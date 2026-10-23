@@ -164,6 +164,36 @@ def _on_a_call() -> bool:
         return False
 
 
+from agent_friday.services import global_stop as _global_stop  # noqa: E402
+
+#: What the page hears when Stop everything ends a call (or refuses one).
+_STOPPED_FRAME = {"type": "everything_stopped", "error": "everything_stopped",
+                  "detail": "Everything is stopped. Press Resume on the screen to talk again."}
+
+
+def _voice_refused_while_stopped(ws) -> bool:
+    """No voice call starts while everything is stopped (services/global_stop)."""
+    if not _global_stop.active():
+        return False
+    try:
+        ws.send(json.dumps(_STOPPED_FRAME))
+    except Exception:
+        pass
+    return True
+
+
+def _voice_on_this_desk() -> bool:
+    """This voice socket is the owner's own page on this PC: a loopback request with
+    no forwarding evidence, a local Host, and this launch's desk key in `dk`
+    (services/desk_press). Only then may a spoken yes approve a card."""
+    try:
+        from agent_friday.services import desk_press as _dp
+        return bool(_is_local_request()) and _dp.host_is_local(request) and \
+            _dp.key_matches(request.args.get('dk', ''))
+    except Exception:   # a check that cannot run is not the desk
+        return False
+
+
 def _live_conn_next():
     with _LIVE_RESUME_LOCK:
         _LIVE_CONN_GEN[0] += 1
@@ -605,6 +635,11 @@ def _injection_text(text: str, kind: str) -> str:
     body = text if kind in _INJECT_APPROVED_AS_SHOWN else _gate_voice_tool_result(text, kind)
     if kind in ("declined", "notice"):
         body = body + "]"
+    elif kind not in _INJECT_APPROVED_AS_SHOWN and body:
+        # Work and tool output is data, never instructions: the one envelope
+        # (services/untrusted_input), around what the gate let through.
+        from agent_friday.services.untrusted_input import wrap as _data_envelope
+        body = _data_envelope(body)
     return _INJECT_LEADS.get(kind, _INJECT_LEADS["result"]) + body
 
 
@@ -1131,7 +1166,7 @@ def _voice_tool_surface_note():
         "back denied, say the permission is off and offer to walk the user to the "
         "toggle. Do not say you took one.\n\n"
         "FOR ANYTHING SUBSTANTIAL, USE delegate_to_friday (or spawn_task for a "
-        "long-running workflow the user wants to watch in the Task Tray). Do not "
+        "long-running workflow the user wants to watch on its task card in System). Do not "
         "narrate the work as though you are doing it inline - in voice you are "
         "not.\n\n"
     )
@@ -1430,6 +1465,9 @@ def tts():
     in the JSON body. The text is wrapped with a conversational style hint so
     the model delivers it as a news anchor rather than reading robotically.
     """
+    if _global_stop.active():
+        return jsonify({"error": "Everything is stopped. Press Resume to hear Friday again.",
+                        "code": "everything_stopped"}), 423
     try:
         text = request.json.get('text', '')
         if not text:
@@ -3442,16 +3480,26 @@ def local_context_act(approval_id):
     rec = approvals.get_approval(approval_id)
     if not rec or rec.get("kind") != lc.KIND:
         return jsonify({"ok": False, "error": "no share request with that id"}), 404
+    if action not in ("send", "decline", "allow_conversation", "edit"):
+        return jsonify({"ok": False, "error": "action must be send, decline, allow_conversation or edit"}), 400
+    from agent_friday.services import screen_click
+    if action != "decline":
+        # Send, its standing form (allow for this conversation) and Edit (which changes the
+        # words a later Send releases) are a press on the card in Friday's page on this PC; the
+        # label is never taken on trust. Decline is open to any channel.
+        refused = screen_click.press_refusal(
+            request, "Send this with a press on the card, on the computer Friday runs on.")
+        if refused is not None:
+            return refused
     if action == "edit":
         return jsonify(lc.edit(approval_id, d.get("text") or "", accept=d.get("accept")))
     if action == "allow_conversation":
         if rec.get("status") == "pending":
             lc.grant_for_conversation((rec.get("payload") or {}).get("conversation_id"))
         action = "send"
-    if action not in ("send", "decline"):
-        return jsonify({"ok": False, "error": "action must be send, decline, allow_conversation or edit"}), 400
     out, won = approvals.decide_with_outcome(
-        approval_id, "approve" if action == "send" else "deny", decided_by="owner:ui")
+        approval_id, "approve" if action == "send" else "deny",
+        decided_by=screen_click.decided_by(request, "owner:ui", for_ids=[approval_id]))
     return jsonify({"ok": bool(out), "won": won, "approval": out})
 
 
@@ -4239,11 +4287,17 @@ if sock is not None:
         # `request` are request-context bound, and turns now run on their own
         # thread where neither is available.
         _ws_authenticated = _ws_auth_ok(_ui_tok_ok)
+        if _voice_refused_while_stopped(ws):
+            return
         from agent_friday.services import crew_runtime as _crew_host_runtime
         _crew_call_origin = _crew_host_runtime.capture_host_origin()
         # The owner's own voice on this PC (a paired phone or a tunnel is not): only then may the
         # router's rule-layer call carry the owner mark (notifications "quiet until morning").
-        _owner_voice = bool(_ws_authenticated) and bool(_is_local_request())
+        # ...and only with this launch's desk key, which Friday's own page on this PC
+        # carries in the socket's query (`dk`; services/desk_press). A header-stripped
+        # tunnel looks local to _is_local_request() but never has the key, so voice
+        # arriving through it can talk and decline but never approve a card.
+        _owner_voice = bool(_ws_authenticated) and _voice_on_this_desk()
 
         done = threading.Event()
 
@@ -4655,6 +4709,9 @@ if sock is not None:
                                          "_crew_host_origin": _crew_call_origin,
                                          "conversation_id": _tool_session.get("conversation_id"),
                                          "provider": _prov,
+                                         # The owner on this PC (desk key on the socket): only then
+                                         # may a spoken yes approve (services/approvals).
+                                         "owner_local": bool(_owner_voice),
                                          "is_voice": True,
                                          "surface": "voice-local",
                                          "owner_text": str(user_text or "")[:4000],
@@ -4779,6 +4836,19 @@ if sock is not None:
             _manifest.subscribe(_sub)
             sess.start()
 
+            # Stop everything (services/global_stop) cuts her off mid-word and ends the call.
+            def _halt_call():
+                try:
+                    sess.barge("global_stop")
+                except Exception:
+                    pass
+                try:
+                    _send(_STOPPED_FRAME)
+                except Exception:
+                    pass
+                done.set()
+            _gs_unregister = _global_stop.on_stop(_halt_call)
+
         except BaseException:
             _release_voice_front(_front)
             raise
@@ -4814,6 +4884,10 @@ if sock is not None:
                     _vlog.error("voice frame failed: %s: %s", type(_he).__name__, _he)
         finally:
             done.set()
+            try:
+                _gs_unregister()
+            except Exception:
+                pass
             _manifest.unsubscribe(_sub)
             sess.close()
             try:
@@ -4913,13 +4987,15 @@ if sock is not None:
                 return
         _ui_t = request.args.get('t', '')
         _ui_tok_ok = _api_token_valid(_ui_t)
-        _owner_local_live = bool(_is_local_request())     # a tunnel or a paired phone is not the owner's own voice here
+        _owner_local_live = _voice_on_this_desk()     # a tunnel or a paired phone is not the owner's own voice here
         if not _ws_auth_ok(_ui_tok_ok):
             _vlog('AUTH FAIL — sending unauthorized and closing')
             try:
                 ws.send(json.dumps({"type": "error", "error": "unauthorized"}))
             except Exception:
                 pass
+            return
+        if _voice_refused_while_stopped(ws):
             return
 
         # A provider can request its first tool long after private mode ends.
@@ -6031,7 +6107,12 @@ if sock is not None:
                                 return refused
                             _tell_hold()
                             _took = _time.time() - _orb_t0
-                            result = _mark_if_stale(result, fname, _orb_t0,
+                            # What the tool returned reaches the model as data, never as
+                            # instructions: the one envelope (services/untrusted_input), put
+                            # on after the egress gate has judged the output itself. Friday's
+                            # own "late result" line stays outside it.
+                            from agent_friday.services.untrusted_input import wrap as _data_envelope
+                            result = _mark_if_stale(_data_envelope(result), fname, _orb_t0,
                                                     _user_words_ts[0], _time.time())
                             _log.info("voice tool result: %s -> %d chars in %.2fs",
                                       fname, len(result or ''), _took)
@@ -6752,7 +6833,7 @@ if sock is not None:
                             _live_laya.for_call(
                                 _voice_session, send=_safe_send,
                                 run_tool=lambda _n, _a: _voice_tool_run(_n, _a, _safe_send, _voice_session),
-                                trusted=bool(session.get("authenticated")) and bool(_is_local_request())
+                                trusted=bool(session.get("authenticated")) and _owner_local_live
                                 and _voice_room_mode(live_settings) != "room",
                             ).attach(session_ai, _cfg_try, asyncio.get_running_loop())
                         except Exception as _lle:
@@ -7028,6 +7109,17 @@ if sock is not None:
                 except Exception as e:
                     print(f'[live] voice distill spawn error: {e}')
 
+        # Stop everything (services/global_stop) ends the call: the page is told, the
+        # runner's loops see `done`, and closing the socket ends the blocked receive.
+        def _halt_live_call():
+            _safe_send(_STOPPED_FRAME)
+            done.set()
+            try:
+                ws.close()
+            except Exception:
+                pass
+        _gs_unregister_live = _global_stop.on_stop(_halt_live_call)
+
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(runner())
@@ -7048,6 +7140,10 @@ if sock is not None:
                 pass
         finally:
             done.set()
+            try:
+                _gs_unregister_live()
+            except Exception:
+                pass
             if _crew[0]:
                 _crew[0].close()
             if _crew_chan[0]:

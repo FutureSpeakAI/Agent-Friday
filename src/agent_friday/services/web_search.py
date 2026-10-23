@@ -54,6 +54,26 @@ _canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
 _BRAVE_USD_PER_QUERY = 0.005
 
 
+#: Where each backend sends the query. wigolo runs on this PC.
+_SEARCH_HOSTS = {"brave": "api.search.brave.com", "duckduckgo-scrape": "html.duckduckgo.com",
+                 "firecrawl": "api.firecrawl.dev"}
+
+
+def _record_query(backend: str, q: str, out: dict) -> None:
+    """The query in the egress ledger (§26.7), for each backend it actually
+    went to (a backend that is not set up, or runs on this PC, sent nothing)."""
+    try:
+        host = _SEARCH_HOSTS.get(backend)
+        if not host or (out or {}).get("status") == SearchStatus.NO_BACKEND:
+            return
+        from agent_friday.services import egress_gate as _eg
+        ok = (out or {}).get("status") in (SearchStatus.OK, SearchStatus.EMPTY)
+        _eg.record_service_send("web_search", ("search:" + backend)[:80], destination=host,
+                                content={"query": q}, result="sent" if ok else "failed", part="query")
+    except Exception:
+        pass
+
+
 class SearchStatus:
     OK = "ok"                      # results returned
     EMPTY = "empty"                # backend answered, genuinely nothing
@@ -180,6 +200,7 @@ def verify_key(key: str | None = None) -> dict:
     Returns which endpoints answered, the error code for those that did not,
     and any rate-limit/quota headers the API volunteered.
     """
+    # egress: not recorded: the owner's key check sends only the fixed word "test", no data of theirs
     import requests
     k = (key or brave_key() or "").strip()
     if not k:
@@ -251,7 +272,7 @@ def key_status() -> dict:
     }
     try:
         from agent_friday.services import credential_store
-        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave"))
+        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave", use=False))  # a status check
     except Exception:
         pass
     try:
@@ -411,6 +432,7 @@ def _firecrawl_search(query: str, count: int) -> dict:
 
 
 def _brave(query: str, count: int) -> dict:
+    # egress: recorded by search() via _record_query, for each backend tried
     import requests
     key = brave_key()
     r = requests.get(
@@ -621,6 +643,11 @@ def search(query: str, count: int = 10) -> dict:
     `_normalise_rows` for the day that cost.
     """
     q = (query or "").strip()
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("web")
+    if _why:
+        return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
+                "backend": "none", "detail": _why}
     if not q:
         return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
                 "backend": "none", "detail": "empty query"}
@@ -653,6 +680,7 @@ def search(query: str, count: int = 10) -> dict:
             out = {"status": SearchStatus.BACKEND_BROKEN,
                    "detail": ExceptionText(f"{type(e).__name__}: {e}")}
         _note_backend_health(name, out)
+        _record_query(name, q, out)
         if out.get("status") == SearchStatus.OK:
             out["results"] = _normalise_rows(out.get("results"))
             out["query"] = q

@@ -12,6 +12,7 @@ import mailbox
 import time
 
 import pytest
+from tests.owner_press_support import press
 
 GOOGLE_AR = "mx.google.com; dkim=pass header.i=@{d} header.s=s1 header.b=abc; spf=pass smtp.mailfrom={d}"
 
@@ -294,7 +295,7 @@ def test_the_owners_tick_acts_and_anything_else_asks(ic, ready, monkeypatch):
     c = _client(monkeypatch)
     r = c.post("/api/inbox-cleanup/unsubscribe", json={"senders": ["shop.example"], "requested_by": "friday"})
     assert r.status_code == 202 and calls == [["shop.example"]] and ready["posted"] == []
-    r = c.post("/api/inbox-cleanup/unsubscribe", json={"senders": ["shop.example"], "requested_by": "ui:inbox-cleanup"})
+    r = c.post("/api/inbox-cleanup/unsubscribe", json={"senders": ["shop.example"], "requested_by": "ui:inbox-cleanup"}, headers=press())
     assert r.status_code == 200 and r.get_json()["done"][0]["id"] == "shop.example"
     r = c.post("/api/inbox-cleanup/start", json={"source": {"kind": "mbox", "path": "x.mbox"}})
     assert r.status_code == 403, "reading mail starts from the owner's own click"

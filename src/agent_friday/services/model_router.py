@@ -569,6 +569,9 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
 
     Returns the response text.
     """
+    # Stop everything: no model call starts while stopped (services/global_stop).
+    from agent_friday.services import global_stop as _global_stop
+    _global_stop.raise_if_stopped("a model call")
     # Callers pass either a structured message list or a bare prompt string.
     # Normalize here — a string used to crash the router consult ('str' object
     # has no attribute 'get'), silently pinning those calls to the cloud
@@ -701,7 +704,15 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # but healthy providers get the request first.
     # The mode the user chose outranks the resilience ladder.
     attempts = _mode_filtered_attempts(attempts, routing_cfg, vault_access=vault_access)
+    # A6: no silent move from one cloud provider to another. Applied before the
+    # health ordering, so a provider marked down cannot be skipped for another
+    # cloud provider the owner did not allow either (services/provider_fallback).
+    from agent_friday.services import provider_fallback as _pf
+    attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg)
+    _pf_watch = _pf.LadderWatch(_pf_withheld, routing_cfg)
+    _pf_before = list(attempts)
     attempts = _health_order(attempts, routed_provider_name)
+    _pf_watch.reordered(_pf_before, attempts)
 
     errors = []
     for name, fn, use_model in attempts:
@@ -729,8 +740,10 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                     except Exception:
                         pass
                 _vj.note_done(name, use_model)
+                _pf_watch.leg_succeeded(name)
                 return text
             errors.append(f"{_leg}: empty response")
+            _pf_watch.leg_failed(name, "empty response")
         except Exception as e:
             if type(e).__name__ == "JobCancelled":
                 # A job stopped from its card or the Local AI queue stops; it
@@ -739,11 +752,15 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
             from agent_friday.user_errors import ExceptionText
             errors.append(ExceptionText(f"{_leg}: {e}"))
             _vj.note_failed_leg(name, use_model, e)
+            _pf_watch.leg_failed(name, e)
         try:
             from agent_friday.services import attribution
             attribution.note_fallback(errors[-1])
         except Exception:
             pass
+    # A cloud provider failed and the move to another one was withheld: say so
+    # with the offer (ProviderSwitchWithheld), not as a generic failure.
+    _pf_watch.exhausted()
     _exhausted = (
         "No model provider could generate text (tried "
         + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
@@ -1299,9 +1316,35 @@ TURN_CANCEL = _contextvars.ContextVar("friday_turn_cancel", default=None)
 
 
 def turn_cancelled() -> bool:
-    """Has the caller cancelled the turn running in this context?"""
+    """Has the caller cancelled the turn running in this context? Always True
+    while everything is stopped (core.GLOBAL_STOP, services/global_stop)."""
+    if core.GLOBAL_STOP.is_set():
+        return True
     ev = TURN_CANCEL.get()
     return bool(ev is not None and ev.is_set())
+
+
+class _AnyCancel:
+    """The turn's own cancel Event, or the global stop: whichever is set first.
+    Quacks like the part of threading.Event the stream reader uses."""
+
+    __slots__ = ("_events",)
+
+    def __init__(self, *events):
+        self._events = tuple(e for e in events if e is not None)
+
+    def is_set(self) -> bool:
+        return any(e.is_set() for e in self._events)
+
+    def wait(self, timeout: float) -> bool:
+        end = _time.monotonic() + max(0.0, float(timeout))
+        while True:
+            if self.is_set():
+                return True
+            left = end - _time.monotonic()
+            if left <= 0:
+                return False
+            _time.sleep(min(0.02, left))
 
 
 # How long a local call waits for a seat that answers 503 "Loading model"
@@ -1459,7 +1502,9 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
             getattr(resp, "encoding", "")).lower() in ("iso-8859-1", "latin-1", "latin_1"):
         resp.encoding = "utf-8"
 
-    _cancel = TURN_CANCEL.get()
+    # The turn's own cancel, or Stop everything (core.GLOBAL_STOP): either cuts
+    # the stream, so a reply that is still generating stops at once.
+    _cancel = _AnyCancel(TURN_CANCEL.get(), core.GLOBAL_STOP)
     cancelled = False
     # A cancel must close the stream even while the seat is still prefilling
     # and has sent nothing yet: the per-line check below never runs until a
@@ -2482,7 +2527,8 @@ def _compress_trajectory(messages, model=None):
 
     compressed_block = [
         {"role": "user",
-         "content": f"[COMPRESSED MEMORY — earlier conversation summary]\n{summary}\n[END COMPRESSED MEMORY]"},
+         "content": "[COMPRESSED MEMORY — earlier conversation summary]\n"
+                    + _summary_as_data(summary) + "\n[END COMPRESSED MEMORY]"},
         {"role": "assistant",
          "content": "Got it — I have that context from our earlier conversation."},
     ]
@@ -2490,6 +2536,13 @@ def _compress_trajectory(messages, model=None):
     print(f"  [TRAJ] Compressed {len(old_turns)} turns → 2 synthetic turns. "
           f"Chars: {_estimate_chars(old_turns)} → {_estimate_chars(compressed_block)}")
     return result
+
+
+def _summary_as_data(summary: str) -> str:
+    """A summary of earlier turns keeps what tools found there, so it is replayed as
+    data, never as the owner's words (services/untrusted_input)."""
+    from agent_friday.services.untrusted_input import wrap
+    return wrap(summary)
 
 
 # ── Semantic context pruner (lazy singleton) ──────────────────────
@@ -3788,19 +3841,8 @@ def _load_vault_summary():
         except Exception:
             pass
 
-    # Epistemic score
-    efile = FRIDAY_DIR / "epistemic_scores.json"
-    if not efile.exists():
-        efile = FRIDAY_DIR / "epistemic.json"
-    if efile.exists():
-        try:
-            data = json.loads(efile.read_text(encoding='utf-8'))
-            ctx['epistemic'] = {
-                'overall': round(data.get('overall_score', data.get('overall', 0.72)), 2),
-            }
-        except Exception:
-            pass
-
+    # The epistemic score is not loaded: no prompt reads it, and the honesty
+    # rules are fixed text that no score steers (epistemic_engine.HONESTY_POLICY).
     return ctx
 
 
@@ -4320,9 +4362,12 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     # Layer 3: Vision context (from Gemini screen capture) — the screen could
     # show anything private, so treat it as private by default.
     if vision_description:
+        # What a screen shows (a page, a mail, a dialog) is the source's words: the
+        # one data envelope (services/untrusted_input), never part of the instructions.
+        from agent_friday.services.untrusted_input import wrap as _data_envelope
         add(
             f"\n== SCREEN VISION (what the user's screen shows) ==\n"
-            f"{vision_description[:1500]}",
+            f"{_data_envelope(vision_description[:1500])}",
             classify(vision_description, _T2),
         )
         sources_consulted.append('vision')

@@ -18,11 +18,17 @@ name: installer
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
 #                    (packaging/windows/tests/rehearsal/upgrade-vault-test.ps1)
+#   tests-green      on a version tag only: scripts/release_gate.py waits for
+#                    the tests, codeql and restore workflows on the tag's exact
+#                    commit and fails unless all three are green there
 #   release          on a version tag only: a PUBLISHED pre-release carrying the
 #                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
 # Pushing a version tag is the release decision. The release job runs only
-# after the fresh-install job and every leg of the upgrade matrix have passed.
+# after tests-green, the fresh-install job and every leg of the upgrade matrix
+# have passed, and it asks the release gate once more immediately before it
+# publishes. A tag on a commit whose tests are red, running or missing
+# publishes nothing.
 #
 # The setup program is unsigned and sends nothing anywhere. The model page is
 # answered with the cloud option in CI, so no model is downloaded.
@@ -198,12 +204,67 @@ jobs:
             ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
+  # The release gate. The tests and codeql workflows also run on the tag push
+  # itself, so the tag's exact commit always gets a run to wait for. Pull
+  # request runs do not count: they test a merge, not this commit.
+  tests-green:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+      security-events: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Green means: every required run on this commit passed AND no high or
+      # critical code-scanning alert is open on the tag (a CodeQL run ends green
+      # even when it finds something).
+      - name: The tests, codeql and restore workflows are green on this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_REF: ${{ github.ref }}
+        run: |
+          python3 scripts/release_gate.py --repo "${{ github.repository }}" --sha "${{ github.sha }}" \
+            --workflow tests.yml --workflow codeql.yml --workflow restore.yml --alerts-ref "$TAG_REF" \
+            --wait-minutes 110 --poll-seconds 60
+
+  # Export first, a real uninstall that leaves nothing, and a restore of the
+  # bundle on the same clean machine (north star 27.10, 27.6, 34.3-7).
+  bundle-uninstall-restore:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer
+          path: artifact
+      - name: Install, seed, uninstall with a bundle first, check nothing is left, reinstall, restore
+        shell: powershell
+        run: |
+          $exe = Get-ChildItem artifact\AgentFriday-Setup-*.exe | Select-Object -First 1
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\verify-bundle-uninstall-restore.ps1 -Setup $exe.FullName -WorkDir "$env:RUNNER_TEMP\bur"
+          exit $LASTEXITCODE
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bundle-uninstall-restore-evidence
+          path: |
+            ${{ runner.temp }}/bur/*.json
+            ${{ runner.temp }}/bur/*.log
+            ${{ runner.temp }}/bur/*.err
+          if-no-files-found: ignore
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [fresh-install, upgrade]
+    needs: [tests-green, fresh-install, upgrade, bundle-uninstall-restore]
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
+      security-events: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -251,10 +312,20 @@ jobs:
       # Beta 1.0.x replaces the 5.x line, so it is the latest release: the README's
       # Download link (releases/latest) must land on it, and GitHub skips
       # pre-releases for "latest". Published, never a draft.
-      - name: Publish the release (latest, not a draft)
+      # Asked again here, with no waiting: a rerun that turned a check red
+      # after tests-green passed still stops the release.
+      # The tag must still name the commit that was gated: a tag moved while
+      # this run waited would otherwise put an untested commit under the release.
+      - name: Publish the release (latest, not a draft), only if the checks are still green
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_REF: ${{ github.ref }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
+          python3 scripts/release_gate.py --repo "${{ github.repository }}" --sha "${{ github.sha }}" \
+            --workflow tests.yml --workflow codeql.yml --workflow restore.yml --alerts-ref "$TAG_REF" --wait-minutes 0
+          tagged=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)
+          test "$tagged" = "$GITHUB_SHA" || { echo "the tag now names $tagged, not the gated $GITHUB_SHA"; exit 1; }
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
             artifact/release-manifest.json \
             --repo "${{ github.repository }}" --verify-tag --latest \

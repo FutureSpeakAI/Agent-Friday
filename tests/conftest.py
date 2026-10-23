@@ -160,6 +160,17 @@ os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
 # across runs (the economy/leaderboard flakes in the Chaos Engineer review).
 os.environ["HOME"] = str(_TEST_HOME)
 os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
+# The shared test home is an EXISTING install (north-star A16/A17): its first
+# settings.json keeps the choices tests were written against (no daily
+# spending cap; an unpicked route is not reported as pending). Every test file
+# shares one costs.db, so a cap on by default would pause whichever later file
+# reached a paid choke point after earlier files had recorded spend. Tests of
+# the new-install behaviour use a home of their own.
+_shared_friday = _TEST_HOME / ".friday"
+_shared_friday.mkdir(parents=True, exist_ok=True)
+if not (_shared_friday / "install_choices.json").exists():
+    (_shared_friday / "install_choices.json").write_text(
+        '{"install": "existing", "daily_cap_card": "not_needed"}', encoding="utf-8")
 # FRIDAY_VAULT_PASSPHRASE is the canonical vault key env var; FRIDAY_PASSWORD is
 # the backward-compat fallback.  Set both so tests exercise the new code path.
 os.environ.setdefault("FRIDAY_VAULT_PASSPHRASE", "test-vault-passphrase")
@@ -365,6 +376,39 @@ def federation_on(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _homes_are_existing_installs(request, monkeypatch):
+    """Every home a test points FRIDAY_DIR at is an EXISTING install (north-star
+    A16/A17): its first settings keep the choices tests were written against
+    (no daily spending cap; no route reported as unpicked). costs.db is the
+    shared home's in every test, so a $2 cap on by default in a temp home would
+    pause whichever test reached a paid choke point after earlier tests had
+    recorded spend. Tests of new-install behaviour opt in with the
+    `new_install` marker."""
+    if request.node.get_closest_marker("new_install") is not None:
+        yield
+        return
+    try:
+        from agent_friday import core
+    except Exception:
+        yield
+        return
+    real = getattr(core, "install_origin", None)
+    if real is None:
+        yield
+        return
+
+    def _existing_unless_recorded():
+        if not core.install_choices_state().get("install"):
+            try:
+                core.update_install_choices_state(install=core.EXISTING_INSTALL)
+            except Exception:
+                return core.EXISTING_INSTALL
+        return real()
+    monkeypatch.setattr(core, "install_origin", _existing_unless_recorded)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _held_detail_cards_off(request, monkeypatch):
     """The gate raises a card for every private detail it holds back (services/cloud_release,
     owner ruling 2026-10-17). Hundreds of tests seal private text through a shared scratch home;
@@ -381,6 +425,22 @@ def _held_detail_cards_off(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_leftover_machine_input():
+    """A test that runs a real Computer Control tool marks Friday's own mouse or keyboard action
+    (services/desk_press), and for a few seconds no press counts. The next test starts clean."""
+    import sys as _sys
+    dp = _sys.modules.get("agent_friday.services.desk_press")
+    if dp is not None:
+        dp._last_machine_input = 0.0
+        dp._machine_active = 0
+    yield
+    dp = _sys.modules.get("agent_friday.services.desk_press")
+    if dp is not None:
+        dp._last_machine_input = 0.0
+        dp._machine_active = 0
+
+
+@pytest.fixture(autouse=True)
 def _fresh_swr_cache():
     """Cached panel data must not carry from one test into the next."""
     try:
@@ -391,6 +451,42 @@ def _fresh_swr_cache():
     swr_cache.invalidate("")
     yield
     swr_cache.invalidate("")
+
+
+@pytest.fixture(autouse=True)
+def _own_action_ledger(tmp_path_factory, monkeypatch):
+    """Every test writes to an action ledger of its own (services/action_ledger.py).
+    Receipts, decisions and activity rows from one test must not show up in the
+    next one's reads, and a test that breaks the chain on purpose must not hold
+    the outward actions of the tests after it. FRIDAY_LEDGER_DIR is honoured
+    only with FRIDAY_TESTING=1."""
+    import uuid
+    # a name never used before: a test that removes its ledger folder must not
+    # hand the same path (and so the same anchor) to the next test. Not
+    # tmp_path_factory.mktemp: it lists the whole base folder on every call,
+    # which grows by one folder per test and doubled the Windows suite time.
+    name = uuid.uuid4().hex
+    d = tmp_path_factory.getbasetemp() / "ledgers" / name[:2] / name
+    d.mkdir(parents=True)
+    monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(d))
+    try:
+        from agent_friday.services import action_ledger, action_journal
+        action_ledger.reset_caches()
+        action_journal.reset()
+    except Exception:
+        pass
+    try:
+        # safe mode is decided once per process; each test decides afresh
+        from agent_friday.services import safe_mode
+        safe_mode.reset_for_tests()
+    except Exception:
+        pass
+    yield
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.reset_caches()
+    except Exception:
+        pass
 
 
 class NetworkModelDownload(RuntimeError):
@@ -925,6 +1021,43 @@ def _notices_and_approvals_do_not_outlive_their_file():
     yield
     for p in set(paths) | set(_top_bar_store_paths()):
         _put_back(p, before.get(p))
+
+
+def _schedules_file() -> Path:
+    """The schedules.json the scheduler reads: its own path once it is loaded
+    (a test that points it at tmp has put it back by the time this runs)."""
+    sch = sys.modules.get("agent_friday.services.scheduler")
+    if sch is not None and getattr(sch, "SCHEDULES_FILE", None):
+        return Path(sch.SCHEDULES_FILE)
+    from agent_friday.paths import friday_home
+    return friday_home() / "schedules.json"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _schedules_do_not_outlive_their_file():
+    """Each test file leaves schedules.json as it found it.
+
+    Same leak as settings.json above, another store. Arming a post (schedule,
+    post now, release) switches the Content publisher job on when it is still
+    in its seeded-off state (services/publisher.ensure_publisher_running), and
+    it can only do that once the job is registered. A file that registers the
+    builtins (publisher.start(), e.g. tests/unit/test_content_publisher.py)
+    leaves that registration in the worker, so a later file that arms a post
+    through the routes (tests/api/test_content_routes.py) wrote an enabled
+    sch_content_publisher into the shared home's schedules.json, and every
+    later file on that worker saw the job on. Which files share a worker is
+    up to --dist loadfile (tests/unit/test_schedules_do_not_leak_between_files.py
+    runs a registrar, an arming file and a probe in one process).
+
+    The bytes, or the file's absence, are put back when the test file ends.
+    """
+    path = _schedules_file()
+    try:
+        before = path.read_bytes()
+    except FileNotFoundError:
+        before = None
+    yield
+    _put_back(path, before)
 
 
 @pytest.fixture(autouse=True)

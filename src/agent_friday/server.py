@@ -129,11 +129,11 @@ ROUTE_MODULES = [
     'actions', 'agent_workspaces', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
     'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code', 'compute',
     'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_memory', 'core_routes', 'desktop',
-    'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
+    'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'doctor', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'inbox_cleanup', 'insights',
-    'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
+    'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
-    'platform', 'podcasts', 'privacy_consent', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
+    'platform', 'podcasts', 'privacy_consent', 'privacy_map', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
     'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
     'work_plan', 'updates', 'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_bundles', 'workspace_studio', 'workspace_undo',
@@ -175,6 +175,40 @@ ROUTE_LABELS = {
 # Populated by _discover_and_register_blueprints; consumed by the policy
 # enforcer, /api/startup-report and tests/api/test_blueprint_discovery.py.
 BLUEPRINT_REPORT: dict = {'registered': [], 'skipped': [], 'blueprint_count': 0}
+
+
+def network_bind_warning(bind_host: str) -> list:
+    """The box printed at start-up when FRIDAY_BIND_HOST is not loopback.
+
+    That switch is a developer option, not a way to use Friday from a phone or a
+    laptop: there is no pairing, no per-device rights and no way to remove one
+    device, and anyone signed in acts as the owner for everything except a press
+    on an approval card, which counts only on this PC's own screen. The supported
+    design for other devices is a separate paired gateway, not this bind."""
+    width = 62
+    rows = [
+        "UNSAFE: FRIDAY_BIND_HOST is a developer-only switch",
+        "",
+        "FRIDAY_BIND_HOST=%s" % str(bind_host)[:43],
+        "puts Friday on the network. It is NOT a supported way to",
+        "use Friday from a phone or laptop, and it is not safe on a",
+        "network other people use:",
+        "  - every signed-in device can read your conversations,",
+        "    mail, files and vault, and acts as you;",
+        "  - one shared password, no pairing, no way to remove a",
+        "    single device;",
+        "  - pressing Approve on a card (send, pay, run a command,",
+        "    website plans) counts only on THIS PC's screen; a tap",
+        "    from another device approves nothing. Typed, spoken",
+        "    and text-message replies follow their own rules.",
+        "",
+        "Unset FRIDAY_BIND_HOST to go back to this PC only.",
+    ]
+    out = ["  ╔" + "═" * width + "╗"]
+    for r in rows:
+        out.append("  ║  " + r.ljust(width - 2)[:width - 2] + "║")
+    out.append("  ╚" + "═" * width + "╝")
+    return out
 
 
 def _route_leaf(dotted: str) -> str:
@@ -475,6 +509,30 @@ def _residency_boot():
 
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
+    # Stop everything (services/global_stop) survives a restart: read it FIRST, before
+    # anything below can start work (reconcile, publishing, the scheduler). A state that
+    # cannot be read boots stopped: Resume is one press away.
+    try:
+        from agent_friday.services import global_stop as _global_stop
+        if _global_stop.load_on_boot().get("stopped"):
+            print("  Stop everything: STILL STOPPED from before the restart; press Resume to let work run")
+    except Exception as _gs_err:
+        import agent_friday.core as _core_gs
+        _core_gs.GLOBAL_STOP.set()
+        print(f"  Stop everything: state not read ({_gs_err}); starting STOPPED")
+    # Safe mode (services/safe_mode.py): extensions and the cloud off, so Friday
+    # can be repaired. Decided once for this process; each part below asks.
+    from agent_friday.services import safe_mode as _safe
+    if _safe.active():
+        _safe.install_network_guard()
+        if _safe.state().get("how") == "failed_starts":
+            # entered because starts kept failing: it stays until the owner
+            # leaves it, so one good safe start does not slip back out
+            _safe.set_next_start(True)
+        print("  SAFE MODE (%s): extensions and the cloud are off, schedules are "
+              "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
+              "Leave it there or with `friday safe-mode off`, then restart."
+              % _safe.state().get("why"))
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
@@ -499,10 +557,65 @@ if not _TESTING:
     try:
         from agent_friday.services import publish_hosting as _ph
         from agent_friday.services import publish_web as _pw
-        if _pw.list_published() and _ph.enabled():
+        if _safe.allows("publish_hosting") and _pw.list_published() and _ph.enabled():
             _ph.ensure_started()
     except Exception as _ph_err:
         print(f"  Published pages: hosting not started ({_ph_err})")
+
+    # The action ledger (services/action_ledger.py): bring any receipts still
+    # in the legacy receipt files (one per part of Friday) into the one chain, then
+    # check every line once, so a break found now is on Activity and holds
+    # outward actions from the first one.
+    def _ledger_boot():
+        try:
+            from agent_friday.services import action_ledger as _al
+            # check what is there before anything is written to it
+            _al.verify(force=True, migrate=False)
+            _al.migrate_legacy()
+            rep = _al.verify(force=True)
+            if not rep.get("ok"):
+                print(f"  Action ledger: {rep.get('open_problem_count')} break(s) to review in Activity; outward actions held")
+        except Exception as _al_err:
+            print(f"  Action ledger: could not be checked at start ({_al_err})")
+        # A22: entries past the retention period (Settings, 2 years by
+        # default) move into the encrypted archive, never deleted; then once a day.
+        while True:
+            try:
+                _out = _al.archive_old()
+                if _out.get("archived"):
+                    print(f"  Action ledger: {_out.get('records')} older entries archived (through {_out.get('through')})")
+            except Exception as _ar_err:
+                print(f"  Action ledger: archive step skipped ({_ar_err})")
+            __import__("time").sleep(86400)
+    threading.Thread(target=_ledger_boot, daemon=True, name="action-ledger-boot").start()
+
+    # Scheduled Friday Bundles and the restore rehearsal (services/backup_schedule.py,
+    # §27.4): off until the owner turns them on; checked every 15 minutes. Kept in
+    # safe mode (a backup is part of repairing Friday).
+    def _backup_schedule_loop():
+        from agent_friday.services import backup_schedule as _bs
+        from agent_friday.services import doctor_weekly as _dw0   # hears off-the-record ends
+        _dw0.install_hooks()
+        __import__("time").sleep(120)
+        while True:
+            try:
+                _bs.tick()
+            except Exception as _bs_err:
+                print(f"  Scheduled bundles: skipped ({_bs_err})")
+            try:
+                # the weekly Doctor ask (A3): a quiet card at most once a week; it sends nothing
+                from agent_friday.services import doctor_weekly as _dw
+                _dw.tick()
+            except Exception:
+                pass
+            try:
+                # the first backup offer (§34.4-9): a quiet card until scheduled bundles are on
+                from agent_friday.services import first_backup as _fb
+                _fb.tick()
+            except Exception:
+                pass
+            __import__("time").sleep(900)
+    threading.Thread(target=_backup_schedule_loop, daemon=True, name="backup-schedule").start()
 
     # Adopt whatever was running when the previous process died.
     #
@@ -513,8 +626,9 @@ if not _TESTING:
     # silence: a job that stopped has to say it stopped.
     try:
         from agent_friday.services import reconcile as _reconcile
-        threading.Thread(target=_reconcile.run_at_boot, daemon=True,
-                         name="boot-reconcile").start()
+        if _safe.allows("reconcile_resume"):
+            threading.Thread(target=_reconcile.run_at_boot, daemon=True,
+                             name="boot-reconcile").start()
     except Exception as _rc_err:
         print(f"  Reconciliation: unavailable ({_rc_err})")
 
@@ -523,10 +637,29 @@ if not _TESTING:
     # there is no first-run request.
     try:
         from agent_friday.services import first_run_models as _frm
-        threading.Thread(target=_frm.run_at_boot, daemon=True,
-                         name="first-run-models-boot").start()
+        if _safe.allows("first_run_models"):
+            threading.Thread(target=_frm.run_at_boot, daemon=True,
+                             name="first-run-models-boot").start()
     except Exception as _frm_err:
         print(f"  First-run models: unavailable ({_frm_err})")
+
+    # North-star A17: an install from before the daily spending cap shipped on
+    # kept its own cap; it gets one card explaining the new cap, once, with a
+    # press to set it (services/spending_caps).
+    try:
+        from agent_friday.services import spending_caps as _sc
+        threading.Thread(target=_sc.push_daily_cap_card_if_pending, daemon=True,
+                         name="daily-cap-card").start()
+    except Exception as _sc_err:
+        print(f"  Daily spending cap card: unavailable ({_sc_err})")
+    # A21: an install that finished setup before the key store passphrase became the default
+    # is offered it once, on a card (services/keystore_offer). Never forced.
+    try:
+        from agent_friday.services import keystore_offer as _ko
+        threading.Thread(target=_ko.push_card_if_pending, daemon=True,
+                         name="keystore-offer-card").start()
+    except Exception as _ko_err:
+        print(f"  Key store offer: unavailable ({type(_ko_err).__name__})")
 
     threading.Thread(target=_start_kill_hotkey, daemon=True).start()
     # Closed-loop learning: nightly SkillOpt auto-research at 3:30 AM Central is
@@ -545,7 +678,8 @@ if not _TESTING:
     # publisher module lands — a missing/broken module never blocks boot.
     try:
         from agent_friday.services import publisher as _content_publisher
-        _content_publisher.start()
+        if _safe.allows("publisher"):
+            _content_publisher.start()
     except Exception as _cp_err:
         print(f"  Content publisher: skipped ({_cp_err})")
     # Task journal (docs/design/active/task-visibility.md TV8): rebuild the
@@ -560,14 +694,32 @@ if not _TESTING:
               + (f", {_n_int} marked interrupted" if _n_int else ""))
     except Exception as _tj_err:
         print(f"  Task journal: restore skipped ({_tj_err})")
-    start_scheduler()
+    # Goals (north star §17, BD-12): a milestone the previous process left
+    # mid-run follows what its task became above — checked if it finished,
+    # waited on if it was safely resumed, held for the owner otherwise. Never
+    # re-dispatched. AFTER the task journal, BEFORE the scheduler's first tick.
+    # Like the task-resume reconcile above, it waits while safe mode is on.
+    if _safe.allows("reconcile_resume"):
+        try:
+            from agent_friday.services import goals as _goals_boot
+            _g_summary = _goals_boot.reconcile_on_boot()
+            _g_n = len(_g_summary.get("settled") or [])
+            if _g_n or _g_summary.get("unreadable"):
+                print(f"  Goals: {_g_n} interrupted milestone(s) settled"
+                      + (f", {len(_g_summary['unreadable'])} unreadable goal file(s)"
+                         if _g_summary.get("unreadable") else ""))
+        except Exception as _g_err:
+            print(f"  Goals: reconcile skipped ({_g_err})")
+    if _safe.allows("scheduler"):
+        start_scheduler()
     try:
         from agent_friday.services import call_watch as _call_watch
-        _call_watch.start()
+        if _safe.allows("call_watch"):
+            _call_watch.start()
     except Exception as _cw_err:
         print(f"  Call watch: not started ({_cw_err})")
 
-    if _notif_engine:
+    if _notif_engine and _safe.allows("notifications_loop"):
         threading.Thread(target=_notification_trigger_loop, daemon=True).start()
 
     # THE EMBEDDER IS LOADED AT BOOT, NOT ON THE USER'S FIRST SENTENCE.
@@ -608,13 +760,15 @@ if not _TESTING:
                      name="warm-embedder").start()
 
     # Persistent news archive: grow the per-day article store on the RSS cadence.
-    threading.Thread(target=_news_archiver_loop, daemon=True).start()
+    if _safe.allows("news"):
+        threading.Thread(target=_news_archiver_loop, daemon=True).start()
 
     # Podcast render worker: finishes episodes left mid-render by a restart and
     # renders queued ones when the idle gate allows (services/podcast_engine.py).
     try:
         from agent_friday.services import podcast_engine as _podcast_engine
-        _podcast_engine.start_worker()
+        if _safe.allows("podcasts"):
+            _podcast_engine.start_worker()
     except Exception as _pw_e:
         print(f"  Podcasts: render worker not started ({_pw_e})")
 
@@ -633,7 +787,8 @@ if not _TESTING:
     # full creations folder (services/media_index.py).
     try:
         from agent_friday.services import media_index as _media_index
-        _media_index.start_background()
+        if _safe.allows("media_index"):
+            _media_index.start_background()
     except Exception as _mi_e:
         print(f"  Media: library indexer not started ({_mi_e})")
 
@@ -641,26 +796,30 @@ if not _TESTING:
     # read when Friday last stopped (services/library/runtime.py).
     try:
         from agent_friday.services.library import runtime as _library_runtime
-        _library_runtime.start_background()
+        if _safe.allows("library_runtime"):
+            _library_runtime.start_background()
     except Exception as _lib_e:
         print(f"  Library: background reading not started ({_lib_e})")
 
     # Offline-first resilience: probe connectivity every 30s, auto-switch to
     # local inference when offline, flush the queue + refresh feeds when back.
-    threading.Thread(target=_network_monitor_loop, daemon=True).start()
+    if _safe.allows("network_monitor"):
+        threading.Thread(target=_network_monitor_loop, daemon=True).start()
 
     # MCP connectors: launch configured MCP servers and register their tools.
     _mcp_boot()
 
     # Predictive workspaces: pre-warm the workspaces this moment usually wants,
     # then keep them warm as the time-of-day shifts.
-    threading.Thread(target=_prewarm_predicted_boot, daemon=True).start()
-    threading.Thread(target=_predictive_prewarm_loop, daemon=True).start()
+    if _safe.allows("predictive_prewarm"):
+        threading.Thread(target=_prewarm_predicted_boot, daemon=True).start()
+        threading.Thread(target=_predictive_prewarm_loop, daemon=True).start()
 
     # Ambient connector-health monitoring: watch every connector (Google +
     # MCP) and push a notification on a connected->down edge.
     from agent_friday.services.connectors import connector_health_monitor_loop
-    threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
+    if _safe.allows("connectors"):
+        threading.Thread(target=connector_health_monitor_loop, daemon=True).start()
 
     # Credential sweep: read every credential Friday holds and say what is
     # wrong, hourly and locally.
@@ -671,7 +830,8 @@ if not _TESTING:
     # MCP server, a disabled Google API as working. This is the standing
     # version of that enumeration.
     from agent_friday.services.credential_sweep import sweep_loop
-    threading.Thread(target=sweep_loop, daemon=True).start()
+    if _safe.allows("credential_sweep"):
+        threading.Thread(target=sweep_loop, daemon=True).start()
 
     # Residency: compute the placement plan, bind it into capability_routing,
     # and bring the GPU to that plan (decision Q9).
@@ -685,7 +845,7 @@ if not _TESTING:
     # Runs on a daemon thread and is FAIL-SOFT by construction: a residency
     # problem must never stop Friday from starting. Opt out with
     # FRIDAY_NO_ARBITER=1.
-    if os.environ.get("FRIDAY_NO_ARBITER") != "1":
+    if os.environ.get("FRIDAY_NO_ARBITER") != "1" and _safe.allows("model_seats"):
         threading.Thread(target=_residency_boot, daemon=True).start()
 
     # Machine monitor (docs/design/implemented/headroom.md §4.3): read-only telemetry --
@@ -697,7 +857,8 @@ if not _TESTING:
     # background loop here).
     try:
         from agent_friday.services import machine_monitor as _mm
-        _mm.start_loop()
+        if _safe.allows("machine_monitor"):
+            _mm.start_loop()
     except Exception as _mm_err:
         print(f"  Machine monitor: unavailable ({_mm_err})")
 
@@ -1090,6 +1251,10 @@ if __name__ == '__main__':
     _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
     _ssl_context = None
     if bind_host not in _LOOPBACK_HOSTS:
+        print()
+        for _line in network_bind_warning(bind_host):
+            print(_line)
+        print()
         # Refuse to start a network-exposed
         # server with no remote auth key. The request-time guard already denies
         # keyless remote requests (fail-closed), but refusing to boot at all is
@@ -1316,9 +1481,23 @@ if __name__ == '__main__':
     # the tab links and the tray use. Never prompts and never changes Windows.
     try:
         from agent_friday.services import local_address as _la
-        _la.boot(_port)
+        from agent_friday.services import safe_mode as _safe_la
+        if _safe_la.allows("local_address"):
+            _la.boot(_port)
     except Exception as _la_err:
         print(f"  Local address: skipped ({_la_err})")
+    # The desk key (services/desk_press): a per-launch secret Friday's page fetches
+    # from 127.0.0.1 only, so a press on an approval card can prove it was made on
+    # this PC's screen. Always loopback, whatever FRIDAY_BIND_HOST says.
+    try:
+        from agent_friday.services import desk_press as _dp
+        _dp_port = _dp.start(_port, tls=bool(_ssl_context))
+        if _dp_port:
+            print(f"  Desk key: served on 127.0.0.1:{_dp_port} only (presses from other devices never count)")
+        else:
+            print("  Desk key: UNAVAILABLE - no press on an approval card can be confirmed until Friday restarts")
+    except Exception as _dp_err:
+        print(f"  Desk key: UNAVAILABLE ({_dp_err}) - approval presses cannot be confirmed")
     # Say out loud, once, any store Friday cannot open or cannot vouch for
     # (services/integrity_report): log, /api/health and one Needs-you card.
     try:
@@ -1329,8 +1508,10 @@ if __name__ == '__main__':
     # Deliberately after the boot-guard thread and before app.run(): the warm
     # waits on its own, so this only registers the intention.
     try:
-        warm_voice_after_boot(
-            "%s://127.0.0.1:%s" % ("https" if _ssl_context else "http", _port))
+        from agent_friday.services import safe_mode as _safe_vw
+        if _safe_vw.allows("voice_warm"):
+            warm_voice_after_boot(
+                "%s://127.0.0.1:%s" % ("https" if _ssl_context else "http", _port))
     except Exception as _warm_err:
         print(f"  Voice warm: unavailable ({_warm_err})")
 

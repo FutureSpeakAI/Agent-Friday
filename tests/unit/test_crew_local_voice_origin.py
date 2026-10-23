@@ -227,7 +227,8 @@ def test_native_crew_completion_rechecks_before_recording_and_sending(monkeypatc
                     SimpleNamespace(function_calls=[call])))
     assert len(sent) == 1 and sent[0].id == "fixture-call"
     if boundary == "public":
-        assert sent[0].response["result"] == "Private result marker"
+        from agent_friday.services.untrusted_input import wrap
+        assert sent[0].response["result"] == wrap("Private result marker")
         assert len(finished) == 1 and not discarded
     else:
         assert "NOT DONE" in sent[0].response["result"]

@@ -3,9 +3,13 @@ name: tests
 on:
   push:
     branches: [main]
+    # A version tag runs the suite on its exact commit; the installer
+    # workflow's release gate (scripts/release_gate.py) waits for this run.
+    tags: ["v*"]
   pull_request:
     # labeled: adding red-evidence re-runs the PR as the targeted job below.
     types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -72,6 +76,30 @@ jobs:
       - name: Run the workspace and Laya contract test
         if: ${{ !cancelled() }}
         run: pytest tests/test_laya_workspace_contracts.py -q
+
+      # The integration suite: services working together, and on Windows the
+      # document engine end to end with the real pinned binary. The binary is
+      # put in place by the installer's own code (OfficeCli.ps1: download, size
+      # and SHA-256 against the pin, INSTALL.json), so CI proves the same file
+      # a person gets. FRIDAY_REQUIRE_OFFICECLI turns the office tests' skip
+      # into a failure, so a broken install cannot pass as "skipped".
+      # The live residency tests stay opt-in (multi-GB local models).
+      - name: Put the pinned document engine where Friday looks for it
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: powershell
+        run: |
+          . packaging\windows\lib\Common.ps1
+          . packaging\windows\lib\Download.ps1
+          . packaging\windows\lib\OfficeCli.ps1
+          if (Get-Command Initialize-Tls -ErrorAction SilentlyContinue) { Initialize-Tls }
+          if (-not (Install-OfficeCli)) { $script:Transcript | Select-Object -Last 20; throw 'the pinned OfficeCLI could not be installed' }
+          Get-Content (Join-Path $env:USERPROFILE '.friday\runtime\officecli\INSTALL.json')
+
+      - name: Run the integration suite
+        if: ${{ !cancelled() }}
+        env:
+          FRIDAY_REQUIRE_OFFICECLI: ${{ runner.os == 'Windows' && '1' || '' }}
+        run: pytest tests/integration -q -rs
 
   guards:
     name: repository guards
@@ -143,11 +171,16 @@ jobs:
           npx playwright test --config=playwright.app.config.ts --workers=1
           --timeout=180000 --output=test-results/app
           settings_walk.spec.ts smoke.spec.ts
+          camera_mode.spec.ts
           fill_in_place.spec.ts messages_friday_select.spec.ts open_only_stage.spec.ts
           point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts
           studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
           activity_never_collapses.spec.ts connect_services.spec.ts laya_settings.spec.ts
+          posting_screens.spec.ts
+      # The run's output folder, uploaded on success as well as failure: it holds
+      # the Settings walk table, failure traces, and the screenshots specs save
+      # for a person to look at (posting_screens.spec.ts: posting-*.png).
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
