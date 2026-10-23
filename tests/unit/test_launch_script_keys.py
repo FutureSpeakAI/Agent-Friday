@@ -17,13 +17,23 @@ from pathlib import Path
 import pytest
 
 from agent_friday.services import credential_store as cs
-from agent_friday.services import launch_script_keys as lk
+
+try:
+    from agent_friday.services import launch_script_keys as lk
+except ImportError:          # the old tree: each test fails by assertion in its body
+    class _NoMigration:
+        def __getattr__(self, name):
+            raise AssertionError("start.bat keys are never moved on this tree "
+                                 "(no services/launch_script_keys.%s)" % name)
+    lk = _NoMigration()
 
 VALUE = "synthetic-launch-value-0001"
 
 
 @pytest.fixture
 def anthropic_env():
+    if isinstance(lk, _NoMigration if "_NoMigration" in globals() else ()):
+        return "ANTHROPIC_API_KEY"
     names = lk._provider_env_names()
     env = next((k for k, v in names.items() if v == "anthropic"), None)
     assert env, names
