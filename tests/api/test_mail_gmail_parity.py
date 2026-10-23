@@ -7,13 +7,15 @@ initiative.
   nothing ever deletes permanently.
 * Trash, spam and importance exist only in Gmail: on an account that has not
   allowed changes they are refused, and Friday's view does not pretend.
-* The owner's own click acts at once. Friday asking for the same thing files
-  an approval card and changes nothing until it is approved.
+* The owner's own press acts at once (after the checkpoint, when it reaches
+  Gmail). Friday asking for the same thing files an approval card and changes
+  nothing until it is approved.
 """
 import pytest
 
 from agent_friday.services import gmail_mailbox as gm
 from agent_friday.services import google_accounts as ga
+from tests.owner_press_support import press
 
 THREADS: dict = {}
 CALLS: list = []
@@ -155,27 +157,27 @@ def test_trash_is_never_a_label_change():
 
 def test_delete_through_the_route_changes_gmail_first_and_undo_restores(client, state):
     r = client.post("/api/messages/action", json={"requested_by": "ui:test",
-        "ids": ["c1"], "action": "trash", "gmail": _items(("c1", "acct_m", "t1"))}).get_json()
+        "ids": ["c1"], "action": "trash", "gmail": _items(("c1", "acct_m", "t1"))}, headers=press()).get_json()
     assert r["status"] == "ok" and r["gmail_status"] == {"acct_m": "synced"}
     assert "TRASH" in THREADS["t1"] and state["s"]["c1"]["trashed"] is True
-    client.post("/api/messages/restore", json={"states": r["before"], "gmail_changes": r["gmail_changes"]})
+    client.post("/api/messages/restore", json={"states": r["before"], "gmail_changes": r["gmail_changes"]}, headers=press())
     assert "TRASH" not in THREADS["t1"] and state["s"] == {}
 
 
 def test_delete_on_a_read_only_account_is_refused_not_faked(client, state):
     r = client.post("/api/messages/action", json={"requested_by": "ui:test",
         "ids": ["c1", "c3"], "action": "trash",
-        "gmail": _items(("c1", "acct_r", "t1"), ("c3", "acct_m", "t3"))}).get_json()
+        "gmail": _items(("c1", "acct_r", "t1"), ("c3", "acct_m", "t3"))}, headers=press()).get_json()
     assert r["ids"] == ["c3"]                                          # only the one Gmail moved
     assert "Reconnect" in r["not_changed"]["c1"]
     assert "c1" not in state["s"] and "TRASH" not in THREADS["t1"]
     r = client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["c1"], "action": "trash",
-                                                    "gmail": _items(("c1", "acct_r", "t1"))}).get_json()
+                                                    "gmail": _items(("c1", "acct_r", "t1"))}, headers=press()).get_json()
     assert r["status"] == "error" and "Reconnect" in r["message"]
 
 
 def test_delete_without_knowing_the_account_is_refused(client, state):
-    r = client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["c9"], "action": "trash"}).get_json()
+    r = client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["c9"], "action": "trash"}, headers=press()).get_json()
     assert r["status"] == "error" and state["s"] == {}
 
 
@@ -183,21 +185,21 @@ def test_delete_without_knowing_the_account_is_refused(client, state):
 
 def test_report_spam_and_not_spam(client, state):
     r = client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["c1"], "action": "spam",
-                                                  "gmail": _items(("c1", "acct_m", "t1"))}).get_json()
+                                                  "gmail": _items(("c1", "acct_m", "t1"))}, headers=press()).get_json()
     assert r["status"] == "ok" and "SPAM" in THREADS["t1"] and "INBOX" not in THREADS["t1"]
-    client.post("/api/messages/restore", json={"states": r["before"], "gmail_changes": r["gmail_changes"]})
+    client.post("/api/messages/restore", json={"states": r["before"], "gmail_changes": r["gmail_changes"]}, headers=press())
     assert "SPAM" not in THREADS["t1"] and "INBOX" in THREADS["t1"]
 
 
 def test_importance_is_gmails_label(client, state):
     client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["c2"], "action": "unimportant",
-                                              "gmail": _items(("c2", "acct_m", "t2"))})
+                                              "gmail": _items(("c2", "acct_m", "t2"))}, headers=press())
     assert "IMPORTANT" not in THREADS["t2"]
 
 
 def test_mute_is_friday_only_and_hides_the_conversation(client, state):
     r = client.post("/api/messages/action", json={"requested_by": "ui:test", "ids": ["c1"], "action": "mute",
-                                                  "gmail": _items(("c1", "acct_r", "t1"))}).get_json()
+                                                  "gmail": _items(("c1", "acct_r", "t1"))}, headers=press()).get_json()
     assert r["status"] == "ok" and state["s"]["c1"]["muted"] is True and CALLS == []
 
 
@@ -256,14 +258,16 @@ def test_the_checkpoint_holds_friday_when_its_integrity_check_fails(client, stat
     assert CALLS == [] and state["s"] == {}
 
 
-def test_the_owners_click_is_the_owner_acting_even_when_the_checkpoint_holds(client, state, monkeypatch):
-    """The owner's own REST actions are outside the checkpoint by design
-    (docs/decisions/2026-09-24-injection-provenance-gate.md)."""
+def test_the_owners_press_is_held_too_when_the_integrity_check_fails(client, state, monkeypatch):
+    """Since 2026-10-21 the owner's changes that reach Gmail pass the checkpoint's integrity
+    check and signed receipt first (docs/decisions/2026-09-24-injection-provenance-gate.md,
+    amendment; test_mail_changes_pass_the_checkpoint.py)."""
     from agent_friday.governance import action_gate
     monkeypatch.setattr(action_gate, "verify_claws", lambda: (False, "held"))
     r = client.post("/api/messages/action", json={"ids": ["c1"], "action": "trash", "requested_by": "ui:messages",
-                                                  "gmail": _items(("c1", "acct_m", "t1"))}).get_json()
-    assert r["status"] == "ok" and "TRASH" in THREADS["t1"]
+                                                  "gmail": _items(("c1", "acct_m", "t1"))}, headers=press())
+    assert r.status_code == 403 and r.get_json()["message"].startswith("Nothing was changed")
+    assert CALLS == [] and "TRASH" not in THREADS["t1"] and state["s"] == {}
 
 
 def test_a_denied_or_foreign_card_does_nothing(state):
@@ -274,10 +278,16 @@ def test_a_denied_or_foreign_card_does_nothing(state):
     assert CALLS == [] and state["s"] == {}
 
 
-def test_the_owners_click_is_not_gated(client, state):
+def test_the_owners_press_acts_at_once_with_no_card(client, state):
+    r = client.post("/api/messages/action", json={"ids": ["c1"], "action": "archive", "requested_by": "ui:messages",
+                                                  "gmail": _items(("c1", "acct_m", "t1"))}, headers=press())
+    assert r.status_code == 200 and "INBOX" not in THREADS["t1"]
+
+
+def test_a_body_that_says_it_is_the_owner_without_the_press_changes_nothing(client, state):
     r = client.post("/api/messages/action", json={"ids": ["c1"], "action": "archive", "requested_by": "ui:messages",
                                                   "gmail": _items(("c1", "acct_m", "t1"))})
-    assert r.status_code == 200 and "INBOX" not in THREADS["t1"]
+    assert r.status_code == 403 and CALLS == [] and state["s"] == {}
 
 
 # ── folders ───────────────────────────────────────────────────────────────
@@ -367,8 +377,8 @@ def test_one_click_unsubscribe_posts_once_to_a_public_host(client, monkeypatch):
     monkeypatch.setattr(requests, "post", lambda url, **kw: posts.append((url, kw)) or R())
     opt = client.get("/api/mail/unsubscribe?account=acct_r&message=m1").get_json()
     assert opt["method"] == "one_click" and opt["host"] == "list.example.test"
-    assert client.post("/api/mail/unsubscribe", json={"account_id": "acct_r", "message_id": "m1", "requested_by": "ui:test"}).status_code == 400
-    d = client.post("/api/mail/unsubscribe", json={"account_id": "acct_r", "message_id": "m1", "confirmed": True, "requested_by": "ui:test"}).get_json()
+    assert client.post("/api/mail/unsubscribe", json={"account_id": "acct_r", "message_id": "m1", "requested_by": "ui:test"}, headers=press()).status_code == 400
+    d = client.post("/api/mail/unsubscribe", json={"account_id": "acct_r", "message_id": "m1", "confirmed": True, "requested_by": "ui:test"}, headers=press()).get_json()
     assert d["status"] == "done" and len(posts) == 1
     url, kw = posts[0]
     assert url == "https://list.example.test/u/1" and kw["data"] == "List-Unsubscribe=One-Click" and kw["allow_redirects"] is False
@@ -390,7 +400,7 @@ def test_unsubscribe_never_posts_into_the_local_network(monkeypatch):
 
 def test_mailto_unsubscribe_hands_over_to_the_composer(client):
     MSG_HEADERS.update({"List-Unsubscribe": "<mailto:leave@list.example.test?subject=unsubscribe%20me>"})
-    d = client.post("/api/mail/unsubscribe", json={"account_id": "acct_r", "message_id": "m1", "confirmed": True, "requested_by": "ui:test"}).get_json()
+    d = client.post("/api/mail/unsubscribe", json={"account_id": "acct_r", "message_id": "m1", "confirmed": True, "requested_by": "ui:test"}, headers=press()).get_json()
     assert d["status"] == "next" and d["method"] == "mailto"
     assert d["mailto"] == {"to": "leave@list.example.test", "subject": "unsubscribe me", "body": "unsubscribe"}
 

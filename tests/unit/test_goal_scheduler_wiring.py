@@ -42,7 +42,7 @@ class TestRunDueMilestones:
         goals.set_executor(_passing_executor())
         past = goals._iso_from_ts(__import__("time").time() - 3600)
         future = goals._iso_from_ts(__import__("time").time() + 3600)
-        g = goals.create_goal(title="Draft a due-milestones goal", status="active",
+        g = goals.create_goal(title="Draft a due-milestones goal", status="active", success_criteria="a draft exists",
                               milestones=[{"name": "Overdue", "due": past},
                                           {"name": "Not yet due", "due": future}])
         result = goals.run_due_milestones()
@@ -58,7 +58,7 @@ class TestRunDueMilestones:
     def test_ignores_milestones_without_a_due_date(self, monkeypatch):
         _always_pass(monkeypatch)
         goals.set_executor(_passing_executor())
-        goals.create_goal(title="Draft an undated goal", status="active",
+        goals.create_goal(title="Draft an undated goal", status="active", success_criteria="a draft exists",
                           milestones=[{"name": "No due date"}])
         result = goals.run_due_milestones()
         assert result["changed"] is False
@@ -67,7 +67,7 @@ class TestRunDueMilestones:
         _always_pass(monkeypatch)
         goals.set_executor(_passing_executor())
         past = goals._iso_from_ts(__import__("time").time() - 3600)
-        goals.create_goal(title="Draft a proposed goal", status="proposed",
+        goals.create_goal(title="Draft a proposed goal", status="proposed", success_criteria="a draft exists",
                           milestones=[{"name": "Overdue but not active", "due": past}])
         result = goals.run_due_milestones()
         assert result["changed"] is False
@@ -76,7 +76,7 @@ class TestRunDueMilestones:
         _always_pass(monkeypatch)
         goals.set_executor(_passing_executor())
         past = goals._iso_from_ts(__import__("time").time() - 3600)
-        goals.create_goal(title="Draft a backlog goal", status="active",
+        goals.create_goal(title="Draft a backlog goal", status="active", success_criteria="a draft exists",
                           milestones=[{"name": f"Overdue {i}", "due": past} for i in range(5)])
         result = goals.run_due_milestones(max_per_tick=2)
         assert len(result["processed"]) == 2
@@ -88,7 +88,7 @@ class TestRunDueMilestones:
         _always_pass(monkeypatch)
         goals.set_executor(_passing_executor())
         past = goals._iso_from_ts(__import__("time").time() - 3600)
-        goals.create_goal(title="Send the newsletter", status="active",
+        goals.create_goal(title="Send the newsletter", status="active", success_criteria="a draft exists",
                           milestones=[{"name": "Send the newsletter to the list", "due": past}])
         first = goals.run_due_milestones()
         assert len(first["processed"]) == 1

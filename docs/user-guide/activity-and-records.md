@@ -26,7 +26,7 @@ The card shows one status word:
 | **WAITING** | The task is queued and has not started yet. |
 | **INTERRUPTED** | The task was running or waiting when Friday restarted. It does not carry on by itself; where it can, the card offers **Resume** (or **Resume from step N**). |
 | **STOPPED** | The task was cancelled. |
-| **COMPLETE** | The task finished. A grade shows if its result was checked. |
+| **COMPLETE** | The task finished, including a task you resumed. A grade shows if its result was checked. |
 | **UNVERIFIED** | The task finished, but the check of its result did not pass. Look at the result before you rely on it. |
 | **FAILED** | The task ended with an error. |
 

@@ -1251,7 +1251,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
                       "category": None,
                       "key": "lane, unread, q, folder, category, sort, status, kind, project."},
     "organize_media": {"action": None, "cards": None, "value": None, "replaces": None, "why": None, "selection": None},
-    "task_control": {"target": "Workflow, task id or name words; empty: the one on screen.", "message": "For steer: what to tell it."},
+    "task_control": {"target": "Workflow, task id or name words; empty: what is on screen.", "message": "For steer: the words."},
     # The same date words media_show's `when` shows.
     "media_cards": {"when": None},
 }

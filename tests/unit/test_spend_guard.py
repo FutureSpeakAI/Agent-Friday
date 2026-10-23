@@ -68,15 +68,15 @@ def test_real_spend_past_hard_cap_halts_the_next_cloud_call(monkeypatch, _fresh)
     with pytest.raises(sg.SpendCapReached) as ei:
         mr._seal_or_block({"messages": []}, "anthropic")
     msg = str(ei.value)
-    assert "$1.20" in msg and "$1.00" in msg and "monthly" in msg
-    assert "raise the cap" in msg and "Local models" in msg
+    assert "$1.20" in msg and "$1.00" in msg and "a month" in msg
+    assert "raise the cap" in msg and "Models on this computer keep working" in msg
 
     # Loud: the trip notification fired at the crossing (from record()),
     # and the halt itself is both notified and written to the ledger.
     titles = [p["title"] for p in _fresh]
-    assert any("Hard spending cap reached" in t for t in titles), titles
-    assert any("Stopped by the hard spending cap" in t for t in titles), titles
-    trip = next(p for p in _fresh if "Hard spending cap reached" in p["title"])
+    assert any("Spending cap reached: paid cloud work is paused" in t for t in titles), titles
+    assert any("Paused by your spending cap" in t for t in titles), titles
+    trip = next(p for p in _fresh if "Spending cap reached" in p["title"])
     assert trip["priority"] == "high" and "$1.20" in trip["body"] and "$1.00" in trip["body"]
     rows = [json.loads(l) for l in sg.HALT_LOG.read_text(encoding="utf-8").splitlines()]
     assert rows and rows[-1]["spend"] == 1.2 and rows[-1]["limit"] == 1.0
@@ -92,7 +92,10 @@ def test_alert_only_cap_never_halts(monkeypatch, _fresh):
     assert not sg.HALT_LOG.exists()
 
 
-def test_hard_stop_off_by_default(monkeypatch):
+def test_hard_stop_is_off_when_no_cap_is_stored(monkeypatch):
+    """A cost_budget with no hard-stop keys is no cap. A new install stores the
+    daily cap on (north-star A17); an older install that never set one keeps
+    none (tests/unit/test_daily_spending_cap_on.py)."""
     _settings(monkeypatch)
     _spend(1000.0)
     sg.check("anthropic")
@@ -127,7 +130,7 @@ def test_creative_generation_is_halted_with_a_legible_envelope(monkeypatch):
     _spend(1.50)
     out = ce.generate_image("a lighthouse at dusk")
     assert out["status"] == "blocked" and out.get("spend_cap") is True
-    assert "Hard spending cap reached" in out["reason"] and "image generation" in out["reason"]
+    assert "Paused by your spending cap" in out["reason"] and "image generation" in out["reason"]
     out = ce.generate_video("a lighthouse at dusk")
     assert out["status"] == "blocked" and "video generation" in out["reason"]
 
@@ -140,7 +143,7 @@ def test_firecrawl_is_halted_before_the_wire(monkeypatch):
     monkeypatch.setattr(fc, "api_key", lambda: "fake-firecrawl-key")  # pragma: allowlist secret
     monkeypatch.setattr(requests, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("wire touched")))
     out = fc.search("weather in Denver")
-    assert out["ok"] is False and "Hard spending cap" in out["error"]
+    assert out["ok"] is False and "Paused by your spending cap" in out["error"]
 
 
 # ── boundary rules ───────────────────────────────────────────────────────────
@@ -157,7 +160,7 @@ def test_scheduled_job_halt_is_attributed_and_notified_separately(monkeypatch, _
     finally:
         cm.pop_attribution()
     assert "scheduled job 'job-intel'" in str(ei.value)
-    halt = [p for p in _fresh if "Stopped by the hard spending cap" in p["title"]]
+    halt = [p for p in _fresh if p["title"].startswith("Paused by your spending cap:")]
     assert halt and "job-intel" in halt[-1]["body"]
     assert halt[-1]["dedupe_key"].endswith(":job-intel")
     # And it spent nothing: the rolling total is unchanged by the refusal.
@@ -170,7 +173,7 @@ def test_halt_notification_is_once_per_thing_per_period(monkeypatch, _fresh):
     for _ in range(3):
         with pytest.raises(sg.SpendCapReached):
             sg.check("anthropic", what="anthropic model call")
-    halts = [p for p in _fresh if "Stopped by the hard spending cap" in p["title"]]
+    halts = [p for p in _fresh if p["title"].startswith("Paused by your spending cap:")]
     assert len(halts) == 1
     rows = sg.HALT_LOG.read_text(encoding="utf-8").splitlines()
     assert len(rows) == 3, "every refusal is in the ledger even when the notification is deduped"

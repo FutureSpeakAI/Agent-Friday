@@ -90,7 +90,8 @@ def test_denying_the_card_leaves_the_dates_missed():
     after = goals.get_goal(g["goal_id"])
     assert after["milestones"][0]["due"] == past
     assert after["deadline"] == past
-    assert "declined" in after["history"][-1]["reason"]
+    # The decline is on record (a state line read off the goal may follow it).
+    assert any("declined" in h.get("reason", "") for h in after["history"][-3:])
 
 
 def test_an_approval_never_overwrites_a_date_changed_since():
