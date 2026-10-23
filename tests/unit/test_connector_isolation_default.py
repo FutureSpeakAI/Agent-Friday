@@ -120,9 +120,50 @@ def test_an_existing_connector_is_offered_isolation_once_and_approval_turns_it_o
     assert ci.offer_existing(cfg["servers"]) == [], "offered twice"
     cards = [r for r in ap.list_approvals() if r.get("kind") == ci.KIND]
     assert len(cards) == 1 and "isolated" in cards[0]["title"]
+    assert cards[0]["status"] == "pending", "the offer must wait for the owner's answer"
     assert "isolation" not in cfg["servers"]["legacy"], "switched before the owner answered"
     ap.decide(cards[0]["approval_id"], "approve")
-    assert cfg["servers"]["legacy"]["isolation"] == "appcontainer" and reloads
+    assert cfg["servers"]["legacy"]["isolation"] == "appcontainer"
+    import time
+    for _ in range(100):
+        if reloads:
+            break
+        time.sleep(0.05)
+    assert reloads, "the connector was not restarted"
+
+
+def test_an_unanswered_card_that_expires_is_offered_again(state, monkeypatch):
+    monkeypatch.setattr(_ac(), "available", lambda: True)
+    cfg = {"servers": {"legacy": {"command": "node", "args": []}}}
+    _fake_agent(monkeypatch, cfg)
+    ci.offer_existing(cfg["servers"])
+    from agent_friday.services import approvals as ap
+    first = next(r for r in ap.list_approvals() if r.get("kind") == ci.KIND)
+    ci._on_decision(dict(first, status="expired"))
+    assert ci.offer_existing(cfg["servers"]) == ["legacy"]
+    cards = [r for r in ap.list_approvals() if r.get("kind") == ci.KIND]
+    assert len(cards) == 2 and cards[-1]["approval_id"] != first["approval_id"]
+
+
+def test_an_unclear_setting_counts_as_isolated_and_only_off_turns_it_off():
+    for v in ("appcontainer", "on", "", None, "yes", "AppContainer"):
+        assert ci.is_isolated({"command": "node", "isolation": v}), v
+    for v in ("off", "OFF", "false", "no"):
+        assert not ci.is_isolated({"command": "node", "isolation": v}), v
+    assert not ci.is_isolated({"command": "node"})                # from before A25: offered
+
+
+def test_reconnecting_a_connector_from_before_a25_does_not_switch_it(monkeypatch):
+    from agent_friday.services import connectors as cn
+    store = {"servers": {"slack": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-slack"],
+                                   "env": {}, "enabled": True}}}
+    fake = types.SimpleNamespace(_load_mcp_servers=lambda: copy.deepcopy(store),
+                                 _save_mcp_servers=lambda c: store.update(copy.deepcopy(c)),
+                                 _mcp_reload=lambda: {"ok": True})
+    monkeypatch.setattr(cn, "_mcp_bridge", lambda: fake)
+    cn._connect_mcp("slack", cn.CONNECTOR_DEFS["slack"],
+                    {"SLACK_BOT_TOKEN": "synthetic-bot-value", "SLACK_TEAM_ID": "T0"})
+    assert "isolation" not in store["servers"]["slack"], "a reconnect switched it without the card"
 
 
 def test_declining_leaves_it_as_it_is_and_is_not_asked_again(state, monkeypatch):
@@ -183,13 +224,16 @@ def _server(monkeypatch, network, available=True):
     return sp, started, popened
 
 
-def test_an_isolated_connector_gets_the_internet_only_for_listed_sites(monkeypatch):
+def test_an_isolated_connector_gets_the_internet_only_when_it_lists_a_site(monkeypatch):
     sp, started, _p = _server(monkeypatch, {"isolation": "appcontainer"})
     sp._spawn()
     assert started and started[-1].get("network") is False
     env = started[-1]["env"]
     assert not any(k.upper().endswith("_PROXY") for k in env), "a proxy it cannot reach was left"
     assert env.get("npm_config_cache", "").endswith(".npm-cache")
+    # What it writes while isolated is kept apart from the folder it runs in unisolated.
+    assert Path(env["npm_config_userconfig"]).parent.name == "isolated"
+    assert Path(started[-1]["cwd"]).name == "isolated"
     sp2, started2, _p2 = _server(monkeypatch, {"isolation": "appcontainer", "allow_hosts": ["slack.com"]})
     sp2._spawn()
     assert started2 and started2[-1].get("network") is True
