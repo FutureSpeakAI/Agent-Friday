@@ -70,6 +70,8 @@ def _say(cid, text):
 
 def _block(monkeypatch, memory, message, session="s-today"):
     from agent_friday.services import model_router
+    from agent_friday.services import turn_vector
+    monkeypatch.setattr(turn_vector, "compute", lambda *a, **k: None)      # no model in a test
     monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: memory)
     monkeypatch.setattr(model_router, "_load_settings", lambda: {"memory_recall_enabled": True})
     return model_router._build_memory_context_block(message, session, min_relevance=0.0)
@@ -163,7 +165,9 @@ def test_a_superseded_turn_is_not_fed_to_the_knowledge_graph(monkeypatch):
 
 # ── §34.9-9: rebuilding the index brings nothing back ───────────────────────
 
-def test_rebuilding_conversation_search_keeps_deletions_and_corrections(mem, transcripts):
+def test_rebuilding_conversation_search_keeps_deletions_and_corrections(mem, transcripts, monkeypatch):
+    from agent_friday.services import model_router
+    monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: mem)     # delete reaches this store
     cid = cv.create("Boats")["id"]
     gone = _say(cid, "The old harbour code is 4471.")
     wrong = _say(cid, "The berth number is 12.")
