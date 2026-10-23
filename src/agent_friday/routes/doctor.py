@@ -146,6 +146,26 @@ def _press_here():
     return _is_local_request() and screen_click.screen_session(request)
 
 
+@doctor_bp.route("/api/doctor/repair/search-index", methods=["POST"])
+@login_required
+def repair_search_index():
+    """Rebuild the conversation search index from the transcripts (NS-32.6-1, 32.5 'Doctor offers
+    index repair'). The owner's press on this PC; the transcripts are only read."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": _DESK_PROOF,
+                        "error": "Rebuild the search index on Friday's own page, on this PC."}), 403
+    from agent_friday.services import conversation_fts
+
+    def _run():
+        try:
+            conversation_fts.repair("owner:doctor")
+        except Exception as e:  # noqa: BLE001
+            print(f"[doctor] search index rebuild failed: {type(e).__name__}")
+    _threading.Thread(target=_run, name="doctor-search-index-repair", daemon=True).start()
+    return jsonify({"status": "ok", "started": True,
+                    "message": "Rebuilding the search index from your conversations. They are not changed."}), 202
+
+
 @doctor_bp.route("/api/restore/state", methods=["GET"])
 @login_required
 def restore_state():

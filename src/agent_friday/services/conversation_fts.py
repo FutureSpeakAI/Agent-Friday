@@ -85,6 +85,15 @@ def _connect() -> sqlite3.Connection:
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(p), timeout=10)
+    try:
+        return _prepare(conn)
+    except BaseException:
+        # A damaged file must not stay open (on Windows an open file cannot be moved aside).
+        conn.close()
+        raise
+
+
+def _prepare(conn: sqlite3.Connection) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(
         """
@@ -177,6 +186,8 @@ def add(cid: str, message: dict) -> bool:
         return ok
     except Exception as e:
         _log.warning("conversation search: could not index a message: %s", e)
+        if _damaged(e):
+            _auto_repair(e)               # the rebuild reads this message from its transcript too
         return False
 
 
@@ -252,6 +263,116 @@ def _build_quietly() -> None:
     except Exception as e:
         _BUILT.pop(str(_path()), None)
         _log.warning("conversation search: build failed: %s", e)
+        if _damaged(e):
+            _auto_repair(e)
+
+
+# ── a damaged index (North Star 32.6) ─────────────────────────────────────────
+#: "The human-readable wiki and source documents remain available. Derived graphs and indexes are
+#: rebuilt. Corruption does not result in deletion of source data." This index is derived from the
+#: transcripts: a damaged one is moved aside (kept once, for a look) and rebuilt from them; the
+#: transcripts are never touched.
+#: At most one automatic rebuild in this many seconds (a disk that keeps damaging it must not loop).
+AUTO_REPAIR_EVERY_S = 600.0
+_LAST_AUTO: Dict[str, float] = {}
+_DAMAGED_TAG = ".damaged"
+
+
+def _damaged(exc: BaseException) -> bool:
+    try:
+        from agent_friday.services import failure_state
+        return failure_state.classify(exc) == failure_state.INDEX_CORRUPTION
+    except Exception:
+        return False
+
+
+def _set_aside() -> Optional[str]:
+    """Move the index file (and its WAL/SHM) aside; keep only the newest damaged copy. Caller
+    holds _LOCK. Returns the kept copy's name, or None if there was no file."""
+    p = _path()
+    if not p.exists():
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    kept = p.with_name(p.name + _DAMAGED_TAG + "-" + stamp)
+    for old in p.parent.glob(p.name + _DAMAGED_TAG + "-*"):
+        try:
+            old.unlink()                     # an older damaged copy of a derived index
+        except OSError:
+            pass
+    for suffix in ("", "-wal", "-shm"):
+        src = Path(str(p) + suffix)
+        if src.exists():
+            try:
+                src.replace(Path(str(kept) + suffix))
+            except OSError:
+                if suffix == "":
+                    raise
+    _BUILT.pop(str(p), None)
+    return kept.name
+
+
+def repair(reason: str = "owner") -> Dict[str, Any]:
+    """Rebuild the index from the transcripts: the current file is moved aside first, so a
+    damaged one cannot block the rebuild. The transcripts are only read."""
+    with _LOCK:
+        try:
+            kept = _set_aside()
+        except OSError as e:
+            return {"ok": False, "error": "the damaged index could not be moved aside: %s" % type(e).__name__}
+        out = build(force=True)
+        _BUILT[str(_path())] = True
+    _log.warning("conversation search: index rebuilt from the transcripts (%s); damaged copy: %s",
+                 reason, kept or "none")
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_ok("conversation_search")
+    except Exception:
+        pass
+    return dict(out, set_aside=kept, reason=reason)
+
+
+def _auto_repair(exc: BaseException) -> None:
+    """A damaged index found while reading or writing: rebuilt in the background, at most once
+    in AUTO_REPAIR_EVERY_S. Never raises."""
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_failure("conversation_search", exc)
+    except Exception:
+        pass
+    key = str(_path())
+    now = time.time()
+    if now - _LAST_AUTO.get(key, 0.0) < AUTO_REPAIR_EVERY_S:
+        return
+    _LAST_AUTO[key] = now
+
+    def run():
+        try:
+            repair("damaged index found")
+        except Exception as e:
+            _log.warning("conversation search: automatic rebuild failed: %s", e)
+    if BACKGROUND_BUILD:
+        threading.Thread(target=run, name="conversation-fts-repair", daemon=True).start()
+    else:
+        run()
+
+
+def health() -> Dict[str, Any]:
+    """The Doctor's reading: 'ok', 'damaged', 'missing' (not built yet) or 'unreadable'."""
+    p = _path()
+    if not p.exists():
+        return {"state": "missing"}
+    try:
+        with _LOCK:
+            conn = sqlite3.connect(str(p), timeout=5)
+            try:
+                row = conn.execute("PRAGMA quick_check").fetchone()
+            finally:
+                conn.close()
+        return {"state": "ok" if row and str(row[0]).lower() == "ok" else "damaged"}
+    except sqlite3.DatabaseError as e:
+        return {"state": "damaged" if _damaged(e) else "unreadable"}
+    except Exception:
+        return {"state": "unreadable"}
 
 
 # ── deleting one message everywhere ───────────────────────────────────────────
@@ -329,7 +450,17 @@ def _day(value) -> Optional[float]:
 
 
 def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
-    """Matching turns, best first (BM25), with snippets and dates."""
+    """Matching turns, best first (BM25), with snippets and dates. A damaged index raises (the
+    caller says it could not search) and is rebuilt from the transcripts in the background."""
+    try:
+        return _search(query, since=since, until=until, limit=limit)
+    except sqlite3.DatabaseError as e:
+        if _damaged(e):
+            _auto_repair(e)
+        raise
+
+
+def _search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
     terms = _terms(query)
     if not terms:
         return []

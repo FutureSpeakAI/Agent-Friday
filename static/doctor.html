@@ -216,6 +216,20 @@
       if (i === 2) td.className = String(v);
       tr.appendChild(td);
     });
+    if (c.id === 'search_index' && c.state === 'degraded') {
+      // NS-32.6-1: the index is rebuilt from the conversations themselves, which are not changed.
+      const td = document.createElement('td');
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Rebuild the search index';
+      const note = document.createElement('span');
+      b.addEventListener('click', () => {
+        b.disabled = true;
+        api('/api/doctor/repair/search-index', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+          text(note, ' ' + (ok ? (d.message || 'Rebuilding.') : (d.error || 'Not started.')));
+          b.disabled = false;
+        });
+      });
+      td.appendChild(b); td.appendChild(note); tr.appendChild(td);
+    }
     return tr;
   }
   function show(rep, txt) {
