@@ -1552,7 +1552,10 @@ def test_f3_mj1_the_button_and_the_owners_voice_still_approve(chat, gmail, monke
         with pressed():                   # the button: a verified press on this PC (services/desk_press)
             rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
     else:
-        rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
+        # The owner's voice: a call from this PC's own page (the desk key on the socket).
+        from tests.desk_press_support import voice_call_on_this_desk
+        with voice_call_on_this_desk():
+            rec, won = ap.decide_with_outcome(cid, "approve", decided_by=who)
     assert won is True and ia.wait_for(cid, 10)["status"] == "complete"
 
 
@@ -1739,7 +1742,10 @@ def test_f3_docs_say_how_a_laya_card_is_approved_and_what_is_named():
 
 def _voice_answer(cid, words, voiced, conv=CALL):
     toks = [agent._CURRENT_SURFACE.set("voice"), agent._CURRENT_CONVERSATION.set(conv),
-            agent._CURRENT_OWNER_TEXT.set(words), agent._CURRENT_TOOL_CONTEXT.set({"voiced_cards": list(voiced)})]
+            agent._CURRENT_OWNER_TEXT.set(words),
+            # the owner's call from this PC's own page (the desk key on the voice socket)
+            agent._CURRENT_TOOL_CONTEXT.set({"voiced_cards": list(voiced), "surface": "voice-local",
+                                             "owner_local": True})]
     try:
         return agent._tool_answer_card({"card_id": cid, "decision": "approve"})
     finally:

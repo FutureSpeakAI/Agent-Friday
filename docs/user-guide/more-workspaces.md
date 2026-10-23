@@ -164,9 +164,9 @@ file to edit instead:
 | `~/.friday/finance/portfolio.json` | Portfolio positions |
 
 `~` is your user folder, `%USERPROFILE%`. If one of these files is missing,
-Friday creates a starter file for you. The **contacts** tab says to add your
-financial advisor and CPA in `~/.friday/wiki/finance/`, but in this version
-the tab does not read that folder; it shows blank Advisor and CPA rows.
+Friday creates a starter file for you. The **contacts** tab is a placeholder:
+its **Your Financial Advisor** and **Your CPA / Accountant** cards say
+"Placeholder: this tab does not read any file yet."
 
 The `health` and `finance` folders are part of the vault. When Friday has a
 vault key, she encrypts the files in them at start-up, and a starter file is

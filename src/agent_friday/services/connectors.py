@@ -748,9 +748,14 @@ def _connect_mcp_remote(defn: dict, server_name: str, tmpl: dict, agent_svc) -> 
         except Exception:
             live = {}
         status = (live.get("status") or "").lower()
-        if status in ("ready", "needs_auth", "error"):
+        if status in ("ready", "needs_auth", "error", "needs_approval"):
             break
         _time.sleep(0.25)
+
+    if status == "needs_approval":
+        # The host is not on the owner's list yet (governance/mcp_hosts): say so, and where.
+        return {"ok": False, "status": "needs_approval",
+                "message": live.get("error") or f"{defn['name']} waits for your approval card."}
 
     if status == "ready":
         return {"ok": True, "status": "connected",
@@ -861,6 +866,10 @@ def _disconnect_mcp(key: str, defn: dict) -> dict:
 
 def connect_connector(key: str, data: dict | None = None, *, host_url: str | None = None) -> dict:
     """Initiate a connection for *key*. Returns {ok, status, message, ...}."""
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("connectors")
+    if _why:
+        return {"ok": False, "status": "error", "message": _why}
     defn = CONNECTOR_DEFS.get(key)
     if not defn:
         return {"ok": False, "status": "error", "message": f"unknown connector {key!r}"}

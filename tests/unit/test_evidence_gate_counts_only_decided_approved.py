@@ -34,12 +34,15 @@ DID_NOTHING = [
 def test_a_tool_that_did_nothing_is_not_evidence():
     for result in DID_NOTHING:
         verified, summary, status = agent._evidence_verdict([_t("send_email", result)])
-        assert verified is False and status == "completed_unverified", (result, summary)
+        # a raised card is waiting for the owner (test_waiting_is_not_done.py); the rest did nothing
+        want = "waiting_approval" if result == RAISED else "completed_unverified"
+        assert verified is False and status == want, (result, summary)
 
 
-def test_a_raised_card_beside_a_real_read_is_verified_only_by_the_read():
+def test_a_raised_card_beside_a_real_read_is_waiting_not_complete():
+    """NS-17.7-2: no completed state while an approval is pending, whatever else ran."""
     verified, summary, status = agent._evidence_verdict([_t("send_email", RAISED), _t("read_file", "text")])
-    assert verified and status == "complete" and summary == "read_file"
+    assert not verified and status == "waiting_approval" and "send_email" in summary
 
 
 def test_an_approved_and_executed_tool_counts():

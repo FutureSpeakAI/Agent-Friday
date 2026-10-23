@@ -343,6 +343,10 @@ def git_branches():
 
 @code_bp.route('/api/git/pull', methods=['POST'])
 def git_pull():
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("web")
+    if _why:
+        return jsonify({"status": "error", "message": _why}), 409
     data = request.get_json(silent=True) or {}
     rp = _repo_path(data.get('repo', ''))
     if not rp:
@@ -358,6 +362,10 @@ def git_pull():
 
 @code_bp.route('/api/git/push', methods=['POST'])
 def git_push():
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("web")
+    if _why:
+        return jsonify({"status": "error", "message": _why}), 409
     data = request.get_json(silent=True) or {}
     rp = _repo_path(data.get('repo', ''))
     if not rp:

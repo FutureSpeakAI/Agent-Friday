@@ -612,6 +612,36 @@ def iter_sse_data(fp, deadline: float, *, max_bytes: int = _MAX_HTTP_BODY_BYTES,
         yield "\n".join(buf)
 
 
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """A remote add-on server may redirect within its own host only. Following a redirect to
+    another host would carry the request (and its sign-in header) to a place the owner never
+    allowed (governance/mcp_hosts)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from agent_friday.governance import mcp_hosts
+        same_scheme = newurl.split(":", 1)[0].lower() == req.full_url.split(":", 1)[0].lower()
+        if not same_scheme or mcp_hosts.host_key(newurl) != mcp_hosts.host_key(req.full_url):
+            raise RuntimeError(
+                "the server redirected to %s, a different host; Friday did not follow it"
+                % (mcp_hosts.display(mcp_hosts.host_key(newurl)) or "another address"))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(req, timeout: float):
+    """Every request to a remote add-on server goes through here: same-host redirects only."""
+    return urllib.request.build_opener(_SameHostRedirect()).open(req, timeout=timeout)
+
+
+def _host_refusal(url: str) -> str:
+    """"" when the owner allowed this server's host, else the reason (governance/mcp_hosts).
+    A list that cannot be checked refuses."""
+    try:
+        from agent_friday.governance import mcp_hosts
+        return mcp_hosts.check(url)
+    except Exception as e:  # noqa: BLE001
+        return "the add-on server host list could not be checked (%s)" % type(e).__name__
+
+
 class MCPServerHTTP:
     """One remote MCP server reached over the Streamable HTTP transport.
 
@@ -647,6 +677,35 @@ class MCPServerHTTP:
         self._id = 0
         self._id_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
+        self.ask_again = False      # a restart from Settings asks again after a declined card
+        self.approval_id: str | None = None
+
+    def _not_allowed(self) -> str:
+        """"" when this server's host is on the owner's list; otherwise park the server in
+        "needs_approval", raise (or point at) the card, and return the reason."""
+        why = _host_refusal(self.url)
+        if not why:
+            return ""
+        state = "none"
+        try:
+            from agent_friday.services import mcp_host_cards
+            card = mcp_host_cards.ask(self.url, self.name, again=self.ask_again)
+            state, self.approval_id = card.get("state", "none"), card.get("approval_id") or None
+        except Exception as e:  # noqa: BLE001
+            self._log(f"[mcp:{self.name}] host card not raised: {type(e).__name__}")
+        self.ask_again = False
+        if state == "pending":
+            tail = "; approve the card to connect it"
+        elif state == "declined":
+            tail = "; you declined it. Restart the server in Settings to be asked again"
+        elif state == "blocked":
+            tail = "; the card was stopped by Friday's safety rules"
+        else:
+            tail = ""
+        self.status = "needs_approval"
+        self.error = f"not connected: {why}{tail}"
+        self._log(f"[mcp:{self.name}] not connected: host not allowed")
+        return why
 
     # ── auth plumbing ────────────────────────────────────────────────────────
 
@@ -662,6 +721,9 @@ class MCPServerHTTP:
     def begin_auth(self, *, open_browser: bool = True,
                    on_complete: Callable[[str, bool], None] | None = None) -> dict:
         """Kick off the OAuth 2.1 browser flow for this server."""
+        why = self._not_allowed()
+        if why:
+            return {"ok": False, "error": self.error or why}
         from agent_friday import mcp_oauth
         return mcp_oauth.begin_authorization(
             self.name, self.url,
@@ -681,6 +743,11 @@ class MCPServerHTTP:
         """POST one JSON-RPC message. Returns the matching response dict, or
         None for accepted notifications. Raises _AuthRequired / _SessionExpired
         for the two recoverable HTTP conditions."""
+        why = _host_refusal(self.url)
+        if why:                                    # checked at every request, not only at start,
+            self.status = "needs_approval"         # and before a sign-in token is fetched
+            self.error = f"not connected: {why}"
+            raise RuntimeError(f"not sent to {self.name}: {why}")
         body = json.dumps(payload, default=str).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -700,7 +767,7 @@ class MCPServerHTTP:
                                      method="POST")
         deadline = time.time() + timeout           # the whole reply, not one socket operation
         try:
-            resp = urllib.request.urlopen(req, timeout=timeout)
+            resp = _open(req, timeout)
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 self.auth_challenge = e.headers.get("WWW-Authenticate")
@@ -814,6 +881,8 @@ class MCPServerHTTP:
         with self._lifecycle_lock:
             if self.status == "ready":
                 return True
+            if self._not_allowed():
+                return False
             self.status = "starting"
             self.error = None
             try:
@@ -839,12 +908,12 @@ class MCPServerHTTP:
     def stop(self) -> None:
         """Best-effort session teardown (servers MAY support DELETE)."""
         sid = self.session_id
-        if sid:
+        if sid and not _host_refusal(self.url):
             try:
                 req = urllib.request.Request(
                     self.url, method="DELETE",
                     headers={"Mcp-Session-Id": sid, **self.headers})
-                urllib.request.urlopen(req, timeout=5).close()
+                _open(req, 5).close()
             except Exception:
                 pass
         self.session_id = None
@@ -910,6 +979,32 @@ class MCPServerHTTP:
             "tools": [t.get("name", "?") for t in self.tools],
             "server_info": self.server_info,
         }
+
+
+import re as _re
+
+#: Argument names whose values are credentials, whatever their format.
+_SECRET_KEY = _re.compile(r"(pass(word|wd|phrase)?|secret|token|api[_-]?key|apikey|auth|authorization|"
+                          r"credential|private[_-]?key|cookie|session|bearer)", _re.I)
+_URL_USERINFO = _re.compile(r"(?<=://)[^/@\s:]+:[^/@\s]+@")
+
+
+def _scrubbed_for_keeping(obj):
+    """What a tool call sent, safe to keep with its receipt (A20 keeps the
+    content): values under credential-like names withheld, user:password@ in
+    addresses withheld, then vendor-format keys withheld by the shared filter."""
+    def walk(v, key=""):
+        if key and _SECRET_KEY.search(str(key)):
+            return "[withheld: credential]"
+        if isinstance(v, dict):
+            return {k: walk(x, k) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [walk(x) for x in v]
+        if isinstance(v, str):
+            return _URL_USERINFO.sub("[withheld]@", v)
+        return v
+    from agent_friday.services.credential_paths import redact_secrets
+    return redact_secrets(json.dumps(walk(obj), default=str))
 
 
 class MCPManager:
@@ -981,7 +1076,9 @@ class MCPManager:
             except Exception as e:  # noqa: BLE001
                 self._log(f"[mcp:{name}] on_ready callback failed: {e}")
 
-    def restart(self, name: str, on_ready=None) -> bool:
+    def restart(self, name: str, on_ready=None, *, ask_again: bool = False) -> bool:
+        """Stop and start one server. ``ask_again`` (only the owner's press on screen, from the
+        restart route) raises a fresh host card after a declined one."""
         sp = self.servers.get(name)
         if sp is None:
             return False
@@ -993,6 +1090,8 @@ class MCPManager:
             # started it for real.
             return False
         sp.stop()
+        if isinstance(sp, MCPServerHTTP):
+            sp.ask_again = bool(ask_again)
         ok = sp.start()
         if ok and on_ready:
             try:
@@ -1044,7 +1143,32 @@ class MCPManager:
             return f"[mcp error] no such server: {server}"
         if sp.status == "disabled":
             return f"[mcp error] server '{server}' is disabled"
-        return sp.call_tool(tool, arguments, timeout=timeout)
+        out = sp.call_tool(tool, arguments, timeout=timeout)
+        # §26.7: every call to a tool server is in the egress ledger and on the
+        # privacy map, whichever path made it: where it went, and the
+        # arguments that left (fingerprinted; kept encrypted by default, A20).
+        try:
+            from urllib.parse import urlparse
+            from agent_friday.services import egress_gate as _eg
+            url = getattr(sp, "url", None)
+            dest = (urlparse(str(url)).hostname or str(url)) if url else f"a program on this PC ({server})"
+            # "unavailable" never reached the server; an error after the call
+            # went out (a timeout, a server error) may have been acted on.
+            if isinstance(out, str) and out.startswith("[mcp") and "unavailable" in out[:80]:
+                result = "failed"
+            elif isinstance(out, str) and out.startswith("[mcp"):
+                result = "sent_unconfirmed"
+            else:
+                result = "sent"
+            try:
+                kept = _scrubbed_for_keeping({"tool": tool, "arguments": arguments})
+            except Exception:
+                kept = {"tool": tool, "arguments": "(not kept: could not be checked for secrets)"}
+            _eg.record_service_send("mcp", f"mcp:{server}"[:80], destination=dest, content=kept,
+                                    result=result, part=f"tool {tool}"[:60])
+        except Exception:
+            pass
+        return out
 
     def all_tools(self) -> list[tuple[str, dict]]:
         out: list[tuple[str, dict]] = []

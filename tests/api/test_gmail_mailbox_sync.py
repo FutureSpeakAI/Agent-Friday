@@ -6,6 +6,7 @@ import pytest
 
 from agent_friday.services import gmail_mailbox as gm
 from agent_friday.services import google_accounts as ga
+from tests.owner_press_support import press
 
 THREADS: dict = {}
 CALLS: list = []
@@ -109,24 +110,24 @@ def test_messages_action_syncs_gmail_and_restore_undoes_it(client, monkeypatch):
     r = client.post("/api/messages/action", json={"requested_by": "ui:test",
         "ids": ["c1", "c3"], "action": "archive",
         "gmail": [{"id": "c1", "account_id": "acct_m", "thread_id": "t1"},
-                  {"id": "c3", "account_id": "acct_r", "thread_id": "t3"}]}).get_json()
+                  {"id": "c3", "account_id": "acct_r", "thread_id": "t3"}]}, headers=press()).get_json()
     assert r["status"] == "ok"
     assert r["gmail_status"] == {"acct_m": "synced", "acct_r": "not_permitted"}
     assert "INBOX" not in THREADS["t1"] and "INBOX" in THREADS["t3"]       # read-only account: Friday only
     assert store["s"]["c1"]["archived"] and store["s"]["c3"]["archived"]
-    client.post("/api/messages/restore", json={"states": r["before"], "gmail_changes": r["gmail_changes"]})
+    client.post("/api/messages/restore", json={"states": r["before"], "gmail_changes": r["gmail_changes"]}, headers=press())
     assert "INBOX" in THREADS["t1"] and store["s"] == {}
 
 
 def test_labels_list_create_apply_and_undo(client):
     labs = client.get("/api/mail/labels?account=acct_m").get_json()["labels"]
     assert labs == [{"id": "Label_2", "name": "Stories"}]                   # own labels only
-    assert client.post("/api/mail/labels", json={"account_id": "acct_m", "name": "Leads"}).get_json()["label"]["id"] == "Label_9"
-    r = client.post("/api/mail/modify", json={"account_id": "acct_m", "thread_ids": ["t3"], "add": ["Label_2"]}).get_json()
+    assert client.post("/api/mail/labels", json={"account_id": "acct_m", "name": "Leads"}, headers=press()).get_json()["label"]["id"] == "Label_9"
+    r = client.post("/api/mail/modify", json={"account_id": "acct_m", "thread_ids": ["t3"], "add": ["Label_2"]}, headers=press()).get_json()
     assert "Label_2" in THREADS["t3"]
-    client.post("/api/mail/modify/undo", json={"account_id": "acct_m", "changed": r["changed"]})
+    client.post("/api/mail/modify/undo", json={"account_id": "acct_m", "changed": r["changed"]}, headers=press())
     assert "Label_2" not in THREADS["t3"]
     # browsing labels needs only read access; creating or applying one needs more
     assert client.get("/api/mail/labels?account=acct_r").status_code == 200
-    assert client.post("/api/mail/labels", json={"account_id": "acct_r", "name": "X"}).status_code == 403
-    assert client.post("/api/mail/modify", json={"account_id": "acct_r", "thread_ids": ["t3"], "add": ["Label_2"]}).status_code == 403
+    assert client.post("/api/mail/labels", json={"account_id": "acct_r", "name": "X"}, headers=press()).status_code == 403
+    assert client.post("/api/mail/modify", json={"account_id": "acct_r", "thread_ids": ["t3"], "add": ["Label_2"]}, headers=press()).status_code == 403
