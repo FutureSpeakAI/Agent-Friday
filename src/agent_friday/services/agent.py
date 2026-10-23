@@ -5548,6 +5548,12 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 TASKS[tid] = st
                 loaded += 1
         summary['loaded'] = loaded
+        try:
+            # A task that waited on a card while Friday was down: its card may have been decided
+            # (or its run cut off) in the meantime. Settle what can be settled now.
+            summary['waiting_settled'] = sweep_waiting_tasks(force=True)
+        except Exception:
+            summary['waiting_settled'] = 0
         # Which of the casualties still have a transcript on disk. The journal
         # can only say a task was interrupted; services/task_resume is what can
         # say it is recoverable, so the two notices are separate and the
@@ -5942,20 +5948,172 @@ def _evidence_verdict(tool_trace):
     an approval card and stopped, was held, declined, denied or errored did
     nothing: it counts only once the owner has decided and approved it and the
     tool's own result says it ran. Returns (verified, summary, final_status),
-    and shows the check on the lattice as one verification pass (§13)."""
+    and shows the check on the lattice as one verification pass (§13).
+
+    WAITING IS NOT DONE. A task that raised an approval card is waiting for the
+    owner, whatever else it did: a read that worked beside a card that has not
+    been decided does not make the task complete (NS-17.7-2). Its status is
+    WAITING_APPROVAL until every card it raised is decided
+    (`settle_waiting_task`, called from the card's decision)."""
     from agent_friday.services.completion_receipts import receipt_ok as _ran
-    evidence = [t for t in (tool_trace or [])
-                if t.get('name') not in ('spawn_task',)
-                and _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
-    verified = len(evidence) > 0
-    summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
-               if evidence else 'no tools used')
+    calls = [t for t in (tool_trace or []) if t.get('name') not in ('spawn_task',)]
+    evidence = [t for t in calls if _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
+    waiting = [t for t in calls if _tool_call_status(t.get('result')) == 'pending']
+    verified = len(evidence) > 0 and not waiting
+    if waiting:
+        summary = 'waiting for your decision on: ' + ', '.join(
+            dict.fromkeys(str(t.get('name') or '?') for t in waiting[:10]))
+    else:
+        summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
+                   if evidence else 'no tools used')
     try:
         from agent_friday.services import presence as _presence
         _presence.emit("verify", "once", ok=verified, turn=_presence.current_turn())
     except Exception:
         pass
+    if waiting:
+        return False, summary, WAITING_APPROVAL
     return verified, summary, ('complete' if verified else 'completed_unverified')
+
+
+#: A task whose work raised an approval card the owner has not decided yet. The worker
+#: is finished (task_journal counts it terminal, so a restart never re-runs it); what is
+#: left is the owner's decision, which the card carries and `settle_waiting_task` closes.
+WAITING_APPROVAL = 'waiting_approval'
+#: Every card the task waited on was declined or expired: nothing it asked for ran.
+DECLINED = 'declined'
+
+
+def settle_waiting_task(task_id, *, from_worker=False):
+    """Close a WAITING_APPROVAL task once every card it raised has been decided.
+
+    Called by the approval executor after it acts on (or declines) a card whose payload
+    names this task. With a card still pending, nothing changes. Then:
+      * every card approved and its action ran -> 'complete', verified by those runs,
+        and a workflow continues with its next step;
+      * any approved action that did not go through -> 'failed', with why;
+      * otherwise (declined or expired) -> DECLINED: nothing it asked for ran.
+    Returns the new status, or None when the task is not waiting or still has a card.
+
+    Also called by the task's own worker the moment it finishes waiting, because a card
+    can be decided while the task is still running (the decision then found nothing to
+    settle). Only the cards the approval executor runs (a tool call held for the owner)
+    count; other cards that happen to name the task (a cloud spill offer) are not its
+    action. One settle wins: the check and the write happen under one lock."""
+    task_id = str(task_id or '')
+    if not task_id:
+        return None
+    from agent_friday.services import approvals as _ap
+    with _SETTLE_LOCK:
+        with TASKS_LOCK:
+            rec = dict(TASKS.get(task_id) or {})
+        if rec.get('status') != WAITING_APPROVAL:
+            return None
+        mine = [r for r in _ap.list_approvals()
+                if str(((r or {}).get('payload') or {}).get('task_id') or '') == task_id
+                and r.get('kind') in _SETTLE_KINDS and (r.get('payload') or {}).get('tool')]
+        if not mine:
+            return None
+
+        def _outcome(r):
+            """'pending' | 'running' | 'ran' | 'ran_unchecked' | 'failed' | 'not_approved'."""
+            st = r.get('status')
+            if st == 'pending':
+                return 'pending'
+            if st != 'approved':
+                return 'not_approved'           # denied, expired or blocked
+            detail = r.get('used_detail') or {}
+            if 'ok' in detail:                  # the executor ran it and recorded how it went
+                return 'ran' if detail.get('ok') is True else 'failed'
+            started = r.get('executing_at')
+            if started:
+                # claimed by the executor and not reported back: running, unless far too long ago
+                # (a restart mid-run), which is said as a failure rather than waited on forever
+                return 'running' if _time.time() - float(started) < _SETTLE_STALE_S else 'failed'
+            # used without the executor (the task's own identical call went through on the
+            # approved card) or about to be claimed by it
+            return 'ran_unchecked' if r.get('consumed') else 'running'
+
+        outcomes = [(r, _outcome(r)) for r in mine]
+        if any(o in ('pending', 'running') for _r, o in outcomes):
+            return None                 # a card still waits, or an approved one is still running
+        ran = [r for r, o in outcomes if o == 'ran']
+        unchecked = [r for r, o in outcomes if o == 'ran_unchecked']
+        failed = [r for r, o in outcomes if o == 'failed']
+        tools = lambda rows: ', '.join(dict.fromkeys(str((r.get('payload') or {}).get('tool') or '?')
+                                                     for r in rows[:10]))
+        if failed:
+            status, verified = 'failed', False
+            summary = 'approved but did not go through: ' + tools(failed)
+        elif ran and len(ran) == len(mine):
+            status, verified = 'complete', True
+            summary = 'approved and ran: ' + tools(ran)
+        elif ran or unchecked:
+            ran = ran + unchecked
+            rest = [r for r in mine if r not in ran]
+            status, verified = 'completed_unverified', False
+            summary = 'approved and ran: %s%s%s' % (
+                tools(ran), ('; not approved: ' + tools(rest)) if rest else '',
+                ('; not checked by the card runner: ' + tools(unchecked)) if unchecked else '')
+        else:
+            status, verified = DECLINED, False
+            summary = 'not approved (declined, expired or blocked): ' + tools(mine)
+        _task_set(task_id, status=status, verified=verified, verification_evidence=summary,
+                  settled=_time.time())
+    _task_log(task_id, 'Your decision closed this task: %s (%s).' % (status, summary))
+    if from_worker:
+        return status                   # the worker reports and continues the run itself
+    if rec.get('run_id'):
+        # A workflow step told the owner it was waiting: say how it ended (its delivery
+        # record was used by the waiting notice).
+        try:
+            _task_set(task_id, delivery={'status': 'pending', 'reason': 'settled by your decision'})
+            _report_task_completion(task_id, rec.get('name') or 'Workflow', status, rec.get('result') or '')
+        except Exception as ne:
+            _task_log(task_id, f'Completion notice could not be sent: {ne}')
+    if status in ('complete', 'completed_unverified'):
+        # what the worker does for a finished step: the run continues, and the next step is
+        # told what the owner's decision did (the step's own reply only said a card waited)
+        try:
+            _advance_task_chain(task_id, ((rec.get('result') or '').rstrip()
+                                          + '\n\n(Your decision on its approval card: ' + summary + '.)').strip())
+        except Exception as ce:
+            _task_log(task_id, f'Chain advance error: {ce}')
+    return status
+
+
+_LAST_SWEEP = [0.0]
+#: How often the tray's poll may re-check waiting tasks.
+_SWEEP_EVERY_S = 300
+
+
+def sweep_waiting_tasks(*, force=False):
+    """Settle every waiting task whose cards have all been decided or have stopped reporting
+    (an approved card a restart left half-run is closed after _SETTLE_STALE_S). Called at boot
+    and, at most every _SWEEP_EVERY_S, from the task list the tray polls. Returns how many
+    tasks it closed."""
+    now = _time.time()
+    if not force and now - _LAST_SWEEP[0] < _SWEEP_EVERY_S:
+        return 0
+    _LAST_SWEEP[0] = now
+    with TASKS_LOCK:
+        waiting = [tid for tid, t in TASKS.items() if (t or {}).get('status') == WAITING_APPROVAL]
+    closed = 0
+    for tid in waiting:
+        try:
+            if settle_waiting_task(tid):
+                closed += 1
+        except Exception as e:
+            _log.warning("could not settle waiting task %s: %s", tid, type(e).__name__)
+    return closed
+
+
+#: The card kinds whose action is a task's own tool call (services/approval_executor).
+_SETTLE_KINDS = ('tainted_action', 'tool_confirm')
+_SETTLE_LOCK = threading.Lock()
+#: An approved card claimed for running this long ago with no outcome recorded did not
+#: report back (a restart mid-run): the task is closed as failed rather than left waiting.
+_SETTLE_STALE_S = 1800
 
 
 def _background_model_binding(explicit_model, default_model):
@@ -6304,7 +6462,9 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                       % (reply or '').strip()[:200])
 
         _checked_outcome = None
-        if final_status != 'failed':
+        # A task waiting on a card is not graded as done or not done: the owner's
+        # decision settles it (settle_waiting_task).
+        if final_status not in ('failed', WAITING_APPROVAL):
             outcome = _verify_workflow_task(task_id, reply or '', tool_trace)
             _checked_outcome = outcome
             if outcome is not None:
@@ -6340,6 +6500,21 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         result_text = _summarize_task_outcome(name, reply, tool_trace, status=final_status)
         _task_set(task_id, status=final_status, result=result_text, ended=_time.time(),
                   verified=verified, verification_evidence=verification_summary)
+        _settled_elsewhere = False
+        if final_status == WAITING_APPROVAL:
+            # A card can be decided while the task is still running: that decision found no
+            # waiting task to settle, so settle now (nothing changes while a card still waits).
+            _settled = settle_waiting_task(task_id, from_worker=True)
+            if _settled:
+                final_status = _settled
+                with TASKS_LOCK:
+                    verified = bool((TASKS.get(task_id) or {}).get('verified'))
+            else:
+                with TASKS_LOCK:
+                    _now = (TASKS.get(task_id) or {}).get('status')
+                # A decision landed between our write and our settle and settled it first: it
+                # has reported and continued the run, so this worker does neither again.
+                _settled_elsewhere = _now != WAITING_APPROVAL
 
         # ── Fresh-context evaluator ────────────────────────────────
         # Local seat only, resolved the way `local_only` schedules resolve
@@ -6406,13 +6581,14 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # something polled it. By the output-liveness rule that is a failure
         # even though it exits zero: work completed that the user never hears
         # about is work that did not happen, from where they are sitting.
-        _report_task_completion(task_id, name, final_status, result_text)
+        if not _settled_elsewhere:
+            _report_task_completion(task_id, name, final_status, result_text)
 
-        # ── Task chaining: spawn the next link if this task defines one ──
-        try:
-            _advance_task_chain(task_id, result_text)
-        except Exception as ce:
-            _task_log(task_id, f'Chain advance error: {ce}')
+            # ── Task chaining: spawn the next link if this task defines one ──
+            try:
+                _advance_task_chain(task_id, result_text)
+            except Exception as ce:
+                _task_log(task_id, f'Chain advance error: {ce}')
     except Exception as e:
         traceback.print_exc()
         # The owner's spending cap (services/spend_guard) pauses a task at its
@@ -6831,10 +7007,15 @@ def _report_workflow_completion(task_id, name, status, result_text):
         definition = rec.get('workflow_definition') or {}
         steps = definition.get('steps') or []
         index = int(rec.get('chain_step') or 0)
-        if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout'):
+        # A step waiting on a card holds the run there (the next step starts only once the
+        # owner decides), so the owner hears about it now, not when a later step finishes.
+        if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout',
+                                                     WAITING_APPROVAL):
             _task_set(task_id, delivery={'status': 'deferred', 'reason': 'Next workflow step owns delivery.'})
             return
-        if status in ('failed', 'error') and index < len(steps) and not str(result_text).startswith(SPEND_CAP_PAUSE_MARK):
+        if (status in ('failed', 'error') and index < len(steps) and not rec.get('settled')
+                and not str(result_text).startswith(SPEND_CAP_PAUSE_MARK)):
+            # (a step the owner's card decision settled as failed is not retried: say so now)
             if int(rec.get('chain_retry') or 0) < int(steps[index].get('retries', 1)):
                 return
         if (rec.get('delivery') or {}).get('status') in ('delivered', 'suppressed'):
@@ -6858,12 +7039,22 @@ def _report_workflow_completion(task_id, name, status, result_text):
         # One delivery per completion, chosen by where the owner is.
         target = _nreg.completion_target(cid)
         label = {'completed_unverified': 'finished; output checks are incomplete',
-                 'cancelled': 'stopped', 'failed': 'failed', 'timeout': 'timed out'}.get(aggregate, 'finished')
+                 'cancelled': 'stopped', 'stopped': 'stopped', 'failed': 'failed', 'timeout': 'timed out',
+                 'waiting': 'is waiting for your decision on an approval card',
+                 WAITING_APPROVAL: 'is waiting for your decision on an approval card'}.get(aggregate, 'finished')
+        if status == DECLINED:
+            label = 'stopped: you did not approve its card'
         body = str(result_text or '').strip() or '(no output)'
         title = definition.get('name') or name
         text = f'Workflow "{title}" {label}.\n\n{body}'
         outputs = rec.get('outputs') or []
-        message_meta = {'kind': 'workflow_result', 'task_id': task_id, 'workflow_run_id': rid,
+        # The waiting notice is its own message: the run's result, when it comes, is another
+        # (keyed by the run), so posting one never counts as having posted the other.
+        waiting_note = status == WAITING_APPROVAL
+        mkey, mval = (('workflow_waiting_id', f'{rid}:{task_id}') if waiting_note
+                      else ('workflow_run_id', rid))
+        message_meta = {'kind': 'workflow_waiting' if waiting_note else 'workflow_result',
+                        'task_id': task_id, mkey: mval,
                         'status': aggregate, 'outputs': outputs, 'project_id': rec.get('project_id')}
         delivered, existing, reason = False, False, ''
         invalid_owner = False
@@ -6883,12 +7074,12 @@ def _report_workflow_completion(task_id, name, status, result_text):
                 if cid:
                     # The transcript is the receipt if a crash follows append
                     # but precedes the task snapshot, so retries cannot repeat it.
-                    existing = any((m.get('meta') or {}).get('workflow_run_id') == rid
+                    existing = any((m.get('meta') or {}).get(mkey) == mval
                                    for m in conversations.messages(cid))
                     if target == _nreg.CHAT and not existing:
                         _nreg.transcript_add('E77', cid, {'role': 'friday', 'text': text, 'pinned': False,
                                                           'meta': message_meta}, settings=delivery_settings)
-                    delivered = any((m.get('meta') or {}).get('workflow_run_id') == rid
+                    delivered = any((m.get('meta') or {}).get(mkey) == mval
                                     for m in conversations.messages(cid))
                     if target == _nreg.CHAT and not delivered:
                         reason = 'The result was not confirmed in its conversation.'
@@ -6911,7 +7102,9 @@ def _report_workflow_completion(task_id, name, status, result_text):
             try:
                 import agent_friday.notifications_engine as ne
                 notice = ne.push(title=f'Workflow {label}: {title}', body=body[:400],
-                                proactive_chat=False, emitter='E03', dedupe_key=f'workflow-run:{rid}',
+                                proactive_chat=False, emitter='E03',
+                                dedupe_key=(f'workflow-run:{rid}:waiting:{task_id}' if waiting_note
+                                            else f'workflow-run:{rid}'),
                                 target={'kind': 'task', 'id': task_id})
                 notification = 'delivered' if notice else 'unconfirmed'
                 delivered = bool(notice) or delivered
@@ -6960,12 +7153,18 @@ def _report_task_completion(task_id, name, status, result_text):
         return _report_workflow_completion(task_id, name, status, result_text)
     body = (result_text or '').strip()
     ok = status not in ('failed', 'error')
+    waiting = status == WAITING_APPROVAL
     cid = None
     try:
         cid = _task_conversation_id(task_id)
     except Exception:
         cid = None
-    text = (f"Background task \"{name}\" {'finished' if ok else 'FAILED'}.\n\n"
+    # A task that raised a card is waiting for the owner, never "finished" (NS-17.7-2):
+    # in the chat line, the panel card and the spoken notice alike.
+    said = ('is waiting for your decision on an approval card (Approvals, in the System '
+            'workspace); nothing it asked for has run yet' if waiting
+            else 'finished' if ok else 'FAILED')
+    text = (f"Background task \"{name}\" {said}.\n\n"
             f"{body or '(no output)'}")
 
     def card():
@@ -6976,8 +7175,10 @@ def _report_task_completion(task_id, name, status, result_text):
         import agent_friday.notifications_engine as notifications_engine
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
         notifications_engine.push(
-            title=f"Task {'finished' if ok else 'failed'}: {name}",
-            body=lede or ('Finished with no output.' if ok else 'Failed.'),
+            title=(f"Task needs your decision: {name}" if waiting
+                   else f"Task {'finished' if ok else 'failed'}: {name}"),
+            body=lede or ('Waiting for your decision.' if waiting
+                          else 'Finished with no output.' if ok else 'Failed.'),
             emitter='E02', dedupe_key=f'task-done:{task_id}',
             target={"kind": "task", "id": task_id},
         )
@@ -7861,8 +8062,19 @@ def chain_run_status(name, run_id=None):
                                     ((row.get('log') or [None])[-1] if status in
                                      ('interrupted', 'failed', 'timeout') else None)})
     statuses = {x['status'] for x in out_steps}
-    if statuses & {'queued', 'queued-for-seat', 'running', 'waiting', 'waiting_approval', 'waiting_for_approval'}:
+    if statuses & {'queued', 'queued-for-seat', 'running'}:
         state = 'running'
+    elif statuses & {'waiting', WAITING_APPROVAL, 'waiting_for_approval'}:
+        # Held at a step whose card the owner has not decided: waiting on you, not working.
+        state = 'waiting'
+    elif DECLINED in statuses:
+        state = 'stopped'
+        for x in out_steps:
+            if x['status'] == DECLINED:
+                x['reason'] = 'you declined its approval card'
+            elif x['status'] == 'pending':
+                x['status'] = 'skipped'
+                x['reason'] = "you declined an earlier step's approval card"
     elif statuses & {'failed', 'error', 'timeout'}:
         state = 'failed'
     elif 'cancelled' in statuses:
@@ -8217,6 +8429,17 @@ def _advance_task_chain_once(task_id, result_text):
         _chain_sync(task_id)
         return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
+        return None
+    if t.get('status') in (WAITING_APPROVAL, DECLINED) or (t.get('settled') and t.get('status') == 'failed'):
+        # The step raised a card: what follows may depend on it, so the next step does not
+        # start on a result that says the action is still waiting. The owner's decision
+        # continues the run (settle_waiting_task) or ends it here, declined; an approved action
+        # that did not go through ends it too (whichever path settled it).
+        _task_log(task_id, 'Waiting for your decision on its approval card: the next step '
+                           'starts once you approve it.' if t.get('status') == WAITING_APPROVAL
+                  else 'You declined its approval card: the next step did not start.'
+                  if t.get('status') == DECLINED
+                  else 'The action you approved did not go through: the next step did not start.')
         return None
 
     # A "completed" chain link whose result is a provider-failure message did
