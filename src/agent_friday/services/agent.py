@@ -16354,6 +16354,18 @@ def _save_mcp_servers(cfg: dict) -> dict:
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if "servers" not in cfg:
         cfg = {"servers": cfg}
+    # A25: a connector server new in this save runs in Windows' isolated mode unless
+    # it says otherwise. Every writer of this file comes through here.
+    try:
+        old = json.loads(MCP_SERVERS_FILE.read_text(encoding="utf-8-sig")) \
+            if MCP_SERVERS_FILE.exists() else {"servers": {}}
+    except Exception:
+        # Unreadable on disk: the servers running now are the ones that existed.
+        mgr = _MCP_MANAGER
+        old = {"servers": {n: {} for n in (getattr(mgr, "servers", None) or {})}} if mgr else None
+    if old is not None:
+        from agent_friday.services import connector_isolation as _ci
+        cfg = _ci.apply_default(cfg, old)
     try:
         from agent_friday.services import connector_secrets as _cse
         cfg = _cse.encrypt_config(cfg)
@@ -16772,6 +16784,13 @@ def _mcp_boot() -> None:
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
+        # A25: connectors added before isolation became the default are offered it
+        # once, by a card; nothing is switched without the owner's answer.
+        try:
+            from agent_friday.services import connector_isolation as _ci
+            _ci.offer_existing((cfg or {}).get("servers") or {})
+        except Exception as _ci_err:  # noqa: BLE001
+            print(f"  [mcp] isolation offer skipped: {_ci_err}")
         # Non-blocking: each server starts in its own thread; tools register via
         # the on_ready callback as each handshake completes.
         mgr.start_all(on_ready=_mcp_register_server_tools)

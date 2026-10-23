@@ -163,6 +163,9 @@ def _server(monkeypatch, folders):
         started.append(k)
         return types.SimpleNamespace(stdin=None, stdout=None, stderr=None, poll=lambda: None, pid=7)
     monkeypatch.setattr(ac, "start", fake_start)
+    monkeypatch.setattr(ac, "available", lambda: True)       # the Windows path, on any OS
+    monkeypatch.setattr(ac, "readable_by_containers", lambda p, sid=None: True, raising=False)
+    monkeypatch.setattr(ac, "_sid_text", lambda name: "S-1-15-2-9", raising=False)
     monkeypatch.setattr(ac, "server_profile", lambda n: "AgentFriday.MCP.test")
     monkeypatch.setattr(ac, "set_server_access", lambda profile, **k: given.append((profile, k)),
                         raising=False)

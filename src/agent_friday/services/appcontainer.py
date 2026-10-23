@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 ALL_APP_PACKAGES = "S-1-15-2-1"
+INTERNET_CLIENT = "S-1-15-3-1"       # the internetClient capability
 _MARK = ".friday-isolated-read"
 
 
@@ -89,6 +90,60 @@ def _profile(api, name: str):
     text = s.value
     api.k.LocalFree(s)
     return sid, text
+
+
+def readable_by_containers(path, sid_text: Optional[str] = None) -> Optional[bool]:
+    """Can an isolated app run/read `path`? True when its DACL allows ALL APPLICATION
+    PACKAGES (or `sid_text`), False when it does not, None when it cannot be read.
+    (Some installers, Node.js's among them, set a DACL without app containers; only an
+    administrator can change one under Program Files.)"""
+    if not available():
+        return None
+    import ctypes
+    from ctypes import wintypes as W
+    try:
+        adv = ctypes.WinDLL("advapi32", use_last_error=True)
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        dacl, sd = W.LPVOID(), W.LPVOID()
+        adv.GetNamedSecurityInfoW.argtypes = [W.LPCWSTR, ctypes.c_int, W.DWORD, W.LPVOID, W.LPVOID,
+                                              ctypes.POINTER(W.LPVOID), W.LPVOID, ctypes.POINTER(W.LPVOID)]
+        adv.GetNamedSecurityInfoW.restype = W.DWORD
+        if adv.GetNamedSecurityInfoW(str(path), 1, 4, None, None, ctypes.byref(dacl), None,
+                                     ctypes.byref(sd)) != 0:
+            return None
+        try:
+            if not dacl.value:
+                return True            # no DACL: everyone
+            class ACL_SIZE(ctypes.Structure):
+                _fields_ = [("AceCount", W.DWORD), ("AclBytesInUse", W.DWORD), ("AclBytesFree", W.DWORD)]
+            info = ACL_SIZE()
+            adv.GetAclInformation.argtypes = [W.LPVOID, W.LPVOID, W.DWORD, ctypes.c_int]
+            if not adv.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):
+                return None
+            adv.GetAce.argtypes = [W.LPVOID, W.DWORD, ctypes.POINTER(W.LPVOID)]
+            adv.ConvertSidToStringSidW.argtypes = [W.LPVOID, ctypes.POINTER(W.LPWSTR)]
+            want = {ALL_APP_PACKAGES} | ({sid_text} if sid_text else set())
+            for i in range(info.AceCount):
+                ace = W.LPVOID()
+                if not adv.GetAce(dacl, i, ctypes.byref(ace)):
+                    continue
+                ace_type = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))[0]
+                ace_flags = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))[1]
+                if ace_type != 0 or ace_flags & 0x08:      # an allow entry that applies here
+                    continue
+                mask = ctypes.cast(ace.value + 4, ctypes.POINTER(W.DWORD))[0]
+                s = W.LPWSTR()
+                if adv.ConvertSidToStringSidW(ctypes.c_void_p(ace.value + 8), ctypes.byref(s)):
+                    text = s.value
+                    k32.LocalFree(s)
+                    # FILE_EXECUTE, or GENERIC_EXECUTE / GENERIC_ALL
+                    if text in want and mask & (0x20 | 0x20000000 | 0x10000000):
+                        return True
+            return False
+        finally:
+            k32.LocalFree(sd)
+    except Exception:
+        return None
 
 
 def _icacls(args: List[str], what: str) -> None:
@@ -323,7 +378,8 @@ class _Proc:
 
 def start(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterable = (),
           profile: Optional[str] = None, text: bool = True, memory_mb: int = 2048,
-          max_processes: int = 8, timeout_s: int = 0, contain: bool = False):
+          max_processes: int = 8, timeout_s: int = 0, contain: bool = False,
+          network: bool = False):
     """Start `argv` in an AppContainer with stdio pipes. `profile` names a lasting
     identity (an MCP server); None makes a one-run identity deleted on close(). `read`
     and `write` are folders granted to THIS identity only. Raises IsolationError when
@@ -365,7 +421,27 @@ def start(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterab
     err_parent, err_child = _sbx._pipe(api, child_reads=False)
     child_ends = [in_child, out_child, err_child]
     pi = api.PROCESS_INFORMATION()
-    caps = api.SECURITY_CAPABILITIES(sid, None, 0, 0)
+    # `network`: the internetClient capability (outbound internet; this PC's own
+    # loopback stays closed to app containers). Without it there is no network at all.
+    cap_sid = W.LPVOID()
+    cap_arr = None
+    if network:
+        api.a.ConvertStringSidToSidW.argtypes = [W.LPCWSTR, c.POINTER(W.LPVOID)]
+        api.a.ConvertStringSidToSidW.restype = W.BOOL
+        if not api.a.ConvertStringSidToSidW(INTERNET_CLIENT, c.byref(cap_sid)):
+            for h in child_ends + [in_parent, out_parent, err_parent, job]:
+                api.k.CloseHandle(h)
+            api.a.FreeSid(sid)
+            if temporary:
+                api.ue.DeleteAppContainerProfile(name)
+            raise IsolationError("the internet capability could not be prepared")
+
+        class SID_AND_ATTRIBUTES(c.Structure):
+            _fields_ = [("Sid", W.LPVOID), ("Attributes", W.DWORD)]
+        cap_arr = (SID_AND_ATTRIBUTES * 1)(SID_AND_ATTRIBUTES(cap_sid, 0x4))   # SE_GROUP_ENABLED
+        caps = api.SECURITY_CAPABILITIES(sid, c.cast(cap_arr, W.LPVOID), 1, 0)
+    else:
+        caps = api.SECURITY_CAPABILITIES(sid, None, 0, 0)
     size = c.c_size_t(0)
     api.k.InitializeProcThreadAttributeList(None, 2, 0, c.byref(size))
     attr = c.create_string_buffer(size.value)
@@ -415,6 +491,8 @@ def start(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterab
         raise
     finally:
         api.k.DeleteProcThreadAttributeList(attr)
+        if cap_sid:
+            api.k.LocalFree(cap_sid)
     for h in child_ends:
         api.k.CloseHandle(h)
     if not api.k.AssignProcessToJobObject(job, pi.hProcess):
