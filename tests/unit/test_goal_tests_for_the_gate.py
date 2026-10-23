@@ -252,6 +252,32 @@ def test_the_same_failure_on_every_attempt_stops_as_no_progress(monkeypatch):
     assert out["status"] == "no_progress"
     m = _m(gid)
     assert m["status"] == "blocked" and m["blocker"]["category"] == "no_progress"
+    assert "failed the same way" in m["blocker"]["text"]
+    assert m["verification"]["status"] == "error"
+    assert "verification_failed_escalated" not in _kinds(gid)
+    assert goals.approvals.list_approvals(kind="goal_milestone_escalation") == []
+
+
+@pytest.mark.parametrize("errors", [
+    lambda n: f"the synthetic tool is down ({n})",      # a different failure each time
+    lambda n: "",                                      # failures that say nothing
+])
+def test_failures_that_differ_or_say_nothing_still_get_every_attempt(monkeypatch, errors):
+    """Only the same stated failure again is no progress: different failures,
+    or failures with no detail, use every attempt and then ask the owner."""
+    _grader(monkeypatch)
+    calls = {"n": 0}
+
+    def failing(goal, milestone, *, critique_hint=""):
+        calls["n"] += 1
+        return {"ok": False, "text": "", "cost_mψ": 0, "error": errors(calls["n"])}
+    goals.set_executor(failing)
+    g = _goal()
+    gid, mid = g["goal_id"], _m(g["goal_id"])["milestone_id"]
+    out = goals.run_milestone(gid, mid)
+    assert calls["n"] == 3 and out["status"] == "escalated"
+    assert _m(gid)["status"] == "escalated"
+    assert len(goals.approvals.list_approvals(kind="goal_milestone_escalation")) == 1
 
 
 # ── NS-34.10-6 plan revision and approval waiting ────────────────────────────
@@ -281,7 +307,7 @@ def test_a_step_stopped_by_a_plan_change_continues_on_the_new_plan(monkeypatch):
     def work(goal, milestone, *, critique_hint=""):
         work.calls += 1
         if work.calls == 1:
-            time.sleep(0.01)
+            time.sleep(0.05)
             goals.update_goal(gid, {"success_criteria": "a different synthetic draft"})
         return {"ok": True, "text": f"synthetic draft {work.calls}", "cost_mψ": 10}
     work.calls = 0
@@ -307,7 +333,7 @@ def test_after_a_no_progress_stop_a_revised_plan_runs_only_on_the_owner_s_restar
     g = _goal()
     gid, mid = g["goal_id"], _m(g["goal_id"])["milestone_id"]
     assert goals.run_milestone(gid, mid)["status"] == "no_progress"
-    assert "start it again" in _m(gid)["blocker"]["text"]
+    assert "after a change, start it again" in _m(gid)["blocker"]["text"]
     before = work.calls
 
     goals.update_goal(gid, {"success_criteria": "a relaxed synthetic draft"})
@@ -315,8 +341,8 @@ def test_after_a_no_progress_stop_a_revised_plan_runs_only_on_the_owner_s_restar
     assert work.calls == before, "a plan edit alone ran a step whose attempts had already run"
     assert _m(gid)["status"] == "blocked" and _m(gid)["progress_marks"] == []
 
-    assert goals.restart_milestone(gid, mid, confirm_unknown_outcome=True)["ok"]
-    goals.run_due_milestones()
+    out = goals.restart_milestone(gid, mid, confirm_unknown_outcome=True)   # runs it
+    assert out["ok"] and out["run"]["status"] == "done"
     assert work.calls > before and _m(gid)["status"] == "done"
 
 
