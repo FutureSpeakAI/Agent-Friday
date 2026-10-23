@@ -7,6 +7,8 @@
   GET  /api/doctor/reports/<id>.<json|txt>
                                       a saved report as a file to save and
                                       attach by hand (A3: never sent by Friday)
+  GET  /api/doctor/stores             every store Friday keeps: version, size,
+                                      location (read-only, this PC only)
   GET  /api/safe-mode                 is this run in safe mode, and the next?
   POST /api/safe-mode                 {"next_start": true|false}: start in safe
                                       mode next time, or leave it. A press on
@@ -76,6 +78,9 @@ def doctor_report():
 @doctor_bp.route("/api/doctor/reports", methods=["GET"])
 @login_required
 def doctor_reports():
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     try:
         return jsonify({"status": "ok", "reports": doctor.history()})
     except Exception as e:  # noqa: BLE001
@@ -85,6 +90,9 @@ def doctor_reports():
 @doctor_bp.route("/api/doctor/reports/<rid>.<kind>", methods=["GET"])
 @login_required
 def doctor_report_file(rid, kind):
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     p = doctor.saved(rid, kind)
     if p is None:
         return jsonify({"status": "error", "error": "No such report."}), 404
@@ -92,6 +100,24 @@ def doctor_report_file(rid, kind):
                      as_attachment=True, download_name=p.name)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@doctor_bp.route("/api/doctor/stores", methods=["GET"])
+@login_required
+def doctor_stores():
+    """Every store Friday keeps: version, size, location (§37.3-1). Read-only;
+    on this PC only, like the page that shows it."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    try:
+        from agent_friday.services import store_inventory
+        inv = store_inventory.public(store_inventory.cached(doctor._home()))
+        resp = jsonify({"status": "ok", **inv})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The list of stores could not be made.")
 
 
 @doctor_bp.route("/api/safe-mode", methods=["GET"])

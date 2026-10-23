@@ -6,6 +6,9 @@ settings differ from the shipped defaults, by name; whether the versions on
 disk agree), and performance numbers (provider latency, the action ledger's
 size and check time, disk and memory).
 
+It also lists every store Friday keeps, with its version, size and place in
+the data folder (services/store_inventory.py, §37.3-1).
+
 What it never holds: conversation or memory content, file names, paths,
 email addresses, account names, server names, setting VALUES, anything from
 the vault. It is built only from enumerated fields, and every string in it is
@@ -505,6 +508,17 @@ def _versions() -> dict:
     return out
 
 
+def _stores() -> dict:
+    """Every store with its version, size and place in the data folder
+    (services/store_inventory.py, §37.3-1). Store names and locations are
+    Friday's own; names it does not know are counted, never named."""
+    try:
+        from agent_friday.services import store_inventory
+        return store_inventory.public(store_inventory.cached(_home()))
+    except Exception as e:  # noqa: BLE001
+        return {"error": "unavailable:" + type(e).__name__}
+
+
 # ── the report ──────────────────────────────────────────────────────────────
 
 def build() -> dict:
@@ -516,7 +530,7 @@ def build() -> dict:
         "report_version": REPORT_VERSION,
         "id": "doctor-%s-%s" % (stamp, hashlib.sha256(os.urandom(8)).hexdigest()[:6]),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "content": "none: versions, checks, error signatures, drift and performance only",
+        "content": "none: versions, checks, error signatures, drift, performance and the store inventory only",
         "sharing": "by hand only; Friday never sends this file anywhere",
         "versions": _versions(),
         "checks": [_check(cid, dom, fn) for cid, dom, fn in CHECKS],
@@ -527,7 +541,12 @@ def build() -> dict:
     report["summary"] = {s: sum(1 for c in report["checks"] if c["state"] == s)
                          for s in STATES if any(c["state"] == s for c in report["checks"])}
     report["build_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-    return _clean(report, _private_markers())
+    report = _clean(report, _private_markers())
+    # rebuilt from Friday's own constants and numbers (store_inventory.public),
+    # so the general filter above, which could blank a store whose name holds
+    # a short user name, is not needed for it
+    report["stores"] = _stores()
+    return report
 
 
 def render_text(report: dict) -> str:
@@ -553,6 +572,12 @@ def render_text(report: dict) -> str:
         d.get("settings_unknown_key_count"))]
     p = report.get("performance") or {}
     lines += ["", "Performance: " + json.dumps(p, sort_keys=True)]
+    inv = report.get("stores")
+    if isinstance(inv, dict) and isinstance(inv.get("stores"), list):
+        from agent_friday.services import store_inventory
+        lines += [""] + store_inventory.render_text(inv)
+    elif isinstance(inv, dict) and inv.get("error"):
+        lines += ["", "Stores: %s" % inv["error"]]
     return "\n".join(lines) + "\n"
 
 
