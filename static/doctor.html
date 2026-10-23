@@ -196,14 +196,19 @@
     });
   }
   $('readable-go').addEventListener('click', () => readableExport(false));
-  $('support-go').addEventListener('click', () => {
+  function supportBundle(cloudOk) {
     text($('support-note'), 'Making...');
-    api('/api/doctor/support', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+    api('/api/doctor/support', { method: 'POST', body: JSON.stringify(cloudOk ? { cloud_ok: true } : {}) }).then(({ ok, d }) => {
+      if (!ok && d.code === 'cloud_folder') {
+        if (confirm(d.error)) { supportBundle(true); } else { text($('support-note'), 'Not made.'); }
+        return;
+      }
       text($('support-note'), ok ? 'Made ' + d.file + ' (' + (d.members || []).length + ' files).' +
         ((d.notes || []).length ? ' ' + d.notes.join(' ') : '') + ' Read it before you share it.'
         : (d.error || 'Not made.'));
     });
-  });
+  }
+  $('support-go').addEventListener('click', () => supportBundle(false));
   function caps() {
     api('/api/capabilities/state').then(({ ok, d }) => {
       const box = $('caps'); box.textContent = '';

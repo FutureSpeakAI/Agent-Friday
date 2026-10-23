@@ -53,6 +53,7 @@ def home(tmp_path, monkeypatch):
         sb = importlib.import_module("agent_friday.services.support_bundle")
         monkeypatch.setattr(sb, "_off_record", lambda: False)
         monkeypatch.setattr(sb, "_recently_off_record", lambda: False)
+        monkeypatch.setattr(sb, "_last_off_record", lambda: None)
     return h
 
 
@@ -101,12 +102,51 @@ def test_an_info_line_is_never_kept(home):
      "PermissionError", "Wilhelmina"),
     ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 status=503 from ollama", "status=503", "ollama"),
     ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 wilhelmina_notes failed", "failed", "wilhelmina"),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 could not call 07700 900123", "could not call", "900123"),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 bad code=482913 for login", "code=", "482913"),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 card 4111 1111 1111 1111 refused", "refused", "1111"),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 born 12 May 1990", "12", "1990"),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 at 51.507351 -0.127758", "at", "507351"),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 wilhelmina=1 status=503", "status=503", "wilhelmina"),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 timeout after 2500 ms", "2500 ms", ""),
+    ("2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 then Will said May was fine", "was", "Will"),
+    ('  File "D:\\Notes\\agent_friday\\divorce_letters.py", line 4, in letters', 'File "<other>", line 4, in ~',
+     "divorce"),
 ])
 def test_a_line_keeps_its_shape_and_loses_its_words(raw, keep, gone):
     out = _sb().redact_log_line(raw, [])
     assert keep in out, out
     if gone:
         assert gone not in out, out
+
+
+def test_the_owner_name_from_settings_is_withheld(home, tmp_path):
+    (home / "friday.log").write_text("first\n2026-10-23T09:00:00 ERROR    agent_friday.x \u2014 hello "
+                                     "wilhelmina_ok and was ok\n", encoding="utf-8")
+    files = _zip(_sb().make(tmp_path / "out")["file"])
+    assert "wilhelmina" not in files["log-excerpts.txt"].decode("utf-8").lower()
+
+
+def test_only_lines_after_an_off_record_session_are_kept(home, tmp_path, monkeypatch):
+    from datetime import datetime
+    sb = _sb()
+    cut = datetime.fromisoformat("2026-10-23T09:00:01.500000").timestamp()
+    monkeypatch.setattr(sb, "_last_off_record", lambda: cut)
+    r = sb.make(tmp_path / "out")
+    logs = _zip(r["file"])["log-excerpts.txt"].decode("utf-8")
+    assert "agent_friday.services.probe" not in logs          # 09:00:00, before
+    assert "agent_friday.services.mail" in logs               # 09:00:03, after
+    assert "logs/crashes.log" not in logs and any("Crash lines" in n for n in r["notes"])
+
+
+def test_a_cloud_synced_folder_is_asked_about_and_a_relative_one_refused(home, tmp_path):
+    sb = _sb()
+    with pytest.raises(sb.CloudFolder):
+        sb.make(tmp_path / "OneDrive" / "Documents" / "Friday Support")
+    assert not (tmp_path / "OneDrive").exists()
+    assert Path(sb.make(tmp_path / "OneDrive" / "Documents" / "Friday Support", cloud_ok=True)["file"]).exists()
+    with pytest.raises(sb.SupportError):
+        sb.make(Path("relative-folder"))
 
 
 def test_the_manifest_hashes_every_file(home, tmp_path):

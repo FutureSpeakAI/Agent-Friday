@@ -13,10 +13,12 @@ What is in it:
 
 How a log line is redacted. A line keeps its time, level and logger name (a
 logger outside Friday's own is "other_logger"). Every other word is kept only
-when it is one of a fixed list of plain log words, a number, a code name
-(snake_case, a dotted Friday module, an exception class), or an HTTP method or
-status; any other word becomes "~" (runs of them one "..."). Paths, web
-addresses, email addresses, keys, and this PC's user and host names are
+when it is one of a fixed list of plain log words, a small number (at most
+three digits) or a number with its unit, a code name (snake_case made of those
+words, a dotted Friday module, a built-in exception class), or an HTTP method;
+any other word becomes "~" (runs of them one "..."), and numbers written in
+groups become "#". Paths, web addresses, email addresses, keys, quoted text,
+this PC's user and host names and the owner's own names from settings are
 replaced before that. A traceback frame keeps its line number and function,
 and its file only when it is one of Friday's own (agent_friday/...).
 So a name, a sentence or a file name the owner wrote does not survive; what is
@@ -24,9 +26,11 @@ left is the shape of the error.
 
 Never in it: conversations, memories, wiki pages, settings values, the vault,
 credentials, contacts, file names from the data folder. Nothing is made while
-off the record, and log excerpts are left out for 30 days after an off-record
-session (the same rule as the weekly report). The zip is written outside
-Friday's data folder and never overwrites an earlier one; one receipt (kind
+off the record; log excerpts are left out for 30 days after an off-record
+session (the same rule as the weekly report), and after that only lines written
+since it are kept. The zip is written outside
+Friday's data folder and never overwrites an earlier one; a folder synced to
+the cloud (OneDrive and the like) is asked about first. One receipt (kind
 'export') goes into the action ledger.
 """
 from __future__ import annotations
@@ -37,6 +41,7 @@ import io
 import json
 import os
 import re
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -90,38 +95,73 @@ broken safe mode guard gate gates blocked allowed held hold receipt receipts led
 
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 _LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
-_URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
-_EMAIL = re.compile(r"[^\s@<>\"']+@[^\s@<>\"']+")
-_WINPATH = re.compile(r"(?:[A-Za-z]:)?(?:[\\/][^\\/\s\"'<>|:*?]+){2,}[\\/]?|[A-Za-z]:[\\/]\S*|\\\\[^\s\\/]+[\\/]\S*")
-_QUOTED = re.compile(r"\"[^\"]*\"|'[^']*'")
-_NUMBER = re.compile(r"^[-+]?\d{1,6}(\.\d+)?(%|ms|s|kb|mb|gb)?$", re.I)
+#: A line is cut to this length before any pattern looks at it.
+MAX_LINE = 4000
+_URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,30}://\S{0,2000}")
+_EMAIL = re.compile(r"[^\s@<>\"']{1,64}@[^\s@<>\"']{1,255}")
+_WINPATH = re.compile(r"(?:[A-Za-z]:)?(?:[\\/][^\\/\s\"'<>|:*?]{1,255}){2,64}[\\/]?"
+                      r"|[A-Za-z]:[\\/]\S{0,2000}|\\\\[^\s\\/]{1,255}[\\/]\S{0,2000}")
+_QUOTED = re.compile(r"\"[^\"]{0,2000}\"|'[^']{0,2000}'")
+#: A number is kept when it is small (at most three digits, at most two
+#: decimals) or carries a unit: a phone number, a code, a card or a date of
+#: birth never does.
+_SMALL = re.compile(r"^[-+]?\d{1,3}(\.\d{1,2})?%?$")
+_WITH_UNIT = re.compile(r"^[-+]?\d{1,9}(\.\d{1,3})?(ms|s|kb|mb|gb|b|%)$", re.I)
+_UNITS = {"ms", "s", "sec", "secs", "second", "seconds", "minute", "minutes", "hour", "hours",
+          "byte", "bytes", "kb", "mb", "gb", "%"}
+#: key=value pairs whose (whole-number) value is kept.
+_NUMBER_KEYS = {"status", "port", "pid", "line", "attempt", "attempts", "retries", "count", "code",
+                "seq", "errors", "size", "bytes", "ms", "timeout"}
+_DIGITS = re.compile(r"^\d{1,9}$")
 _SNAKE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
-_FRIDAY_MODULE = re.compile(r"^(agent_friday|friday)(\.[A-Za-z_][A-Za-z0-9_]*)+$")
+_FRIDAY_MODULE = re.compile(r"^agent_friday(\.[a-z_][a-z0-9_]*){1,8}$")
 _EXC = re.compile(r"^[A-Z][A-Za-z0-9]*(Error|Exception|Warning|Exit|Interrupt)$")
 _STRIP = ",.;:()[]{}!?"
-_LINE = re.compile(r"^(?P<ts>\S+) (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+"
+_LINE = re.compile(r"^(?P<ts>\S{1,40}) (?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s{1,20}"
                    r"(?P<logger>[A-Za-z_][A-Za-z0-9_.]{0,80}) — (?P<msg>.*)$")
-_FRAME = re.compile(r'^\s*File "(?P<file>[^"]*)", line (?P<line>\d+)(?:, in (?P<fn>\S+))?')
-_FAULT_FRAME = re.compile(r'^\s*File "(?P<file>[^"]*)", line (?P<line>\d+) in (?P<fn>\S+)')
-_TS = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?$")
+_FRAME = re.compile(r'^\s*File "(?P<file>[^"]{0,1000})", line (?P<line>\d{1,7})(?:,? in (?P<fn>\S{1,200}))?')
+_TS = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-]\d{2}:?\d{2})?$")
+_PLACEHOLDERS = ("<path>", "<url>", "<email>", "<text>", "<withheld>")
 
 
 def _markers() -> list[str]:
+    """This PC's user, host and home names (the Doctor's list), and the
+    owner's own names from settings."""
     from agent_friday.services import doctor
-    return doctor._private_markers()
+    out = set(doctor._private_markers())
+    try:
+        d = json.loads((_home() / "settings.json").read_text(encoding="utf-8"))
+        for k in ("user_name", "owner_name", "display_name", "owner_email", "email", "full_name"):
+            v = d.get(k) if isinstance(d, dict) else None
+            if isinstance(v, str) and len(v.strip()) >= 3:
+                out.add(v.strip().lower())
+                out.update(p.lower() for p in v.split() if len(p) >= 3)
+    except (OSError, ValueError):
+        pass
+    return sorted(out, key=len, reverse=True)
 
 
-def _word(tok: str) -> str:
-    """One word kept as it is, or '~'."""
+def _is_number_word(core: str) -> bool:
+    return bool(_SMALL.match(core) or _WITH_UNIT.match(core))
+
+
+def _word(tok: str, first: bool, nxt: str = "") -> str:
+    """One word kept as it is, or '~'. `first`: the message's first word (a
+    capital there is the sentence's, not a name's). `nxt`: the next word, for
+    a number followed by its unit."""
     core = tok.strip(_STRIP)
-    if not core:
-        return tok
-    if core in ("<path>", "<url>", "<email>", "<text>", "<withheld>"):
+    if not core or core in _PLACEHOLDERS:
         return tok
     low = core.lower()
-    if low in WORDS or core in _METHODS or core in _LEVELS:
+    if low in WORDS and (core == low or first or core.isupper() and len(core) <= 8):
         return tok
-    if _NUMBER.match(core) or _FRIDAY_MODULE.match(core) or _TS.match(core):
+    if core in _METHODS or core in _LEVELS or _TS.match(core):
+        return tok
+    if _is_number_word(core):
+        return tok
+    if _DIGITS.match(core) and nxt.strip(_STRIP).lower() in _UNITS:
+        return tok
+    if _FRIDAY_MODULE.match(core):
         return tok
     if _SNAKE.match(core) and all(p in WORDS or p.isdigit() for p in core.split("_")):
         return tok                           # read_timeout, not_found: never a name
@@ -130,8 +170,10 @@ def _word(tok: str) -> str:
             tok.replace(core, "other_exception")
     if "=" in core:
         k, _, v = core.partition("=")
-        if _SNAKE.match(k) or re.fullmatch(r"[a-z]+", k):
-            return k + "=" + (_word(v) if v else "")
+        if k in WORDS or (_SNAKE.match(k) and all(p in WORDS for p in k.split("_"))):
+            if k in _NUMBER_KEYS and _DIGITS.match(v) and len(v) <= 6 and (k != "code" or int(v) < 600):
+                return k + "=" + v
+            return k + "=" + (_word(v, False) if v else "")
     return "~"
 
 
@@ -139,7 +181,8 @@ def redact_text(text: str, markers: Optional[list] = None) -> str:
     """Free text reduced to its plain log words (see the module doc)."""
     from agent_friday.services import pasted_secrets
     markers = _markers() if markers is None else markers
-    s = pasted_secrets.withhold(str(text), whole=False)[0]
+    s = str(text)[:MAX_LINE]
+    s = pasted_secrets.withhold(s, whole=False)[0]
     s = _URL.sub("<url>", s)
     s = _EMAIL.sub("<email>", s)
     s = _QUOTED.sub("<text>", s)
@@ -149,24 +192,43 @@ def redact_text(text: str, markers: Optional[list] = None) -> str:
         if m and m in low:
             s = re.sub(re.escape(m), "<withheld>", s, flags=re.I)
             low = s.lower()
-    out = []
-    for tok in s.split():
-        w = _word(tok)
+    toks = s.split()
+    out: list[str] = []
+    for n, tok in enumerate(toks):
+        w = _word(tok, n == 0, toks[n + 1] if n + 1 < len(toks) else "")
         if w == "~" and out and out[-1] in ("~", "..."):
             out[-1] = "..."
+            continue
+        # two numbers side by side can be one number written in groups
+        if out and _SMALL.match(w.strip(_STRIP)) and _SMALL.match(out[-1].strip(_STRIP)):
+            out[-1] = "#"
+            continue
+        if out and out[-1] == "#" and _SMALL.match(w.strip(_STRIP)):
             continue
         out.append(w)
     return " ".join(out)[:400]
 
 
-def _frame(m: re.Match, markers) -> str:
+def _own_file(rel: str) -> bool:
+    """Whether agent_friday/<rel> is one of Friday's own installed files."""
+    try:
+        import agent_friday
+        pkg = Path(agent_friday.__file__).resolve().parent
+        return (pkg / rel).is_file()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _frame(m: re.Match) -> str:
     f = m.group("file").replace("\\", "/")
     i = f.rfind("agent_friday/")
-    where = f[i:] if i >= 0 and re.fullmatch(r"agent_friday(/[A-Za-z0-9_]+)+\.py", f[i:]) else "<other>"
+    rel = f[i + len("agent_friday/"):] if i >= 0 else ""
+    own = bool(rel) and re.fullmatch(r"([a-z0-9_]+/){0,6}[a-z0-9_]+\.py", rel) is not None and _own_file(rel)
+    where = "agent_friday/" + rel if own else "<other>"
     fn = m.group("fn") or ""
     # a function name is kept only in Friday's own files: elsewhere (the
     # owner's scripts, an extension) it can be a word the owner chose
-    fn = fn if where != "<other>" and re.fullmatch(r"[<>A-Za-z0-9_.]{1,80}", fn) else "~"
+    fn = fn if own and re.fullmatch(r"[<>A-Za-z0-9_.]{1,80}", fn) else "~"
     return '  File "%s", line %s, in %s' % (where, m.group("line"), fn)
 
 
@@ -175,11 +237,24 @@ def _logger(name: str) -> str:
     return doctor._logger_name(name)
 
 
+def _ts_of(line: str) -> Optional[float]:
+    m = _LINE.match(line[:MAX_LINE])
+    if not m or not _TS.match(m.group("ts")):
+        return None
+    from datetime import datetime
+    raw = m.group("ts").replace(",", ".")
+    try:
+        d = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d.timestamp()
+
+
 def redact_log_line(line: str, markers: Optional[list] = None) -> Optional[str]:
     """A friday.log line (or a traceback line) redacted, or None when it is
     not a warning, an error or part of a traceback."""
     markers = _markers() if markers is None else markers
-    line = line.rstrip("\r\n")
+    line = line.rstrip("\r\n")[:MAX_LINE]
     m = _LINE.match(line)
     if m:
         if m.group("level") in ("DEBUG", "INFO"):
@@ -187,15 +262,15 @@ def redact_log_line(line: str, markers: Optional[list] = None) -> Optional[str]:
         ts = m.group("ts") if _TS.match(m.group("ts")) else "~"
         return "%s %s %s — %s" % (ts, m.group("level"), _logger(m.group("logger")),
                                        redact_text(m.group("msg"), markers))
-    f = _FRAME.match(line) or _FAULT_FRAME.match(line)
+    f = _FRAME.match(line)
     if f:
-        return _frame(f, markers)
+        return _frame(f)
     s = line.strip()
     if s.startswith("Traceback (most recent call last)"):
         return "Traceback (most recent call last):"
     if re.match(r"^(Fatal Python error|Windows fatal exception|Current thread|Thread 0x)", s):
         return redact_text(s, markers)
-    e = re.match(r"^([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Exit|Interrupt))(:\s?(.*))?$", s)
+    e = re.match(r"^([A-Za-z_][A-Za-z0-9_.]{0,200}(?:Error|Exception|Exit|Interrupt))(:\s?(.*))?$", s)
     if e:
         name = e.group(1).rsplit(".", 1)[-1]
         name = name if isinstance(getattr(builtins, name, None), type) else "other_exception"
@@ -216,13 +291,24 @@ def _tail(p: Path) -> str:
         return ""
 
 
-def log_excerpt(p: Path, markers: Optional[list] = None, crash: bool = False) -> list[str]:
+def log_excerpt(p: Path, markers: Optional[list] = None, crash: bool = False,
+                after: Optional[float] = None) -> list[str]:
+    """The newest warning, error and traceback lines of `p`, redacted. With
+    `after`, only lines written after that time (a line without a time
+    belongs to the timed line before it)."""
     markers = _markers() if markers is None else markers
     out = []
     lines = _tail(p).splitlines()
     if lines and not crash:
         lines = lines[1:]                      # the first may be cut mid-line
+    keep = after is None
     for raw in lines:
+        if after is not None:
+            t = _ts_of(raw)
+            if t is not None:
+                keep = t > after
+            if not keep:
+                continue
         r = redact_log_line(raw, markers)
         if r is None and crash and raw.strip():
             r = redact_text(raw.strip(), markers)
@@ -263,13 +349,29 @@ def _off_record() -> bool:
         return True
 
 
-def _recently_off_record() -> bool:
+class _Unknown(Exception):
+    pass
+
+
+def _last_off_record() -> Optional[float]:
+    """When the last off-record session ended (the weekly report's record),
+    or None. Raises _Unknown when that cannot be read."""
     try:
         from agent_friday.services import doctor_weekly
         last = doctor_weekly._state().get("last_off_record_at")
-        return bool(last and time.time() - last < doctor_weekly.OFF_RECORD_SHADOW_S)
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        raise _Unknown() from e
+    return float(last) if isinstance(last, (int, float)) and not isinstance(last, bool) else None
+
+
+def _recently_off_record() -> bool:
+    """Off the record within OFF_RECORD_SHADOW_S, or not known."""
+    try:
+        last = _last_off_record()
+    except _Unknown:
         return True
+    from agent_friday.services import doctor_weekly
+    return bool(last and time.time() - last < doctor_weekly.OFF_RECORD_SHADOW_S)
 
 
 def default_dest() -> Path:
@@ -277,14 +379,26 @@ def default_dest() -> Path:
     return friday_bundle.documents_dir() / FOLDER_NAME
 
 
-def _check_dest(dest: Path) -> Path:
+class CloudFolder(SupportError):
+    """The folder is synced to the cloud: asked first."""
+
+
+def _check_dest(dest: Path, cloud_ok: bool) -> Path:
     dest = Path(dest).expanduser()
+    if not dest.is_absolute():
+        raise SupportError("Name the folder in full (for example D:\\Support).")
     home = _home().resolve()
     try:
         dest.resolve().relative_to(home)
     except ValueError:
-        return dest
-    raise SupportError("Choose a folder outside Friday's own data folder.")
+        pass
+    else:
+        raise SupportError("Choose a folder outside Friday's own data folder.")
+    from agent_friday.services import readable_export
+    if readable_export.cloud_synced(dest) and not cloud_ok:
+        raise CloudFolder("%s is synced to the cloud, so the support bundle would be copied off "
+                          "this PC. Make it there anyway?" % dest)
+    return dest
 
 
 def contents() -> dict:
@@ -301,18 +415,31 @@ def contents() -> dict:
         "stores.json": json.dumps(store_inventory.public(store_inventory.cached(_home())),
                                   indent=1, sort_keys=True).encode("utf-8"),
     }
+    try:
+        last = _last_off_record()
+        known = True
+    except _Unknown:
+        last, known = None, False
     if _recently_off_record():
-        notes.append("Log excerpts are left out: part of the last 30 days was off the record.")
+        notes.append("Log excerpts are left out: part of the last 30 days was off the record"
+                     + ("." if known else ", or that could not be checked."))
     else:
         home = _home()
         parts = []
-        for label, rel, crash in (("friday.log", "friday.log", False),
-                                  ("server_stderr.log", "server_stderr.log", False),
-                                  ("logs/crashes.log", "logs/crashes.log", True)):
-            lines = log_excerpt(home / rel, markers, crash=crash)
+        for label, rel in (("friday.log", "friday.log"), ("server_stderr.log", "server_stderr.log")):
+            lines = log_excerpt(home / rel, markers, after=last)
             parts.append("== %s: %d line(s) ==" % (label, len(lines)))
             parts += lines
             parts.append("")
+        if last is None:
+            lines = log_excerpt(home / "logs" / "crashes.log", markers, crash=True)
+            parts.append("== logs/crashes.log: %d line(s) ==" % len(lines))
+            parts += lines
+        else:
+            # crash lines carry no time of their own, so none from before an
+            # off-record session can be told apart
+            notes.append("Crash lines are left out: they carry no time, and an off-the-record "
+                         "session ended earlier.")
         files["log-excerpts.txt"] = ("\n".join(parts) + "\n").encode("utf-8")
         files["boot-notes.json"] = json.dumps(_boot_notes(markers), indent=1).encode("utf-8")
     readme = [
@@ -326,8 +453,8 @@ def contents() -> dict:
         "- stores.json: every store Friday keeps, with its version, size and place in the data folder.",
         "- log-excerpts.txt: the newest warning, error and crash lines. Each keeps its time, level",
         "  and the part of Friday that wrote it; other words are kept only when they are plain log",
-        "  words, numbers or code names, so names, sentences, paths, addresses and keys read",
-        "  \"~\", \"...\", <path>, <url>, <email> or <withheld>.",
+        "  words, small numbers or code names, so names, sentences, paths, addresses, long numbers",
+        "  and keys read \"~\", \"...\", \"#\", <path>, <url>, <email> or <withheld>.",
         "- boot-notes.json: the start-up guard's newest notes, redacted the same way.",
         "- manifest.json: each file's SHA-256.",
         "",
@@ -337,10 +464,22 @@ def contents() -> dict:
     return {"files": files, "notes": notes, "report_id": rep.get("id")}
 
 
-def make(dest_parent: Optional[Path] = None, *, by: str = "owner") -> dict:
+_MAKE_LOCK = threading.Lock()
+
+
+def make(dest_parent: Optional[Path] = None, *, by: str = "owner", cloud_ok: bool = False) -> dict:
     """Write friday-support-<stamp>.zip into dest_parent (default: Documents,
-    Friday Support). Returns {file, members, notes}."""
-    parent = _check_dest(Path(dest_parent) if dest_parent else default_dest())
+    Friday Support). Returns {file, members, notes}. One at a time."""
+    if not _MAKE_LOCK.acquire(blocking=False):
+        raise SupportError("A support bundle is being made already.")
+    try:
+        return _make(dest_parent, by=by, cloud_ok=cloud_ok)
+    finally:
+        _MAKE_LOCK.release()
+
+
+def _make(dest_parent, *, by: str, cloud_ok: bool) -> dict:
+    parent = _check_dest(Path(dest_parent) if dest_parent else default_dest(), cloud_ok)
     c = contents()
     files = c["files"]
     manifest = {"support_version": SUPPORT_VERSION,
@@ -348,30 +487,35 @@ def make(dest_parent: Optional[Path] = None, *, by: str = "owner") -> dict:
                 "report_id": c["report_id"], "notes": c["notes"],
                 "files": {n: hashlib.sha256(b).hexdigest() for n, b in sorted(files.items())}}
     files["manifest.json"] = json.dumps(manifest, indent=1, sort_keys=True).encode("utf-8")
-    parent.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    out = parent / ("friday-support-%s.zip" % stamp)
-    k = 2
-    while out.exists():
-        out = parent / ("friday-support-%s-%d.zip" % (stamp, k))
-        k += 1
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in sorted(files.items()):
             z.writestr(name, data)
-    tmp = out.with_name(out.name + ".partial")
-    with open(tmp, "xb") as f:
-        f.write(buf.getvalue())
-        f.flush()
-        os.fsync(f.fileno())
-    try:
-        os.link(tmp, out)                     # never replaces a file that appeared meanwhile
-        os.unlink(tmp)
-    except OSError:
-        if out.exists():
-            os.unlink(tmp)
-            raise SupportError("A support bundle with that name appeared meanwhile; try again.")
-        os.replace(tmp, out)
+    data = buf.getvalue()
+    parent.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out = None
+    for k in range(1, 100):
+        cand = parent / ("friday-support-%s%s.zip" % (stamp, "" if k == 1 else "-%d" % k))
+        try:
+            # "x": made only if no file of that name exists, so nothing is overwritten
+            with open(cand, "xb") as f:
+                try:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                except BaseException:
+                    f.close()
+                    cand.unlink(missing_ok=True)
+                    raise
+        except FileExistsError:
+            continue
+        except OSError as e:
+            raise SupportError("The support bundle could not be written there (%s)." % type(e).__name__)
+        out = cand
+        break
+    if out is None:
+        raise SupportError("Too many support bundles were made this second; try again.")
     try:
         from agent_friday.services import action_ledger
         action_ledger.try_append("export", {"event": "support_bundle", "by": str(by)[:40],

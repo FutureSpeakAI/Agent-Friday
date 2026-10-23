@@ -336,9 +336,12 @@ def doctor_support_bundle():
         return jsonify({"status": "error", "code": "press_required",
                         "error": "Make it on Friday's own page, on this PC."}), 403
     from agent_friday.services import support_bundle
+    body = request.get_json(silent=True) or {}
     try:
-        r = support_bundle.make(by="owner:ui")
+        r = support_bundle.make(by="owner:ui", cloud_ok=body.get("cloud_ok") is True)
         return jsonify({"status": "ok", **r})
+    except support_bundle.CloudFolder as e:
+        return jsonify({"status": "error", "code": "cloud_folder", "error": str(e)}), 409
     except support_bundle.SupportError as e:
         return jsonify({"status": "error", "error": str(e)}), 400
     except Exception as e:  # noqa: BLE001
