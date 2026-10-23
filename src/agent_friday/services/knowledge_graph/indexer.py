@@ -396,8 +396,13 @@ def _refs_from_path(key) -> set:
             out.add(("wiki_pages", p.resolve().relative_to(Path(WIKI_DIR).resolve()).as_posix()))
         except Exception:
             pass
-        if p.suffix.lower() == ".json" and "cognitive" in str(p).lower():
-            out.add(("cognitive_keys", p.stem))
+        if p.suffix.lower() == ".json":
+            try:
+                from agent_friday.paths import friday_home
+                p.resolve().relative_to((Path(friday_home()) / "memory").resolve())
+                out.add(("cognitive_keys", p.stem))       # a cognitive memory file
+            except Exception:
+                pass
     except Exception:
         pass
     return out
@@ -970,8 +975,12 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
             e.pop("descriptions", None)
     for rid in list(touched_rels):
         r = relationships.get(rid)
-        if r is not None and _strip(r, rid) and not _sourced(r):
+        if r is None or not _strip(r, rid):
+            continue
+        if not _sourced(r):
             del relationships[rid]
+        elif rid not in refreshed_rels:
+            r["description"] = ""             # as for entities: no longer known
     if dropped:
         say(f"dropped {len(dropped)} node(s) whose only source changed or was removed")
     for key in removed_keys:
