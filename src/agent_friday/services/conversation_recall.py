@@ -77,6 +77,7 @@ def search(query: str, since=None, until=None, limit: int = 8, windows=None,
     prefer = None
     if provider:
         prefer = lambda h: provider in (h.get("sent_to") or [])   # noqa: E731
+    # Compares the index's snippets, not full messages (accepted: the exact-sequence rule keeps false merges rare).
     return recall_dedupe.select(hits, limit, prefer=prefer, path="conversation_search")
 
 

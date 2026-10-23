@@ -89,13 +89,14 @@ def _lines(block):
     return [ln for ln in block.splitlines() if ln.startswith("- [")]
 
 
-# Six ways of saying one thing, oldest first; the last is the newest.
+# Six repeats of one statement, oldest first; the last is the newest. They
+# differ only by case, punctuation, articles and filler words.
 _REPEATS = [
     ("m-dup-1", "2026-05-01T09:00:00", "The mooring fee at Harwich is 400 a year."),
     ("m-dup-2", "2026-05-08T09:00:00", "Mooring fee at Harwich is 400 a year."),
     ("m-dup-3", "2026-05-15T09:00:00", "the mooring fee at harwich is 400 per year"),
     ("m-dup-4", "2026-05-22T09:00:00", "The mooring fee at Harwich is 400 a year!"),
-    ("m-dup-5", "2026-06-01T09:00:00", "Remember: the mooring fee at Harwich is 400 a year."),
+    ("m-dup-5", "2026-06-01T09:00:00", "Actually, the mooring fee at Harwich is really 400 a year."),
     ("m-dup-6", "2026-09-20T09:00:00", "The mooring fee at Harwich is 400 a year."),
 ]
 _DISTINCT = ("m-office", "2026-04-01T09:00:00", "The Harwich harbour office shuts at 5pm on Sundays.")
@@ -189,19 +190,24 @@ def test_numbers_and_negation_make_texts_distinct(rd):
 
 # ── (c) the helper: thresholds, ordering, stability ─────────────────────────
 
-def test_threshold_on_content_word_overlap(rd):
+def test_only_case_punctuation_articles_and_fillers_may_differ(rd):
     a = "alpha bravo charlie delta echo foxtrot golf hotel india"
     b = "alpha bravo charlie delta echo foxtrot golf hotel juliet"          # 8 shared of 10
     assert rd.similarity(a, b) == pytest.approx(0.8)
-    assert rd.is_near_duplicate(a, b)                                       # default 0.8
-    assert not rd.is_near_duplicate(a, b, threshold=0.85)
-    c = "alpha bravo charlie delta echo foxtrot kilo lima mike"             # 6 shared of 12
-    assert not rd.is_near_duplicate(a, c)
-    # stopwords, case and punctuation do not count
-    assert rd.is_near_duplicate("The mooring fee at Harwich is 400.", "mooring fee, harwich: 400")
-    # a restatement with one more word is a duplicate; two short words are not enough
-    assert rd.is_near_duplicate("Wren moored Harwich", "Wren moored Harwich marina")
+    # high word overlap is not enough: one word swapped is a different statement
+    assert not rd.is_near_duplicate(a, b)
+    assert not rd.is_near_duplicate(a, b, threshold=0.1)
+    # articles, case, punctuation and pure fillers do not count
+    assert rd.is_near_duplicate("The mooring fee at Harwich is 400.", "the mooring fee at harwich is 400")
+    assert rd.is_near_duplicate("I really just paid the deposit.", "I paid the deposit")
+    assert rd.is_near_duplicate("Please book a table for 4.", "book the table for 4")
+    # but dropping a preposition or a copula does
+    assert not rd.is_near_duplicate("The mooring fee at Harwich is 400.", "mooring fee, harwich: 400")
+    # a restatement with one more content word is not a duplicate (no containment rule)
+    assert not rd.is_near_duplicate("Wren moored Harwich", "Wren moored Harwich marina")
     assert not rd.is_near_duplicate("Wren Harwich", "Wren Harwich marina")
+    # a filler inside what a negator governs still counts
+    assert not rd.is_near_duplicate("The food was not very good.", "The food was not good.")
     assert not rd.is_near_duplicate("ok", "thanks")
     assert rd.is_near_duplicate("ok", "OK")
 
@@ -214,7 +220,7 @@ def test_a_group_keeps_its_newest_member_at_the_rank_of_its_best(rd):
     items = [
         _it("old", "The mooring fee at Harwich is 400 a year.", "2026-01-01T00:00:00", 0.9),
         _it("other", "The harbour office shuts at 5pm.", "2026-02-01T00:00:00", 0.8),
-        _it("new", "Mooring fee at Harwich: 400 a year.", "2026-09-01T00:00:00", 0.7),
+        _it("new", "mooring fee at Harwich is 400 a year!", "2026-09-01T00:00:00", 0.7),
     ]
     out = rd.select(items, 5)
     assert [x["id"] for x in out] == ["new", "other"]
@@ -416,6 +422,39 @@ _NOT_DUPLICATES = [
     ("Take 5mg of the medicine with food.", "Take 5g of the medicine with food."),
     ("I paid her the deposit yesterday.", "She paid me the deposit yesterday."),
     ("The fee is £400 a year.", "The fee is $400 a year."),
+    # long sentences that differ by one lower-case word (or a preposition pair)
+    ("The biopsy results from the clinic last week showed that the lump in my left breast is benign "
+     "and needs no further treatment.",
+     "The biopsy results from the clinic last week showed that the lump in my left breast is malignant "
+     "and needs no further treatment."),
+    ("The physio said the pain in my left knee comes from the old running injury and needs daily stretching.",
+     "The physio said the pain in my right knee comes from the old running injury and needs daily stretching."),
+    ("The doctor told me to increase the dose of my blood pressure tablets gradually over the next few weeks.",
+     "The doctor told me to decrease the dose of my blood pressure tablets gradually over the next few weeks."),
+    ("I take the thyroid tablet every morning on an empty stomach, at least half an hour before breakfast.",
+     "I take the thyroid tablet every evening on an empty stomach, at least half an hour before breakfast."),
+    ("For the long flight home next month please book me a window seat near the front of the plane.",
+     "For the long flight home next month please book me an aisle seat near the front of the plane."),
+    ("The spare key for the garden shed is in the blue box on the top shelf of the garage.",
+     "The spare key for the garden shed is in the red box on the top shelf of the garage."),
+    ("I lent tom the big ladder and the pressure washer last weekend and he has not given them back.",
+     "I lent jim the big ladder and the pressure washer last weekend and he has not given them back."),
+    ("Last spring we sold the old sailing dinghy to the couple who live next door to my sister.",
+     "Last spring we bought the old sailing dinghy from the couple who live next door to my sister."),
+    ("My parents moved to the small cottage near the coast after my father retired from the railway.",
+     "My parents moved from the small cottage near the coast after my father retired from the railway."),
+    ("The main water stopcock for the whole house is under the kitchen sink behind the cleaning bottles.",
+     "The main water stopcock for the whole house was under the kitchen sink behind the cleaning bottles."),
+    # short pairs: direction, tense, accents, other scripts, lower-case names, possessives
+    ("Transfer 50 pounds to savings.", "Transfer 50 pounds from savings."),
+    ("The boiler is broken.", "The boiler was broken."),
+    ("The parcel goes to Paris on Monday.", "The parcel goes from Paris on Monday."),
+    ("Meeting moved to Thursday.", "Meeting moved from Thursday."),
+    ("My fiancé is a nurse.", "My fiancée is a nurse."),
+    ("我下个月去北京出差", "我下个月去上海出差"),
+    ("Flight to 北京 tomorrow", "Flight to 上海 tomorrow"),
+    ("tom owes me 20 pounds", "jim owes me 20 pounds"),
+    ("Our mooring fee is 400 pounds a year.", "The mooring fee is 400 pounds a year."),
 ]
 
 
@@ -428,8 +467,8 @@ def test_swaps_names_people_days_months_versions_units_and_negations_are_distinc
 
 
 def test_true_rewordings_and_repeats_still_collapse(rd):
-    same = ["Our mooring fee is 400 pounds a year.", "our mooring fee is 400 pounds a year",
-            "The mooring fee is 400 pounds per year."]
+    same = ["The mooring fee is 400 pounds a year.", "the mooring fee is 400 pounds a year",
+            "Mooring fee is 400 pounds per year!", "Actually, the mooring fee is really 400 pounds a year."]
     for a in same:
         for b in same:
             assert rd.is_near_duplicate(a, b), (a, b)
@@ -443,15 +482,19 @@ def test_true_rewordings_and_repeats_still_collapse(rd):
 
 # ── grouping: anchors only, never across speakers, provider preference ──────
 
-def test_near_duplicates_do_not_chain_through_a_group(rd):
+def test_near_duplicates_do_not_chain_through_one_word_changes(rd):
     a = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
-    b = "alpha bravo charlie delta echo foxtrot golf hotel india kilo"       # a ~ b
-    c = "alpha bravo charlie delta echo foxtrot golf hotel lima kilo"        # b ~ c, not a
-    d = "alpha bravo charlie delta echo foxtrot golf mike lima kilo"         # c ~ d, not a or b
-    assert rd.is_near_duplicate(a, b) and rd.is_near_duplicate(b, c) and rd.is_near_duplicate(c, d)
-    assert not rd.is_near_duplicate(a, c) and not rd.is_near_duplicate(a, d)
+    b = "alpha bravo charlie delta echo foxtrot golf hotel india kilo"       # one word from a
+    c = "alpha bravo charlie delta echo foxtrot golf hotel lima kilo"        # one word from b
+    d = "alpha bravo charlie delta echo foxtrot golf mike lima kilo"         # one word from c
+    for x, y in ((a, b), (b, c), (c, d), (a, c), (a, d)):
+        assert not rd.is_near_duplicate(x, y), (x, y)
     out = rd.select([{"text": t} for t in (a, b, c, d)], 5, keep="first", ident=lambda r: None)
-    assert [x["text"] for x in out] == [a, c], "a chain A~B~C~D collapsed into one item"
+    assert [x["text"] for x in out] == [a, b, c, d], "a chain of one-word changes collapsed"
+    # filler-only variants of one statement are one group, whatever the order
+    v = ["alpha bravo charlie", "really alpha bravo charlie", "alpha just bravo charlie also"]
+    out = rd.select([{"text": t} for t in v], 5, keep="first", ident=lambda r: None)
+    assert [x["text"] for x in out] == [v[0]]
 
 
 def test_the_user_and_friday_saying_the_same_words_are_never_one_item(rd):
@@ -571,3 +614,54 @@ def test_library_counts_only_suppressions_within_its_slots(monkeypatch):
                4: cand(4, 4, "Moorings must display the licence number on the bow.", 0.6)})
     assert [e["passage_id"] for e in ls.build_evidence(ctx, 2, 12000)] == [1, 4]
     assert rd.suppressed_counts() == {"library": 1}
+
+
+# ── robustness: odd ids, limits, timestamps, scores and long texts ──────────
+
+def test_words_in_any_script_are_words(rd):
+    assert rd.signature("Zoë paid the fiancée").words == ("zoë", "paid", "fiancée")
+    assert rd.signature("Flight to 北京").words == ("flight", "to", "北京")
+    # composed and decomposed accents are the same word
+    assert rd.is_near_duplicate("My fiancé is a nurse.", "My fiancé is a nurse.")
+
+
+def test_unhashable_ids_count_as_no_id(rd):
+    items = [{"id": ["x"], "text": "Wren is moored at Harwich."},
+             {"id": {"k": 1}, "text": "The gate code changed in June."},
+             {"id": ["x"], "text": "The gate code changed in June."}]
+    out = rd.select(items, 5)
+    assert [x["text"] for x in out] == ["Wren is moored at Harwich.", "The gate code changed in June."]
+
+
+def test_limit_none_means_no_limit(rd):
+    items = [_it(f"i{k}", f"Distinct statement number {k}.") for k in range(7)]
+    items.append(_it("dup", "Distinct statement number 3!"))
+    out = rd.select(items, None)
+    assert len(out) == 7
+
+
+def test_nan_and_inf_timestamps_and_scores_never_win(rd):
+    t = "The mooring fee at Harwich is 400 a year."
+    for bad in (float("nan"), float("inf"), "nan"):
+        out = rd.select([_it("bad", t, bad, 0.9), _it("dated", t, "2026-05-01", 0.1)], 3)
+        assert [x["id"] for x in out] == ["dated"], bad
+    for bad in (float("nan"), float("inf")):
+        out = rd.select([_it("bad", t, "2026-05-01", bad), _it("scored", t, "2026-05-01", 0.1)], 3)
+        assert [x["id"] for x in out] == ["scored"], bad
+    # a custom `when` returning NaN is treated as no time
+    out = rd.select([_it("a", t), _it("b", t)], 3, when=lambda it: float("nan") if it["id"] == "a" else 5.0)
+    assert [x["id"] for x in out] == ["b"]
+
+
+def test_long_texts_are_compared_exactly(rd):
+    long = " ".join(["alpha bravo"] * 1000)                       # 2,000 content words
+    assert len(rd.signature(long).words) > rd.MAX_FUZZY_WORDS
+    # past the bound only an exact content-word sequence counts, fillers included
+    assert rd.is_near_duplicate(long, long.upper() + ".")
+    assert not rd.is_near_duplicate(long, long + " really")
+    assert not rd.is_near_duplicate(long, long.replace("bravo", "charlie", 1))
+    # under the bound the same filler would not separate them
+    short = " ".join(["alpha bravo"] * 10)
+    assert rd.is_near_duplicate(short, short + " really")
+    out = rd.select([{"text": long}, {"text": long + " really"}], 5, ident=lambda r: None)
+    assert len(out) == 2

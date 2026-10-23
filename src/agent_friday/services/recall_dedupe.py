@@ -28,14 +28,17 @@ these hold:
   * where both name a person by pronoun, the pronouns are the same, in order
     ("I paid her" / "she paid me" are distinct; "Our fee" / "The fee" are
     not told apart);
-  * their content-word SEQUENCES match: the content-word sets overlap by
-    Jaccard >= `threshold` (0.8) and the sequences by difflib ratio >=
-    `SEQ_RATIO` (0.85), so word order counts; or the shorter text's content
-    words (at least 3) appear, in order, within the longer one's, with
-    Jaccard >= 0.6 (a restatement with a word or two more).
+  * their content-word SEQUENCES are identical once pure filler words
+    (really, just, also, actually...) are left out. Any other difference -
+    one word swapped (benign / malignant, left / right, to / from, is / was,
+    tom / jim), added or dropped - makes them distinct. There is no
+    similarity score: "almost the same words" is not "the same thing".
+    Texts of more than `MAX_FUZZY_WORDS` content words must match exactly,
+    fillers included.
 
-Content words are lower-cased words minus a small stoplist of articles,
-prepositions and copulas; pronouns, negators and numbers are always kept.
+Content words are lower-cased words (any script: fiancé, Zoë, 北京) minus a
+small stoplist of articles; prepositions, copulas, pronouns, possessives,
+negators and numbers are always kept.
 
 `select` groups items against each group's FIRST (anchor) member only, so
 A~B, B~C, C~D never chain A and D together. Items from different speakers
@@ -53,22 +56,29 @@ shown are not counted.
 """
 from __future__ import annotations
 
-import difflib
+import math
 import re
 import threading
+import unicodedata
 from collections import namedtuple
 from datetime import datetime
 from typing import Any, Callable, Iterable, List, Optional
 
-THRESHOLD = 0.8
-SEQ_RATIO = 0.85
-CONTAIN_JACCARD = 0.6
+THRESHOLD = 0.8          # kept for callers; the rule is exact (see is_near_duplicate)
+MAX_FUZZY_WORDS = 300    # longer texts: exact content-word sequence only
 OVERFETCH_FACTOR = 3
 OVERFETCH_MAX_EXTRA = 20
 
-_STOP = frozenset("""a an the of to in on at by for from with as and or so
-is are was were be been being am it its this that these those there here
-per about into onto over than then just also very really please ok okay""".split())
+# Ignored everywhere: articles only (and "per", as in "400 per year" / "400 a
+# year"). Prepositions (to/from/in/on/by...), copulas and tense (is/was/been),
+# conjunctions (and/or), deictics (this/that/here/there) and possessives all
+# change what a sentence says, so they are content words.
+_STOP = frozenset("a an the per".split())
+
+# Pure fillers: two texts may differ by adding or dropping these and nothing
+# else. Never a word that changes who, what, when, where or whether.
+_FILLER = frozenset("""really just also please actually basically very so ok
+okay""".split())
 
 # Negators. not / no / n't / cannot all read as "not"; the rest keep their own
 # word. Every one is a distinguishing token.
@@ -91,7 +101,7 @@ _PEOPLE = frozenset("""wife husband son daughter mum mom mother mummy mommy dad
 father daddy brother sister partner spouse friend boss colleague coworker
 tenant landlord landlady child kid baby parent grandma grandpa granny grandad
 grandmother grandfather grandson granddaughter aunt uncle cousin nephew niece
-girlfriend boyfriend fiance fiancee neighbour neighbor manager client customer
+girlfriend boyfriend fiance fiancee fiancé fiancée neighbour neighbor manager client customer
 doctor dentist lawyer solicitor accountant teacher stepson stepdaughter
 stepmother stepfather""".split())
 _PEOPLE = _PEOPLE | frozenset(w + "s" for w in _PEOPLE) | frozenset(
@@ -108,7 +118,9 @@ _UNIT_ALIAS = {"percent": "%", "pct": "%", "quid": "pounds", "pound": "pounds",
                "euro": "euros", "eur": "euros"}
 _CURRENCY = {"£": "pounds", "$": "dollars", "€": "euros", "¥": "yen"}
 
-_TOKEN = re.compile(r"[£$€¥%]|[vV]\d+(?:\.\d+)+|\d+(?:[.,]\d+)*|[A-Za-z]+(?:'[A-Za-z]+)*")
+# Words in any script (letters only: [^\W\d_]), so fiancé / fiancée, Zoë and
+# 北京 / 上海 are words of their own, not dropped or split.
+_TOKEN = re.compile(r"[£$€¥%]|[vV]\d+(?:\.\d+)+|\d+(?:[.,]\d+)*|[^\W\d_]+(?:'[^\W\d_]+)*")
 _CONTRACTION = {"m": "am", "re": "are", "ve": "have", "ll": "will", "d": "would"}
 _NT_BASE = {"wo": "will", "ca": "can", "sha": "shall", "ai": "is"}
 _BOUNDARY_SKIP = " \t\"'“”‘’([{*_"
@@ -153,7 +165,7 @@ def _sentence_start(text: str, start: int) -> bool:
 
 def signature(text: str) -> Signature:
     """The comparable form of a text (see the module docstring)."""
-    src = str(text or "").replace("’", "'").replace("‘", "'")
+    src = unicodedata.normalize("NFC", str(text or "")).replace("’", "'").replace("‘", "'")
     toks = [(m.group(0), m.start()) for m in _TOKEN.finditer(src)]
     words: List[str] = []
     caps = set()
@@ -243,11 +255,6 @@ def _pronouns(s: Signature) -> list:
     return [w for w in s.words if w in _PRONOUNS]
 
 
-def _in_order(short, long) -> bool:
-    it = iter(long)
-    return all(any(w == x for x in it) for w in short)
-
-
 def similarity(a, b) -> float:
     """Jaccard of the content-word sets (texts or signatures)."""
     wa, wb = set(_sig(a).words), set(_sig(b).words)
@@ -257,56 +264,63 @@ def similarity(a, b) -> float:
 
 
 def is_near_duplicate(a, b, threshold: float = THRESHOLD) -> bool:
-    """Do two texts (or signatures) say the same thing? Any doubt -> False."""
+    """Do two texts (or signatures) say the same thing? Any doubt -> False.
+
+    Same content words in the same order, allowing only pure fillers
+    (`_FILLER`) to be added or dropped; texts longer than `MAX_FUZZY_WORDS`
+    content words must match exactly. Linear time, no similarity score;
+    `threshold` is accepted for callers and not used."""
     sa, sb = _sig(a), _sig(b)
-    if not sa.words or not sb.words:
-        if sa.words or sb.words:
+    ca = tuple(w for w in sa.words if w not in _FILLER)
+    cb = tuple(w for w in sb.words if w not in _FILLER)
+    if not ca or not cb:
+        if ca or cb:
             return False
-        # Nothing but stopwords on both sides: equal only if the raw text is.
+        # Nothing but articles / fillers on both sides: equal only if the raw text is.
         return bool(sa.raw) and sa.raw == sb.raw
+    if len(sa.words) > MAX_FUZZY_WORDS or len(sb.words) > MAX_FUZZY_WORDS:
+        if sa.words != sb.words:
+            return False
+    elif ca != cb:
+        return False
+    # Second guard (the sequences already agree): distinguishing tokens,
+    # including what each negator governs, and pronouns.
     entities = sa.caps | sb.caps
     if _distinguishing(sa, entities) != _distinguishing(sb, entities):
         return False
     pa, pb = _pronouns(sa), _pronouns(sb)
     if pa and pb and pa != pb:
         return False
-    wa, wb = set(sa.words), set(sb.words)
-    jac = len(wa & wb) / len(wa | wb)
-    if jac < CONTAIN_JACCARD:
-        return False
-    if jac >= threshold:
-        ratio = difflib.SequenceMatcher(None, sa.words, sb.words, autojunk=False).ratio()
-        if ratio >= SEQ_RATIO:
-            return True
-    short, long = (sa.words, sb.words) if len(sa.words) <= len(sb.words) else (sb.words, sa.words)
-    return len(short) >= 3 and _in_order(short, long)
+    return True
+
+
+def _finite(value) -> Optional[float]:
+    """A finite float, else None (NaN / inf never sort as newest or best)."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _ts(value) -> Optional[float]:
     if value is None or value == "":
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return _finite(value)
     s = str(value).strip()
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        pass
-    try:
-        return datetime.strptime(s[:16], "%Y-%m-%d %H:%M").timestamp()
-    except ValueError:
-        pass
-    try:
-        return datetime.strptime(s[:10], "%Y-%m-%d").timestamp()
-    except ValueError:
-        return None
+    for parse in (lambda: datetime.fromisoformat(s.replace("Z", "+00:00")),
+                  lambda: datetime.strptime(s[:16], "%Y-%m-%d %H:%M"),
+                  lambda: datetime.strptime(s[:10], "%Y-%m-%d")):
+        try:
+            return _finite(parse().timestamp())
+        except (ValueError, OverflowError, OSError):
+            continue
+    return None
 
 
 def _num(value) -> Optional[float]:
-    try:
-        return None if value is None else float(value)
-    except (TypeError, ValueError):
-        return None
+    return None if value is None else _finite(value)
 
 
 def _default_text(item) -> str:
@@ -377,14 +391,22 @@ def select(items: Iterable[Any], limit: int, *, threshold: float = THRESHOLD,
     with keep="current" the not-superseded, preferred (`prefer`), newest,
     best-scored, best-ranked one; with keep="first" the first preferred one,
     else the best-ranked (for sources with no "said when"). Groups keep the
-    rank of their anchor. Stable: equal inputs give equal outputs."""
-    limit = max(0, int(limit))
+    rank of their anchor. Stable: equal inputs give equal outputs.
+    `limit=None` means no limit; an unhashable id counts as no id."""
+    try:
+        lim: Optional[int] = None if limit is None else max(0, int(limit))
+    except (TypeError, ValueError, OverflowError):
+        lim = None
     seen_ids = set()
     groups: List[dict] = []          # {"anchor": sig, "part": key, "members": [(rank, item)]}
     n = 0
     for rank, it in enumerate(items):
         n = rank + 1
         iid = ident(it)
+        try:
+            hash(iid)
+        except TypeError:
+            iid = None
         if iid is not None and iid != "":
             if iid in seen_ids:
                 continue
@@ -413,7 +435,7 @@ def select(items: Iterable[Any], limit: int, *, threshold: float = THRESHOLD,
 
         def k(m):
             r, it = m
-            t, s = when(it), score(it)
+            t, s = _finite(when(it)), _finite(score(it))
             return (1 if superseded(it) else 0,
                     _pref(it),
                     -(t if t is not None else float("-inf")),
@@ -421,11 +443,13 @@ def select(items: Iterable[Any], limit: int, *, threshold: float = THRESHOLD,
                     r)
         return sorted(members, key=k)[0]
 
-    chosen = [_pick(g["members"]) for g in groups][:limit]
+    if lim is None:
+        lim = n
+    chosen = [_pick(g["members"]) for g in groups][:lim]
     if path:
         shown = {r for r, _ in chosen}
         # Only what would have filled a slot with no suppression is counted.
-        note_suppressed(path, sum(1 for r in range(min(limit, n)) if r not in shown))
+        note_suppressed(path, sum(1 for r in range(min(lim, n)) if r not in shown))
     return [it for _, it in chosen]
 
 
