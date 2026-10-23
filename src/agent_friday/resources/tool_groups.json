@@ -370,6 +370,9 @@
   "local_work": [
    "settings"
   ],
+  "draft_goal": [
+   "workflows"
+  ],
   "make_podcast": [
    "media",
    "news"

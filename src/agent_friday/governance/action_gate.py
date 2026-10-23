@@ -248,6 +248,9 @@ INTERNAL_TOOLS = frozenset({
     # the local models are working on and takes a waiting job out of the line:
     # Friday's own queue, nothing reaches anyone else.
     "queue_status", "local_work",
+    # A goal draft that waits in System > Goals for the owner's confirming
+    # click (services/goal_tools). It creates and starts nothing.
+    "draft_goal",
     # What Laya learned from the owner's own corrections (services/laya_learning_tools):
     # a summary, and forget / reset / roll back / wipe of her own personal layer. It runs
     # only on the owner's own words in the turn, changes nothing outside Friday's learning
