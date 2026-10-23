@@ -2797,6 +2797,8 @@ def _generate_session_summary(date_str, force=False):
         # Build a compact transcript (oldest-first; get_session already sorts).
         lines = []
         for t in turns:
+            if t.get("superseded"):
+                continue                 # history, not evidence (§34.9-4)
             role = "Friday" if t.get("role") == "friday" else "User"
             txt = " ".join((t.get("text") or "").split())
             if txt:
@@ -2965,10 +2967,15 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         if not kept:
             return live_block
         lines = [
-            "These are real excerpts from earlier conversations with this user. "
-            "Use them for continuity. When you rely on one to make a factual "
-            "claim, you may cite it as [conversation:DATE/\"short quote\"].",
+            "These are real excerpts from earlier conversations with this user, "
+            "newest first. Use them for continuity. When two disagree, the newer "
+            "one is the current state. When you rely on one to make a factual "
+            "claim, cite it as [conversation:DATE ref] with the date and ref shown "
+            "on its line.",
         ]
+        # Newest first (§34.9-3): what was said last is what is true now, and
+        # if the block is cut for length the oldest lines are the ones dropped.
+        kept.sort(key=lambda h: str(h.get("timestamp") or h.get("date") or ""), reverse=True)
         used = 0
         recalled = []
         for h in kept:
@@ -2977,7 +2984,10 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             snippet = " ".join((h.get("text") or "").split())
             if len(snippet) > 320:
                 snippet = snippet[:317] + "..."
-            entry = f"- [{date}] {role}: {snippet}"
+            # The source (§34.9-2): the stored turn's id, so a claim made from
+            # memory can be traced back to the message it came from.
+            ref = str(h.get("id") or "")[:12]
+            entry = f"- [{date}{' ref ' + ref if ref else ''}] {role}: {snippet}"
             if used + len(entry) > max_chars:
                 break
             lines.append(entry)
