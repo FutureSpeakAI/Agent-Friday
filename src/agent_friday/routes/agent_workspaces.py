@@ -53,7 +53,9 @@ def _body(keys):
         raise UserFacingValueError("JSON body required.", status=415)
     if request.content_length is not None and request.content_length > _MAX_BODY:
         raise UserFacingValueError("This workspace request is too large.", status=413)
-    raw = request.stream.read(_MAX_BODY + 1)
+    # get_data, not request.stream: a body the idempotency check already read (core) is
+    # cached there, while the raw stream would be empty. MAX_CONTENT_LENGTH caps the read.
+    raw = request.get_data(cache=True)
     if len(raw) > _MAX_BODY:
         raise UserFacingValueError("This workspace request is too large.", status=413)
     try:

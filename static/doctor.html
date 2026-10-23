@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Friday™ Doctor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { background:#04070e; color:#dfe7ef; font:14px/1.5 system-ui, sans-serif; margin:0; padding:24px; }
+  h1 { font-size:20px; color:#00d4ff; margin:0 0 4px; }
+  p.lead { color:#9aa8b8; margin:0 0 18px; max-width:760px; }
+  section { border:1px solid rgba(0,212,255,0.2); border-radius:8px; padding:14px 16px; margin:0 0 16px; max-width:900px; }
+  h2 { font-size:15px; margin:0 0 8px; }
+  button { background:rgba(0,212,255,0.12); color:#00d4ff; border:1px solid rgba(0,212,255,0.45); border-radius:6px; padding:6px 12px; font:inherit; cursor:pointer; margin-right:8px; }
+  button:focus-visible, a:focus-visible { outline:2px solid #fbbf24; outline-offset:2px; }
+  table { border-collapse:collapse; width:100%; font:12px/1.4 'JetBrains Mono', monospace; }
+  td, th { text-align:left; padding:3px 8px; border-bottom:1px solid rgba(255,255,255,0.06); }
+  .healthy { color:#3effa1 } .degraded, .unverified { color:#fbbf24 } .broken, .misconfigured { color:#f87171 }
+  .unavailable_by_configuration, .unavailable_by_hardware, .blocked_by_policy, .repairing { color:#9aa8b8 }
+  #caps h3 { font-size:14px; margin:12px 0 4px; } #caps ul { margin:0; padding-left:20px; }
+  .blocked_by_policy, .unavailable_by_configuration, .unavailable_by_hardware { color:#9aa8b8 }
+  pre { white-space:pre-wrap; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; font:12px/1.4 'JetBrains Mono', monospace; max-height:420px; overflow:auto; }
+  a { color:#00d4ff; }
+  .safe { border-color:rgba(251,191,36,0.5); }
+  .meter { margin-left:8px; font-size:12px; } .meter.s0, .meter.s1 { color:#f87171 } .meter.s2 { color:#fbbf24 } .meter.s3, .meter.s4 { color:#3effa1 }
+  .muted { color:#9aa8b8; font-size:12px; }
+  input, select { background:#0b1220; color:#dfe7ef; border:1px solid rgba(0,212,255,0.3); border-radius:5px; padding:3px 6px; font:inherit; }
+</style>
+</head>
+<body>
+<main>
+<h1>Doctor</h1>
+<p class="lead">A check of Friday on this PC: versions, the state of each part, error signatures, settings drift and speed. It contains no conversations, memories, file names, addresses or vault content. Friday never sends it anywhere. To share it, save the file and attach it yourself.</p>
+
+<section id="safe" aria-labelledby="safe-h">
+  <h2 id="safe-h">Safe mode</h2>
+  <p id="safe-state" role="status">Checking...</p>
+  <button id="safe-on" type="button">Start in safe mode next time</button>
+  <button id="safe-off" type="button">Leave safe mode at the next start</button>
+  <p id="safe-note" role="status"></p>
+</section>
+
+<section id="capabilities" aria-labelledby="caps-h">
+  <h2 id="caps-h">What Friday can do right now</h2>
+  <p>Read live. <strong>Off</strong> means a setting, a choice of yours or this PC keeps something off: nothing is wrong. <strong>Needs attention</strong> means something is wrong, with what to do.</p>
+  <div id="caps" role="status">Checking...</div>
+</section>
+<section id="restore" aria-labelledby="restore-h" hidden>
+  <h2 id="restore-h">After a restore</h2>
+  <p id="restore-why" role="status"></p>
+  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC.</p>
+  <button id="resume" type="button">Resume outward actions</button>
+  <p id="restore-note" role="status"></p>
+</section>
+
+<section aria-labelledby="bundle-h">
+  <h2 id="bundle-h">Backup: Friday Bundle</h2>
+  <p>One encrypted file with your memory, vault, settings, skills, workspaces, receipts and conversations. Service sign-ins are not included; you reconnect them after a restore. It is saved in Documents, Friday Bundles. Without the passphrase it cannot be opened, by anyone.</p>
+  <label>Passphrase (four or five unrelated words work well) <input id="bp1" type="password" autocomplete="new-password"></label>
+  <span class="meter" id="bp1-meter" role="status" aria-live="polite"></span><br>
+  <label>Type it again <input id="bp2" type="password" autocomplete="new-password"></label><br>
+  <button id="make" type="button">Make a bundle</button>
+  <p id="bundle-note" role="status"></p>
+  <p>To restore on another PC: install Friday, do not set it up, then run <code>friday restore &lt;file&gt;</code>.</p>
+</section>
+
+<section id="schedule" aria-labelledby="sched-h">
+  <h2 id="sched-h">Scheduled bundles</h2>
+  <div id="first-backup" hidden>
+    <p id="first-backup-text"><strong>No backup is set up yet.</strong> Everything Friday knows is in one folder on this PC. Choose a folder below (another drive or a network share is best), a passphrase, and turn scheduled bundles on.</p>
+    <button id="fb-later" type="button">Not now</button>
+    <button id="fb-never" type="button">Don't ask again</button>
+  </div>
+  <p>Friday can make a bundle every day or every week into a folder you choose (this PC or a network share), check each one after it is written, keep the newest few, and now and then rehearse a restore from the newest one without changing anything. The passphrase for scheduled bundles, with the folder and how many to keep, is kept in this account's credential store (Windows Credential Manager) so they can be made while you are away: anyone who can open this account can open them. On a system without a credential store, scheduled bundles cannot be turned on.</p>
+  <p id="sched-state" role="status">Off.</p>
+  <label>Folder <input id="sf" size="48" placeholder="D:\Backups\Friday or \\server\share\Friday"></label><br>
+  <label>How often <select id="se"><option value="daily">every day</option><option value="weekly" selected>every week</option></select></label>
+  <label>Keep the newest <input id="sk" type="number" min="1" max="60" value="7" size="3"></label>
+  <label>Rehearse a restore every <input id="sr" type="number" min="1" max="365" value="30" size="3"> days</label><br>
+  <label>Passphrase for scheduled bundles <input id="sp1" type="password" autocomplete="new-password"></label>
+  <span class="meter" id="sp1-meter" role="status" aria-live="polite"></span><br>
+  <label>Type it again <input id="sp2" type="password" autocomplete="new-password"></label>
+  <span class="muted">(leave both empty to keep the one already set)</span><br>
+  <button id="sched-on" type="button">Turn on or save</button>
+  <button id="sched-off" type="button">Turn off</button>
+  <button id="sched-run" type="button">Make one now</button>
+  <button id="sched-rehearse" type="button">Rehearse a restore now</button>
+  <p id="sched-note" role="status"></p>
+</section>
+
+<section id="authority" aria-labelledby="auth-h">
+  <h2 id="auth-h">Revoke all action authority</h2>
+  <p>Take back everything Friday may do on your behalf, at once: every waiting approval is withdrawn, every standing permission (pre-approved sends, file and folder grants, desktop control, websites she may act on) is taken back, scheduled jobs are paused and remote channels stopped. Until you restore it, nothing leaves this PC and nothing is read at your connected services. Restoring lifts the hold only; you give permissions back one by one.</p>
+  <p id="auth-state" role="status"></p>
+  <button id="auth-revoke" type="button">Revoke all action authority</button>
+  <button id="auth-restore" type="button" hidden>Restore action authority</button>
+  <p id="auth-note" role="status"></p>
+</section>
+
+<section id="weekly" aria-labelledby="weekly-h">
+  <h2 id="weekly-h">Weekly report to FutureSpeak</h2>
+  <p>Nothing about Friday leaves this PC by itself. If you like, Friday asks once a week whether to email this report to FutureSpeak from your own account. You see exactly what would be sent, and you decide each time.</p>
+  <p class="muted" id="weekly-promise"></p>
+  <p id="weekly-state" role="status"></p>
+  <div id="weekly-ask" hidden>
+    <button id="w-yes" type="button">Yes, ask me weekly</button>
+    <button id="w-notnow" type="button">Not now</button>
+    <button id="w-never" type="button">Never ask again</button>
+    <label id="w-local-wrap" hidden><input type="checkbox" id="w-local"> Also while Friday is in local-only mode</label>
+  </div>
+  <div id="weekly-card" hidden>
+    <p>This is the exact text that would be sent to <span id="w-to"></span>:</p>
+    <pre id="w-text"></pre>
+    <button id="w-send" type="button">Send</button>
+    <button id="w-skip" type="button">Skip this week</button>
+    <button id="w-stop" type="button">Stop asking</button>
+  </div>
+  <p id="weekly-note" role="status"></p>
+</section>
+
+<section aria-labelledby="rep-h">
+  <h2 id="rep-h">Report</h2>
+  <button id="run" type="button">Run the checks</button>
+  <span id="files"></span>
+  <div id="out" role="region" aria-live="polite"></div>
+</section>
+
+<section aria-labelledby="hist-h">
+  <h2 id="hist-h">Earlier reports</h2>
+  <ul id="hist"></ul>
+</section>
+</main>
+<script>
+(function () {
+  'use strict';
+  const tok = window.__FRIDAY_API_TOKEN || '';
+  // A press counts only with this launch's desk key, which the loopback door
+  // hands to Friday's own pages on this PC (services/desk_press).
+  let deskKey = '';
+  function refreshDesk() {
+    return fetch('/api/desk/where', { cache: 'no-store', headers: { 'X-Friday-Token': tok } })
+      .then(r => r.ok ? r.json() : null).then(w => {
+        const port = w && Number(w.port);
+        if (!port || port < 1 || port > 65535 || Math.floor(port) !== port) return false;
+        return fetch('http://127.0.0.1:' + port + '/desk-key', { cache: 'no-store', credentials: 'omit', mode: 'cors' })
+          .then(r => r.ok ? r.json() : null).then(d => {
+            if (d && typeof d.key === 'string' && d.key) { deskKey = d.key; return true; }
+            return false;
+          });
+      }).catch(() => false);
+  }
+  const once = (url, opts) => fetch(url, Object.assign({}, opts || {}, {
+    headers: Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' },
+                           deskKey ? { 'X-Friday-Desk': deskKey } : {}, (opts || {}).headers || {})
+  })).then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })));
+  // A key from an earlier launch is refused with desk_proof_required: fetch the
+  // current one and press once more.
+  const api = (url, opts) => once(url, opts).then(res =>
+    (res.status === 403 && res.d && res.d.code === 'desk_proof_required')
+      ? refreshDesk().then(ok => ok ? once(url, opts) : res) : res);
+  refreshDesk();
+  const $ = id => document.getElementById(id);
+  const text = (el, s) => { el.textContent = s; };
+
+  function safeState() {
+    api('/api/safe-mode').then(({ d }) => {
+      const now = d.active ? 'This run is in safe mode (' + (d.why || '') + '): extensions and the cloud are off, schedules are paused, outward actions are held.'
+                           : 'This run is a normal start.';
+      const next = d.next_start_safe ? ' The next start will be in safe mode.' : ' The next start will be normal.';
+      text($('safe-state'), now + next);
+      $('safe').className = d.active ? 'safe' : '';
+    });
+  }
+  function setNext(on) {
+    api('/api/safe-mode', { method: 'POST', body: JSON.stringify({ next_start: on }) }).then(({ ok, d }) => {
+      text($('safe-note'), ok ? (d.restart_needed ? 'Saved. Restart Friday for it to take effect.' : 'Saved.') : (d.error || 'Not saved.'));
+      safeState();
+    });
+  }
+  // The nine health states (services/doctor.STATES), in words, and what each
+  // means for the owner: what is off on purpose never reads as a failure.
+  const WORDS = { healthy: 'working', degraded: 'partly working', unavailable_by_configuration: 'off (a setting or a choice)',
+                  unavailable_by_hardware: 'not available on this PC', misconfigured: 'set up wrongly',
+                  blocked_by_policy: 'off by a rule you set', broken: 'not working', repairing: 'being repaired',
+                  unverified: 'not checked yet' };
+  const GROUP = { healthy: 'working', unavailable_by_configuration: 'off', unavailable_by_hardware: 'off',
+                  blocked_by_policy: 'off', degraded: 'attention', misconfigured: 'attention', broken: 'attention',
+                  unverified: 'pending', repairing: 'pending' };
+  const HEADS = { attention: 'Needs attention', working: 'Working', off: 'Off, and nothing is wrong', pending: 'Not checked yet' };
+  const MEANING = { working: 'fine', off: 'off on purpose', attention: 'needs attention', pending: 'not checked yet' };
+  function caps() {
+    api('/api/capabilities/state').then(({ ok, d }) => {
+      const box = $('caps'); box.textContent = '';
+      if (!ok) { box.textContent = 'Could not be read: ' + (d.error || 'unknown'); return; }
+      ['attention', 'working', 'off', 'pending'].forEach(g => {
+        const items = (d.capabilities || []).filter(c => (HEADS[c.group] ? c.group : (GROUP[c.health] || 'pending')) === g);
+        if (!items.length) return;
+        const h = document.createElement('h3'); h.textContent = HEADS[g]; box.appendChild(h);
+        const ul = document.createElement('ul');
+        items.forEach(c => {
+          const li = document.createElement('li');
+          const st = document.createElement('span'); st.className = String(c.health || '');
+          st.textContent = WORDS[c.health] || String(c.health || '');
+          li.appendChild(document.createTextNode(String(c.label || c.key) + ': '));
+          li.appendChild(st);
+          if (c.health_why) li.appendChild(document.createTextNode(' — ' + String(c.health_why)));
+          ul.appendChild(li);
+        });
+        box.appendChild(ul);
+      });
+    });
+  }
+  function row(c) {
+    const tr = document.createElement('tr');
+    [c.id, c.domain, c.state, MEANING[GROUP[c.state]] || '', c.code].forEach((v, i) => {
+      const td = document.createElement('td'); td.textContent = v == null ? '' : String(v);
+      if (i === 2) td.className = String(v);
+      tr.appendChild(td);
+    });
+    return tr;
+  }
+  function show(rep, txt) {
+    const out = $('out'); out.textContent = '';
+    const t = document.createElement('table');
+    const head = document.createElement('tr');
+    ['check', 'domain', 'state', 'meaning', 'code'].forEach(h => { const th = document.createElement('th'); th.textContent = h; head.appendChild(th); });
+    t.appendChild(head);
+    (rep.checks || []).forEach(c => t.appendChild(row(c)));
+    out.appendChild(t);
+    const pre = document.createElement('pre'); pre.textContent = txt || ''; out.appendChild(pre);
+    const f = $('files'); f.textContent = '';
+    ['txt', 'json'].forEach(k => {
+      const a = document.createElement('a'); a.href = '/api/doctor/reports/' + rep.id + '.' + k;
+      a.textContent = 'Save as .' + k; a.setAttribute('download', rep.id + '.' + k);
+      f.appendChild(a); f.appendChild(document.createTextNode('  '));
+    });
+  }
+  function history() {
+    api('/api/doctor/reports').then(({ d }) => {
+      const ul = $('hist'); ul.textContent = '';
+      (d.reports || []).forEach(r => {
+        const li = document.createElement('li');
+        const a = document.createElement('a'); a.href = '/api/doctor/reports/' + r.id + '.txt'; a.textContent = r.generated_at;
+        li.appendChild(a);
+        li.appendChild(document.createTextNode(' ' + Object.entries(r.summary || {}).map(([k, v]) => v + ' ' + k).join(', ')));
+        ul.appendChild(li);
+      });
+    });
+  }
+  $('run').addEventListener('click', () => {
+    text($('out'), 'Running...');
+    api('/api/doctor/report', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+      if (!ok) { text($('out'), d.error || 'The report could not be made.'); return; }
+      show(d.report, d.text); history();
+    });
+  });
+  function restoreState() {
+    api('/api/restore/state').then(({ d }) => {
+      $('restore').hidden = !d.held;
+      text($('restore-why'), d.why || '');
+    });
+  }
+  $('resume').addEventListener('click', () => {
+    api('/api/restore/resume', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+      text($('restore-note'), ok ? 'Friday may act again on this PC.' : (d.error || 'Not resumed.'));
+      restoreState();
+    });
+  });
+  function bundlePoll() {
+    api('/api/bundle/status').then(({ d }) => {
+      if (d.state === 'running') { text($('bundle-note'), 'Making the bundle...'); setTimeout(bundlePoll, 2000); return; }
+      if (d.state === 'done') text($('bundle-note'), 'Made and verified: ' + d.file + ' (' + d.files + ' files).');
+      else if (d.state === 'failed') text($('bundle-note'), d.error || 'The bundle could not be made.');
+    });
+  }
+  $('make').addEventListener('click', () => {
+    const a = $('bp1').value, b = $('bp2').value;
+    if (a !== b) { text($('bundle-note'), 'The two passphrases differ.'); return; }
+    api('/api/bundle/create', { method: 'POST', body: JSON.stringify({ passphrase: a }) }).then(({ ok, d }) => {
+      $('bp1').value = ''; $('bp2').value = '';
+      if (!ok) { text($('bundle-note'), d.error || 'Not started.'); return; }
+      bundlePoll();
+    });
+  });
+  // the strength meter: one implementation, on the server (services/passphrase_strength)
+  function meter(inputId) {
+    const out = $(inputId + '-meter');
+    let t = null;
+    $(inputId).addEventListener('input', () => {
+      clearTimeout(t);
+      const v = $(inputId).value;
+      if (!v) { out.textContent = ''; out.className = 'meter'; return; }
+      t = setTimeout(() => api('/api/bundle/strength', { method: 'POST', body: JSON.stringify({ passphrase: v }) }).then(({ d }) => {
+        out.className = 'meter s' + (d.score || 0);
+        out.textContent = 'Strength: ' + (d.label || '') + (d.ok ? '' : '. ' + ((d.feedback || [])[0] || 'Too easy to guess.'));
+      }), 250);
+    });
+  }
+  meter('bp1'); meter('sp1');
+  const when = t => t ? new Date(t * 1000).toLocaleString() : 'never';
+  function schedState() {
+    api('/api/bundle/schedule').then(({ d }) => {
+      const s = d.schedule || {};
+      if (s.folder) $('sf').value = s.folder;
+      $('se').value = s.every || 'weekly'; $('sk').value = s.keep || 7; $('sr').value = s.rehearse_days || 30;
+      text($('sched-state'), s.enabled
+        ? 'On: ' + (s.every === 'daily' ? 'every day' : 'every week') + ', keeping ' + s.keep + '. Last bundle: ' + when(s.last_ok) +
+          (s.last_error ? '. The last try failed: ' + s.last_error : '') + '. Last rehearsal: ' + when(s.last_rehearsal) +
+          (s.last_rehearsal_ok === false ? ' (FAILED: ' + (s.last_rehearsal_error || '') + ')' : (s.last_rehearsal ? ' (passed)' : '')) + '.'
+        : 'Off.');
+      firstBackup();
+    });
+  }
+  function firstBackup() {
+    api('/api/bundle/first-run').then(({ ok, d }) => {
+      $('first-backup').hidden = !(ok && d.setup_done && !d.scheduled && !d.answer && d.why !== 'asked_enough' || ok && d.due);
+    });
+  }
+  const fbAnswer = choice => api('/api/bundle/first-run/answer', { method: 'POST', body: JSON.stringify({ choice }) })
+    .then(({ ok, d }) => { text($('sched-note'), ok ? (choice === 'never' || d.asked >= d.max_asks ? 'Friday will not ask again. Scheduled bundles stay here whenever you want them.' : 'Friday will ask again in a week.') : (d.error || 'Not saved.')); firstBackup(); });
+  $('fb-later').addEventListener('click', () => fbAnswer('not_now'));
+  $('fb-never').addEventListener('click', () => fbAnswer('never'));
+  $('sched-on').addEventListener('click', () => {
+    const a = $('sp1').value, b = $('sp2').value;
+    if (a !== b) { text($('sched-note'), 'The two passphrases differ.'); return; }
+    api('/api/bundle/schedule', { method: 'POST', body: JSON.stringify({ enabled: true, folder: $('sf').value,
+      every: $('se').value, keep: Number($('sk').value), rehearse_days: Number($('sr').value), passphrase: a || null }) })
+      .then(({ ok, d }) => { $('sp1').value = ''; $('sp2').value = ''; $('sp1-meter').textContent = '';
+        text($('sched-note'), ok ? 'Saved.' : (d.error || 'Not saved.')); schedState(); });
+  });
+  $('sched-off').addEventListener('click', () => api('/api/bundle/schedule', { method: 'POST', body: JSON.stringify({ enabled: false }) })
+    .then(({ ok, d }) => { text($('sched-note'), ok ? 'Turned off; the kept passphrase was removed.' : (d.error || 'Not changed.')); schedState(); }));
+  const act = what => api('/api/bundle/schedule/' + what, { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+    text($('sched-note'), ok ? (what === 'run' ? 'Making a bundle...' : 'Rehearsing a restore...') : (d.error || 'Not started.'));
+    if (ok) setTimeout(schedState, 5000);
+  });
+  $('sched-run').addEventListener('click', () => act('run'));
+  $('sched-rehearse').addEventListener('click', () => act('rehearse'));
+  // the weekly ask (A3): one question, then a card a week; nothing sends without the approval card
+  let wSha = null;
+  function weekly() {
+    api('/api/doctor/weekly').then(({ d }) => {
+      text($('weekly-promise'), d.promise || '');
+      $('w-to').textContent = d.address || '';
+      // the three answers, and in local-only mode the separate yes for that mode
+      $('weekly-ask').hidden = d.answer === 'weekly' && !(d.local_only && !d.local_only_ok);
+      $('w-local-wrap').hidden = !d.local_only;
+      const words = { weekly: 'You said: ask me weekly.', not_now: 'You said: not now.', never: 'You said: never ask again.' };
+      text($('weekly-state'), (words[d.answer] || 'Friday has not asked yet.') +
+        (d.off_record ? ' Off the record: nothing is prepared.' : '') +
+        (d.ledger_unreadable ? ' Waiting: the action ledger has a break to review in Activity, so nothing is offered.' : '') +
+        (d.answer === 'weekly' && d.decided_this_week ? ' Done for this week.' : ''));
+      $('weekly-card').hidden = true;
+      if (d.item === 'weekly') {
+        api('/api/doctor/weekly/prepare', { method: 'POST', body: '{}' }).then(({ ok, d: p }) => {
+          if (!ok) { text($('weekly-note'), p.error || 'The report could not be prepared.'); return; }
+          wSha = p.sha256; $('w-text').textContent = p.text; $('weekly-card').hidden = false;
+        });
+      }
+    });
+  }
+  const wpost = (what, body) => api('/api/doctor/weekly/' + what, { method: 'POST', body: JSON.stringify(body || {}) })
+    .then(({ ok, d }) => {
+      text($('weekly-note'), ok ? (d.detail || 'Saved.') : (d.error || 'Not done.'));
+      if (ok && d.how === 'by_hand' && d.text) { $('w-text').textContent = d.text; $('weekly-card').hidden = false; return; }
+      weekly();
+    });
+  $('w-yes').addEventListener('click', () => wpost('answer', { choice: 'weekly', local_only_too: $('w-local').checked }));
+  $('w-notnow').addEventListener('click', () => wpost('answer', { choice: 'not_now' }));
+  $('w-never').addEventListener('click', () => wpost('answer', { choice: 'never' }));
+  $('w-send').addEventListener('click', () => wpost('send', { sha256: wSha }));
+  $('w-skip').addEventListener('click', () => wpost('skip'));
+  $('w-stop').addEventListener('click', () => wpost('answer', { choice: 'never' }));
+  function authState() {
+    api('/api/authority').then(({ d }) => {
+      text($('auth-state'), d.unreadable
+        ? 'Held: whether authority was revoked could not be checked, because the action ledger could not be read (' + (d.error || 'unknown') + '). Look at the Ledger page (/ledger), then restore here.'
+        : d.revoked ? 'Revoked since ' + (d.at || 'earlier') + '. Outward actions and connected-service reads are held.' : 'In force.');
+      $('auth-revoke').hidden = !!d.revoked; $('auth-restore').hidden = !d.revoked;
+    });
+  }
+  $('auth-revoke').addEventListener('click', () => {
+    if (!confirm('Revoke all action authority now?')) return;
+    api('/api/authority/revoke-all', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+      text($('auth-note'), ok ? 'Revoked. Waiting approvals withdrawn: ' + ((d.approvals_expired || 0) + (d.approved_withdrawn || 0)) + '; jobs paused: ' + ((d.jobs_paused || []).length) + '.' +
+        ((d.errors || []).length ? ' Some parts could not be taken back (they are held all the same): ' + d.errors.join('; ') + '.' : '') : (d.error || 'Not done.'));
+      authState();
+    });
+  });
+  $('auth-restore').addEventListener('click', () => api('/api/authority/restore', { method: 'POST', body: '{}' })
+    .then(({ ok, d }) => { text($('auth-note'), ok ? 'Restored. Give back the permissions you want, one by one.' + (d.note ? ' ' + d.note : '') : (d.error || 'Not done.')); authState(); }));
+  authState();
+  weekly();
+  caps();
+  schedState();
+  restoreState();
+  $('safe-on').addEventListener('click', () => setNext(true));
+  $('safe-off').addEventListener('click', () => setNext(false));
+  safeState(); history();
+})();
+</script>
+</body>
+</html>

@@ -4,11 +4,12 @@
     POST /api/inbox-cleanup/start         read headers from {source: {kind: gmail, account_id} | {kind: mbox, path}}
     POST /api/inbox-cleanup/unsubscribe   {senders: [...], requested_by}
 
-The owner's own tick in Friday's page (requested_by "ui:<surface>") is the
-approval and acts at once, one request per sender, each with a receipt.
-Anything else, including a request that does not say who made it, is Friday
-asking, and becomes an approval card that lists every sender; nothing is
-sent until that card is approved.
+The owner's own press in Friday's page is the approval and acts at once, one
+request per sender, each with a receipt, after the action checkpoint
+(services/mail_owner). A body that says "ui:<surface>" without the press
+changes nothing and says so. Anything else, including a request that does not
+say who made it, is Friday asking, and becomes an approval card that lists
+every sender; nothing is sent until that card is approved.
 """
 from __future__ import annotations
 
@@ -45,9 +46,11 @@ def _gate():
     return None
 
 
-def _is_owner(actor) -> bool:
-    from agent_friday.routes.messages import _is_owner as owner
-    return owner(actor)
+def _who(actor) -> str:
+    """services/mail_owner.who: the owner only by the owner's press in Friday's page; a body
+    that says "ui:..." without it is CLAIMED, and anything else is Friday asking."""
+    from agent_friday.services import mail_owner
+    return mail_owner.who(request, actor)
 
 
 @inbox_cleanup_bp.route("/api/inbox-cleanup", methods=["GET"])
@@ -57,9 +60,13 @@ def inbox_cleanup_view():
 
 @inbox_cleanup_bp.route("/api/inbox-cleanup/start", methods=["POST"])
 def inbox_cleanup_start():
+    from agent_friday.services import mail_owner
     b = request.get_json(silent=True) or {}
     src = b.get("source") if isinstance(b.get("source"), dict) else {}
-    if not _is_owner(b.get("requested_by")):
+    actor = _who(b.get("requested_by"))
+    if actor == mail_owner.CLAIMED:
+        return mail_owner.not_the_owners_press(request, "The clean-up did not start")
+    if actor != mail_owner.OWNER:
         return jsonify({"ok": False, "error": "owner_only",
                         "message": "Reading your mail for the clean-up starts from your own click."}), 403
     try:
@@ -75,9 +82,17 @@ def inbox_cleanup_unsubscribe():
     senders = [str(s)[:120] for s in (b.get("senders") or []) if str(s).strip()][:200]
     if not senders:
         return jsonify({"ok": False, "error": "nothing_ticked", "message": "Tick at least one sender."}), 400
-    if not _is_owner(b.get("requested_by")):
+    from agent_friday.services import mail_owner
+    actor = _who(b.get("requested_by"))
+    if actor == mail_owner.CLAIMED:
+        return mail_owner.not_the_owners_press(request, "Nobody was unsubscribed")
+    if actor == mail_owner.FRIDAY:
         out = ic.propose(senders, requested_by=str(b.get("requested_by") or "friday"),
                          reason=str(b.get("reason") or ""))
         return jsonify({"ok": out.get("status") != "error", **out}), 202
+    held = mail_owner.held("mail:unsubscribe", "%d sender(s): %s" % (len(senders), ", ".join(senders[:10])),
+                           "Nobody was unsubscribed")
+    if held:
+        return held
     return jsonify({"ok": True, **ic.unsubscribe(senders, decided_by="owner click"),
                     "board": ic.view()})

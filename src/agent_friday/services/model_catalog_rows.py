@@ -183,7 +183,8 @@ def _previous_available(model_id: str) -> bool:
         return False
 
 
-def model_row(m: dict, profile: dict, *, installed: bool, pinned_vram_mib=0, pinned_ram_mib=0) -> dict:
+def model_row(m: dict, profile: dict, *, installed: bool, pinned_vram_mib=0, pinned_ram_mib=0,
+              held: str | None = None) -> dict:
     measured = _measured_tok_s(m["id"], profile)
     files = [file_row(m, f, profile, pinned_vram_mib=pinned_vram_mib, pinned_ram_mib=pinned_ram_mib,
                       installed=installed, measured_tok_s=measured)
@@ -196,6 +197,9 @@ def model_row(m: dict, profile: dict, *, installed: bool, pinned_vram_mib=0, pin
         "licence": m.get("licence"), "licence_class": m.get("licence_class") or licence_class(m.get("licence")),
         "telemetry": m.get("telemetry") or "none", "repo_url": m.get("repo_url"), "runtime": m.get("runtime"),
         "generation_note": m.get("generation_note"), "installed": installed, "source": m.get("source", "shortlist"),
+        # "experimental" models are offered but not recommended; a HELD one is
+        # on disk and verified but no seat uses it yet (shortlist seat_hold).
+        "status": m.get("status") or "standard", "held": held,
         "files": files, "best": best["verdict"] if best else None,
         "bench": _bench_summary(m["id"]) if installed else None,
         "previous_available": _previous_available(m["id"]),
@@ -264,13 +268,19 @@ def resident_mib() -> tuple[int, int]:
 def catalog_payload(profile: dict | None = None, *, beside_resident: bool = False) -> dict:
     from agent_friday.services import hardware_profile as hwp
     prof = profile or hwp.get()
+    held: dict = {}
     try:
         from agent_friday.services import model_store
         installed = set(model_store.available().keys())
+        # Installed and verified but held out of every seat: still installed,
+        # so the row offers no second download.
+        held = model_store.held_installed()
+        installed |= set(held)
     except Exception:
         installed = set()
     pv, pr = resident_mib() if beside_resident else (0, 0)
-    rows = [model_row(m, prof, installed=m["id"] in installed, pinned_vram_mib=pv, pinned_ram_mib=pr)
+    rows = [model_row(m, prof, installed=m["id"] in installed, pinned_vram_mib=pv, pinned_ram_mib=pr,
+                      held=held.get(m["id"]))
             for m in sl.entries()]
     rows += [model_row(m, prof, installed=True, pinned_vram_mib=pv, pinned_ram_mib=pr) for m in store_models()]
     return {"status": "ok", "machine": machine_line(prof), "models": rows,
