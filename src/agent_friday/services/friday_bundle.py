@@ -734,28 +734,15 @@ def _add_ledger(tar, home: Path, ledger_files, manifest_files) -> Optional[dict]
     return state
 
 
-def _inventory(home: Path) -> list:
-    """Which stores are in the folder and their declared versions (§37.3-1)."""
-    out = []
-    for name, rel in (("settings", "settings.json"), ("vault", "vault/.vault_config.json"),
-                      ("action_ledger", "ledger/actions.jsonl"), ("keystore", "security/keystore.json"),
-                      ("instructions", "instructions/manifest.json")):
-        p = home / rel
-        if not p.exists():
-            continue
-        ver = None
-        try:
-            if p.suffix == ".json":
-                d = json.loads(p.read_text(encoding="utf-8"))
-                ver = d.get("version") or d.get("schema_version") or d.get("v") if isinstance(d, dict) else None
-            elif name == "action_ledger":
-                with open(p, "rb") as f:
-                    first = f.readline()
-                ver = (json.loads(first) or {}).get("v") if first.strip() else None
-        except Exception:
-            ver = "unreadable"
-        out.append({"store": name, "version": ver})
-    return out
+def _inventory(home: Path) -> dict:
+    """Every store in the folder with its version, size and location
+    (services/store_inventory.py, §37.3-1), as the data folder stood when the
+    bundle was made."""
+    try:
+        from agent_friday.services import store_inventory
+        return store_inventory.inventory(home)
+    except Exception as e:  # noqa: BLE001 - a bundle is never refused for its inventory
+        return {"error": "unavailable:" + type(e).__name__}
 
 
 def _app_info() -> dict:

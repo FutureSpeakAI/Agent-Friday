@@ -132,6 +132,13 @@
   <div id="out" role="region" aria-live="polite"></div>
 </section>
 
+<section id="stores" aria-labelledby="stores-h">
+  <h2 id="stores-h">What Friday keeps</h2>
+  <p class="muted">Every store in Friday's data folder: its version, its size and where it lives in the folder. The same list goes into every report, every bundle and every export.</p>
+  <p id="stores-sum" role="status">Checking...</p>
+  <div id="stores-out"></div>
+</section>
+
 <section aria-labelledby="hist-h">
   <h2 id="hist-h">Earlier reports</h2>
   <ul id="hist"></ul>
@@ -233,6 +240,40 @@
       f.appendChild(a); f.appendChild(document.createTextNode('  '));
     });
   }
+  function size(n) {
+    if (n == null) return '?';
+    const u = ['B', 'KB', 'MB', 'GB']; let i = 0; n = Number(n);
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+  }
+  function stores() {
+    api('/api/doctor/stores').then(({ ok, d }) => {
+      const out = $('stores-out'); out.textContent = '';
+      if (!ok) { text($('stores-sum'), 'Could not be read: ' + (d.error || 'unknown')); return; }
+      const rows = d.stores || [];
+      const kept = rows.filter(r => r.durable !== false);
+      const t = d.totals || {};
+      const u = d.unlisted || {};
+      text($('stores-sum'), kept.length + ' stores, ' + size(t.durable_bytes) + '; downloads, caches and logs ' +
+        size(t.other_bytes) + '. ' + (d.absent || []).length + ' more are not created yet.' +
+        (u.entries ? ' ' + u.entries + ' other entries in the folder (' + size(u.bytes) + ') are not Friday stores.' : ''));
+      const tb = document.createElement('table');
+      const head = document.createElement('tr');
+      ['store', 'version', 'size', 'files', 'where (in the data folder)', 'kind'].forEach(h => {
+        const th = document.createElement('th'); th.textContent = h; head.appendChild(th);
+      });
+      tb.appendChild(head);
+      kept.concat(rows.filter(r => r.durable === false)).forEach(r => {
+        const tr = document.createElement('tr');
+        [r.store, r.version, size(r.bytes) + (r.at_least ? ' or more' : ''), r.files, r.location,
+         r.durable === false ? r.format + ' (not durable)' : r.format].forEach(v => {
+          const td = document.createElement('td'); td.textContent = v == null ? '' : String(v); tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      });
+      out.appendChild(tb);
+    });
+  }
   function history() {
     api('/api/doctor/reports').then(({ d }) => {
       const ul = $('hist'); ul.textContent = '';
@@ -249,7 +290,7 @@
     text($('out'), 'Running...');
     api('/api/doctor/report', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
       if (!ok) { text($('out'), d.error || 'The report could not be made.'); return; }
-      show(d.report, d.text); history();
+      show(d.report, d.text); history(); stores();
     });
   });
   function restoreState() {
@@ -395,7 +436,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); history();
+  safeState(); history(); stores();
 })();
 </script>
 </body>
