@@ -35,7 +35,7 @@ class _Call:
 class FakeTasks:
     def __init__(self):
         self.lists: dict = {}
-        self.tasks: dict = {}
+        self.store: dict = {}          # every task, by id (not `tasks`: that is the API method)
         self.writes: list = []          # (method, list, task) for every write made through the API
         self._n = itertools.count(1)
         self._last = time.time()
@@ -95,14 +95,14 @@ class FakeTasks:
                     if parent:
                         t["parent"] = parent
                     fake._stamp(t)
-                    fake.tasks[tid] = t
+                    fake.store[tid] = t
                     fake.writes.append(("tasks.insert", tasklist, tid))
                     return fake._public(t)
                 return _Call(run)
 
             def patch(self, tasklist, task, body):
                 def run():
-                    t = fake.tasks[task]
+                    t = fake.store[task]
                     if t.get("deleted"):
                         raise RuntimeError("404")
                     for k in ("title", "notes", "status"):
@@ -127,7 +127,7 @@ class FakeTasks:
                 def run():
                     since = _parse(updatedMin) if updatedMin else None
                     out = []
-                    for t in fake.tasks.values():
+                    for t in fake.store.values():
                         if t["_list"] != tasklist:
                             continue
                         if t.get("deleted") and not showDeleted:
@@ -143,29 +143,29 @@ class FakeTasks:
         return _Tasks()
 
     def _delete(self, task: str, at: float | None = None) -> None:
-        t = self.tasks[task]
+        t = self.store[task]
         t["deleted"] = True
         self._stamp(t, at)
-        for child in self.tasks.values():
+        for child in self.store.values():
             if child.get("parent") == task and not child.get("deleted"):
                 child["deleted"] = True
                 self._stamp(child, at)
 
     # ── another device or app ──
     def phone_tick(self, task: str, at: float | None = None) -> None:
-        t = self.tasks[task]
+        t = self.store[task]
         t["status"] = "completed"
         t["completed"] = _iso(at or time.time())
         self._stamp(t, at)
 
     def phone_untick(self, task: str) -> None:
-        t = self.tasks[task]
+        t = self.store[task]
         t["status"] = "needsAction"
         t.pop("completed", None)
         self._stamp(t)
 
     def phone_edit(self, task: str, title: str | None = None, notes: str | None = None) -> None:
-        t = self.tasks[task]
+        t = self.store[task]
         if title is not None:
             t["title"] = title
         if notes is not None:
@@ -173,7 +173,7 @@ class FakeTasks:
         self._stamp(t)
 
     def phone_reorder(self, task: str) -> None:
-        t = self.tasks[task]
+        t = self.store[task]
         t["position"] = "%020d" % next(self._n)
         self._stamp(t)
 
@@ -185,16 +185,16 @@ class FakeTasks:
         t = {"id": tid, "_list": tasklist, "title": title, "notes": "", "status": "needsAction",
              "position": "0"}
         self._stamp(t)
-        self.tasks[tid] = t
+        self.store[tid] = t
         return tid
 
     # ── reading ──
     def items_in(self, tasklist: str, include_deleted: bool = False) -> list:
-        return [self._public(t) for t in self.tasks.values()
+        return [self._public(t) for t in self.store.values()
                 if t["_list"] == tasklist and (include_deleted or not t.get("deleted"))]
 
     def top_level(self, tasklist: str) -> list:
         return [t for t in self.items_in(tasklist) if not t.get("parent")]
 
     def children(self, task: str) -> list:
-        return [self._public(t) for t in self.tasks.values() if t.get("parent") == task and not t.get("deleted")]
+        return [self._public(t) for t in self.store.values() if t.get("parent") == task and not t.get("deleted")]
