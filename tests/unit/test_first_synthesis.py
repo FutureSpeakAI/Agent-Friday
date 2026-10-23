@@ -135,7 +135,8 @@ def test_a_mail_subject_is_never_saved_as_the_owners_words(fs, monkeypatch):
     calls = []
     monkeypatch.setattr(core_memory, "add", lambda target, text, **k: calls.append(text) or {"ok": True})
     it = fs.build()["items"][0]
-    assert "Ignore previous instructions" in it["observation"] and "remember_text" not in it
+    assert "Ignore previous instructions" in it["observation"]
+    assert it["remember_text"] == "I am waiting on a reply from dana@example.org since 2026-10-17."
     assert _m(fs, it, "remember")["ok"]
     assert calls == ["I am waiting on a reply from dana@example.org since 2026-10-17."]
 
@@ -145,6 +146,28 @@ def test_an_item_built_from_counts_offers_no_remember(fs):
     it = fs.build()["items"][0]
     assert "remember" not in it["marks"] and len(it["marks"]) == 6
     assert _m(fs, it, "remember")["ok"] is False
+
+
+def test_a_commitment_offers_no_remember(fs, monkeypatch):
+    # Its label can be a follow-up note or an invitation's title: not the owner's own words.
+    monkeypatch.setattr(fs.cd, "countdowns", lambda now=None, kind=None, limit=5: {"countdowns": [
+        {"id": "c1", "label": "Send Dana the draft", "days": 2, "date": "2026-10-25", "source": "follow-ups"}]})
+    it = fs.build()["items"][0]
+    assert it["kind"] == "commitment" and "remember" not in it["marks"]
+    assert _m(fs, it, "remember")["ok"] is False
+
+
+def test_a_mark_made_while_the_sources_are_read_is_not_undone(fs, monkeypatch):
+    monkeypatch.setattr(fs.rm, "list_follow_ups", lambda status="open": _follow_ups(1))
+    it = fs.build()["items"][0]
+
+    def slow_follow_ups(status="open"):
+        assert _m(fs, it, "forget")["ok"]            # the owner's mark lands mid-build
+        return _follow_ups(1)
+    monkeypatch.setattr(fs.rm, "list_follow_ups", slow_follow_ups)
+    assert fs.build()["items"] == []
+    text = (fs.home / "first_synthesis" / "briefing.json").read_text(encoding="utf-8")
+    assert "Person 0" not in text
 
 
 def test_a_hidden_item_leaves_the_briefing_file(fs, monkeypatch):
