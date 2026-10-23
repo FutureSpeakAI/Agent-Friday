@@ -489,6 +489,27 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
             **({"pre_approval_withheld": withheld} if withheld else {})}
 
 
+def _record_egress(payload: dict, raw: str, result: str) -> None:
+    """The send in the egress ledger and on the privacy map (§26.7): to Gmail,
+    how many recipients (Bcc included), and the message itself fingerprinted
+    and, by default (A20), kept encrypted with the receipt."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        from email.utils import getaddresses
+        n = 0
+        for key in ("to", "cc", "bcc"):
+            v = payload.get(key) or []
+            if isinstance(v, list):
+                # One recipient per item (a display name may hold a comma).
+                n += len([x for x in v if str(x).strip()])
+            else:
+                n += len([a for _name, a in getaddresses([str(v)]) if "@" in a])
+        _eg.record_service_send("mail", "gmail", destination="gmail.googleapis.com", content=raw,
+                                result=result, recipients=n, part="message")
+    except Exception:
+        pass
+
+
 def send(approval_id: str) -> dict:
     """Deliver a message the owner approved. The ONLY function that sends.
 
@@ -498,6 +519,10 @@ def send(approval_id: str) -> dict:
     from agent_friday.services import approvals as _ap
     from agent_friday.services import google_accounts as G
 
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): nothing is sent while stopped.
+        raise SendRefused("everything is stopped, so nothing was sent. Press Resume first.")
     appr = _ap.get_approval(approval_id)
     if not appr:
         raise SendRefused("no such approval: %s" % approval_id)
@@ -631,9 +656,11 @@ def send(approval_id: str) -> dict:
     except Exception as e:
         _log.warning("send failed: %s", e)
         _outbox_record(appr, ok=False, error=str(e)[:500])
+        _record_egress(payload, raw, "failed")
         raise SendRefused("Gmail refused the message (error %s)." % log_failure(e, "Gmail send failed"),
                           detail="Gmail refused the message: %s" % str(e)[:300])
 
+    _record_egress(payload, raw, "sent")
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),
                                               "thread_id": sent.get("threadId")})
     _outbox_record(appr, ok=True, message_id=sent.get("id"))
@@ -753,7 +780,11 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
         raise SendRefused("that account's credentials could not be read, so nothing was saved")
     from googleapiclient.discovery import build
     from agent_friday.services import gmail_api
-    svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    from agent_friday.services import egress_record as _er
+    # A draft saved into the owner's Gmail is a write to Google: recorded, with
+    # the message (A20), in the egress ledger and on the privacy map.
+    svc = _er.recorded(build("gmail", "v1", credentials=creds, cache_discovery=False),
+                       "mail_draft", "gmail-drafts", "gmail.googleapis.com")
     try:
         d = gmail_api.execute(svc.users().drafts().create(userId="me", body={"message": msg}))
     except gmail_api.GmailError as e:
@@ -1140,6 +1171,11 @@ def _tick(now: float | None = None) -> list:
     """Send what is due. A message due more than LATE_LIMIT_S ago (Friday was
     off) is not sent: its approval is burned and the owner is told."""
     now = _time.time() if now is None else now
+    # Stop everything (services/global_stop): nothing is sent while stopped; the
+    # rows stay held and are judged again after Resume.
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        return []
     with _HELD_LOCK:
         rows = _load_held()
         due = [r for r in rows if (r.get("due") or 0) <= now]
@@ -1147,7 +1183,12 @@ def _tick(now: float | None = None) -> list:
             return []
         _save_held([r for r in rows if (r.get("due") or 0) > now])
     done = []
-    for r in due:
+    for i, r in enumerate(due):
+        if _core_gs.GLOBAL_STOP.is_set():
+            # Stopped after the rows were taken: they go back, held, for after Resume.
+            with _HELD_LOCK:
+                _save_held(_load_held() + due[i:])
+            break
         if now - r["due"] > LATE_LIMIT_S:
             _burn(r["approval_id"], "gmail_send_missed",
                   {"reason": "not sent: Friday was not running when it was due"})

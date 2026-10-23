@@ -116,8 +116,8 @@ teaching phrases against phrases that report a job done. An essay with neither
 scores 0.50.
 
 The score is reported, never used to rewrite. Friday writes a second draft only
-if the first came back empty. The header then also says "rewritten for
-stronger pushback", and the foot says the first draft was "too safe"; both
-only mean the first attempt returned nothing.
+if the first came back empty. The header then also says "first attempt came
+back empty, written again", and the foot says "the first attempt came back
+empty, so it was written again".
 
 Related: [News](news.md), [Memory](memory.md), [Scheduled jobs](scheduled-jobs.md).

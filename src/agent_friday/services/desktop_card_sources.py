@@ -16,6 +16,7 @@ KINDS = {
     "task": ("Tasks", "tasks"), "calendar": ("Local calendar", "calendar"),
     "project": ("Projects", "projects"), "routine": ("Routines", "workflows"),
     "schedule": ("Schedules", "settings"), "activity": ("Local activity", "tasks"),
+    "goal": ("Goals", "system"),
 }
 
 
@@ -92,6 +93,60 @@ def _tasks(now):
             priority=90 if status in {"failed", "stalled", "interrupted"} else 80,
             expires=ended + 86400 if ended else None, state=status))
     return records, max((row["updated_at"] or 0 for row in records), default=None), "Reported task state from Friday's local registry; this is not an independent heartbeat check."
+
+
+def _goals(now):
+    """Every goal still open, with its state (§17.3) and what it waits on
+    (§17.8). Goals are durable files (services/goals.py); a goal file Friday
+    cannot read is shown as such rather than left off."""
+    from agent_friday.services import goals, goal_state
+    records = []
+    open_goals = [g for g in goals.list_goals()
+                  if g.get("status") not in goals.TERMINAL_STATUSES and g.get("goal_id")]
+    for goal in open_goals[:MAX_RECORDS]:
+        status = goal.get("status")
+        milestones = [m for m in goal.get("milestones") or [] if isinstance(m, dict)]
+        done = sum(1 for m in milestones if m.get("status") == "done")
+        waits = [w for w in (goals.blocker_words(m) for m in milestones) if w]
+        running = any(m.get("status") == "in_progress" for m in milestones)
+        body = "Goal " + goal_state.STATE_WORDS.get(status, _text(status or "unknown", 30)) + ". "
+        if milestones:
+            body += f"{done} of {len(milestones)} milestones done."
+        if running:
+            body += " A milestone is being worked on now."
+        if waits:
+            body += " " + " ".join(waits[:2])
+        if status == "at_risk":
+            body += " At risk: " + "; ".join(goal_state.risk_reasons(goal, now)[:2]) + "."
+        if any((m.get("blocker") or {}).get("type") in ("interrupted", "run_failed") for m in milestones):
+            state = "interrupted"
+        elif status in ("needs_owner", "waiting", "at_risk"):
+            state = status
+        else:
+            state = "running" if running else (status or "unknown")
+        updated = goals._parse_ts(goal.get("updated_at"))
+        # §17.1 notification policy (schema-2 goals): Home shows the goal only
+        # for the moments the owner asked to hear about. The Goals card always
+        # shows it.
+        policy = goal.get("notification_policy")
+        notify = True
+        if isinstance(policy, dict) and isinstance(policy.get("on"), list):
+            moment = ("needs_owner" if state in {"interrupted", "needs_owner"} else
+                      "at_risk" if state == "at_risk" else "progress")
+            # A step stopped until the owner says so always shows: muting it
+            # would leave work waiting where nobody looks.
+            notify = moment in policy["on"] or any(
+                (m.get("blocker") or {}).get("needs_confirmation") for m in milestones)
+        records.append(_record(goal.get("goal_id") or "", goal.get("title") or "Goal", body,
+            updated=updated, priority=90 if state in {"interrupted", "needs_owner"} else
+                     75 if state in {"waiting", "at_risk"} else 60,
+            state=state, notify=notify))
+    for bad in goals.unreadable_goals()[:5]:
+        records.append(_record("unreadable:" + bad["goal_id"], "A goal Friday can't read",
+            "The file " + bad["file"] + " and its last good copy could not be read. "
+            "It was left as it is in Friday's folder.", priority=95, state="interrupted"))
+    stamp = max((r["updated_at"] or 0 for r in records), default=None)
+    return records, stamp, "Goals from Friday's goal files on this PC."
 
 
 def _calendar(now):
@@ -219,24 +274,20 @@ def _routines(now):
 
 def _activity(now):
     from agent_friday.services import activity_ledger
-    path = Path(activity_ledger.LEDGER_FILE)
-    if not path.exists():
-        return [], None, "No local activity has been recorded."
-    # Read only a bounded tail, discarding the first partial line. No prompt,
-    # tool arguments, task descriptions or result bodies enter the card.
-    with path.open("rb") as stream:
-        size = stream.seek(0, 2)
-        stream.seek(max(0, size - 256 * 1024))
-        raw = stream.read(256 * 1024)
-    lines = raw.splitlines()
-    if size > len(raw):
-        lines = lines[1:]
     day = datetime.fromtimestamp(now).date()
     since = datetime.combine(day, datetime.min.time()).timestamp()
+    # A bounded read of today's rows from the action ledger, newest first. No
+    # prompt, tool arguments, task descriptions or result bodies enter the card.
+    from agent_friday.services import action_ledger
+    if not action_ledger.summary().get("intact", True):
+        # a record that cannot be read in full is never shown as a quiet day
+        raise ValueError("the activity record could not be read in full")
+    rows = activity_ledger.read(limit=5000, since=since, until=now)
+    if not rows and not activity_ledger.read(limit=1):
+        return [], None, "No local activity has been recorded."
     counts = {"model_invocation": 0, "tool_call": 0, "subagent_spawn": 0}
     latest = None
-    for line in lines:
-        row = json.loads(line)
+    for row in rows:
         if not isinstance(row, dict):
             raise ValueError("invalid activity record")
         stamp = _number(row.get("ts"))
@@ -245,16 +296,17 @@ def _activity(now):
         if row.get("kind") in counts:
             counts[row["kind"]] += 1
             latest = max(latest or 0, stamp)
-    detail = "Metadata from the latest 256 KiB of local activity; counts can be partial on busy days."
+    detail = "Metadata from the newest 5,000 rows of today's local activity; counts can be partial on busy days."
     if latest is None:
-        return [], path.stat().st_mtime, detail
+        return [], None, detail
     body = f"{counts['tool_call']} tool calls · {counts['model_invocation']} model calls · {counts['subagent_spawn']} tasks started in today's recent local activity."
     expiry = (datetime.combine(day, datetime.min.time()) + timedelta(days=1)).timestamp()
     return [_record("today", "Today's activity", body, updated=latest, priority=30, expires=expiry)], latest, detail
 
 
 _READERS = {"task": _tasks, "calendar": _calendar, "project": _projects,
-            "routine": _routines, "schedule": _schedules, "activity": _activity}
+            "routine": _routines, "schedule": _schedules, "activity": _activity,
+            "goal": _goals}
 
 
 def snapshot(now):
@@ -291,7 +343,7 @@ def card_for(kind, source_id, observations, *, prefix="auto", now):
                   updated_at=row["updated_at"])
     return {"id": automatic_id(kind, source_id, now) if prefix == "auto" else stable_id(prefix, kind, source_id), "title": row["title"], "body": row["body"],
             "type": kind, "origin": "tracked" if prefix == "track" else "automatic", "priority": row["priority"],
-            "actions": [{"label": "Open " + ("Activity" if kind in {"task", "activity"} else KINDS[kind][0]), **target}],
+            "actions": [{"label": "Open " + ("Activity" if kind in {"task", "activity"} else "Goals" if kind == "goal" else KINDS[kind][0]), **target}],
             "source": source, "created_at": row["updated_at"] or now, "updated_at": row["updated_at"],
             "expires_at": row["expires_at"]}
 
@@ -299,7 +351,7 @@ def card_for(kind, source_id, observations, *, prefix="auto", now):
 def automatic(observations, now):
     """Small, deterministic workday candidates derived from actual observations."""
     cards = []
-    for kind, maximum in (("task", 3), ("calendar", 2), ("schedule", 2), ("routine", 1), ("project", 1), ("activity", 1)):
+    for kind, maximum in (("goal", 2), ("task", 3), ("calendar", 2), ("schedule", 2), ("routine", 1), ("project", 1), ("activity", 1)):
         rows = list(observations[kind]["records"].values())
         if kind == "calendar":
             rows = [r for r in rows if (r.get("expires_at") or 0) > now and r.get("starts_at", now) <= now + 86400]
@@ -313,6 +365,11 @@ def automatic(observations, now):
             rows.sort(key=lambda r: (-r["priority"], r.get("next_run") or float("inf"), r["id"]))
         elif kind == "routine":
             rows = [r for r in rows if r.get("available") and r.get("state") in {"failed", "error"}]
+        elif kind == "goal":
+            rows = [r for r in rows if r.get("state") in {"interrupted", "needs_owner", "waiting",
+                                                          "at_risk", "running", "active"}
+                    and r.get("notify", True)]
+            rows.sort(key=lambda r: (-r["priority"], -(r["updated_at"] or 0), r["id"]))
         elif kind == "project":
             rows = [r for r in rows if (r["updated_at"] or 0) >= now - 7 * 86400]
             rows.sort(key=lambda r: -(r["updated_at"] or 0))

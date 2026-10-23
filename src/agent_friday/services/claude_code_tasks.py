@@ -109,6 +109,13 @@ def _on_decision(record: dict) -> None:
             entry['stopped'] = datetime.now().isoformat()
             core._persist_vibe_terminals()
         return
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): an approval while stopped launches nothing.
+        entry['status'] = 'stopped'
+        entry['stopped'] = datetime.now().isoformat()
+        core._persist_vibe_terminals()
+        return
     grant = _mint(task_id, entry.get('task') or '')
     entry['grant_id'] = grant.get('grant_id')
     core._persist_vibe_terminals()
@@ -299,6 +306,9 @@ def gate(task_id: str, token: str, tool_name: str, tool_input: Any) -> Dict[str,
         return {"decision": "deny", "reason": "the task token does not match; nothing runs"}
     if entry.get('status') in ('stopped', 'denied', 'expired'):
         return {"decision": "deny", "reason": "this task was stopped; nothing runs"}
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        return {"decision": "deny", "reason": "everything is stopped; nothing runs until the owner presses Resume"}
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     why = _own_refusal(str(tool_name or ""), tool_input)
     if why:

@@ -131,7 +131,7 @@ def test_goal_and_receipts_survive_a_simulated_restart(tmp_path, monkeypatch):
     # ── The second milestone is untouched and still runnable post-restart ──
     second = goals.run_milestone(goal["goal_id"], ms2)
     assert second["ok"] is True and second["status"] == "done"
-    assert goals.get_goal(goal["goal_id"])["status"] == "completed"
+    assert goals.get_goal(goal["goal_id"])["status"] == "met_verified"
     assert len(goals.get_receipts(goal["goal_id"])) == 2
 
     # ── goal_id appears in work_log's goal_ancestry_json (a separate,
