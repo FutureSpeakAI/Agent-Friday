@@ -107,7 +107,7 @@ def google(tmp_path, monkeypatch):
     monkeypatch.setattr(ga, "tasks_writable", lambda aid: True)
     monkeypatch.setattr(ga, "_gate_task_text", lambda body: (dict(body), ""))
     monkeypatch.setattr(ga.cs, "audit_event", lambda *a, **k: None)
-    monkeypatch.setattr(ga, "_RECENT_CREATES", {})
+    monkeypatch.setattr(ga, "_RECENT_CREATES", {}, raising=False)
     monkeypatch.setattr(discovery, "build", lambda *a, **k: tasks)
     yield cal, tasks, box
     journal.reset()
@@ -176,6 +176,24 @@ def test_a_task_whose_reply_was_lost_is_found_in_the_list(google):
     tasks.lose_reply = True
     res = _res(agent._tool_create_task(dict(TASK)))
     assert res.get("id") in tasks.store and not res.get("error") and len(tasks.store) == 1
+
+
+def test_a_task_the_owner_made_by_hand_is_never_adopted(google):
+    _, tasks, _ = google
+    tasks.store["mine"] = {"id": "mine", "title": "Call the bank", "notes": "about the card",
+                           "status": "needsAction"}
+    tasks.lose_reply = True
+    lost = dict(TASK, notes="")
+    res = _res(agent._tool_create_task(lost))
+    assert res.get("id") != "mine", "an owner's own task with other notes is not Friday's"
+
+
+def test_without_a_key_a_lost_task_is_not_looked_for(google):
+    _, tasks, box = google
+    box["turn"] = None
+    tasks.lose_reply = True
+    res = _res(agent._tool_create_task(dict(TASK)))
+    assert res.get("error") and "did not confirm" in res["error"]
 
 
 def test_two_tasks_with_that_title_cannot_be_told_apart_so_the_owner_is_asked(google):
