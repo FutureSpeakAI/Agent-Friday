@@ -298,6 +298,9 @@ _ALL = [
     # is on, at most three times a week apart; it turns nothing on and sends nothing.
     _e("L08", "services/first_backup.py:tick", "first_backup", NEEDS_YOU,
        "first-backup:{n}", source="backup"),
+    # The drive with Friday's data is almost full (§32.13): one card while background work is
+    # paused, closed when space is back.
+    _e("DF1", "services/disk_guard.py:_enter", "disk_full", NEEDS_YOU, "disk-full", source="disk"),
     # Quiet turned on by the owner (voice, chat or the page): a visible line in Updates that never
     # merges with another, so every activation can be seen.
     _e("NQ1", "services/notification_tools.py:_quiet", "quiet_on", UPDATES, "quiet-on:{surface}:{seq}",

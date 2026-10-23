@@ -31,6 +31,8 @@ _LOCK = threading.Lock()
 # DROPPED on write — this is the egress-tier guarantee: names, ids, counts and
 # durations only; never prompt text, never tool args/results.
 _ALLOWED_FIELDS = {
+    # services/disk_guard: background work paused for a full disk, and resumed (no paths).
+    "disk_full": {"free_mib", "state"},
     "model_invocation": {
         "model", "provider", "seat", "duration_ms",
         "tokens_in", "tokens_out", "orb_id", "task_id", "workspace",

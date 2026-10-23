@@ -2975,6 +2975,15 @@ def _uses_gpu(rec) -> bool:
     return not kind.startswith(("file", "cleanup", "prune", "publish"))
 
 
+def _disk_holds(rec) -> bool:
+    """services/disk_guard.holds, never raising: a check that cannot run holds nothing."""
+    try:
+        from agent_friday.services import disk_guard
+        return bool(disk_guard.holds(rec))
+    except Exception:
+        return False
+
+
 def _tick():
     now = _now_central()
     try:                       # quiet hours or Focus Assist just ended: held approvals pop open and get texted
@@ -3009,6 +3018,11 @@ def _tick():
                 _record_missed(rec)
                 rec = dict(rec, catch_up=None)
             if _is_due(rec, now):
+                if _disk_holds(rec):
+                    # A full disk (services/disk_guard, NS-32.13-1): the job is left unmarked and
+                    # runs on the first tick after space is back; the owner has the card.
+                    _log.info("holding %s: the drive with Friday's data is almost full", rec.get('id'))
+                    continue
                 if held and _uses_gpu(rec):
                     _log.info("holding %s: the %s job holds the GPU; it will "
                               "run on the first tick after that releases",
