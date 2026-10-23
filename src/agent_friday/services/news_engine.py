@@ -565,6 +565,19 @@ def _normalize_entry(entry):
     return {"title": title, "snippet": snippet, "url": link, "source": domain, "ts": ts}
 
 
+def _record_feed(url, result):
+    """A feed request in the egress ledger and on the privacy map (§26.7): the
+    address (which can carry your area, for Google News) went to that site."""
+    try:
+        from urllib.parse import urlparse
+        from agent_friday.services import egress_gate as _eg
+        host = urlparse(str(url or "")).hostname or "a news site"
+        _eg.record_service_send("news_feed", ("feed:" + host)[:80], destination=host,
+                                content={"url": url}, result=result, part="address")
+    except Exception:
+        pass
+
+
 def _parse_feed(url, limit=12, timeout=None):
     """Fetch+parse one RSS feed into normalized entries, with TTL caching.
 
@@ -584,6 +597,7 @@ def _parse_feed(url, limit=12, timeout=None):
         hit = _RSS_CACHE.get(url)
         if hit and (now - hit[0]) < _RSS_CACHE_TTL:
             return hit[1][:limit]
+    recorded = attempted = False
     try:
         import urllib.request
         import feedparser
@@ -597,6 +611,7 @@ def _parse_feed(url, limit=12, timeout=None):
             if modified:
                 headers["If-Modified-Since"] = modified
         req = urllib.request.Request(url, headers=headers)
+        attempted = True                     # from here the address may have left
         try:
             with urllib.request.urlopen(
                     req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
@@ -604,12 +619,16 @@ def _parse_feed(url, limit=12, timeout=None):
                 etag = resp.headers.get("ETag") or ""
                 modified = resp.headers.get("Last-Modified") or ""
         except urllib.error.HTTPError as e:
+            _record_feed(url, "sent")         # the address reached the site either way
+            recorded = True
             if e.code != 304 or before is None:
                 raise
             # Not modified since the last full answer: the same entries.
             with _RSS_CACHE_LOCK:
                 _RSS_CACHE[url] = (now, before)
             return before[:limit]
+        _record_feed(url, "sent")
+        recorded = True
         d = feedparser.parse(raw)
         out = []
         for e in d.entries[: max(limit * 2, limit)]:
@@ -623,7 +642,11 @@ def _parse_feed(url, limit=12, timeout=None):
             else:
                 _FEED_VALIDATORS.pop(url, None)
         return out[:limit]
+    except urllib.error.HTTPError:
+        return []
     except Exception:
+        if attempted and not recorded:       # once per request, never for a local error
+            _record_feed(url, "sent_unconfirmed")
         return []
 
 
@@ -707,6 +730,14 @@ def _brave_results(query, limit=8):
                      "X-Subscription-Token": key},
             timeout=12,
         )
+        # §26.7: the news query in the egress ledger and on the privacy map.
+        try:
+            from agent_friday.services import egress_gate as _eg
+            _eg.record_service_send("news_search", "search:brave-news", destination="api.search.brave.com",
+                                    content={"query": query}, part="query",
+                                    result="sent" if resp.status_code == 200 else "failed")
+        except Exception:
+            pass
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -1578,9 +1609,12 @@ def _fetch_brutalist_links(limit=200):
     try:
         resp = requests.get(_BRUTALIST_URL, timeout=15,
                              headers={"User-Agent": "Mozilla/5.0 (FridayNewsBot)"})
+        _record_feed(_BRUTALIST_URL, "sent")
         resp.raise_for_status()
     except Exception as e:
         print(f"  [brutalist] fetch failed: {e}")
+        if "resp" not in locals():
+            _record_feed(_BRUTALIST_URL, "sent_unconfirmed")
         return []
     try:
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -2976,7 +3010,10 @@ def _editorial_markdown(week_id, when, body, banned, score, regenerated):
     if score is not None:
         note = f"*Independence score: {score:.2f}"
         if regenerated:
-            note += " — first draft was too safe, so I rewrote it with more pushback"
+            # `regenerated` is set only when the first attempt came back
+            # empty (see _generate_weekly_editorial); nothing is rewritten
+            # for its score, so the note says what happened and no more.
+            note += " — the first attempt came back empty, so it was written again"
         note += ".*"
         parts.append("")
         parts.append(note)
@@ -3133,7 +3170,11 @@ def _read_editorial(week_id):
     safe = re.sub(r"[^0-9A-Za-z\-]", "", week_id or "")
     if not safe:
         return None
-    path = EDITORIALS_DIR / f"{safe}.md"
+    from agent_friday.paths import contained
+    try:
+        path = contained(EDITORIALS_DIR, f"{safe}.md")
+    except ValueError:
+        return None
     if not path.exists():
         return None
     try:
@@ -3576,7 +3617,13 @@ def _extract_article_text(url):
     that points at this machine or its network: the URL comes from a feed,
     the page, or the voice model, none of which may steer a fetch inward."""
     from agent_friday.services import page_reader
-    page = page_reader.fetch(url, timeout=15)
+    try:
+        page = page_reader.fetch(url, timeout=15)
+    except Exception as e:
+        if type(e).__name__ != "UnsafeURLError":     # refused before anything was sent
+            _record_feed(url, "sent_unconfirmed")
+        raise
+    _record_feed(url, "sent")
     return page.title, page.text
 
 

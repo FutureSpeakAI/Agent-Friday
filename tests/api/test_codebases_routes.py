@@ -7,6 +7,7 @@ import pytest
 
 from agent_friday.services import codebases as cb
 from agent_friday.services import conversations as convs
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +36,7 @@ def test_plus_codebase_makes_a_repo_and_a_chat_bound_to_it(client):
 
 def test_a_bad_template_or_folder_is_a_400(client, tmp_path):
     assert client.post("/api/codebases", json={"title": "x", "template": "rails"}).status_code == 400
-    assert client.post("/api/codebases", json={"title": "x", "path": str(tmp_path / "missing")}).status_code == 400
+    assert client.post("/api/codebases", json={"title": "x", "path": str(tmp_path / "missing")}, headers=desk_headers()).status_code == 400
 
 
 def test_files_read_edit_steps_undo_and_preview(client):

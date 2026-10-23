@@ -6,7 +6,7 @@ Invariants this module protects:
 - One task per local seat. A spawn aimed at a busy local seat is admitted as
   ``queued-for-seat`` and gets NO worker thread until promoted. The caller's
   live task record (not seat_queue's internal copy) carries the status and
-  the user-facing notice, so the task tray renders honest state directly.
+  the user-facing notice, so the task card renders honest state directly.
 - FIFO promotion. When a running task ends (completion or watchdog kill),
   the freed seat's oldest queued task is started via the injected thread
   factory — the same construction the dispatcher would have used at spawn.
@@ -409,7 +409,11 @@ class SeatSupervisor:
         when the queue promotes it again. If nothing behind it could run, it
         keeps the seat, so its prompt prefix stays the seat's cache."""
         from agent_friday.services.background_gate import JobCancelled, REASON_INTERACTIVE, REASON_PAUSED
+        from agent_friday.services.background_gate import _everything_stopped
         while True:
+            if _everything_stopped():
+                # Stop everything (services/global_stop) ends a running job, it does not park it.
+                raise JobCancelled("Everything is stopped; this job was stopped.")
             yielded_now = False
             with self._lock:
                 record = self._records.get(task_id)

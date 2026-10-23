@@ -82,7 +82,12 @@ def _config_path() -> Path:
 
 
 def _secret_path(name: str) -> Path:
-    return phone_dir() / "secrets" / ("%s.bin" % name)
+    # Only the known secret names, joined through paths.contained (the containment check
+    # CodeQL's path-injection query recognises): a request-supplied name never leaves the folder.
+    from agent_friday.paths import contained
+    if name not in SECRET_NAMES:
+        raise ValueError("not a phone secret name")
+    return contained(phone_dir() / "secrets", "%s.bin" % name)
 
 
 def normalize_number(raw: Any) -> str:
@@ -240,6 +245,8 @@ def get_secret(name: str) -> Optional[str]:
 
 def secret_status(name: str) -> str:
     """'stored', 'unreadable' (present but will not decrypt), or 'missing'."""
+    if name not in SECRET_NAMES:
+        return "missing"
     p = _secret_path(name)
     if not p.exists():
         return "missing"
@@ -247,6 +254,8 @@ def secret_status(name: str) -> str:
 
 
 def delete_secret(name: str) -> bool:
+    if name not in SECRET_NAMES:
+        return False             # never a path built from an unknown name (it could leave the folder)
     p = _secret_path(name)
     if not p.exists():
         return False
