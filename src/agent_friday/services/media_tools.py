@@ -439,13 +439,47 @@ def _tool_save_output(inp):
         # Honour an explicit filename (creative_store names by job/url hash).
         safe = Path(filename).name
         target = saved.with_name(safe)
-        try:
-            if target.exists():
-                target.unlink()
-            saved.rename(target)
-            saved = target
-        except OSError as e:
-            return "save_output: downloaded to %s but rename failed (%s)" % (saved, e)
+        # Never replace a file already there (§34.12-2 overwrite safety): the
+        # download takes the next free name, "clip-2.mp4", and says so. A
+        # hard link fails if the name is taken, so a file that appears between
+        # the check and the move is not overwritten either.
+        placed = None
+        for n in range(1, 100):
+            cand = target if n == 1 else saved.with_name("%s-%d%s" % (Path(safe).stem, n, Path(safe).suffix))
+            try:
+                os.link(saved, cand)
+            except FileExistsError:
+                continue
+            except OSError:
+                # No hard links on this drive: claim the name exclusively and
+                # copy, so an existing file is never replaced on any OS.
+                try:
+                    fd = os.open(cand, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0))
+                except FileExistsError:
+                    continue
+                except OSError as e:
+                    return "save_output: downloaded to %s but could not name it (%s)" % (saved, e)
+                try:
+                    with os.fdopen(fd, "wb") as dst, open(saved, "rb") as src:
+                        import shutil
+                        shutil.copyfileobj(src, dst)
+                except OSError as e:
+                    try:
+                        cand.unlink()               # no half-copied file left behind
+                    except OSError:
+                        pass
+                    return "save_output: downloaded to %s but could not name it (%s)" % (saved, e)
+            try:
+                saved.unlink()
+            except OSError:
+                pass
+            placed = cand
+            break
+        if placed is None:
+            return "save_output: downloaded to %s; every name like %s is taken" % (saved, safe)
+        note = "" if placed == target else (
+            "\nA file named %s was already there, so this one is %s." % (safe, placed.name))
+        return "saved: %s (%.1f KB)%s" % (placed, placed.stat().st_size / 1024, note)
     return "saved: %s (%.1f KB)" % (saved, saved.stat().st_size / 1024)
 
 

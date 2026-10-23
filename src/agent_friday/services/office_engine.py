@@ -553,6 +553,18 @@ def deliver_check(path, *, want_image: bool = True) -> dict:
             import base64
             out["image_b64"] = base64.b64encode(png).decode("ascii")
             out["media_type"] = "image/png"
+    # The structural checks (north star §34.12-1, services/artifact_qa) read
+    # the saved file itself: bounds, formulas, charts, fonts, alt text. They
+    # need no officecli and catch what its validator does not look at; an
+    # error blocks delivery, a warning is reported alongside.
+    try:
+        from agent_friday.services import artifact_qa
+        qa = artifact_qa.check_isolated(doc)        # time-limited: never hangs delivery
+        out["qa"] = qa
+        findings += ["%s: %s" % (f["check"], f["message"]) for f in qa["findings"] if f["severity"] == "error"]
+        out["warnings"] = ["%s: %s" % (f["check"], f["message"]) for f in qa["findings"] if f["severity"] == "warn"]
+    except Exception:
+        pass
     out["ok"] = not findings
     out["findings"] = findings
     return out
