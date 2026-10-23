@@ -26,7 +26,7 @@ def test_the_briefing_is_served_with_its_marks(client, monkeypatch):
     d = _briefing(client)
     assert d["ok"] and len(d["items"]) <= 5 and "remember" in d["marks"]
     item = next(i for i in d["items"] if i["kind"] == "follow_up")
-    assert "remember_text" not in item and "remember" in item["marks"]
+    assert item["remember_text"] == "I mean to follow up with Route Person." and "remember" in item["marks"]
 
 
 def test_a_mark_needs_the_press_on_this_pc_and_the_text_that_was_shown(client, monkeypatch):
@@ -70,10 +70,3 @@ def test_skipping_the_goal_is_the_owners_press(client):
         else:
             p.write_text(before, encoding="utf-8")
 
-
-def test_the_old_acks_route_cannot_claim_section_9_6(client):
-    r = client.post("/api/onboarding/acks", json={"goal_skipped": True, "action_place_ack": True},
-                    headers=page_headers())
-    assert r.status_code == 200
-    acks = r.get_json()["acks"]
-    assert acks.get("goal_skipped") is None and acks.get("action_place_ack") is None

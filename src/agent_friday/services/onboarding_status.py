@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+_lock = threading.Lock()
 CHECKS = ("reviewed", "action", "receipt", "where_ran", "memory", "goal")
 LABELS = {
     "reviewed": "You reviewed what I see so far",
@@ -122,22 +124,23 @@ def status() -> Dict[str, Any]:
 
 def answer(which: str, seq=None) -> Dict[str, Any]:
     """The owner's own answer (routes/first_synthesis, behind the desk press)."""
-    a = _answers()
-    if which == "saw_where_it_ran":
-        r = _action_receipt()
-        if not r:
-            return {"ok": False, "error": "There is no completed action with a receipt yet."}
-        if seq != r["seq"]:
-            return {"ok": False, "error": "That is not the action whose receipt is shown; look again."}
-        a["saw_where_it_ran_seq"] = r["seq"]
-    elif which == "skip_goal":
-        a["goal_skipped_ts"] = time.time()
-    else:
-        return {"ok": False, "error": "unknown answer"}
-    p = _path()
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(a), encoding="utf-8")
-    os.replace(tmp, p)
+    with _lock:
+        a = _answers()
+        if which == "saw_where_it_ran":
+            r = _action_receipt()
+            if not r:
+                return {"ok": False, "error": "There is no completed action with a receipt yet."}
+            if isinstance(seq, bool) or not isinstance(seq, int) or seq != r["seq"]:
+                return {"ok": False, "error": "That is not the action whose receipt is shown; look again."}
+            a["saw_where_it_ran_seq"] = r["seq"]
+        elif which == "skip_goal":
+            a["goal_skipped_ts"] = time.time()
+        else:
+            return {"ok": False, "error": "unknown answer"}
+        p = _path()
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(a), encoding="utf-8")
+        os.replace(tmp, p)
     return {"ok": True, "status": status()}
 
 

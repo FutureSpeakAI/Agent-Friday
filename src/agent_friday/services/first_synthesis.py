@@ -201,8 +201,9 @@ def _commitments() -> List[dict]:
             why=str(c.get("why") or "It has a date and it is coming up."),
             source=str(c.get("source") or "your commitments"), freshness="as of today", confidence="certain",
             related={"kind": "commitment", "id": str(c.get("id") or "")[:60]},
-            next_step="Decide what the next step on it is.", open_view="calendar",
-            remember_text=("%s is due on %s." % (str(c["label"])[:100], c.get("date")) if c.get("date") else "")))
+            # No "Remember this": a commitment's label can be a follow-up note or an invitation's
+            # title, which are not the owner's own words.
+            next_step="Decide what the next step on it is.", open_view="calendar"))
     return out
 
 
@@ -264,6 +265,11 @@ def _hidden() -> tuple[set, set]:
     return items, kinds
 
 
+def _text_of(it: dict) -> str:
+    """Every text an item holds, lower-cased, for forgetting a person."""
+    return " ".join(str(it.get(k) or "") for k in FIELDS + ("remember_text",)).lower()
+
+
 def _off_record() -> bool:
     try:
         from agent_friday.services import off_record
@@ -278,38 +284,37 @@ def build(save: bool = True) -> Dict[str, Any]:
     Off the record nothing is read or saved."""
     if _off_record():
         return {"ok": True, "items": [], "off_record": True, "marks": list(MARKS)}
-    hidden_items, hidden_kinds = _hidden()
-    items: List[dict] = []
+    found_all: List[dict] = []
     failed: List[str] = []
     for fn in _CANDIDATES:
         try:
-            found = fn()
+            found_all.extend(fn())
         except Exception:
             failed.append(fn.__name__.strip("_"))
-            continue
-        for it in found:
-            if it["id"] in hidden_items or it["kind"] in hidden_kinds:
-                continue
-            if any(x["id"] == it["id"] for x in items):
-                continue
-            items.append(it)
     try:
         from agent_friday.services import forget_person as fp
         tomb = [t.lower() for t in list(fp.forgotten_names()) + list(fp.forgotten_emails()) if str(t).strip()]
     except Exception:
         tomb = []
-    if tomb:
-        items = [it for it in items
-                 if not any(t in " ".join(str(it.get(k) or "") for k in FIELDS).lower() for t in tomb)]
-    items = items[:MAX_ITEMS]
     with _lock:
+        # The marks are read under the same lock a mark writes under, so a mark made while the
+        # sources were read is never undone by this write.
+        hidden_items, hidden_kinds = _hidden()
+        items: List[dict] = []
+        for it in found_all:
+            if it["id"] in hidden_items or it["kind"] in hidden_kinds or any(x["id"] == it["id"] for x in items):
+                continue
+            if tomb and any(t in _text_of(it) for t in tomb):
+                continue
+            items.append(it)
+        items = items[:MAX_ITEMS]
         _note_sources()
         if save:
             _write(_dir() / "briefing.json", {"generated_ts": time.time(), "items": items})
-    marked = {m.get("item"): m.get("mark") for m in _marks()}
+        marked = {m.get("item"): m.get("mark") for m in _marks()}
     public = []
     for it in items:
-        row = {k: v for k, v in it.items() if k != "remember_text"}
+        row = dict(it)
         row["marked"] = marked.get(it["id"])
         public.append(row)
     return {"ok": True, "items": public, "failed": failed, "marks": list(MARKS),
@@ -351,7 +356,8 @@ def mark(item_id: str, answer: str, *, shown_text: str = "", by: str = "owner") 
             if not (isinstance(res, dict) and res.get("ok")):
                 why = str((res or {}).get("error") or "the memory card refused it")[:160]
                 return {"ok": False, "error": "It could not be remembered: " + why}
-            said = "Remembered on your memory card, where you can change or delete it."
+            said = ('Remembered on your memory card as "%s". You can change or delete it there.'
+                    % it.get("remember_text"))
         elif answer == "forget":
             said = "I will not show this again. The record it came from is unchanged; delete it there if you want it gone."
         elif answer == "dont_surface":
@@ -385,7 +391,7 @@ def _naming(names, emails) -> List[dict]:
     terms = [str(t).lower() for t in list(names or []) + list(emails or []) if str(t).strip()]
     shown = (_read(_dir() / "briefing.json", {}) or {}).get("items") or []
     return [it for it in shown if isinstance(it, dict)
-            and any(t in " ".join(str(it.get(k) or "") for k in FIELDS).lower() for t in terms)]
+            and any(t in _text_of(it) for t in terms)]
 
 
 def forget_find(names, emails) -> int:
