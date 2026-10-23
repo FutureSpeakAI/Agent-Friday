@@ -49,10 +49,15 @@ def derive(rec: Optional[Dict[str, Any]], *, stop_requested: bool = False) -> st
         return "completed_unverified"
     if status.startswith("failed") or status in ("timeout", "error", "killed"):
         return "failed"
-    if status in ("cancelled", "canceled", "superseded", "stopped", "skipped", "deleted"):
-        return "cancelled"
+    if status in ("cancelled", "canceled", "superseded", "stopped", "skipped", "deleted",
+                  "declined"):
+        return "cancelled"              # declined: the owner said no on the task's card
     if status == "interrupted":
         return "recovered_after_crash"
+    if status in ("waiting_approval", "waiting_for_approval"):
+        # Terminal for the journal (the worker is done; a restart must not run it again), but the
+        # task is not finished: it waits for the owner's card (agent.settle_waiting_task).
+        return "waiting_for_approval"
     try:
         from agent_friday.services import task_journal as _tj
         if _tj.is_terminal(status):
