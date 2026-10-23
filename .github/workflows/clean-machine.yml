@@ -15,6 +15,10 @@ name: clean-machine
 #   locale         a Turkish user locale (dotless i, decimal comma) (§34.3-4)
 #   standard-user  a standard, non-administrator account whose name and
 #                  profile folder are not plain ASCII (§34.3-5)
+#   rollback       on the installed build, a bad change followed by starts
+#                  that never reach serving is rolled back by the boot guard
+#                  to the last state that booted, and Friday serves again
+#                  (packaging/windows/tests/rollback, §34.2-8)
 #   evidence       one record over every leg; every leg must have installed the
 #                  same setup program (scripts/clean_machine_evidence.py) (§34.3-8)
 #
@@ -38,6 +42,8 @@ on:
   pull_request:
     paths:
       - "packaging/windows/tests/clean-machine/**"
+      - "packaging/windows/tests/rollback/**"
+      - "src/agent_friday/services/boot_guard.py"
       - "packaging/windows/tests/verify-clean-install.ps1"
       - "packaging/windows/installer/**"
       - "packaging/windows/install.ps1"
@@ -105,6 +111,7 @@ jobs:
           - { leg: memory-cap,    os: windows-latest, variant: memory-cap }
           - { leg: locale,        os: windows-latest, variant: locale }
           - { leg: standard-user, os: windows-latest, variant: standard-user }
+          - { leg: rollback,      os: windows-latest, variant: rollback }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -135,6 +142,9 @@ jobs:
             }
             'standard-user' {
               powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\run-as-standard-user.ps1 -Setup $exe -WorkDir $work
+            }
+            'rollback' {
+              powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\rollback\verify-boot-rollback.ps1 -Setup $exe -WorkDir $work
             }
             default {
               powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows\tests\clean-machine\verify-clean-machine.ps1 `

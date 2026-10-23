@@ -1,0 +1,1816 @@
+{
+ "$id": "agent-friday/settings",
+ "properties": {
+  "agent_name": {
+   "type": "string"
+  },
+  "approvals_policy": {
+   "properties": {
+    "external_message": {
+     "properties": {
+      "expires_seconds": {
+       "type": "number"
+      },
+      "gated": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "internal": {
+     "properties": {
+      "expires_seconds": {},
+      "gated": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "irreversible": {
+     "properties": {
+      "expires_seconds": {
+       "type": "number"
+      },
+      "gated": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "outward": {
+     "properties": {
+      "expires_seconds": {
+       "type": "number"
+      },
+      "gated": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "spend": {
+     "properties": {
+      "expires_seconds": {
+       "type": "number"
+      },
+      "gated": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "artifact_panel_enabled": {
+   "type": "boolean"
+  },
+  "audio_input_device_id": {
+   "type": "string"
+  },
+  "audio_output_device_id": {
+   "type": "string"
+  },
+  "auto_open_created_files": {
+   "type": "boolean"
+  },
+  "away_drain": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "away_drain_after_s": {
+   "type": "number"
+  },
+  "background_idle_minutes": {
+   "integer": true,
+   "maximum": 240,
+   "minimum": 1,
+   "type": "number"
+  },
+  "big_mode": {
+   "type": "string"
+  },
+  "calendar_delete_notify_guests": {
+   "type": "boolean"
+  },
+  "call_mode": {
+   "enum": [
+    "automatic",
+    "ask",
+    "off"
+   ],
+   "type": "string"
+  },
+  "call_verifier": {
+   "properties": {
+    "argument_sanity": {
+     "type": "boolean"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "injection_flag": {
+     "type": "boolean"
+    },
+    "loop_breaker": {
+     "type": "boolean"
+    },
+    "loop_limit": {
+     "type": "number"
+    },
+    "privacy_vote": {
+     "type": "boolean"
+    },
+    "repeat_cache": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "camera_interval_sec": {
+   "type": "number"
+  },
+  "capability_routing": {
+   "properties": {
+    "asr": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "creative_image": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "creative_music": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "creative_video": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "embedding": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "function_manager": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "heavy_hitter": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "local": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "memory_manager": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "orchestrator": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "reasoning": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "researcher": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "sidekick_fast": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "subagent": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "tts": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "voice": {
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "career_ops": {
+   "properties": {
+    "path": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "channels": {
+   "properties": {
+    "discord": {
+     "properties": {
+      "allowlist": {
+       "type": "array"
+      },
+      "enabled": {
+       "type": "boolean"
+      },
+      "poll_interval": {
+       "type": "number"
+      }
+     },
+     "type": "object"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "telegram": {
+     "properties": {
+      "allowlist": {
+       "type": "array"
+      },
+      "enabled": {
+       "type": "boolean"
+      },
+      "poll_interval": {
+       "type": "number"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "chat_tool_routing": {
+   "enum": [
+    "laya",
+    "model",
+    ""
+   ],
+   "type": "string"
+  },
+  "cite_sources": {
+   "type": "boolean"
+  },
+  "cloud_context_slicing": {
+   "type": "string"
+  },
+  "cloud_context_slicing_offer": {
+   "type": "string"
+  },
+  "communication_style": {
+   "type": "string"
+  },
+  "compaction": {
+   "properties": {
+    "context_window": {
+     "type": "number"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "keep_head": {
+     "type": "number"
+    },
+    "keep_tail": {
+     "type": "number"
+    },
+    "summary_max_tokens": {
+     "type": "number"
+    },
+    "trigger_ratio": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "computer_control_enabled": {
+   "type": "boolean"
+  },
+  "confirm_before_opening": {
+   "type": "boolean"
+  },
+  "content": {
+   "properties": {
+    "conflict_window_hours": {
+     "type": "number"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "psi_daily_cap": {
+     "type": "number"
+    },
+    "staging_base_url": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "context_compression": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "min_tokens_to_compress": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "context_logging_enabled": {
+   "type": "boolean"
+  },
+  "context_pruning": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "keep_recent": {
+     "type": "number"
+    },
+    "max_turns": {
+     "type": "number"
+    },
+    "model": {
+     "type": "string"
+    },
+    "top_k": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "context_retention_days": {
+   "type": "number"
+  },
+  "cost_budget": {
+   "properties": {
+    "daily": {
+     "type": "number"
+    },
+    "daily_enabled": {
+     "type": "boolean"
+    },
+    "hard_stop_daily": {
+     "type": "number"
+    },
+    "hard_stop_daily_enabled": {
+     "type": "boolean"
+    },
+    "hard_stop_monthly": {
+     "type": "number"
+    },
+    "hard_stop_monthly_enabled": {
+     "type": "boolean"
+    },
+    "loop_guard_enabled": {
+     "type": "boolean"
+    },
+    "monthly": {
+     "type": "number"
+    },
+    "monthly_enabled": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "creative_model": {
+   "type": "string"
+  },
+  "creative_policy": {
+   "properties": {
+    "additional_blocked_categories": {
+     "type": "array"
+    },
+    "harm_floor": {
+     "properties": {
+      "enforced": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "refusal_style": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "custom_models": {
+   "type": "array"
+  },
+  "daily_creation_budget_usd": {},
+  "daily_creation_free_choice": {
+   "type": "boolean"
+  },
+  "decision_backend": {
+   "type": "string"
+  },
+  "decision_shadow": {
+   "type": "string"
+  },
+  "demo_mode": {},
+  "display_reserve_mode": {
+   "type": "string"
+  },
+  "distribution": {
+   "type": "string"
+  },
+  "dock_by_asking": {
+   "enum": [
+    "apply_with_undo",
+    "ask_first"
+   ],
+   "type": "string"
+  },
+  "dock_custom": {
+   "properties": {
+    "hidden": {
+     "type": "array"
+    },
+    "order": {
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "dock_layout": {
+   "type": "string"
+  },
+  "elevenlabs_api_key": {
+   "type": "string"
+  },
+  "elevenlabs_model": {
+   "type": "string"
+  },
+  "elevenlabs_voice_id": {
+   "type": "string"
+  },
+  "email_cloud_release": {
+   "enum": [
+    "ask",
+    "withhold"
+   ],
+   "type": "string"
+  },
+  "first_run_seat_satisfied_by_serving": {
+   "type": "boolean"
+  },
+  "google_oauth": {
+   "properties": {
+    "redirect_base_override": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "hang_watchdog": {
+   "properties": {
+    "auto_restart_after_dump": {
+     "type": "boolean"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "heartbeat_interval_s": {
+     "type": "number"
+    },
+    "stall_threshold_s": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "heartbeat": {
+   "properties": {
+    "calendar_lookahead_minutes": {
+     "type": "number"
+    },
+    "precheck": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "held_features": {
+   "properties": {
+    "federation": {
+     "type": "boolean"
+    },
+    "trust_agents": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "honour_focus_assist": {
+   "type": "boolean"
+  },
+  "identity": {
+   "properties": {
+    "local_voice_matches_cloud": {
+     "type": "boolean"
+    },
+    "name_in_lockup": {
+     "type": "boolean"
+    },
+    "pronouns": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "idle_work": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "from_hour": {
+     "type": "number"
+    },
+    "idle_after_s": {
+     "type": "number"
+    },
+    "to_hour": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "include_sources": {
+   "type": "boolean"
+  },
+  "interruption_budget_per_hour": {
+   "integer": true,
+   "maximum": 60,
+   "minimum": 0,
+   "type": "number"
+  },
+  "inworld_api_key": {
+   "type": "string"
+  },
+  "inworld_model": {
+   "type": "string"
+  },
+  "inworld_plan_tier": {
+   "type": "string"
+  },
+  "inworld_voice_id": {
+   "type": "string"
+  },
+  "job_prompts": {
+   "properties": {
+    "slim": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "judgment_gate": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "model": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "keep_brain_warm_between_sessions": {
+   "type": "boolean"
+  },
+  "knowledge_graph": {
+   "type": "object"
+  },
+  "landing_mode": {
+   "type": "string"
+  },
+  "laya_personal_learning": {
+   "type": "boolean"
+  },
+  "laya_personal_retention_days": {
+   "type": "number"
+  },
+  "laya_personal_shadow_days": {
+   "type": "number"
+  },
+  "laya_pilot_enabled": {
+   "type": "boolean"
+  },
+  "laya_runtime": {
+   "type": "string"
+  },
+  "laya_safe_writes": {
+   "type": "string"
+  },
+  "laya_tool_head": {
+   "type": "string"
+  },
+  "learning_loop": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "epoch_weekday": {
+     "type": "number"
+    },
+    "max_active_skills": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "ledger_archive_after_days": {
+   "type": "number"
+  },
+  "library_cloud_answers": {
+   "type": "boolean"
+  },
+  "library_cloud_char_cap": {
+   "type": "number"
+  },
+  "library_floor_tier": {
+   "type": "boolean"
+  },
+  "library_index_on_battery": {
+   "type": "boolean"
+  },
+  "library_kg_learn": {
+   "type": "string"
+  },
+  "library_search": {
+   "type": "boolean"
+  },
+  "local_address": {
+   "properties": {
+    "host": {
+     "type": "string"
+    },
+    "http_port": {
+     "type": "number"
+    },
+    "https_port": {
+     "type": "number"
+    },
+    "serve": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "local_reasoning_effort": {
+   "type": "string"
+  },
+  "local_reasoning_effort_policy": {
+   "properties": {
+    "deep_xhigh": {
+     "type": "boolean"
+    },
+    "reflex_thinking_off": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "local_scheduler_admit_timeout_s": {
+   "type": "number"
+  },
+  "local_scheduler_lease_wait_s": {
+   "type": "number"
+  },
+  "local_scheduler_ram_floor_gb": {
+   "type": "number"
+  },
+  "local_scheduler_resident_s": {
+   "type": "number"
+  },
+  "local_scheduler_wrap_background": {
+   "type": "boolean"
+  },
+  "local_sizing": {
+   "properties": {
+    "cpu_seats_hide_gpu": {
+     "type": "boolean"
+    },
+    "enabled": {
+     "type": "boolean"
+    },
+    "helpers_to_cpu_when_tight": {
+     "type": "boolean"
+    },
+    "min_room_tokens": {
+     "type": "number"
+    },
+    "plan_unmeasured_from_estimate": {
+     "type": "boolean"
+    },
+    "prompt_margin_pct": {
+     "type": "number"
+    },
+    "small_helper_max_params_b": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "local_voice_asr_model": {
+   "type": "string"
+  },
+  "local_voice_borrow_llama_cpp_cublas": {
+   "type": "boolean"
+  },
+  "local_voice_gpu_asr_model": {
+   "type": "string"
+  },
+  "local_voice_gpu_tts": {
+   "type": "string"
+  },
+  "local_voice_kokoro_allow_cpu": {
+   "type": "boolean"
+  },
+  "local_voice_kokoro_voice": {
+   "type": "string"
+  },
+  "local_voice_switch_offer": {
+   "type": "string"
+  },
+  "local_voice_tts_engine": {
+   "enum": [
+    "piper",
+    "kokoro"
+   ],
+   "type": "string"
+  },
+  "local_voice_tts_voice": {
+   "type": "string"
+  },
+  "mail_default_account": {
+   "type": "string"
+  },
+  "meeting_archive": {
+   "type": "string"
+  },
+  "meeting_audio_retention": {
+   "type": "string"
+  },
+  "meeting_consent_line": {
+   "type": "string"
+  },
+  "meeting_consent_mode": {
+   "type": "string"
+  },
+  "meeting_speak_consent": {
+   "type": "boolean"
+  },
+  "meeting_suggestions": {
+   "type": "boolean"
+  },
+  "meeting_text_retention": {
+   "type": "string"
+  },
+  "meeting_text_retention_days": {
+   "type": "number"
+  },
+  "memory_dreaming": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "hour": {
+     "type": "number"
+    },
+    "keep_topics": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "memory_recall_enabled": {
+   "type": "boolean"
+  },
+  "memory_review_enabled": {
+   "type": "boolean"
+  },
+  "memory_review_every_turns": {
+   "type": "number"
+  },
+  "minor_mode": {
+   "type": "boolean"
+  },
+  "model_routing": {
+   "properties": {
+    "cloud_consent": {
+     "properties": {
+      "answered": {
+       "type": "boolean"
+      },
+      "at": {},
+      "capability_snapshot": {},
+      "choice": {}
+     },
+     "type": "object"
+    },
+    "cloud_fallback_order": {
+     "type": "string"
+    },
+    "cloud_provider": {
+     "type": "string"
+    },
+    "cost_tracking": {
+     "type": "boolean"
+    },
+    "default_cloud_model": {
+     "type": "string"
+    },
+    "fallback_to_cloud": {
+     "type": "boolean"
+    },
+    "local_model": {
+     "type": "string"
+    },
+    "mode": {
+     "enum": [
+      "local_only",
+      "local_preferred",
+      "cloud_preferred",
+      "cloud_only"
+     ],
+     "type": "string"
+    },
+    "ollama_url": {
+     "type": "string"
+    },
+    "openai_api_key": {
+     "type": "string"
+    },
+    "openai_base_url": {
+     "type": "string"
+    },
+    "openai_model": {
+     "type": "string"
+    },
+    "task_overrides": {
+     "type": "object"
+    },
+    "unrestricted_cloud": {
+     "type": "boolean"
+    },
+    "vault_cloud_fallback": {
+     "type": "string"
+    },
+    "vault_local_only": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "music_model": {
+   "type": "string"
+  },
+  "network_probe": {
+   "type": "string"
+  },
+  "news_edition_window_hours": {
+   "properties": {
+    "briefing": {
+     "type": "number"
+    },
+    "front_page": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "news_local_area": {
+   "type": "string"
+  },
+  "news_local_sources": {
+   "type": "array"
+  },
+  "news_priorities": {
+   "type": "array"
+  },
+  "news_trusted_outlets": {
+   "type": "array"
+  },
+  "notification_mutes": {
+   "type": "array"
+  },
+  "off_record": {
+   "type": "boolean"
+  },
+  "off_record_stops_storage": {
+   "type": "boolean"
+  },
+  "offline_auto_local": {
+   "type": "boolean"
+  },
+  "offline_queue_cloud_tasks": {
+   "type": "boolean"
+  },
+  "offline_voice_fallback": {
+   "type": "boolean"
+  },
+  "orchestrator_model": {
+   "type": "string"
+  },
+  "outward_reads": {
+   "type": "string"
+  },
+  "overrides": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "models": {
+     "type": "boolean"
+    },
+    "static_css": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "pause_warnings_off": {
+   "type": "boolean"
+  },
+  "podcasts": {
+   "properties": {
+    "cloud_voice": {
+     "type": "boolean"
+    },
+    "cohost_name_asked": {
+     "type": "boolean"
+    },
+    "enabled_for_routines": {
+     "properties": {
+      "briefing": {
+       "type": "boolean"
+      },
+      "editorial": {
+       "type": "boolean"
+      },
+      "front_page": {
+       "type": "boolean"
+      },
+      "weekly": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "format": {
+     "properties": {
+      "any": {
+       "type": "string"
+      },
+      "briefing": {
+       "type": "string"
+      },
+      "editorial": {
+       "type": "string"
+      },
+      "front_page": {
+       "type": "string"
+      },
+      "weekly": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "hosts": {
+     "properties": {
+      "a": {
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "voice": {
+         "type": "string"
+        }
+       },
+       "type": "object"
+      },
+      "b": {
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "voice": {
+         "type": "string"
+        }
+       },
+       "type": "object"
+      }
+     },
+     "type": "object"
+    },
+    "length": {
+     "properties": {
+      "any": {
+       "type": "string"
+      },
+      "briefing": {
+       "type": "string"
+      },
+      "editorial": {
+       "type": "string"
+      },
+      "front_page": {
+       "type": "string"
+      },
+      "weekly": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "on_ready": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "providers": {
+   "type": "object"
+  },
+  "publish_default_adapter": {
+   "type": "string"
+  },
+  "publish_mark": {
+   "type": "boolean"
+  },
+  "publish_this_pc_enabled": {
+   "type": "boolean"
+  },
+  "publish_this_pc_tunnel": {
+   "type": "boolean"
+  },
+  "push_to_transcribe": {
+   "type": "boolean"
+  },
+  "push_to_transcribe_hold_ms": {
+   "type": "number"
+  },
+  "push_to_transcribe_hotkey": {
+   "type": "string"
+  },
+  "qa_gates": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "max_retries": {
+     "type": "number"
+    },
+    "mode": {
+     "type": "string"
+    },
+    "threshold": {
+     "type": "number"
+    },
+    "vision_for_images": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "quiet_hours_enabled": {
+   "type": "boolean"
+  },
+  "quiet_hours_end": {
+   "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+   "type": "string"
+  },
+  "quiet_hours_start": {
+   "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+   "type": "string"
+  },
+  "quiet_until_ts": {
+   "type": "number"
+  },
+  "rate_limiter": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "ring2_per_min": {
+     "type": "number"
+    },
+    "ring3_per_min": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "reasoning_traces": {
+   "properties": {
+    "capture": {
+     "type": "boolean"
+    },
+    "retention_days": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "reflex_approval_replies": {
+   "type": "boolean"
+  },
+  "reflex_open_enabled": {},
+  "repo_sync": {
+   "properties": {
+    "repos": {
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "response_length": {
+   "type": "string"
+  },
+  "runtime_dir": {
+   "type": "string"
+  },
+  "scheduled_cloud": {
+   "properties": {
+    "allow": {
+     "type": "boolean"
+    },
+    "answered": {
+     "type": "boolean"
+    },
+    "at": {},
+    "heartbeat_every_minutes": {
+     "type": "number"
+    },
+    "heartbeat_from_hour": {
+     "type": "number"
+    },
+    "heartbeat_model": {
+     "type": "string"
+    },
+    "heartbeat_to_hour": {
+     "type": "number"
+    },
+    "job_model": {
+     "type": "string"
+    },
+    "routine_follows_cloud_mode": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "schedules": {
+   "properties": {
+    "held_default": {
+     "enum": [
+      "retry",
+      "wait"
+     ],
+     "type": "string"
+    },
+    "missed_default": {
+     "enum": [
+      "run_once",
+      "skip"
+     ],
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "scheduling": {
+   "properties": {
+    "buffer_minutes": {
+     "type": "number"
+    },
+    "min_notice_hours": {
+     "type": "number"
+    },
+    "timezone": {
+     "type": "string"
+    },
+    "working_days": {
+     "type": "array"
+    },
+    "working_hours": {
+     "properties": {
+      "end": {
+       "type": "string"
+      },
+      "start": {
+       "type": "string"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "seat_prefix_warm": {
+   "type": "boolean"
+  },
+  "show_all_workspaces": {
+   "type": "boolean"
+  },
+  "spending_caps": {
+   "properties": {
+    "answered": {
+     "type": "object"
+    },
+    "asked": {
+     "type": "boolean"
+    },
+    "workspace_monthly_mpsi": {},
+    "workspace_task_mpsi": {}
+   },
+   "type": "object"
+  },
+  "studio_dazzle": {
+   "type": "string"
+  },
+  "subagent_model": {
+   "type": "string"
+  },
+  "task_journal": {
+   "properties": {
+    "capture_reasoning": {
+     "type": "boolean"
+    },
+    "encrypt_at_rest": {
+     "type": "boolean"
+    },
+    "retention_days": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "temperature": {
+   "type": "number"
+  },
+  "tool_hooks": {
+   "properties": {
+    "audit_log": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "call_verifier": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "confirmation_gate": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "cost_attribution": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "governance_rings": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "pii_scrub": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "rate_limiter": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "sandbox_policy": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "vault_zt": {
+     "properties": {
+      "enabled": {
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "tool_output_retention_days": {
+   "type": "number"
+  },
+  "tracking": {
+   "properties": {
+    "click_method": {
+     "type": "string"
+    },
+    "debug_overlay": {
+     "type": "boolean"
+    },
+    "depth_strength": {
+     "type": "number"
+    },
+    "dock_depth": {
+     "type": "number"
+    },
+    "dwell_ms": {
+     "type": "number"
+    },
+    "hand_accel": {
+     "type": "number"
+    },
+    "hand_deadzone": {
+     "type": "number"
+    },
+    "hand_gain": {
+     "type": "number"
+    },
+    "hand_region": {
+     "type": "number"
+    },
+    "hand_smoothing": {
+     "type": "number"
+    },
+    "head_response": {
+     "type": "number"
+    },
+    "head_smoothing": {
+     "type": "number"
+    },
+    "holo_cues": {
+     "type": "number"
+    },
+    "neutral_face_width": {
+     "type": "number"
+    },
+    "parallax_strength": {
+     "type": "number"
+    },
+    "pinch_enter": {
+     "type": "number"
+    },
+    "pinch_exit": {
+     "type": "number"
+    },
+    "screen_width_cm": {
+     "type": "number"
+    },
+    "snap": {
+     "type": "boolean"
+    },
+    "snap_radius": {
+     "type": "number"
+    },
+    "two_hand_zoom": {
+     "type": "boolean"
+    },
+    "viewing_distance_cm": {
+     "type": "number"
+    },
+    "zoom_in_max": {
+     "type": "number"
+    },
+    "zoom_out_max": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "trust_scoring": {
+   "properties": {
+    "ban_ceiling": {
+     "maximum": 0.5,
+     "minimum": 0.0,
+     "type": "number"
+    },
+    "boost_floor": {
+     "maximum": 0.95,
+     "minimum": 0.5,
+     "type": "number"
+    },
+    "boost_lift": {
+     "maximum": 0.5,
+     "minimum": 0.0,
+     "type": "number"
+    },
+    "prior_strength": {
+     "maximum": 20.0,
+     "minimum": 0.5,
+     "type": "number"
+    }
+   },
+   "type": "object"
+  },
+  "tts_voice": {
+   "type": "string"
+  },
+  "turn_budget": {
+   "properties": {
+    "rounds": {
+     "type": "object"
+    },
+    "tokens": {
+     "type": "object"
+    },
+    "wall_clock_s": {
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "turn_queue_enabled": {
+   "type": "boolean"
+  },
+  "turn_queue_seat_slots": {
+   "type": "object"
+  },
+  "turn_queue_tool_release_s": {
+   "type": "number"
+  },
+  "unattended_send_undo_s": {
+   "maximum": 600,
+   "minimum": 10,
+   "type": "number"
+  },
+  "user_email": {
+   "type": "string"
+  },
+  "user_modeling": {
+   "properties": {
+    "enabled": {
+     "type": "boolean"
+    },
+    "inject_prompt": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "voice_affective": {
+   "type": "boolean"
+  },
+  "voice_async_routing": {
+   "enum": [
+    "local_only",
+    "follow_model_routing"
+   ],
+   "type": "string"
+  },
+  "voice_barge_grace_ms": {
+   "type": "number"
+  },
+  "voice_barge_sustain_ms": {
+   "type": "number"
+  },
+  "voice_brain_during_calls": {
+   "enum": [
+    "auto",
+    "parked",
+    "resident"
+   ],
+   "type": "string"
+  },
+  "voice_context_compression": {
+   "type": "boolean"
+  },
+  "voice_ear_gpu": {
+   "enum": [
+    "never",
+    "preferred",
+    "if_free",
+    "required"
+   ],
+   "type": "string"
+  },
+  "voice_engine": {
+   "type": "string"
+  },
+  "voice_engine_choice": {
+   "type": "object"
+  },
+  "voice_first_token_filler_s": {
+   "type": "number"
+  },
+  "voice_front_model": {
+   "enum": [
+    "auto",
+    "ternary-bonsai:1.7b",
+    "qwen3-4b-instruct-2507",
+    "qwen3-1.7b"
+   ],
+   "type": "string"
+  },
+  "voice_idle_unload_s": {
+   "type": "number"
+  },
+  "voice_interruption_mode": {
+   "type": "string"
+  },
+  "voice_language": {
+   "type": "string"
+  },
+  "voice_live_compression_target_tokens": {
+   "type": "number"
+  },
+  "voice_live_compression_trigger_tokens": {
+   "type": "number"
+  },
+  "voice_live_idempotency_s": {
+   "type": "number"
+  },
+  "voice_live_instruction_max_tokens": {
+   "type": "number"
+  },
+  "voice_live_reduce_local_model": {
+   "enum": [
+    "off",
+    "seat_if_up"
+   ],
+   "type": "string"
+  },
+  "voice_live_reduce_over_chars": {
+   "type": "number"
+  },
+  "voice_live_reflex": {
+   "enum": [
+    "off",
+    "shadow",
+    "on"
+   ],
+   "type": "string"
+  },
+  "voice_live_reflex_classes": {
+   "type": "array"
+  },
+  "voice_live_soft_budget_usd": {
+   "type": "number"
+  },
+  "voice_live_tool_kit_size": {
+   "type": "number"
+  },
+  "voice_live_trim": {
+   "type": "string"
+  },
+  "voice_local_barge_sustain_ms": {
+   "type": "number"
+  },
+  "voice_max_tokens": {
+   "type": "number"
+  },
+  "voice_model": {
+   "type": "string"
+  },
+  "voice_mouth_gpu": {
+   "enum": [
+    "never",
+    "preferred",
+    "if_free",
+    "required"
+   ],
+   "type": "string"
+  },
+  "voice_proactive": {
+   "type": "boolean"
+  },
+  "voice_response_depth": {
+   "type": "string"
+  },
+  "voice_room_approvals_require_name": {
+   "type": "boolean"
+  },
+  "voice_room_mode": {
+   "type": "string"
+  },
+  "voice_silence_ms": {
+   "type": "number"
+  },
+  "voice_speaking_pace": {
+   "type": "string"
+  },
+  "voice_style_prompt": {
+   "type": "string"
+  },
+  "voice_switch_back": {
+   "type": "object"
+  },
+  "voice_temperature": {},
+  "voice_tool_hard_limit_s": {
+   "type": "number"
+  },
+  "voice_tool_routing": {
+   "enum": [
+    "laya",
+    "model"
+   ],
+   "type": "string"
+  },
+  "voice_tools": {
+   "type": "boolean"
+  },
+  "web_fonts_from_google": {
+   "type": "boolean"
+  },
+  "wiki_encrypted_sections": {
+   "type": "array"
+  },
+  "wiki_mirror_dir": {
+   "type": "string"
+  },
+  "work_order_privacy_class": {
+   "type": "string"
+  },
+  "work_orders_enabled": {
+   "type": "boolean"
+  },
+  "workspace_layouts": {
+   "type": "object"
+  },
+  "workspace_temperatures": {
+   "properties": {
+    "chat": {
+     "type": "number"
+    },
+    "code": {
+     "type": "number"
+    },
+    "content": {
+     "type": "number"
+    },
+    "creative": {
+     "type": "number"
+    },
+    "dev": {
+     "type": "number"
+    },
+    "news": {
+     "type": "number"
+    },
+    "research": {
+     "type": "number"
+    },
+    "review": {
+     "type": "number"
+    },
+    "studio": {
+     "type": "number"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "type": "object"
+}

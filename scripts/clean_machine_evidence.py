@@ -43,6 +43,10 @@ LEGS = {
     "locale": {"row": "NS-34.3-4", "variant": "locale", "image": None, "checks": _CLEAN_MACHINE + ("locale",)},
     "standard-user": {"row": "NS-34.3-5", "variant": "standard-user", "image": None,
                       "checks": _CLEAN_MACHINE + ("account",)},
+    "rollback": {"row": "NS-34.2-8", "variant": "rollback", "image": None,
+                 "checks": ("install", "known-good", "bad-change", "failed-starts", "rollback",
+                            "page-restored", "kept-for-inspection", "note", "serves-again",
+                            "data-intact", "uninstall")},
 }
 
 ROW_TEXT = {
@@ -53,6 +57,8 @@ ROW_TEXT = {
     "NS-34.3-4": "Clean-machine: non-English locale (Turkish user locale; the ANSI code page "
                  "stays 1252, which needs a reboot to change)",
     "NS-34.3-5": "Clean-machine: restricted user account (standard account, non-ASCII profile path)",
+    "NS-34.2-8": "Update and rollback: the upgrade matrix (installer.yml) plus, on the installed "
+                 "build, a bad change after failed starts is rolled back to the last state that booted",
 }
 
 
