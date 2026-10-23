@@ -1509,6 +1509,13 @@ examples:
     p_restore.add_argument("--allow-newer", action="store_true", dest="allow_newer",
                            help="Restore a bundle made by a newer Friday")
 
+    p_resume = sub.add_parser("resume", help="After a restore: let outward actions go again "
+                                             "(review your connections first)")
+    p_resume.add_argument("--status", action="store_true",
+                          help="Say whether outward actions wait on a restore; change nothing")
+    p_resume.add_argument("--yes", action="store_true",
+                          help="Do not ask for confirmation (you have reviewed your connections)")
+
     # safe mode (services/safe_mode.py)
     sub.add_parser("safe", help="Start Friday in safe mode: extensions and the cloud off")
     p_safe = sub.add_parser("safe-mode", help="Start in safe mode next time, or leave it")
@@ -2167,8 +2174,54 @@ def cmd_restore(args):
         return 0
     ok = (r.get("checked_in_place") or {}).get("files_match") and \
         ((r.get("checked_in_place") or {}).get("ledger") or {}).get("ok", True)
-    print("Restored. Outward actions are held until you press Resume on the Doctor page.")
+    print("Restored. Outward actions are held until you press Resume on the Doctor page "
+          "(or run: friday resume).")
     return 0 if ok else 1
+
+
+def cmd_resume(args) -> int:
+    """The owner's re-attestation after a restore, from a terminal on this PC:
+    the same act as Resume on the Doctor page. It lifts the restore hold only;
+    safe mode, a revocation of authority or a ledger break still hold, and are
+    named. From inside Friday it cannot run: a command is an outward action,
+    and outward actions are held while the restore hold stands."""
+    from agent_friday.services import friday_bundle
+    why = friday_bundle.restore_hold()
+    if not why:
+        print("Outward actions are not waiting on a restore.")
+        return 0
+    print(why + ".")
+    if getattr(args, "status", False):
+        return 0
+    if not getattr(args, "yes", False):
+        if not sys.stdin or not sys.stdin.isatty():
+            print("Not resumed: confirm with --yes, or run this in a terminal.")
+            return 1
+        try:
+            answer = input("Have you reviewed your connections and want outward actions to go "
+                           "again? Type yes: ")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() != "yes":
+            print("Not resumed.")
+            return 1
+    try:
+        done = friday_bundle.resume_after_restore("owner:cli")
+    except Exception as e:  # noqa: BLE001 - said plainly; the hold stays
+        print("Not resumed: the record of this could not be written (%s)." % type(e).__name__)
+        return 1
+    if not done:
+        print("Outward actions are not waiting on a restore.")
+        return 0
+    print("Resumed: outward actions may go again.")
+    try:
+        from agent_friday.governance import action_gate
+        still = action_gate.outward_hold()
+    except Exception as e:  # noqa: BLE001
+        still = "the remaining holds could not be checked (%s)" % type(e).__name__
+    if still:
+        print("Still held: %s." % still)
+    return 0
 
 
 def cmd_safe_mode(state):
@@ -2247,6 +2300,8 @@ def main():
         rv = cmd_bundle(args)
     elif cmd == "restore":
         rv = cmd_restore(args)
+    elif cmd == "resume":
+        rv = cmd_resume(args)
     elif cmd == "health":
         rv = cmd_health(exit_code=getattr(args, "exit_code", False))
     elif cmd == "update":
