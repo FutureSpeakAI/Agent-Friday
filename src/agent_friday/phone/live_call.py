@@ -333,6 +333,15 @@ class CallBridge:
         if not text:
             return
         self.history.append({"who": "caller", "text": text})
+        from agent_friday.services import voice_repeat
+        if voice_repeat.is_repeat_request(text):
+            # "Say that again": the last thing said to this caller, word for
+            # word, with no model call (NS-33.3-2). Already through the gate.
+            last = next((h["text"] for h in reversed(self.history[:-1]) if h.get("who") == "friday"), "")
+            again = _gate_spoken(voice_repeat.repeat_reply(last))     # gated again: cheap, and safe
+            self.history.append({"who": "friday", "text": again})
+            self.say(again)
+            return
         try:
             reply = self.agent(self.history)
         except Exception as e:
