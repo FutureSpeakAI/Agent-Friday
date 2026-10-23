@@ -53,8 +53,22 @@ def edit_line():
 @login_required
 def delete_line():
     d = _body()
-    return jsonify(public_result(core_memory.owner_delete(str(d.get("target") or ""), d.get("index")),
+    return jsonify(public_result(core_memory.owner_delete(str(d.get("target") or ""), d.get("index"),
+                                                          wrong=bool(d.get("wrong"))),
                                  "Couldn't delete that line"))
+
+
+@core_memory_bp.route("/api/core-memory/restore-messages", methods=["POST"])
+@login_required
+def restore_messages():
+    """Put back into recall the messages a card correction retired (the ids
+    the edit or delete returned)."""
+    d = _body()
+    ids = d.get("ids")
+    if not isinstance(ids, list) or not ids or len(ids) > 200 or not all(isinstance(i, str) and 0 < len(i) <= 80
+                                                                       for i in ids):
+        return jsonify({"ok": False, "error": "which messages?"}), 400
+    return jsonify({"ok": True, "restored": core_memory.restore_superseded(ids)})
 
 
 @core_memory_bp.route("/api/core-memory/undo", methods=["POST"])
