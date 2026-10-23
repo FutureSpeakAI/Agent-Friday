@@ -1411,6 +1411,8 @@ def _tasks_for_creds(creds, max_results: int) -> list:
         lists_resp = svc.tasklists().list(maxResults=10).execute()
         out = []
         for tl in lists_resp.get("items", []):
+            if _inbox_fenced(None, tl.get("id")):
+                continue
             resp = svc.tasks().list(tasklist=tl["id"], showCompleted=False,
                                     maxResults=max_results).execute()
             for t in resp.get("items", []):
@@ -1432,6 +1434,26 @@ def _tasks_for_creds(creds, max_results: int) -> list:
         return out
     except Exception as e:
         return [{"error": ExceptionText(f"Tasks fetch failed: {e}")}]
+
+
+# ── the inbox fence ──────────────────────────────────────────────────────────
+# Friday's waiting list on the owner's phone (services/tasks_inbox) is a Google
+# Tasks list that only that module may write. Every read below skips it and every
+# write refuses it, whoever the caller is: Friday's own Tasks tools, a run that
+# holds a run grant, a connector or a code session. A tick in that list must
+# never be something Friday's own model could make.
+INBOX_FENCE_REFUSAL = ("That list is Friday's waiting list on your phone. Only Friday's own "
+                       "inbox may change it, and nothing else may read it as a task list.")
+
+
+def _inbox_fenced(account_id, tasklist_id) -> bool:
+    try:
+        from agent_friday.services import tasks_inbox
+        return tasks_inbox.is_inbox_list(account_id, tasklist_id)
+    except ImportError:
+        return False
+    except Exception:
+        return True                       # cannot tell: refuse
 
 
 # ── writes ───────────────────────────────────────────────────────────────────
@@ -1511,6 +1533,8 @@ def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body
     if not tasklist_id:
         return {"error": "tasklist_id is required for a task write — call "
                          "list_tasks first to find it."}
+    if _inbox_fenced(account_id, tasklist_id):
+        return {"error": INBOX_FENCE_REFUSAL, "fenced": True}
     creds = credentials_for(account_id)
     if not creds:
         return {"error": "needs_reauth", "account_id": account_id}
@@ -1571,6 +1595,8 @@ def delete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
         return {"error": "account_id, tasklist_id, and task_id are all "
                          "required for a task delete — call list_tasks first "
                          "to find them. Never guessed."}
+    if _inbox_fenced(account_id, tasklist_id):
+        return {"error": INBOX_FENCE_REFUSAL, "fenced": True}
     creds = credentials_for(account_id)
     if not creds:
         return {"error": "needs_reauth", "account_id": account_id}
