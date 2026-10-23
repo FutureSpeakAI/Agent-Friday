@@ -5184,6 +5184,89 @@ def _apply_isolation_headers(resp):
     return _isolation_headers(resp)
 
 
+# ── Idempotency keys (services/idempotency; BD-11a) ─────────────
+# Registered after check_auth, so only a request that passed the front door is
+# kept or replayed. The same key twice runs once.
+
+@app.before_request
+def _idempotency_begin():
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        return None
+    try:
+        from agent_friday.services import idempotency as _idem
+    except Exception:  # noqa: BLE001 - without the module the request runs as before
+        return None
+    if not _idem.applies(request.method, request.path):
+        return None
+    if not _idem.valid_key(key):
+        return jsonify({"status": "error", "code": "bad_idempotency_key",
+                        "message": "Idempotency-Key must be 8 to 128 letters, digits, '.', '_', ':' or '-'. "
+                                   "Nothing was run."}), 400
+    # Who is asking, so one caller's key never answers another: the principal, where the request
+    # comes from (this PC or not, and its address), whether it carries the page's valid session
+    # token (its validity, not its value, so a rotation does not split one page's retries), and
+    # whether its session is signed in (read after check_auth, which may sign a first request in:
+    # the session cookie's own bytes change when it does, which would split a request from its
+    # retry).
+    try:
+        _local = bool(_is_local_request())
+    except Exception:  # noqa: BLE001
+        _local = False
+    try:
+        _tok_ok = bool(_api_token_valid(request.headers.get("X-Friday-Token")))
+    except Exception:  # noqa: BLE001
+        _tok_ok = False
+    caller = "%s|%s|%s|%s|%s" % (getattr(g, "friday_principal", "user") or "user", _local,
+                                 request.remote_addr or "", _tok_ok,
+                                 bool(session.get("authenticated")))
+    decision, got = _idem.begin(key, caller, "",
+                                _idem.fingerprint(request.method, request.path, request.get_data(cache=True)))
+    if decision == "run":
+        g._idempotency_scope = got
+        return None
+    if decision == "replay":
+        resp = Response(got["body"], status=got["status"], mimetype=got["mimetype"])
+        resp.headers[_idem.REPLAYED] = "true"
+        return resp
+    words = {
+        "running": ("idempotency_in_progress", 409,
+                    "A request with this Idempotency-Key is still running; it was not run again."),
+        "stream": ("idempotency_used", 409,
+                   "A request with this Idempotency-Key was already handled, and its answer was a stream "
+                   "that cannot be sent again. It was not run again."),
+        "mismatch": ("idempotency_key_reused", 422,
+                     "This Idempotency-Key was already used for a different request. Nothing was run."),
+    }[decision]
+    return jsonify({"status": "error", "code": words[0], "message": words[2]}), words[1]
+
+
+@app.after_request
+def _idempotency_finish(resp):
+    scope = getattr(g, "_idempotency_scope", None)
+    if scope:
+        try:
+            from agent_friday.services import idempotency as _idem
+            streamed = bool(resp.is_streamed or resp.direct_passthrough)
+            body = None if streamed else resp.get_data()
+            _idem.finish(scope, resp.status_code, body, resp.mimetype, streamed)
+            g._idempotency_scope = None
+        except Exception:  # noqa: BLE001
+            pass
+    return resp
+
+
+@app.teardown_request
+def _idempotency_forget(_exc=None):
+    scope = getattr(g, "_idempotency_scope", None)
+    if scope:
+        try:
+            from agent_friday.services import idempotency as _idem
+            _idem.forget(scope)          # the request failed before an answer: a retry runs
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @app.route('/api/session/token')
 def session_token():
     """The current session token, for a page that stayed open past a rotation.
