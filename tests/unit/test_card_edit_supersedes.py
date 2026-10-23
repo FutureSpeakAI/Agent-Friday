@@ -136,7 +136,10 @@ def test_a_rewording_that_still_says_it_retires_nothing(world):
     cid = cv.create("Food")["id"]
     said = _said(mem, cid, "I really like spicy Thai food, the hotter the better.")
     cm.add("user", "Likes spicy Thai food.", actor="owner")
-    same = cm.owner_set("user", 0, "Likes spicy Thai food, especially green curry.")
+    cm.add("user", "Walks the dog every morning.", actor="owner")
+    more = cm.owner_set("user", 1, "Walks the dog every morning before work.")   # added detail
+    assert more["ok"] and "superseded_turns" not in more
+    same = cm.owner_set("user", 0, "Likes spicy Thai food!")                     # a re-save
     assert same["ok"] and "superseded_turns" not in same
     assert said in _recalled_ids(mem, "spicy thai food")
     changed = cm.owner_set("user", 0, "Avoids spicy food now.")
