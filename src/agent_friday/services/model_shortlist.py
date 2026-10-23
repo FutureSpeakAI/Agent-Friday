@@ -28,6 +28,7 @@ import re
 import sys
 from functools import lru_cache
 from pathlib import Path
+from agent_friday.user_errors import UserFacingValueError
 
 SHORTLIST_PATH = Path(__file__).resolve().parent.parent / "resources" / "model_shortlist.json"
 
@@ -89,7 +90,7 @@ def file_url(model_id: str, entry: dict) -> str:
     if rev is None:
         return HF_RESOLVE.format(repo=m.get("repo", ""), file=entry["file"])
     if not isinstance(rev, str) or not _COMMIT_RE.fullmatch(rev):
-        raise ValueError("%s: revision %r is not a full commit id" % (model_id, rev))
+        raise UserFacingValueError("%s: revision %r is not a full commit id" % (model_id, rev))
     return HF_RESOLVE_AT.format(repo=m.get("repo", ""), revision=rev, file=entry["file"])
 
 

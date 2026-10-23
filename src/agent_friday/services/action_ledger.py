@@ -101,6 +101,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional
+from agent_friday.user_errors import UserFacingRuntimeError
 
 VERSION = 1
 GENESIS = "0" * 64
@@ -149,7 +150,7 @@ def _fresh_state(d: Optional[str]) -> dict:
 _STATE.update(_fresh_state(None))
 
 
-class LedgerError(RuntimeError):
+class LedgerError(UserFacingRuntimeError):
     """The ledger could not be written or read (no key, no disk, lock timeout)."""
 
 
@@ -857,7 +858,7 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                     raise
                 except Exception as e:  # noqa: BLE001
                     if strict:
-                        raise LedgerError("the action ledger's archive could not be read (%s)" % e)
+                        raise LedgerError("the action ledger's archive could not be read (%s)" % type(e).__name__)
                     arch = []
                 sources = list(arch) + sources
             order = list(reversed(sources)) if newest_first else sources
@@ -1187,7 +1188,7 @@ def _check_archive(key: Optional[bytes], deep: bool) -> dict:
                     else:
                         reason = _walk_archived(plain, key, r)
             except LedgerError as e:
-                reason = str(e)
+                reason = e.user_message
             except OSError:
                 reason = "an archived file cannot be read"
             cache[name] = (sig, reason)

@@ -234,7 +234,7 @@ def _read(kinds, *, archive: bool, **kw):
     try:
         return action_ledger.entries(kinds, archive=True, strict=True, gate=False, **kw), None
     except action_ledger.LedgerError as e:
-        return action_ledger.entries(kinds, archive=False, **kw), str(e)
+        return action_ledger.entries(kinds, archive=False, **kw), e.user_message
 
 
 def _key_or_none():

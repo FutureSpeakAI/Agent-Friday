@@ -54,6 +54,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from agent_friday.user_errors import UserFacingValueError
 
 #: The one FutureSpeak address the weekly report goes to.
 FUTURESPEAK_DOCTOR_ADDRESS = "doctor@futurespeak.ai"
@@ -85,7 +86,7 @@ _OFF_RECORD_SEEN: list = []
 OFF_RECORD_SHADOW_S = 30 * 86400.0
 
 
-class WeeklyError(ValueError):
+class WeeklyError(UserFacingValueError):
     """Said plainly to the owner."""
 
 

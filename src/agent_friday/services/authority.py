@@ -35,9 +35,10 @@ import os
 import time
 from pathlib import Path
 from typing import Optional
+from agent_friday.user_errors import UserFacingRuntimeError
 
 
-class AuthorityError(RuntimeError):
+class AuthorityError(UserFacingRuntimeError):
     """Said plainly to the owner."""
 
 
@@ -118,7 +119,7 @@ def revoked() -> Optional[dict]:
         # the record cannot be read: held (fails closed), and said as such:
         # the owner is never told they revoked something they did not
         return {"at": None, "by": None, "unreadable": True,
-                "error": (str(e) or type(e).__name__)[:160]}
+                "error": type(e).__name__}
     rec = (e or {}).get("rec") or {}
     if rec.get("event") == "revoked":
         return {"at": e.get("ts"), "by": rec.get("by")}

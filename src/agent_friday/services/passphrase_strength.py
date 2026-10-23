@@ -252,9 +252,18 @@ def _period(s: str) -> Optional[tuple[str, int]]:
     return None
 
 
+def _trim_trailing_non_letters(s: str) -> str:
+    end = len(s)
+    while end and not s[end - 1].isalpha():
+        end -= 1
+    return s[:end]
+
+
 def _common(s: str) -> bool:
     sq = re.sub(r"[\s\-_.]+", "", s).lower()
-    cands = {sq, re.sub(r"\d+$", "", sq), re.sub(r"[\d\W_]+$", "", sq).translate(_LEET),
+    # Trailing digits and symbols are trimmed without a regex: a backtracking
+    # pattern anchored at the end is quadratic in the length.
+    cands = {sq, sq.rstrip("0123456789"), _trim_trailing_non_letters(sq).translate(_LEET),
              sq.translate(_LEET)}
     return any(c in _COMMON for c in cands if c)
 

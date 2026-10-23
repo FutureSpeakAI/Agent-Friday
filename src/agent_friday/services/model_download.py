@@ -41,6 +41,7 @@ import requests
 
 from agent_friday.core import runtime_dir
 from agent_friday.services import model_shortlist as sl
+from agent_friday.user_errors import result_text
 
 _log = logging.getLogger("friday.model_download")
 
@@ -418,7 +419,7 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
                               "bytes": int(c.get("bytes") or 0), "sha256": c.get("sha256"),
                               "role": c.get("kind", "companion")})
     except ValueError as e:
-        return {"status": "refused", "error": str(e)}
+        return {"status": "refused", "error": result_text(e)}
     try:
         from agent_friday.services import model_store
         held_now = model_store.held_installed()

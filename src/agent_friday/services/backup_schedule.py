@@ -47,6 +47,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
+from agent_friday.user_errors import UserFacingValueError
 
 EVERY = {"daily": 86400.0, "weekly": 7 * 86400.0}
 DEFAULT_KEEP = 7
@@ -63,7 +64,7 @@ _LOCK = threading.Lock()
 _TEST_SECRETS: dict[str, str] = {}
 
 
-class ScheduleError(ValueError):
+class ScheduleError(UserFacingValueError):
     """A schedule that cannot be set as asked (said in plain words)."""
 
 

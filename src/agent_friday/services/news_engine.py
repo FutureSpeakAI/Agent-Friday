@@ -3170,7 +3170,11 @@ def _read_editorial(week_id):
     safe = re.sub(r"[^0-9A-Za-z\-]", "", week_id or "")
     if not safe:
         return None
-    path = EDITORIALS_DIR / f"{safe}.md"
+    from agent_friday.paths import contained
+    try:
+        path = contained(EDITORIALS_DIR, f"{safe}.md")
+    except ValueError:
+        return None
     if not path.exists():
         return None
     try:

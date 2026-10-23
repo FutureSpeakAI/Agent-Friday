@@ -270,7 +270,7 @@ def bundle_schedule_set():
             passphrase=(body.get("passphrase") or None) if isinstance(body.get("passphrase"), str) else None)
         return jsonify({"status": "ok", "schedule": st})
     except backup_schedule.ScheduleError as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
+        return api_error(e, "The backup schedule could not be changed.", 400)
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The backup schedule could not be changed.")
 
@@ -363,7 +363,7 @@ def doctor_weekly_act(what):
                 str(body.get("sha256") or ""), account_id=body.get("account_id") or None)})
         return jsonify({"status": "ok", **doctor_weekly.skip()})
     except doctor_weekly.WeeklyError as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
+        return api_error(e, "That could not be done.", 400)
     except Exception as e:  # noqa: BLE001
         return api_error(e, "That could not be done.")
 
@@ -390,7 +390,7 @@ def authority_revoke_all():
     try:
         return jsonify({"status": "ok", **authority.revoke_all("owner:ui")})
     except authority.AuthorityError as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+        return api_error(e, "Authority could not be changed.", 500)
 
 
 @doctor_bp.route("/api/authority/restore", methods=["POST"])
@@ -403,4 +403,4 @@ def authority_restore():
     try:
         return jsonify({"status": "ok", **authority.restore("owner:ui")})
     except authority.AuthorityError as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+        return api_error(e, "Authority could not be changed.", 500)
