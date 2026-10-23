@@ -605,58 +605,119 @@ class ConversationMemory:
 
     def rebuild_from_transcripts(self, progress=None):
         """Index every stored conversation turn again from the transcripts
-        (north star §34.9-9). What the transcripts no longer hold (a deleted
-        message, an off-the-record turn) is not indexed, and a turn that was
-        superseded stays superseded: its flag is read from this store and
-        from conversation search before the pass and put back after it.
-        Existing rows are refreshed in place (same message id), never
-        dropped. Returns {"ok", "indexed", "kept_superseded"}."""
+        (north star §34.9-9). Run it from a background job, never a request:
+        every turn is embedded again.
+
+        Kept as the live path keeps it: off-the-record turns, tool and system
+        lines and deleted messages are not in the transcript's indexable set;
+        a reply that read the Library is indexed as the stand-in the live path
+        stores, never the documents' words; recalled-memory spans are stripped
+        (memory_fence). A superseded turn stays superseded: its flag (from
+        this store, from conversation search, or from an older row holding
+        the same words) is put back on each row as it is written, and once
+        more at the end for anything superseded while the pass ran. Existing
+        rows are refreshed in place (same message id), never dropped.
+        Returns {"ok", "indexed", "failed", "kept_superseded"}."""
         if not self._ensure():
             return {"ok": False, "error": "conversation memory is not available"}
         say = progress or (lambda msg: None)
-        keep = {}
+        keep, keep_text = {}, {}
         try:
             with self._lock:
-                got = self._collection.get(include=["metadatas"])
-            for i, m in zip(got.get("ids") or [], got.get("metadatas") or []):
+                got = self._collection.get(include=["metadatas", "documents"])
+            for i, m, d in zip(got.get("ids") or [], got.get("metadatas") or [],
+                               got.get("documents") or [None] * len(got.get("ids") or [])):
                 m = m or {}
                 if str(m.get(_SUPERSEDED_KEY) or "") == "1":
-                    keep[str(i)] = (m.get(_SUPERSEDED_REASON) or "superseded", m.get(_SUPERSEDED_BY) or "")
+                    flag = (m.get(_SUPERSEDED_REASON) or "superseded", m.get(_SUPERSEDED_BY) or "")
+                    keep[str(i)] = flag
+                    if d:
+                        keep_text[" ".join(str(d).split())] = flag
         except Exception as e:
             say(f"could not read the current supersession flags: {e}")
             return {"ok": False, "error": "the current flags could not be read; nothing was changed"}
+        from agent_friday.services import conversation_fts as fts
         try:
-            from agent_friday.services import conversation_fts as _fts
-            for mid in _fts.superseded_ids():
+            for mid in fts.superseded_ids():
                 keep.setdefault(str(mid), ("superseded", ""))
         except Exception:
             pass
         from agent_friday.services import conversations as cv
-        from agent_friday.services import conversation_fts as fts
-        indexed = 0
-        for conv in cv.list_all(include_archived=True):
-            cid = conv.get("id")
-            if not cid:
-                continue
-            for m in cv._stored_messages(cid):
-                if not fts._indexable(m):          # text, an id, a turn, not off the record
+        try:
+            from agent_friday.services import memory_fence as _mf
+        except Exception:
+            _mf = None
+        try:
+            from agent_friday.services.library import cite as _cite
+            elided = getattr(_cite, "ELIDED", None)
+        except Exception:
+            elided = None
+        indexed = failed = kept = 0
+        applied = set()
+
+        def _flag(mid, flag):
+            nonlocal kept
+            if mid in applied:
+                return
+            if self._set_supersession([mid], "1", flag[0], flag[1]).get("superseded"):
+                applied.add(mid)
+                kept += 1
+        try:
+            for conv in cv.list_all(include_archived=True):
+                cid = conv.get("id")
+                if not cid:
                     continue
-                try:
-                    ts = datetime.fromtimestamp(float(m.get("ts") or 0)).isoformat() if m.get("ts") else None
-                except (TypeError, ValueError, OSError):
-                    ts = None
-                if self.index(m["text"], m.get("role") or "user",
-                              session_id=(ts or datetime.now().isoformat())[:10],
-                              timestamp=ts, msg_id=str(m["id"])):
+                for m in cv._stored_messages(cid):
+                    if not fts._indexable(m):          # text, an id, a turn, not off the record
+                        continue
+                    meta = m.get("meta") or {}
+                    text = m["text"]
+                    role = m.get("role") or "user"
+                    if role not in ("user",) and (m.get("library") or meta.get("library")):
+                        if not elided:
+                            continue                  # never the documents' words
+                        text = elided
+                    if _mf is not None:
+                        try:
+                            text = _mf.strip(text)
+                        except Exception:
+                            pass
+                    if not str(text or "").strip():
+                        continue
+                    try:
+                        ts = datetime.fromtimestamp(float(m["ts"])).isoformat() if m.get("ts") else None
+                    except (TypeError, ValueError, OSError):
+                        ts = None
+                    mid = str(m["id"])
+                    try:
+                        ok = self.index(text, role, session_id=(ts or datetime.now().isoformat())[:10],
+                                        timestamp=ts, msg_id=mid)
+                    except Exception as e:
+                        say(f"turn {mid} not indexed: {e}")
+                        ok = None
+                    if not ok:
+                        failed += 1
+                        continue
                     indexed += 1
-        by_reason = {}
-        for i, (reason, by) in keep.items():
-            by_reason.setdefault((reason, by), []).append(i)
-        kept = 0
-        for (reason, by), ids in by_reason.items():
-            kept += len(self._set_supersession(ids, "1", reason, by).get("superseded") or [])
-        say(f"indexed {indexed} turns, {kept} kept superseded")
-        return {"ok": True, "indexed": indexed, "kept_superseded": kept}
+                    flag = keep.get(mid) or keep_text.get(" ".join(str(m["text"]).split()))
+                    if flag:
+                        _flag(mid, flag)             # no window: right after its own write
+        finally:
+            # Whatever happened above, every flag read at the start is back,
+            # plus anything superseded in conversation search while it ran.
+            try:
+                for mid in fts.superseded_ids():
+                    keep.setdefault(str(mid), ("superseded", ""))
+            except Exception:
+                pass
+            for mid, flag in keep.items():
+                if mid not in applied:
+                    try:
+                        _flag(mid, flag)
+                    except Exception:
+                        pass
+        say(f"indexed {indexed} turns ({failed} failed), {kept} kept superseded")
+        return {"ok": failed == 0, "indexed": indexed, "failed": failed, "kept_superseded": kept}
 
     def find_ids(self, substring, limit=50):
         """Document ids whose text contains *substring* (case-insensitive).
