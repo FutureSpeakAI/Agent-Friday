@@ -706,6 +706,27 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         todo = list(chunks)
     say(f"to extract: {len(todo)} chunks (mode={mode})")
 
+    # North star §34.9-3/-4/-9: a source that changed or was removed takes its
+    # old contribution with it. Its provenance references (recorded in the
+    # manifest, and read from its current chunks) are stripped from the nodes
+    # loaded below; a node left with no source is dropped, and a node the
+    # changed source still mentions gets the new description, not the old.
+    # Conversation turns never appear in delta()'s paths, so they are never
+    # "removed" here. Approved facts (fact_*) are the owner's, never touched.
+    stale_refs: set = set()
+    removed_keys: list = []
+    if mode == "delta":
+        removed_keys = [k for k in d["removed"] if "conversation:" not in str(k)]
+        for key in list(stale) + removed_keys:
+            for k2, vals in ((manifest.sources.get(key) or {}).get("refs") or {}).items():
+                stale_refs.update((k2, str(v)) for v in (vals or []))
+        for c in todo:
+            if c["source_path"].startswith("conversation:"):
+                continue
+            for k2, vals in (c.get("provenance") or {}).items():
+                if isinstance(vals, list):
+                    stale_refs.update((k2, str(v)) for v in vals)
+
     # ── extract ──────────────────────────────────────────────
     extract_tpl = _prompt("extract_graph")
     entities: dict[str, dict] = {e["id"]: e for e in store.load("entities")
@@ -713,6 +734,34 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     relationships: dict[str, dict] = {r["id"]: r for r in
                                       store.load("relationships")
                                       if r.get("tier") == "B"} if mode == "delta" else {}
+    if mode != "delta":
+        # A full rebuild re-derives everything from the sources, but approved
+        # facts (integration.ingest_fact) have no source text to re-derive
+        # from: they are kept, with the links woven to them.
+        entities = {e["id"]: e for e in store.load("entities")
+                    if e.get("tier") == "B" and str(e.get("id", "")).startswith("fact_")}
+        relationships = {r["id"]: r for r in store.load("relationships")
+                         if r.get("tier") == "B" and (str(r.get("source", "")).startswith("fact_")
+                                                      or str(r.get("target", "")).startswith("fact_"))}
+    touched: set = set()
+    touched_rels: set = set()
+    if stale_refs:
+        for coll, mark in ((entities, touched), (relationships, touched_rels)):
+            for oid, obj in coll.items():
+                if str(oid).startswith("fact_"):
+                    continue
+                prov = obj.get("provenance") or {}
+                hit = False
+                for k2, vals in list(prov.items()):
+                    if not isinstance(vals, list):
+                        continue
+                    keep = [v for v in vals if (k2, str(v)) not in stale_refs]
+                    if len(keep) != len(vals):
+                        prov[k2] = keep
+                        hit = True
+                if hit:
+                    mark.add(oid)
+    refreshed: set = set()
     skipped_tier3 = 0
     skipped_cloud_cap = 0
     cloud_extract_calls = 0
@@ -813,6 +862,11 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                     "provenance": dict(chunk["provenance"]),
                 }
             else:
+                if eid in touched and eid not in refreshed:
+                    # The source that described it changed: what it says now
+                    # replaces what it said, rather than being merged with it.
+                    cur["descriptions"] = []
+                    refreshed.add(eid)
                 cur["frequency"] += 1
                 cur.setdefault("descriptions", [cur.get("description", "")])
                 if e["description"] not in cur["descriptions"]:
@@ -835,7 +889,22 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                     "tier": "B", "provenance": dict(chunk["provenance"]),
                 }
         manifest.record(chunk["source_path"], kind="tierb",
-                        produced=[chunk["id"]])
+                        produced=[chunk["id"]],
+                        refs={k: v for k, v in (chunk.get("provenance") or {}).items()
+                              if isinstance(v, list)})
+
+    def _sourced(obj) -> bool:
+        return any(isinstance(v, list) and v for v in (obj.get("provenance") or {}).values())
+
+    dropped = [eid for eid in touched if eid in entities and not _sourced(entities[eid])]
+    for eid in dropped:
+        del entities[eid]
+    for rid in [r for r in touched_rels if r in relationships and not _sourced(relationships[r])]:
+        del relationships[rid]
+    if dropped:
+        say(f"dropped {len(dropped)} node(s) whose only source changed or was removed")
+    for key in removed_keys:
+        manifest.forget(key)
 
     if capped_sources:
         # A sibling chunk from one of these files may have already called
