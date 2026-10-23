@@ -34,3 +34,8 @@ def test_the_doctor_page_has_the_weekly_card():
     for needle in ('id="weekly"', 'id="w-yes"', 'id="w-notnow"', 'id="w-never"', 'id="w-send"',
                    'id="w-skip"', 'id="w-stop"', "/api/doctor/weekly/prepare", "Also while Friday is in local-only mode"):
         assert needle in html, needle
+
+
+def test_the_page_never_says_the_report_is_never_sent_while_it_offers_the_email():
+    html = (ROOT / "static" / "doctor.html").read_text(encoding="utf-8")
+    assert "never sends it anywhere by itself" in html and "never sends it anywhere." not in html
