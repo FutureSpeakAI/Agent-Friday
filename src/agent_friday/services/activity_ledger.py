@@ -1,6 +1,6 @@
 """Global activity ledger (B4 — Seats & Transparency).
 
-Append-only JSONL record of *metadata-only* activity events: which model ran,
+Append-only record of *metadata-only* activity events: which model ran,
 on which seat, for how long, with which orb/task correlation ids — plus tool
 call outcomes and subagent spawns. This is the single global answer to
 "what has Friday actually been doing?" across chat, voice, background tasks
@@ -11,9 +11,12 @@ silently drops everything else. Prompt text, tool arguments and tool results
 can never enter the ledger — there are no such fields.
 
 Every write is best-effort: a ledger failure must never break a turn.
+
+Since the action ledger, rows are entries of kind "activity" in
+services/action_ledger.py (one hash-chained store). `LEDGER_FILE` is where they
+were kept before; only the one-time migration reads it.
 """
 
-import json
 import threading
 import time
 from pathlib import Path
@@ -123,13 +126,10 @@ def record(kind, /, **fields):
             if isinstance(val, str) and len(val) > _TEXT_CAP:
                 val = val[:_TEXT_CAP]
             rec[key] = val
-        line = json.dumps(rec, default=str)
-        with _LOCK:
-            LEDGER_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _maybe_rotate_locked()
-            with open(LEDGER_FILE, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-        return True
+        # The one action ledger (services/action_ledger.py) holds every
+        # activity row as an entry of kind "activity", in its hash chain.
+        from agent_friday.services import action_ledger
+        return action_ledger.try_append("activity", rec) is not None
     except Exception:
         return False
 
@@ -137,45 +137,35 @@ def record(kind, /, **fields):
 def read(limit=200, kind=None, model=None, since=None, until=None, task_id=None):
     """Return recent events, NEWEST FIRST, after filtering.
 
-    since/until are unix timestamps (inclusive). Reads the live file plus the
-    rotated `.1` file when needed to satisfy `limit`. Never raises.
+    since/until are unix timestamps (inclusive). Each event carries `seq`, its
+    place in the action ledger. Never raises.
     """
-    lines = []
-    try:
-        with _LOCK:
-            for path in (_rotated_path(), LEDGER_FILE):
-                try:
-                    if path.exists():
-                        with open(path, encoding="utf-8") as f:
-                            lines.extend(f.readlines())
-                except Exception:
-                    continue
-    except Exception:
-        return []
-
-    out = []
-    for raw in reversed(lines):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            rec = json.loads(raw)
-        except Exception:
-            continue
+    def _want(e):
+        rec = e.get("rec")
         if not isinstance(rec, dict):
-            continue
+            return False
         if kind is not None and rec.get("kind") != kind:
-            continue
+            return False
         if model is not None and rec.get("model") != model:
-            continue
+            return False
         if task_id is not None and rec.get("task_id") != task_id:
-            continue
+            return False
         ts = rec.get("ts")
         if since is not None and (ts is None or ts < since):
-            continue
+            return False
         if until is not None and (ts is None or ts > until):
-            continue
+            return False
+        return True
+    try:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries(["activity"], newest_first=True,
+                                     limit=max(1, int(limit)), where=_want)
+    except Exception:
+        return []
+    out = []
+    for e in rows:
+        rec = dict(e["rec"])
+        rec.pop("_migrated", None)
+        rec["seq"] = e.get("seq")
         out.append(rec)
-        if len(out) >= max(1, int(limit)):
-            break
     return out
