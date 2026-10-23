@@ -1736,7 +1736,8 @@ def api_capabilities_state():
     try:
         from agent_friday.services import capability_state as _cs
         return jsonify({"status": "ok", "capabilities": _cs.as_dicts(),
-                        "states": list(_cs.STATES)})
+                        "states": list(_cs.STATES), "health_states": list(_cs.HEALTH_STATES),
+                        "groups": list(_cs.GROUPS)})
     except Exception as e:
         return api_error(e, "Couldn't load the capabilities", key="error")
 

@@ -6,10 +6,6 @@ Found by discovery, like test_every_action_is_governed: every registered tool
 is run through _execute_tool with its handler replaced by a spy and the
 checkpoint allowing it. Each one that ran, and whose decision was outward or
 a read, must leave an outcome entry naming that decision's seq and hash.
-
-Red on the old code by assertion: no outcome entry existed, so no decision
-could be joined to what it carried out, and nothing could tell a ran-without-
-a-decision action from a governed one.
 """
 from __future__ import annotations
 
@@ -222,8 +218,8 @@ def test_every_channel_send_has_a_receipt_and_the_gateway_reply_is_gated(monkeyp
 
 
 def test_a_chat_yes_and_a_card_are_not_flagged_and_a_later_receipt_does_not_steal_the_link(monkeypatch):
-    """Review round 1 (B1, S1): a call the owner confirmed in chat ran on a
-    "confirm" decision, and a later hook's receipt replaced the decision."""
+    """A call the owner confirms in chat runs on a "confirm" decision and is not
+    flagged, and a later hook's receipt never replaces the decision."""
     from agent_friday.services import receipt_audit
     tool = "send_email" if "send_email" in agent.CLAUDE_TOOL_HANDLERS else next(
         n for n in sorted(agent.CLAUDE_TOOL_HANDLERS) if action_gate.classify(n, {})[0] == action_gate.OUTWARD)
@@ -247,7 +243,6 @@ def test_a_chat_yes_and_a_card_are_not_flagged_and_a_later_receipt_does_not_stea
 
 
 def test_the_audit_reads_only_signed_entries_and_the_last_thirty_days():
-    """Review round 1 (S3, L1)."""
     from agent_friday.services import receipt_audit
     with open(L.live_path(), "a", encoding="utf-8") as f:
         f.write(json.dumps({"v": 1, "seq": 10 ** 6, "kind": "outcome", "t": time.time(),
@@ -261,7 +256,6 @@ def test_the_audit_reads_only_signed_entries_and_the_last_thirty_days():
 
 
 def test_an_approval_name_alone_does_not_hide_a_run_and_an_old_seq_is_looked_up(monkeypatch):
-    """Review round 2 (1, 2)."""
     from agent_friday.services import receipt_audit
     d = L.append("decision", {"tool": "send_email", "class": "outward", "decision": "confirm",
                               "args_hash": "x", "via": "tool_call"}, durable=True)

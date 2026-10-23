@@ -1,15 +1,15 @@
 """The action ledger: one append-only, hash-chained, signed record of what
 Friday did.
 
-Before this module, each part of Friday kept its own receipt file: the action
-gate's decision log (decision-bom.jsonl), the organize receipts with their undo
-data (actions/receipts.jsonl), the activity feed (activity_ledger.jsonl), goal
+The legacy receipt files, one per part of Friday, are: the action gate's
+decision log (decision-bom.jsonl), the organize receipts with their undo data
+(actions/receipts.jsonl), the activity feed (activity_ledger.jsonl), goal
 receipts, dissent events, the pre-approved-send log, the website-trust history,
-the inbox-cleanup receipts and the media-diet receipts. Some were signed line by
-line, one was chained, most were neither, and none joined the others (north
-star §18.9, §36.9-2, §37.2-5).
+the inbox-cleanup receipts and the media-diet receipts. Some are signed line by
+line, one is chained, most are neither, and none joins the others (north star
+§18.9, §36.9-2, §37.2-5).
 
-They are now kinds of entry in this one ledger. Each module keeps its own
+They are kinds of entry in this one ledger. Each module keeps its own
 public functions; what it writes goes here, and what it reads comes from here.
 
 The file

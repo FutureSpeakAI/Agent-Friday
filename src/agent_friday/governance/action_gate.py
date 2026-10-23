@@ -504,6 +504,10 @@ _SELF_API = re.compile(r"\b(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[?::1\]?|
                        r"|/api/", re.I)
 
 
+#: Brackets that run what they hold: (…), @(…), {…}.
+_GROUPING = re.compile(r"[({]")
+
+
 def _literal_search_patterns(cmd: str) -> str:
     """Hide inert search patterns from checks of executable shell text.
 
@@ -598,6 +602,11 @@ def classify_command(cmd: str) -> tuple:
         return "forbidden", "it addresses Friday's own local API"
     if _DANGEROUS.search(c):
         return OUTWARD, "it chains, redirects, changes or reaches outside"
+    if _GROUPING.search(c):
+        # (…), @(…) and {…} run whatever they hold. Quoted or not: where a
+        # quote ends is PowerShell's to decide, so any bracket left after the
+        # literal search patterns are hidden goes to a card
+        return OUTWARD, "a bracketed expression or script block can run any command"
     for stage in c.split("|"):
         words = stage.strip().split()
         if not words:
@@ -1370,6 +1379,19 @@ SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "open_path", "
                                   "browser_open", "browse_web", "install_package",
                                   "codebase_run", "codebase_agent"})
 
+#: Built-in tools judged internal that still reach a connected service (the
+#: owner's Google account): mail (also the voice check and the career inbox),
+#: calendar (also free/busy and releasing holds), Drive and Docs, contacts,
+#: Tasks, Gmail drafts, the sending-account list and selecting mail on
+#: screen (a Gmail search). Safe mode and a
+#: revocation of authority hold them like any read at a connected service.
+CONNECTED_SERVICE_TOOLS = frozenset({
+    "search_email", "check_email", "career_inbox", "query_calendar", "find_calendar_events",
+    "find_free_slots", "release_holds", "search_drive", "read_doc", "search_contacts",
+    "list_tasks", "create_task", "update_task", "complete_task", "draft_email",
+    "list_sending_accounts", "screen_select",
+})
+
 
 def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             grant_tainted=None) -> Verdict:
@@ -1384,6 +1406,16 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
+        if tool_name in CONNECTED_SERVICE_TOOLS:
+            # a built-in tool that reaches the owner's Google account: off in
+            # safe mode (connectors off) and while authority is revoked
+            try:
+                from agent_friday.services import safe_mode as _sm
+                _why = _sm.refusal("connector_reads") or _authority_hold()
+            except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+                _why = "safe mode could not be checked (%s)" % type(e).__name__
+            if _why:
+                return Verdict("deny", klass, f"held: {_why}")
         if str(tool_name).lower().startswith("mcp_"):
             # a connector tool judged internal (a clean read under the card
             # setting) still reaches a connected service

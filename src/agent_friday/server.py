@@ -563,7 +563,7 @@ if not _TESTING:
         print(f"  Published pages: hosting not started ({_ph_err})")
 
     # The action ledger (services/action_ledger.py): bring any receipts still
-    # in the files each part of Friday used to keep into the one chain, then
+    # in the legacy receipt files (one per part of Friday) into the one chain, then
     # check every line once, so a break found now is on Activity and holds
     # outward actions from the first one.
     def _ledger_boot():
@@ -606,6 +606,12 @@ if not _TESTING:
                 # the weekly Doctor ask (A3): a quiet card at most once a week; it sends nothing
                 from agent_friday.services import doctor_weekly as _dw
                 _dw.tick()
+            except Exception:
+                pass
+            try:
+                # the first backup offer (§34.4-9): a quiet card until scheduled bundles are on
+                from agent_friday.services import first_backup as _fb
+                _fb.tick()
             except Exception:
                 pass
             __import__("time").sleep(900)

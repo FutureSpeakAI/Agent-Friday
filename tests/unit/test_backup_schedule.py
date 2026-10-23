@@ -1,7 +1,5 @@
 """Scheduled Friday Bundles and the restore rehearsal (north star §27.4,
 services/backup_schedule.py).
-
-Red on the old code: there was no schedule; a bundle was made only by hand.
 """
 from __future__ import annotations
 
@@ -169,8 +167,8 @@ def test_the_doctor_view_names_no_folder_or_file(home, tmp_path):
 
 
 def test_files_planted_in_the_data_folder_never_turn_a_schedule_on_or_redirect_it(home, tmp_path, monkeypatch):
-    """Review round 1 (B1, S1): a planted schedule.json and a plain passphrase
-    file made Friday write the keychain's secrets into an attacker's bundle."""
+    """A planted schedule.json and a plain passphrase file never make Friday
+    write the keychain's secrets into an attacker's bundle."""
     from agent_friday.services import backup_schedule as bs
     monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")     # the real stores, not the test memory
     evil = tmp_path / "attacker-share"
@@ -207,7 +205,6 @@ def test_a_redirected_folder_in_the_state_file_is_never_used(home, tmp_path, mon
 
 
 def test_an_unverified_bundle_is_not_left_behind_and_failures_back_off(home, tmp_path, monkeypatch):
-    """Review round 1 (S4)."""
     from agent_friday.services import backup_schedule as bs
     from agent_friday.services import friday_bundle as fb
     real = fb.create
@@ -225,7 +222,6 @@ def test_an_unverified_bundle_is_not_left_behind_and_failures_back_off(home, tmp
 
 
 def test_turning_it_off_removes_the_record_from_every_store(home, tmp_path, monkeypatch):
-    """Review round 1 (S5)."""
     from agent_friday.services import backup_schedule as bs
     f = home / "vault" / ".bundle-schedule-passphrase"
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -249,7 +245,7 @@ def _with_fast(monkeypatch):
 
 
 def test_a_planted_list_cannot_make_rotation_delete_the_owners_bundles(home, tmp_path, monkeypatch):
-    """Review round 2 (S1): untagged entries, or the real ones reordered."""
+    """Neither untagged entries nor the real ones reordered make rotation delete bundles."""
     from agent_friday.services import backup_schedule as bs
     _with_fast(monkeypatch)
     dest = tmp_path / "out"
@@ -271,7 +267,6 @@ def test_a_planted_list_cannot_make_rotation_delete_the_owners_bundles(home, tmp
 
 
 def test_a_time_in_the_future_does_not_stop_the_schedule(home, tmp_path, monkeypatch):
-    """Review round 2 (S2)."""
     from agent_friday.services import backup_schedule as bs
     _with_fast(monkeypatch)
     _on(bs, tmp_path / "out")
@@ -296,7 +291,7 @@ def test_the_doctor_says_when_scheduled_bundles_are_overdue(home, tmp_path, monk
 
 
 def test_without_a_keychain_a_schedule_cannot_be_turned_on(home, tmp_path, monkeypatch):
-    """Review round 2 (B1): on a system with no keychain nothing in the data
+    """On a system with no keychain nothing in the data
     folder stands in for it."""
     from agent_friday.services import backup_schedule as bs
     monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")      # sys.modules["keyring"] is None here
@@ -309,7 +304,7 @@ def test_without_a_keychain_a_schedule_cannot_be_turned_on(home, tmp_path, monke
 
 
 def test_a_real_entry_said_again_cannot_push_other_bundles_out(home, tmp_path, monkeypatch):
-    """Review round 3 (B1): duplicated tagged entries made rotation delete real bundles."""
+    """Duplicated tagged entries never make rotation delete real bundles."""
     from agent_friday.services import backup_schedule as bs
     _with_fast(monkeypatch)
     dest = tmp_path / "out"
@@ -327,7 +322,6 @@ def test_a_real_entry_said_again_cannot_push_other_bundles_out(home, tmp_path, m
 
 
 def test_a_record_from_before_tags_gets_a_key_and_rotates(home, tmp_path, monkeypatch):
-    """Review round 3 (SF3)."""
     from agent_friday.services import backup_schedule as bs
     _with_fast(monkeypatch)
     dest = tmp_path / "out"
@@ -342,7 +336,6 @@ def test_a_record_from_before_tags_gets_a_key_and_rotates(home, tmp_path, monkey
 
 
 def test_a_record_too_big_for_the_credential_store_is_refused_plainly(home, tmp_path):
-    """Review round 3 (SF2)."""
     from agent_friday.services import backup_schedule as bs
     deep = tmp_path / ("x" * 200) / ("y" * 200) / ("z" * 200) / ("w" * 200) / ("v" * 200)
     try:
@@ -356,7 +349,7 @@ def test_a_record_too_big_for_the_credential_store_is_refused_plainly(home, tmp_
 
 
 def test_the_rehearsal_checks_the_newest_bundle_this_schedule_made(home, tmp_path, monkeypatch):
-    """Review round 3 (L1): a reordered list pointed the rehearsal at an older bundle."""
+    """A reordered list never points the rehearsal at an older bundle."""
     from agent_friday.services import backup_schedule as bs
     _with_fast(monkeypatch)
     dest = tmp_path / "out"
@@ -374,7 +367,7 @@ def test_the_rehearsal_checks_the_newest_bundle_this_schedule_made(home, tmp_pat
 
 
 def test_off_says_so_when_the_credential_store_will_not_let_go(home, tmp_path, monkeypatch):
-    """Review round 4 (S3): off reported success while the record stayed."""
+    """Off reports failure while the record stays."""
     import types
     from agent_friday.services import backup_schedule as bs
     monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")
@@ -397,7 +390,7 @@ def test_off_says_so_when_the_credential_store_will_not_let_go(home, tmp_path, m
 
 
 def test_off_is_read_back_when_the_store_says_nothing_was_there(home, tmp_path, monkeypatch):
-    """Closing review (E2): some stores report a refused delete as "not found"."""
+    """Some stores report a refused delete as "not found", so off is read back."""
     import types
     from agent_friday.services import backup_schedule as bs
     monkeypatch.setenv("FRIDAY_SCHEDULE_SECRET", "keyring")

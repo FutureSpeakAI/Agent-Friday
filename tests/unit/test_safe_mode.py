@@ -4,11 +4,10 @@ North star §28.5 (models optional, connectors disabled, schedules paused,
 outward actions held, Doctor, backup), §28.5-2 (still reachable after starts
 that keep failing), §33.5-3; burn-down BD-03.
 
-Red on the old code by assertion: FRIDAY_SAFE_START did nothing, so every
-refusal below was a normal answer (a cloud token, a web search, an allowed read
-at a connected service, the owner's skills, a scheduled run, an MCP reload).
-Only functions that exist before and after the change are called; the mode is
-reset between tests where the new module exists.
+With FRIDAY_SAFE_START set, each of these is refused: a cloud token, a web
+search, an allowed read at a connected service, the owner's skills, a scheduled
+run, an MCP reload. Only public functions are called; the mode is reset
+between tests whenever the safe_mode module is importable.
 """
 from __future__ import annotations
 

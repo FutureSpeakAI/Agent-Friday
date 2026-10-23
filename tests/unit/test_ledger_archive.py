@@ -5,9 +5,6 @@ period (Settings, two years by default) leave the live record for an encrypted
 archive carried by every Friday Bundle and backup. Nothing is deleted, and the
 chain verifies across the archive boundary: a missing, edited or substituted
 archive, an edited list, or a live record cut at the boundary is a break.
-
-Red on the old code by assertion and on missing names: there was no retention
-setting, no archive, and old entries stayed in the live files forever.
 """
 from __future__ import annotations
 
@@ -245,8 +242,8 @@ def test_a_friday_bundle_carries_the_archive_and_it_verifies_after_restore(tmp_p
     assert [e["rec"]["i"] for e in L.entries(["decision"], newest_first=False, archive=True)] == [0, 1, 2, 3]
 
 def test_a_deleted_archive_holds_at_once_and_strict_readers_fail_closed():
-    """Review round 1: the hold check reused a cached result while the archive
-    was gone, and a strict reader (revocations) found nothing instead of failing."""
+    """A deleted archive holds at once: the hold check never reuses a cached
+    result, and a strict reader (revocations) fails instead of finding nothing."""
     _old_and_new()
     L.archive_old(now=_later(), days=730)
     assert L.hold_reason() is None
@@ -316,8 +313,8 @@ def test_new_segments_never_take_an_archived_name():
 
 
 def test_an_old_receipt_file_planted_after_archiving_is_quarantined_not_read():
-    """Review round 2: archiving the segment that held migration_complete
-    re-opened the import, so a planted old receipt became signed history."""
+    """Archiving the segment that holds migration_complete keeps the import shut,
+    so a planted legacy receipt file is quarantined and never becomes signed history."""
     from agent_friday.paths import friday_home
     _old_and_new()
     L.archive_old(now=_later(), days=730)
@@ -362,8 +359,8 @@ def test_strict_reads_of_a_large_archive_open_each_file_once(monkeypatch):
 
 @pytest.mark.parametrize("how", ["archive_deleted", "list_garbled"])
 def test_old_receipt_files_stay_shut_when_the_archive_is_removed_or_garbled(how):
-    """Review round 3: deleting the archive, or garbling its list, made the
-    switch from the old files look unfinished, and a planted file was read."""
+    """Deleting the archive, or garbling its list, leaves the switch from the
+    legacy files finished, and a planted file is not read."""
     from agent_friday.paths import friday_home
     L.migrate_legacy()                          # as every start does
     _old_and_new()
@@ -449,7 +446,7 @@ def _evil_read():
 
 
 def test_a_forged_first_line_does_not_reopen_the_switch_after_the_archive_is_removed():
-    """Review round 4 (A): delete the archive and plant a seq-1 line."""
+    """A deleted archive plus a planted seq-1 line does not reopen the switch."""
     L.migrate_legacy()
     _old_and_new()
     L.archive_old(now=_later(), days=730)
@@ -461,7 +458,6 @@ def test_a_forged_first_line_does_not_reopen_the_switch_after_the_archive_is_rem
 
 
 def test_a_forged_line_in_an_emptied_anchored_ledger_does_not_reopen_the_switch():
-    """Review round 4 (A2)."""
     L.migrate_legacy()
     L.append("decision", {"tool": "x"}, durable=True)
     shutil.rmtree(L.ledger_dir())
@@ -473,8 +469,8 @@ def test_a_forged_line_in_an_emptied_anchored_ledger_does_not_reopen_the_switch(
 
 
 def test_cutting_the_record_back_before_the_switch_ended_does_not_reopen_it():
-    """Review round 4 (B): no archive needed; cut the live file back to the
-    rows imported before migration_complete."""
+    """With no archive, a live file cut back to the rows imported before
+    migration_complete does not reopen the switch."""
     from agent_friday.paths import friday_home
     old = friday_home() / "actions" / "receipts.jsonl"
     old.parent.mkdir(parents=True, exist_ok=True)
@@ -514,7 +510,6 @@ def test_a_genuine_import_that_stopped_halfway_still_continues():
 
 
 def test_strict_readers_refuse_a_rolled_back_list_with_no_live_record_left():
-    """Review round 4 (C)."""
     for i in range(3):
         L.append("send_grant", {"event": "revoked", "grant_id": "g%d" % i}, durable=True)
         _seal()
@@ -536,7 +531,7 @@ def test_strict_readers_refuse_a_rolled_back_list_with_no_live_record_left():
 
 @pytest.mark.parametrize("junk", [b"\n", b"[]\n", b"garbage"])
 def test_bytes_that_are_not_an_entry_do_not_reopen_the_switch(junk):
-    """Review round 5: an anchored ledger emptied down to a line that is not an entry."""
+    """An anchored ledger emptied down to a line that is not an entry stays switched."""
     L.migrate_legacy()
     L.append("decision", {"tool": "x"}, durable=True)
     shutil.rmtree(L.ledger_dir())
@@ -547,8 +542,8 @@ def test_bytes_that_are_not_an_entry_do_not_reopen_the_switch(junk):
 
 
 def test_ordinary_rechecks_do_not_postpone_the_full_reread(monkeypatch):
-    """Review round 5: every recompute restarted the full-check clock, so an
-    edit that kept a sealed file's size, time and tail could hide for good."""
+    """An ordinary recompute never restarts the full-check clock, so an edit that
+    keeps a sealed file's size, time and tail cannot hide for good."""
     _old_and_new(n_old=3, n_new=1)
     L.verify(force=True)
     full_at = L._STATE["full_at"]
@@ -558,7 +553,7 @@ def test_ordinary_rechecks_do_not_postpone_the_full_reread(monkeypatch):
 
 
 def test_strict_readers_refuse_a_cut_record_even_without_an_archive():
-    """Review round 5: the strict anchor check ran only with an archive."""
+    """The strict anchor check runs with or without an archive."""
     L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
     L.append("send_grant", {"event": "revoked", "grant_id": "g2"}, durable=True)
     lines = L.live_path().read_text(encoding="utf-8").splitlines()
@@ -570,7 +565,7 @@ def test_strict_readers_refuse_a_cut_record_even_without_an_archive():
 
 
 def test_a_ledger_folder_swapped_for_a_link_is_a_break_and_keeps_its_anchor(tmp_path):
-    """Review round 6: a junction on ledger/ named another keychain account."""
+    """A link on ledger/ is a break and never names another keychain account."""
     import os
     L.append("decision", {"tool": "x"}, durable=True)
     acct = L._anchor_account()
@@ -613,7 +608,7 @@ def test_an_acknowledgement_that_cannot_keep_its_anchor_says_so(monkeypatch):
 
 
 def test_the_owner_can_still_list_send_approvals_while_the_ledger_shows_a_break():
-    """Review round 7 (A): the Settings list answered 500 during a break."""
+    """The Settings list of send approvals answers during a break (never a 500)."""
     from agent_friday.governance import send_grants
     L.append("activity", {"kind": "x"})
     p = L.live_path()
@@ -624,7 +619,7 @@ def test_the_owner_can_still_list_send_approvals_while_the_ledger_shows_a_break(
 
 
 def test_the_workspace_reads_the_archive_during_a_break():
-    """Review round 7 (B): the workspace dropped the archive while a break was open."""
+    """The workspace keeps reading the archive while a break is open."""
     _old_and_new()
     L.archive_old(now=_later(), days=730)
     L.append("activity", {"kind": "x"})
@@ -636,7 +631,7 @@ def test_the_workspace_reads_the_archive_during_a_break():
 
 
 def test_a_strict_read_refuses_a_line_whose_signature_does_not_hold(monkeypatch):
-    """Review round 7 (F): within the cache window a strict read checks each line."""
+    """Within the cache window a strict read checks each line."""
     L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
     assert L.entries(["send_grant"], strict=True)
     monkeypatch.setattr(L, "verify", lambda **k: {"ok": True})   # as within the 10-minute window
@@ -647,7 +642,7 @@ def test_a_strict_read_refuses_a_line_whose_signature_does_not_hold(monkeypatch)
 
 
 def test_a_junction_for_the_ledger_folder_is_a_break(tmp_path):
-    """Review round 7 (D): the Windows junction path, where links need no privilege."""
+    """The Windows junction path, where links need no privilege, is a break."""
     import os
     import subprocess
     if os.name != "nt":
@@ -666,7 +661,6 @@ def test_a_junction_for_the_ledger_folder_is_a_break(tmp_path):
 
 
 def test_an_acknowledged_bad_line_does_not_hold_strict_readers_for_good():
-    """Review round 8 (1)."""
     L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
     L.append("send_grant", {"event": "revoked", "grant_id": "g2"}, durable=True)
     p = L.live_path()
@@ -679,7 +673,7 @@ def test_an_acknowledged_bad_line_does_not_hold_strict_readers_for_good():
 
 
 def test_a_line_garbled_or_renamed_within_the_cache_window_is_refused(monkeypatch):
-    """Review round 8 (2): the check runs before the kind filter, on every line."""
+    """The check runs before the kind filter, on every line."""
     L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
     L.append("activity", {"kind": "x"})
     monkeypatch.setattr(L, "verify", lambda **k: {"ok": True})
@@ -697,7 +691,7 @@ def test_a_line_garbled_or_renamed_within_the_cache_window_is_refused(monkeypatc
 
 @pytest.mark.parametrize("tail", [b" ", b"\r", b"\t "])
 def test_whitespace_after_the_last_line_hides_nothing_from_strict_reads(tail):
-    """Closing review (D1): whitespace with no newline is no unfinished write."""
+    """Whitespace with no newline is no unfinished write."""
     L.append("send_grant", {"event": "revoked", "grant_id": "g1"}, durable=True)
     L.append("send_grant", {"event": "revoked", "grant_id": "g2"}, durable=True)
     with open(L.live_path(), "ab") as f:
@@ -710,7 +704,7 @@ def test_whitespace_after_the_last_line_hides_nothing_from_strict_reads(tail):
 
 
 def test_strict_reads_of_sealed_files_are_checked_once(monkeypatch):
-    """Closing review (performance): a sealed file is checked line by line once
+    """A sealed file is checked line by line once
     per signature, then its rows of those kinds come from memory."""
     for i in range(5):
         L.append("send_grant", {"event": "revoked", "grant_id": "g%d" % i}, durable=True)

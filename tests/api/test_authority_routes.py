@@ -1,6 +1,4 @@
 """Revoke all action authority from the Doctor page (§18.12).
-
-Red on the old code by assertion: the routes did not exist (404).
 """
 from __future__ import annotations
 

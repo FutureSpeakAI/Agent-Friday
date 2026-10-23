@@ -18,6 +18,11 @@
       reinstall   the setup program again, silently
       restore     `friday restore <bundle>` with the installed Python, then
                   tests/clean_machine/check_restore.py
+      first backup  on the reinstalled, set-up Friday with nothing scheduled:
+                  the first backup is offered; scheduled bundles turned on
+                  with the installed CLI make one verified bundle, the offer
+                  ends, Doctor's backup check is healthy; turned off again
+                  (north star 34.4-9; tests/clean_machine/check_first_backup.py)
 #>
 [CmdletBinding()]
 param(
@@ -123,6 +128,14 @@ try {
         -ArgumentList @((Join-Path $RepoRoot 'tests\clean_machine\check_restore.py'), '--expected', $Expected) `
         -RedirectStandardOutput (Join-Path $WorkDir 'check.json') -RedirectStandardError (Join-Path $WorkDir 'check.err')
     Check 'restored_and_checked' ($c.ExitCode -eq 0) (Get-Content -LiteralPath (Join-Path $WorkDir 'check.json') -Raw)
+
+    # ── the first backup, last: running Friday rewrites settings.json, which
+    #    the restore above compares with what seed wrote ─────────────────────
+    $fb = Start-Process -FilePath $py -PassThru -Wait -NoNewWindow `
+        -WorkingDirectory (Join-Path $InstallRoot 'app') `
+        -ArgumentList @((Join-Path $RepoRoot 'tests\clean_machine\check_first_backup.py'), '--folder', (Join-Path $WorkDir 'scheduled')) `
+        -RedirectStandardOutput (Join-Path $WorkDir 'first-backup.json') -RedirectStandardError (Join-Path $WorkDir 'first-backup.err')
+    Check 'first_backup' ($fb.ExitCode -eq 0) (Get-Content -LiteralPath (Join-Path $WorkDir 'first-backup.json') -Raw)
 } catch {
     Check 'script' $false "$_"
 } finally {

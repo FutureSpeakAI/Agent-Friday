@@ -1,8 +1,8 @@
 """Reading and tampering with the action ledger in tests.
 
-Receipts that used to be lines in files of their own (decision-bom.jsonl,
+Receipts that the legacy receipt files hold as lines (decision-bom.jsonl,
 activity_ledger.jsonl, ...) are entries in services/action_ledger.py. These
-helpers give tests the old shapes back: each `rec` as the writer signed it.
+helpers give tests the legacy shapes back: each `rec` as the writer signed it.
 """
 from __future__ import annotations
 

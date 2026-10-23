@@ -1,9 +1,6 @@
 """The Doctor report: versions, checks, errors, drift and performance, with no
 content and no personal data, kept on this PC and shared only by hand (A3).
 Safe mode is chosen and left from the Doctor page with the owner's press.
-
-Red on the old code by assertion: /api/doctor/report, /api/safe-mode and the
-/doctor page did not exist (404).
 """
 from __future__ import annotations
 
