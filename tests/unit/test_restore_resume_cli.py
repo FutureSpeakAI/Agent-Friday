@@ -137,8 +137,14 @@ def test_a_bracketed_command_inside_a_read_only_one_is_outward(command):
 
 @pytest.mark.parametrize("command", [
     'gci "C:\\Program Files (x86)"',
-    "gci 'C:\\Program Files (x86)'",
-    'Get-Content a.txt | Select-String -Pattern "(a|b)"',
+    "gci 'it''s (x)'",
+    "gci 'a'(whoami)",
 ])
-def test_brackets_inside_quotes_stay_read_only(command):
+def test_a_bracket_inside_quotes_goes_to_a_card_too(command):
+    """Where a quote ends is PowerShell's to decide: any bracket is outward."""
+    assert action_gate.classify_command(command)[0] == action_gate.OUTWARD
+
+
+def test_a_literal_search_pattern_with_brackets_stays_read_only():
+    command = 'Get-Content a.txt | Select-String -Pattern "(a|b)"'
     assert action_gate.classify_command(command)[0] == action_gate.INTERNAL
