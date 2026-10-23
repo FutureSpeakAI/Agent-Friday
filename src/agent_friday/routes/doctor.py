@@ -297,6 +297,30 @@ def bundle_schedule_act(what):
 
 # ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
 
+@doctor_bp.route("/api/export/readable", methods=["POST"])
+@login_required
+def export_readable():
+    """Write the human-readable export (services/readable_export.py) to
+    Documents/Friday Exports. A press on Friday's own page, on this PC: it
+    writes the owner's data out unencrypted."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Export on Friday's own page, on this PC."}), 403
+    from agent_friday.services import friday_bundle, readable_export
+    body = request.get_json(silent=True) or {}
+    only = body.get("only")
+    if only is not None and not (isinstance(only, list) and all(isinstance(c, str) for c in only)):
+        return jsonify({"status": "error", "error": "only is a list of categories."}), 400
+    try:
+        r = readable_export.export(friday_bundle.documents_dir() / "Friday Exports", only=only,
+                                   by="owner:ui")
+        return jsonify({"status": "ok", **r})
+    except readable_export.ExportError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The export could not be made.")
+
+
 @doctor_bp.route("/api/bundle/first-run", methods=["GET"])
 @login_required
 def first_backup_status():
