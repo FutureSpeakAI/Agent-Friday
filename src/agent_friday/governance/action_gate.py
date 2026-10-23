@@ -1362,19 +1362,22 @@ def _send_grant(tool_name, args, ctx) -> Optional[dict]:
 #: In safe mode these run nothing at all: a command or program can reach the
 #: network or another machine in ways no socket guard in this process sees
 #: (git remotes, \\host paths, -ComputerName).
-#: Built-in tools judged internal that still reach a connected service (the
-#: owner's Google account): mail, calendar, Drive and Docs, contacts, Tasks,
-#: Gmail drafts and the sending-account list. Safe mode and a revocation of
-#: authority hold them like any read at a connected service.
-CONNECTED_SERVICE_TOOLS = frozenset({
-    "search_email", "query_calendar", "find_calendar_events", "search_drive", "read_doc",
-    "search_contacts", "list_tasks", "create_task", "update_task", "complete_task", "draft_email",
-    "list_sending_accounts",
-})
-
 SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "open_path", "open_url",
                                   "browser_open", "browse_web", "install_package",
                                   "codebase_run", "codebase_agent"})
+
+#: Built-in tools judged internal that still reach a connected service (the
+#: owner's Google account): mail (also the voice check and the career inbox),
+#: calendar (also free/busy and releasing holds), Drive and Docs, contacts,
+#: Tasks, Gmail drafts, the sending-account list and selecting mail on
+#: screen (a Gmail search). Safe mode and a
+#: revocation of authority hold them like any read at a connected service.
+CONNECTED_SERVICE_TOOLS = frozenset({
+    "search_email", "check_email", "career_inbox", "query_calendar", "find_calendar_events",
+    "find_free_slots", "release_holds", "search_drive", "read_doc", "search_contacts",
+    "list_tasks", "create_task", "update_task", "complete_task", "draft_email",
+    "list_sending_accounts", "screen_select",
+})
 
 
 def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,

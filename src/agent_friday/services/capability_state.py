@@ -80,6 +80,7 @@ _GROUP_OF = {"healthy": "working",
 #: Capabilities that reach the web, and those that reach the owner's Google
 #: account: safe mode and a revocation of authority keep them off.
 _WEB_KEYS = frozenset({"brave", "firecrawl", "duckduckgo"})
+_UNCHECKED = "whether a rule keeps it off could not be checked"
 _ACCOUNT_KEYS = frozenset({"google"})
 
 
@@ -239,13 +240,15 @@ def _policy_hold(key: str) -> str:
             if why:
                 return why
     except Exception as e:  # noqa: BLE001 - a check that cannot run is said
-        return "the policy check could not run (%s)" % type(e).__name__
+        return _UNCHECKED + " (%s)" % type(e).__name__
     return ""
 
 
 def health_of(c: CapabilityState) -> tuple:
     """(health state, why) for one capability, in the nine states."""
     hold = _policy_hold(c.key)
+    if hold.startswith(_UNCHECKED):
+        return "unverified", hold
     if hold:
         return "blocked_by_policy", hold
     if c.health in HEALTH_STATES:

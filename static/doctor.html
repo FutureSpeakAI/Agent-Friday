@@ -170,7 +170,7 @@
       const box = $('caps'); box.textContent = '';
       if (!ok) { box.textContent = 'Could not be read: ' + (d.error || 'unknown'); return; }
       ['attention', 'working', 'off', 'pending'].forEach(g => {
-        const items = (d.capabilities || []).filter(c => (c.group || GROUP[c.health]) === g);
+        const items = (d.capabilities || []).filter(c => (HEADS[c.group] ? c.group : (GROUP[c.health] || 'pending')) === g);
         if (!items.length) return;
         const h = document.createElement('h3'); h.textContent = HEADS[g]; box.appendChild(h);
         const ul = document.createElement('ul');
