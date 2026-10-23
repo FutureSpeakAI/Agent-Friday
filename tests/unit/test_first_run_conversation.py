@@ -315,21 +315,36 @@ def test_the_never_send_list_reaches_the_floor_the_egress_gate_reads(home, steps
 
 # ── money and routines ───────────────────────────────────────────────────────
 
-def test_money_is_offered_with_ten_labelled_and_nothing_capped_by_default(home, steps):
+#: A new install's daily cap (north-star A17): on, at the modest default.
+_NEW_INSTALL_CAP = {"hard_stop_daily": 2.0, "hard_stop_daily_enabled": True}
+
+
+def test_money_shows_the_daily_cap_already_on_and_skipping_keeps_it(home, steps):
+    home["settings"]["cost_budget"] = dict(_NEW_INSTALL_CAP)
     _walk("money")
+    assert any("after $2.00 a day" in t for t in _texts()), "the ask says what is on now"
     chips = sc.view()["prompt"]["chips"]
     rec = [c for c in chips if c.get("recommended")]
-    assert [c["value"] for c in rec] == ["10"]
+    assert [c["value"] for c in rec] == ["keep"]
+    assert rec[0]["label"] == "Keep $2.00 a day (recommended)"
     sc.answer("money", "skip", "")
-    assert "cost_budget" not in home["settings"]
+    assert home["settings"]["cost_budget"] == _NEW_INSTALL_CAP
 
 
-def test_a_typed_amount_turns_the_monthly_stop_on(home, steps):
+def test_a_typed_amount_sets_the_daily_cap(home, steps):
+    home["settings"]["cost_budget"] = dict(_NEW_INSTALL_CAP)
     _walk("money")
-    sc.answer("money", None, "$12 a month")
+    sc.answer("money", None, "$3 a day")
     cb = home["settings"]["cost_budget"]
-    assert cb["hard_stop_monthly"] == 12.0 and cb["hard_stop_monthly_enabled"] is True
+    assert cb["hard_stop_daily"] == 3.0 and cb["hard_stop_daily_enabled"] is True
     assert home["settings"]["spending_caps"]["asked"] is True
+
+
+def test_no_daily_cap_is_a_choice(home, steps):
+    home["settings"]["cost_budget"] = dict(_NEW_INSTALL_CAP)
+    _walk("money")
+    sc.answer("money", "none", "")
+    assert home["settings"]["cost_budget"]["hard_stop_daily_enabled"] is False
 
 
 def test_money_is_not_asked_when_everything_stays_on_this_pc(home, steps):
@@ -416,7 +431,7 @@ def test_the_receipt_says_who_decided_each_line(home, steps, monkeypatch):
     rows = {r["label"]: r for r in sc.view()["receipt"]}
     assert rows["Where I think"]["value"] == "Cloud for public things"
     assert rows["Where I think"]["how"] == "you chose"
-    assert rows["Monthly ceiling"]["value"] == "$10.00 a month"
+    assert rows["Daily spending cap"]["value"] == "$10.00 a day"
     assert rows["My pronouns"]["how"] == "default because skipped"
     assert rows["Routines"]["value"] == "none scheduled"
 
@@ -443,9 +458,11 @@ def test_a_sentence_that_mentions_an_offer_is_not_a_yes(home):
 def test_use_recommended_never_answers_the_next_question(home, steps, monkeypatch):
     monkeypatch.setattr(sc, "_scheduled_cloud_wanted", lambda st: True)
     monkeypatch.setattr(sc, "_scheduled_cloud_question", lambda: "May they use a cloud model?")
+    home["settings"]["cost_budget"] = dict(_NEW_INSTALL_CAP)
     _walk("money")
     v = sc.use_recommended()
-    assert home["settings"]["cost_budget"]["hard_stop_monthly"] == 10.0
+    assert home["settings"]["cost_budget"]["hard_stop_daily"] == 2.0
+    assert "cloud_daily_stop" in home["settings"]["spending_caps"]["answered"]
     assert v["stage"] == "scheduled_cloud", "the next question is asked, not answered"
     assert "scheduled_cloud" not in home["settings"] or not home["settings"]["scheduled_cloud"].get("answered")
 

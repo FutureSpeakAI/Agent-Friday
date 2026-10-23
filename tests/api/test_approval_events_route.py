@@ -13,6 +13,7 @@ import pytest
 
 from agent_friday.services import approval_feed as feed
 from agent_friday.services import approvals as ap
+from tests.desk_press_support import desk_headers      # an approve is a press on this PC's screen
 
 _REMOTE = {"REMOTE_ADDR": "203.0.113.5"}      # TEST-NET-3, never loopback
 
@@ -58,11 +59,15 @@ def test_two_tabs_racing_exactly_one_decides(app):
         start = threading.Barrier(2)
         answers = {}
 
+        # A body names only the screen or the plain owner (screen_click.decided_by), so the two
+        # tabs are told apart by the label each one's decision carries.
+        label = {"tab-a": "owner:ui", "tab-b": "owner"}
+
         def tab(name, decision):
             client = app.test_client()
             start.wait()
             r = client.post("/api/approvals/%s/decide" % rec["approval_id"],
-                            json={"decision": decision, "decided_by": name})
+                            json={"decision": decision, "decided_by": label[name]}, headers=desk_headers())
             answers[name] = (r.status_code, r.get_json())
 
         ts = [threading.Thread(target=tab, args=("tab-a", "approve")),
@@ -76,7 +81,7 @@ def test_two_tabs_racing_exactly_one_decides(app):
         lost = [n for n, (_, b) in answers.items() if b["already_decided"]]
         assert len(won) == 1 and len(lost) == 1 and won != lost
         final = ap.get_approval(rec["approval_id"])
-        assert final["decided_by"] == won[0]
+        assert final["decided_by"] == label[won[0]]
         assert answers[lost[0]][1]["approval"]["status"] == final["status"]
         assert len(fired) == 1
     finally:
@@ -133,7 +138,7 @@ def test_the_feed_is_authenticated_like_any_other_request(app):
 def test_a_single_decision_still_says_it_won(client):
     rec = _card()
     body = client.post("/api/approvals/%s/decide" % rec["approval_id"],
-                       json={"decision": "approve"}).get_json()
+                       json={"decision": "approve"}, headers=desk_headers()).get_json()
     assert body["ok"] and body["won"] and not body["already_decided"]
     again = client.post("/api/approvals/%s/decide" % rec["approval_id"],
                         json={"decision": "deny"}).get_json()
