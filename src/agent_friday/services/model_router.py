@@ -2996,6 +2996,11 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             return live_block
         mem = _get_conversation_memory()
         if not mem.available():
+            if getattr(mem, "_init_error", None) is not None:
+                # The store is there but would not open: recall is degraded, not empty
+                # (services/recall_health; the turn's context says so).
+                from agent_friday.services import recall_health as _rh
+                _rh.note_failure("past_conversations", mem._init_error)
             return live_block
         # The turn's one embedding of this message (services/turn_vector), when
         # there is one; the store checks it is the same model and width.
@@ -3044,6 +3049,11 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
                 + _mf.fence("past_conversations", "\n".join(lines)) + "\n")
     except Exception as _e:
+        try:
+            from agent_friday.services import recall_health as _rh
+            _rh.note_failure("past_conversations", _e)
+        except Exception:
+            pass
         return ""
 
 

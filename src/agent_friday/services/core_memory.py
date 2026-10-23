@@ -108,7 +108,15 @@ def entries(target: str) -> List[str]:
         return []
     try:
         raw = _path(target).read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        # The card exists but cannot be read: not an empty card (services/recall_health).
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_failure("memory_card", e)
+        except Exception:
+            pass
         return []
     out = []
     for line in raw.splitlines():

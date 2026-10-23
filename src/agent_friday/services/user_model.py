@@ -350,7 +350,12 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
         if not lines:
             return ""
         return "\n".join(lines)
-    except Exception:
+    except Exception as e:
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_failure("user_facts", e)
+        except Exception:
+            pass
         return ""
 
 

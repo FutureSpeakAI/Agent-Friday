@@ -349,6 +349,16 @@ def _c_crashes():
     return ("degraded", "crashes_recorded:%d" % n) if n else ("healthy", "none_recorded")
 
 
+def _c_recall():
+    # services/recall_health: a long-term memory store that could not be read in the last ten
+    # minutes (NS-32.5-1). Fixed codes only: the source names, never their contents.
+    from agent_friday.services import recall_health
+    s = recall_health.status()
+    if s["state"] == "degraded":
+        return "degraded", "recall_degraded:" + ",".join(s["sources"])
+    return "healthy", "ok"
+
+
 def _c_boot():
     from agent_friday.services import boot_guard
     n = int(boot_guard._read_attempt().get("consecutive_failures") or 0)
@@ -373,6 +383,7 @@ CHECKS = (
     ("connectors", "connector authentication", _c_connectors),
     ("backup", "backup", _c_backup),
     ("disk", "GPU and resource state", _c_disk),
+    ("recall", "memory and search indexes", _c_recall),
     ("model_files", "model files and checksums", _c_models),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
