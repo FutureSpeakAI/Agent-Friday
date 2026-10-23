@@ -1531,11 +1531,15 @@ def _context_logging_enabled():
 
 
 def _off_record_now():
+    # The process registry's `off_record` mark keeps a process out of
+    # forensic snapshots (ops/forensics-snapshot.py), so it follows the
+    # learning check (NS-15.8-2), not storage: marked whenever off-record is
+    # on, whether or not off-record transcripts are kept. Cannot tell: marked.
     try:
         from agent_friday.services import off_record as _off
-        return _off.active()
+        return bool(_off.active() or _off.excludes_learning())
     except Exception:
-        return False
+        return True
 
 
 def _log_context(event_type, data):

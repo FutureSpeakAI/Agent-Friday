@@ -3338,12 +3338,16 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
             _lib_cite.remember_library_reply(agent_text)
         except Exception:
             pass
-    if not _unsaved and user_text:
+    if not off_record and user_text:
         # Use the same reversible, session-level adaptation as typed turns.
         # Lasting traits still require the existing owner/acceptance path.
+        # Off the record nothing is learned, whether or not the transcript is
+        # kept (NS-15.8-2): gated on the setting itself, not on storage, and
+        # the turn's snapshot is passed so user_model does not re-read it.
         try:
             from agent_friday.services.user_model import observe_message
-            observe_message(user_text, role="user", workspace="voice")
+            observe_message(user_text, role="user", workspace="voice",
+                            off_record=off_record)
         except Exception:
             pass
     if not off_record:
