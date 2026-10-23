@@ -295,6 +295,88 @@ def purge_library_documents(doc_ids) -> dict:
     return out
 
 
+def purge_conversation_turns(turn_ids, store=None) -> dict:
+    """Take corrected conversation turns out of the graph (north star
+    §34.9-4; services/memory_derived), with the Library purge's rules: what
+    only they supported goes; what other sources support loses its
+    description; community reports that mention a touched entity go; their
+    search entries go. Approved facts (fact_*) are the owner's and stay.
+    Returns the counts and "refused" when a sealed file refused the save (the
+    caller keeps the ids queued)."""
+    keys = {str(t) for t in turn_ids if str(t).strip()}
+    store = store if store is not None else KnowledgeGraphStore()
+    gone: list[str] = []
+    touched: set[str] = set()
+    out = {"entities": 0, "relationships": 0, "described_again": 0, "reports": 0}
+
+    def _strip(records, kind):
+        keep = []
+        for r in records:
+            prov = r.get("provenance") or {}
+            convs = [str(c) for c in (prov.get("conversations") or [])]
+            if str(r.get("id", "")).startswith("fact_") or not (set(convs) & keys):
+                keep.append(r)
+                continue
+            convs = [c for c in convs if c not in keys]
+            other = [k for k, v in prov.items() if k not in ("sensitivity", "conversations") and isinstance(v, list) and v]
+            if convs or other:
+                prov["conversations"] = convs
+                r["description"] = ""
+                r.pop("descriptions", None)
+                out["described_again"] += 1
+                if kind == "entities":
+                    touched.add(r["id"])
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
+                keep.append(r)
+            else:
+                out[kind] += 1
+                if kind == "entities":
+                    gone.append(r["id"])
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
+        return keep
+
+    ents = _strip(store.load("entities"), "entities")
+    dead = set(gone)
+    rels = [r for r in _strip(store.load("relationships"), "relationships")
+            if r.get("source") not in dead and r.get("target") not in dead]
+    comms = store.load("communities")
+    hit_comms = {c.get("community") for c in comms if (set(c.get("entity_ids") or []) & (touched | dead))}
+    reports = store.load("community_reports")
+    kept_reports = [r for r in reports if r.get("community") not in hit_comms]
+    out["reports"] = len(reports) - len(kept_reports)
+    refused_before = store.refusals
+    if any(out.values()) or dead:
+        store.save("entities", ents)
+        store.save("relationships", rels)
+        store.save("community_reports", kept_reports)
+    out["refused"] = store.refusals != refused_before
+    if not out["refused"]:
+        try:
+            manifest = KnowledgeGraphManifest(base_dir=store.base)
+            changed = False
+            for k in keys:
+                if canonical(f"conversation:{k}") in manifest.sources:
+                    manifest.forget(f"conversation:{k}")
+                    changed = True
+            if changed:
+                manifest.save()
+        except Exception:
+            pass
+    ids = sorted(dead | touched)
+    if ids:
+        try:
+            from pathlib import Path as _P
+            from agent_friday.conversation_memory import get_conversation_memory
+            cm = get_conversation_memory()
+            if _P(cm.persist_dir).exists() and cm._ensure():
+                cm._client.get_or_create_collection("knowledge-graph").delete(ids=ids)
+        except Exception:
+            pass
+    return out
+
+
 def purge_library_document(doc_id: int) -> dict:
     return purge_library_documents([doc_id])
 
@@ -1011,6 +1093,14 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     store.save_layout(layout_meta)
     if store.refusals == refused_before:            # a refused save keeps its sources due again
         manifest.save()
+
+    # Corrections made while this pass ran (services/memory_derived): taken
+    # out now, after the save, so this pass cannot put their nodes back.
+    try:
+        from agent_friday.services import memory_derived as _md
+        _md.apply_pending_graph_retractions(store=store)
+    except Exception as _re:
+        say(f"corrections not applied to the graph yet: {_re}")
 
     # Tier B used to fail SILENTLY and completely: `indexing_mode` defaulted
     # to a local model no install actually delivered, every call raised, was
