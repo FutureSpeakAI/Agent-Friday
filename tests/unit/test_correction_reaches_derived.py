@@ -65,6 +65,7 @@ def home(tmp_path, monkeypatch):
     mem._collection = FakeCollection()
     monkeypatch.setattr(mem, "_assert_embedding_space", lambda: None)
     monkeypatch.setattr(mem, "_shared_query_ok", lambda: False)
+    monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: mem)
     return tmp_path, mem, graph
 
 
@@ -120,8 +121,13 @@ def test_a_restore_requeues_the_summary_but_takes_nothing_from_the_graph(home):
     assert "2026-09-03" in json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text())
 
 
-def test_the_graph_drops_what_only_the_corrected_turn_said(tmp_path):
+def test_the_graph_drops_what_only_the_corrected_turn_said(tmp_path, monkeypatch):
+    import agent_friday.conversation_memory as cmod
     from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
+
+    class NoIndex:
+        persist_dir = tmp_path / "no-index"                # never created: nothing to delete
+    monkeypatch.setattr(cmod, "get_conversation_memory", lambda: NoIndex())
     store = KnowledgeGraphStore(base_dir=tmp_path / "kg")
     text = "Peter Smallwood is the harbour master at Harwich and has been for years."
     tid = hashlib.sha1(text.encode()).hexdigest()[:10]
@@ -152,10 +158,25 @@ def test_a_correction_during_a_graph_pass_waits_for_the_pass(tmp_path, monkeypat
     monkeypatch.setattr(md, "_pending_path", lambda: tmp_path / "kg-retract-pending.json")
     applied = []
     monkeypatch.setattr(md, "apply_pending_graph_retractions",
-                        lambda store=None: applied.append(sorted(md._read_pending())) or {})
+                        lambda store=None, **k: applied.append(sorted(md._read_pending())) or {})
     monkeypatch.setitem(kg_routes._TIER_B_STATE, "running", True)
     out = md.queue_graph_retraction(["A turn long enough to have been given a graph id."])
     assert out.get("deferred") and applied == [] and len(md._read_pending()) == 1
     monkeypatch.setitem(kg_routes._TIER_B_STATE, "running", False)
     md.queue_graph_retraction(["Another corrected turn of a decent length."])
     assert applied and len(applied[-1]) == 2
+
+
+def test_a_pass_that_starts_during_the_purge_keeps_the_ids_queued(tmp_path, monkeypatch):
+    from agent_friday.routes import knowledge_graph as kg_routes
+    from agent_friday.services.knowledge_graph import indexer
+    monkeypatch.setattr(md, "_pending_path", lambda: tmp_path / "kg-retract-pending.json")
+    monkeypatch.setitem(kg_routes._TIER_B_STATE, "running", False)
+    monkeypatch.setitem(kg_routes._TIER_B_STATE, "started_at", 1.0)
+
+    def purge(ids, store=None):
+        kg_routes._TIER_B_STATE["started_at"] = 2.0       # a pass began meanwhile
+        return {"entities": 0, "refused": False}
+    monkeypatch.setattr(indexer, "purge_conversation_turns", purge)
+    md.queue_graph_retraction(["A corrected turn that a starting pass may still hold."])
+    assert len(md._read_pending()) == 1, "the ids were cleared though a pass may hold the old graph"
