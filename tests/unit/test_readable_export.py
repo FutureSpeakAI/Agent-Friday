@@ -174,3 +174,87 @@ def test_the_command_line(home, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Exported" in out and "contacts" in out
     assert len(list((tmp_path / "cli").glob("friday-readable-*"))) == 1
+
+
+# ── secrets in any shape, links outside the data folder ─────────────────────
+
+ANT = "sk-ant-api03-" + "Q" * 40 + "AA"            # pragma: allowlist secret
+PROJ = "sk-proj-" + "Z9" * 24                       # pragma: allowlist secret
+HIDDEN = ["acc-tok-1234567890abcdef", "cli-sec-abcdefabcdef1234", "nested-sec-9876543210",
+          "list-tok-112233445566", "smtp-pw-778899", "ghp_" + "X" * 36,
+          "T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX", "querytok123456", "pw-in-url-445566",
+          "v2keyvalue0987654321"]                   # pragma: allowlist secret
+
+
+def test_settings_secrets_in_any_shape_are_blanked(home, tmp_path):
+    (home / "settings.json").write_text(json.dumps({
+        "theme": "dark", "accessToken": HIDDEN[0], "clientSecret": HIDDEN[1],
+        "secrets": {"x": HIDDEN[2]}, "tokens": [HIDDEN[3]], "smtp_pass": HIDDEN[4],
+        "github_pat": HIDDEN[5], "notify_url": "https://hooks.slack.com/services/" + HIDDEN[6],
+        "feed": "https://example.org/feed?token=" + HIDDEN[7], "proxy": "http://me:" + HIDDEN[8] + "@proxy:8080",
+        "api_key_v2": HIDDEN[9], "nickname": ANT}), encoding="utf-8")
+    f = Path(_run(home, tmp_path, only=["settings"])["folder"])
+    text = (f / "settings" / "settings.json").read_text(encoding="utf-8")
+    assert json.loads(text)["theme"] == "dark"
+    for h in HIDDEN + [ANT]:
+        assert h not in text, h
+
+
+def test_a_key_pasted_into_an_old_conversation_is_withheld(home, tmp_path):
+    p = home / "conversations" / "c1" / "messages.jsonl"
+    p.write_text(p.read_text(encoding="utf-8") + json.dumps({"role": "user", "text": "my key is " + PROJ,
+                                                              "ts": time.time()}) + "\n", encoding="utf-8")
+    f = Path(_run(home, tmp_path, only=["conversations"])["folder"])
+    for c in (f / "conversations").glob("*.md"):
+        assert PROJ not in c.read_text(encoding="utf-8")
+
+
+def _link(target: Path, link: Path):
+    import os
+    try:
+        os.symlink(target, link, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError):
+        pytest.skip("this system does not make symbolic links here")
+
+
+def test_nothing_that_links_outside_the_data_folder_is_read(home, tmp_path):
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "secret.md").write_text("EXTERNAL-SECRET", encoding="utf-8")
+    (outside / "msgs.jsonl").write_text(json.dumps({"role": "user", "text": "EXTERNAL-MSG"}) + "\n", encoding="utf-8")
+    (outside / "goal.json").write_text(json.dumps({"title": "EXTERNAL-GOAL"}), encoding="utf-8")
+    (outside / "dir").mkdir()
+    (outside / "dir" / "page.md").write_text("EXTERNAL-PAGE", encoding="utf-8")
+    me = home / "core_memory" / "ME.md"
+    me.unlink()
+    _link(outside / "secret.md", me)
+    _link(outside / "secret.md", home / "wiki" / "linked.md")
+    _link(outside / "dir", home / "wiki" / "linkdir")
+    c2 = home / "conversations" / "c2"
+    c2.mkdir()
+    _link(outside / "msgs.jsonl", c2 / "messages.jsonl")
+    _link(outside / "goal.json", home / "goals" / "goal_2.json")
+    r = _run(home, tmp_path)
+    f = Path(r["folder"])
+    for p in f.rglob("*"):
+        if p.is_file():
+            t = p.read_text(encoding="utf-8", errors="replace")
+            for marker in ("EXTERNAL-SECRET", "EXTERNAL-MSG", "EXTERNAL-GOAL", "EXTERNAL-PAGE"):
+                assert marker not in t, (p, marker)
+    assert any("links outside" in n for n in r["notes"])
+
+
+def test_receipts_carry_no_undo_data(home, tmp_path):
+    from agent_friday.services import action_ledger
+    action_ledger.append("action", {"summary": "moved a file", "undo": {"from": "UNDO-PATH"}})
+    f = Path(_run(home, tmp_path, only=["receipts"])["folder"])
+    for name in ("receipts.jsonl", "receipts.md"):
+        assert "UNDO-PATH" not in (f / "receipts" / name).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("path,synced", [
+    ("C:/Users/a/OneDrive/Documents", True), ("C:/Users/a/OneDrive - Contoso/Documents", True),
+    ("/home/a/Dropbox/x", True), ("C:/Users/a/Documents", False), ("/home/a/docs", False)])
+def test_a_cloud_synced_folder_is_recognised(path, synced):
+    from agent_friday.services import readable_export
+    assert readable_export.cloud_synced(Path(path)) is synced
