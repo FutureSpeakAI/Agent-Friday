@@ -21,11 +21,15 @@ name: installer
 #   tests-green      on a version tag only: scripts/release_gate.py waits for
 #                    the tests, codeql and restore workflows on the tag's exact
 #                    commit and fails unless all three are green there
+#   acceptance       on a version tag only: scripts/release_acceptance.py
+#                    refuses a tag that is not a beta unless the section 34
+#                    checklist (docs/release/acceptance-34.json) is all green
+#                    for that version (north-star A26; betas pass, A19)
 #   release          on a version tag only: a PUBLISHED pre-release carrying the
 #                    exe, its SHA-256 and RELEASE_NOTES.md.
 #
 # Pushing a version tag is the release decision. The release job runs only
-# after tests-green, the fresh-install job and every leg of the upgrade matrix
+# after tests-green, acceptance, the fresh-install job and every leg of the upgrade matrix
 # have passed, and it asks the release gate once more immediately before it
 # publishes. A tag on a commit whose tests are red, running or missing
 # publishes nothing.
@@ -229,6 +233,22 @@ jobs:
             --workflow tests.yml --workflow codeql.yml --workflow restore.yml --alerts-ref "$TAG_REF" \
             --wait-minutes 110 --poll-seconds 60
 
+  # The section 34 gate (north-star A26): a tag that is not a beta
+  # (vX.Y.Z-beta.N) is refused unless docs/release/acceptance-34.json is all
+  # green for this version. Betas pass it (A19).
+  acceptance:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: A public non-beta release needs the section 34 checklist all green
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: python3 scripts/release_acceptance.py --tag "$TAG_NAME"
+
   # Export first, a real uninstall that leaves nothing, and a restore of the
   # bundle on the same clean machine (north star 27.10, 27.6, 34.3-7).
   bundle-uninstall-restore:
@@ -259,7 +279,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tests-green, fresh-install, upgrade, bundle-uninstall-restore]
+    needs: [tests-green, acceptance, fresh-install, upgrade, bundle-uninstall-restore]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -313,6 +333,7 @@ jobs:
         run: |
           python3 scripts/release_gate.py --repo "${{ github.repository }}" --sha "${{ github.sha }}" \
             --workflow tests.yml --workflow codeql.yml --workflow restore.yml --alerts-ref "$TAG_REF" --wait-minutes 0
+          python3 scripts/release_acceptance.py --tag "$TAG_NAME"
           tagged=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)
           test "$tagged" = "$GITHUB_SHA" || { echo "the tag now names $tagged, not the gated $GITHUB_SHA"; exit 1; }
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
