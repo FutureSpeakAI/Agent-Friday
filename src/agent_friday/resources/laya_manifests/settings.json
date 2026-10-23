@@ -177,7 +177,7 @@
   {"action": "settings.mail_default_account", "kind": "by_design", "reason": "The account a new draft goes to when none is named is the owner's choice (Connections > Google accounts); Friday asks when it is unset."},
   {"action": "settings.preapproved_sends", "kind": "by_design", "reason": "A pre-approval is the owner's own decision: no tool may make, widen, re-approve or revoke one, or let voice use them; a skill's needs are approved as seen."},
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
-  {"action": "settings.tasks_inbox", "kind": "by_design", "reason": "Turning on the waiting list in Google Tasks, sending more text to Google, and deleting the list are the owner's press on this PC, because they decide what leaves it; by voice, \"open the Google Tasks list settings\" opens the section, where turning it off or sending less is one press."},
+  {"action": "settings.tasks_inbox", "kind": "by_design", "reason": "Turning on the Google Tasks list, more text to Google and removing it are a press on this PC; voice can open the section."},
   {"action": "settings.locks_windows_page", "kind": "by_design", "reason": "Opens a Windows settings page on the owner's own press; the Locks lines themselves are read by opening the section."},
   {"action": "settings.connections_local_only", "kind": "by_design", "reason": "Choosing local AI only is the owner's press on Connect your services; by voice, \"connect local AI\" opens that card."},
   {"action": "settings.connection_test", "kind": "by_design", "reason": "A test sends the stored key to its provider, so it is the owner's press on the card the voice opened."},
