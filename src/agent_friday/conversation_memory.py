@@ -592,7 +592,9 @@ class ConversationMemory:
             # (north star §34.9-4): a superseded turn is not evidence anywhere.
             try:
                 from agent_friday.services import conversation_fts as _fts
-                _fts.mark_superseded(found, bool(flag))
+                # Every id asked for: a turn the full-text index holds but
+                # Chroma does not (its indexing failed) is corrected there too.
+                _fts.mark_superseded(ids, bool(flag))
             except Exception as _e:
                 print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
