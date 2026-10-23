@@ -80,6 +80,7 @@ def calendar_created(res: dict, *, conversation_id: Optional[str] = None) -> Opt
                    items=[{"id": res["id"], "title": t, "start": res.get("start")}],
                    summary="Created “%s” on the calendar." % t, said="Created an event.",
                    undo_rows=[{"op": "delete_created", "id": res["id"], "title": t,
+                               "guests": int(res.get("guests") or 0),
                                "account": res.get("account_id") or "",
                                "calendar": res.get("calendar_id") or "primary"}],
                    conversation_id=conversation_id)
@@ -118,7 +119,8 @@ def calendar_deleted(res: dict, *, conversation_id: Optional[str] = None) -> Opt
            and not b.get("recurring"))
     guests = int((res.get("before") or {}).get("guests") or 0)
     rows = ([{"op": "recreate", "id": res["id"], "title": t,
-              "fields": {k: b.get(k, "") for k in EVENT_FIELDS if k != "summary"} | {"summary": t},
+              "fields": {k: b.get(k, "") for k in EVENT_FIELDS if k != "summary"}
+              | {"summary": str(b.get("summary") or b.get("title") or t)},
               "guests": guests, "account": res.get("account_id") or "",
               "calendar": res.get("calendar_id") or "primary"}] if can else [])
     note = ("" if can else " (a repeating event cannot be made again by Undo)" if b.get("recurring")
@@ -139,14 +141,16 @@ def undo_calendar_row(cw, r: dict) -> bool:
         return not res.get("error")
     if op == "delete_created":
         now = cw.read_event(r["id"], calendar_id=cal, account_id=acct, for_write=True)
-        if now.get("gone"):
+        if now.get("gone") or now.get("not_found"):
             return True                                   # already deleted by the owner: put back
         if not now.get("ok"):
             return False
-        if int((now.get("before") or {}).get("guests") or 0):
-            # guests were added since Friday made it: deleting it silently would cancel on them
+        had = int(r.get("guests") or 0)
+        if int((now.get("before") or {}).get("guests") or 0) > had:
+            # guests were added since Friday made it: deleting it would cancel on them
             return False
-        res = cw.delete_event(r["id"], calendar_id=cal, account_id=acct, notify_guests=False)
+        # guests Friday invited with it are told it is cancelled, as the card says
+        res = cw.delete_event(r["id"], calendar_id=cal, account_id=acct, notify_guests=bool(had))
         return bool(res.get("ok"))
     if op == "restore_fields":
         f = r.get("fields") or {}
@@ -249,8 +253,11 @@ def undo_lines(receipt: dict, domain: str) -> List[str]:
     for r in undo_rows(receipt, domain):
         t, op = r.get("title") or ("the event" if domain == "calendar" else "the task"), r.get("op") or "move"
         if op == "delete_created":
+            g = int(r.get("guests") or 0)
             out.append("Delete \u201c%s\u201d, which Friday created%s." % (
-                t, " (not if guests were added since)" if domain == "calendar" else ""))
+                t, "" if domain != "calendar" else
+                ("; its %d guest(s) are told it is cancelled (not if more were added since)" % g) if g
+                else " (not if guests were added since)"))
         elif op == "recreate":
             g = int(r.get("guests") or 0)
             out.append("Make \u201c%s\u201d again%s." % (t, (" without its %d guest(s)" % g) if g else ""))

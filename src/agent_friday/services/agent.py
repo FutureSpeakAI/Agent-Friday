@@ -1034,7 +1034,7 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string"},
          "why": {"type": "string"}},
       "required": ["action"]}},
-    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki) or a write_file: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
+    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki), a write_file, or a Google Calendar or Google Tasks change Friday made: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail, calendar and tasks go back on one approval card.",
      "input_schema": {"type": "object", "properties": {
          "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
     {"name": "answer_card", "description": "Record the user's answer to an organize, undo_action or money-paragraph card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer; if it returns a read-back, say it and ask.",

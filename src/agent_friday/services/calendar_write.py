@@ -587,7 +587,7 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
         return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
-            "start": start, "end": end}
+            "start": start, "end": end, "guests": len(body.get("attendees") or [])}
 
 
 def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary",
