@@ -17,12 +17,16 @@ text editor or spreadsheet, without Friday and without FutureSpeak:
   settings/settings.json     settings, with every secret value blanked
   manifest.json              each file with its SHA-256
 
-It reads Friday's stores and never writes to Friday's data folder (one
-receipt in the action ledger says an export was made, and where). It never
-contains credentials, keys or tokens; messages kept off the record are never
-on disk, so never in it. Wiki pages in an encrypted section are written out in
+It reads Friday's stores; the one thing it adds to Friday's data folder is a
+receipt in the action ledger saying an export was made, and where. Reading
+the ledger can finish importing legacy receipt files, as every start does.
+Only files inside the data folder are read: a link to anywhere else is left
+out. Credential files are never read; every value under a credential-like
+name and every key shape Friday recognises (services/pasted_secrets) is
+blanked in every file written. Messages kept off the record are never on
+disk, so never in it. Wiki pages in an encrypted section are written out in
 plain text when the vault is open on this PC, and listed as left out when it
-is not: the export is the owner's own copy, kept wherever they choose.
+is not: the export is the owner's own copy, kept where they choose.
 """
 from __future__ import annotations
 
@@ -30,6 +34,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import sqlite3
 import time
@@ -37,6 +42,15 @@ from pathlib import Path
 from typing import Optional
 
 CATEGORIES = ("wiki", "memories", "conversations", "goals", "receipts", "contacts", "settings")
+
+#: A key name that may hold a credential (anywhere in the name, any case).
+_SECRET_NAME = re.compile(r"(?i)(secret|token|passw|passphrase|pwd|api.?key|apikey|private.?key|"
+                          r"credential|auth|bearer|cookie|session|webhook|signing|_pat$|^pat$|_pass$|^pass$)")
+#: Values that carry a credential whatever their name: a webhook, a token or
+#: key in a query, a user and password in a URL.
+_SECRET_VALUE = re.compile(r"(?i)(hooks\.slack\.com/|discord(?:app)?\.com/api/webhooks/|"
+                           r"[?&](?:token|key|access_token|api_key|sig|signature)=|://[^/\s:@]+:[^/\s@]+@)")
+BLANKED = "(blanked)"
 
 
 class ExportError(RuntimeError):
@@ -55,6 +69,45 @@ def _when(t) -> str:
         return ""
 
 
+def _inside(p: Path, root: Path) -> bool:
+    """p is a real file inside root once every link and junction is followed."""
+    try:
+        rp = p.resolve(strict=True)
+        rr = root.resolve()
+        rp.relative_to(rr)
+        rp.relative_to(_home().resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return rp.is_file()
+
+
+def _inside_dir(d: Path, root: Path) -> bool:
+    """A folder to walk into: not a link or junction to somewhere else."""
+    try:
+        d.resolve(strict=True).relative_to(root.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return not d.is_symlink()
+
+
+def _scrub_text(text: str, whole: bool = False) -> str:
+    from agent_friday.services import pasted_secrets
+    return pasted_secrets.withhold(text, whole=whole)[0]
+
+
+def _scrub_value(obj, key=None):
+    """Blank what may be a credential in a parsed document."""
+    if key is not None and isinstance(key, str) and _SECRET_NAME.search(key):
+        return BLANKED if obj not in (None, "", [], {}) else obj
+    if isinstance(obj, dict):
+        return {k: _scrub_value(v, k) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub_value(v) for v in obj]
+    if isinstance(obj, str):
+        return BLANKED if _SECRET_VALUE.search(obj) else _scrub_text(obj)
+    return obj
+
+
 def _safe(name: str, limit: int = 80) -> str:
     s = re.sub(r"[^\w .,'()-]+", " ", str(name or "")).strip(" .")
     return (re.sub(r"\s+", " ", s)[:limit] or "untitled").strip()
@@ -68,6 +121,7 @@ class _Out:
         self.files: dict = {}
 
     def write(self, rel: str, text: str) -> None:
+        text = _scrub_text(text)
         p = self.root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         data = text.encode("utf-8")
@@ -85,9 +139,15 @@ def _wiki(out: _Out, notes: list) -> int:
     if not root.is_dir():
         return 0
     n = 0
-    for p in sorted(root.rglob("*.md")):
+    pages = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and _inside_dir(here / d, root)]
+        pages += [here / f for f in filenames if f.endswith(".md") and not f.startswith(".")]
+    for p in sorted(pages):
         rel = p.relative_to(root)
-        if any(part.startswith(".") for part in rel.parts) or p.is_symlink():
+        if not _inside(p, root):
+            notes.append("wiki/%s: left out, it links outside Friday's data folder" % rel.as_posix())
             continue
         try:
             text = wiki_engine.wiki_read_text(p)
@@ -112,12 +172,16 @@ def _memories(out: _Out, notes: list) -> int:
             p = Path(core_memory._path(target))
         except Exception:
             continue
-        if p.is_file():
+        if p.exists() and not _inside(p, _home()):
+            notes.append("memories/%s: left out, it links outside Friday's data folder" % name)
+        elif p.is_file():
             out.write("memories/" + name, "# %s\n\n%s" % (title, p.read_text(encoding="utf-8", errors="replace")))
             n += 1
     from agent_friday.services import user_model
     db = Path(user_model.DB_PATH)
-    if db.is_file():
+    if db.exists() and not _inside(db, _home()):
+        notes.append("memories/profile.md: left out, the profile links outside Friday's data folder")
+    elif db.is_file():
         try:
             con = sqlite3.connect("file:%s?mode=ro" % db.as_posix(), uri=True)
             try:
@@ -155,10 +219,18 @@ def _conversations(out: _Out, notes: list) -> int:
     for d in sorted(root.iterdir()):
         if not d.is_dir() or d.is_symlink():
             continue
-        try:
-            conv = json.loads((d / "conversation.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            conv = {"id": d.name}
+        if not _inside_dir(d, root):
+            continue
+        conv = {"id": d.name}
+        if _inside(d / "conversation.json", root):
+            try:
+                conv = json.loads((d / "conversation.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+        mp = d / "messages.jsonl"
+        if mp.exists() and not _inside(mp, root):
+            notes.append("conversations/%s: left out, it links outside Friday's data folder" % d.name)
+            continue
         msgs = cv._stored_messages(d.name)
         if not msgs:
             continue
@@ -176,7 +248,7 @@ def _conversations(out: _Out, notes: list) -> int:
             text = m.get("text") if isinstance(m.get("text"), str) else m.get("content")
             if not isinstance(text, str):
                 text = json.dumps(text, ensure_ascii=False) if text is not None else ""
-            lines += ["**%s** · %s" % (who, _when(m.get("ts"))), "", text.strip(), ""]
+            lines += ["**%s** · %s" % (who, _when(m.get("ts"))), "", _scrub_text(text.strip(), whole=True), ""]
         out.write("conversations/%s.md" % name, "\n".join(lines))
         index.append("- [%s](%s.md) (%d messages)" % (title, name.replace(" ", "%20"), len(msgs)))
         n += 1
@@ -192,13 +264,16 @@ def _goals(out: _Out, notes: list) -> int:
         return 0
     items = []
     for p in sorted(root.glob("goal_*.json")):
+        if not _inside(p, root):
+            notes.append("goals/%s: left out, it links outside Friday's data folder" % p.name)
+            continue
         try:
             g = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             notes.append("goals/%s: could not be read" % p.name)
             continue
         if isinstance(g, dict):
-            items.append(g)
+            items.append(_scrub_value(g))
     if not items:
         return 0
     lines = ["# Goals", ""]
@@ -223,6 +298,16 @@ def _goals(out: _Out, notes: list) -> int:
     return len(items)
 
 
+def _public(e: dict) -> dict:
+    """An entry as the Ledger shows it: no undo data, credentials blanked."""
+    e = dict(e)
+    rec = e.get("rec")
+    if isinstance(rec, dict):
+        rec = {k: v for k, v in rec.items() if k != "undo"}
+        e["rec"] = _scrub_value(rec)
+    return e
+
+
 def _receipts(out: _Out, notes: list) -> int:
     from agent_friday.services import action_ledger
     from agent_friday.routes.ledger import plain_line
@@ -235,8 +320,12 @@ def _receipts(out: _Out, notes: list) -> int:
         rep = action_ledger.verify(force=True, migrate=False)
     except Exception as e:  # noqa: BLE001
         rep = {"ok": False, "problems": [{"reason": "the check could not run (%s)" % type(e).__name__}]}
+    rows = [_public(e) for e in rows]
     lines = ["# Everything Friday did or decided", "",
-             "One line per entry, oldest first. receipts.jsonl holds the same entries as signed lines.", ""]
+             "One line per entry, oldest first. receipts.jsonl holds the same entries with "
+             "their hashes and signatures; undo data and anything that looks like a credential "
+             "are left out of both, so a changed line no longer matches its signature here. "
+             "verification.md is the check Friday ran on the record itself.", ""]
     for e in rows:
         try:
             line = plain_line(e)
@@ -265,6 +354,9 @@ def _contacts(out: _Out, notes: list) -> int:
     src = g.path if g.path.exists() else g.legacy_path
     if not src.exists():
         return 0
+    if not _inside(src, _home()):
+        notes.append("contacts: left out, the contacts file links outside Friday's data folder")
+        return 0
     rows = g.contacts_list()
     if not rows:
         return 0
@@ -286,11 +378,14 @@ def _contacts(out: _Out, notes: list) -> int:
 def _settings(out: _Out, notes: list) -> int:
     from agent_friday.services import friday_bundle
     p = _home() / "settings.json"
-    if not p.is_file():
+    if not p.exists():
+        return 0
+    if not _inside(p, _home()):
+        notes.append("settings: left out, settings.json links outside Friday's data folder")
         return 0
     try:
         raw = friday_bundle._scrub_settings(p.read_bytes())
-        data = json.loads(raw.decode("utf-8"))
+        data = _scrub_value(friday_bundle._scrub_obj(json.loads(raw.decode("utf-8"))))
     except Exception as e:  # noqa: BLE001
         notes.append("settings: could not be read (%s)" % type(e).__name__)
         return 0
@@ -303,6 +398,16 @@ _WRITERS = {"wiki": _wiki, "memories": _memories, "conversations": _conversation
 
 
 # ── the export ───────────────────────────────────────────────────────────────
+
+_SYNCED = ("onedrive", "dropbox", "google drive", "googledrive", "icloud", "icloud drive", "box", "pcloud",
+           "mega", "sync.com", "nextcloud", "owncloud")
+
+
+def cloud_synced(path: Path) -> bool:
+    """Whether a folder looks like one a sync service copies off this PC."""
+    parts = [x.lower() for x in Path(path).expanduser().resolve().parts]
+    return any(any(x == s or x.startswith(s + " ") or x.startswith(s + "-") for s in _SYNCED) for x in parts)
+
 
 def _check_dest(dest: Path) -> Path:
     dest = Path(dest).expanduser()
@@ -346,8 +451,10 @@ def export(dest_parent: Path, *, only: Optional[list] = None, by: str = "owner")
               "", "## What is here", ""]
     readme += ["- **%s**: %d" % (c, counts.get(c, 0)) for c in cats]
     readme += ["", "## Never in an export", "",
-               "- Passwords, API keys, account tokens and Friday's own keys.",
-               "- Secret values in settings (blanked).",
+               "- Friday's credential files: account tokens, stored API keys, Friday's own keys.",
+               "- Values that look like a password, key or token, wherever they appear: they read "
+               "\"%s\" or are withheld." % BLANKED,
+               "- Files that link outside Friday's data folder.",
                "- Messages said off the record (Friday never saves them).",
                "", "manifest.json lists every file with its SHA-256, so you can check nothing changed.",
                "", "Keep this folder somewhere safe: it is your data, unencrypted."]

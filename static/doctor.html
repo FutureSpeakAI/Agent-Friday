@@ -173,14 +173,19 @@
                   unverified: 'pending', repairing: 'pending' };
   const HEADS = { attention: 'Needs attention', working: 'Working', off: 'Off, and nothing is wrong', pending: 'Not checked yet' };
   const MEANING = { working: 'fine', off: 'off on purpose', attention: 'needs attention', pending: 'not checked yet' };
-  $('readable-go').addEventListener('click', () => {
+  function readableExport(cloudOk) {
     text($('readable-note'), 'Exporting...');
-    api('/api/export/readable', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+    api('/api/export/readable', { method: 'POST', body: JSON.stringify(cloudOk ? { cloud_ok: true } : {}) }).then(({ ok, d }) => {
+      if (!ok && d.code === 'cloud_folder') {
+        if (confirm(d.error)) { readableExport(true); } else { text($('readable-note'), 'Not exported.'); }
+        return;
+      }
       text($('readable-note'), ok ? 'Exported ' + d.files + ' files to ' + d.folder + '.' +
         ((d.notes || []).length ? ' Left out: ' + d.notes.length + ' (listed in the README there).' : '')
         : (d.error || 'Not exported.'));
     });
-  });
+  }
+  $('readable-go').addEventListener('click', () => readableExport(false));
   function caps() {
     api('/api/capabilities/state').then(({ ok, d }) => {
       const box = $('caps'); box.textContent = '';

@@ -29,3 +29,13 @@ def test_the_doctor_page_has_the_export():
     html = (ROOT / "static" / "doctor.html").read_text(encoding="utf-8")
     for needle in ('id="readable"', 'id="readable-go"', "/api/export/readable"):
         assert needle in html, needle
+
+
+def test_a_cloud_synced_documents_folder_asks_first(client, monkeypatch, tmp_path):
+    from agent_friday.services import friday_bundle
+    monkeypatch.setattr(friday_bundle, "documents_dir", lambda: tmp_path / "OneDrive" / "Documents")
+    r = client.post("/api/export/readable", json={"only": ["settings"]}, headers=_press())
+    assert r.status_code == 409 and r.get_json()["code"] == "cloud_folder"
+    assert not (tmp_path / "OneDrive").exists()
+    r = client.post("/api/export/readable", json={"only": ["settings"], "cloud_ok": True}, headers=_press())
+    assert r.status_code == 200

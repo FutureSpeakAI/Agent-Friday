@@ -1701,6 +1701,9 @@ def cmd_export_readable(out: str | None = None, only: str | None = None) -> int:
     from agent_friday.services import friday_bundle, readable_export
     parent = Path(out).expanduser() if out else friday_bundle.documents_dir() / "Friday Exports"
     cats = [c.strip() for c in only.split(",") if c.strip()] if only else None
+    if readable_export.cloud_synced(parent):
+        print("Note: %s looks like a folder a sync service copies off this PC; the export is "
+              "not encrypted. Use --out to choose another folder." % parent)
     try:
         r = readable_export.export(parent, only=cats, by="owner:cli")
     except readable_export.ExportError as e:
