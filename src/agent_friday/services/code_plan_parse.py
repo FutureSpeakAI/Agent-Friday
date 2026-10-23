@@ -34,7 +34,9 @@ THINK_END = "</think>"
 #: Upper bounds on the scan, so a huge or hostile reply cannot stall a request.
 #: A 16K-token answer is well under 100,000 characters.
 _MAX_REPLY_CHARS = 400_000
-_MAX_STARTS = 100_000
+_MAX_STARTS = 20_000
+
+_OBJECT_START = re.compile(r'\{\s*["}]')
 
 _FENCE_OPEN = re.compile(r"^```[a-zA-Z]*\n")
 _FENCE_CLOSE = re.compile(r"\n```\s*$")
@@ -49,7 +51,11 @@ def _strip_fences(text: str) -> str:
 
 
 def _is_plan(obj) -> bool:
-    return isinstance(obj, dict) and isinstance(obj.get("files"), list)
+    """A JSON object whose `files` is a list of file entries (objects)."""
+    if not isinstance(obj, dict):
+        return False
+    files = obj.get("files")
+    return isinstance(files, list) and all(isinstance(f, dict) for f in files)
 
 
 def _last_plan(text: str) -> Optional[dict]:
@@ -67,9 +73,12 @@ def _last_plan(text: str) -> Optional[dict]:
     pos = 0
     starts = 0
     while starts < _MAX_STARTS:
-        i = text.find("{", pos)
-        if i < 0:
+        # Only a `{` followed by a key or `}` can start an object; skipping the
+        # rest keeps stray braces in prose and code from costing a decode each.
+        m = _OBJECT_START.search(text, pos)
+        if m is None:
             break
+        i = m.start()
         starts += 1
         try:
             obj, end = decoder.raw_decode(text, i)

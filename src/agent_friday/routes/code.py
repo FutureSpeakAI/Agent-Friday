@@ -625,6 +625,8 @@ def code_plan():
         if not safe:
             continue
         new_content = f.get("new_content") or ""
+        if not isinstance(new_content, str):
+            continue
         old_content = ""
         exists = os.path.isfile(safe)
         if exists:
