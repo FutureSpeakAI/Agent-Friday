@@ -740,7 +740,7 @@ def _inventory(home: Path) -> dict:
     bundle was made."""
     try:
         from agent_friday.services import store_inventory
-        return store_inventory.inventory(home)
+        return store_inventory.public(store_inventory.inventory(home))
     except Exception as e:  # noqa: BLE001 - a bundle is never refused for its inventory
         return {"error": "unavailable:" + type(e).__name__}
 

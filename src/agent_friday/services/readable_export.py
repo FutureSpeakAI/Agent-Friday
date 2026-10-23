@@ -452,7 +452,7 @@ def _stores() -> dict:
     (services/store_inventory.py, §37.3-1)."""
     try:
         from agent_friday.services import store_inventory
-        return store_inventory.inventory(_home())
+        return store_inventory.public(store_inventory.inventory(_home()))
     except Exception as e:  # noqa: BLE001 - an export is never refused for its inventory
         return {"error": "unavailable:" + type(e).__name__}
 

@@ -29,9 +29,13 @@ inventory goes into the Doctor report, which holds no file names.
 """
 from __future__ import annotations
 
+import itertools
 import json
+import math
 import os
+import re
 import stat
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +49,8 @@ INVENTORY_VERSION = 1
 #: version table. ("in", rel, rule): the rule applied to a file inside the
 #: folder ("*" in rel matches one name). ("none",): the store records no
 #: version. ("secret",): never opened.
-_J = ("json", ("version", "schema_version", "format", "v"))
+_J = ("json", ("version", "schema_version"))
+_Jv = ("json", ("version", "schema_version", "v"))   # stores that write "v"
 _L = ("jsonl", "v")
 _S = ("sqlite",)
 _N = ("none",)
@@ -256,7 +261,7 @@ STORES: tuple[Store, ...] = (
     _f("voice_tool_usage", "voice_tool_usage.json", "json", _J),
     _f("bench", "bench/", "folder"),
     _f("overrides", "overrides/", "folder"),
-    _f("backups_schedule", "backups/", "json folder", ("in", "schedule.json", _J)),
+    _f("backups_schedule", "backups/", "json folder", ("in", "schedule.json", _Jv)),
     _f("heartbeat_state", "heartbeat_state.json", "json", _J),
     _f("ambient_state", "ambient_state.json", "json", _J),
     _f("seat_state", "seat_state.json", "json", _J),
@@ -265,7 +270,7 @@ STORES: tuple[Store, ...] = (
     # vault, keys and credentials: listed, never opened (the vault's own
     # settings file and the keystore's version field excepted)
     _f("vault", "vault/", "encrypted folder", ("in", ".vault_config.json", _J)),
-    _f("keystore", "security/keystore.json", "json", _J),
+    _f("keystore", "security/keystore.json", "json", _Jv),
     _f("security", "security/", "credentials folder", _X),
     _f("privacy_records", "privacy/", "folder", _X),
     _f("google_accounts", "google_accounts/", "credentials folder", _X),
@@ -358,6 +363,11 @@ def _measure(folder: Path, budget: _Budget) -> dict:
     while stack:
         d = stack.pop()
         try:
+            # looked at again just before it is opened: a folder swapped for a
+            # junction since it was listed is not walked
+            if _is_link(os.lstat(d)):
+                links += 1
+                continue
             it = os.scandir(d)
         except OSError:
             partial = True
@@ -395,22 +405,44 @@ def _iso(t: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
 
+_VERSION_WORD = re.compile(r"^\d{1,9}(\.\d{1,9}){0,3}([-+][0-9A-Za-z.]{1,16})?$")
+
+
 def _short(v):
-    """A version value as it may be reported: a number or a short word."""
+    """A version as it may be reported: a whole number from 0 to 2^31, or a
+    version-shaped word ("2", "1.0", "1.2.3-beta.1"). Anything else, a name,
+    a sentence, NaN, is "unrecognised": owner text never passes as a version."""
     if isinstance(v, bool):
         return "unrecognised"
-    if isinstance(v, (int, float)):
+    if isinstance(v, float) and math.isfinite(v) and v.is_integer():
+        v = int(v)
+    if isinstance(v, int) and 0 <= v < 2 ** 31:
         return v
-    if isinstance(v, str) and 0 < len(v) <= 40 and all(c.isalnum() or c in "._-+" for c in v):
+    if isinstance(v, str) and _VERSION_WORD.match(v):
         return v
     return "unrecognised"
 
 
-def _version_json(p: Path, keys) -> tuple:
-    if os.lstat(p).st_size > MAX_JSON_BYTES:
+def _open_checked(p: Path, st: os.stat_result):
+    """Open `p` for reading only if it is still the file that was looked at
+    (same file id and device as its lstat): a swap for a link in between is
+    refused."""
+    f = open(p, "rb")
+    try:
+        fs = os.fstat(f.fileno())
+        if (fs.st_ino, fs.st_dev) != (st.st_ino, st.st_dev) or not stat.S_ISREG(fs.st_mode):
+            raise OSError("the file changed while it was looked at")
+    except BaseException:
+        f.close()
+        raise
+    return f
+
+
+def _version_json(p: Path, st: os.stat_result, keys) -> tuple:
+    if st.st_size > MAX_JSON_BYTES:
         return "not_read_too_large", None
-    with open(p, "rb") as f:
-        d = json.loads(f.read().decode("utf-8-sig"))
+    with _open_checked(p, st) as f:
+        d = json.loads(f.read(MAX_JSON_BYTES + 1).decode("utf-8-sig"))
     if isinstance(d, dict):
         for k in keys:
             if k in d and d[k] is not None:
@@ -418,8 +450,8 @@ def _version_json(p: Path, keys) -> tuple:
     return "none", None
 
 
-def _version_jsonl(p: Path, key: str) -> tuple:
-    with open(p, "rb") as f:
+def _version_jsonl(p: Path, st: os.stat_result, key: str) -> tuple:
+    with _open_checked(p, st) as f:
         first = f.readline(MAX_LINE_BYTES)
     if not first.strip():
         return "empty", None
@@ -435,8 +467,8 @@ def _version_jsonl(p: Path, key: str) -> tuple:
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
-def _version_sqlite(p: Path) -> tuple:
-    with open(p, "rb") as f:
+def _version_sqlite(p: Path, st: os.stat_result) -> tuple:
+    with _open_checked(p, st) as f:
         head = f.read(100)
     if len(head) < 100:
         return ("empty", None) if not head else ("unreadable", None)
@@ -446,13 +478,13 @@ def _version_sqlite(p: Path) -> tuple:
     return (uv, "sqlite:user_version") if uv else ("none", None)
 
 
-def _version_sqlite_meta(p: Path, table: str, kcol: str, key: str, vcol: str) -> tuple:
+def _version_sqlite_meta(p: Path, st: os.stat_result, table: str, kcol: str, key: str, vcol: str) -> tuple:
     import sqlite3
-    ver, how = _version_sqlite(p)
+    ver, how = _version_sqlite(p, st)
     if ver in ("empty", "unreadable", "encrypted_or_not_sqlite"):
         return ver, how
     # read-only and immutable: no lock is taken and no -wal or -shm is made
-    uri = p.resolve().as_uri() + "?mode=ro&immutable=1"
+    uri = p.absolute().as_uri() + "?mode=ro&immutable=1"
     conn = sqlite3.connect(uri, uri=True, timeout=1)
     try:
         row = conn.execute('SELECT "%s" FROM "%s" WHERE "%s" = ?' % (vcol, table, kcol), (key,)).fetchone()
@@ -465,20 +497,24 @@ def _version_sqlite_meta(p: Path, table: str, kcol: str, key: str, vcol: str) ->
     return ver, how
 
 
-def _apply(rule: tuple, p: Path) -> tuple:
+def _apply(rule: tuple, p: Path, st: os.stat_result) -> tuple:
     kind = rule[0]
     if kind == "json":
-        return _version_json(p, rule[1])
+        return _version_json(p, st, rule[1])
     if kind == "jsonl":
-        return _version_jsonl(p, rule[1])
+        return _version_jsonl(p, st, rule[1])
     if kind == "sqlite":
-        return _version_sqlite(p)
+        return _version_sqlite(p, st)
     if kind == "sqlite_meta":
-        return _version_sqlite_meta(p, *rule[1:])
+        return _version_sqlite_meta(p, st, *rule[1:])
     return "none", None
 
 
-def _version(home: Path, s: Store, base: Path) -> tuple:
+#: At most this many entries of a folder are looked at for a "*" version rule.
+_GLOB_LIMIT = 200
+
+
+def _version(home: Path, s: Store, base: Path, st: os.stat_result) -> tuple:
     rule = s.version
     if rule[0] == "none":
         return "none", None
@@ -491,25 +527,27 @@ def _version(home: Path, s: Store, base: Path) -> tuple:
                 head, _, tail = rel.partition("*/")
                 found = []
                 try:
-                    names = sorted(e.name for e in os.scandir(base / head) if not e.name.startswith("."))
+                    with os.scandir(base / head) as it:
+                        names = sorted(e.name for e in itertools.islice(it, _GLOB_LIMIT)
+                                       if not e.name.startswith("."))
                 except OSError:
                     names = []
                 for name in names[:50]:
-                    q, st, linked = _reach(home, s.location + head + name + "/" + tail)
-                    if q is not None and not linked and st is not None and stat.S_ISREG(st.st_mode):
-                        found.append(_apply(inner, q))
+                    q, qst, linked = _reach(home, s.location + head + name + "/" + tail)
+                    if q is not None and not linked and qst is not None and stat.S_ISREG(qst.st_mode):
+                        found.append(_apply(inner, q, qst))
                 vers = sorted({str(v) for v, _h in found})
                 if not vers:
                     return "none", None
-                return (found[0][0] if len(vers) == 1 else "mixed:" + ",".join(vers)[:40]), found[0][1]
-            q, st, linked = _reach(home, s.location + rel)
-            if q is None or st is None:
+                return (found[0][0] if len(vers) == 1 else "mixed"), found[0][1]
+            q, qst, linked = _reach(home, s.location + rel)
+            if q is None or qst is None:
                 return "none", None
-            if linked or not stat.S_ISREG(st.st_mode):
+            if linked or not stat.S_ISREG(qst.st_mode):
                 return "not_read_link", None
-            v, how = _apply(inner, q)
+            v, how = _apply(inner, q, qst)
             return v, (rel + " " + how) if how else None
-        return _apply(rule, base)
+        return _apply(rule, base, st)
     except Exception:  # noqa: BLE001 - one store never stops the inventory
         return "unreadable", None
 
@@ -524,6 +562,9 @@ def inventory(home: Optional[Path] = None) -> dict:
     Each store: {store, location, format, durable, version, version_from,
     bytes, files, modified} (+ "link": true when reached through a link and so
     not read, + "at_least": true when the walk ran out of time or entries).
+    A store that holds credentials reports its size only: how many files it
+    has and when one last changed would tell how many accounts are connected
+    and when a token was refreshed.
     """
     if home is None:
         from agent_friday.paths import friday_home
@@ -552,7 +593,10 @@ def inventory(home: Optional[Path] = None) -> dict:
             row.update(_measure(p, budget))
         else:
             row.update(bytes=st.st_size, files=1, modified=_iso(st.st_mtime))
-        ver, how = _version(home, s, p)
+        if s.version[0] == "secret":
+            row.update(files=None, modified=None)
+            row.pop("links_not_followed", None)
+        ver, how = _version(home, s, p, st)
         row["version"], row["version_from"] = ver, how
         stores.append(row)
         if "/" not in s.location.rstrip("/"):       # top level: counted once
@@ -585,6 +629,88 @@ def inventory(home: Optional[Path] = None) -> dict:
     return {"inventory_version": INVENTORY_VERSION, "made_at": _iso(time.time()),
             "app": _app(), "stores": stores, "absent": absent, "unlisted": unlisted,
             "totals": {"durable_bytes": durable_bytes, "other_bytes": other_bytes}}
+
+
+#: The Doctor page and report ask at most once per CACHE_S for each data
+#: folder, and one walk runs at a time: a page that asks over and over makes
+#: one walk, not many.
+CACHE_S = 30.0
+_LOCK = threading.Lock()
+_CACHE: dict = {}
+
+
+def cached(home: Optional[Path] = None) -> dict:
+    """inventory(home), reused for CACHE_S; one walk at a time."""
+    if home is None:
+        from agent_friday.paths import friday_home
+        home = friday_home()
+    key = os.path.normcase(os.path.abspath(str(home)))
+    with _LOCK:
+        hit = _CACHE.get(key)
+        if hit and time.monotonic() - hit[0] < CACHE_S:
+            return hit[1]
+        inv = inventory(Path(home))
+        _CACHE.clear()
+        _CACHE[key] = (time.monotonic(), inv)
+        return inv
+
+
+_BY_NAME = {s.name: s for s in STORES}
+_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_TOKENS = {"none", "not_read", "not_read_link", "not_read_too_large", "unreadable", "unrecognised",
+           "empty", "encrypted_or_not_sqlite", "unexpected_kind", "mixed"}
+
+
+def _num(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def public(inv: dict) -> dict:
+    """The inventory rebuilt from Friday's own constants and numbers only, for
+    the Doctor report and page: a store's name, location and format come from
+    STORES, never from the folder; a version is a number, a version-shaped
+    word or one of a fixed set of words. Nothing the owner wrote or named can
+    be in it, so it needs no other filter."""
+    rows = []
+    for r in inv.get("stores") or []:
+        s = _BY_NAME.get(r.get("store"))
+        if s is None:
+            continue
+        v = r.get("version")
+        v = v if (isinstance(v, str) and v in _TOKENS) else _short(v)
+        how = r.get("version_from")
+        out = {"store": s.name, "location": s.location, "format": s.fmt, "durable": s.durable,
+               "version": v, "version_from": how if isinstance(how, str) and _HOW.match(how) else None,
+               "bytes": _num(r.get("bytes")), "files": _num(r.get("files")),
+               "modified": r.get("modified") if isinstance(r.get("modified"), str)
+               and _ISO.match(r["modified"]) else None}
+        for flag in ("link", "at_least"):
+            if r.get(flag) is True:
+                out[flag] = True
+        if _num(r.get("links_not_followed")):
+            out["links_not_followed"] = r["links_not_followed"]
+        rows.append(out)
+    u = inv.get("unlisted") or {}
+    t = inv.get("totals") or {}
+    app = inv.get("app") or {}
+    return {"inventory_version": INVENTORY_VERSION,
+            "made_at": inv.get("made_at") if isinstance(inv.get("made_at"), str)
+            and _ISO.match(inv["made_at"]) else None,
+            "app": {k: _short(app[k]) if k == "build_sequence" else
+                    (app[k] if isinstance(app.get(k), str) and _VERSION_WORD.match(app[k].lstrip("v")) else None)
+                    for k in ("release", "build_sequence") if k in app},
+            "stores": rows,
+            "absent": [n for n in (inv.get("absent") or []) if n in _BY_NAME],
+            "unlisted": {"entries": _num(u.get("entries")) or 0, "bytes": _num(u.get("bytes")) or 0,
+                         **({"at_least": True} if u.get("at_least") is True else {})},
+            "totals": {"durable_bytes": _num(t.get("durable_bytes")) or 0,
+                       "other_bytes": _num(t.get("other_bytes")) or 0}}
+
+
+#: version_from is built from constants: "json:<key>", "first line:<key>",
+#: "sqlite:user_version", "sqlite:<table>.<key>", optionally after a file
+#: name from a rule ("actions.jsonl first line:v").
+_HOW = re.compile(r"^([A-Za-z0-9_.*/-]{1,60} )?(json|first line|sqlite):[A-Za-z0-9_.]{1,40}$")
 
 
 def _app() -> dict:

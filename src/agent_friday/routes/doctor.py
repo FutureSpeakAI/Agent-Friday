@@ -78,6 +78,9 @@ def doctor_report():
 @doctor_bp.route("/api/doctor/reports", methods=["GET"])
 @login_required
 def doctor_reports():
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     try:
         return jsonify({"status": "ok", "reports": doctor.history()})
     except Exception as e:  # noqa: BLE001
@@ -87,6 +90,9 @@ def doctor_reports():
 @doctor_bp.route("/api/doctor/reports/<rid>.<kind>", methods=["GET"])
 @login_required
 def doctor_report_file(rid, kind):
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     p = doctor.saved(rid, kind)
     if p is None:
         return jsonify({"status": "error", "error": "No such report."}), 404
@@ -106,8 +112,8 @@ def doctor_stores():
         return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     try:
         from agent_friday.services import store_inventory
-        inv = store_inventory.inventory(doctor._home())
-        resp = jsonify({"status": "ok", **doctor._clean(inv, doctor._private_markers())})
+        inv = store_inventory.public(store_inventory.cached(doctor._home()))
+        resp = jsonify({"status": "ok", **inv})
         resp.headers["Cache-Control"] = "no-store"
         return resp
     except Exception as e:  # noqa: BLE001

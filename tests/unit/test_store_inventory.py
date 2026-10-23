@@ -168,12 +168,68 @@ def test_a_name_it_does_not_know_is_counted_never_named(home):
     assert "Taxes" not in json.dumps(inv) and "Wilhelmina" not in json.dumps(inv)
 
 
-def test_a_version_that_is_not_a_plain_word_is_not_reported_as_it_is(home):
-    (home / "settings.json").write_text(json.dumps({"version": "wilhelmina@example.test"}), encoding="utf-8")
+@pytest.mark.parametrize("value", ["wilhelmina@example.test", "Wilhelmina", "my secret plan", -1,
+                                   2 ** 40, True, [1], {"a": 1}])
+def test_only_a_number_or_a_version_word_is_reported_as_a_version(home, value):
+    (home / "settings.json").write_text(json.dumps({"version": value}), encoding="utf-8")
+    assert _by(_si().inventory(home))["settings"]["version"] == "unrecognised"
+
+
+def test_nan_and_a_name_under_format_never_reach_the_list(home):
+    (home / "settings.json").write_text('{"version": NaN}', encoding="utf-8")
+    (home / "onboarding.json").write_text(json.dumps({"format": "Wilhelmina", "v": "Wilhelmina"}), encoding="utf-8")
     (home / "desktop_cards.json").write_text("{not json", encoding="utf-8")
-    s = _by(_si().inventory(home))
+    inv = _si().inventory(home)
+    s = _by(inv)
     assert s["settings"]["version"] == "unrecognised"
+    assert s["onboarding"]["version"] == "none"
     assert s["desktop_cards"]["version"] == "unreadable"
+    json.loads(json.dumps(inv, allow_nan=False))
+    for good in ("1.0", "2", "1.2.3-beta.1"):
+        (home / "settings.json").write_text(json.dumps({"version": good}), encoding="utf-8")
+        assert _by(_si().inventory(home))["settings"]["version"] == good
+
+
+def test_a_credential_store_reports_its_size_only(home):
+    s = _by(_si().inventory(home))
+    for name in ("provider_keys", "google_accounts"):
+        assert s[name]["bytes"] > 0 and s[name]["files"] is None and s[name]["modified"] is None, s[name]
+
+
+def test_the_public_view_is_built_from_friday_names_only(home):
+    si = _si()
+    inv = si.inventory(home)
+    inv["stores"].append({"store": "Wilhelmina", "location": "Wilhelmina/", "format": "x", "version": 1})
+    inv["stores"][0]["location"] = "Wilhelmina-notes/secret"
+    inv["stores"][0]["version"] = "Wilhelmina"
+    inv["absent"].append("Wilhelmina")
+    pub = si.public(inv)
+    assert "Wilhelmina" not in json.dumps(pub)
+    first = si.STORES[[s.name for s in si.STORES].index(pub["stores"][0]["store"])]
+    assert pub["stores"][0]["location"] == first.location
+
+
+def test_one_walk_serves_the_page_for_a_while(home, monkeypatch):
+    si = _si()
+    calls = []
+    real = si.inventory
+    monkeypatch.setattr(si, "inventory", lambda h=None: (calls.append(1), real(h))[1])
+    a = si.cached(home)
+    b = si.cached(home)
+    assert a is b and len(calls) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions are a Windows thing")
+def test_a_junction_is_listed_and_not_followed(home, tmp_path):
+    import _winapi
+    outside = tmp_path / "outside-j"
+    outside.mkdir()
+    (outside / "big.bin").write_bytes(b"x" * 5000)
+    _winapi.CreateJunction(str(outside), str(home / "skills"))
+    _winapi.CreateJunction(str(outside), str(home / "wiki" / "elsewhere"))
+    s = _by(_si().inventory(home))
+    assert s["skills"].get("link") is True and s["skills"]["bytes"] is None
+    assert s["wiki"]["files"] == 2 and s["wiki"].get("links_not_followed") == 1
 
 
 def test_every_folder_the_bundle_knows_is_a_store_in_the_inventory():

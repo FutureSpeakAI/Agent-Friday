@@ -514,7 +514,7 @@ def _stores() -> dict:
     Friday's own; names it does not know are counted, never named."""
     try:
         from agent_friday.services import store_inventory
-        return store_inventory.inventory(_home())
+        return store_inventory.public(store_inventory.cached(_home()))
     except Exception as e:  # noqa: BLE001
         return {"error": "unavailable:" + type(e).__name__}
 
@@ -537,12 +537,16 @@ def build() -> dict:
         "errors": _errors(),
         "drift": _drift(),
         "performance": _performance(),
-        "stores": _stores(),
     }
     report["summary"] = {s: sum(1 for c in report["checks"] if c["state"] == s)
                          for s in STATES if any(c["state"] == s for c in report["checks"])}
     report["build_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-    return _clean(report, _private_markers())
+    report = _clean(report, _private_markers())
+    # rebuilt from Friday's own constants and numbers (store_inventory.public),
+    # so the general filter above, which could blank a store whose name holds
+    # a short user name, is not needed for it
+    report["stores"] = _stores()
+    return report
 
 
 def render_text(report: dict) -> str:
