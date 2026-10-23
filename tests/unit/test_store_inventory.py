@@ -169,6 +169,7 @@ def test_a_name_it_does_not_know_is_counted_never_named(home):
 
 
 @pytest.mark.parametrize("value", ["wilhelmina@example.test", "Wilhelmina", "my secret plan", -1,
+                                   "1-Wilhelmina", "2+myplan", "1\n",
                                    2 ** 40, True, [1], {"a": 1}])
 def test_only_a_number_or_a_version_word_is_reported_as_a_version(home, value):
     (home / "settings.json").write_text(json.dumps({"version": value}), encoding="utf-8")

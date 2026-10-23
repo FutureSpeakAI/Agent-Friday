@@ -27,6 +27,8 @@ def test_the_store_list_is_not_given_to_another_machine(client):
     remote = {"REMOTE_ADDR": "203.0.113.7"}
     assert client.get("/api/doctor/stores", environ_base=remote).status_code in (401, 403)
     assert client.get("/api/doctor/reports", environ_base=remote).status_code in (401, 403)
+    assert client.get("/api/doctor/reports/doctor-20261023-120000-abcdef.json",
+                      environ_base=remote).status_code in (401, 403)
 
 
 def test_the_doctor_page_shows_the_stores():

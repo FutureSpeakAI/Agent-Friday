@@ -324,6 +324,9 @@ _KNOWN_TOPS = frozenset(s.location.rstrip("/").split("/")[0].lower() for s in ST
 # ── looking without touching ─────────────────────────────────────────────────
 
 def _is_link(st: os.stat_result) -> bool:
+    """A symbolic link, a junction or any other Windows reparse point. Cloud
+    placeholders (OneDrive and the like) are reparse points too: they are
+    listed, not opened, so looking never downloads them."""
     if stat.S_ISLNK(st.st_mode):
         return True
     return bool(getattr(st, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT)
@@ -405,7 +408,7 @@ def _iso(t: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
 
-_VERSION_WORD = re.compile(r"^\d{1,9}(\.\d{1,9}){0,3}([-+][0-9A-Za-z.]{1,16})?$")
+_VERSION_WORD = re.compile(r"\d{1,9}(\.\d{1,9}){0,3}(-(alpha|beta|rc|dev)\.?\d{0,4})?")
 
 
 def _short(v):
@@ -418,7 +421,7 @@ def _short(v):
         v = int(v)
     if isinstance(v, int) and 0 <= v < 2 ** 31:
         return v
-    if isinstance(v, str) and _VERSION_WORD.match(v):
+    if isinstance(v, str) and _VERSION_WORD.fullmatch(v):
         return v
     return "unrecognised"
 
@@ -483,7 +486,9 @@ def _version_sqlite_meta(p: Path, st: os.stat_result, table: str, kcol: str, key
     ver, how = _version_sqlite(p, st)
     if ver in ("empty", "unreadable", "encrypted_or_not_sqlite"):
         return ver, how
-    # read-only and immutable: no lock is taken and no -wal or -shm is made
+    # read-only and immutable: no lock is taken and no -wal or -shm is made.
+    # SQLite opens the path again; a swap in between can only change which
+    # version word is read, and that word still passes _short.
     uri = p.absolute().as_uri() + "?mode=ro&immutable=1"
     conn = sqlite3.connect(uri, uri=True, timeout=1)
     try:
@@ -584,7 +589,8 @@ def inventory(home: Optional[Path] = None) -> dict:
                        modified=None, link=True)
             stores.append(row)
             continue
-        if s.is_folder != stat.S_ISDIR(st.st_mode):
+        if not (stat.S_ISDIR(st.st_mode) if s.is_folder else stat.S_ISREG(st.st_mode)):
+            # a folder where a file belongs, or a pipe or device, is never opened
             row.update(version="unexpected_kind", version_from=None, bytes=None, files=None,
                        modified=None)
             stores.append(row)
@@ -680,10 +686,10 @@ def public(inv: dict) -> dict:
         v = v if (isinstance(v, str) and v in _TOKENS) else _short(v)
         how = r.get("version_from")
         out = {"store": s.name, "location": s.location, "format": s.fmt, "durable": s.durable,
-               "version": v, "version_from": how if isinstance(how, str) and _HOW.match(how) else None,
+               "version": v, "version_from": how if isinstance(how, str) and _HOW.fullmatch(how) else None,
                "bytes": _num(r.get("bytes")), "files": _num(r.get("files")),
                "modified": r.get("modified") if isinstance(r.get("modified"), str)
-               and _ISO.match(r["modified"]) else None}
+               and _ISO.fullmatch(r["modified"]) else None}
         for flag in ("link", "at_least"):
             if r.get(flag) is True:
                 out[flag] = True
@@ -695,9 +701,9 @@ def public(inv: dict) -> dict:
     app = inv.get("app") or {}
     return {"inventory_version": INVENTORY_VERSION,
             "made_at": inv.get("made_at") if isinstance(inv.get("made_at"), str)
-            and _ISO.match(inv["made_at"]) else None,
+            and _ISO.fullmatch(inv["made_at"]) else None,
             "app": {k: _short(app[k]) if k == "build_sequence" else
-                    (app[k] if isinstance(app.get(k), str) and _VERSION_WORD.match(app[k].lstrip("v")) else None)
+                    (app[k] if isinstance(app.get(k), str) and _VERSION_WORD.fullmatch(app[k].lstrip("v")) else None)
                     for k in ("release", "build_sequence") if k in app},
             "stores": rows,
             "absent": [n for n in (inv.get("absent") or []) if n in _BY_NAME],
