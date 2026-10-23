@@ -543,9 +543,27 @@ def rehearse(home: Optional[Path] = None) -> dict:
         return {"ok": ok, "why": why, "bundle_id": newest.get("bundle_id"), **summary}
 
 
+def _held() -> Optional[str]:
+    """Why no scheduled backup runs now: everything is stopped, or the owner
+    revoked action authority. Safe mode is not a reason: backups keep running
+    there. A check that cannot run holds."""
+    try:
+        from agent_friday.services import global_stop
+        if global_stop.active():
+            return "everything is stopped"
+        from agent_friday.services import authority
+        return authority.hold_reason()
+    except Exception as e:  # noqa: BLE001
+        return "whether backups may run could not be checked (%s)" % type(e).__name__
+
+
 def tick(home: Optional[Path] = None) -> Optional[dict]:
     """What the background loop does each time: a bundle when one is due,
-    then a rehearsal when one is due. Never raises."""
+    then a rehearsal when one is due, unless everything is stopped or action
+    authority is revoked. Never raises."""
+    held = _held()
+    if held:
+        return {"held": held}
     out = {}
     try:
         if due(home):

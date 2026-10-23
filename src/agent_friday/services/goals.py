@@ -1247,7 +1247,6 @@ _RUNNING_MILESTONES: set = set()
 _RUNNING_MILESTONES_LOCK = threading.Lock()
 
 
-@visible_job('Goal milestone', kind='goal_milestone', workspace='goals')
 def _everything_stopped() -> bool:
     """The owner pressed Stop everything (services/global_stop). A check that
     cannot run counts as stopped: no milestone work or verdict without it."""
@@ -1258,6 +1257,7 @@ def _everything_stopped() -> bool:
         return True
 
 
+@visible_job('Goal milestone', kind='goal_milestone', workspace='goals')
 def run_milestone(goal_id: str, milestone_id: str) -> Dict[str, Any]:
     """Advance one milestone by one attempt-cycle (which itself contains a
     bounded internal repair loop). NEVER marks a milestone done on a failed

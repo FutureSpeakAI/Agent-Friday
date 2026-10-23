@@ -132,3 +132,15 @@ def test_settings_shows_the_retention_row_in_both_ui_files():
     js = (ROOT / "static" / "friday_ledger.js").read_text(encoding="utf-8")
     assert "window.FridayLedgerRetentionRow" in js and "/api/ledger/retention" in js
     assert "href: '/ledger'" in js
+
+
+def test_the_ledger_page_runs_as_one_of_fridays_own_pages(client):
+    """Not sandboxed like a creation: its own script may call the API and fetch
+    the desk key from the loopback door, or its Save could never count as a press."""
+    r = client.get("/ledger")
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert r.status_code == 200
+    assert "sandbox" not in csp and "connect-src 'none'" not in csp, csp
+    assert "connect-src 'self'" in csp, csp
+    assert b"X-Friday-Desk" in r.data and b"desk_proof_required" in r.data
+

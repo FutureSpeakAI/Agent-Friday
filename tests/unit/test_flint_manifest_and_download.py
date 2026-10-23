@@ -1,6 +1,6 @@
 """Flint (Recursive's coding model) arrives the way every shortlist model does, plus pins.
 
-Spec: ftv/program/specs/core_models_flint_laya_bonsai2_STORM_2026-10-22.md, Phase CT1
+Core models plan, phase CT1 (Flint).
 (§10; engineering calls CT-E05, CT-E06, CT-E16, CT-E24, CT-E25, CT-E26).
 
   * The shortlist names Flint as an experimental CODER: a pinned repo commit,

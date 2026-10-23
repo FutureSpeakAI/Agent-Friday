@@ -412,3 +412,19 @@ def test_off_is_read_back_when_the_store_says_nothing_was_there(home, tmp_path, 
     with pytest.raises(bs.ScheduleError):
         bs.set_schedule(enabled=False)
     assert bs.state()["enabled"] is True
+
+
+def test_a_due_bundle_waits_while_everything_is_stopped_or_authority_is_revoked(home, tmp_path, monkeypatch):
+    from agent_friday.services import authority, global_stop
+    from agent_friday.services import backup_schedule as bs
+    from agent_friday.services import friday_bundle as fb
+    made = []
+    monkeypatch.setattr(fb, "create", lambda *a, **k: made.append(a) or {})
+    _on(bs, tmp_path / "out")
+    assert bs.due()
+    monkeypatch.setattr(global_stop, "active", lambda: True)
+    assert bs.tick() == {"held": "everything is stopped"} and made == []
+    monkeypatch.setattr(global_stop, "active", lambda: False)
+    monkeypatch.setattr(authority, "hold_reason", lambda: "you revoked all action authority (test)")
+    assert "revoked" in bs.tick()["held"] and made == []
+

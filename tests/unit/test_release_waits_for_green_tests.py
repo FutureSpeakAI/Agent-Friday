@@ -238,9 +238,21 @@ def test_open_high_alerts_on_the_tag_refuse():
 
 @pytest.mark.parametrize("name", ["tests.yml", "codeql.yml"])
 def test_no_required_job_can_be_skipped_into_a_green_run(name):
-    """A job-level if: could skip every job and leave the workflow 'success'."""
+    """A job-level if: could skip every job and leave the workflow 'success'. The
+    gate counts only push and workflow_dispatch runs on the tag's commit, so the
+    only conditions allowed are ones that are true for those events (the
+    red-evidence label skips the full suites on a pull request only) or that
+    only ever run a job on a pull request."""
+    allowed = {
+        # true on every push and workflow_dispatch run: never skips a counted run
+        "${{ github.event_name != 'pull_request' || "
+        "!contains(github.event.pull_request.labels.*.name, 'red-evidence') }}",
+        # a job that runs only on a pull request: never part of a counted run
+        "${{ github.event_name == 'pull_request' && "
+        "contains(github.event.pull_request.labels.*.name, 'red-evidence') }}",
+    }
     for jname, job in (_wf(name).get("jobs") or {}).items():
-        assert "if" not in job, (name, jname)
+        assert "if" not in job or job["if"] in allowed, (name, jname, job.get("if"))
 
 
 def test_alert_levels():

@@ -1763,10 +1763,20 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
     """Every line of every segment, the archive it continues from (A22), the
     head, the anchor and what this process wrote. The whole report. `deep`
     also opens every archived file and walks its chain."""
-    # What this process had written, taken before any file is read: an append
-    # by another thread while the files are read (no write lock here) is then
+    # What this process had written, the head and the anchor, all taken before
+    # any file is read: an append by another thread while the files are read
+    # (no write lock here) only makes the files longer than these, so it is
     # never mistaken for records that went missing.
     seen_before = _STATE.get("max_seen") or 0
+    head = _read_head()
+    anchor_where = "none"
+    anchor_error = None
+    try:
+        anchor, anchor_where = anchor_get()
+    except Exception as e:  # noqa: BLE001
+        anchor = None
+        anchor_where = "unreadable"
+        anchor_error = e
     problems: list[dict] = []
     acks: list[dict] = []
     flagged: list[dict] = []
@@ -1833,7 +1843,6 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
                          "reason": "signatures cannot be checked: the governance key is unavailable",
                          "raw_sha256": ""})
     # the head: lines cut off the end since the last append
-    head = _read_head()
     if head and isinstance(head.get("seq"), int):
         hraw = canon(head)
         if key is not None and head.get("kid") == key_id(key) and not _hmac.compare_digest(
@@ -1843,14 +1852,9 @@ def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
             problems.append(_problem(HEAD_NAME, 0, hraw, "%d record(s) missing from the end"
                                      % (head["seq"] - last_seq), head["seq"]))
     # the anchor outside the data folder
-    anchor_where = "none"
-    try:
-        anchor, anchor_where = anchor_get()
-    except Exception as e:  # noqa: BLE001
-        anchor = None
-        anchor_where = "unreadable"
+    if anchor_error is not None:
         problems.append({"segment": "anchor", "line": 0, "seq": None,
-                         "reason": "the ledger's anchor could not be read (%s)" % type(e).__name__,
+                         "reason": "the ledger's anchor could not be read (%s)" % type(anchor_error).__name__,
                          "raw_sha256": ""})
     if anchor and anchor[0] > 0:
         aseq, ahash = anchor
