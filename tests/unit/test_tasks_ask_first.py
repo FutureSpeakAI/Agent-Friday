@@ -10,7 +10,6 @@ done twice. Synthetic ids only.
 """
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -87,8 +86,7 @@ def gate(monkeypatch):
 
 
 def _last_receipt():
-    lines = ag.receipts_path().read_text(encoding="utf-8").strip().splitlines()
-    return json.loads(lines[-1])
+    return ag.receipts(newest_first=True, limit=1)[0]
 
 
 def test_a_background_run_asks_then_its_grant_lets_the_next_change_through_with_a_receipt(gate):
