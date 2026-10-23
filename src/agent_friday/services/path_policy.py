@@ -143,6 +143,64 @@ _AUTORUN = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zsh
             ".jupyter", "Start Menu", ".config/autostart")
 
 
+_KNOWN_DOCS: Optional[List[Path]] = None
+
+
+def _known_documents() -> List[Path]:
+    """The owner's real Documents folder on Windows (it may be redirected, e.g. into
+    OneDrive), as Windows reports it, plus the shell-folder setting. Read once."""
+    global _KNOWN_DOCS
+    if _KNOWN_DOCS is None:
+        found = _shell_documents() + _registry_documents()
+        uniq: List[Path] = []
+        for d in found:
+            if all(_norm(d) != _norm(x) for x in uniq):
+                uniq.append(d)
+        if os.name == "nt" and not uniq:
+            import logging
+            logging.getLogger(__name__).warning("path_policy: the real Documents folder could not be read")
+            return []                    # not remembered: asked again next time
+        _KNOWN_DOCS = uniq
+    return list(_KNOWN_DOCS)
+
+
+def _registry_documents() -> List[Path]:
+    if os.name != "nt":
+        return []
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as k:
+            v, _t = winreg.QueryValueEx(k, "Personal")
+        v = os.path.expandvars(str(v or ""))
+        return [Path(v).resolve(strict=False)] if v else []
+    except Exception:
+        return []
+
+
+def _shell_documents() -> List[Path]:
+    if os.name != "nt":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes as W
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("a", W.DWORD), ("b", W.WORD), ("c", W.WORD), ("d", ctypes.c_ubyte * 8)]
+        # FOLDERID_Documents {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
+        fid = GUID(0xFDD39AD0, 0x238F, 0x46AF, (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7))
+        out = ctypes.c_wchar_p()
+        shell = ctypes.windll.shell32
+        if shell.SHGetKnownFolderPath(ctypes.byref(fid), 0, None, ctypes.byref(out)) != 0:
+            return []
+        try:
+            return [Path(out.value).resolve(strict=False)] if out.value else []
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+    except Exception:
+        return []
+
+
 def _off_limits(op: str) -> List[Tuple[Path, str]]:
     import agent_friday.core as core
     homes = {_home(), _profile()}
@@ -169,6 +227,12 @@ def _off_limits(op: str) -> List[Tuple[Path, str]]:
         out += [(h / rel, "a store of sign-ins or history") for rel in _SIGN_IN_STORES]
         if op == "write":
             out += [(h / rel, "a file run or obeyed at start-up") for rel in _AUTORUN]
+    if op == "write":
+        # Documents may live elsewhere (moved into OneDrive): PowerShell's profile is
+        # under the REAL Documents folder, wherever that is.
+        for docs in _known_documents():
+            out += [(docs / rel, "a file run or obeyed at start-up")
+                    for rel in ("WindowsPowerShell", "PowerShell")]
     # The same rule for the profile's own zones (profile\AppData holding a sandbox
     # root under %TEMP%). Friday's state folder always stays refused.
     root = _home()
@@ -201,6 +265,17 @@ def off_limits_reason(p: Path, op: str = "read") -> Optional[str]:
     return None
 
 
+_STARTUP = "a file run or obeyed at start-up"
+
+
+def _zone_root(p: Path, op: str) -> Optional[Path]:
+    """The start-up zone `p` is in, or None."""
+    for root, label in _off_limits(op):
+        if label == _STARTUP and _within_folded(p, root):
+            return root
+    return None
+
+
 def judge(raw: str, op: str) -> Tuple[Optional[Path], Optional[str]]:
     """May a file tool `op` ("read" or "write") at `raw`? (path, None) when allowed;
     (None, reason) when not. Fails closed."""
@@ -214,7 +289,16 @@ def judge(raw: str, op: str) -> Tuple[Optional[Path], Optional[str]]:
             return p, None
         zone = off_limits_reason(p, op)
         if zone:
-            return (p, None) if _grant_for(p, op) is not None else (None, zone)
+            g = _grant_for(p, op)
+            if g is not None and _STARTUP in zone:
+                # A file run at start-up is opened only by a grant made for that place
+                # itself, never by a broader grant that happens to contain it (a grant on
+                # a Documents folder kept elsewhere does not open its PowerShell profile).
+                z = _zone_root(p, op)
+                g = None if z is None else next(
+                    (x for x in grants() if op in (x.get("ops") or [])
+                     and _within(p, Path(x["root"])) and _within_folded(Path(x["root"]), z)), None)
+            return (p, None) if g is not None else (None, zone)
         if _within(p, _home()):
             return p, None
         if _grant_for(p, op) is not None:
