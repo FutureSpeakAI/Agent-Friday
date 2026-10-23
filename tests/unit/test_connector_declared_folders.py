@@ -96,13 +96,21 @@ def test_a_write_folder_with_a_git_file_is_refused(home):
     assert refused and ".git file" in refused[0]
 
 
-def test_inside_a_write_folder_git_and_editor_settings_stay_read_only(home):
+def test_a_write_folder_holding_git_or_editor_settings_is_refused(home):
+    # Windows does not apply a deny entry to an isolated app's identity, so a .git
+    # inside a write folder cannot be held read-only: the write folder is refused, and
+    # the same folder may still be declared read-only.
     proj = _folder(home / "Projects" / "app")
     _folder(proj / ".git" / "hooks")
     _folder(proj / "web" / ".vscode")
-    _r, write, keep, refused = cf.plan([{"path": str(proj), "write": True}], "", [])
-    assert refused == [] and proj.resolve() in _paths(write)
-    assert {p.name for p in _paths(keep)} == {".git", ".vscode"}
+    _r, write, _k, refused = cf.plan([{"path": str(proj), "write": True}], "", [])
+    assert write == [] and refused and ".git" in refused[0] and ".vscode" in refused[0]
+    read, _w, _k, refused = cf.plan([str(proj)], "", [])
+    assert refused == [] and proj.resolve() in _paths(read)
+    deep = _folder(home / "Projects" / "mono" / "packages" / "a")
+    _folder(deep / ".git")
+    _r, write, _k, refused = cf.plan([{"path": str(home / "Projects" / "mono"), "write": True}], "", [])
+    assert write == [] and refused
 
 
 def test_only_the_program_and_its_script_are_opened_never_another_argument(home, monkeypatch):
@@ -193,8 +201,8 @@ def test_what_a_server_no_longer_declares_is_taken_back(home, monkeypatch):
     ac = _ac()
     calls = []
     monkeypatch.setattr(ac, "_sid_text", lambda name: "S-1-15-2-9-" + name[-4:], raising=False)
-    for fn in ("grant", "revoke", "deny_write"):
-        monkeypatch.setattr(ac, fn, (lambda f: lambda path, sid, *a, **k: calls.append((f, str(path))))(fn),
+    for fn in ("grant", "revoke"):
+        monkeypatch.setattr(ac, fn, (lambda f: lambda path, sid, *a, **k: (calls.append((f, str(path))), True)[1])(fn),
                             raising=False)
     a = _folder(home / "Documents" / "A")
     b = _folder(home / "Documents" / "B")
@@ -248,7 +256,7 @@ def test_a_hostile_server_reads_what_it_declared_and_nothing_else(home, tmp_path
             p.close()
         return out.decode("utf-8", "replace")
     try:
-        ac.set_server_access(profile, read=read, write=[work, *write], protect=keep)
+        ac.set_server_access(profile, read=read, write=[work, *write])
         seen = run_once()
         assert DECLARED in seen, seen
         assert SECRET not in seen, "an undeclared folder or Friday's state was readable"
