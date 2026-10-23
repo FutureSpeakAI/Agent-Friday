@@ -579,7 +579,11 @@ def saved(report_id: str, kind: str = "json") -> Optional[Path]:
     """The saved file for `report_id`, or None. Names are checked exactly."""
     if not re.fullmatch(r"doctor-\d{8}-\d{6}-[0-9a-f]{6}", report_id or "") or kind not in ("json", "txt"):
         return None
-    p = reports_dir() / f"{report_id}.{kind}"
+    from agent_friday.paths import contained
+    try:
+        p = contained(reports_dir(), f"{report_id}.{kind}")
+    except ValueError:
+        return None
     return p if p.is_file() else None
 
 

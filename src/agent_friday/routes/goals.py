@@ -203,7 +203,7 @@ def define_goal_route():
     try:
         goal = _goals.define_goal(body["goal"], body.get("summary_id"))
     except goal_definition.DefinitionRefused as e:
-        return jsonify({"ok": False, "error": str(e)}), 409
+        return api_error(e, "Couldn't create the goal", 409, shape="ok")
     if isinstance(body.get("draft_id"), str):
         # A draft Friday wrote from conversation is used up once confirmed.
         from agent_friday.services import goal_tools
@@ -237,7 +237,7 @@ def update_goal_route(goal_id):
     try:
         goal = _goals.update_goal(goal_id, patch)
     except ValueError as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+        return api_error(e, "Couldn't update the goal", 400, shape="ok")
     if not goal:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "goal": goal})

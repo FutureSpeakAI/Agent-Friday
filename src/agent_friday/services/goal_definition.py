@@ -27,6 +27,7 @@ import hashlib
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
+from agent_friday.user_errors import UserFacingValueError
 
 SCHEMA_VERSION = 2
 
@@ -63,7 +64,7 @@ QUESTIONS = {
 }
 
 
-class DefinitionRefused(ValueError):
+class DefinitionRefused(UserFacingValueError):
     pass
 
 

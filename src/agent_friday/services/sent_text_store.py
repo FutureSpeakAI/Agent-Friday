@@ -37,6 +37,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+from agent_friday.user_errors import UserFacingError
 
 _log = logging.getLogger("friday.sent_text")
 
@@ -229,7 +230,11 @@ def has(fp: str) -> bool:
 def _path(fp: str) -> Optional[Path]:
     if not isinstance(fp, str) or not _FP.fullmatch(fp):
         return None
-    return _dir() / (fp + ".bin")
+    from agent_friday.paths import contained
+    try:
+        return contained(_dir(), fp + ".bin")
+    except ValueError:
+        return None
 
 
 def keep(fp: str, text: str, *, provider: str = "", model: str = "",
@@ -347,7 +352,7 @@ def purge_all() -> int:
     return n
 
 
-class ChoiceRefused(Exception):
+class ChoiceRefused(UserFacingError):
     pass
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 from flask import Blueprint, g, jsonify, request
 
 from agent_friday.services import privacy_map
+from agent_friday.routes._errors import api_error
 
 privacy_map_bp = Blueprint("privacy_map", __name__)
 
@@ -89,7 +90,7 @@ def privacy_sent_text_choice():
     try:
         return jsonify({"ok": True, **sent_text_store.set_mode(mode)})
     except sent_text_store.ChoiceRefused as e:
-        return jsonify({"ok": False, "message": str(e)}), 409
+        return api_error(e, "Couldn't change what is kept", 409, shape="ok", key="message")
 
 
 @privacy_map_bp.route("/api/privacy/sent-text/delete", methods=["POST"])

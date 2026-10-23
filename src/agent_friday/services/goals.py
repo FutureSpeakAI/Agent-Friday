@@ -559,21 +559,21 @@ def update_goal(goal_id: str, patch: dict) -> Optional[Dict[str, Any]]:
     if "allowed_routes" in patch:
         clean = goal_state.valid_routes(patch["allowed_routes"])
         if clean is None:
-            raise ValueError("allowed_routes must be a list of: " + ", ".join(goal_state.ROUTE_MODES))
+            raise UserFacingValueError("allowed_routes must be a list of: " + ", ".join(goal_state.ROUTE_MODES))
         patch["allowed_routes"] = clean
     auto_change = None
     if "autonomy" in patch:
         a = patch.pop("autonomy")
         if not isinstance(a, dict) or any(k not in goal_definition.AUTONOMY_CATEGORIES
                                           or v not in goal_definition.AUTONOMY_LEVELS for k, v in a.items()):
-            raise ValueError("autonomy maps " + ", ".join(goal_definition.AUTONOMY_CATEGORIES)
+            raise UserFacingValueError("autonomy maps " + ", ".join(goal_definition.AUTONOMY_CATEGORIES)
                              + " to one of " + ", ".join(goal_definition.AUTONOMY_LEVELS))
         auto_change = dict(a)             # merged over the goal's own map below
     budget_change = None
     if "budget" in patch:
         b = patch.pop("budget")
         if not isinstance(b, dict):
-            raise ValueError("budget is {mψ, money_cents, runtime_minutes}")
+            raise UserFacingValueError("budget is {mψ, money_cents, runtime_minutes}")
         budget_change = b
     for key in ("constraints", "stop_conditions", "people"):
         if key in patch:
