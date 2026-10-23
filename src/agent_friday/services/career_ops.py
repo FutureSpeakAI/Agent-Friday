@@ -786,6 +786,16 @@ def parse_board(kind: str, data) -> List[dict]:
     return [o for o in out if o["title"] and o["url"]]
 
 
+def _record_fetch(url: str, result) -> None:
+    """A job-board page fetch in the egress ledger and on the privacy map
+    (§26.7). Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_address("career_fetch", url, result, prefix="jobs")
+    except Exception:
+        pass
+
+
 def fetch_json(url: str, timeout: int = 20):
     """GET a public job-board API. SSRF-checked, no redirects, size-capped."""
     import requests
@@ -796,6 +806,10 @@ def fetch_json(url: str, timeout: int = 20):
                                 headers={"User-Agent": "AgentFriday-career-scan"})
     except UnsafeURLError as e:
         raise CareerError(f"refused {url}: {e}") from e
+    except Exception as e:
+        _record_fetch(url, e)
+        raise
+    _record_fetch(url, "sent")
     if resp.status_code != 200:
         raise CareerError(f"HTTP {resp.status_code} from {url}")
     if len(resp.content) > 5_000_000:

@@ -95,6 +95,11 @@ def _delay(attempt: int, exc=None) -> float:
 def execute(request, *, tries: int = MAX_TRIES, sleep=time.sleep):
     """Run one request with backoff. Raises GmailError on final failure."""
     last = None
+    # A recorded write (services/egress_record) is one send however many tries
+    # it takes: only its final failure is recorded, by this loop.
+    recorded = hasattr(request, "final_failure")
+    if recorded:
+        request.defer_failure = True
     for attempt in range(tries):
         try:
             return request.execute()
@@ -103,6 +108,8 @@ def execute(request, *, tries: int = MAX_TRIES, sleep=time.sleep):
             if attempt < tries - 1 and _retryable(exc):
                 sleep(_delay(attempt, exc))
                 continue
+            if recorded:
+                request.final_failure()
             d = describe(exc)
             raise GmailError(d['kind'], d['message']) from exc
     d = describe(last)

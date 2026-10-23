@@ -20,6 +20,7 @@ _API = "https://api.telegram.org/bot{token}/{method}"
 
 class TelegramBridge(ChannelAdapter):
     name = "telegram"
+    max_chars = 4096
 
     def __init__(self) -> None:
         super().__init__()
@@ -33,6 +34,7 @@ class TelegramBridge(ChannelAdapter):
         url = _API.format(token=token, method=method)
         data = urllib.parse.urlencode(params).encode("utf-8")
         req = urllib.request.Request(url, data=data)
+        # egress: sendMessage is recorded by ChannelAdapter.send; getUpdates carries no owner content
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
@@ -65,7 +67,8 @@ class TelegramBridge(ChannelAdapter):
             return {"ok": bool(r.get("ok"))}
         except Exception as e:
             self._last_error = exception_text(e)
-            return {"ok": False, "error": exception_text(e)}
+            from agent_friday.services.channels.base import send_unsure
+            return {"ok": False, "error": exception_text(e), "unsure": send_unsure(e)}
 
     # ── helpers for tests / callers ──────────────────────────────────────────
     @staticmethod

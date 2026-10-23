@@ -27,6 +27,7 @@ def _discord_available() -> bool:
 
 class DiscordBridge(ChannelAdapter):
     name = "discord"
+    max_chars = 2000
 
     def __init__(self) -> None:
         super().__init__()
@@ -80,10 +81,18 @@ class DiscordBridge(ChannelAdapter):
                 if self._handler else None
             if reply:
                 # the same door as every other send: the egress gate and the
-                # action checkpoint's receipt (base.prepare_outbound)
+                # action checkpoint's receipt (base.prepare_outbound), then the
+                # send record (base.record_channel_send)
                 gated = self.prepare_outbound(chat_id, reply)
                 if gated:
-                    await message.channel.send(gated[:2000])
+                    from agent_friday.services.channels.base import record_channel_send, send_unsure
+                    gated = gated[:2000]
+                    try:
+                        await message.channel.send(gated)
+                    except Exception as e:
+                        record_channel_send(self.name, chat_id, gated, False, send_unsure(e))
+                        raise
+                    record_channel_send(self.name, chat_id, gated, True)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -114,8 +123,10 @@ class DiscordBridge(ChannelAdapter):
             req = urllib.request.Request(url, data=data, method="POST")
             req.add_header("Authorization", f"Bot {token}")
             req.add_header("Content-Type", "application/json")
+            # egress: recorded by ChannelAdapter.send, the only caller
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return {"ok": resp.status in (200, 201)}
         except Exception as e:
             self._last_error = exception_text(e)
-            return {"ok": False, "error": exception_text(e)}
+            from agent_friday.services.channels.base import send_unsure
+            return {"ok": False, "error": exception_text(e), "unsure": send_unsure(e)}
