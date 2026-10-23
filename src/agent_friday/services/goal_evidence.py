@@ -42,14 +42,16 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from agent_friday.user_errors import UserFacingRuntimeError
+
 _URL = re.compile(r"https?://[^\s\"'<>)\]]+")
 _FILENAME = re.compile(r"[\w.-]+\.[A-Za-z0-9]{1,8}\b")
 _KEEP_RECEIPTS = 2000
 _KEEP_CALLS = 2000
 
 
-class _Unreadable(Exception):
-    pass
+class _Unreadable(UserFacingRuntimeError):
+    """A record of the run that could not be read, named in Friday's words."""
 
 
 def _outward_tools() -> set:
@@ -121,7 +123,7 @@ def collect(task_ids: List[str], since: Optional[float]) -> Dict[str, Any]:
         try:
             ev["receipts"] = _receipts(set(ids))          # one read of the receipts for every run
         except _Unreadable as e:
-            ev["errors"].append(str(e))
+            ev["errors"].append(e.user_message)
         except Exception as e:
             ev["errors"].append(f"receipts ({type(e).__name__})")
     for tid in ids:
@@ -129,7 +131,7 @@ def collect(task_ids: List[str], since: Optional[float]) -> Dict[str, Any]:
             try:
                 ev[key].extend(fn())
             except _Unreadable as e:
-                ev["errors"].append(str(e))
+                ev["errors"].append(e.user_message)
             except Exception as e:
                 ev["errors"].append(f"{key} ({type(e).__name__})")
     return ev
