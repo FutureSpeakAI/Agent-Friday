@@ -1390,7 +1390,8 @@ SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "open_path", "
                                   "browser_open", "browse_web", "install_package",
                                   "codebase_run", "codebase_agent"})
 
-#: Built-in tools judged internal that still reach a connected service (the
+#: Built-in tools that reach a connected service (most judged internal; the
+#: Google Tasks changes are outward since A24) (the
 #: owner's Google account): mail (also the voice check and the career inbox),
 #: calendar (also free/busy and releasing holds), Drive and Docs, contacts,
 #: Tasks, Gmail drafts, the sending-account list and selecting mail on
@@ -1422,19 +1423,21 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             _why = "safe mode could not be checked (%s)" % type(e).__name__
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
+    if tool_name in CONNECTED_SERVICE_TOOLS:
+        # a built-in tool that reaches the owner's Google account: off in
+        # safe mode (connectors off) and while authority is revoked, whatever
+        # its class (A24 made the Google Tasks changes outward; they are held
+        # here first, exactly as before)
+        try:
+            from agent_friday.services import safe_mode as _sm
+            _why = _sm.refusal("connector_reads") or _authority_hold()
+            if not _why and tool_name in CONNECTED_SERVICE_WRITES:
+                _why = outward_hold()
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
+        if _why:
+            return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
-        if tool_name in CONNECTED_SERVICE_TOOLS:
-            # a built-in tool that reaches the owner's Google account: off in
-            # safe mode (connectors off) and while authority is revoked
-            try:
-                from agent_friday.services import safe_mode as _sm
-                _why = _sm.refusal("connector_reads") or _authority_hold()
-                if not _why and tool_name in CONNECTED_SERVICE_WRITES:
-                    _why = outward_hold()
-            except Exception as e:  # noqa: BLE001 - a check that cannot run holds
-                _why = "safe mode could not be checked (%s)" % type(e).__name__
-            if _why:
-                return Verdict("deny", klass, f"held: {_why}")
         if str(tool_name).lower().startswith("mcp_"):
             # a connector tool judged internal (a clean read under the card
             # setting) still reaches a connected service
