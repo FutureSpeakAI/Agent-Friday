@@ -58,7 +58,10 @@ _OFF_RECORD: set = set()
 BASE_DIR_OVERRIDE: Optional[Path] = None
 
 TERMINAL = ("complete", "completed", "completed_unverified", "done", "failed",
-            "error", "timeout", "cancelled", "interrupted", "superseded", "killed")
+            "error", "timeout", "cancelled", "interrupted", "superseded", "killed",
+            # The worker is finished and what is left is the owner's decision on a card
+            # (services/agent.settle_waiting_task): a restart must never run it again.
+            "waiting_approval", "declined")
 
 
 def is_terminal(status) -> bool:
@@ -109,19 +112,39 @@ def _encrypt_enabled() -> bool:
 
 # ── at-rest protection ───────────────────────────────────────────────────────
 
+class _NotWritable(Exception):
+    """Encryption at rest is on and nothing can encrypt this record right now, so it is not
+    written to disk (never written in plain text instead)."""
+
+    def __init__(self, msg="Friday's key store cannot encrypt this record, so it was not written"):
+        super().__init__(msg)
+
+
+_PROTECT_WARNED = False
+
+
 def _protect(data: bytes) -> bytes:
+    global _PROTECT_WARNED
     if not _encrypt_enabled():
         return data
     try:
         from agent_friday.services import credential_store as cs
         blob, method = cs.protect(data)
+        _PROTECT_WARNED = False
         if method == "plaintext":
             return data
         return blob
     except Exception as e:
-        # A protection failure must not lose the record; write plain and say so.
-        _log.warning("task journal: at-rest protection unavailable (%s); writing plaintext", e)
-        return data
+        # Encryption at rest is on and nothing can encrypt (Friday's key store cannot be used:
+        # credential_store refuses rather than drop to another key). The record is NOT written,
+        # and never in plain text: the caller treats it as a failed write (the task is marked
+        # unrecorded, as for a full disk; the live task table still has it for this run). Said
+        # once until a write succeeds again, not on every event.
+        if not _PROTECT_WARNED:
+            _PROTECT_WARNED = True
+            _log.warning("task journal: at-rest protection unavailable (%s); records are not "
+                         "written until Friday's key store can encrypt again", type(e).__name__)
+        raise _NotWritable() from None
 
 
 # Records that cannot be decrypted, by digest. A passphrase rotation can leave
@@ -591,7 +614,7 @@ def announce_interrupted(interrupted: Iterable[dict]) -> None:
         ne.push(
             title=f"{len(items)} task{'s were' if len(items) != 1 else ' was'} interrupted by a restart",
             body=(f"{names}{more}. Each record is complete up to its last checkpoint. "
-                  "Nothing was resumed: re-run any of them from the Task Tray."),
+                  "Nothing was resumed: re-run any of them from their task cards in System."),
             priority="high", source="task-journal", kind="tasks_interrupted",
             emitter="E28", dedupe_key="tasks_interrupted:" + _incident([t.get("task_id") for t in items]),
             target={"workspace": "system", "tab": "tasks"},
@@ -638,10 +661,23 @@ def redact(fn) -> Dict[str, Any]:
                     ev = _decode_line(raw)
                     if ev is None:
                         new_lines.append(raw)
+                        if raw.strip().startswith(_LINE_PREFIX):
+                            # a protected line no key opens: it may hold the text; say so
+                            out["left_unchanged"] = out.get("left_unchanged", 0) + 1
                         continue
                     nev, c = _redact_value(ev, fn)
                     if c:
-                        new_lines.append(_encode_line(nev))
+                        try:
+                            new_lines.append(_encode_line(nev))
+                        except _NotWritable:
+                            # Nothing can encrypt right now. A line that was plain stays plain,
+                            # with the text taken out; a protected one cannot be rewritten and
+                            # is counted, never written back in plain text.
+                            if raw.strip().startswith(_LINE_PREFIX):
+                                new_lines.append(raw)
+                                out["left_unchanged"] = out.get("left_unchanged", 0) + 1
+                                continue
+                            new_lines.append(json.dumps(nev, default=str, ensure_ascii=False))
                         changed += 1
                     else:
                         new_lines.append(raw)
@@ -649,13 +685,26 @@ def redact(fn) -> Dict[str, Any]:
                     _write_atomic(jp, ("\n".join(new_lines) + "\n").encode("utf-8"))
                     out["records"] += changed
             for f in sorted(d.glob("*.json")):
+                stored = b""
                 try:
-                    obj = json.loads(_unprotect(f.read_bytes()).decode("utf-8"))
+                    stored = f.read_bytes()
+                    obj = json.loads(_unprotect(stored).decode("utf-8"))
                 except Exception:
+                    if stored and stored.lstrip()[:1] not in (b"{", b"["):
+                        # a protected record no key opens: it may hold the text; say so
+                        out["left_unchanged"] = out.get("left_unchanged", 0) + 1
                     continue
                 nobj, c = _redact_value(obj, fn)
                 if c:
-                    _write_atomic(f, _protect(json.dumps(nobj, default=str, ensure_ascii=False).encode("utf-8")))
+                    plain = json.dumps(nobj, default=str, ensure_ascii=False).encode("utf-8")
+                    try:
+                        _write_atomic(f, _protect(plain))
+                    except _NotWritable:
+                        if stored.lstrip()[:1] in (b"{", b"["):
+                            _write_atomic(f, plain)          # it was plain: stays plain, text taken out
+                        else:
+                            out["left_unchanged"] = out.get("left_unchanged", 0) + 1
+                            continue
                     out["records"] += 1
     return out
 
@@ -734,8 +783,23 @@ def checkpoint(iteration: int, phase: str, summary: str, *, session_ctx=None, ta
                  summary=_cap(summary, _SUMMARY_CAP))
 
 
+def _to_ledger(fn_name: str, session_ctx, task_id, **kw) -> None:
+    """Feed the task's compact ledger (§17.11: cost, routes, decisions,
+    approvals, blockers). Never raises; a task with no ledger is skipped."""
+    try:
+        tid = resolve_task_id(session_ctx, task_id)
+        if not tid:
+            return
+        from agent_friday.services import task_ledger as _tl
+        getattr(_tl, fn_name)(tid, **kw)
+    except Exception:
+        pass
+
+
 def model_call(*, model, provider, seat, tokens_in=None, tokens_out=None, cost_usd=None,
                duration_ms=None, iteration=None, stop_reason=None, session_ctx=None, task_id=None):
+    _to_ledger("note_model_call", session_ctx, task_id, model=model, provider=provider, seat=seat,
+               tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd)
     return _emit("model_call", session_ctx, task_id, model=model, provider=provider, seat=seat,
                  tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd,
                  duration_ms=duration_ms, iteration=iteration, stop_reason=stop_reason)
@@ -765,6 +829,8 @@ def decision(point: str, chosen, *, reason=None, alternatives=None, session_ctx=
     """A choice Friday's own code made at a known line, with the reason it
     already held. Points: seat_select, ladder_fallback, retry, gate, approval,
     spend_cap, chain_advance, evaluate."""
+    _to_ledger("note_decision", session_ctx, task_id, point=point, chosen=_cap(chosen, 200),
+               reason=_cap(reason, 300))
     return _emit("decision", session_ctx, task_id, point=point, chosen=_cap(chosen, _SUMMARY_CAP * 2),
                  alternatives=[_cap(a, _SUMMARY_CAP) for a in (alternatives or [])][:8] or None,
                  reason=_cap(reason, _TEXT_CAP // 4))
@@ -991,6 +1057,12 @@ def request_stop(task_id: str) -> None:
 def stop_requested(task_id: Optional[str]) -> bool:
     if not task_id:
         return False
+    try:  # Stop everything (services/global_stop): every task sees its stop.
+        import agent_friday.core as _core
+        if _core.GLOBAL_STOP.is_set():
+            return True
+    except Exception:
+        pass
     if str(task_id) in _STOP_REQUESTED:
         return True
     state = read_state(str(task_id))

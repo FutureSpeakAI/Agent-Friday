@@ -44,7 +44,11 @@ INJECTED = {"from": "stranger@outside.example.test", "subject": "Quarterly numbe
 def client(app):
     import agent_friday.core as core
     c = app.test_client()
-    c.environ_base["HTTP_X_FRIDAY_TOKEN"] = core._current_api_token()
+    # Friday's page on this PC: its token, a press's browser metadata and the desk key
+    # (services/desk_press), which making a pre-approval demands.
+    from tests.desk_press_support import desk_headers as _desk
+    for _k, _v in _desk().items():
+        c.environ_base["HTTP_" + _k.upper().replace("-", "_")] = _v
     return c
 
 
@@ -356,8 +360,9 @@ def test_a_voice_request_uses_no_pre_approval_unless_the_owner_allows_it(client,
     pushed = []
     monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw) or {})
     g = _grant(client, scope="recipients", recipients=[TEAM])
+    # the owner's own call from this PC's page (the desk key on the voice socket)
     voice = {"authenticated": True, "surface": "voice-live", "taint_key": "voice-live-synthetic",
-             "conversation_id": "conv_voice_1"}
+             "conversation_id": "conv_voice_1", "owner_local": True}
     res = _send(TEAM, ctx=voice)
     assert _carded(res), "a spoken request used the pre-approval with the voice switch off"
     assert "by voice" in _pending_for(res["approval_id"])[0]["action_description"]

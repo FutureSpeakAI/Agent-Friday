@@ -104,7 +104,7 @@ def test_settings_parts_are_read_from_the_served_ui():
     """The section titles come from the real index.html, tab by tab."""
     dt._PARTS_CACHE.update(key=None, map={})
     parts = dt.settings_parts()
-    assert "Hard stop" in parts["costs"] and "Budget alerts" in parts["costs"]
+    assert "Spending caps" in parts["costs"] and "Budget alerts" in parts["costs"]
     assert "Identity" in parts["general"]
     assert "Setup checklist" in parts["general"]
     assert "PHONE" in parts["connections"]

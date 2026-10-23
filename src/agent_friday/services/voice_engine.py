@@ -718,11 +718,11 @@ _VOICE_LIVE_TOOLS = [
      "Use for work taking more than about ten seconds. THIS IS THE ONLY WAY to do work in voice that outlives the "
      "current turn: if the user asks you to research, investigate, analyse, "
      "compile, monitor, or write something substantial, call this tool rather "
-     "than describing what you are about to do. Progress appears in the user's "
-     "Task Tray (bottom-right). Optionally chain a follow-up with on_complete.",
+     "than describing what you are about to do. Progress appears on its "
+     "task card in System. Optionally chain a follow-up with on_complete.",
      {"name": ("string", "Short task title, e.g. 'Research the Zelda short film'."),
       "prompt": ("string", "Full background-agent instruction."),
-      "description": ("string", "Optional one-line Task Tray subtitle."),
+      "description": ("string", "Optional one-line task card subtitle."),
       "on_complete_spawn": ("string", "Optional follow-up title; auto-starts on success."),
       "on_complete_prompt": ("string", "Optional full follow-up instruction.")},
      ["name", "prompt"]),
@@ -1251,7 +1251,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
                       "category": None,
                       "key": "lane, unread, q, folder, category, sort, status, kind, project."},
     "organize_media": {"action": None, "cards": None, "value": None, "replaces": None, "why": None, "selection": None},
-    "task_control": {"target": "Workflow, task id or name words; empty: the one on screen.", "message": "For steer: what to tell it."},
+    "task_control": {"target": "Workflow, task id or name words; empty: what is on screen.", "message": "For steer: the words."},
     # The same date words media_show's `when` shows.
     "media_cards": {"when": None},
 }

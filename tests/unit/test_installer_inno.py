@@ -284,7 +284,7 @@ def test_the_upgrade_job_proves_every_previous_release():
     assert "-BaseExe" in upgrade and "-BaseZip" in upgrade
     assert "AgentFriday-Setup-*.exe" in upgrade and "AgentFriday-Setup-*.zip" in upgrade
     assert "name: upgrade-evidence-${{ matrix.base }}" in upgrade, "one evidence artifact per leg"
-    assert {"fresh-install", "upgrade"} <= _release_needs(), "the release waits for every leg"
+    assert {"tests-green", "fresh-install", "upgrade", "bundle-uninstall-restore"} <= _release_needs(), "the release waits for every leg"
     harness = (REPO / "packaging" / "windows" / "tests" / "rehearsal" / "upgrade-vault-test.ps1").read_text(encoding="utf-8")
     assert "[string] $BaseExe" in harness and "give -BaseZip or -BaseExe, not both" in harness
     for switch in ("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/ModelsCloud=1", "/SkipMemory=1", "/SkipJudgment=1"):
@@ -299,7 +299,7 @@ def test_the_release_job_publishes_the_latest_release_not_a_draft():
     assert "--latest" in rel and "--prerelease" not in rel and "--draft" not in rel
     assert "PLACEHOLDER" in rel and "a placeholder is left in the notes" in rel, \
         "the notes get the installer's real SHA-256, and a leftover placeholder stops the release"
-    assert {"fresh-install", "upgrade"} <= _release_needs()
+    assert {"tests-green", "fresh-install", "upgrade", "bundle-uninstall-restore"} <= _release_needs()
     assert "--title \"Agent Friday Beta 1.2 (update 2)\"" in rel and "--notes-file" in rel
     assert ".exe.sha256" in rel and "AgentFriday-Setup-*.exe" in rel
     assert "Build sequence" in rel, "the notes carry the line the updater orders releases by"

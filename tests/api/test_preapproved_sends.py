@@ -37,11 +37,13 @@ SCHEDULED = {"is_background_task": True, "schedule_id": "sch_weekly_status", "ta
 
 @pytest.fixture
 def client(app):
-    """The test client as Friday's own page: it carries the page's X-Friday-Token,
-    which the send-grant routes demand even from loopback."""
-    import agent_friday.core as core
+    """The test client as Friday's own page on this PC: it carries the page's X-Friday-Token,
+    which the send-grant routes demand even from loopback, and a press's browser metadata
+    and desk key, which making a pre-approval demands (services/desk_press)."""
+    from tests.desk_press_support import desk_headers
     c = app.test_client()
-    c.environ_base["HTTP_X_FRIDAY_TOKEN"] = core._current_api_token()
+    for k, v in desk_headers().items():
+        c.environ_base["HTTP_" + k.upper().replace("-", "_")] = v
     return c
 
 
@@ -103,7 +105,7 @@ def test_a_covered_send_goes_without_a_card_and_every_use_is_logged(client):
     assert used[0]["schedule_id"] == "sch_weekly_status"
     assert listed["grants"][0]["uses"] == 1
     # The checkpoint's signed receipt names the grant behind the call.
-    bom = [json.loads(x) for x in action_gate.receipts_path().read_text(encoding="utf-8").splitlines()]
+    bom = action_gate.receipts()                  # the action ledger's decisions
     assert any(r.get("tool") == "draft_email" and r.get("grant") == g["grant_id"] for r in bom)
 
 

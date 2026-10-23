@@ -35,7 +35,11 @@ CHAT = {"session_id": "chat_r3", "authenticated": True, "conversation_id": "conv
 def client(app):
     import agent_friday.core as core
     c = app.test_client()
-    c.environ_base["HTTP_X_FRIDAY_TOKEN"] = core._current_api_token()
+    # Friday's page on this PC: its token, a press's browser metadata and the desk key
+    # (services/desk_press), which making a pre-approval demands.
+    from tests.desk_press_support import desk_headers as _desk
+    for _k, _v in _desk().items():
+        c.environ_base["HTTP_" + _k.upper().replace("-", "_")] = _v
     return c
 
 
@@ -364,10 +368,14 @@ def _money_card():
 
 def _say(words, card_id, decision="approve", surface="voice"):
     from agent_friday.services import agent
-    toks = [agent._CURRENT_SURFACE.set(surface), agent._CURRENT_OWNER_TEXT.set(words)]
+    toks = [agent._CURRENT_SURFACE.set(surface), agent._CURRENT_OWNER_TEXT.set(words),
+            # a spoken answer is made inside the owner's call from this PC's own page
+            agent._CURRENT_TOOL_CONTEXT.set({"surface": surface, "owner_local": True}
+                                            if surface.startswith("voice") else None)]
     try:
         return agent._tool_answer_card({"card_id": card_id, "decision": decision})
     finally:
+        agent._CURRENT_TOOL_CONTEXT.reset(toks[2])
         agent._CURRENT_OWNER_TEXT.reset(toks[1])
         agent._CURRENT_SURFACE.reset(toks[0])
 

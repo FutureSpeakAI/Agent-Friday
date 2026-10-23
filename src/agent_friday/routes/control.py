@@ -59,6 +59,13 @@ def cc_permission():
     data = request.get_json(force=True, silent=True) or {}
     action = data.get('action', '')
     if action == 'grant':
+        # Letting Friday move the mouse and type would let it press an approval card on this
+        # PC's own screen, so granting it is itself a press on this PC's screen.
+        from agent_friday.services import screen_click as _sc
+        refused = _sc.press_refusal(request, "Grant Computer Control with a press in Settings, on "
+                                             "the computer Friday runs on.")
+        if refused is not None:
+            return refused
         # Experimental opt-in gate: refuse unless the feature is enabled in
         # Settings → Experimental (defaults OFF for new users).
         try:
@@ -104,6 +111,14 @@ def cc_app_grants():
                         "origin": cur["origin"]})
     data = request.get_json(force=True, silent=True) or {}
     app = data.get('app', '')
+    if not data.get('remove') and str(data.get('tier') or '').strip().lower() in ('observe', 'act'):
+        # Widening what Friday may see or do in an app (a browser holding Friday's own page among
+        # them) is a press on this PC's screen. Narrowing and removing are open.
+        from agent_friday.services import screen_click as _sc
+        refused = _sc.press_refusal(request, "Change app permissions with a press in Settings, on "
+                                             "the computer Friday runs on.")
+        if refused is not None:
+            return refused
     try:
         if data.get('remove'):
             apps = _dg.remove_grant(app)
@@ -133,6 +148,56 @@ def cc_kill():
             pass
     _log_context("cc_action", {"action": "kill_switch_activated"})
     return jsonify({"killed": True, "message": "Computer control terminated. All permissions revoked."})
+
+
+# ── Stop everything (services/global_stop) ──────────────────────────────────
+#
+# Stop is open to every channel the owner uses (it only ends work). Resume is a
+# press on Friday's own page (screen_click.screen_session): no word, tool call or
+# program can resume. Each writes a signed receipt (decision-bom.jsonl).
+
+@control_bp.route('/api/stop-everything', methods=['GET'])
+@login_required
+def stop_everything_state():
+    from agent_friday.services import global_stop as _gs
+    st = _gs.state()
+    return jsonify({"status": "ok", "stopped": bool(st.get("stopped")),
+                    "since": st.get("since"), "source": st.get("source"),
+                    "resume_needs": "a press on Friday's own screen"})
+
+
+@control_bp.route('/api/stop-everything', methods=['POST'])
+@login_required
+def stop_everything():
+    from agent_friday.services import global_stop as _gs
+    data = request.get_json(silent=True) or {}
+    source = str(data.get("source") or "button").strip().lower()
+    if source not in ("button", "keyboard", "tray"):
+        source = "button"
+    st = _gs.stop(by="owner", source=source, reason=str(data.get("reason") or "")[:200])
+    return jsonify({"status": "ok", "stopped": True, "since": st.get("since"),
+                    "halted": st.get("halted"), "receipt": st.get("receipt"),
+                    "message": _gs.SPOKEN_STOPPED})
+
+
+@control_bp.route('/api/stop-everything/resume', methods=['POST'])
+@login_required
+def stop_everything_resume():
+    from agent_friday.services import global_stop as _gs, screen_click
+    # The owner's page on THIS PC: a page reached through a tunnel, a forward or the LAN
+    # carries the same token, so the press must also arrive over loopback with no
+    # forwarding evidence (core._is_local_request).
+    if not (screen_click.screen_session(request) and core._is_local_request()):
+        return jsonify({"status": "refused", "code": "resume_needs_press",
+                        "error": "Resume is a press of the Resume button on Friday's own screen."}), 403
+    try:
+        st = _gs.resume(by="owner", source="button")
+    except _gs.ResumeHeld:
+        return jsonify({"status": "held", "code": "resume_receipt_failed",
+                        "error": "Nothing resumed: the resume receipt could not be written. "
+                                 "Everything is still stopped; try again."}), 503
+    return jsonify({"status": "ok", "stopped": False, "message": _gs.RESUMED_TEXT,
+                    "saved": not st.get("save_error")})
 
 
 # ── File permissions (WO-17) ────────────────────────────────────────────────
@@ -178,11 +243,17 @@ def decide_cloud_release(approval_id):
     from agent_friday.services import cloud_release as _cr
     from agent_friday.services import screen_click as _sc
     data = request.get_json(silent=True) or {}
-    # Send lets private text leave the PC: only a click on the card on Friday's own page is
-    # "owner:ui". A request that merely claims it is the plain owner, and cloud_release refuses
-    # a Send from it (Keep on this PC is always accepted).
-    out = _cr.decide(approval_id, str(data.get("decision") or "").strip().lower(),
-                     data.get("remember"), decided_by=_sc.decided_by(request, "owner:ui"))
+    decision = str(data.get("decision") or "").strip().lower()
+    # Send lets private text leave the PC: only a press on the card in Friday's own page, on
+    # this PC's own screen, is "owner:ui" (services/desk_press). Any other request is refused
+    # with the code that has the page fetch the desk key; Keep on this PC is always accepted.
+    if decision == "approve":
+        refused = _sc.press_refusal(request, "Send this with its own button on the card, on the "
+                                             "computer Friday runs on.")
+        if refused is not None:
+            return refused
+    out = _cr.decide(approval_id, decision,
+                     data.get("remember"), decided_by=_sc.decided_by(request, "owner:ui", for_ids=[approval_id]))
     if not out.get("ok"):
         return jsonify({"status": "error", "ok": False, "message": out.get("error")}), (
             404 if out.get("error") == "not found" else 400)
@@ -277,6 +348,13 @@ def create_file_grant():
     """Create a grant. body: {path, scope: 'file'|'folder'|'glob',
     never_send_override?: bool, ack_never_send_matches?: [str],
     expiry_days? (required for folder/glob, max 30)}."""
+    # A grant lets a file's contents reach a model: the same consent as approving a file-access
+    # card, so the same press on this PC's own screen (services/desk_press).
+    from agent_friday.services import screen_click as _sc
+    refused = _sc.press_refusal(request, "Grant file access with a press in Settings, on the "
+                                         "computer Friday runs on.")
+    if refused is not None:
+        return refused
     data = request.get_json(force=True, silent=True) or {}
     path = (data.get('path') or '').strip()
     scope = (data.get('scope') or 'file').strip().lower()
@@ -350,6 +428,12 @@ def reattest_file_grant():
     this ledger has used is refused (400), because what it says is unknown.
     """
     from agent_friday.services import file_grants as _fg
+    from agent_friday.services import screen_click as _sc
+    # Re-signing a line brings a grant back into force: a press on this PC's own screen.
+    refused = _sc.press_refusal(request, "Confirm this with a press in Settings, on the computer "
+                                         "Friday runs on.")
+    if refused is not None:
+        return refused
     data = request.get_json(silent=True) or {}
     sha = (data.get("line_sha256") or "").strip()
     who = (data.get("confirmed_by") or "").strip()

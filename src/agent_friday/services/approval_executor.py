@@ -126,8 +126,31 @@ def _describe(tool: str, args: Dict[str, Any]) -> str:
         return tool
 
 
+def _settle(record: dict) -> None:
+    """A background task that raised this card waits for it (status waiting_approval);
+    once its last card is decided, the task's status says what the decisions did."""
+    task_id = str(((record or {}).get("payload") or {}).get("task_id") or "")
+    if not task_id:
+        return
+    try:
+        from agent_friday.services import agent as _agent
+        _agent.settle_waiting_task(task_id)
+    except Exception as e:  # noqa: BLE001 - the card already holds the outcome
+        _log.warning("could not settle task %s after card %s: %s",
+                     task_id, record.get("approval_id"), type(e).__name__)
+
+
 def _on_decision(record: dict) -> None:
-    """Run an approved card's action once, and report what happened."""
+    """Run an approved card's action once, report what happened, and settle the
+    task that was waiting for it."""
+    try:
+        _decide(record)
+    finally:
+        if isinstance(record, dict) and record.get("status") != "pending":
+            _settle(record)
+
+
+def _decide(record: dict) -> None:
     if not isinstance(record, dict):
         return
     if record.get("kind") == "tool_confirm":

@@ -7,6 +7,7 @@ import pytest
 from agent_friday import notifications_engine as ne
 from agent_friday.services import approvals
 from agent_friday.services import notification_policy as pol
+from tests.desk_press_support import desk_headers      # an approve is a press on this PC's screen
 
 
 @pytest.fixture(autouse=True)
@@ -48,11 +49,12 @@ def test_deciding_a_batch_decides_exactly_the_listed_approvals_and_a_stale_one_i
     cards = [_card(i) for i in range(3)]
     b = client.get("/api/approvals/batches").get_json()["batches"][0]
     stale = client.post("/api/approvals/batches/%s/decide" % b["batch_id"],
-                        json={"decision": "approve", "approval_ids": b["approval_ids"][:2]})
+                        json={"decision": "approve", "approval_ids": b["approval_ids"][:2]}, headers=desk_headers())
     assert stale.status_code == 409 and stale.get_json()["error"] == "changed"
     assert {approvals.get_approval(c["approval_id"])["status"] for c in cards} == {"pending"}
     r = client.post("/api/approvals/batches/%s/decide" % b["batch_id"],
-                    json={"decision": "approve", "approval_ids": b["approval_ids"], "decided_by": "owner:ui"})
+                    json={"decision": "approve", "approval_ids": b["approval_ids"], "decided_by": "owner:ui"},
+                    headers=desk_headers())
     assert r.status_code == 200 and r.get_json()["decided"] == 3
     assert {approvals.get_approval(c["approval_id"])["status"] for c in cards} == {"approved"}
 
