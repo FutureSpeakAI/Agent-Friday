@@ -463,6 +463,7 @@ class ConversationMemory:
             with self._lock:
                 count = self._collection.count()
                 if count == 0:
+                    _recall_ok("past_conversations")      # read, and empty
                     return []
                 # Over-fetch when filtering supersession out in Python. Doing
                 # it here rather than in a Chroma `where` clause is deliberate:

@@ -2996,7 +2996,9 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             return live_block
         mem = _get_conversation_memory()
         if not mem.available():
-            if getattr(mem, "_init_error", None) is not None:
+            if (getattr(mem, "_init_error", None) is not None
+                    and not isinstance(mem._init_error, ImportError)):
+                # (An ImportError is recall not installed, by choice: not a failure.)
                 # The store is there but would not open: recall is degraded, not empty
                 # (services/recall_health; the turn's context says so).
                 from agent_friday.services import recall_health as _rh

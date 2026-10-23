@@ -29,7 +29,7 @@ WINDOW_S = 600.0
 SOURCES = {
     "past_conversations": "past conversations",
     "memory_card": "the memory card",
-    "user_facts": "what you have told me about yourself",
+    "user_facts": "the facts the user has told you about themselves",
     "knowledge_graph": "the knowledge graph",
     "conversation_search": "conversation search",
 }

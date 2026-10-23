@@ -108,6 +108,11 @@ def entries(target: str) -> List[str]:
         return []
     try:
         raw = _path(target).read_text(encoding="utf-8")
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_ok("memory_card")
+        except Exception:
+            pass
     except FileNotFoundError:
         return []
     except OSError as e:

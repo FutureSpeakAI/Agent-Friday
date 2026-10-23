@@ -347,6 +347,11 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
         facts = _recent_facts(max_facts)
         for f in facts:
             lines.append(f"• {f['text']}")
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_ok("user_facts")
+        except Exception:
+            pass
         if not lines:
             return ""
         return "\n".join(lines)
