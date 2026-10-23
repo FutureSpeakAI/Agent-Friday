@@ -79,6 +79,9 @@ def _ensure_defaults() -> None:
     from agent_friday.services import meeting_capture as _meeting_capture
     register_store("meetings", _meeting_capture.people_find, _meeting_capture.people_purge)
     register_store("memory_proposals", _memory_proposals.people_find, _memory_proposals.people_purge)
+    # Imported items waiting for the owner's answer (services/import_staging) name people too.
+    from agent_friday.services import import_staging as _import_staging
+    register_store("import_staging", _import_staging.forget_find, _import_staging.forget_purge)
 
 
 def _norm(s: str) -> str:

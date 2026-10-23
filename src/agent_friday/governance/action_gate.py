@@ -214,6 +214,9 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: back through this checkpoint one by one).
 LIBRARY_SCREEN_ACTIONS = frozenset({"library_add", "library_remove", "library_forget", "library_shelf",
                                     "library_reindex", "library_tracked", "library_draft_review"})
+#: Answers to imported items in staging (services/import_staging): internal only as the owner's
+#: verified click on Friday's page.
+IMPORT_SCREEN_ACTIONS = frozenset({"import_review"})
 
 INTERNAL_TOOLS = frozenset({
     # Reads the machine and the model catalogue; downloads nothing and
@@ -871,6 +874,12 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         if (ctx or {}).get("screen_click") is True:
             return INTERNAL, "the owner's own change, made on the Library page"
         return OUTWARD, "a change to the Library that did not come from the Library page"
+    if tool_name in IMPORT_SCREEN_ACTIONS:
+        # The owner's answer to an imported item (services/import_staging): accepting one is
+        # what makes it durable, so only a verified click on Friday's page counts.
+        if (ctx or {}).get("screen_click") is True:
+            return INTERNAL, "the owner's own answer to an imported item, made on Friday's page"
+        return OUTWARD, "an answer to an imported item that did not come from Friday's page"
     if tool_name in OUTWARD_TOOLS:
         return OUTWARD, "it acts outside this conversation"
     if tool_name in INTERNAL_TOOLS:
