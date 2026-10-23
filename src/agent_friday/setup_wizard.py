@@ -253,6 +253,12 @@ def _save_config(config: dict):
     # written no wider than settings.json holds it now.
     from agent_friday.services import guarded_settings
     config = guarded_settings.clamp_for_write(config, SETTINGS_FILE)
+    # The person's spending caps survive this rewrite (north-star A17).
+    try:
+        from agent_friday.services import spending_caps as _caps
+        config = _caps.keep_caps_on_rewrite(config, SETTINGS_FILE)
+    except Exception:
+        pass
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     try:
         import yaml
@@ -807,14 +813,22 @@ def step_routing(total: int, step: int, existing_mode: str) -> str:
         console.print(f"       [dim]{c['detail']}[/dim]")
         console.print()
 
-    default = "1" if not capable else "3"
+    # North-star A16: nothing is pre-selected. The recommendation above is a
+    # label; Enter alone picks nothing and the question is asked again. Only an
+    # install that already has a route the owner chose keeps it as the answer
+    # Enter gives (`existing_mode`; a new install passes "").
+    default = ""
     if existing_mode:
         for i, c in enumerate(choices):
             if c["mode"] == existing_mode:
                 default = str(i + 1)
     while True:
         pick = Prompt.ask(f"  [cyan]Where should Friday think (1-{len(choices)})[/cyan]",
-                          default=default)
+                          default=default, show_default=bool(default))
+        if not str(pick or "").strip():
+            console.print(f"  [yellow]Nothing is picked for you. Enter a number from 1 to "
+                          f"{len(choices)}.[/yellow]")
+            continue
         try:
             idx = int(pick) - 1
             if 0 <= idx < len(choices):
@@ -1702,6 +1716,15 @@ def main():
     args = parser.parse_args()
     quick = args.quick
 
+    # North-star A16/A17: decide whether this is a new install BEFORE this
+    # wizard writes settings.json itself (the installer runs it before the app
+    # has ever started), so a new install keeps the new-install choices.
+    try:
+        from agent_friday import core as _core
+        _core.install_origin()
+    except Exception:
+        pass
+
     # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills on
     # first run. A no-op the moment that directory exists at all, so this is
     # safe to call unconditionally on every wizard invocation, including
@@ -1781,12 +1804,19 @@ def main():
 
     # ── Screen 3: where your words go ──
     _routing_existing = (existing.get("model_routing") or {}).get("mode", "")
+    # A16: a new install's stored mode is not a choice, so it is never offered
+    # as the answer Enter gives on the routing screen.
+    try:
+        from agent_friday import core as _core
+        _routing_offered = "" if _core.route_pick_pending(existing) else _routing_existing
+    except Exception:
+        _routing_offered = ""
     # Only an answer to the routing screen is a setup choice that counts as consent for cloud
     # only; quick mode and a skipped screen keep the mode and record it as "unverified" (the
     # mode_chosen record itself is unchanged, for the background routes that read it).
     config["_routing_answered"] = False
     if not quick and _ask("routing"):
-        config["routing_mode"] = step_routing(total_steps, 3, _routing_existing)
+        config["routing_mode"] = step_routing(total_steps, 3, _routing_offered)
         config["_routing_answered"] = True
     else:
         config["routing_mode"] = _routing_existing or "cloud_only"
@@ -1900,7 +1930,8 @@ def main():
         # Answered at the terminal by the owner: a setup choice, and choosing cloud only
         # there is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS). Quick mode or a
         # skipped routing screen kept the mode without asking: not consent.
-        block["mode_chosen_via"] = "setup" if answered else "unverified"
+        # A16: a kept route is recorded as such ("kept"), never as a pick.
+        block["mode_chosen_via"] = "setup" if answered else "kept"
         config["model_routing"] = block
 
     # Defaults that server expects

@@ -248,6 +248,9 @@ INTERNAL_TOOLS = frozenset({
     # the local models are working on and takes a waiting job out of the line:
     # Friday's own queue, nothing reaches anyone else.
     "queue_status", "local_work",
+    # A goal draft that waits in System > Goals for the owner's confirming
+    # click (services/goal_tools). It creates and starts nothing.
+    "draft_goal",
     # What Laya learned from the owner's own corrections (services/laya_learning_tools):
     # a summary, and forget / reset / roll back / wipe of her own personal layer. It runs
     # only on the owner's own words in the turn, changes nothing outside Friday's learning
@@ -1111,8 +1114,9 @@ _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
                             "plan_version")
 
 
-def _receipt(entry: dict) -> None:
-    """Sign and append. Raises on failure, so the caller can hold the action."""
+def _receipt(entry: dict) -> dict:
+    """Sign and append; returns the ledger entry. Raises on failure, so the
+    caller can hold the action."""
     try:
         from agent_friday.services import off_record as _off
         if _off.active():
@@ -1123,14 +1127,66 @@ def _receipt(entry: dict) -> None:
     entry = dict(entry, timestamp=datetime.utcnow().isoformat() + "Z")
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
     entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()
-    path = receipts_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, default=str) + "\n")
+    # One store for what Friday did (services/action_ledger.py): the decision
+    # is an entry in the hash-chained ledger, written to disk (fsync) before
+    # the action runs. The entry keeps its own HMAC as well, so a decision can
+    # still be checked on its own (verify_receipt).
+    from agent_friday.services import action_ledger
+    return action_ledger.append("decision", entry, durable=True)
+
+
+#: The checkpoint's last decision in this context (set by authorize only):
+#: the governance hook stores it on the call, so the call's outcome names the
+#: exact decision it carried out (north star §18.9, NS-34.17-7).
+LAST_RECEIPT: ContextVar = ContextVar("friday_last_decision_receipt", default=None)
+
+#: Outcome statuses an outcome entry may carry.
+OUTCOMES = ("ok", "error", "refused", "held")
+
+
+def record_outcome(tool: str, decision: Optional[dict], status: str, *,
+                   approval: Optional[str] = None, duration_ms: Optional[float] = None,
+                   detail: str = "") -> None:
+    """The terminal receipt of an outward or reading action: what happened
+    after the decision (it ran: ok or error; the handler refused; a later
+    check held it), linked to the decision's seq and hash. `detail` is a
+    fixed code, never free text, and is left out off the record. Never raises."""
+    try:
+        from agent_friday.services import action_ledger
+        try:
+            from agent_friday.services import off_record as _off
+            if _off.active():
+                detail = ""
+        except Exception:
+            pass
+        action_ledger.try_append("outcome", {
+            "tool": tool, "status": status if status in OUTCOMES else "error",
+            "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
+            "approval": approval or (decision or {}).get("approval"),
+            "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
+            "detail": str(detail or "")[:120]})
+    except Exception:
+        pass
 
 
 def receipts_path() -> Path:
+    """Where decisions were kept before the action ledger. Read only by the
+    one-time migration (action_ledger.migrate_legacy); nothing writes it."""
     return Path(friday_home()) / "decision-bom.jsonl"
+
+
+def receipts(*, newest_first: bool = False, limit: Optional[int] = None,
+             where=None, with_seq: bool = False) -> list:
+    """Every decision receipt, from the action ledger: the signed entry as
+    `_receipt` wrote it (`with_seq` adds `_seq`, its place in the ledger)."""
+    from agent_friday.services import action_ledger
+    out = []
+    for e in action_ledger.entries(["decision"], newest_first=newest_first, limit=limit,
+                                   where=where):
+        r = e.get("rec")
+        if isinstance(r, dict):
+            out.append(dict(r, _seq=e.get("seq")) if with_seq else dict(r))
+    return out
 
 
 def verify_receipt(entry: dict, key: Optional[bytes] = None) -> bool:
@@ -1143,7 +1199,9 @@ def verify_receipt(entry: dict, key: Optional[bytes] = None) -> bool:
     sig = entry.get("hmac")
     if not isinstance(sig, str) or not sig:
         return False
-    body = {k: v for k, v in entry.items() if k != "hmac"}
+    # `_seq` (its place in the action ledger) and `_migrated` (where an old
+    # receipt came from) are added after signing and are not part of it.
+    body = {k: v for k, v in entry.items() if k not in ("hmac", "_seq", "_migrated")}
     try:
         k = key or _governance_key()
         canonical = json.dumps(body, sort_keys=True, default=str).encode("utf-8")
@@ -1185,7 +1243,7 @@ def _interactive(ctx: dict) -> bool:
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
               *, tainted: bool = False, clean: bool = False,
-              grant_tainted: Optional[bool] = None) -> Verdict:
+              grant_tainted: Optional[bool] = None, via: str = "") -> Verdict:
     """Decide whether this action may run now. Never raises.
 
     `tainted`: a detail came from outside content badly enough to need a card.
@@ -1211,6 +1269,16 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
     except Exception as e:
         klass, why, failed = OUTWARD, "", f"classification failed ({e})"
     try:
+        # Stop everything (services/global_stop): every authorization fails closed while
+        # stopped, whoever asks (an approval hook, a Claude Code session, a held send).
+        import agent_friday.core as _core_gs
+        if _core_gs.GLOBAL_STOP.is_set() and not (
+                tool_name == "task_control"
+                and str((args or {}).get("op") if isinstance(args, dict) else "").lower() in ("stop", "stop_all")):
+            failed = failed or "everything is stopped (the owner pressed Stop)"
+    except Exception:
+        pass
+    try:
         # A check that could not run holds the action; not even a grant
         # overrides that, because nobody knows what the action is.
         v = (Verdict("deny", klass, f"held: {failed}") if failed
@@ -1220,8 +1288,11 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
+        _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
+                  # "tool_call": the governance hook of _execute_tool, whose
+                  # call writes an outcome (services/receipt_audit expects one)
+                  "via": via or None,
                   "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
                                                          default=str).encode()).hexdigest(),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
@@ -1234,6 +1305,9 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "chosen_by": _chosen_by(ctx),
                   "plan_version": _plan_version(),
                   "turn_id": _turn_id()})
+        _out = _out if isinstance(_out, dict) else {}
+        LAST_RECEIPT.set({"seq": _out.get("seq"), "hash": _out.get("hash"), "tool": tool_name,
+                          "class": v.klass, "decision": v.action})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
@@ -1289,17 +1363,48 @@ def _send_grant(tool_name, args, ctx) -> Optional[dict]:
         return None
 
 
+#: In safe mode these run nothing at all: a command or program can reach the
+#: network or another machine in ways no socket guard in this process sees
+#: (git remotes, \\host paths, -ComputerName).
+SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "open_path", "open_url",
+                                  "browser_open", "browse_web", "install_package",
+                                  "codebase_run", "codebase_agent"})
+
+
 def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             grant_tainted=None) -> Verdict:
     if klass == "forbidden":
         return Verdict("deny", klass, f"not allowed: {why}")
+    if tool_name in SAFE_MODE_HELD_TOOLS:
+        try:
+            from agent_friday.services import safe_mode as _sm
+            _why = _sm.refusal("connectors") if _sm.active() else _authority_hold()
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
+        if _why:
+            return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
+        if str(tool_name).lower().startswith("mcp_"):
+            # a connector tool judged internal (a clean read under the card
+            # setting) still reaches a connected service
+            _why = _authority_hold()
+            if _why:
+                return Verdict("deny", klass, f"held: {_why}")
         if tainted and _own_mailbox_draft(tool_name, args):
             # A recipient read in an email is the normal case for a reply. The
             # draft reaches nobody; the send that could is asked separately.
             return Verdict("allow", klass, why + " (some details came from content read)")
         return Verdict("card" if tainted else "allow", klass, why)
     if klass == OBSERVE:
+        # Safe mode (services/safe_mode.py): connectors are off, so a read at
+        # a connected service is held too.
+        try:
+            from agent_friday.services import safe_mode as _sm
+            _why = _sm.refusal("connector_reads") or _authority_hold()
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
+        if _why:
+            return Verdict("deny", klass, f"held: {_why}")
         # A read at a connected service: runs unasked, receipted as observe.
         # A detail from outside content could be data being smuggled out
         # through the query, so that still goes to a card.
@@ -1307,6 +1412,9 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     ok, integrity = verify_claws()
     if not ok:
         return Verdict("deny", klass, f"held: cLaws integrity check failed -- {integrity}")
+    hold = outward_hold()
+    if hold:
+        return Verdict("deny", klass, f"held: {hold}")
     # A send the owner pre-approved (named recipients; a job's or skill's
     # sends to them). Its id becomes the owner's decision behind the call
     # (DECIDED), which the sending handler re-verifies for the exact message
@@ -1350,6 +1458,53 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     return Verdict("card", klass, why)
 
 
+def outward_hold() -> Optional[str]:
+    """Why every outward action waits right now, or None. Read on every
+    outward decision, after the cLaws check:
+
+    * Friday is in safe mode (services/safe_mode.py);
+    * Friday was restored from a Friday Bundle and the owner has not yet
+      resumed outward actions on this device (services/friday_bundle.py,
+      north star §27.6);
+    * the action ledger has a break the owner has not looked at
+      (services/action_ledger.hold_reason): a receipt changed, removed or
+      reordered on disk;
+    * the owner revoked all action authority (services/authority.py) and
+      has not restored it.
+
+    A check that cannot run holds: the reason names what failed."""
+    try:
+        from agent_friday.services import safe_mode as _sm
+        if _sm.active():
+            return _sm.refusal("connectors")
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return "safe mode could not be checked (%s)" % type(e).__name__
+    try:
+        from agent_friday.services import friday_bundle
+        why = friday_bundle.restore_hold()
+        if why:
+            return why
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return "the restore state could not be checked (%s)" % type(e).__name__
+    try:
+        from agent_friday.services import action_ledger
+        why = action_ledger.hold_reason()
+    except Exception as e:  # noqa: BLE001 - fail closed
+        why = "the action ledger could not be checked (%s)" % type(e).__name__
+    if why:
+        return why                       # a break is named first: it is the true reason
+    return _authority_hold() or None
+
+
+def _authority_hold() -> Optional[str]:
+    """The owner revoked all action authority (services/authority.py)."""
+    try:
+        from agent_friday.services import authority
+        return authority.hold_reason()
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return "the owner's revocation of authority could not be checked (%s)" % type(e).__name__
+
+
 class Held(RuntimeError):
     """An outward action the checkpoint would not let through."""
 
@@ -1365,12 +1520,19 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     a signed receipt of the action is written. Raises `Held` if either fails,
     so the caller stops before anything leaves the machine.
     """
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): held; the decision is not spent.
+        raise Held("everything is stopped (the owner pressed Stop); nothing was sent")
     try:
         ok, why = verify_claws()
     except Exception as e:
         raise Held(f"the cLaws integrity check could not run ({e})")
     if not ok:
         raise Held(f"the cLaws integrity check failed ({why})")
+    hold = outward_hold()
+    if hold:
+        raise Held(hold)
     try:
         _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
                   "surface": surface,
@@ -1409,9 +1571,23 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
     """
     from agent_friday.services import approvals as _ap
     try:
+        import agent_friday.core as _core_gs
+        if _core_gs.GLOBAL_STOP.is_set():
+            # Stop everything (services/global_stop): held, and the card is not used up.
+            # "card", not "deny": callers wait (as for a card) instead of recording a decline.
+            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
+    except Exception:
+        pass
+    try:
         ok, integrity = verify_claws()
         if not ok:
             return Verdict("deny", OUTWARD, f"held: {integrity}")
+        # the same hold every outward action takes (safe mode, a restore, the
+        # owner's revocation of authority, a ledger break): before any card
+        # is looked up or raised, so an approved card cannot slip past it
+        hold = outward_hold()
+        if hold:
+            return Verdict("deny", OUTWARD, f"held: {hold}")
         subject = external_subject(action, detail)
         rec = None
         if approval_id:

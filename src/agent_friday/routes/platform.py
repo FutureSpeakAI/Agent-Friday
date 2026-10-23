@@ -1,4 +1,4 @@
-﻿"""Platform endpoints — the Goose-inspired extensibility layer.
+"""Platform endpoints — the Goose-inspired extensibility layer.
 
 Exposes the seven extensibility services over the web API:
   * recipes            — YAML workflows (list / save / dry-run / run)
@@ -858,6 +858,17 @@ def api_subagent_scopes():
 @platform_bp.route("/api/subagents/scopes", methods=["POST"])
 def api_subagent_scope_save():
     data = request.get_json(silent=True) or {}
+    # §17.14-3: letting a scope start subagents, or changing a scope that
+    # exists, is the owner's click in Friday's window, never a request.
+    try:
+        existing = {s.get("name") for s in subagents.list_scopes()}
+    except Exception:
+        existing = None                   # can't tell: treat it as a change
+    if data.get("allow_subagents") or existing is None or (data.get("name") or "").strip() in existing:
+        from agent_friday.services import screen_click as _screen_click
+        if not _screen_click.screen_session(request):
+            return jsonify({"ok": False, "error": "needs_screen_click",
+                            "message": "Change this scope from Friday's window."}), 403
     try:
         return jsonify({"ok": True, "scope": subagents.save_custom_scope(data)})
     except ValueError as e:

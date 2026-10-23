@@ -312,6 +312,67 @@ def _unpack(archive: Path, into: Path) -> Path:
     return into
 
 
+_SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
+
+
+def _is_sha256(value) -> bool:
+    return isinstance(value, str) and bool(_SHA256_RE.fullmatch(value))
+
+
+def _expected_pinned_assets(spec: dict, backend: str, fam: str, name: str) -> list[str]:
+    """The exact asset names a pinned runtime will fetch on (os, backend):
+    ``llama-<tag>-<suffix>`` for the server archive, the cudart pack by name."""
+    wanted = sl.runtime_asset_names(backend, fam, name=name)
+    if not wanted:
+        return []
+    tag = str(spec.get("pinned_tag") or "")
+    out = ["llama-%s-%s" % (tag, wanted[0])]
+    out.extend(wanted[1:])
+    return out
+
+
+def runtime_pin_refusal(name: str, profile: dict | None = None) -> str | None:
+    """Why runtime ``name`` cannot be installed from its pins on this machine,
+    or None. Asked before a model download is queued, so a 13 GB file is not
+    fetched for a computer whose runtime build was never pinned (CT-E25).
+    A runtime without ``pinned_sha256`` (the Bonsai fork) is not checked here."""
+    spec = sl.runtime_spec(name)
+    if not spec:
+        return "the runtime %r is not on the shortlist" % name
+    pins = spec.get("pinned_sha256")
+    if pins is None:
+        return None
+    if not str(spec.get("pinned_tag") or "").strip():
+        return "the %s runtime has digests but no pinned release; not installing it" % name
+    try:
+        from agent_friday.services import hardware_profile as hwp
+        prof = profile if profile is not None else hwp.get()
+    except Exception:
+        prof = profile or {}
+    fam = sl.os_family()
+    backend = sl.backend_for(prof)
+    names = _expected_pinned_assets(spec, backend, fam, name)
+    if not names:
+        return ("%s is not available for this computer yet (%s, %s build): no pinned "
+                "runtime" % (spec.get("label") or name, fam, backend))
+    missing = [n for n in names if not _is_sha256((pins or {}).get(n))]
+    if missing:
+        return ("%s is not available for this computer yet: the %s runtime for %s/%s has no "
+                "pinned checksum (%s)" % (spec.get("label") or name, name, fam, backend,
+                                          ", ".join(missing)))
+    return None
+
+
+def _pinned_runtime_stale(name: str) -> bool:
+    """For a runtime with pins: the folder holds something other than the
+    pinned release (no install record, or another tag), so it is reinstalled
+    from the pins rather than trusted."""
+    spec = sl.runtime_spec(name)
+    if spec.get("pinned_sha256") is None:
+        return False
+    return installed_runtime_problem(name) is not None
+
+
 def runtime_binary(name: str = "prism-fork") -> Path | None:
     spec = sl.runtime_spec(name)
     binary = (spec.get("server_binary") or {}).get(sl.os_family(), "llama-server")
@@ -338,16 +399,46 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
     f = sl.file_entry(model_id, packing)
     if not f:
         return {"status": "refused", "error": "no such file for %s: %r" % (model_id, packing)}
-    items = [{"kind": "gguf", "name": f["file"], "url": sl.file_url(model_id, f),
-              "bytes": int(f.get("bytes") or 0), "sha256": f.get("sha256"),
-              "role": "weights", "packing": f.get("packing")}]
-    if with_companions:
-        for c in sl.companions(model_id):
-            items.append({"kind": "gguf", "name": c["file"], "url": sl.file_url(model_id, c),
-                          "bytes": int(c.get("bytes") or 0), "sha256": c.get("sha256"),
-                          "role": c.get("kind", "companion")})
-    needs_runtime = (m.get("runtime") == "prism-fork" and f.get("runtime") != "llama.cpp"
-                     and with_runtime and not engine_override and runtime_binary() is None)
+    # A curated file is only ever accepted against the publisher's checksum
+    # (CT-E26): an entry without one is a mistake in the shipped list, and
+    # "size only" would install whatever bytes the server sent.
+    unpinned = [x.get("file") for x in [f] + (sl.companions(model_id) if with_companions else [])
+                if not _is_sha256(x.get("sha256"))]
+    if unpinned:
+        return {"status": "refused",
+                "error": "%s has no published checksum for %s, so it will not be installed"
+                         % (model_id, ", ".join(str(u) for u in unpinned))}
+    try:
+        items = [{"kind": "gguf", "name": f["file"], "url": sl.file_url(model_id, f),
+                  "bytes": int(f.get("bytes") or 0), "sha256": f.get("sha256"),
+                  "role": "weights", "packing": f.get("packing")}]
+        if with_companions:
+            for c in sl.companions(model_id):
+                items.append({"kind": "gguf", "name": c["file"], "url": sl.file_url(model_id, c),
+                              "bytes": int(c.get("bytes") or 0), "sha256": c.get("sha256"),
+                              "role": c.get("kind", "companion")})
+    except ValueError as e:
+        return {"status": "refused", "error": str(e)}
+    try:
+        from agent_friday.services import model_store
+        held_now = model_store.held_installed()
+    except Exception:
+        held_now = {}
+    if model_id in held_now:
+        # Installed, verified and waiting for its seat. Replacing it would move
+        # the copy aside through the previous-version slot for nothing.
+        return {"status": "refused",
+                "error": "%s is already installed (%s); remove it first to change the file"
+                         % (m.get("label", model_id), held_now[model_id])}
+    runtime = m.get("runtime") or None
+    needs_runtime = (bool(runtime) and runtime in (sl.runtime_names())
+                     and f.get("runtime") != "llama.cpp"
+                     and with_runtime and not engine_override
+                     and (runtime_binary(runtime) is None or _pinned_runtime_stale(runtime)))
+    if needs_runtime:
+        why = runtime_pin_refusal(runtime, profile)
+        if why:
+            return {"status": "refused", "error": why}
     total = sum(i["bytes"] for i in items)
     refusal = _disk_refusal(profile, total)
     if refusal:
@@ -356,8 +447,8 @@ def start_model(model_id: str, packing: str | None = None, *, profile: dict | No
         "id": "dl-%s" % uuid.uuid4().hex[:8], "model_id": model_id, "label": m.get("label", model_id),
         "packing": f.get("packing"), "status": "queued", "items": items,
         "bytes_total": total, "bytes_done": 0, "rate_mib_s": None, "eta_s": None,
-        "needs_runtime": needs_runtime, "engine": engine_override, "error": None,
-        "started_at": time.time(), "finished_at": None, "orb_pid": None,
+        "needs_runtime": needs_runtime, "runtime": runtime, "engine": engine_override,
+        "error": None, "started_at": time.time(), "finished_at": None, "orb_pid": None,
         "serve": (serve_override if serve_override is not None else (m.get("serve") or {})),
         "licence": m.get("licence"),
     }
@@ -387,6 +478,13 @@ def start_pasted(repo: str, filename: str, *, bytes_: int, sha256: str | None,
     repo = repo.strip().strip("/")
     if repo.count("/") != 1 or not filename.lower().endswith(".gguf") or "/" in filename or ".." in filename:
         return {"status": "refused", "error": "a pasted model is publisher/model plus one .gguf file name"}
+    held = sl.held_repos().get(repo.lower())
+    if held:
+        # The same weights as a held shortlist model, under another id, would
+        # be a seat the hold never covered.
+        return {"status": "refused",
+                "error": "%s is on Friday's own list; install it from its row there (%s)"
+                         % (repo, held)}
     model_id = "hf:" + repo.split("/")[1].lower()
     items = [{"kind": "gguf", "name": filename, "url": sl.HF_RESOLVE.format(repo=repo, file=filename),
               "bytes": int(bytes_ or 0), "sha256": sha256, "role": "weights",
@@ -496,7 +594,7 @@ def run_job(job_id: str) -> dict:
         if job.get("needs_runtime"):
             _set(job, status="installing-runtime")
             _orb(job, label="Installing the runtime for %s" % job["label"])
-            job["engine"] = str(_install_runtime(ctrl))
+            job["engine"] = str(_install_runtime(ctrl, job.get("runtime") or "prism-fork"))
         _set(job, status="registering")
         rec = _register(job)
         _set(job, status="installed", finished_at=time.time(), record=rec)
@@ -563,17 +661,48 @@ def check_release_build(release: dict, spec: dict) -> int | None:
     return build
 
 
-def _install_runtime(ctrl: dict) -> Path:
-    spec = sl.runtime_spec()
+def check_pinned_assets(release: dict, spec: dict, assets: list[dict], name: str) -> list[dict]:
+    """For a runtime that carries ``pinned_sha256``: refuse a release whose tag
+    is not the pinned one, an asset with no pin, and a release digest that
+    differs from its pin; return the assets with the PIN as their sha256.
+    Runs before anything is fetched. A runtime without pins passes through."""
+    pins = spec.get("pinned_sha256")
+    if pins is None:
+        return assets
+    tag = str((release or {}).get("tag_name") or "")
+    pinned_tag = str(spec.get("pinned_tag") or "")
+    if not pinned_tag or tag != pinned_tag:
+        raise DownloadError("the %s runtime is pinned to release %s but the release offered "
+                            "is %r; not installing it" % (name, pinned_tag or "(none)", tag))
+    out = []
+    for a in assets:
+        pin = (pins or {}).get(a["name"])
+        if not _is_sha256(pin):
+            raise DownloadError("the %s runtime asset %s has no pinned checksum; not installing "
+                                "it" % (name, a["name"]))
+        published = a.get("sha256")
+        if published and published.lower() != pin.lower():
+            raise DownloadError("the %s runtime asset %s is not the pinned build (release says "
+                                "%s…, pin is %s…); not installing it"
+                                % (name, a["name"], str(published)[:12], pin[:12]))
+        out.append(dict(a, sha256=pin.lower()))
+    return out
+
+
+def _install_runtime(ctrl: dict, name: str = "prism-fork") -> Path:
+    spec = sl.runtime_spec(name)
+    if not spec:
+        raise DownloadError("the runtime %r is not on the shortlist" % name)
     from agent_friday.services import hardware_profile as hwp
     backend = sl.backend_for(hwp.get())
     release = _release_json(runtime_release_url(spec))
     build = check_release_build(release, spec)
-    assets = sl.pick_release_assets(release, backend)
+    assets = sl.pick_release_assets(release, backend, name=name)
     if not assets:
         raise DownloadError("no runtime server archive for this OS and %s backend in the "
                             "release (see friday.log for the assets considered)" % backend)
-    into = runtime_dir_for()
+    assets = check_pinned_assets(release, spec, assets, name)
+    into = runtime_dir_for(name)
     for a in assets:
         dest = destination("runtime", a["name"])
         _log.info("runtime: fetching %s (%s) into %s", a["name"], a.get("role") or "asset", into)
@@ -582,7 +711,7 @@ def _install_runtime(ctrl: dict) -> Path:
         if out["status"] != "done":
             raise DownloadError("runtime download %s" % out["status"])
         _unpack(dest, into)
-    binary = runtime_binary()
+    binary = runtime_binary(name)
     if binary is None:
         wanted = (spec.get("server_binary") or {}).get(sl.os_family(), "llama-server")
         names = ", ".join(a["name"] for a in assets)
@@ -601,11 +730,11 @@ def _install_runtime(ctrl: dict) -> Path:
     return binary
 
 
-def repair_runtime() -> Path:
+def repair_runtime(name: str = "prism-fork") -> Path:
     """Reinstall the runtime from the pinned release (a broken one on disk is
     replaced). Raises DownloadError with the reason when it cannot."""
-    _log.info("runtime: reinstalling: %s", installed_runtime_problem() or "requested")
-    return _install_runtime({"pause": threading.Event(), "cancel": threading.Event()})
+    _log.info("runtime: reinstalling %s: %s", name, installed_runtime_problem(name) or "requested")
+    return _install_runtime({"pause": threading.Event(), "cancel": threading.Event()}, name)
 
 
 def installed_runtime_problem(name: str = "prism-fork") -> str | None:
@@ -622,10 +751,17 @@ def installed_runtime_problem(name: str = "prism-fork") -> str | None:
         return ("the local model runtime in %s has no server program (%s); it will be "
                 "reinstalled from release %s" % (into, (spec.get("server_binary") or {}).get(
                     sl.os_family(), "llama-server"), spec.get("pinned_tag") or "latest"))
+    pinned = spec.get("pinned_sha256") is not None
     try:
         rec = json.loads((into / "friday_runtime.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        if pinned:
+            return ("the %s runtime in %s has no install record, so it is not known to be "
+                    "the pinned release %s; it will be reinstalled" % (name, into, spec.get("pinned_tag")))
         return None   # installed before this record existed and it has its server: fine
+    if pinned and str(rec.get("tag") or "") != str(spec.get("pinned_tag") or ""):
+        return ("the installed %s runtime is release %s, not the pinned %s; it will be reinstalled"
+                % (name, rec.get("tag") or "(unknown)", spec.get("pinned_tag")))
     build = rec.get("build")
     bad = {str(k): v for k, v in (spec.get("known_bad_builds") or {}).items()}
     if build is not None and str(build) in bad:
@@ -642,9 +778,10 @@ def _register(job: dict) -> dict:
         m = {"repo": job["pasted"]["repo"], "label": job.get("label"), "licence": job.get("licence")}
     serve = job.get("serve") or {}
     engine = job.get("engine")
-    if not engine and m.get("runtime") == "prism-fork":
-        b = runtime_binary()
+    if not engine and m.get("runtime") in sl.runtime_names():
+        b = runtime_binary(m["runtime"])
         engine = str(b) if b else None
+    held = None if job.get("pasted") else m.get("seat_hold")
     return model_store.register(
         job["model_id"], weights["dest"], source=model_store.SOURCE_DOWNLOAD,
         mmproj=mmproj["dest"] if mmproj else None,
@@ -653,7 +790,7 @@ def _register(job: dict) -> dict:
                 "licence": m.get("licence"), "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S")},
         label="%s (%s)" % (m.get("label", job["model_id"]), weights.get("packing") or "gguf"),
         engine=engine, serve_args=serve.get("serve_args"),
-        serve_num_ctx=serve.get("serve_num_ctx"))
+        serve_num_ctx=serve.get("serve_num_ctx"), held=held)
 
 
 # ── controls ────────────────────────────────────────────────────────────────

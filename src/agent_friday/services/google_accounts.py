@@ -1445,7 +1445,8 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
     except Exception as e:
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
-        svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
+        from agent_friday.services import egress_record as _er
+        svc = _er.tasks(build("tasks", "v1", credentials=creds, cache_discovery=False))
         if task_id:
             result = svc.tasks().patch(tasklist=tasklist_id, task=task_id, body=body).execute()
         else:
@@ -1462,7 +1463,8 @@ def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
     except Exception as e:
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
-        svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
+        from agent_friday.services import egress_record as _er
+        svc = _er.tasks(build("tasks", "v1", credentials=creds, cache_discovery=False))
         svc.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
         return {"deleted": True, "id": task_id}
     except Exception as e:

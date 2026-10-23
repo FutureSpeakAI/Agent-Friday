@@ -195,6 +195,10 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # Retiring a learned lesson or skill (services/lesson_records): it archives
     # something the owner relies on, so a click on the card only.
     "lesson_retire": frozenset({"owner:ui"}),
+    # Installing a skill from a package (services/skill_import_review): it
+    # changes what Friday does whenever its triggers match, so a press on the
+    # card that shows its procedure, triggers and tools, and nothing else.
+    "skill_import": frozenset({"owner:ui"}),
 }
 
 
@@ -774,6 +778,14 @@ def decide(approval_id: str, decision: str, *, decided_by: str = "owner",
     return rec
 
 
+def _everything_stopped() -> bool:
+    try:
+        import agent_friday.core as _core_gs
+        return _core_gs.GLOBAL_STOP.is_set()
+    except Exception:
+        return False
+
+
 def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
                         note: str = "", source: str = "") -> tuple:
     """`decide()`, also saying whether THIS call made the decision.
@@ -806,8 +818,18 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
             return None, False
         if rec.get("status") != "pending":
             return dict(rec), False
+        if decision == "approve" and _everything_stopped():
+            # Stop everything (services/global_stop): nothing is approved while stopped,
+            # because an approval runs its action. Declining stays open; the card waits.
+            return dict(rec), False
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
         if decision == "approve" and screen_only is not None and decided_by not in screen_only:
+            return dict(rec), False
+        if decision == "approve" and source == "voice" and voice_off_this_desk():
+            # A spoken yes counts only from a voice call on Friday's own page on this PC
+            # (the desk key on the socket, routes/voice.py). Voice through a tunnel or a
+            # forward may decline, never approve. Every production voice decision runs
+            # inside a voice call's tool call (agent._execute_tool), which carries the flag.
             return dict(rec), False
         if (decision == "approve" and (rec.get("payload") or {}).get("origin") == "laya_safe_write"
                 and decided_by not in LAYA_CARD_APPROVERS):
@@ -842,6 +864,36 @@ _MESSAGE_SURFACES = frozenset({"sms", "text", "telegram", "discord", "channel", 
 #: Sources a caller may name for its own decision (decide(source=...)). Never desktop_press:
 #: that one is only ever worked out from a verified press.
 _CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday"})
+
+
+def voice_on_this_desk() -> bool:
+    """Positive proof for a spoken approval: the decision is made inside a voice call's
+    tool call, and that call is the owner's own page on this PC."""
+    try:
+        from agent_friday.services.agent import _CURRENT_TOOL_CONTEXT
+        ctx = _CURRENT_TOOL_CONTEXT.get() or {}
+    except Exception:
+        return False
+    surface = str(ctx.get("surface") or "")
+    if not (ctx.get("is_voice") or surface.startswith("voice")):
+        return False
+    return bool(ctx.get("owner_local") or ctx.get("voice_owner_local"))
+
+
+def voice_off_this_desk() -> bool:
+    """True when the decision is being made inside a voice call's tool call and that
+    call is not the owner's own page on this PC (no desk key on its socket). Outside a
+    voice tool call (a page press, a typed answer, in-process code) it is False: those
+    channels have their own rules."""
+    try:
+        from agent_friday.services.agent import _CURRENT_TOOL_CONTEXT
+        ctx = _CURRENT_TOOL_CONTEXT.get() or {}
+    except Exception:
+        return False
+    surface = str(ctx.get("surface") or "")
+    if not (ctx.get("is_voice") or surface.startswith("voice")):
+        return False
+    return not (ctx.get("owner_local") or ctx.get("voice_owner_local"))
 
 
 def _press_granted(approval_id=None) -> bool:
@@ -948,6 +1000,29 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
         return ("Private text goes to the cloud only with its card's own Send button in the app, where you "
                 "see exactly the words and where they would go. It cannot be approved from here.")
     return ""
+
+
+def withdraw_unused_approved(by: str, note: str = "") -> int:
+    """Move every APPROVED card that has not been used to 'expired': the
+    owner's revocation of all action authority (services/authority.py) takes
+    back yeses not yet acted on, so none runs by itself after a restore.
+    Returns how many."""
+    withdrawn: List[Dict[str, Any]] = []
+    with _LOCK:
+        recs = _read_store()
+        for r in recs:
+            if r.get("status") in ("approved", "auto_approved") and not r.get("used_by") \
+                    and not r.get("consumed"):
+                r["status"] = "expired"
+                r["decided_at"] = time.time()
+                r["decided_by"] = by
+                r["decision_note"] = note
+                withdrawn.append(dict(r))
+        if withdrawn:
+            _write_store(recs)
+    for rec in withdrawn:
+        _feed("card_resolved", rec)
+    return len(withdrawn)
 
 
 def expire_matching(match, by: str, note: str = "") -> int:

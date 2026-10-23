@@ -514,6 +514,10 @@ def tick(now=None) -> Dict[str, Any]:
     """One publisher pass: expire stale holds, recover crashed claims, claim
     due targets, dispatch each through the gate chain. Returns a summary
     envelope; never raises. Re-entrant calls coalesce (one tick at a time)."""
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): nothing is published while stopped.
+        return {"ok": True, "skipped": "everything is stopped"}
     if not _TICK_LOCK.acquire(blocking=False):
         return {"ok": True, "skipped": "tick already running"}
     try:
@@ -551,6 +555,9 @@ def tick(now=None) -> Dict[str, Any]:
         counts: Dict[str, int] = {}
         confirmed_posts: List[str] = []
         for t in targets:
+            if _core_gs.GLOBAL_STOP.is_set():
+                # Stopped mid-pass: what is not sent yet waits for Resume (claims recover).
+                break
             outcome = _dispatch_target(t)
             counts[outcome] = counts.get(outcome, 0) + 1
             if outcome == "confirmed":
@@ -1469,6 +1476,22 @@ def _run_target(target: Dict[str, Any]) -> str:
     store.set_target_status(tid, "SENT")
     pub = adapter.publish(prepared)
     pub = pub if isinstance(pub, dict) else {"ok": False, "error": "publish_failed"}
+    # §26.7: the post in the egress ledger and on the privacy map (what went
+    # to which platform; the text fingerprinted and kept encrypted, A20).
+    try:
+        from agent_friday.services import egress_gate as _eg
+        platform = str(target.get("platform") or "")
+        _eg.record_service_send("publishing", ("publish:" + platform)[:80], destination=_destination(platform),
+                                content={"platform": platform, "post": {
+                                    k: prepared.get(k) for k in ("title", "body", "text", "texts", "segments",
+                                                                 "hashtags", "mentions", "caption", "link")
+                                    if prepared.get(k) is not None},
+                                    "assets": [{k: a.get(k) for k in ("id", "filename", "content_hash", "sha256",
+                                                                      "kind", "alt_text", "bytes") if k in a}
+                                               for a in (prepared.get("assets") or []) if isinstance(a, dict)]},
+                                result="sent" if pub.get("ok") else "failed", part="post")
+    except Exception:
+        pass
     if pub.get("ok"):
         # The adapter's word beats the arm-time flag: a publish the platform
         # did NOT schedule must never be recorded or announced as native.

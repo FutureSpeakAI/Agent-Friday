@@ -31,6 +31,12 @@ SCOPES_FILE = friday_home() / "subagent_scopes.json"
 # Ring 3 (OS control) is never available to a subagent, whatever the scope says.
 _SUBAGENT_RING_CEILING = 2
 
+#: Tools that start more work of their own (§17.14-3): a scoped subagent may
+#: call them only when its scope allows subagents.
+SPAWN_TOOLS = frozenset({"spawn_task", "run_workflow", "workflow_action", "deep_research",
+                         "schedule_job", "ask_crew", "steer_crew", "talk_crew", "task_control",
+                         "create_website", "start_creative_pipeline", "submit_work_order"})
+
 
 class SubagentScope:
     def __init__(self, data: dict):
@@ -52,9 +58,15 @@ class SubagentScope:
         # scope that declares none has none. 900 was a fallback nobody chose.
         _secs = data.get("time_budget_s")
         self.time_budget_s = int(_secs) if _secs else None
+        # §17.14-3: a subagent may start subagents (or schedules, workflows,
+        # crew asks, research runs) only when its scope says so.
+        self.allow_subagents = bool(data.get("allow_subagents", False))
 
     def allows(self, tool_name: str, ring: int) -> tuple:
         """Return (allowed, reason)."""
+        if tool_name in SPAWN_TOOLS and not self.allow_subagents:
+            return False, (f"subagent scope '{self.name}': tool '{tool_name}' starts more work, "
+                           "and this scope does not allow subagents")
         if ring > self.max_ring:
             return False, (f"subagent scope '{self.name}': tool '{tool_name}' is "
                            f"ring-{ring}, scope ceiling is ring-{self.max_ring}")
@@ -74,7 +86,27 @@ class SubagentScope:
             "max_ring": self.max_ring,
             "max_steps": self.max_steps,
             "time_budget_s": self.time_budget_s,
+            "allow_subagents": self.allow_subagents,
         }
+
+    def broader_than(self, parent: "SubagentScope") -> list:
+        """The ways this scope would give a child more than `parent` has."""
+        why = []
+        if self.max_ring > parent.max_ring:
+            why.append(f"ring {self.max_ring} above the parent's {parent.max_ring}")
+        if parent.allowed_tools is not None and (
+                self.allowed_tools is None or not set(self.allowed_tools) <= set(parent.allowed_tools)):
+            why.append("tools outside the parent's allow-list")
+        if set(parent.denied_tools) - set(self.denied_tools) and (
+                self.allowed_tools is None or set(self.allowed_tools) & set(parent.denied_tools)):
+            why.append("tools the parent is denied")
+        if parent.max_steps and (not self.max_steps or self.max_steps > parent.max_steps):
+            why.append("a larger step budget")
+        if parent.time_budget_s and (not self.time_budget_s or self.time_budget_s > parent.time_budget_s):
+            why.append("a longer time budget")
+        if self.allow_subagents and not parent.allow_subagents:
+            why.append("leave to start subagents")
+        return why
 
     def contract_text(self) -> str:
         """Human-readable scope contract appended to the subagent prompt."""
@@ -196,6 +228,10 @@ def save_custom_scope(data: dict) -> dict:
     name = (data.get("name") or "").strip()
     if not name:
         raise UserFacingValueError("scope requires a 'name'")
+    if name in BUILTIN_SCOPES:
+        # A built-in (goal-milestone above all) is never redefined: every
+        # autonomous task under it would be widened at once.
+        raise UserFacingValueError(f"'{name}' is a built-in scope; choose another name")
     scope = SubagentScope(data)  # normalizes + clamps the ring ceiling
     custom = _load_custom_scopes()
     custom[name] = scope.to_dict()
@@ -214,15 +250,49 @@ def spawn_scoped_subagent(name: str, prompt: str, scope: str = "researcher",
     """
     sc = get_scope(scope)
     from agent_friday.services.agent import _spawn_task
-    task_id = _spawn_task(name, prompt + sc.contract_text(), description)
+    # The scope goes in WITH the spawn: _spawn_task registers it before the
+    # worker starts (no window where the first tool call runs unscoped), and the
+    # record carries it, so anything that re-dispatches the task (a restart, a
+    # move to the cloud) keeps it.
+    task_id = _spawn_task(name, prompt + sc.contract_text(), description, scope=scope)
+    if task_id and get_task_scope(task_id) is None:
+        register_scope_for_task(task_id, scope)     # a dispatcher that did not register it
     with _LOCK:
-        _SCOPED_TASKS[task_id] = {
-            "scope": sc, "name": name, "spawned": time.time(), "steps": 0,
-        }
+        rec = _SCOPED_TASKS.get(task_id)
+        if rec is not None:
+            rec["name"] = name
     return {"task_id": task_id, "scope": sc.to_dict()}
 
 
-def register_scope_for_task(task_id: str, scope: str) -> SubagentScope:
+def nested_spawn_check(parent_task_id: str, child_scope: str | None, *,
+                       continuation: bool = False) -> tuple:
+    """(ok, reason, scope to inherit) for a task spawned by `parent_task_id`.
+    An unscoped parent is Friday's own work and may spawn freely (its
+    children are still checked by the governance gate). `continuation` is
+    the same work going on (a chain step, a follow-up, a retry, named by its
+    caller): it keeps the parent's scope. Anything else a scoped task starts
+    is a subagent: the parent must allow subagents, and the child may be no
+    broader than it; a child given no scope runs under the parent's."""
+    parent = get_task_scope(parent_task_id)
+    if parent is None:
+        return True, "", None
+    if continuation and (not child_scope or child_scope == parent.name):
+        return True, "", parent.name
+    if not parent.allow_subagents:
+        return False, f"the '{parent.name}' scope this work runs under does not allow subagents", None
+    if not child_scope or child_scope == parent.name:
+        return True, "", parent.name
+    try:
+        child = get_scope(child_scope)
+    except Exception:
+        return False, f"unknown scope {child_scope!r}", None
+    why = child.broader_than(parent)
+    if why:
+        return False, f"the '{child.name}' scope would give more than '{parent.name}': " + "; ".join(why), None
+    return True, "", None
+
+
+def register_scope_for_task(task_id: str, scope: str, *, budget_from: str | None = None) -> SubagentScope:
     """Apply a named scope to a task_id, atomically, BEFORE that task's
     worker thread can execute any tool call.
 
@@ -239,9 +309,16 @@ def register_scope_for_task(task_id: str, scope: str) -> SubagentScope:
     """
     sc = get_scope(scope)  # raises KeyError for an unknown scope — fail loud
     with _LOCK:
-        _SCOPED_TASKS[task_id] = {
-            "scope": sc, "name": scope, "spawned": time.time(), "steps": 0,
-        }
+        if task_id in _SCOPED_TASKS:
+            # Never reset a live task's step count or clock.
+            return _SCOPED_TASKS[task_id]["scope"]
+        rec = {"scope": sc, "name": scope, "spawned": time.time(), "steps": 0}
+        parent = _SCOPED_TASKS.get(budget_from) if budget_from else None
+        if parent is not None:
+            # A subagent shares its parent's budget: one counter for the
+            # whole family (the root's), so spawning cannot multiply it.
+            rec["shared"] = parent.get("shared") or parent
+        _SCOPED_TASKS[task_id] = rec
     return sc
 
 
@@ -255,10 +332,11 @@ def scope_check(task_id: str, tool_name: str, ring: int) -> tuple:
         rec = _SCOPED_TASKS.get(task_id)
         if rec is None:
             return True, ""
-        rec["steps"] += 1
-        steps = rec["steps"]
+        budget = rec.get("shared") or rec
+        budget["steps"] += 1
+        steps = budget["steps"]
         sc = rec["scope"]
-        spawned = rec["spawned"]
+        spawned = budget["spawned"]
     if sc.max_steps and steps > sc.max_steps:
         return False, (f"subagent scope '{sc.name}': step budget "
                        f"({sc.max_steps}) exhausted")

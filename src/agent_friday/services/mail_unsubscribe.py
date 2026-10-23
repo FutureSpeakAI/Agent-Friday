@@ -134,6 +134,17 @@ def options(account_id: str, message_id: str) -> dict:
             "host": urlsplit(shown).hostname if shown else None}
 
 
+def _record_unsubscribe(url: str, result) -> None:
+    """A one-click unsubscribe in the egress ledger and on the privacy map
+    (§26.7); the link (which can carry a personal token) is kept encrypted
+    under A20. Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_address("unsubscribe", url, result, prefix="unsubscribe")
+    except Exception:
+        pass
+
+
 def unsubscribe(account_id: str, message_id: str) -> dict:
     """Do the part Friday can do itself. -> {"status": "done" | "next" | "none" | "error", ...}"""
     opt = options(account_id, message_id)
@@ -151,10 +162,12 @@ def unsubscribe(account_id: str, message_id: str) -> dict:
             with web_safety.pinned(url):
                 r = _post(url)
                 getattr(r, "close", lambda: None)()
+            _record_unsubscribe(url, "sent")
         except web_safety.UnsafeURLError:
             return {"status": "error", "method": "one_click",
                     "message": "The list's unsubscribe address is not a public web address, so Friday did not contact it."}
         except Exception as e:
+            _record_unsubscribe(url, e)
             return {"status": "error", "method": "one_click", "message": ExceptionText("The list did not answer: %s" % e)}
         if 200 <= r.status_code < 300:
             return {"status": "done", "method": "one_click", "host": opt["host"],

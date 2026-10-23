@@ -40,7 +40,8 @@ def test_all_82_census_emitters_are_registered_with_a_place():
 def test_the_emitters_live_gained_since_the_census_are_registered():
     """Visible jobs, the Local AI queue, the cloud-spill offer and the in-call voice
     frames are emitters too: each has a place, and none is a safety-critical notice."""
-    assert len(reg.LIVE_IDS) == 6
+    assert len(reg.LIVE_IDS) == 7
+    assert reg.get("L07").place == reg.NEEDS_YOU            # the weekly Doctor ask (A3): a card, asked
     for eid in reg.LIVE_IDS:
         em = reg.get(eid)
         assert em is not None, eid
@@ -196,7 +197,8 @@ def test_the_ledger_line_holds_counts_only_no_words():
     ne.push(title="Tidy the notes finished", body="Your private notes about Alice",
             source="system", kind="info", emitter="E02", dedupe_key="task-done:t9",
             meta={"task_id": "t9"})
-    raw = al.LEDGER_FILE.read_text(encoding="utf-8")
+    from tests import ledger_support               # rows live in the action ledger
+    raw = ledger_support.text("activity")
     for word in ("Tidy", "private", "Alice", "t9"):
         assert word not in raw, word
     rec = json.loads(raw.splitlines()[-1])
