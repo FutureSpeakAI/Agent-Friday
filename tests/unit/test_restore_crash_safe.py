@@ -31,10 +31,25 @@ poi._GOV_KEY_FILE = home / "vault" / ".governance-key"
 from agent_friday.services import friday_bundle as fb
 if not hasattr(fb, "_journal_step"):
     sys.exit(3)                       # no step to stop at: this Friday keeps no journal
-def stop(s):
-    if s == step:
-        os._exit(9)
-fb._journal_step = stop
+if step.startswith("replace:"):
+    real_replace = fb._replace
+    def rep(src, dst):
+        real_replace(src, dst)
+        if step[8:] in Path(dst).name:
+            os._exit(9)
+    fb._replace = rep
+elif step.startswith("unlink:"):
+    real_unlink = fb._unlink_retry
+    def unl(p):
+        real_unlink(p)
+        if Path(p).name.endswith(step[7:]):
+            os._exit(9)
+    fb._unlink_retry = unl
+else:
+    def stop(s):
+        if s == step:
+            os._exit(9)
+    fb._journal_step = stop
 fb.restore(bundle, sys.argv[4], home=home, replace=True)
 sys.exit(0)
 """
@@ -275,4 +290,61 @@ def test_a_journal_naming_other_folders_is_never_acted_on(machines, tmp_path):
     out = fb.recover_interrupted_restore(b)
     assert out["rolled"] == "none"
     assert (victim / "letter.txt").read_text(encoding="utf-8") == "keep me"
+    assert (b / "core_memory" / "ME.md").exists()
+
+def test_a_stop_right_after_the_old_folder_is_moved_aside_puts_it_back(machines):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    r = _run(CHILD, ["replace:.pre-restore-", b, bundle, PASS], b, scratch)
+    assert r.returncode == 9, (r.returncode, r.stderr[-2000:])
+    assert not b.exists()
+    out = fb.recover_interrupted_restore(b)
+    assert out and out["rolled"] == "back", out
+    assert (b / "core_memory" / "ME.md").read_text(encoding="utf-8") == "- the Friday that was here\n"
+    assert not _siblings(b, ".pre-restore-")
+
+
+def test_a_stop_as_the_journal_is_dropped_leaves_the_restore_finished(machines):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    r = _run(CHILD, ["unlink:" + fb.JOURNAL_SUFFIX, b, bundle, PASS], b, scratch)
+    assert r.returncode == 9, (r.returncode, r.stderr[-2000:])
+    assert fb.recover_interrupted_restore(b) is None
+    assert (b / "core_memory" / "ME.md").read_text(encoding="utf-8") == "- the restored Friday\n"
+    assert list((b / "restore").glob("receipt-*.json"))
+
+
+def test_a_keychain_that_will_not_take_the_key_stops_the_restore(machines, monkeypatch):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    other = "33" * 32
+
+    class Stubborn(_Keyring):
+        def set_password(self, svc, name, value):
+            if name == "governance-key" and value != other:
+                raise RuntimeError("locked")
+            super().set_password(svc, name, value)
+    kr = Stubborn()
+    kr.set_password("agent-friday", "governance-key", other)
+    monkeypatch.setitem(sys.modules, "keyring", kr)
+    monkeypatch.setitem(sys.modules, "keyring.errors", kr.errors)
+    with pytest.raises(fb.BundleError, match="keychain"):
+        fb.restore(bundle, PASS, home=b, replace=True)
+    assert kr.get_password("agent-friday", "governance-key") == other
+    assert (b / "core_memory" / "ME.md").read_text(encoding="utf-8") == "- the Friday that was here\n"
+    assert not _siblings(b, ".restore-journal") and not _siblings(b, ".friday-restore-")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="folder names are not case-sensitive on Windows only")
+def test_a_journal_written_with_other_letter_case_is_still_used(machines):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    r = _run(CHILD, ["aside", b, bundle, PASS], b, scratch)
+    assert r.returncode == 9
+    jp = fb._journal_path(b)
+    jr = json.loads(jp.read_text(encoding="utf-8"))
+    jr["home"] = jr["home"].upper()
+    jp.write_text(json.dumps(jr), encoding="utf-8")
+    out = fb.recover_interrupted_restore(b)
+    assert out and out["rolled"] == "back", out
     assert (b / "core_memory" / "ME.md").exists()
