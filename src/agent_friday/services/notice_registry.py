@@ -251,6 +251,13 @@ _ALL = [
     _e("E81", "routes/chat.py:stream", "stream_trace", RECEIPTS, "", route=STREAM, ledger=False),
     _e("E82", "core.py:process_register", "process_orb", ACTIVITY, "", route=AMBIENT,
        ledger=False),
+    # A crash in the middle of an outward action (north star §34.16-1): an approved card whose
+    # action began and never recorded its end, and a task whose first outward step was in flight.
+    # Whether it happened is not known; nothing is retried; the owner is told once.
+    _e("CR1", "services/card_recovery.py:_announce", "approval_outcome_unknown", NEEDS_YOU,
+       "approval_outcome_unknown:{approval_ids}", source="card-recovery"),
+    _e("CR2", "services/task_resume.py:announce_may_have_acted", "tasks_may_have_acted", NEEDS_YOU,
+       "tasks_may_have_acted:{incident}", source="task-resume"),
     # A model swap on the same side of the cloud line: a receipt, pulled not pushed.
     _e("X02", "services/seat_transparency.py:observe_seats(same side)", "seat_receipt", RECEIPTS,
        "seat_receipt:{seat_state}"),

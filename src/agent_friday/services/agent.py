@@ -5588,6 +5588,21 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 _tr2.announce(summary.get('resumable') or [], resumed=_picked)
             except Exception:
                 pass
+            # §34.16-1: what a crash interrupted mid outward action is told,
+            # never retried: a task whose first outward step was in flight, and
+            # an approved card whose action began and never recorded its end.
+            try:
+                from agent_friday.services import task_resume as _tr3
+                _acted = _tr3.may_have_acted_after_boot()
+                summary['may_have_acted'] = [r['task_id'] for r in _acted]
+                _tr3.announce_may_have_acted(_acted)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import card_recovery as _cards
+                summary['cards_outcome_unknown'] = _cards.reconcile_at_boot()
+            except Exception:
+                pass
         try:
             removed = tj.apply_retention()
             if removed:
@@ -9312,6 +9327,9 @@ def _tool_office_check(inp):
         lines.append("%s is NOT ready yet:" % out.get("file"))
         for f in out.get("findings", []):
             lines.append("  - %s" % f)
+    if out.get("warnings"):
+        lines.append("Worth fixing:")
+        lines += ["  - %s" % w for w in out["warnings"][:10]]
     lines.append("Look at the render before you decide it is done.")
     note = "\n".join(lines)
     if out.get("image_b64"):
@@ -16284,6 +16302,21 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
         # documents: Library passages are replaced by a stand-in before any of them sees the result.
         from agent_friday.services.library import envelope as _lib_env
         result = _lib_env.keep_out_of_records(name, result)
+    except Exception:
+        pass
+    # The artifact manifest (§34.12-2): a file a creating tool made is linked
+    # to its task, its turn and the receipt that allowed the call, with its
+    # hash and structural check. Only a call that went through counts.
+    try:
+        from agent_friday.services import artifact_manifest as _am
+        if name in _am.CREATING_TOOLS:
+            from agent_friday.services import completion_receipts as _cr
+            _went = (_tool_call_status(result) == "ok" and isinstance(result, str)
+                     and not result.lstrip().startswith(_cr.FAILURE_SENTINELS))
+            # Recorded on a background thread: a long video's hash or a big
+            # PDF's check never holds up the conversation.
+            _am.submit(name, args, result, task_id=_journal().current_task(), ok=_went,
+                       started_at=_time.time() - float(duration_ms or 0) / 1000.0)
     except Exception:
         pass
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
