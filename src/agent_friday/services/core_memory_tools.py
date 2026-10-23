@@ -205,11 +205,13 @@ def _tool_update_core_memory(inp=None) -> str:
         return "NOT DONE: action is add, replace, remove or show."
     if target not in core_memory.TARGETS:
         return "NOT DONE: target is user or friday."
-    if not _owner_decided() and _off_record_turn(_ctx(), "update_core_memory"):
+    if (action in ("add", "replace") and not _owner_decided()
+            and _off_record_turn(_ctx(), "update_core_memory")):
         # NS-15.8-2: an off-record turn teaches Friday nothing. Nothing is
         # saved and nothing is queued on the card (pending.jsonl) unless the
-        # owner approved a card for exactly this call.
-        return ("NOT SAVED: this conversation is off the record, so Friday keeps nothing from it, "
+        # owner approved a card for exactly this call. A remove ("forget
+        # that") is not learning and goes ahead as on the record.
+        return ("NOT SAVED: this conversation is off the record, so Friday saves nothing new from it, "
                 "on the memory card or in its review queue. Tell the user in one sentence; if they "
                 "want it kept, they can add it on their Memory card themselves or turn off-record off.")
     actor = _actor()

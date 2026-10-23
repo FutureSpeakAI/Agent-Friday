@@ -1375,7 +1375,12 @@ def _note_recall_turn(session_id, conversation_id):
 def _turn_learning_off():
     """This turn's off-record state for everything that LEARNS from it
     (services/off_record.excludes_learning, NS-15.8-2), read once at the
-    start of the turn. Cannot tell: off the record, nothing is learned."""
+    start of the turn. Cannot tell: off the record, nothing is learned.
+    /api/chat/stream runs chat() on a worker thread and takes its snapshot
+    at request time (_PILOT_OFF_RECORD): an off-record request stays off the
+    record even if the toggle changes before the worker reads settings."""
+    if _PILOT_OFF_RECORD.get():
+        return True
     try:
         from agent_friday.services import off_record as _off
         return bool(_off.excludes_learning(_load_settings() or {}))
@@ -2631,7 +2636,9 @@ def chat():
                 _laya_tr = _ctr.decide(
                     message, data, settings=settings, local=_routed_local,
                     held=[str(t.get('name')) for t in _ag_tools_for_turn(workspace, _conversation_id)],
-                    off_record=bool(_off_laya.active()),
+                    # Not logged or learned from when the turn is off the
+                    # record for learning (its snapshot) or for storage.
+                    off_record=bool(_turn_off_record or _off_laya.active()),
                     conversation_id=_conversation_id)
             if _laya_tr is not None and _laya_tr.action == 'ask':
                 _ctr.record(_turn_id, _laya_tr, ran=None, outcome='asked')

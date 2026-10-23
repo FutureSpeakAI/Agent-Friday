@@ -696,18 +696,31 @@ def migrate_user_model_facts() -> Dict[str, Any]:
         facts = user_model._recent_facts(200)
     except Exception:
         facts = []
+
+    def _owner_source(src: str) -> bool:
+        # Exactly the confirmed sources (user_model.is_confirmed_source: "manual"
+        # itself, not "manual_x"), less "setup" and "user_stated": this move
+        # never put those on the card and does not start now, so it only
+        # tightens. They go to the review queue as before.
+        try:
+            from agent_friday.services import user_model as _um
+            return _um.is_confirmed_source(src) and src not in ("setup", "user_stated")
+        except Exception:
+            return False
+
     for f in facts:
         text, src = _clean(f.get("text")), str(f.get("source") or "")
         if not text:
             continue
-        if src.startswith(("manual", "proposed:", "meeting:")):
+        owner = _owner_source(src)
+        if owner:
             r = add("user", text, actor="owner", dedupe=True)
             if r.get("ok") and not r.get("unchanged"):
                 moved += 1
                 continue
         r = queue("user", "add", text=text, source=src or "older note",
                   reason="Saved before the memory card existed; never reviewed by you."
-                  if not src.startswith(("manual", "proposed:", "meeting:")) else
+                  if not owner else
                   "You saved this earlier, but the card was full.")
         if r.get("ok") and not r.get("unchanged"):
             queued += 1

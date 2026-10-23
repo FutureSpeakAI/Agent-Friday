@@ -297,27 +297,31 @@ SPECIAL_CATEGORIES = {
 _SPECIAL_RES = {cat: re.compile(r"\b(?:" + "|".join(words) + r")\b", re.IGNORECASE)
                 for cat, words in SPECIAL_CATEGORIES.items()}
 
-#: A person attribute ("Is blind.", "Sam is deaf", "she's trans", "is Black"):
-#: the word alone means something else too ("a blind spot", "notifications
-#: disabled", "black coffee"), so it counts only after a person and a verb: the
-#: start of a line or sentence (card lines drop the subject: "Is deaf."), a
-#: pronoun or family word, or a capitalised name. "Black" counts only
-#: capitalised, as an ethnicity is written.
-_SUBJECT = ("(?:(?i:i|he|she|they|we|you|who|wife|husband|partner|spouse|son|daughter|child|kid|"
+#: A person attribute ("Is blind.", "my son is deaf", "she's trans", "he is
+#: Black"): the word alone means something else too ("a blind spot", "Wifi is
+#: disabled", "Mode is Black", "black coffee"), so it counts only with a PERSON
+#: as its subject: the start of a line or sentence (card lines are third person
+#: about the owner and drop the subject: "Is deaf.", "Is Black."), a personal
+#: pronoun, or a family or relationship word. Any other noun ("Wifi", "Mic",
+#: "Project", "Car") is not a person, so a name is not one either: "Sam is
+#: blind" is a miss, the price of never reading "Laptop is Black" as an
+#: ethnicity. "Is registered blind", "uses a wheelchair" and "Black
+#: British/African/Caribbean/American" are caught by the families above
+#: whatever the subject. Case-insensitive throughout ("He is black.").
+_SUBJECT = ("(?:i|he|she|they|we|you|who|wife|husband|partner|spouse|son|daughter|child|kid|"
             "baby|mother|father|mum|mom|dad|brother|sister|friend|user|owner|boss|colleague|"
             "girlfriend|boyfriend|grandmother|grandfather|grandma|grandpa|aunt|uncle|cousin|"
-            "nephew|niece)\\s+(?i:is|am|are|was|were|has been|have been)"
-            "|(?!(?:This|That|It|There|Here|What|Which|Everything|Nothing|Something|Background|Screen|"
-            "Theme|Text|Output|Font|Colou?r|Feature|Setting|Telemetry|Sync|Notifications?)\\b)"
-            "[A-Z][a-z]+\\s+(?i:is|was|has been))")
+            "nephew|niece|stepson|stepdaughter|fianc\\w*)"
+            "\\s+(?:is|am|are|was|were|has been|have been)")
 _PERSON_ATTR_RE = re.compile(
-    "(?:(?:^|[.;!?]\\s+)(?i:is|am|are|was|were|has been)\\s+|\\b" + _SUBJECT + "\\s+"
-    "|\\b(?i:i'm|he's|she's|they're|we're|you're)\\s+)"
-    "(?:(?i:legally|registered|partially|totally|profoundly|physically|severely|completely|"
+    "(?:(?:^|[.;!?]\\s+)(?:is|am|are|was|were|has been)\\s+|\\b" + _SUBJECT + "\\s+"
+    "|\\b(?:i'm|he's|she's|they're|we're|you're)\\s+)"
+    "(?:(?:legally|registered|partially|totally|profoundly|physically|severely|completely|"
     "visually)\\s+)?"
-    "(?P<attr>(?i:disabled|blind|deaf|trans|transgender)|Black)\\b"
-    "(?!\\s+(?i:to|by|in|on|for|until|via|when|because|at|from|and white|belt|friday|spots?|"
-    "eye|alley|date|test|box|mode|theme|coffee|tea|mirror|metal|hat|ops))")
+    "(?P<attr>disabled|blind|deaf|trans|transgender|black)\\b"
+    "(?!\\s+(?:to|by|on|for|until|via|when|because|at|from|and white|belt|friday|spots?|"
+    "eye|alley|date|test|box|mode|theme|coffee|tea|mirror|metal|hat|ops))",
+    re.IGNORECASE)
 _ATTR_CATEGORY = {"disabled": "health", "blind": "health", "deaf": "health",
                   "trans": "sexuality", "transgender": "sexuality", "black": "ethnicity"}
 
