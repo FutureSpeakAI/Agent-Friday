@@ -607,8 +607,7 @@ def code_plan():
         return api_error(e, "Couldn't plan the change")
 
     # Find the plan object in the reply: fences, prose and thinking that a
-    # local seat handed back as answer text are all tolerated
-    # (services/code_plan_parse).
+    # local seat handed back as answer text are all tolerated.
     from agent_friday.services.code_plan_parse import extract_plan
     plan_obj = extract_plan(raw)
     if not isinstance(plan_obj, dict) or "files" not in plan_obj:

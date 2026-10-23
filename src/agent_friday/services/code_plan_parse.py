@@ -15,10 +15,9 @@ usable plan. It never guesses a shape: a reply without a JSON object that
 carries a `files` list is not a plan.
 
 Rules:
-- A reply that is exactly one JSON object (fences allowed) is taken as it is,
-  as before.
-- Otherwise the reply is scanned for JSON objects with a `files` list, and the
-  last one wins, because the answer follows the thinking.
+- A reply that is exactly one JSON object (fences allowed) is taken as it is.
+- Otherwise the reply is scanned for top-level JSON objects with a `files`
+  list, and the last one wins, because the answer follows the thinking.
 - An object followed later in the reply by `</think>` was written while the
   model was still thinking (a draft), so it is never taken. A `</think>` inside
   the object, in a file's contents, does not count.
@@ -33,8 +32,9 @@ from typing import Optional
 THINK_END = "</think>"
 
 #: Upper bounds on the scan, so a huge or hostile reply cannot stall a request.
-_MAX_REPLY_CHARS = 2_000_000
-_MAX_STARTS = 5000
+#: A 16K-token answer is well under 100,000 characters.
+_MAX_REPLY_CHARS = 400_000
+_MAX_STARTS = 100_000
 
 _FENCE_OPEN = re.compile(r"^```[a-zA-Z]*\n")
 _FENCE_CLOSE = re.compile(r"\n```\s*$")
@@ -53,28 +53,33 @@ def _is_plan(obj) -> bool:
 
 
 def _last_plan(text: str) -> Optional[dict]:
-    """The last JSON object in `text` that has a `files` list and is not
-    followed by an end-of-thinking marker. Scans `{` positions from the end."""
+    """The last top-level JSON object in `text` that has a `files` list and is
+    not followed by an end-of-thinking marker.
+
+    Scans forward. A `{` that starts a complete object is skipped past as a
+    whole, so braces inside it (in file contents, or in the plan's own file
+    entries) are never visited and an inner object never stands in for the
+    one around it. A `{` that does not start an object usually fails within a
+    character or two, which keeps the scan close to linear.
+    """
     decoder = json.JSONDecoder()
-    end_search = len(text)
+    found = None
+    pos = 0
     starts = 0
     while starts < _MAX_STARTS:
-        i = text.rfind("{", 0, end_search)
+        i = text.find("{", pos)
         if i < 0:
-            return None
-        end_search = i
+            break
         starts += 1
         try:
             obj, end = decoder.raw_decode(text, i)
-        except ValueError:
+        except (ValueError, RecursionError):
+            pos = i + 1
             continue
-        if not _is_plan(obj):
-            continue
-        if text.find(THINK_END, end) >= 0:
-            # Written before the thinking ended: a draft, not the answer.
-            continue
-        return obj
-    return None
+        pos = end
+        if _is_plan(obj) and text.find(THINK_END, end) < 0:
+            found = obj
+    return found
 
 
 def extract_plan(raw) -> Optional[dict]:
@@ -85,7 +90,7 @@ def extract_plan(raw) -> Optional[dict]:
     whole = _strip_fences(text)
     try:
         obj = json.loads(whole)
-    except ValueError:
+    except (ValueError, RecursionError):
         obj = None
     if isinstance(obj, dict) and "files" in obj:
         return obj
