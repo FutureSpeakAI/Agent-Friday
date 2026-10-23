@@ -696,10 +696,7 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
     and asks first, and the Calendar route is the owner's own click."""
     got = read_event(event_id, calendar_id=calendar_id, account_id=account_id, for_write=True)
     if not got.get("ok"):
-        if got.get("gone"):
-            return {"ok": True, "id": event_id, "already_gone": True,
-                    "guests_told": "It was already deleted; nothing else was changed."}
-        return got
+        return got          # an already-deleted event says so (test_calendar_event_delete)
     tell = notify_guests_default() if notify_guests is None else bool(notify_guests)
     cal = got["before"]["calendar_id"]
     svc, err = _service(got["account_id"])
