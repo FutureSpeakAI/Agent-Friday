@@ -313,8 +313,27 @@ def test_holds_partly_placed_keep_their_series_and_are_not_not_done(holds, monke
 def test_deleting_what_is_already_gone_is_done(calendar, tasks):
     res = calendar("delete_calendar_event", HttpError(410))
     assert res.get("ok") is True and res.get("already_gone")
-    res = tasks("delete_task", HttpError(404))
+    res = tasks("delete_task", HttpError(410))
     assert res.get("deleted") is True and res.get("already_gone")
+
+
+def test_a_task_id_google_does_not_know_is_not_a_delete_that_happened(tasks):
+    # nothing is read before a task delete and the ids are the model's: a 404 is a wrong id
+    with _co().call() as notes:
+        res = tasks("delete_task", HttpError(404))
+    assert not res.get("deleted") and "not found" in res["error"] and notes
+
+
+def test_revoked_access_at_the_read_before_a_calendar_delete_is_named(monkeypatch, marked):
+    from agent_friday.services import calendar_write as cw
+    svc = FakeGoogle(None)
+    svc.get = lambda **kw: _Exec(HttpError(401, "GET .../events/e1?alt=json returned 401"))
+    monkeypatch.setattr(cw, "write_ready", lambda: (True, ""))
+    monkeypatch.setattr(cw, "resolve_write_account", lambda aid=None: ("acct_c1", None))
+    monkeypatch.setattr(cw, "_service", lambda aid=None: (svc, None))
+    res = cw.delete_event("e1", notify_guests=False)
+    assert not res.get("ok") and "Reconnect" in res["error"] and "alt=json" not in res["error"]
+    assert ("acct_c1", "needs_reauth") in marked and not svc.writes
 
 
 @pytest.mark.parametrize("fixture,op,account", CHANGES, ids=IDS)
