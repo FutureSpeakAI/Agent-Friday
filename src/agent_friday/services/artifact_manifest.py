@@ -52,7 +52,7 @@ RAN_UNDER = ("allow", "confirm", "card")
 #: Files bigger than this are listed without a hash (a long video).
 MAX_HASH_BYTES = 512 * 1024 * 1024
 #: How far back in the receipts file to look for the call's receipt.
-_RECEIPT_TAIL_BYTES = 1024 * 1024
+_RECEIPT_LOOKBACK = 50
 _LOCK = threading.Lock()
 _DOMAIN = b"agent-friday/artifact-manifest/v1"
 
@@ -181,33 +181,27 @@ def _tail_lines(path: Path, limit: int) -> List[str]:
 
 
 def _find_receipt(tool: str, task_id: Optional[str], turn_id: Optional[str],
-                  ahash: Optional[str], receipts: Optional[Path] = None,
-                  gov_key: Optional[bytes] = None) -> Optional[dict]:
+                  ahash: Optional[str], gov_key: Optional[bytes] = None) -> Optional[dict]:
     """The newest verified receipt for exactly this call: the same tool and
     arguments, in the same turn (or, outside a turn, the same task). With no
-    arguments hash or no turn or task to tie it to, there is no receipt."""
+    arguments hash or no turn or task to tie it to, there is no receipt.
+    Receipts are read from the action ledger, where decisions are kept."""
     if not ahash or not (turn_id or task_id):
         return None
+
+    def this_call(e: dict) -> bool:
+        r = e.get("rec") or {}
+        if r.get("tool") != tool or r.get("decision") not in RAN_UNDER or r.get("args_hash") != ahash:
+            return False
+        return r.get("turn_id") == turn_id if turn_id else r.get("task_id") == task_id
+
     try:
         from agent_friday.governance import action_gate as ag
-        lines = _tail_lines(receipts or ag.receipts_path(), _RECEIPT_TAIL_BYTES)
+        for r in ag.receipts(newest_first=True, limit=_RECEIPT_LOOKBACK, where=this_call):
+            if ag.verify_receipt(r, key=gov_key):
+                return r
     except Exception:
         return None
-    for line in reversed(lines):
-        if ahash not in line:
-            continue
-        try:
-            r = json.loads(line)
-        except Exception:
-            continue
-        if not isinstance(r, dict) or r.get("tool") != tool or r.get("decision") not in RAN_UNDER:
-            continue
-        if r.get("args_hash") != ahash:
-            continue
-        if (turn_id and r.get("turn_id") != turn_id) or (not turn_id and r.get("task_id") != task_id):
-            continue
-        if ag.verify_receipt(r, key=gov_key):
-            return r
     return None
 
 
@@ -218,12 +212,10 @@ def receipt_of(entry: dict) -> Optional[dict]:
         return None
     try:
         from agent_friday.governance import action_gate as ag
-        with open(ag.receipts_path(), encoding="utf-8") as f:
-            for line in f:
-                if want in line:
-                    r = json.loads(line)
-                    if r.get("hmac") == want and ag.verify_receipt(r):
-                        return r
+        for r in ag.receipts(newest_first=True, limit=1,
+                             where=lambda e: (e.get("rec") or {}).get("hmac") == want):
+            if ag.verify_receipt(r):
+                return r
     except Exception:
         return None
     return None
@@ -285,7 +277,7 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
             turn_id = _current_turn()
         ahash = args_hash(args)
         where = where or {}
-        receipt = _find_receipt(name, task_id, turn_id, ahash, where.get("receipts"), where.get("gov_key"))
+        receipt = _find_receipt(name, task_id, turn_id, ahash, where.get("gov_key"))
         appended = name == "write_file" and isinstance(result, str) and result.startswith("Appended ")
         from agent_friday.services import artifact_qa
         lines = []
@@ -357,7 +349,7 @@ def submit(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
     # now, on the caller's thread: the turn, the files and the keys.
     try:
         from agent_friday.governance import action_gate as ag
-        where = {"manifest": manifest_path(), "receipts": ag.receipts_path(),
+        where = {"manifest": manifest_path(),
                  "key": _key(), "gov_key": ag._governance_key()}
     except Exception:
         return False
