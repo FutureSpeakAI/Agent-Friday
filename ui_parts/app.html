@@ -29998,7 +29998,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     {shellQuickDraft}
 
     {/* Dock — grouped (Life / Work / System) */}
-    <div className={`dock ${dockHidden?'hidden':''}`}>
+    <div className={`dock ${dockHidden?'hidden':''}`} role="navigation" aria-label="Workspaces">
       {dockShape.groups.map((g,gi)=>(<React.Fragment key={g.name+':'+gi}>
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">

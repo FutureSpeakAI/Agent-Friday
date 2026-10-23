@@ -1,4 +1,5 @@
 <body>
+    <a class="skip-link" href="#ui-inner">Skip to Agent Friday™</a>
     <style>
     /* Native controls in a dark UI. A select's open list, and a date
        picker, are drawn by the browser from the page's colour scheme, not
@@ -192,7 +193,7 @@
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
-        <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
+        <div id="ui-inner" tabindex="-1" style="pointer-events:auto;height:100vh;outline:none"></div>
     </div>
 
     <!-- MediaPipe (head and hand tracking) is NOT loaded with the page. The

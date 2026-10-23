@@ -198,6 +198,7 @@ CENSUS = [
     (r"fridayLandingInput\(", None),           # the landing judge noting that a key was pressed
     (r"fridaySceneKey\(e\)", None),            # keeps the scene's arrows from it while a workspace is open
     (r"localAiMarkActive\(\)", None),          # typing counts as activity for the Local AI queue's idle gate; acts on no key
+    (r"closest\('\[role=\"radio\"\]'\)", None),  # arrows inside a focused radio group: the control's own keys (WAI-ARIA), not a shortcut
 ]
 
 
