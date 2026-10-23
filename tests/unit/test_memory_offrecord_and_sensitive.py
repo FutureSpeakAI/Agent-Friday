@@ -635,8 +635,17 @@ def test_a_special_category_check_that_fails_refuses(monkeypatch):
     ("politics", "Votes Republican."), ("religion", "Is a practising Muslim."),
     ("health", "Is HIV positive."), ("health", "Is on antidepressants."), ("health", "Is pregnant."),
     ("sexuality", "Is trans."), ("sexuality", "Their sister is transgender."),
-    ("health", "Is disabled."), ("health", "Sam is blind."), ("health", "Her father is deaf."),
+    ("health", "Is disabled."), ("health", "Sam is registered blind."), ("health", "Her father is deaf."),
     ("ethnicity", "Is Black."), ("ethnicity", "Is Black British."),
+    # A person subject: a pronoun, a family word, or a card line's "Is ...";
+    # case-insensitive ("He is black.").
+    ("ethnicity", "He is black."), ("ethnicity", "She is Black."), ("ethnicity", "he's black"),
+    ("ethnicity", "Is Black African."), ("ethnicity", "Is Black Caribbean."),
+    ("ethnicity", "Is Black American."), ("health", "I'm blind."), ("health", "I am deaf."),
+    ("health", "My son is deaf."), ("health", "Their daughter is blind."),
+    ("health", "My wife is disabled."), ("health", "They are disabled."),
+    ("health", "My dad is deaf in one ear."), ("health", "My friend is partially deaf."),
+    ("health", "Is legally blind."), ("health", "Is blind."),
     ("politics", "Supports Labour."), ("politics", "Is a Conservative voter."),
     ("politics", "Tory voter since 2010."), ("politics", "Lib Dem member."),
     ("politics", "Is a member of the Green party."),
@@ -669,6 +678,11 @@ def test_the_special_category_filter_catches(category, text):
     "Is sober about estimates.", "Was sentenced to refactor the auth module.", "Saw a praying mantis.",
     "Drinks black coffee.", "Buys AA batteries in bulk.", "Does meal prep on Sundays.",
     "Researches lithium-ion batteries.", "Has a blind spot for CSS.", "Is blind to criticism.",
+    # Not a person: a setting, a device or a thing is disabled, deaf, blind or Black.
+    "Wifi is disabled.", "Bluetooth is disabled.", "Account is disabled.", "Status is disabled.",
+    "Autosave is disabled.", "Payments is disabled.", "Mic is deaf.", "Project is blind.",
+    "Car is Black.", "Laptop is Black.", "Wallpaper is Black.", "Mode is Black.",
+    "Background is black.", "Prefers a black theme.",
 ])
 def test_the_special_category_filter_leaves_ordinary_lines_alone(text):
     from agent_friday.services.sensitive_categories import special_category
@@ -728,6 +742,9 @@ def test_the_chat_routes_read_off_record_once_and_reuse_it():
     for step in ("get_epistemic_engine", "_skcap.capture", "target=_index_chat_turn"):
         at = body_chat.index(step)
         assert "if not _turn_off_record:" in body_chat[max(0, at - 600):at], step
+    # Laya's chat routing logs and learns (note_learn -> laya_router_learn) unless
+    # the turn is off the record for learning OR storage.
+    assert "off_record=bool(_turn_off_record or _off_laya.active())" in body_chat
 
 
 def test_the_routes_turn_snapshot_fails_closed(monkeypatch):
@@ -759,3 +776,168 @@ def test_confirmed_sources_match_exactly_except_the_two_prefixes():
     q = cm.queue("user", "add", text="Has bipolar disorder.", source="setup_research")
     assert not q["ok"] and q.get("sensitive") and cm.pending() == []
     assert cm.queue("user", "add", text="Has bipolar disorder.", source="setup")["ok"]
+
+
+def test_the_migration_moves_only_exactly_confirmed_owner_sources(monkeypatch):
+    """migrate_user_model_facts reads user_model.is_confirmed_source: a
+    "manual_x" source is not the owner's and is neither put on the card as the
+    owner's nor let past the filter. "setup" and "user_stated" still go to the
+    queue, as before (this slice only tightens)."""
+    facts = [{"text": "Has bipolar disorder.", "source": "manual_x"},
+             {"text": "Likes trains.", "source": "manual_x"},
+             {"text": "Takes coffee black.", "source": "manual"},
+             {"text": "Works in Leeds.", "source": "setup"},
+             {"text": "Prefers tea.", "source": "user_stated"}]
+    monkeypatch.setattr(um, "_recent_facts", lambda *a, **k: list(facts))
+    out = cm.migrate_user_model_facts()
+    assert cm.entries("user") == ["Takes coffee black."], cm.entries("user")
+    pending = [p["text"] for p in cm.pending()]
+    assert "Has bipolar disorder." not in pending
+    assert sorted(pending) == sorted(["Likes trains.", "Works in Leeds.", "Prefers tea."]), pending
+    assert out["moved"] == 1 and out["queued"] == 3, out
+
+
+# ── confirmation review: Laya's router learns nothing off the record ────────
+
+def _laya_route(decision="tool", tool="search_wiki"):
+    from types import SimpleNamespace
+    return SimpleNamespace(decision=decision, tool=tool, args={"query": "deck"}, confidence=0.9,
+                           layer="head")
+
+
+def test_laya_router_corrections_hold_and_write_nothing_off_record(monkeypatch):
+    """note_learn -> laya_router_learn.note_route keeps the owner's words for a
+    later correction, which writes the DAgger shadow corpus: off the record
+    (transcript kept or not) the turn is not held and an undo writes no row."""
+    from agent_friday.services import laya_router_learn as ll
+    written = []
+    monkeypatch.setattr(ll, "_sha", lambda text: "k" * 64)
+    monkeypatch.setattr(ll, "_learning", lambda settings: True)
+    monkeypatch.setattr(ll, "_write", lambda ent, **kw: written.append(ent) or True)
+    ll.reset()
+    try:
+        for stops_storage in (True, False):
+            _off_record(True, stops_storage=stops_storage)
+            ll.note_route("find the deck", _laya_route(), conversation_id="c1", owner=True)
+            assert list(ll._held) == [], "an off-record routed turn was held"
+        _off_record(False)
+        ll.note_route("find the deck", _laya_route(), conversation_id="c1", owner=True)
+        assert len(ll._held) == 1 and ll._held[0]["text"] == "find the deck"
+
+        # A correction made off the record teaches nothing either.
+        _off_record(True, stops_storage=False)
+        assert ll.note_undo(conversation_id="c1") is False
+        assert written == []
+        _off_record(False)
+        ll.note_route("find the deck", _laya_route(), conversation_id="c1", owner=True)
+        assert ll.note_undo(conversation_id="c1") is True and len(written) == 1
+    finally:
+        ll.reset()
+
+
+def test_the_router_heads_shadow_log_keys_on_the_learning_check(monkeypatch):
+    from agent_friday.services import laya_router_head as lh
+    jobs = []
+    monkeypatch.setattr(lh, "available", lambda *a, **k: True)
+    monkeypatch.setattr(lh, "_shadow_job", lambda *a, **k: jobs.append(a))
+    monkeypatch.setattr(lh, "_shadow_pending", 0)
+    _off_record(True, stops_storage=False)
+    assert lh.shadow("find the deck", None, None, "chat", sync=True) is False
+    assert jobs == [], "the shadow corpus logged an off-record turn whose transcript is kept"
+    _off_record(False)
+    assert lh.shadow("find the deck", None, None, "chat", sync=True) is True and len(jobs) == 1
+
+
+# ── confirmation review: the streamed turn's request-time snapshot ──────────
+
+def test_a_streamed_turn_keeps_its_request_time_off_record_snapshot(monkeypatch):
+    """/api/chat/stream reads off-record at request time (_PILOT_OFF_RECORD) and
+    runs chat() on a worker: a toggle before the worker reads settings does not
+    let the turn be learned."""
+    from agent_friday.routes import chat as chat_route
+    monkeypatch.setattr(chat_route, "_load_settings", lambda *a, **k: {"off_record": False})
+    tok = chat_route._PILOT_OFF_RECORD.set(True)
+    try:
+        assert chat_route._turn_learning_off() is True
+    finally:
+        chat_route._PILOT_OFF_RECORD.reset(tok)
+    assert chat_route._turn_learning_off() is False
+
+
+# ── confirmation review: degraded settings fail closed for learning ─────────
+
+def test_degraded_settings_count_as_off_record_for_learning_unless_the_last_good_say_otherwise(monkeypatch):
+    from agent_friday.services import off_record
+    monkeypatch.setattr(core, "_SETTINGS_LAST_GOOD", {"path": None, "value": None})
+    deg = core._DegradedSettings(copy.deepcopy(core.DEFAULT_SETTINGS))
+    deg[core.DEGRADED_READ_KEY] = 1
+    assert not deg.get("off_record"), "factory defaults are on the record"
+    assert off_record.excludes_learning(deg) is True
+    assert off_record.active(deg) is False, "storage keeps failing open"
+    monkeypatch.setattr(core, "_load_settings", lambda *a, **k: deg)
+    assert off_record.excludes_learning() is True and off_record.skip_learning("probe") is True
+    assert off_record.active() is False
+    # With last good settings for this file, they decide.
+    monkeypatch.setattr(core, "_SETTINGS_LAST_GOOD",
+                        {"path": str(core.SETTINGS_FILE), "value": {"off_record": False}})
+    assert off_record.excludes_learning() is False
+    monkeypatch.setattr(core, "_SETTINGS_LAST_GOOD",
+                        {"path": str(core.SETTINGS_FILE), "value": {"off_record": True}})
+    assert off_record.excludes_learning() is True
+
+
+def test_a_missing_settings_file_is_not_degraded_but_a_corrupt_one_is(tmp_path, monkeypatch):
+    """A fresh home (no settings.json, as in a normal test run) seeds the
+    defaults and is on the record; an existing file that cannot be read is
+    degraded and learns nothing."""
+    from agent_friday.services import off_record
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(core, "FRIDAY_DIR", home)
+    monkeypatch.setattr(core, "SETTINGS_FILE", home / "settings.json")
+    monkeypatch.setattr(core, "_SETTINGS_CACHE", {"value": None, "ts": 0.0})
+    monkeypatch.setattr(core, "_SETTINGS_LAST_GOOD", {"path": None, "value": None})
+    monkeypatch.setattr(core, "_SETTINGS_DEGRADED", {"path": None})
+    monkeypatch.setattr(core, "_SETTINGS_READ_RETRY_S", 0.0)
+    fresh = core._load_settings_raw()
+    assert not core._is_degraded_settings(fresh)
+    assert off_record.excludes_learning(fresh) is False
+
+    (home / "settings.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(core, "_SETTINGS_CACHE", {"value": None, "ts": 0.0})
+    monkeypatch.setattr(core, "_SETTINGS_LAST_GOOD", {"path": None, "value": None})
+    broken = core._load_settings_raw()
+    assert core._is_degraded_settings(broken)
+    assert off_record.excludes_learning(broken) is True
+    assert off_record.active(broken) is False
+
+
+# ── confirmation review: a real journal failure still shows ─────────────────
+
+def test_an_unwritten_workflow_context_fails_unless_storage_is_really_off(monkeypatch):
+    """The task's off_record mark follows the learning check, under which the
+    journal still writes: a write that did not happen is then a real failure."""
+    from types import SimpleNamespace
+    fake = SimpleNamespace(append=lambda *a, **k: None, index_put=lambda *a, **k: None,
+                           write_state=lambda *a, **k: False, stop_requested=lambda *a, **k: False)
+    monkeypatch.setattr(agent, "_journal", lambda: fake)
+    _off_record(True, stops_storage=False)
+    with pytest.raises(RuntimeError, match="could not persist its run context"):
+        agent._spawn_task("wf step", "do it", workflow_context={"run_id": "r-m7"}, task_id="t-m7-wf")
+    assert "t-m7-wf" not in agent.TASKS
+    assert agent._off_record_storage_active() is False
+    _off_record(True, stops_storage=True)
+    assert agent._off_record_storage_active() is True
+
+
+# ── confirmation review: "forget that" still works off the record ───────────
+
+@pytest.mark.parametrize("stops_storage", [True, False])
+def test_forgetting_a_line_off_the_record_still_removes_it(stops_storage):
+    """Removing is not learning: off the record only saving is refused."""
+    assert cm.add("user", "Takes coffee black.", actor="owner")["ok"]
+    _off_record(True, stops_storage=stops_storage)
+    out = _friday_tool({"action": "remove", "target": "user", "old": "coffee black"},
+                       "Forget that line: takes coffee black.")
+    assert out.startswith("Removed in core memory"), out
+    assert cm.entries("user") == []
