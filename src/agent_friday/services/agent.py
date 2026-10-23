@@ -14466,15 +14466,15 @@ def _hook_governance(ctx):
     # every other flag); everywhere else the flag stands as it is.
     _clean = _taint_clean(d, key, ctx.session_ctx)
     # A24: a Google Tasks change in a run may already have its own card; never do it twice.
-    _prior, _waiting_card = _run_card_prior(ctx, key)
+    _prior, _waiting_cards = _run_card_prior(ctx, key)
     if _prior is not None:
         return _prior
     v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
                         tainted=(d.action == "ask"), clean=_clean,
                         grant_tainted=(d.action == "ask" and not _clean))
     ctx.meta["governance"] = v
-    if v.action == "allow" and _waiting_card is not None:
-        _prior = _run_card_supersede(ctx, _waiting_card, v.grant)
+    if v.action == "allow" and _waiting_cards:
+        _prior = _run_card_supersede(ctx, _waiting_cards, v.grant)
         if _prior is not None:
             return _prior
     if (v.detail or {}).get("grant_withheld"):
@@ -14672,14 +14672,14 @@ def _run_card_prior(ctx, key):
       any approved, not yet claimed      ->  this call claims it, passes the checkpoint's
                                              integrity check and signed receipt, and runs once;
                                              the executor then finds it taken
-      the newest waiting                 ->  returned, so the caller withdraws it if the grant
-                                             lets the call through
-      the newest declined or blocked by the owner  ->  "[DECLINED]": a grant never overrides
-                                             the owner's no to this exact change
+      any declined or blocked by the owner  ->  "[DECLINED]": a grant never overrides the
+                                             owner's no to this exact change
+      every one still waiting            ->  returned, so the caller withdraws them all if the
+                                             grant lets the call through
       withdrawn as friday:superseded     ->  "[ALREADY DONE]" (the grant carried it out)
       expired only, or none              ->  nothing to say; the checkpoint decides
 
-    Returns (verdict or None, waiting card or None).
+    Returns (verdict or None, list of waiting cards or None).
     """
     try:
         from agent_friday.services import run_grants as _rg
@@ -14701,16 +14701,20 @@ def _run_card_prior(ctx, key):
     approved = [r for r in recs if r.get("status") == "approved"]
     done = [r for r in approved if r.get("consumed") or r.get("executing_at")]
     if done:
-        return _run_card_claim(ctx, done[0]), None
+        ok_done = [r for r in done if (r.get("used_detail") or {}).get("ok") is not False]
+        return _run_card_claim(ctx, (ok_done or done)[0]), None
     if approved:
         return _run_card_claim(ctx, approved[0]), None
-    newest = recs[0]
-    status = newest.get("status")
-    if status == "pending":
-        return None, newest
     superseded = [r for r in recs if r.get("decided_by") == "friday:superseded"]
-    if status in ("denied", "blocked") and newest.get("decided_by") != "friday:superseded":
+    if any(r.get("status") in ("denied", "blocked") and r.get("decided_by") != "friday:superseded"
+           for r in recs):
+        # The owner said no to this exact change on some card: a grant never overrides that.
         return _run_card_declined(ctx), None
+    waiting = [r for r in recs if r.get("status") == "pending"]
+    if waiting:
+        # Every card still waiting for it (an expired card can leave re-raised ones behind),
+        # so the caller withdraws them all if the grant lets the call through.
+        return None, waiting
     if superseded:
         # Withdrawn because the run's grant already carried this change out.
         return _run_card_claim(ctx, dict(superseded[0], consumed=True)), None
@@ -14763,29 +14767,38 @@ def _run_card_claim(ctx, rec):
         f"not retry it.")
 
 
-def _run_card_supersede(ctx, card, grant):
-    """The run's grant let this call through while its own card still waits: withdraw the card,
-    so approving it later cannot do the change a second time. If the owner decided the card in
-    the same instant, their decision stands: approved is claimed here once, declined is not run."""
+def _run_card_supersede(ctx, cards, grant):
+    """The run's grant let this call through while cards for it still wait: withdraw every one,
+    so approving any of them later cannot do the change a second time. If the owner decided one
+    in the same instant, their decision stands: a yes is carried out once (here or by the
+    executor), a no is not run."""
     from agent_friday.services import approvals as _appr
-    aid = card.get("approval_id")
-    try:
-        rec, won = _appr.decide_with_outcome(
-            aid, "deny", decided_by="friday:superseded",
-            note="carried out under the run's grant %s" % ((grant or {}).get("grant_id") or ""))
-    except Exception as e:
-        _log.warning("could not withdraw run card %s: %s", aid, type(e).__name__)
-        return _hooks.DENY(
-            f"[NOT RUN] '{ctx.tool_name}' was NOT executed: its waiting card could not be "
-            f"withdrawn, so running it now could do it twice. Tell the user.")
-    if won:
-        return None
-    rec = rec or {}
-    if rec.get("status") == "approved":
-        return _run_card_claim(ctx, rec)
-    return _hooks.DENY(
-        f"[DECLINED] The user declined '{ctx.tool_name}' with these details on an approval "
-        f"card. It was NOT executed. Do not retry it.")
+    if isinstance(cards, dict):
+        cards = [cards]
+    approved, declined = [], False
+    for card in cards or []:
+        aid = card.get("approval_id")
+        try:
+            rec, won = _appr.decide_with_outcome(
+                aid, "deny", decided_by="friday:superseded",
+                note="carried out under the run's grant %s" % ((grant or {}).get("grant_id") or ""))
+        except Exception as e:
+            _log.warning("could not withdraw run card %s: %s", aid, type(e).__name__)
+            return _hooks.DENY(
+                f"[NOT RUN] '{ctx.tool_name}' was NOT executed: a waiting card for it could not "
+                f"be withdrawn, so running it now could do it twice. Tell the user.")
+        if won:
+            continue
+        rec = rec or {}
+        if rec.get("status") == "approved":
+            approved.append(rec)
+        elif rec.get("status") in ("denied", "blocked"):
+            declined = True
+    if approved:
+        return _run_card_claim(ctx, approved[0])
+    if declined:
+        return _run_card_declined(ctx)
+    return None
 
 
 def _run_grant_payload(payload, name, session_ctx):
