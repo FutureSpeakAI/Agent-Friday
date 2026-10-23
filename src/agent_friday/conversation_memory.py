@@ -467,8 +467,9 @@ class ConversationMemory:
             docs = (res.get("documents") or [[]])[0]
             metas = (res.get("metadatas") or [[]])[0]
             dists = (res.get("distances") or [[]])[0]
+            ids = (res.get("ids") or [[]])[0] or [None] * len(docs)
             out = []
-            for doc, meta, dist in zip(docs, metas, dists):
+            for doc_id, doc, meta, dist in zip(ids, docs, metas, dists):
                 meta = meta or {}
                 try:
                     rel = max(0.0, min(1.0, 1.0 - float(dist)))
@@ -478,6 +479,9 @@ class ConversationMemory:
                 if is_superseded and not include_superseded:
                     continue
                 out.append({
+                    # The stored turn's id (the conversation message id when the
+                    # turn was indexed from chat): what a recalled line cites.
+                    "id": doc_id,
                     "text": doc,
                     "role": meta.get("role"),
                     "timestamp": meta.get("timestamp"),
@@ -584,6 +588,15 @@ class ConversationMemory:
                 if found:
                     self._collection.update(ids=found, metadatas=new_metas)
             out["superseded"] = found
+            # The full-text search over conversations honours it too
+            # (north star §34.9-4): a superseded turn is not evidence anywhere.
+            try:
+                from agent_friday.services import conversation_fts as _fts
+                # Every id asked for: a turn the full-text index holds but
+                # Chroma does not (its indexing failed) is corrected there too.
+                _fts.mark_superseded(ids, bool(flag))
+            except Exception as _e:
+                print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
         except Exception as e:
             print(f"  [MEMORY] supersede failed (non-fatal): {e}")
