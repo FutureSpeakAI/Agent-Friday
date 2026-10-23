@@ -58,12 +58,17 @@ def _tool_search_conversations_typed(inp=None) -> str:
     if not query:
         return "search_past_conversations needs something to look for."
     from agent_friday.services import conversation_recall as rc
-    hits = rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12)
+    local = _loop_is_local()
+    # A cloud model: within a near-duplicate group the turn this provider
+    # already received is the one kept (services/recall_dedupe `prefer`), so
+    # the dedupe never trades a shown turn for a withheld twin.
+    prov = None if local else _provider()
+    hits = rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12,
+                     provider=prov)
     if not hits:
         return f'Nothing in earlier conversations matches "{query}".'
-    if _loop_is_local():
+    if local:
         return "From earlier conversations (best match first):\n" + _format(hits[:10])
-    prov = _provider()
     direct = [h for h in hits if prov in (h.get("sent_to") or [])]
     rest = len(hits) - len(direct)
     parts = []

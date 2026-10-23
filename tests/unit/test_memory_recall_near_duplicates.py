@@ -357,21 +357,217 @@ def test_library_keeps_passages_that_differ_by_a_value(monkeypatch):
     assert [e["passage_id"] for e in ls.build_evidence(ctx, 2, 12000)] == [1, 2]
 
 
-def test_wiki_context_does_not_spend_its_slots_on_copies_of_one_page(tmp_path, monkeypatch):
+def _wiki_dirs(tmp_path, monkeypatch):
     from agent_friday.services import model_router
     home = tmp_path / "home"
     (home / "wiki").mkdir(parents=True)
     friday_wiki = tmp_path / "friday_wiki"
     friday_wiki.mkdir()
+    monkeypatch.setattr(model_router, "HOME", home)
+    monkeypatch.setattr(model_router, "WIKI_DIR_FRIDAY", friday_wiki)
+    return model_router, home / "wiki", friday_wiki
+
+
+def test_wiki_context_does_not_spend_its_slots_on_copies_of_one_page(tmp_path, monkeypatch):
+    model_router, home_wiki, friday_wiki = _wiki_dirs(tmp_path, monkeypatch)
     page = "# Mooring\nThe mooring at Harwich costs 400 a year and renews in April.\n"
-    for name in ("mooring.md", "mooring-copy.md", "mooring-old.md"):
-        (home / "wiki" / name).write_text(page, encoding="utf-8")
+    # The same note in both wiki folders; only the frontmatter differs (and its
+    # dates would make the raw texts look different if it were compared).
+    (home_wiki / "mooring.md").write_text("---\nupdated: 2026-01-04\n---\n" + page, encoding="utf-8")
+    (friday_wiki / "mooring.md").write_text("---\nupdated: 2026-09-21\ntags: [boat, 7]\n---\n" + page,
+                                            encoding="utf-8")
     (friday_wiki / "harbour.md").write_text(
         "# Harbour\nThe Harwich harbour office shuts at 5pm on Sundays; mooring queries go there.\n",
         encoding="utf-8")
-    monkeypatch.setattr(model_router, "HOME", home)
-    monkeypatch.setattr(model_router, "WIKI_DIR_FRIDAY", friday_wiki)
     out = model_router._get_wiki_context("mooring")
     files = [r["file"] for r in out]
     assert "harbour.md" in files, "a distinct page was crowded out by copies: %s" % files
-    assert sum(f.startswith("mooring") for f in files) == 1, files
+    assert files.count("mooring.md") == 1, files
+    assert out[0]["excerpt"].startswith("---\nupdated: 2026-01-04"), "the excerpt shown changed"
+    assert set(out[0]) == {"file", "excerpt"}
+
+
+def test_wiki_pages_with_another_title_or_file_name_are_never_copies(tmp_path, monkeypatch):
+    model_router, home_wiki, friday_wiki = _wiki_dirs(tmp_path, monkeypatch)
+    body = "The mooring at Harwich costs 400 a year and renews in April.\n"
+    (home_wiki / "mooring.md").write_text("# Mooring\n" + body, encoding="utf-8")
+    (home_wiki / "mooring-2025.md").write_text("# Mooring\n" + body, encoding="utf-8")   # other stem
+    (friday_wiki / "mooring.md").write_text("# Mooring (Wren)\n" + body, encoding="utf-8")  # other H1
+    files = sorted(r["file"] for r in model_router._get_wiki_context("mooring"))
+    assert files == ["mooring-2025.md", "mooring.md", "mooring.md"], files
+
+
+# ── adversarial: texts that share words but say different things ─────────────
+
+_NOT_DUPLICATES = [
+    ("Alice pays Bob 50 pounds every month.", "Bob pays Alice 50 pounds every month."),
+    ("Alice pays Bob", "Bob pays Alice"),
+    ("I do not like cats but I like dogs", "I like cats but I do not like dogs"),
+    ("The tenant owes the landlord 900 for March.", "The landlord owes the tenant 900 for March."),
+    ("My wife has a dentist appointment on Friday.", "My son has a dentist appointment on Friday."),
+    ("The bin collection is on Tuesday mornings.", "The bin collection is on Wednesday mornings."),
+    ("We renew the boat insurance in May every year.", "We renew the boat insurance in June every year."),
+    ("We decided to use Postgres for the ledger service.", "We decided against Postgres for the ledger service."),
+    ("We pinned the client to v1.20 of the library.", "We pinned the client to v1.2 of the library."),
+    ("We pinned the client to 1.2.3 of the library.", "We pinned the client to 1.2.30 of the library."),
+    ("The standup is at 9am every weekday.", "The standup is at 9pm every weekday."),
+    ("The standup is at 9 am every weekday.", "The standup is at 9 pm every weekday."),
+    ("Take 5 mg of the medicine with food.", "Take 5 g of the medicine with food."),
+    ("Take 5mg of the medicine with food.", "Take 5g of the medicine with food."),
+    ("I paid her the deposit yesterday.", "She paid me the deposit yesterday."),
+    ("The fee is £400 a year.", "The fee is $400 a year."),
+]
+
+
+@pytest.mark.parametrize("a,b", _NOT_DUPLICATES)
+def test_swaps_names_people_days_months_versions_units_and_negations_are_distinct(rd, a, b):
+    assert not rd.is_near_duplicate(a, b)
+    assert not rd.is_near_duplicate(b, a)
+    out = rd.select([{"id": "a", "text": a, "role": "user"}, {"id": "b", "text": b, "role": "user"}], 5)
+    assert [x["id"] for x in out] == ["a", "b"]
+
+
+def test_true_rewordings_and_repeats_still_collapse(rd):
+    same = ["Our mooring fee is 400 pounds a year.", "our mooring fee is 400 pounds a year",
+            "The mooring fee is 400 pounds per year."]
+    for a in same:
+        for b in same:
+            assert rd.is_near_duplicate(a, b), (a, b)
+    out = rd.select([{"id": str(i), "text": t, "role": "user"} for i, t in enumerate(same)], 5)
+    assert len(out) == 1
+    # case alone never separates a name, a day or a month
+    assert rd.is_near_duplicate("Alice pays Bob 50 pounds every month.", "alice pays bob 50 pounds every month")
+    assert rd.is_near_duplicate("The bin goes out on Tuesday.", "the bin goes out on tuesday")
+    assert rd.is_near_duplicate("I don't like cats.", "I do not like cats.")
+
+
+# ── grouping: anchors only, never across speakers, provider preference ──────
+
+def test_near_duplicates_do_not_chain_through_a_group(rd):
+    a = "alpha bravo charlie delta echo foxtrot golf hotel india juliet"
+    b = "alpha bravo charlie delta echo foxtrot golf hotel india kilo"       # a ~ b
+    c = "alpha bravo charlie delta echo foxtrot golf hotel lima kilo"        # b ~ c, not a
+    d = "alpha bravo charlie delta echo foxtrot golf mike lima kilo"         # c ~ d, not a or b
+    assert rd.is_near_duplicate(a, b) and rd.is_near_duplicate(b, c) and rd.is_near_duplicate(c, d)
+    assert not rd.is_near_duplicate(a, c) and not rd.is_near_duplicate(a, d)
+    out = rd.select([{"text": t} for t in (a, b, c, d)], 5, keep="first", ident=lambda r: None)
+    assert [x["text"] for x in out] == [a, c], "a chain A~B~C~D collapsed into one item"
+
+
+def test_the_user_and_friday_saying_the_same_words_are_never_one_item(rd):
+    t = "The mooring fee at Harwich is 400 a year."
+    items = [{"id": "u", "text": t, "role": "user", "timestamp": "2026-01-01"},
+             {"id": "f", "text": t, "role": "assistant", "timestamp": "2026-09-01"},
+             {"id": "f2", "text": t, "role": "friday", "timestamp": "2026-09-02"}]
+    out = rd.select(items, 5)
+    assert sorted(x["id"] for x in out) == ["f2", "u"], [x["id"] for x in out]
+
+
+def test_a_user_turn_is_not_hidden_behind_friday_repeating_it_in_recall(monkeypatch):
+    class Mem:
+        def available(self):
+            return True
+
+        def search(self, message, n=5, **kw):
+            t = "The mooring fee at Harwich is 400 a year."
+            return [{"id": "m-friday", "text": t, "timestamp": "2026-09-01T09:00:00",
+                     "role": "friday", "relevance": 0.9},
+                    {"id": "m-user", "text": t, "timestamp": "2026-03-01T09:00:00",
+                     "role": "user", "relevance": 0.8}][:n]
+    text = "\n".join(_lines(_block(monkeypatch, Mem(), "mooring fee")))
+    assert "ref m-user] User:" in text and "ref m-friday] You:" in text, text
+
+
+def test_prefer_wins_within_a_group_before_the_newest(rd):
+    t = "The mooring fee at Harwich is 400 a year."
+    items = [_it("new", t, "2026-09-01", 0.9), _it("sent", t, "2026-01-01", 0.5)]
+    assert [x["id"] for x in rd.select(items, 3)] == ["new"]
+    out = rd.select(items, 3, prefer=lambda x: x["id"] == "sent")
+    assert [x["id"] for x in out] == ["sent"]
+    # a superseded item still loses, preferred or not
+    items[1]["superseded"] = True
+    assert [x["id"] for x in rd.select(items, 3, prefer=lambda x: x["id"] == "sent")] == ["new"]
+
+
+def _fts_rows(sent_to_old, sent_to_new):
+    t = "The mooring fee at Harwich is 400 a year."
+    return [
+        {"message_id": "m-new", "conversation_id": "c2", "title": "", "ts": 2000.0, "date": "2026-09-01",
+         "role": "user", "via": "chat", "text": t, "sent_to": sent_to_new, "score": 9.0},
+        {"message_id": "m-old", "conversation_id": "c1", "title": "", "ts": 1000.0, "date": "2026-05-01",
+         "role": "user", "via": "chat", "text": t, "sent_to": sent_to_old, "score": 8.0},
+        {"message_id": "m-gate", "conversation_id": "c3", "title": "", "ts": 1500.0, "date": "2026-07-01",
+         "role": "user", "via": "chat", "text": "The Harwich marina gate code changed in June.",
+         "sent_to": [], "score": 5.0},
+    ]
+
+
+def test_cloud_typed_search_keeps_the_twin_this_provider_already_saw(monkeypatch):
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import conversation_search_tool as cst
+    rows = _fts_rows(["anthropic"], [])
+    monkeypatch.setattr(fts, "search", lambda q, since=None, until=None, limit=8: rows[:limit])
+    monkeypatch.setattr(cst, "_loop_is_local", lambda: False)
+    monkeypatch.setattr(cst, "_provider", lambda: "anthropic")
+    out = cst._tool_search_conversations_typed({"query": "mooring fee harwich"})
+    assert "2026-05-01" in out, "the turn this model already saw was dropped for an unsent twin:\n" + out
+    assert "2026-09-01" not in out
+    # the suppressed twin is neither shown nor counted among the withheld matches
+    assert "1 more match(es)" in out, out
+    # a local model just gets the newest of the group
+    monkeypatch.setattr(cst, "_loop_is_local", lambda: True)
+    out = cst._tool_search_conversations_typed({"query": "mooring fee harwich"})
+    assert "2026-09-01" in out and "2026-05-01" not in out, out
+
+
+def test_voice_search_keeps_the_twin_gemini_already_heard(monkeypatch):
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import conversation_recall as rc
+    from agent_friday.services import voice_engine as ve
+    rows = _fts_rows([rc.prov.GEMINI], [])
+    monkeypatch.setattr(fts, "search", lambda q, since=None, until=None, limit=8: rows[:limit])
+    monkeypatch.setattr(ve, "_voice_local_only", lambda: True)
+    shared = []
+    monkeypatch.setattr(ve, "_start_local_share", lambda *a, **k: shared.append(a) or None)
+    out = ve._tool_search_past_conversations({"query": "mooring fee harwich"}, session=None)
+    assert "From earlier calls with you" in out and "2026-05-01" in out, out
+    assert "2026-09-01" not in out
+    assert "1 more match(es)" in out, out
+    assert shared == []
+
+
+# ── suppression counts: only what would have had a slot ────────────────────
+
+def test_only_suppressions_that_would_have_taken_a_slot_are_counted(rd, monkeypatch):
+    monkeypatch.setattr(rd, "SUPPRESSED", {})
+    t, u = "The mooring fee at Harwich is 400 a year.", "The marina gate code changed in June."
+    items = [{"text": t}, {"text": t}, {"text": u}, {"text": u}, {"text": u}]
+    out = rd.select(items, 2, ident=lambda r: None, keep="first", path="probe")
+    assert [x["text"] for x in out] == [t, u]
+    assert rd.suppressed_counts() == {"probe": 1}, "over-fetched extras were counted as suppressed"
+
+
+def test_library_counts_only_suppressions_within_its_slots(monkeypatch):
+    from agent_friday.services import recall_dedupe as rd
+    from agent_friday.services.library import search as ls
+    monkeypatch.setattr(rd, "SUPPRESSED", {})
+    docs = {d: {"id": d, "title": f"Doc {d}"} for d in (1, 2, 3, 4)}
+
+    class TB:
+        def visible_docs(self):
+            return docs
+
+    class Store:
+        def dec(self, raw, shelf):
+            return raw
+
+    def cand(pid, doc, text, score):
+        return {"id": pid, "doc_id": doc, "raw": text, "shelf": "open", "block_ids": "[]",
+                "section_id": None, "score": score, "route": score}
+    fee = "The annual mooring fee is 400 pounds, payable in April."
+    ctx = SimpleNamespace(
+        tb=TB(), store=Store(), question="mooring fee", cfg={"p_strong": 0.8, "p_weak": 0.4},
+        cands={1: cand(1, 1, fee, 0.95), 2: cand(2, 2, fee, 0.94), 3: cand(3, 3, fee, 0.93),
+               4: cand(4, 4, "Moorings must display the licence number on the bow.", 0.6)})
+    assert [e["passage_id"] for e in ls.build_evidence(ctx, 2, 12000)] == [1, 4]
+    assert rd.suppressed_counts() == {"library": 1}

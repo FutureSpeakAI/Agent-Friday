@@ -394,9 +394,12 @@ def build_evidence(ctx: _Ctx, limit: int, max_chars: int) -> list[dict]:
         # A passage that says what a better-ranked one already said (a second
         # copy of a document, an overlapping chunk) leaves its slot to
         # distinct evidence (NS-14.6-2, services/recall_dedupe).
+        # Each kept passage is its own anchor (no chaining through skipped ones).
         sig = recall_dedupe.signature(text)
         if any(recall_dedupe.is_near_duplicate(sig, s) for s in kept_sigs):
-            suppressed += 1
+            # Counted only if, with no suppression, it would have had a slot.
+            if len(out) + suppressed < limit:
+                suppressed += 1
             continue
         kept_sigs.append(sig)
         blk = _best_block(ctx.store, json.loads(c["block_ids"] or "[]"), c["shelf"], ctx.question)
