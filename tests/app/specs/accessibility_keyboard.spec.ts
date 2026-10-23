@@ -39,6 +39,16 @@ async function focusRing(page: Page) {
 
 test('the first Tab stop skips straight to the app', async ({ page }) => {
   await desktop(page);
+  // From the top of the page: the desktop may already have put focus in the
+  // chat box, so start where a fresh Tab sequence starts, before the first
+  // element (a point that is not itself a Tab stop), then press Tab.
+  await page.evaluate(() => {
+    const top = document.createElement('span');
+    top.id = 'ax-top-of-page';
+    top.tabIndex = -1;
+    document.body.insertBefore(top, document.body.firstChild);
+    top.focus();
+  });
   await page.keyboard.press('Tab');
   const skip = page.locator('a.skip-link');
   await expect(skip, 'the first thing Tab reaches is the skip link').toBeFocused();
