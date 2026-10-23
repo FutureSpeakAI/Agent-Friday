@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled: adding red-evidence re-runs the PR as the targeted job below.
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -15,6 +17,9 @@ concurrency:
 jobs:
   pytest:
     name: pytest (${{ matrix.os }}, py${{ matrix.python }})
+    # A red-evidence PR proves only that its new tests fail on unchanged code:
+    # it runs the red-evidence job instead of the full matrix.
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -114,6 +119,7 @@ jobs:
   # provider catalogues, which a CI runner has no keys or local models for.
   app-specs:
     name: app specs (Settings walk, See & Touch)
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     # Windows, the platform Friday ships on: the scratch server calls Windows
     # tools (PowerShell) that a Linux runner does not have.
     runs-on: windows-latest
@@ -137,11 +143,16 @@ jobs:
           npx playwright test --config=playwright.app.config.ts --workers=1
           --timeout=180000 --output=test-results/app
           settings_walk.spec.ts smoke.spec.ts
+          camera_mode.spec.ts
           fill_in_place.spec.ts messages_friday_select.spec.ts open_only_stage.spec.ts
           point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts
           studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
           activity_never_collapses.spec.ts connect_services.spec.ts laya_settings.spec.ts
+          posting_screens.spec.ts
+      # The run's output folder, uploaded on success as well as failure: it holds
+      # the Settings walk table, failure traces, and the screenshots specs save
+      # for a person to look at (posting_screens.spec.ts: posting-*.png).
       - name: Keep the Settings walk table and failure traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # same pin as installer.yml
@@ -170,6 +181,7 @@ jobs:
 
   package:
     name: package build
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -184,3 +196,32 @@ jobs:
       # without them installs a career pipeline that cannot work.
       - name: Verify package data
         run: python scripts/check_package_data.py dist/*.whl
+
+  # A PR labelled red-evidence carries only new tests on unchanged code, to show
+  # they fail by assertion before the fix. It runs just the test files it changes,
+  # once, instead of the whole matrix: the fix PR runs the full suites.
+  red-evidence:
+    name: red evidence (changed test files)
+    if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install agent-friday with the dev extra
+        run: pip install -e ".[dev,google,federation,podcast,compose]"
+      - name: Run the changed test files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          files=$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- 'tests/*.py' 'tests/**/*.py' | grep -E '(^|/)test_[^/]*\.py$' || true)
+          if [ -z "$files" ]; then
+            echo "A red-evidence PR must add or change at least one test file."; exit 1
+          fi
+          echo "$files"
+          pytest $files -q

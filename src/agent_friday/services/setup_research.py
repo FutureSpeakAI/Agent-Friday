@@ -26,8 +26,8 @@ setup_chat_copy.RESEARCH_ASK, and this module is what keeps that promise:
   Rejected items are deleted.
 
 The job runs as an ordinary background task through ``agent._spawn_task(...,
-runner=...)``, the same path the deep_research tool uses, so it appears in the
-Task Tray and carries a reasoning trace. The web and the model are reached
+runner=...)``, the same path the deep_research tool uses, so it has a task
+card in System and carries a reasoning trace. The web and the model are reached
 through ``ResearchEngine``; the default ``WebEngine`` reads pages with
 services/web_fetch (SSRF-validated) and finds them with services/web_search.
 A different engine can be dropped in without touching the chat or its UI.

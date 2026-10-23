@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 import pytest
+from tests.desk_press_support import pressed      # "the click" is a verified press on this PC (services/desk_press)
 
 KEY = b"g" * 32
 SID = "50_say_before_acting"
@@ -183,7 +184,7 @@ def test_a_better_candidate_is_recommended_and_only_a_click_adopts_it(home):
         assert approvals.get_approval(card["approval_id"])["status"] == "pending", channel
         assert inf.load(SID) == inf.shipped_text(SID)
 
-    approvals.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert inf.load(SID) == new
     hist = inf.history(SID)
     assert hist[-1]["actor"] == f"card:{card['approval_id']}"
@@ -197,7 +198,7 @@ def test_keep_current_can_win_and_then_nothing_changes(home):
     assert out["result"]["recommend"] == "current"
     card = approvals.get_approval(out["card_id"])
     assert "Recommended: keep current" in card["description"]
-    approvals.decide(card["approval_id"], "deny", decided_by="owner:ui")
+    with pressed(): approvals.decide(card["approval_id"], "deny", decided_by="owner:ui")
     assert inf.load(SID) == inf.shipped_text(SID)
     with pytest.raises(trials.TrialRefused):
         _candidate(trials)
@@ -250,7 +251,7 @@ def test_a_background_card_is_quiet_until_the_weekly_summary(home, monkeypatch):
     digest = trials.weekly_digest()
     assert digest and digest["kind"] == "trial_digest"
     # the summary decides nothing
-    approvals.decide(digest["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(digest["approval_id"], "approve", decided_by="owner:ui")
     assert inf.load(SID) == cur
 
 
@@ -272,7 +273,7 @@ def test_a_learned_heuristic_card_is_approved_only_by_a_click(home):
                                      action_class="internal", force_gate=True, payload={"skill_id": "h1"})
     approvals.decide(card["approval_id"], "approve", decided_by="owner")
     assert approvals.get_approval(card["approval_id"])["status"] == "pending"
-    approvals.decide(card["approval_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(card["approval_id"], "approve", decided_by="owner:ui")
     assert approvals.get_approval(card["approval_id"])["status"] == "approved"
 
 
@@ -325,7 +326,7 @@ def test_an_approved_skill_card_applies_the_change_through_the_signed_writer(ski
     out = trials.run_trial(cand["id"], run_one=_runner(lambda *a: _grade(True)),
                            pack=[{"id": "x1", "domain": "mail", "prompt": "x", "tags": []}])
     assert out["status"] == "untested"
-    approvals.decide(out["card_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(out["card_id"], "approve", decided_by="owner:ui")
     assert (skills_home / "report-summary" / "SKILL.md").exists()
     import agent_friday.skill_registry as registry
     assert registry.skill_owner("report-summary", skills_home) == registry.AGENT_AUTHOR
@@ -340,7 +341,7 @@ def test_a_candidate_changed_on_disk_after_the_card_is_not_adopted(home):
     rec = trials.load(cand["id"])
     rec["candidate"]["instructions"][SID] = new.replace("First, in one line", "Swapped text")
     trials.save(rec)
-    approvals.decide(out["card_id"], "approve", decided_by="owner:ui")
+    with pressed(): approvals.decide(out["card_id"], "approve", decided_by="owner:ui")
     assert inf.load(SID) == inf.shipped_text(SID)
     assert trials.load(cand["id"])["status"] == "approve_refused"
 

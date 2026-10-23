@@ -7,6 +7,7 @@ safe seam — real spawns start agent threads against the LLM kill-switch).
 from __future__ import annotations
 
 import pytest
+from tests.desk_press_support import desk_headers      # a press on this PC's screen (services/desk_press)
 
 
 @pytest.fixture
@@ -201,9 +202,9 @@ def test_extension_security_assess_blocks_pipeline(client):
 
 
 def test_extension_allowlist_roundtrip(client):
-    assert client.post("/api/extensions/allowlist", json={}).status_code == 400
+    assert client.post("/api/extensions/allowlist", json={}, headers=desk_headers()).status_code == 400
     added = client.post("/api/extensions/allowlist",
-                        json={"name": "my-server"}).get_json()["allowlist"]
+                        json={"name": "my-server"}, headers=desk_headers()).get_json()["allowlist"]
     assert "my-server" in added
     removed = client.delete("/api/extensions/allowlist/my-server").get_json()["allowlist"]
     assert "my-server" not in removed

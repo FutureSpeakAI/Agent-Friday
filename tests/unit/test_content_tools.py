@@ -13,6 +13,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pytest
 
@@ -23,6 +24,7 @@ if str(_SRC) not in sys.path:
 from agent_friday.services import agent as agent_mod  # noqa: E402
 from agent_friday.services import content_composer as cc  # noqa: E402
 from agent_friday.services import content_pipeline as cpl  # noqa: E402
+from agent_friday.services import media_index  # noqa: E402
 
 REWRITTEN = "[[tool-test-rewrite]]"
 FUTURE = "2026-12-01T09:00:00Z"
@@ -130,7 +132,9 @@ class TestCreatePost:
             "body": "Shipping day. The pipeline is live.",
             "platforms": ["linkedin", "bluesky"]})
         assert out["post_status"] == "DRAFT"
-        assert out["queue_link"] == f"/?workspace=content&tab=queue&post={out['post_id']}"
+        # The post's card in Media (Content's old Queue tab redirects to Media).
+        card = media_index.post_card_id(out["post_id"])
+        assert out["queue_link"] == "/w/media?" + urlencode({"card": card})
         post = cpl.get_post(out["post_id"])["post"]
         assert post["status"] == "DRAFT"
         assert {t["platform"] for t in post["targets"]} == {"linkedin", "bluesky"}
@@ -239,7 +243,7 @@ class TestPostStatus:
             "body": "Queue me.", "platforms": ["linkedin"],
             "publish_at": FUTURE})
         out = _call_json("content_post_status", {})
-        assert out["queue_link"] == "/?workspace=content&tab=queue"
+        assert out["queue_link"] == "/w/media?default_view=review"
         rows = [r for r in out["upcoming"] if r["post_id"] == created["post_id"]]
         assert rows and rows[0]["platform"] == "linkedin"
         assert rows[0]["publish_at"] == FUTURE

@@ -20,6 +20,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -114,14 +115,34 @@ def save_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
             return {"ok": False, "error": exception_text(e)}
 
 
+#: Option names that are public identifiers although they look like keys:
+#: TikTok's app id is called its client key (platforms/tiktok.py reads it here).
+_PUBLIC_KEY_NAMES = frozenset({"client_key"})
+_SECRET_NAME = re.compile(
+    r"secret|token|passw|passphrase|pwd|credential|private|cookie|session|bearer|"
+    r"auth_?code|(?:^|_)(?:api|access|app|signing|consumer|master)?_?key$",
+    re.IGNORECASE)
+
+
+def _secret_like(name: Any) -> bool:
+    """A secret-looking option name. platforms.json is plain text; secrets go
+    to the credential store (configure_platform's secret_value), never here."""
+    n = str(name or "").strip().lower().replace("-", "_")
+    return n not in _PUBLIC_KEY_NAMES and bool(_SECRET_NAME.search(n))
+
+
 def _sanitize_opts(opts: Any, depth: int = 0) -> Dict[str, Any]:
     """Bound caller-supplied options — these arrive straight from JSON bodies,
-    so types and sizes are attacker-controllable."""
+    so types and sizes are attacker-controllable. Secret-looking names
+    (secret, token, password, key, ...) are dropped at every depth: this goes
+    to platforms.json in plain text."""
     out: Dict[str, Any] = {}
     if not isinstance(opts, dict) or depth > 2:
         return out
     for k, v in list(opts.items())[:50]:
         k = str(k)[:64]
+        if _secret_like(k):
+            continue
         if isinstance(v, bool) or isinstance(v, (int, float)):
             out[k] = v
         elif isinstance(v, str):
@@ -144,6 +165,8 @@ def configure_platform(name: str, opts: Dict[str, Any], *,
         return {"ok": False, "error": f"unknown platform: {name}"}
     cfg = load_config()
     section = cfg.get(mod) if isinstance(cfg.get(mod), dict) else {}
+    # A secret an older build wrote here is dropped on the next save too.
+    section = {k: v for k, v in section.items() if not _secret_like(k)}
     section.update(_sanitize_opts(opts))
     cfg[mod] = section
     res = save_config(cfg)
