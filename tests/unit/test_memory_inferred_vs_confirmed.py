@@ -236,10 +236,8 @@ def test_a_model_proposal_reaches_memory_only_once_approved_and_then_says_where_
 
 
 def test_a_style_inferred_this_session_is_labelled_inferred_in_the_prompt():
-    """FAILS on current code: render_user_model_prompt (services/user_model.py,
-    the "Communication style:" line) states a session-inferred style as plain
-    fact. Proposed fix: when the value comes from _SESSION_TRAITS, say so on
-    the line ("inferred from how they write this session, not stated by them")."""
+    """render_user_model_prompt says which part of the style Friday inferred
+    from how the owner writes; the part the owner set carries no such mark."""
     for _ in range(8):
         um.observe_message("lol yeah gonna grab coffee, thanks!", role="user")
     block = _user_model_block(_head())
@@ -253,6 +251,26 @@ def test_a_style_inferred_this_session_is_labelled_inferred_in_the_prompt():
     block = _user_model_block(_head())
     style = [ln for ln in block.splitlines() if ln.startswith("Communication style:")]
     assert style and "formal" in style[0] and "inferred" not in style[0].lower()
+
+
+def test_a_style_stored_before_inference_became_session_only_counts_as_inferred():
+    """Rows an older Friday wrote from inference carry no owner mark: they are
+    labelled inferred and do not freeze this session's adaptation."""
+    conn = um._connect()
+    conn.execute("INSERT INTO traits(key,value,confidence,updated_ts,evidence) VALUES(?,?,?,?,?)",
+                 ("comm.formality", "0.9", 0.6, 0.0, 3))
+    conn.execute("INSERT INTO traits(key,value,confidence,updated_ts,evidence) VALUES(?,?,?,?,?)",
+                 ("expertise.code", "0.9", 0.6, 0.0, 3))
+    conn.commit()
+    conn.close()
+    assert not um.owner_set("comm.formality")
+    block = _user_model_block(_head())
+    style = [ln for ln in block.splitlines() if ln.startswith("Communication style:")]
+    assert style and "inferred" in style[0].lower(), block
+    assert "code (inferred)" in block, block
+    for _ in range(8):
+        um.observe_message("lol yeah gonna grab coffee, thanks!", role="user")
+    assert um.get_trait("comm.formality") < 0.9, "an old inference was treated as the owner's setting"
 
 
 def _words(text):
@@ -337,12 +355,8 @@ def test_a_queued_contradiction_leaves_the_owners_line_as_the_only_one_in_the_pr
 
 
 def test_an_owner_set_style_is_not_overridden_by_what_friday_infers_this_session():
-    """FAILS on current code: user_model.get_trait returns the session value
-    ahead of the durable one, and _nudge_trait moves a session copy of an
-    owner-set trait away from what the owner set (services/user_model.py,
-    get_trait and _nudge_trait). Proposed fix: in _nudge_trait, return without
-    nudging when _durable_trait(key) is not None (the owner's setting stands);
-    _all_traits then has no session overlay for that key either."""
+    """What Friday infers this session never moves a style the owner set,
+    and the owner's part of the line is not labelled inferred."""
     um.set_trait("comm.formality", 0.9)
     for _ in range(8):
         um.observe_message("lol yeah gonna grab coffee, thanks!", role="user")
@@ -351,15 +365,12 @@ def test_an_owner_set_style_is_not_overridden_by_what_friday_infers_this_session
     style = [ln for ln in _user_model_block(_head()).splitlines()
              if ln.startswith("Communication style:")]
     assert style and "formal/professional" in style[0], style
+    assert "formal/professional (inferred" not in style[0], style
 
 
 def test_approving_a_fact_the_store_already_holds_as_inferred_lifts_it_to_approved_confidence():
-    """FAILS on current code: user_model.note_fact's duplicate branch sets
-    confidence to old + 0.1 and ignores the confidence passed in, so approving
-    a proposal whose text the store already holds from dreaming (0.6) leaves it
-    at 0.7, level with a regex match (services/user_model.py, note_fact, the
-    `if source and source != (dup[2] or "")` branch). Proposed fix: there,
-    new confidence = min(0.98, max(float(confidence), float(dup[1]) + 0.1))."""
+    """Approving a proposal whose text the store already holds from an
+    inference lifts it to the approved confidence (not just old + 0.1)."""
     um.note_fact("workflow", PROPOSED, confidence=0.6, source="dream:2026-08-01")
     _propose()
     assert mp.approve([mp.pending()[0]["fact_id"]])["approved"] == 1
@@ -371,22 +382,23 @@ def test_approving_a_fact_the_store_already_holds_as_inferred_lifts_it_to_approv
 
 
 def test_a_confirmed_fact_keeps_its_confirmed_source_when_an_inference_repeats_it():
-    """FAILS on current code: user_model.note_fact's duplicate branch writes
-    the NEW source over the old one, so an inferred repeat ("dream:...") erases
-    the mark that the owner entered it ("manual"), and the card migration then
-    queues the owner's own fact for review instead of keeping it
-    (services/user_model.py, note_fact; core_memory.migrate_user_model_facts
-    reads that source). Proposed fix: in the duplicate branch keep the old
-    source when it is a confirmed one (manual, proposed:, meeting:,
-    user_stated, setup) and the new one is not."""
+    """An inferred repeat ("dream:...") keeps the mark that the owner entered
+    the fact ("manual"), so the card migration keeps it as the owner's, and
+    an inference cannot raise its own confidence by claiming a high one."""
     um.note_fact("preference", "Prefers short answers.", confidence=0.7, source="manual")
     um.note_fact("preference", "Prefers short answers.", confidence=0.6, source="dream:2026-10-02")
     assert _fact("Prefers short answers.")["source"] == "manual", \
         "an inference repeating the owner's fact erased the mark that the owner entered it"
+    um.note_fact("bio", "Lives by the sea.", confidence=0.95, source="setup")
+    um.note_fact("bio", "Lives by the sea.", confidence=0.6, source="dream:2026-10-03")
+    assert _fact("Lives by the sea.")["source"] == "setup"
+    um.note_fact("preference", "Likes long walks.", confidence=0.5, source="dream:2026-10-01")
+    um.note_fact("preference", "Likes long walks.", confidence=0.95, source="dream:2026-10-02")
+    assert _fact("Likes long walks.")["confidence"] == pytest.approx(0.6, abs=0.001)
     cm._MIGRATION_CHECKED.clear()
     cm.ensure_migrated()
-    assert cm.entries("user") == ["Prefers short answers."]
-    assert cm.pending() == []
+    assert "Prefers short answers." in cm.entries("user")
+    assert "Prefers short answers." not in [p.get("text") for p in cm.pending()]
 
 
 # ── (d) only the owner's action confirms ─────────────────────────────────────
@@ -416,23 +428,40 @@ def test_only_the_owners_routes_keep_a_suggestion_or_approve_a_proposal():
     """core_memory.decide and memory_proposals.approve turn an inferred item
     into a confirmed one. Nothing but the owner's HTTP routes calls them: no
     tool handler, no background pass, no model loop."""
+    import ast
     root = Path(__file__).resolve().parents[2] / "src" / "agent_friday"
     allowed = {("routes", "core_memory.py"), ("routes", "memory_proposals.py")}
-    patterns = [
-        re.compile(r"\bcore_memory\.decide\s*\("),
-        re.compile(r"\b(?:mp|memory_proposals)\.approve\s*\("),
-        re.compile(r"from\s+agent_friday\.services\.core_memory\s+import[^\n]*\bdecide\b"),
-        re.compile(r"from\s+agent_friday\.services\.memory_proposals\s+import[^\n]*\bapprove\b"),
-    ]
-    callers = []
+    confirmers = {"core_memory": "decide", "memory_proposals": "approve"}
+    callers, scanned = set(), 0
     for path in root.rglob("*.py"):
         rel = path.relative_to(root).parts
-        if rel[-2:] in allowed:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+        except SyntaxError:
             continue
-        src = path.read_text(encoding="utf-8", errors="ignore")
-        if any(p.search(src) for p in patterns):
-            callers.append("/".join(rel))
-    assert callers == [], "something other than the owner's routes confirms memory: %s" % callers
+        scanned += 1
+        aliases = {}                                   # local name -> module
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                base = (node.module or "") if isinstance(node, ast.ImportFrom) else ""
+                last = base.rsplit(".", 1)[-1]
+                for a in node.names:
+                    mod = a.name.rsplit(".", 1)[-1]
+                    if mod in confirmers:              # the module, under any name
+                        aliases[a.asname or mod] = mod
+                    elif last in confirmers and a.name == confirmers[last]:
+                        callers.add("/".join(rel))      # `from ...core_memory import decide`
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and isinstance(node.func.value, ast.Name):
+                mod = aliases.get(node.func.value.id)
+                if mod and node.func.attr == confirmers[mod]:
+                    callers.add("/".join(rel))
+    assert scanned > 100, "the scan found no source to check"
+    found = {tuple(c.split("/")[-2:]) for c in callers}
+    assert allowed <= found, "the scan no longer sees the owner's own routes: %s" % sorted(callers)
+    others = sorted(c for c in callers if tuple(c.split("/")[-2:]) not in allowed)
+    assert others == [], "something other than the owner's routes confirms memory: %s" % others
 
 
 def test_the_owners_keep_is_recorded_as_the_owners_change():
@@ -455,6 +484,7 @@ def test_a_rejected_proposal_leaves_recall_cannot_be_approved_later_and_is_not_p
     assert PROPOSED not in _head()
 
     again = _propose()
+    assert again["ok"] and again["turns_reviewed"] == 5, again
     assert again["stored"] == 0, "the rejected fact was proposed again"
     assert mp.pending() == []
 

@@ -149,6 +149,12 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
                     "UPDATE traits SET value=?, confidence=?, updated_ts=?, evidence=? "
                     "WHERE key=?",
                     (str(value), float(confidence), time.time(), new_ev, key))
+            if key.startswith(_STYLE_PREFIXES):
+                # Set, not inferred (§34.9-8): rows from before inferred style
+                # became session-only carry no such mark.
+                conn.execute(
+                    "INSERT OR REPLACE INTO traits(key,value,confidence,updated_ts,evidence) "
+                    "VALUES(?,?,?,?,?)", (_OWNER_MARK + key, "1", 1.0, time.time(), 0))
             conn.commit()
             conn.close()
             return {"ok": True, "key": key, "value": value}
@@ -156,25 +162,36 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
             return {"ok": False, "error": exception_text(e)}
 
 
+_STYLE_PREFIXES = ("comm.", "expertise.")
+_OWNER_MARK = "owner_set."
+
+
+def owner_set(key: str) -> bool:
+    """True when the owner set this style or expertise trait. A stored one
+    without the mark is an old inference (written before inferred style
+    became session-only) and counts as inferred."""
+    return _durable_trait(_OWNER_MARK + str(key)) is not None
+
+
 def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
     """Move a 0..1 session trait toward `target` by an EMA step.
 
-    Session-only: the step starts from this session's value, else from the
-    owner's durable value, else 0.5, and is never written to the store. The
-    read-compute-write runs under _LOCK so two concurrent observers (chat and
-    a channel poll thread) cannot lose an update.
+    Session-only: never written to the store. A trait the owner set is never
+    nudged (what Friday infers does not out-rank it, §34.9-8); otherwise the
+    step starts from this session's value, else from an older stored
+    inference, else 0.5. The read-compute-write runs under _LOCK so two
+    concurrent observers (chat and a channel poll thread) cannot lose an
+    update.
     """
     try:
         with _LOCK:
             if key in _SESSION_TRAITS:
                 cur, ev = _SESSION_TRAITS[key]
             else:
-                durable = _durable_trait(key)
-                if durable is not None:
-                    # The owner set this one: what Friday infers never
-                    # out-ranks it (§34.9-8), not even for a session.
+                if owner_set(key):
                     return
-                cur, ev = 0.5, 0
+                durable = _durable_trait(key)
+                cur, ev = (float(durable) if _isfloat(durable) else 0.5), 0
             new = round(cur + (target - cur) * weight, 4)
             _SESSION_TRAITS[key] = (max(0.0, min(1.0, new)), ev + 1)
     except Exception:
@@ -264,7 +281,7 @@ def observe_event(kind: str, value: str) -> Dict[str, Any]:
 #: Sources that mean the owner entered or approved the fact (as
 #: core_memory.migrate_user_model_facts reads them); every other source is
 #: something Friday inferred.
-CONFIRMED_SOURCES = ("manual", "proposed:", "meeting:")
+CONFIRMED_SOURCES = ("manual", "proposed:", "meeting:", "setup", "user_stated")
 
 
 def is_confirmed_source(source) -> bool:
@@ -303,10 +320,12 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
                     # confidence given (§34.9-8).
                     keep = dup[2] if is_confirmed_source(dup[2]) and not is_confirmed_source(source) \
                         else source
+                    lifted = float(dup[1]) + 0.1
+                    if is_confirmed_source(source):
+                        lifted = max(float(confidence), lifted)
                     conn.execute(
                         "UPDATE facts SET confidence=?, source=?, ts=? WHERE fact_id=?",
-                        (min(0.98, max(float(confidence), float(dup[1]) + 0.1)), keep,
-                         time.time(), fid))
+                        (min(0.98, lifted), keep, time.time(), fid))
                 else:
                     conn.execute("UPDATE facts SET ts=? WHERE fact_id=?",
                                  (time.time(), fid))
@@ -341,23 +360,26 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
         lines: List[str] = []
         formality = get_trait("comm.formality")
         verbosity = get_trait("comm.verbosity")
-        with _LOCK:
-            inferred = set(_SESSION_TRAITS)
+        formality = float(formality) if _isfloat(formality) else None
+        verbosity = float(verbosity) if _isfloat(verbosity) else None
+
+        def _inferred(key):
+            # Said apart from what the owner set (§34.9-8).
+            return not owner_set(key)
+        mark = " (inferred from how they write, not stated by them)"
         if formality is not None:
-            lines.append(
-                "Communication style: "
-                + ("formal/professional" if formality > 0.6 else
-                   "casual/relaxed" if formality < 0.4 else "balanced")
-                + (", prefers detail" if (verbosity or 0.5) > 0.6 else
-                   ", prefers terse answers" if (verbosity or 0.5) < 0.4 else "")
-                # Said apart from what the owner set (§34.9-8).
-                + (" (inferred from how they write this session, not stated by them)"
-                   if inferred & {"comm.formality", "comm.verbosity"} else ""))
+            parts = [("formal/professional" if formality > 0.6 else
+                      "casual/relaxed" if formality < 0.4 else "balanced")
+                     + (mark if _inferred("comm.formality") else "")]
+            if verbosity is not None and not 0.4 <= verbosity <= 0.6:
+                parts.append(("prefers detail" if verbosity > 0.6 else "prefers terse answers")
+                             + (mark if _inferred("comm.verbosity") else ""))
+            lines.append("Communication style: " + ", ".join(parts))
         experts = []
         novices = []
         for key, val in _all_traits().items():
             if key.startswith("expertise.") and _isfloat(val):
-                dom = key.split(".", 1)[1] + (" (inferred)" if key in inferred else "")
+                dom = key.split(".", 1)[1] + ("" if owner_set(key) else " (inferred)")
                 fv = float(val)
                 if fv >= 0.7:
                     experts.append(dom)
