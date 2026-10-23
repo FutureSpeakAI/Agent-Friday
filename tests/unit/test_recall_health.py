@@ -80,6 +80,42 @@ def test_recall_switched_off_or_never_installed_is_not_degraded(rh, monkeypatch)
     assert rh.degraded() == []
 
 
+def test_recall_not_installed_is_not_degraded(rh, monkeypatch):
+    from agent_friday.services import model_router as mr
+
+    class NotInstalled:
+        _init_error = ModuleNotFoundError("No module named 'chromadb'")
+
+        def available(self):
+            return False
+    monkeypatch.setattr(mr, "_get_conversation_memory", lambda: NotInstalled())
+    monkeypatch.setattr(mr, "_load_settings", lambda: {"memory_recall_enabled": True})
+    mr._build_memory_context_block("hello", "s1")
+    assert rh.degraded() == []
+
+
+def test_a_card_that_reads_again_clears_its_failure(rh, monkeypatch, tmp_path):
+    from agent_friday.services import core_memory as cm
+    rh.note_failure("memory_card")
+    card = tmp_path / "user.md"
+    card.write_text("- the owner lives in Leeds\n", encoding="utf-8")
+    monkeypatch.setattr(cm, "_path", lambda target: card)
+    cm.entries("user")
+    assert rh.degraded() == []
+
+
+def test_user_facts_read_again_clear_their_failure(rh, monkeypatch):
+    from agent_friday.services import user_model as um
+    rh.note_failure("user_facts")
+    monkeypatch.setattr(um, "_enabled", lambda: True)
+    monkeypatch.setattr(um, "get_trait", lambda key: None)
+    monkeypatch.setattr(um, "_all_traits", lambda: {})
+    monkeypatch.setattr(um, "_top_counters", lambda *a, **k: [])
+    monkeypatch.setattr(um, "_recent_facts", lambda n: [])
+    um.render_user_model_prompt()
+    assert rh.degraded() == []
+
+
 def test_a_search_that_raises_is_degraded(rh, monkeypatch):
     from agent_friday.services import model_router as mr
 
