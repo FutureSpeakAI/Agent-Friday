@@ -1031,12 +1031,18 @@ if __name__ == '__main__':
     try:
         from agent_friday.services import friday_bundle as _fb_boot
         _rr = _fb_boot.recover_interrupted_restore()
-        if _rr:
-            print("  Restore: an interrupted restore was %s (%s)"
-                  % ({"forward": "finished", "back": "rolled back"}.get(_rr.get("rolled"), "left as it was"),
-                     _rr.get("bundle_id") or _rr.get("why") or ""))
     except Exception as _rr_err:
+        _rr = None
         print(f"  Restore: the check for an interrupted restore failed ({_rr_err})")
+    if _rr:
+        print("  Restore: an interrupted restore was %s (%s)"
+              % ({"forward": "finished", "back": "rolled back"}.get(_rr.get("rolled"), "left as it was"),
+                 _rr.get("bundle_id") or _rr.get("why") or ""))
+        if _rr.get("stop"):
+            # starting now would make a fresh, empty Friday where the owner's
+            # folder belongs
+            print("  Restore: Friday is not starting on this data folder yet.")
+            sys.exit(3)
 
     # Single-instance guard — FIRST, before anything else can hang or race.
     _instance_lock_fh = _acquire_single_instance_lock()

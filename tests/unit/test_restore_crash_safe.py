@@ -17,6 +17,7 @@ import pytest
 
 from agent_friday.governance import proof_of_integrity as poi
 
+ROOT = Path(__file__).resolve().parents[2]
 PASS = "orbit lantern pepper tundra violet 42"   # pragma: allowlist secret
 VAULT_PASS = "vault passphrase for the test"  # pragma: allowlist secret
 
@@ -64,7 +65,8 @@ def _env(home: Path, scratch: Path) -> dict:
     env.update(FRIDAY_HOME=str(home), FRIDAY_LEDGER_DIR=str(home / "ledger"),
                FRIDAY_VAULT_PASSPHRASE=VAULT_PASS, FRIDAY_PASSWORD=VAULT_PASS,
                HOME=str(scratch), USERPROFILE=str(scratch), FRIDAY_NO_ARBITER="1",
-               CUDA_VISIBLE_DEVICES="-1", PYTHONIOENCODING="utf-8")
+               CUDA_VISIBLE_DEVICES="-1", PYTHONIOENCODING="utf-8",
+               PYTHONPATH=str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", ""))
     return env
 
 
@@ -210,3 +212,67 @@ def test_a_bundle_write_stopped_part_way_leaves_only_a_partial_that_the_next_one
     fresh.write_bytes(b"a writer still at work")
     assert fb.clear_stale_partials(out.parent) == [partials[0].name]
     assert fresh.exists() and not partials[0].exists()
+
+
+class _Keyring:
+    """A keychain in memory."""
+
+    class errors:
+        class NoKeyringError(Exception):
+            pass
+
+    def __init__(self):
+        self.store = {}
+
+    def get_password(self, svc, name):
+        return self.store.get((svc, name))
+
+    def set_password(self, svc, name, value):
+        self.store[(svc, name)] = value
+
+    def delete_password(self, svc, name):
+        self.store.pop((svc, name), None)
+
+
+def test_a_rolled_back_restore_gives_the_keychain_its_key_back(machines, monkeypatch):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    kr = _Keyring()
+    other = "22" * 32
+    kr.set_password("agent-friday", "governance-key", other)       # the Friday that was here
+    monkeypatch.setitem(sys.modules, "keyring", kr)
+    monkeypatch.setitem(sys.modules, "keyring.errors", kr.errors)
+
+    def boom(step):
+        if step == "aside":
+            raise OSError("the disk went away")
+    monkeypatch.setattr(fb, "_journal_step", boom)
+    with pytest.raises(OSError):
+        fb.restore(bundle, PASS, home=b, replace=True)
+    assert kr.get_password("agent-friday", "governance-key") == other
+    assert (b / "core_memory" / "ME.md").read_text(encoding="utf-8") == "- the Friday that was here\n"
+
+
+def test_a_second_restore_waits_for_the_first(machines):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    with fb._RestoreLock(b) as lk:
+        assert lk.held
+        with pytest.raises(fb.BundleError, match="Another restore"):
+            fb.restore(bundle, PASS, home=b, replace=True)
+    assert (b / "core_memory" / "ME.md").read_text(encoding="utf-8") == "- the Friday that was here\n"
+
+
+def test_a_journal_naming_other_folders_is_never_acted_on(machines, tmp_path):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    victim = tmp_path / "Documents"
+    victim.mkdir()
+    (victim / "letter.txt").write_text("keep me", encoding="utf-8")
+    fb._journal_path(b).write_text(json.dumps({
+        "v": 1, "step": "aside", "home": str(Path(os.path.abspath(str(b)))), "stage": str(victim),
+        "moved_aside": str(victim), "bundle_id": "x", "keys": {}}), encoding="utf-8")
+    out = fb.recover_interrupted_restore(b)
+    assert out["rolled"] == "none"
+    assert (victim / "letter.txt").read_text(encoding="utf-8") == "keep me"
+    assert (b / "core_memory" / "ME.md").exists()
