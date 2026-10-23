@@ -93,7 +93,14 @@ test('a message is written and sent with the keyboard alone', async ({ page }) =
     expect(await page.evaluate(() => !!document.activeElement && document.activeElement.hasAttribute('data-chat-input')),
       'Ctrl+/ puts the cursor in a chat field').toBe(true);
   }).toPass({ timeout: 20_000 });
-  await page.keyboard.type('keyboard-only hello');
+  // Typed into the field that has focus; typed again if the tray re-rendered under the keys.
+  const box = page.locator('[data-chat-input]:focus');
+  await expect(async () => {
+    await page.keyboard.press('Control+A');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type('keyboard-only hello');
+    await expect(box).toHaveValue('keyboard-only hello', { timeout: 2000 });
+  }).toPass({ timeout: 20_000 });
   await page.keyboard.press('Enter');
   await expect.poll(() => sent.some(b => b.includes('keyboard-only hello')),
     { message: 'Enter sent the message', timeout: 15_000 }).toBeTruthy();
