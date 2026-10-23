@@ -1478,7 +1478,13 @@ examples:
                        help="Write the Doctor report (versions, checks, errors, drift, "
                             "performance) under ~/.friday/doctor/reports and print it")
     p_doc.add_argument("--out", metavar="PATH",
-                       help="Also copy the report (.txt) to this file, to attach by hand")
+                       help="Also copy the report (.txt) to this file, to attach by hand; "
+                            "with --support, the folder for the zip")
+    p_doc.add_argument("--support", action="store_true",
+                       help="Make a support bundle (the report, the store list and redacted "
+                            "log excerpts) as a zip in Documents\\Friday Support; never sent")
+    p_doc.add_argument("--cloud-ok", action="store_true",
+                       help="With --support: make it even when the folder is synced to the cloud")
 
     # Revoke all action authority (services/authority.py, north star §18.12)
     p_auth = sub.add_parser("authority", help="Revoke all action authority, or restore it")
@@ -2060,6 +2066,27 @@ def cmd_doctor_report(out=None):
     return 1 if bad else 0
 
 
+def cmd_doctor_support(out=None, cloud_ok: bool = False) -> int:
+    """Make the support bundle (services/support_bundle.py). Local only;
+    nothing is sent."""
+    from agent_friday.services import support_bundle
+    try:
+        r = support_bundle.make(Path(out).expanduser().absolute() if out else None, by="owner:cli",
+                                cloud_ok=cloud_ok)
+    except support_bundle.CloudFolder as e:
+        print("No support bundle was made: %s Run it again with --cloud-ok, or --out a folder "
+              "that is not synced." % e)
+        return 1
+    except support_bundle.SupportError as e:
+        print("No support bundle was made: %s" % e)
+        return 1
+    print("Made %s (%d files: %s)." % (r["file"], len(r["members"]), ", ".join(r["members"])))
+    for n in r["notes"]:
+        print(n)
+    print("Read it before you share it. Friday never sends it; attach it yourself.")
+    return 0
+
+
 def _bundle_passphrase(confirm: bool) -> str:
     """The bundle passphrase: FRIDAY_BUNDLE_PASSPHRASE (unattended runs) or typed.
     A new one (`confirm`) must be strong enough (services/passphrase_strength):
@@ -2299,6 +2326,9 @@ def main():
         rv = cmd_tools()
     elif cmd == "config":
         rv = cmd_config(args)
+    elif cmd == "doctor" and getattr(args, "support", False):
+        rv = cmd_doctor_support(out=getattr(args, "out", None),
+                                cloud_ok=getattr(args, "cloud_ok", False))
     elif cmd == "doctor" and getattr(args, "report", False):
         rv = cmd_doctor_report(out=getattr(args, "out", None))
     elif cmd in ("status", "doctor", "check"):

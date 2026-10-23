@@ -130,6 +130,9 @@
   <button id="run" type="button">Run the checks</button>
   <span id="files"></span>
   <div id="out" role="region" aria-live="polite"></div>
+  <p class="muted">A support bundle is one zip in Documents\Friday Support: this report, the list of what Friday keeps, and the newest warning and error lines of Friday's logs with names, sentences, paths, addresses and keys taken out. Friday never sends it; read it, then attach it yourself.</p>
+  <button id="support-go" type="button">Make a support bundle</button>
+  <p id="support-note" role="status"></p>
 </section>
 
 <section id="stores" aria-labelledby="stores-h">
@@ -193,6 +196,19 @@
     });
   }
   $('readable-go').addEventListener('click', () => readableExport(false));
+  function supportBundle(cloudOk) {
+    text($('support-note'), 'Making...');
+    api('/api/doctor/support', { method: 'POST', body: JSON.stringify(cloudOk ? { cloud_ok: true } : {}) }).then(({ ok, d }) => {
+      if (!ok && d.code === 'cloud_folder') {
+        if (confirm(d.error)) { supportBundle(true); } else { text($('support-note'), 'Not made.'); }
+        return;
+      }
+      text($('support-note'), ok ? 'Made ' + d.file + ' (' + (d.members || []).length + ' files).' +
+        ((d.notes || []).length ? ' ' + d.notes.join(' ') : '') + ' Read it before you share it.'
+        : (d.error || 'Not made.'));
+    });
+  }
+  $('support-go').addEventListener('click', () => supportBundle(false));
   function caps() {
     api('/api/capabilities/state').then(({ ok, d }) => {
       const box = $('caps'); box.textContent = '';
