@@ -18,15 +18,21 @@ name: installer
 #                    the data survive, the data was backed up first, and the
 #                    shortcuts landed
 #                    (packaging/windows/tests/rehearsal/upgrade-vault-test.ps1)
+#   supply-chain     the SBOM the build job wrote from the wheelhouse it staged,
+#                    judged for licences, attribution and known advisories
+#                    (.github/workflows/supply-chain.yml, north star §34.2-10,
+#                    §34.2-17, §34.17-6). On a beta tag it only records
+#                    (amendment A19: betas are exempt from §34).
 #   tests-green      on a version tag only: scripts/release_gate.py waits for
 #                    the tests, codeql and restore workflows on the tag's exact
 #                    commit and fails unless all three are green there
 #   release          on a version tag only: a PUBLISHED pre-release carrying the
-#                    exe, its SHA-256 and RELEASE_NOTES.md.
+#                    exe, its SHA-256, its SBOM and RELEASE_NOTES.md.
 #
 # Pushing a version tag is the release decision. The release job runs only
-# after tests-green, the fresh-install job and every leg of the upgrade matrix
-# have passed, and it asks the release gate once more immediately before it
+# after tests-green, the fresh-install job, every leg of the upgrade matrix,
+# the bundle uninstall/restore check and the supply-chain verdict have
+# passed, and it asks the release gate once more immediately before it
 # publishes. A tag on a commit whose tests are red, running or missing
 # publishes nothing.
 #
@@ -102,6 +108,21 @@ jobs:
         run: |
           $exe = Get-ChildItem packaging/windows/dist/AgentFriday-Setup-*.exe | Select-Object -First 1
           ./packaging/windows/sign-installer.ps1 -Path $exe.FullName
+      # The SBOM of exactly what this setup program carries: the wheelhouse
+      # build-installer.ps1 just staged, the vendored browser code, the bundled
+      # CPython (scripts/supply_chain.py).
+      - name: The SBOM of the staged wheelhouse
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          python scripts/supply_chain.py sbom --wheels packaging\windows\staging\wheelhouse --out supply-chain --version "$env:REF_NAME"
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: supply-chain/sbom.cdx.json
+          if-no-files-found: error
       - name: The checksum matches the file
         shell: pwsh
         run: |
@@ -204,6 +225,15 @@ jobs:
             ${{ runner.temp }}/upgrade/setup-upgrade.log
           if-no-files-found: ignore
 
+  supply-chain:
+    needs: build
+    uses: ./.github/workflows/supply-chain.yml
+    with:
+      called: true
+      # A beta tag (v1.2.0-beta.3) records the verdict without failing (A19);
+      # a public tag (v1.0.0) must pass it.
+      report_only: ${{ !startsWith(github.ref, 'refs/tags/v') || contains(github.ref_name, '-') }}
+
   # The release gate. The tests and codeql workflows also run on the tag push
   # itself, so the tag's exact commit always gets a run to wait for. Pull
   # request runs do not count: they test a merge, not this commit.
@@ -259,7 +289,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tests-green, fresh-install, upgrade, bundle-uninstall-restore]
+    needs: [tests-green, fresh-install, upgrade, bundle-uninstall-restore, supply-chain]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -271,6 +301,14 @@ jobs:
         with:
           name: installer
           path: artifact
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sbom
+          path: sbom
+      - name: The SBOM is named for the setup program it describes
+        run: |
+          exe=$(basename artifact/AgentFriday-Setup-*.exe .exe)
+          cp sbom/sbom.cdx.json "artifact/$exe.sbom.cdx.json"
       - name: The notes carry the build sequence
         run: |
           # The updater orders releases by the "Build sequence: N" line in the
@@ -316,6 +354,6 @@ jobs:
           tagged=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG_NAME}" --jq .sha)
           test "$tagged" = "$GITHUB_SHA" || { echo "the tag now names $tagged, not the gated $GITHUB_SHA"; exit 1; }
           gh release create "${{ github.ref_name }}" artifact/AgentFriday-Setup-*.exe artifact/AgentFriday-Setup-*.exe.sha256 \
-            artifact/release-manifest.json \
+            artifact/release-manifest.json artifact/AgentFriday-Setup-*.sbom.cdx.json \
             --repo "${{ github.repository }}" --verify-tag --latest \
             --title "Agent Friday Beta 1.2 (update 2)" --notes-file "$RUNNER_TEMP/notes.md"
