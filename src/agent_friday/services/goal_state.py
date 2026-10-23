@@ -476,7 +476,7 @@ def repeated(marks: Iterable[Dict[str, Any]], *, output: str = "", critique: str
     err_fp = fingerprint(error) if error else None
     for m in marks:
         if err_fp and m.get("error") == err_fp:
-            return "it failed the same way as the attempt before"
+            return "it failed the same way as an earlier attempt"
         if out_fp and m.get("output") == out_fp:
             return "it produced the same result as an earlier attempt"
         if cr_fp and m.get("critique") == cr_fp:
