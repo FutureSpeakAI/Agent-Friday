@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 import uuid
 
 import pytest
@@ -161,9 +162,28 @@ class TestExtractPlanUnit:
         noise = "{" * 20000
         assert self._extract(noise + json.dumps(_plan(NEW_FILE)))["files"][0]["new_content"] == NEW_FILE
 
-    def test_brace_noise_after_the_plan_is_bounded(self):
-        # More stray braces than the scan bound: no plan, and no stall.
-        assert self._extract(json.dumps(_plan(NEW_FILE)) + " {" * 6000) is None
+    def test_brace_noise_after_the_plan(self):
+        t0 = time.monotonic()
+        plan = self._extract(json.dumps(_plan(NEW_FILE)) + " {" * 20000)
+        assert plan["files"][0]["new_content"] == NEW_FILE
+        assert time.monotonic() - t0 < 10
+
+    def test_file_with_many_braces_after_spilled_thinking(self):
+        # A big stylesheet: thousands of braces inside the answer's strings.
+        css = "".join(".c%d { color: red; }\n" % n for n in range(8000))
+        plan = self._extract(_split_reply(json.dumps(_plan(css))))
+        assert plan["files"][0]["new_content"] == css
+
+    def test_an_inner_object_never_stands_in_for_the_plan(self):
+        # new_content written as an object that itself has a `files` list.
+        inner = {"name": "pkg", "files": ["dist"]}
+        outer = {"summary": "outer", "files": [{"path": "package.json", "new_content": inner}]}
+        plan = self._extract("Plan follows.\n" + json.dumps(outer) + "\nThat is all {x}.")
+        assert plan["summary"] == "outer"
+
+    def test_deep_nesting_is_not_an_error(self):
+        assert self._extract("prose " + "[" * 100000) is None
+        assert self._extract("prose " + '{"a":' * 5000) is None
 
     def test_fixture_shape_matches_the_split(self):
         reply = _split_reply(json.dumps(_plan(NEW_FILE)))
