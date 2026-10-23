@@ -95,9 +95,11 @@ def classify(exc: BaseException) -> str:
         except Exception:
             pass
         return "revoked"
-    if "invalid_grant" in text:
-        return "revoked"
     status = _status(exc)
+    if status is None and "invalid_grant" in text:
+        # only an error with no HTTP status (an auth library's own): an HttpError's text
+        # carries the request URL, which holds ids the model chose
+        return "revoked"
     if status is not None:
         if status == 401:
             return "revoked"
@@ -113,7 +115,10 @@ def classify(exc: BaseException) -> str:
             return "unconfirmed"
         if 400 <= status < 500:
             return "refused"
-    if isinstance(exc, TimeoutError) or name in ("timeout", "ReadTimeout", "ReadTimeoutError"):
+    if isinstance(exc, (TimeoutError, ConnectionResetError, BrokenPipeError,
+                        ConnectionAbortedError)) or name in (
+            "timeout", "ReadTimeout", "ReadTimeoutError", "RemoteDisconnected", "SSLError",
+            "SSLEOFError", "IncompleteRead", "ProtocolError"):
         return "unconfirmed"          # the request may have reached Google
     if isinstance(exc, (ConnectionError, OSError)) or name in (
             "ServerNotFoundError", "TransportError", "ConnectionError", "NewConnectionError",
@@ -168,8 +173,8 @@ def settle(result: Any) -> Any:
     is a change that did not happen, even when nothing below noted why (a missing account, a
     refusal before Google was asked). Returns `result` unchanged."""
     notes = _NOTES.get()
-    if notes is not None and not notes and isinstance(result, dict) and (
-            result.get("error") or result.get("ok") is False):
+    if (notes is not None and not notes and isinstance(result, dict)
+            and result.get("ok") is not True and (result.get("error") or result.get("ok") is False)):
         notes.append({"kind": "not_attempted", "service": ""})
     return result
 

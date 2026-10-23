@@ -1512,6 +1512,8 @@ def _delete_task_for_creds(creds, tasklist_id: str, task_id: str,
         svc.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
         return {"deleted": True, "id": task_id}
     except Exception as e:
+        if _co._status(e) in (404, 410):
+            return {"deleted": True, "id": task_id, "already_gone": True}
         return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
 
 

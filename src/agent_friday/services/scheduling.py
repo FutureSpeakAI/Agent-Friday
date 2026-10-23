@@ -474,13 +474,19 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
         except Exception as ex:
             cw._drop_calendar_cache()
             if holds:
-                # some holds were placed: the call changed something; say which did not
+                # some holds were placed: the call changed something. It is done for those, with
+                # the series kept (book or release it later) and the slots not held named.
                 why = (_co.sentence("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
                        else _co.sentence(_co.classify(ex), "Google Calendar"))
-            else:
-                why = (_co.not_done("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
-                       else _co.failed(ex, "Google Calendar", account_id=aid))
-            return {"error": "placing a hold failed. " + why, "partial": bool(holds),
+                return {"ok": True, "partial": True, "series_id": series, "account_id": aid,
+                        "holds": holds,
+                        "not_held": [{"start": a.isoformat(), "end": b.isoformat()}
+                                     for a, b in pairs[len(holds):]],
+                        "warning": "Only %d of %d holds were placed. %s"
+                                   % (len(holds), len(pairs), why)}
+            why = (_co.not_done("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
+                   else _co.failed(ex, "Google Calendar", account_id=aid))
+            return {"error": "placing a hold failed. " + why, "partial": False,
                     "series_id": series, "account_id": aid, "holds": holds}
         holds.append({"id": ev.get("id"), "start": body["start"]["dateTime"],
                       "end": body["end"]["dateTime"]})
@@ -621,8 +627,10 @@ def book_slot(*, series_id, title: str, hold_event_id=None, start=None,
     try:
         rel = _release(svc, series, keep_event_id=hold_event_id)
     except Exception as e:
+        from agent_friday.services import connector_outcome as _co
         rel = {"released": [], "left_alone": [],
-               "error": "the other holds could not be released (%s)" % e}
+               "error": "the other holds could not be released. " + _co.sentence(_co.classify(e),
+                                                                                  "Google Calendar")}
     cw._drop_calendar_cache()
     return {"ok": True, "account_id": aid, "series_id": series,
             "event": {"id": booked.get("id") or hold_event_id,

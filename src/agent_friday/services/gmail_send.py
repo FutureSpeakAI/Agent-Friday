@@ -796,7 +796,7 @@ def save_draft(*, account_id: str, to=None, subject: str = "", body: str = "", c
         _co.not_done(_kind, "Gmail", account_id=account_id)
         raise SendRefused("Gmail did not save the draft (error %s). %s"
                           % (log_failure(e, "Gmail draft failed"), _co.sentence(_kind, "Gmail")),
-                          detail="Gmail did not save the draft: %s. Nothing was saved." % e)
+                          detail="Gmail did not save the draft. " + _co.sentence(_kind, "Gmail"))
     if not _co.confirmed(d):
         # Gmail answered without naming a draft: it may or may not exist. Never "saved", and
         # never "nothing was saved" either.
