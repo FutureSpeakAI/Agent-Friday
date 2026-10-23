@@ -198,6 +198,12 @@ def _post(path: str, body: dict, timeout: int) -> tuple[dict | None, str]:
     import requests
     if not configured():
         return None, "no Firecrawl API key configured"
+    # North-star A16a: no web search or page read until a route is chosen.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search" if path.endswith("/search") else "web_fetch",
+                          "firecrawl " + path.rsplit("/", 1)[-1])
+    if _held:
+        return None, _held
     # Hard spending cap (services/spend_guard): Firecrawl credits are metered
     # as USD estimates into cost_meter, so they count against the cap too.
     try:
@@ -319,6 +325,10 @@ def credits() -> dict:
     import requests
     if not configured():
         return {"ok": False, "error": "no key"}
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "firecrawl credits")      # A16a
+    if _held:
+        return {"ok": False, "error": _held, "route_not_chosen": True}
     try:
         r = requests.get(f"{BASE}/{API_VERSION}/team/credit-usage",
                          headers={"Authorization": f"Bearer {api_key()}"},
@@ -340,6 +350,11 @@ def verify() -> dict:
     if not configured():
         return {"configured": False, "valid": None,
                 "summary": "No Firecrawl key is configured."}
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "firecrawl key check")    # A16a
+    if _held:
+        return {"configured": True, "valid": None, "endpoints": {},
+                "summary": _held, "route_not_chosen": True}
     out: dict = {"configured": True, "endpoints": {}}
     t0 = time.time()
     s = search("test", count=1)

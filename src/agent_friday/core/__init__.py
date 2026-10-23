@@ -3877,18 +3877,51 @@ def install_origin_file() -> Path:
     return Path(FRIDAY_DIR) / INSTALL_ORIGIN_NAME
 
 
+#: Its own decoder: the record is read under every settings read (A16a), and
+#: must not show up in (or be skewed by) anything that counts json.loads calls.
+_INSTALL_RECORD_DECODER = json.JSONDecoder()
+
+
+def _read_install_record():
+    """(state, data). state is "missing", "ok" (data is the record dict),
+    "damaged" (the file holds no JSON object) or "busy" (it could not be read
+    just now: on Windows a scanner or another process can hold it for a moment;
+    never taken as damage). Read fresh every time: a cached answer could
+    outlive a write the cache did not see."""
+    p = install_origin_file()
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "missing", None
+    except OSError:
+        return "busy", None
+    try:
+        data = _INSTALL_RECORD_DECODER.decode(text)
+    except ValueError:
+        return "damaged", None
+    return ("ok", data) if isinstance(data, dict) else ("damaged", None)
+
+
 def install_choices_state() -> dict:
     """The install-origin record ({} when there is none or it cannot be read)."""
-    try:
-        data = json.loads(install_origin_file().read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    _state, data = _read_install_record()
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def install_record_unreadable() -> bool:
+    """True when the install-origin record exists but cannot be read as one
+    (damaged, half-written, not a JSON object). Such a record is never
+    overwritten: what it said is unknown, so nothing may be decided over it."""
+    return _read_install_record()[0] == "damaged"
 
 
 def update_install_choices_state(**fields) -> None:
-    """Merge `fields` into the install-origin record (atomic replace)."""
+    """Merge `fields` into the install-origin record (atomic replace).
+
+    An unreadable record is left as it is (install_record_unreadable)."""
     with _INSTALL_ORIGIN_LOCK:
+        if install_record_unreadable():
+            return
         cur = install_choices_state()
         known = _INSTALL_ORIGIN_CACHE.get(str(install_origin_file()))
         if known and "install" not in cur:
@@ -3916,6 +3949,12 @@ def install_origin() -> str:
     if got in (NEW_INSTALL, EXISTING_INSTALL):
         _INSTALL_ORIGIN_CACHE[key] = got
         return got
+    if install_record_unreadable():
+        # Neither decided again nor overwritten. EXISTING keeps the person's
+        # stored choices (A17); route_pick_pending separately keeps an
+        # unpicked route local-only (A16a), so this never opens the cloud.
+        _INSTALL_ORIGIN_CACHE[key] = EXISTING_INSTALL
+        return EXISTING_INSTALL
     home = Path(FRIDAY_DIR)
     fresh = not (Path(SETTINGS_FILE).exists() or (home / ".setup_complete").exists()
                  or (home / "costs.db").exists() or (home / "config.yaml").exists())
@@ -3948,18 +3987,32 @@ def route_pick_pending(settings=None) -> bool:
     not a pick. An install that already existed is never pending: its stored
     route is its choice."""
     try:
-        if install_origin() != NEW_INSTALL:
+        unreadable = install_record_unreadable()
+        if install_origin() != NEW_INSTALL and not unreadable:
             return False
+        if not unreadable and install_choices_state().get("route_picked") is True:
+            return False                    # a verified pick was made (sticky)
         s = _load_settings_raw() if settings is None else settings
         mr = (s or {}).get("model_routing")
         mr = mr if isinstance(mr, dict) else {}
         mode = str(mr.get("mode") or "").strip().lower()
         chosen = str(mr.get("mode_chosen") or "").strip().lower()
+        via = str(mr.get("mode_chosen_via") or "")
         if not mode or chosen != mode:
+            # A damaged record cannot say this install existed before A16, so
+            # a route with no recorded pick stays local-only (fails closed).
             return True
-        return str(mr.get("mode_chosen_via") or "") == ROUTE_KEPT_VIA
+        if via == ROUTE_KEPT_VIA:
+            return True
+        # Only a pick the owner verifiably made ends it (A16a).
+        return via not in ROUTE_PICK_VIAS
     except Exception:
-        return False
+        # A check that cannot run keeps a new install local-only (A16a) and
+        # never changes an existing one.
+        try:
+            return install_origin() == NEW_INSTALL
+        except Exception:
+            return False
 
 
 def _persist_spending_caps_migration(delta: dict):
@@ -4204,19 +4257,58 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_fallback_order_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
-        return _save_settings_locked(data,
+        out = _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,
             owner_routing_change=owner_routing_change,
             owner_safe_writes_change=owner_safe_writes_change,
             routing_change_via=routing_change_via,
             owner_room_approvals_change=owner_room_approvals_change,
             owner_fallback_order_change=owner_fallback_order_change)
+    # A16a: a verified pick, once made, stays made. Kept in the install record
+    # (which no client and no whole-file settings rewrite can touch), so a
+    # later routing change that cannot be tied to a screen (the chat's mode
+    # button) moves the mode without taking the person back to "not chosen".
+    if owner_routing_change and routing_change_via in ROUTE_PICK_VIAS:
+        _mr_saved = (data or {}).get("model_routing") if isinstance(data, dict) else None
+        if isinstance(_mr_saved, dict) and str(_mr_saved.get("mode") or "").strip():
+            try:
+                if not install_choices_state().get("route_picked"):
+                    update_install_choices_state(route_picked=True)
+            except Exception:
+                pass
+            _after_route_pick()
+    return out
+
+
+def _after_route_pick() -> None:
+    """A16a: once a route is chosen, the add-on connectors that were held
+    start. Only in a running app (the agent module already loaded); never
+    imports it, never blocks the save."""
+    import sys as _sys
+    _agent = _sys.modules.get("agent_friday.services.agent")
+    fn = getattr(_agent, "_mcp_resume_after_route_pick", None) if _agent else None
+    if fn is None:
+        return
+    try:
+        threading.Thread(target=fn, name="mcp-after-route-pick", daemon=True).start()
+    except Exception:
+        pass
 
 
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`
 #: records it (privacy/cloud_consent.ROUTING_CONSENT_VIAS says which count as
 #: consent when the mode is cloud only). Anything else is stored as "unverified".
-ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified")
+#: "consent_screen" is the route picked on the first-run consent screen (A16a):
+#: a pick, not cloud consent.
+ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified",
+                       "consent_screen")
+
+#: The vias that end a new install's route-not-chosen state (A16, A16a): a
+#: pick the owner verifiably made on a screen or at the terminal question.
+#: "unverified" (a routing change whose request could not be tied to an
+#: owner's screen) is recorded but does not end it; "migration" only ever
+#: runs on an install that already existed.
+ROUTE_PICK_VIAS = ("settings", "setup", "posture", "consent_screen", "migration")
 
 
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
@@ -4621,12 +4713,17 @@ def _apply_offline_routing_overlay(settings):
     try:
         with _NETWORK_LOCK:
             offline = NETWORK_STATE["status"] == "offline"
+        # North-star A16a: an install whose owner has not picked a route is
+        # local-only until they do, whatever the stored starting mode says. The
+        # same overlay as offline, so every reader of the mode sees it; nothing
+        # is persisted (route_pick_pending reads the stored settings).
+        pending = route_pick_pending(settings)
         try:
             from agent_friday.services import safe_mode as _sm
             safe = _sm.active()          # safe mode: local only for this run
         except Exception:
             safe = False
-        if not safe and (not offline or not settings.get("offline_auto_local", True)):
+        if not safe and not pending and (not offline or not settings.get("offline_auto_local", True)):
             return settings
         mr = dict(settings.get("model_routing") or {})
         if mr.get("mode") != "local_only" or mr.get("fallback_to_cloud") is not False:

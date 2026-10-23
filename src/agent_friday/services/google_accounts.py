@@ -664,7 +664,16 @@ def credentials_for(account_id: str):
 
     Refresh failures are isolated per account: the account is marked
     'needs_reauth' and None is returned; other accounts are untouched.
+
+    North-star A16a: before the owner chooses where Friday thinks, no Google
+    connector is used. None is returned and the stored status is left exactly
+    as it was (this is not a fault of the account).
     """
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("connector", "google"):
+        if isinstance(account_id, str):
+            _LAST_PROBLEM[account_id] = "route_not_chosen"
+        return None
     _migrate_legacy_if_needed()
     try:
         creds = _raw_credentials(account_id)
@@ -1702,6 +1711,10 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
     """
     # Bundled client first-resort, the user's own always winning -- see
     # services/google_oauth_client.active_client for why that order matters.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("connector", "google sign-in")       # A16a
+    if _held:
+        raise UserFacingRuntimeError(_held)
     from agent_friday.services import google_oauth_client as goc
     cfg, _src, _kind = goc.active_client(discover=_google_client_config)
     if not cfg:
