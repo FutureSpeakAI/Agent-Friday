@@ -123,7 +123,7 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(cw, "_gate_calendar_field", lambda text, field: (text, ""))
     monkeypatch.setattr(cw, "_drop_calendar_cache", lambda *a, **k: None)
     monkeypatch.setattr(ga, "credentials_for", lambda aid: object())
-    monkeypatch.setattr(ga, "tasks_writable", lambda aid: True)
+    monkeypatch.setattr(ga, "tasks_writable", lambda aid: True, raising=False)
     monkeypatch.setattr(ga, "_gate_task_text", lambda body: (dict(body), ""))
     monkeypatch.setattr(ga.cs, "audit_event", lambda *a, **k: None)
     monkeypatch.setattr(discovery, "build", lambda *a, **k: tasks)
