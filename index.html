@@ -62219,6 +62219,211 @@ function DockSettingsPanel() {
     rows);
 }
 
+// ── Connections > Google: your waiting list in Google Tasks (services/tasks_inbox, Part 1) ──
+// A tick in that list approves nothing: it brings the card to the top of this PC. Deleting an
+// item (or ticking "No, not now") declines the kinds of card where no only means don't do it.
+// Turning it on, and sending more text to Google, are a press here (routes/tasks_inbox.py);
+// nothing is pre-selected, and Recommended is a label, never a choice made for the owner.
+function TasksInboxPanel() {
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [acct, setAcct] = useState('');
+  const [level, setLevel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/tasks-inbox').then(r => r.json()).then(setD).catch(() => setMsg('Could not read the phone list settings.'));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const run = (url, body, done) => {
+    setBusy(true);
+    setMsg('');
+    apiFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body || {})
+    }).then(r => r.json()).then(x => {
+      setMsg(x.ok ? done : x.message || 'Nothing changed.');
+      load();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const title = 'Your waiting list in Google Tasks';
+  const desc = 'See what ' + fridayName() + ' is waiting on from your phone. A tick there approves nothing.';
+  if (!d) return E(StSection, {
+    title,
+    desc
+  }, E('div', {
+    className: 'sc-sub'
+  }, msg || 'Reading…'));
+  const levelButtons = (current, onPick) => E('div', {
+    role: 'group',
+    'aria-label': 'How much text goes to Google',
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginTop: 4
+    }
+  }, (d.levels || []).map(l => E('button', {
+    key: l.id,
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'tasks-inbox-level-' + l.id,
+    'aria-pressed': current === l.id,
+    style: {
+      fontSize: 11,
+      outline: current === l.id ? '1px solid #00d4ff' : 'none'
+    },
+    title: l.words,
+    disabled: busy,
+    onClick: () => onPick(l.id)
+  }, l.label + (l.id === d.recommended_level ? ' (Recommended)' : ''))));
+  const tickWords = E('ul', {
+    className: 'lk-sub',
+    'aria-label': 'What a tick in Google Tasks does'
+  }, (d.what_a_tick_does || []).map((w, i) => E('li', {
+    key: i
+  }, w)));
+  const limit = E('p', {
+    className: 'lk-words',
+    role: 'note'
+  }, E('strong', null, 'The honest limit. '), d.honest_limit);
+  const where = E('div', {
+    className: 'lk-words'
+  }, d.where_it_goes);
+  const status = E('div', {
+    role: 'status',
+    'aria-live': 'polite',
+    className: 'sc-msgline'
+  }, msg);
+  if (!d.enabled) {
+    const accounts = d.accounts || [];
+    return E(StSection, {
+      title,
+      desc
+    }, d.problem ? E('div', {
+      role: 'alert',
+      className: 'lk-words'
+    }, d.problem) : null, tickWords, where, accounts.length === 0 ? E('div', {
+      className: 'lk-words',
+      'data-testid': 'tasks-inbox-no-account'
+    }, 'No connected Google account allows task changes yet. Connect one above with task changes allowed, then come back here.') : E('div', null, E('div', {
+      className: 'lk-title'
+    }, 'Which account holds the list'), E('div', {
+      role: 'group',
+      'aria-label': 'Which Google account',
+      style: {
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap',
+        marginTop: 4
+      }
+    }, accounts.map(a => E('button', {
+      key: a.id,
+      type: 'button',
+      className: 'btn',
+      'aria-pressed': acct === a.id,
+      'data-testid': 'tasks-inbox-account',
+      style: {
+        fontSize: 11,
+        outline: acct === a.id ? '1px solid #00d4ff' : 'none'
+      },
+      onClick: () => setAcct(a.id)
+    }, a.email || a.label))), E('div', {
+      className: 'lk-title',
+      style: {
+        marginTop: 8
+      }
+    }, 'How much text goes to Google'), levelButtons(level, setLevel), level ? E('div', {
+      className: 'lk-words'
+    }, ((d.levels || []).find(l => l.id === level) || {}).words) : null, E('button', {
+      type: 'button',
+      className: 'settings-btn',
+      'data-testid': 'tasks-inbox-enable',
+      style: {
+        fontSize: 12,
+        marginTop: 8
+      },
+      disabled: busy || !acct || !level,
+      onClick: () => run('/api/tasks-inbox/enable', {
+        account_id: acct,
+        text_level: level
+      }, 'The list is on. It appears in Google Tasks as “' + d.list_title + '”.')
+    }, 'Turn on the waiting list')), limit, status);
+  }
+  return E(StSection, {
+    title,
+    desc
+  }, d.problem ? E('div', {
+    role: 'alert',
+    className: 'lk-words'
+  }, d.problem) : null, E('div', {
+    className: 'lk-words',
+    'data-testid': 'tasks-inbox-on'
+  }, 'On, in ' + (d.account && d.account.email || 'your Google account') + ' as “' + d.list_title + '”. ' + d.open_items + ' card' + (d.open_items === 1 ? '' : 's') + ' on the list now.' + (d.effective_level !== d.text_level ? ' Only on this PC is on, so only “Something needs you” is posted.' : '')), E('div', {
+    className: 'lk-title',
+    style: {
+      marginTop: 6
+    }
+  }, 'How much text goes to Google'), levelButtons(d.text_level, l => run('/api/tasks-inbox/level', {
+    text_level: l
+  }, 'Changed. New items use it; items already posted keep their words.')), tickWords, where, (d.recent || []).length > 0 ? E('ul', {
+    className: 'lk-sub',
+    'aria-label': 'Recently on the list'
+  }, d.recent.slice().reverse().map((e, i) => E('li', {
+    key: i
+  }, ({
+    ticked: 'A tick was seen',
+    declined: 'A card was declined from Google Tasks',
+    held: 'Several items changed at once, so nothing was declined',
+    void: 'An item was changed outside ' + fridayName() + ', so a fresh one replaced it',
+    foreign: 'An item ' + fridayName() + ' didn’t write is in the list (it is never acted on)',
+    deleted: 'An item was deleted in Google Tasks'
+  }[e.event] || e.event) + (e.at ? ' at ' + new Date(e.at * 1000).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  }) : '')))) : null, E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginTop: 8
+    }
+  }, E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/sync', {}, 'Checked.')
+  }, 'Check now'), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'tasks-inbox-off',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/disable', {
+      remove_list: false
+    }, 'Off. The list stays in Google Tasks; nothing more is posted or read.')
+  }, 'Turn off'), E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/disable', {
+      remove_list: true
+    }, 'Off, and ' + fridayName() + '’s list was removed from Google Tasks.')
+  }, 'Turn off and remove the list')), limit, status);
+}
 function GoogleAccountsPanel() {
   const [accounts, setAccounts] = useState([]);
   const [msg, setMsg] = useState('');
@@ -63761,13 +63966,13 @@ function SettingsTabConnectors({
     }).catch(() => {});
     apiFetch('/api/connectors').then(r => r.json()).then(d => setConnectors(Array.isArray(d) ? d : d.connectors || [])).catch(() => {});
   }, [part]);
-  if (part === 'accounts') return /*#__PURE__*/React.createElement(StSection, {
+  if (part === 'accounts') return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "Google accounts",
     desc: "Connect one or more Google accounts for mail, calendar and files. Their tokens are encrypted on this machine and never sent to a cloud model."
   }, /*#__PURE__*/React.createElement(GoogleAccountsPanel, null), /*#__PURE__*/React.createElement(MailDefaultAccountRow, {
     s: s,
     save: save
-  }));
+  })), /*#__PURE__*/React.createElement(TasksInboxPanel, null));
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "MCP servers"
   }, /*#__PURE__*/React.createElement("div", {
