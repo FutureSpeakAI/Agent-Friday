@@ -7,6 +7,7 @@
 //
 // SCRATCH server only (FRIDAY_BASE must be set; the live :3000 is refused). Every write is answered here.
 import { test, expect, type Page } from '../fixtures';
+import { settle } from '../helpers/settle';
 import { BASE } from '../harness';
 
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
@@ -47,7 +48,7 @@ test('every workspace: each control has a name and each meaningful image a text 
     try {
       await page.goto(`${BASE}/w/${encodeURIComponent(id)}`, { waitUntil: 'domcontentloaded' });
       await page.locator('#ui-inner, #ui-root').first().waitFor({ state: 'attached', timeout: 60_000 });
-      await page.waitForTimeout(2500);          // let the workspace draw its first data
+      await settle(page, { quietMs: 1000, timeout: 10000 });          // let the workspace draw its first data
     } catch {
       notOpened.push(id);
       continue;
