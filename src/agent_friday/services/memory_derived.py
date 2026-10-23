@@ -199,17 +199,30 @@ def _write_pending(ids: set) -> None:
     tmp.replace(p)
 
 
-def apply_pending_graph_retractions(store=None) -> dict:
+def _pass_state():
+    """(running, started_at) of the semantic graph pass, or None when it
+    cannot be read (then nothing is applied: it waits for the next pass)."""
+    try:
+        from agent_friday.routes import knowledge_graph as kg_routes
+        st = kg_routes._TIER_B_STATE
+        return bool(st.get("running")), st.get("started_at")
+    except Exception:
+        return None
+
+
+def apply_pending_graph_retractions(store=None, clear_if=None) -> dict:
     """Take the queued turns out of the graph. The caller holds the graph's
-    rebuild lock (a graph pass, or the worker below). Ids stay queued when a
-    file refused the save."""
+    rebuild lock (the worker below, or a semantic pass right after its own
+    save). Ids stay queued when a file refused the save, and when `clear_if`
+    (a check run after the purge) says a pass may have loaded the graph
+    before it: that pass applies them again after it saves."""
     from agent_friday.services.knowledge_graph import indexer
     with _LOCK:
         ids = _read_pending()
     if not ids:
         return {"applied": 0}
     out = indexer.purge_conversation_turns(ids, store=store)
-    if not out.get("refused"):
+    if not out.get("refused") and (clear_if is None or clear_if()):
         with _LOCK:
             _write_pending(_read_pending() - ids)
     return out
@@ -223,19 +236,22 @@ def queue_graph_retraction(texts: Iterable[str]) -> dict:
         return {"queued": 0}
     with _LOCK:
         _write_pending(_read_pending() | tids)
+    state = _pass_state()
     try:
         from agent_friday.routes import knowledge_graph as kg_routes
         lock = kg_routes._rebuild_lock
-        running = bool(kg_routes._TIER_B_STATE.get("running"))
     except Exception:
-        lock, running = None, False
-    if running or (lock is not None and not lock.acquire(blocking=False)):
+        lock = None
+    if state is None or lock is None or state[0] or not lock.acquire(blocking=False):
         return {"queued": len(tids), "deferred": True}
     try:
-        return dict(apply_pending_graph_retractions(), queued=len(tids))
+        started = state[1]
+        # Cleared only if no semantic pass started meanwhile: one that did
+        # may have loaded the old graph, and applies the queue after it saves.
+        return dict(apply_pending_graph_retractions(
+            clear_if=lambda: _pass_state() == (False, started)), queued=len(tids))
     finally:
-        if lock is not None:
-            lock.release()
+        lock.release()
 
 
 # ── the hook ───────────────────────────────────────────────────────────────

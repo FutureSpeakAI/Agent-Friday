@@ -1098,7 +1098,14 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     # out now, after the save, so this pass cannot put their nodes back.
     try:
         from agent_friday.services import memory_derived as _md
-        _md.apply_pending_graph_retractions(store=store)
+        try:
+            from agent_friday.routes import knowledge_graph as _kg_routes
+            _lock = _kg_routes._rebuild_lock
+        except Exception:
+            _lock = None
+        if _lock is not None:
+            with _lock:                               # a structural rebuild also re-saves Tier B
+                _md.apply_pending_graph_retractions(store=store)
     except Exception as _re:
         say(f"corrections not applied to the graph yet: {_re}")
 
