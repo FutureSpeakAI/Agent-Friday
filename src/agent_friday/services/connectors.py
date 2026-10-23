@@ -100,6 +100,9 @@ CONNECTOR_DEFS: dict[str, dict] = {
             "command": "npx",
             "args": ["-y", "@modelcontextprotocol/server-slack"],
             "env": {},
+            # A25: isolated; it needs only the npm registry (first run) and Slack.
+            "isolation": "appcontainer",
+            "allow_hosts": ["registry.npmjs.org", "slack.com", "*.slack.com"],
         },
         "fields": [
             {"key": "SLACK_BOT_TOKEN", "label": "Bot Token", "secret": True,
@@ -136,6 +139,11 @@ CONNECTOR_DEFS: dict[str, dict] = {
             "args": ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
                      "ghcr.io/github/github-mcp-server"],
             "env": {},
+            # A25 exception: Docker already runs it in its own container, and Windows'
+            # isolated mode cannot reach Docker, so it runs outside it.
+            "isolation": "off",
+            "isolation_note": "Runs inside Docker's own container; Windows' isolated "
+                              "mode cannot reach Docker.",
         },
         "fields": [
             {"key": "GITHUB_PERSONAL_ACCESS_TOKEN", "label": "Personal Access Token",
@@ -198,6 +206,10 @@ CONNECTOR_DEFS: dict[str, dict] = {
             "command": "npx",
             "args": ["-y", "mcp-discord"],
             "env": {},
+            # A25: isolated; it needs only the npm registry (first run) and Discord.
+            "isolation": "appcontainer",
+            "allow_hosts": ["registry.npmjs.org", "discord.com", "*.discord.com",
+                            "gateway.discord.gg", "*.discord.gg", "cdn.discordapp.com"],
         },
         "fields": [
             {"key": "DISCORD_TOKEN", "label": "Bot Token", "secret": True,
@@ -234,6 +246,12 @@ CONNECTOR_DEFS: dict[str, dict] = {
             "env": {},
             "enabled_tools": ["State-Tool", "Snapshot", "State",
                               "Screenshot", "Wait-Tool", "Wait"],
+            # A25 exception: it reads other apps' windows, which Windows' isolated
+            # mode does not allow; its tools stay held by enabled_tools and the
+            # per-app grants instead.
+            "isolation": "off",
+            "isolation_note": "Reads other apps' windows, which Windows' isolated "
+                              "mode does not allow.",
         },
         "fields": [],
         "docs_url": "https://github.com/CursorTouch/Windows-MCP",
@@ -843,6 +861,16 @@ def _connect_mcp(key: str, defn: dict, data: dict) -> dict:
                 entry[k] = existing[k]
             elif k in tmpl:
                 entry[k] = list(tmpl[k])
+        # Isolation (A25) and what it declares: an existing entry keeps exactly what it
+        # has (one from before A25 is offered isolation by its card, never switched by
+        # a reconnect); only a new entry takes the template's.
+        for k in ("isolation", "folders", "allow_hosts", "isolation_note"):
+            if existing:
+                if k in existing:
+                    entry[k] = existing[k]
+            elif k in tmpl:
+                v = tmpl[k]
+                entry[k] = list(v) if isinstance(v, list) else v
         servers[server_name] = entry
         agent_svc._save_mcp_servers(full)
         reload_result = agent_svc._mcp_reload()
