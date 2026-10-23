@@ -33,6 +33,13 @@ second file. The files are plain text the owner can open and edit by hand.
 Text that reads as instructions to the assistant, or as a credential, is
 refused whoever writes it.
 
+A line Friday or a background pass would add or rewrite that states or
+implies a special category about anyone (health, sexuality, politics,
+religion, ethnicity, union membership, genetic or biometric data, criminal
+record, immigration: services/sensitive_categories) is dropped, neither
+written nor queued (NS-15.4-3). The owner's own edits are not filtered; a line
+resting on the owner's own words in the conversation waits for their Keep.
+
 Leaf module: no Flask, never raises to a caller (returns envelopes).
 """
 from __future__ import annotations
@@ -357,16 +364,55 @@ def _err(msg: str) -> Dict[str, Any]:
     return {"ok": False, "error": msg}
 
 
+#: Why an inferred line touching a special category is not kept (NS-15.4-3).
+SPECIAL_REFUSAL = ("it would record {cat} about a person, which Friday never infers or keeps "
+                   "on her own; only the owner's own words, kept by the owner, can put it on the card")
+
+
+def _special(text: str, where: str, prefix: str = "NOT SAVED: ") -> Optional[Dict[str, Any]]:
+    """The refusal for an INFERRED line that states or implies a special
+    category (health, sexuality, politics, religion, ethnicity, union
+    membership, genetic or biometric data, criminal record, immigration;
+    services/sensitive_categories), counted with no text kept; else None."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        cat = _sc.special_category(text)
+        if not cat:
+            return None
+        _sc.note_dropped(where, cat)
+    except Exception:
+        return None
+    return {**_err(prefix + SPECIAL_REFUSAL.format(cat=cat.replace("_", " "))),
+            "sensitive": cat}
+
+
+def _confirmed_source(source: str) -> bool:
+    """A queued row whose source means the owner entered or approved it."""
+    try:
+        from agent_friday.services.user_model import is_confirmed_source
+        return is_confirmed_source(source)
+    except Exception:
+        return False
+
+
 def add(target: str, text: str, *, actor: str = "friday",
-        dedupe: Optional[bool] = None) -> Dict[str, Any]:
+        dedupe: Optional[bool] = None, owner_ok: bool = False) -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
-    typing it themselves (`dedupe` overrides, e.g. an approved suggestion)."""
+    typing it themselves (`dedupe` overrides, e.g. an approved suggestion).
+
+    A line any writer but the owner adds is refused when it touches a special
+    category (NS-15.4-3), unless `owner_ok`: the owner approved exactly this
+    call (core_memory_tools, the gate's owner decision)."""
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    if actor != "owner" and not owner_ok:
+        hit = _special(text, f"core_memory.{actor}.add")
+        if hit:
+            return hit
     with _LOCK:
         items = entries(target)
         if any(e.lower() == text.lower() for e in items):
@@ -388,13 +434,18 @@ def add(target: str, text: str, *, actor: str = "friday",
     return {"ok": True, "change_id": cid, "usage": usage(target)}
 
 
-def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[str, Any]:
+def replace(target: str, old: str, text: str, *, actor: str = "friday",
+            owner_ok: bool = False) -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    if actor != "owner" and not owner_ok:
+        hit = _special(text, f"core_memory.{actor}.replace")
+        if hit:
+            return hit
     with _LOCK:
         items = entries(target)
         i, miss = _match(items, old)
@@ -512,15 +563,26 @@ def resolve_line(target: str, old: str):
 
 
 def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
-          reason: str = "") -> Dict[str, Any]:
+          reason: str = "", owner_stated: bool = False) -> Dict[str, Any]:
     """File a change for the owner to approve. Duplicates are not queued twice.
 
     A replace or remove stores the WHOLE line it changes, resolved now, so the
     card shows the owner exactly which line it is and Keep changes that line
-    and no other (`decide` matches it exactly)."""
+    and no other (`decide` matches it exactly).
+
+    An inferred add or replace (a dream, a review, a model's guess) that
+    touches a special category is dropped, not queued (NS-15.4-3). It is
+    queued only when it rests on the owner's own words (`owner_stated`, set by
+    core_memory_tools after its own-words check) or its source says the owner
+    entered or approved it (user_model.CONFIRMED_SOURCES)."""
     if target not in TARGETS or op not in ("add", "replace", "remove"):
         return _err("bad target or op")
     text, old = _clean(text), _clean(old)
+    if op in ("add", "replace") and not owner_stated and not _confirmed_source(source):
+        hit = _special(text, "queue." + (str(source).split(":", 1)[0] or "unknown")[:20],
+                       prefix="NOT QUEUED: ")
+        if hit:
+            return hit
     if op in ("replace", "remove"):
         line, miss = resolve_line(target, old)
         if miss:

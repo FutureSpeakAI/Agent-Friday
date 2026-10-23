@@ -68,6 +68,32 @@ def skip(store: str, settings: dict | None = None) -> bool:
     return True
 
 
+def excludes_learning(settings: dict | None = None) -> bool:
+    """True while off-record is on: Friday learns nothing from the turn.
+
+    NS-15.8-2: off-record content stays out of learning, introspection,
+    personalization and background summaries. Unlike `active()` this does not
+    depend on `off_record_stops_storage`: an owner who keeps the transcript
+    still has an off-record turn, and nothing is inferred from it."""
+    s = _settings() if settings is None else (settings or {})
+    return bool(s.get("off_record"))
+
+
+def skip_learning(learner: str, settings: dict | None = None,
+                  off_record: bool | None = None) -> bool:
+    """`excludes_learning()`, counting the skipped learner (no content kept).
+
+    `off_record` is the turn's own state when the caller already knows it (a
+    snapshot taken with the turn); None reads the current settings."""
+    off = excludes_learning(settings) if off_record is None else bool(off_record)
+    if not off:
+        return False
+    with _LOCK:
+        key = "learn:" + str(learner)
+        SKIPPED[key] = SKIPPED.get(key, 0) + 1
+    return True
+
+
 def _remember_locked(cid: str, message: dict) -> dict:
     message = dict(message or {})
     message.setdefault("ts", time.time())

@@ -379,10 +379,17 @@ def propose(day: Optional[str] = None, *, memory=None,
     took_ms = int((time.time() - t0) * 1000)
 
     facts = _parse_facts(raw)
+    # NS-15.4-3: what the model proposes is inference. A fact (or its quoted
+    # evidence) that touches a special category is dropped before anything is
+    # stored or returned; only a count by category is kept.
+    proposed = len(facts)
+    facts, dropped = _drop_special(facts, "proposals.day")
 
     # A barren run is NOT a success. The regex extractor's whole failure was
-    # looking like one 215 turns at a time.
-    barren = bool(turns) and not facts
+    # looking like one 215 turns at a time. (Facts dropped as special
+    # categories were proposed: the run was not barren, and its raw response,
+    # which holds them, is not logged.)
+    barren = bool(turns) and not proposed
     if barren:
         _log.warning(
             "memory proposal for %s read %d turns and proposed NOTHING. That "
@@ -417,9 +424,30 @@ def propose(day: Optional[str] = None, *, memory=None,
                    f"{len(facts)} fact(s), {stored} new and awaiting your "
                    f"review. None are in memory yet.")
 
-    return {"ok": True, "day": day, "seat": s, "turns_reviewed": len(turns),
-            "facts": facts, "stored": stored, "barren": barren,
-            "capped": capped, "took_ms": took_ms, "summary": summary}
+    out = {"ok": True, "day": day, "seat": s, "turns_reviewed": len(turns),
+           "facts": facts, "stored": stored, "barren": barren,
+           "capped": capped, "took_ms": took_ms, "summary": summary}
+    if dropped:
+        out["dropped_sensitive"] = dropped           # a count; the text was not kept
+    return out
+
+
+def _drop_special(facts: List[Dict[str, Any]], where: str):
+    """(facts that touch no special category, how many were dropped).
+    services/sensitive_categories; the dropped text is not kept or logged."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+    except Exception:
+        return [], len(facts)                    # cannot check: propose nothing
+    kept, dropped = [], 0
+    for f in facts:
+        cat = _sc.first_special(f.get("text"), f.get("evidence"))
+        if cat:
+            _sc.note_dropped(where, cat)
+            dropped += 1
+            continue
+        kept.append(f)
+    return kept, dropped
 
 
 #: What a meeting may propose. A decision is not one of the day-review
@@ -447,6 +475,11 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
             cat = str(c.get("category") or "").strip().lower()
             span = c.get("span") if isinstance(c.get("span"), dict) else None
             if len(text) < 4 or cat not in MEETING_CATEGORIES or not span:
+                continue
+            # A meeting's people are other people: a candidate about anyone's
+            # health, sexuality, politics, religion ... is not proposed (NS-15.4-3).
+            if _drop_special([{"text": text, "evidence": str(c.get("evidence") or "")}],
+                             "proposals.meeting")[1]:
                 continue
             if _already_proposed(conn, text) or _already_from_meeting(conn, str(meeting_id), text):
                 continue

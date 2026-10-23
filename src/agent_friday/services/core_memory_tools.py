@@ -14,6 +14,13 @@ in the conversation's ledger (6 h). Anything else waits in the memory card's
 review queue for the owner's Keep. An approved card for exactly this call is
 the owner's OK. The background review never rewrites or removes.
 
+A special category (health, sexuality, politics, religion, ethnicity, union
+membership, genetic or biometric data, criminal record, immigration;
+services/sensitive_categories, NS-15.4-3) is Friday inferring unless it rests
+on the owner's own words: then it never saves silently but waits for the
+owner's Keep (the explicit purpose); otherwise it is dropped, not queued. An
+approved card for exactly this call is the owner's OK and saves as asked.
+
 For a model that is not known to be on this PC, `show` and the refusal
 listings leave out the lines about the owner, and no file path is returned.
 
@@ -147,10 +154,21 @@ def _cloud_reader() -> bool:
         return True
 
 
-def _ask_first(target: str, action: str, inp: dict, why: str) -> str:
+def _special_category(text: str):
+    try:
+        from agent_friday.services.sensitive_categories import special_category
+        return special_category(text)
+    except Exception:
+        return None
+
+
+def _ask_first(target: str, action: str, inp: dict, why: str, *,
+               owner_stated: bool = False) -> str:
     r = core_memory.queue(target, action, text=inp.get("text") or "", old=inp.get("old") or "",
-                          source="friday", reason=why)
+                          source="friday", reason=why, owner_stated=owner_stated)
     if not r.get("ok"):
+        if r.get("sensitive"):
+            return str(r.get("error"))
         return "NOT SAVED: " + str(r.get("error"))
     if target == "friday" and action in ("add", "replace") and not r.get("unchanged"):
         # A lesson written after Friday read outside content starts as
@@ -226,17 +244,32 @@ def _tool_update_core_memory(inp=None) -> str:
         if _read_outside_content(ctx):
             return _ask_first(target, action, inp,
                               "Friday read outside content in this conversation, so it may come from there.")
+        if action in ("add", "replace"):
+            # NS-15.4-3: a special category (health, sexuality, politics,
+            # religion, ...) is never saved on Friday's own judgment, even in
+            # the owner's words: it waits for the owner's Keep, which is the
+            # explicit purpose. Not resting on their words, it is dropped
+            # (core_memory.queue / add refuse it).
+            cat = _special_category(inp.get("text") or "")
+            if cat:
+                return _ask_first(target, action, inp,
+                                  "It is about %s, which Friday keeps only when the user keeps it."
+                                  % cat.replace("_", " "), owner_stated=True)
     if target == "friday" and action in ("replace", "remove"):
         # The whole line `old` points at, so its learning record is found.
         _line, _miss = core_memory.resolve_line(target, inp.get("old") or "")
         if _line and not _miss:
             inp = dict(inp, old=_line)
+    # The owner approved exactly this call on its card (the gate's owner
+    # decision): that is their explicit OK, special category or not.
+    owner_ok = actor == "friday" and _owner_decided()
     tok = core_memory.REVEAL_USER.set(not cloud)
     try:
         if action == "add":
-            r = core_memory.add(target, inp.get("text") or "", actor=actor)
+            r = core_memory.add(target, inp.get("text") or "", actor=actor, owner_ok=owner_ok)
         elif action == "replace":
-            r = core_memory.replace(target, inp.get("old") or "", inp.get("text") or "", actor=actor)
+            r = core_memory.replace(target, inp.get("old") or "", inp.get("text") or "", actor=actor,
+                                    owner_ok=owner_ok)
         else:
             r = core_memory.remove(target, inp.get("old") or "", actor=actor)
     finally:

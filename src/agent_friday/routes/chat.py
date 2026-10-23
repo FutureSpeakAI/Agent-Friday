@@ -1430,9 +1430,11 @@ def chat():
         workspace = data.get('workspace', '')
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
+        # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
-            _um.observe_message(message, role='user', workspace=workspace)
+            _um.observe_message(message, role='user', workspace=workspace,
+                                off_record=bool((_load_settings() or {}).get('off_record')))
         except Exception:
             pass
         # An empty message with no image is unanswerable — refuse it cleanly
@@ -3175,27 +3177,32 @@ def chat():
                 "tool_count": len(tool_trace or []),
             })
 
-        # Epistemic scoring — score this turn in background
-        try:
-            from agent_friday.epistemic_engine import get_epistemic_engine
-            threading.Thread(
-                target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
+        # Epistemic scoring — score this turn in background. It is Friday's
+        # introspection on the turn: an off-record turn is not scored (NS-15.8-2).
+        if not settings.get('off_record'):
+            try:
+                from agent_friday.epistemic_engine import get_epistemic_engine
+                threading.Thread(
+                    target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
 
         # Closed-loop learning — capture the turn trajectory + accumulate skill
         # metrics in the background. Feeds the nightly SkillOpt optimizer.
-        try:
-            import agent_friday.skill_capture as _skcap
-            threading.Thread(
-                target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
-                    _skcap.capture(m, r, tool_trace=tt, workspace=ws),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
+        # Off the record nothing is learned from the turn (NS-15.8-2), even
+        # when the owner lets the transcript be stored.
+        if not settings.get('off_record'):
+            try:
+                import agent_friday.skill_capture as _skcap
+                threading.Thread(
+                    target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
+                        _skcap.capture(m, r, tool_trace=tt, workspace=ws),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
 
         # Persistent conversation memory — index both turns into ChromaDB in the
         # background so future sessions can recall and cite this exchange. Skip
@@ -3513,9 +3520,11 @@ def chat_send():
         workspace = data.get('workspace', '')
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
+        # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
-            _um.observe_message(message, role='user', workspace=workspace)
+            _um.observe_message(message, role='user', workspace=workspace,
+                                off_record=bool((_load_settings() or {}).get('off_record')))
         except Exception:
             pass
         include_vision = data.get('includeVision', False)

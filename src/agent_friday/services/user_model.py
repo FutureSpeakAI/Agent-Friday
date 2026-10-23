@@ -225,11 +225,31 @@ def _durable_trait(key: str):
 
 
 # ── Observation ───────────────────────────────────────────────────────────────
+def _off_record(off_record: Optional[bool], learner: str) -> bool:
+    """True when this turn is off the record (NS-15.8-2): nothing is learned.
+
+    `off_record` is the turn's own state when the caller knows it (voice
+    passes the settings snapshot it persisted the turn under); None reads the
+    current settings, so a caller that passes nothing is still covered.
+    Cannot tell: treat as off-record and learn nothing."""
+    try:
+        from agent_friday.services import off_record as _off
+        return _off.skip_learning(learner, off_record=off_record)
+    except Exception:
+        return True
+
+
 def observe_message(text: str, *, role: str = "user", workspace: str = "",
-                    ts: Optional[float] = None) -> Dict[str, Any]:
-    """Update communication + expertise signals from one user message."""
+                    ts: Optional[float] = None,
+                    off_record: Optional[bool] = None) -> Dict[str, Any]:
+    """Update communication + expertise signals from one user message.
+
+    An off-record turn changes nothing: no session trait, no signal, no
+    workflow counter (NS-15.8-2). Checked here, not at each caller."""
     if not _enabled() or role != "user" or not isinstance(text, str) or not text.strip():
         return {"ok": True, "skipped": True}
+    if _off_record(off_record, "user_model"):
+        return {"ok": True, "skipped": True, "off_record": True}
     # Bound the scan window — a megabyte paste must not cost a megabyte of
     # substring scans per lexicon. Style/expertise signals are ample in 8 KB.
     low = text[:8000].lower()
@@ -252,17 +272,21 @@ def observe_message(text: str, *, role: str = "user", workspace: str = "",
                 target = 0.2 if novice else min(1.0, 0.55 + 0.1 * hits)
                 _nudge_trait(f"expertise.{dom}", target, weight=0.12)
         if workspace:
-            observe_event("workspace", workspace)
+            observe_event("workspace", workspace, off_record=False)
         _record_signal("message", f"{workspace}:{len(text.split())}w")
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": exception_text(e)}
 
 
-def observe_event(kind: str, value: str) -> Dict[str, Any]:
-    """Record a workflow event (tool use, workspace switch, session hour)."""
+def observe_event(kind: str, value: str, *,
+                  off_record: Optional[bool] = None) -> Dict[str, Any]:
+    """Record a workflow event (tool use, workspace switch, session hour).
+    Nothing is recorded while off the record (NS-15.8-2)."""
     if not _enabled():
         return {"ok": True, "skipped": True}
+    if _off_record(off_record, "user_model_event"):
+        return {"ok": True, "skipped": True, "off_record": True}
     try:
         _record_signal(kind, str(value))
         # Active-hour histogram lives in a trait keyed by hour.

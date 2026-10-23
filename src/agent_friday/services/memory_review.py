@@ -245,7 +245,7 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
         if is_refusal(raw):
             raise RuntimeError("no local model could run the memory review: " + str(raw)[:160])
     plan = _parse(raw)
-    added = queued = 0
+    added = queued = dropped = 0
     token = core_memory.ACTOR.set("review")
     try:
         for a in plan["add"]:
@@ -253,9 +253,15 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
             text = str(a.get("text") or "")
             on_user = _rests_on_the_user(a.get("evidence") or "", text, window)
             if on_user:
+                # A special category (health, sexuality, politics, ...) is
+                # refused here and by the queue: the review is inferring
+                # (NS-15.4-3), even from the owner's words.
                 r = core_memory.add(target, text, actor="review")
                 if r.get("ok") and not r.get("unchanged"):
                     added += 1
+                    continue
+                if r.get("sensitive"):
+                    dropped += 1
                     continue
                 if not r.get("full"):
                     continue                      # refused or already there
@@ -265,11 +271,13 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
                                   if not on_user else
                                   "The background review suggested this; the card was full.")
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
+            dropped += int(bool(r.get("sensitive")))
         for c in plan["change"]:
             target = c.get("target") if c.get("target") in core_memory.TARGETS else "user"
             r = core_memory.queue(target, "replace", old=c.get("old") or "", text=c.get("text") or "",
                                   source="review", reason=str(c.get("why") or ""))
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
+            dropped += int(bool(r.get("sensitive")))
         for c in plan["remove"]:
             target = c.get("target") if c.get("target") in core_memory.TARGETS else "user"
             r = core_memory.queue(target, "remove", old=c.get("old") or "", source="review",
@@ -277,7 +285,10 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
     finally:
         core_memory.ACTOR.reset(token)
-    return {"ok": True, "added": added, "queued": queued}
+    out = {"ok": True, "added": added, "queued": queued}
+    if dropped:
+        out["dropped_sensitive"] = dropped        # a count; the text was not kept
+    return out
 
 
 def forget_text(text: str) -> int:
