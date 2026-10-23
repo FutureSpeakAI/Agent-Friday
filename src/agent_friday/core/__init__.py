@@ -1187,11 +1187,27 @@ def _bootstrap_env_from_launch_scripts():
                         sources.append(fname)
         except Exception as _be:
             print(f"  [FRIDAY] env bootstrap skipped {fname}: {_be}")
+    # Keys moved out of these scripts into the credential store
+    # (services/launch_script_keys) come back from the store here, with the
+    # precedence their script line had, so every process (the server, the CLI,
+    # the voice path, constants computed below) sees them exactly as before.
+    global ENV_FROM_LAUNCH_SCRIPTS
+    # Published BEFORE the store is read, so anything resolved during the read sees
+    # which variables came from a launch script.
+    ENV_FROM_LAUNCH_SCRIPTS = set(loaded)
+    try:
+        from agent_friday.services.launch_script_keys import restore_moved_keys
+        for _n in restore_moved_keys(already_loaded=loaded, force_names=_FORCE_OVERRIDE):
+            loaded.add(_n)
+            if "credential store" not in sources:
+                sources.append("credential store")
+    except Exception:
+        pass
     # Publish WHICH names came from a launch script. A value this process
     # read out of start.bat is not the same kind of fact as a variable the
     # user set in Windows, and until now nothing downstream could tell them
     # apart -- so a key saved in Settings lost to start.bat on every boot.
-    global ENV_FROM_LAUNCH_SCRIPTS
+    # (Declared global above, before the store is read.)
     ENV_FROM_LAUNCH_SCRIPTS = set(loaded)
     if loaded:
         # Do NOT name the variables. This runs at package import, so it fires on

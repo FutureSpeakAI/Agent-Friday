@@ -484,12 +484,26 @@ if not _TESTING:
         _migrate_legacy_keys()
     except Exception:
         pass
+    # Provider keys in start.bat / launch_now.bat / friday_startup.bat go into the
+    # credential store; the lines are blanked in place (services/launch_script_keys).
+    try:
+        from agent_friday.services.launch_script_keys import migrate as _migrate_launch_keys
+        _migrate_launch_keys()
+    except Exception:
+        pass
 
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
         from agent_friday.services.credential_store import bootstrap_provider_env_detail
         _pk_detail = bootstrap_provider_env_detail()
+        # Constants core computed at import (GEMINI_API_KEY) take a key that
+        # moved out of start.bat and is now in the store.
+        try:
+            from agent_friday.services.launch_script_keys import refresh_core_constants
+            refresh_core_constants()
+        except Exception:
+            pass
         # Gate on candidates existing at all, not on the count that
         # succeeded: printing only a nonzero success count means a run where
         # every stored key fails to decrypt prints NOTHING, the least visible
