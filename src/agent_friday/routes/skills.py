@@ -37,6 +37,11 @@ from agent_friday.routes._errors import api_error
 
 skills_bp = Blueprint('skills', __name__)
 
+# A skill-import card approved after a restart still installs: its decision
+# hook is registered when this blueprint loads, not only when a card is raised.
+from agent_friday.services import skill_import_review as _skill_import_review  # noqa: E402
+_skill_import_review.ensure_hook()
+
 
 
 # ── Portable skill registry (SKILL.md folder format) ────────────
@@ -55,11 +60,16 @@ def api_skills_list():
 @skills_bp.route('/api/skills/import', methods=['POST'])
 @login_required
 def api_skills_import():
-    """Import a portable skill — multipart .zip upload, or JSON {path, name}
-    pointing at a local folder / zip / legacy .yaml."""
+    """Propose a portable skill for install — multipart .zip upload, or JSON
+    {path, name} pointing at a local folder / zip / legacy .yaml.
+
+    Installs NOTHING. The package is read (bounded, never extracted) and one
+    card is raised that says what the skill would make Friday do; it installs
+    when the owner approves that card with a press on this PC's screen
+    (services/skill_import_review). Answers 202 with the card's id."""
     import tempfile as _tf, shutil as _sh
+    from agent_friday.services import skill_import_review as _review
     try:
-        import agent_friday.skill_registry as _skreg
         upload = request.files.get('file') if request.files else None
         if upload is not None:
             name = request.form.get('name') or None
@@ -71,18 +81,45 @@ def api_skills_import():
                 base = (upload.filename or '').replace('\\', '/').rsplit('/', 1)[-1]
                 dest = contained(tmpd, base if base not in ('', '.', '..') else 'skill.zip')
                 upload.save(str(dest))
-                res = _skreg.import_skill(dest, name=name)
+                res = _review.stage(dest, name=name, source_name=base or 'an upload')
             finally:
                 _sh.rmtree(tmpd, ignore_errors=True)
         else:
             data = request.get_json(silent=True) or {}
-            src = data.get('path')
-            if not src:
+            if not data.get('path'):
                 return jsonify({"error": "provide a 'file' upload or JSON {path}"}), 400
-            res = _skreg.import_skill(src, name=data.get('name'))
-        return jsonify({"status": "ok", **res})
+            src = _owner_folder_path(str(data.get('path')))
+            if src is None:
+                return jsonify({"status": "error", "error": "Nothing was installed: choose a skill package in "
+                                "Documents, Downloads, Desktop, Creations or Projects, or upload the file."}), 400
+            res = _review.stage(src, name=data.get('name'))
+        if res.get("status") == "refused":
+            return jsonify({"status": "error", "error": "Nothing was installed: %s." % res.get("reason")}), 400
+        return jsonify({**res, "message": "Nothing is installed yet. A card shows what this skill would make "
+                                          "Friday do; it installs when you approve that card on this PC's "
+                                          "screen."}), 202
     except Exception as e:
-        return api_error(e, "Couldn't import the skill", 400, shape="bare")
+        from agent_friday.user_errors import log_failure
+        return jsonify({"status": "error", "error": "Couldn't read the skill package (error %s). Nothing was "
+                                                    "installed." % log_failure(e, "skill import")}), 400
+
+
+def _owner_folder_path(raw):
+    """A local skill package named by path, only inside one of the owner's own folders
+    (studio_files.roots: Documents, Downloads, Desktop, Creations, Projects), resolved
+    and contained there; None for any other place."""
+    import os
+    from agent_friday.paths import contained
+    from agent_friday.services import studio_files as _sf
+    try:
+        full = os.path.realpath(os.path.expanduser(raw))
+        for root in _sf.roots().values():
+            base = os.path.realpath(str(root))
+            if full.startswith(base + os.sep):
+                return contained(base, os.path.relpath(full, base))
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 @skills_bp.route('/api/skills/<name>/export', methods=['GET'])
@@ -290,6 +327,10 @@ def ollama_pull():
     (`routes/residency.py`'s pre-fetch card routes text pulls here); other
     modalities have no automated fetch to refuse.
     """
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("first_run_models")
+    if _why:
+        return jsonify({"ok": False, "error": _why}), 409
     try:
         from agent_friday.services import machine_monitor as _mm
         _s = _mm.last_sample() or _mm.sample()

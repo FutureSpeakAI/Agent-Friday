@@ -140,9 +140,10 @@ def test_every_quiet_on_writes_a_real_activity_ledger_line(monkeypatch):
     from agent_friday import core
     from agent_friday.services import activity_ledger as al
     monkeypatch.setattr(core, "_save_settings", lambda d, **k: None)
-    before = al.LEDGER_FILE.read_text(encoding="utf-8").splitlines() if al.LEDGER_FILE.exists() else []
+    from tests import ledger_support               # rows live in the action ledger
+    before = ledger_support.rows("activity")
     ip.turn_on_quiet("voice", now=NIGHT_EIGHT)
-    rows = [json.loads(x) for x in al.LEDGER_FILE.read_text(encoding="utf-8").splitlines()[len(before):]]
+    rows = ledger_support.rows("activity")[len(before):]
     mine = [r for r in rows if r.get("kind") == "quiet_on"]
     assert len(mine) == 1 and mine[0]["surface"] == "voice" and mine[0]["capped"] is True
     assert mine[0]["until_ts"] == int(NIGHT_EIGHT + 12 * 3600)

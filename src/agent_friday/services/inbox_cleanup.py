@@ -45,7 +45,6 @@ Everything stays on this PC: the state file is encrypted at rest
 from __future__ import annotations
 
 import email.utils
-import hashlib
 import json
 import logging
 import re
@@ -128,58 +127,42 @@ def save(st: dict) -> None:
 
 
 def _receipt(event: str, **detail) -> dict:
-    """Append one receipt: hash-chained, holding the sender's domain and the
-    outcome, never message content."""
+    """Append one receipt to the action ledger (services/action_ledger.py,
+    kind "inbox_cleanup"; hash-chained and signed there), holding the
+    sender's domain and the outcome, never message content. receipts_path()
+    is where receipts were kept, in a chain of their own, before it."""
+    from agent_friday.services import action_ledger
+    body = {"ts": round(time.time(), 3), "event": event, "detail": detail}
     with _LOCK:
-        p = receipts_path()
-        prev = "0" * 64
-        if p.exists():
-            try:
-                lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
-                if lines:
-                    prev = json.loads(lines[-1]).get("hash") or prev
-            except (OSError, ValueError):
-                pass
-        body = {"ts": round(time.time(), 3), "event": event, "detail": detail, "prev": prev}
-        body["hash"] = hashlib.sha256((prev + json.dumps(body, sort_keys=True)).encode("utf-8")).hexdigest()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "a", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps(body, sort_keys=True) + "\n")
-        return body
+        e = action_ledger.append("inbox_cleanup", body)
+    return dict(body, seq=e.get("seq"), hash=e.get("hash"))
 
 
 def verify_receipts() -> dict:
-    """{ok, count, reason}: walk the receipts' hash chain from the first line."""
+    """{ok, count, reason}: the action ledger's chain, which these receipts
+    are part of."""
     try:
-        lines = [ln for ln in receipts_path().read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except OSError:
-        return {"ok": True, "count": 0, "reason": ""}
-    prev = "0" * 64
-    for i, ln in enumerate(lines, start=1):
-        try:
-            rec = json.loads(ln)
-        except ValueError:
-            return {"ok": False, "count": len(lines), "reason": "line %d is not readable" % i}
-        body = {k: v for k, v in rec.items() if k != "hash"}
-        want = hashlib.sha256((prev + json.dumps(body, sort_keys=True)).encode("utf-8")).hexdigest()
-        if rec.get("prev") != prev or rec.get("hash") != want:
-            return {"ok": False, "count": len(lines), "reason": "line %d was changed or moved" % i}
-        prev = rec["hash"]
-    return {"ok": True, "count": len(lines), "reason": ""}
+        from agent_friday.services import action_ledger
+        rep = action_ledger.verify(force=False)
+        count = len(action_ledger.entries(["inbox_cleanup"], newest_first=False))
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "count": 0, "reason": "the action ledger could not be read (%s)" % type(e).__name__}
+    if rep.get("ok"):
+        return {"ok": True, "count": count, "reason": ""}
+    first = next((p for p in rep.get("problems", []) if not p.get("acknowledged")), {})
+    return {"ok": False, "count": count,
+            "reason": "record %s was changed or moved (%s)" % (first.get("seq"), first.get("reason"))}
 
 
 def receipts(limit: int = 200) -> list:
     try:
-        lines = receipts_path().read_text(encoding="utf-8").splitlines()
-    except OSError:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries(["inbox_cleanup"], newest_first=True, limit=max(0, int(limit)))
+    except Exception:
         return []
-    out = []
-    for ln in lines[-limit:]:
-        try:
-            out.append(json.loads(ln))
-        except ValueError:
-            continue
-    return out
+    return [dict({k: v for k, v in e["rec"].items() if k != "_migrated"},
+                 seq=e.get("seq"), hash=e.get("hash"))
+            for e in reversed(rows) if isinstance(e.get("rec"), dict)]
 
 
 # ── reading headers ──────────────────────────────────────────────────────────

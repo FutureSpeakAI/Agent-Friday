@@ -339,6 +339,14 @@ def _find_manifest(folder: Path) -> Optional[Path]:
 # ── loading ─────────────────────────────────────────────────────
 
 def _default_dirs():
+    # Safe mode (services/safe_mode.py): only the skills shipped with the app;
+    # nothing the owner added or Friday learned is loaded.
+    try:
+        from agent_friday.services import safe_mode as _sm
+        if not _sm.allows("skills"):
+            return [BUNDLED_DIR]
+    except Exception:
+        pass
     return [SKILLS_DIR, BUNDLED_DIR]
 
 
@@ -1079,6 +1087,10 @@ def import_skill(src, name=None) -> dict:
     Normalizes OpenClaw/agentskills folders (which already use SKILL.md) and
     Friday's legacy YAML into the canonical SKILL.md folder format under
     ~/.friday/skills/, tagging ``source: imported``.
+
+    This installs AT ONCE, with no review. No route or tool calls it: an import
+    from outside goes through services/skill_import_review, which shows the
+    owner a card and installs only after a press on it. Keep it that way.
     """
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     src = Path(src)

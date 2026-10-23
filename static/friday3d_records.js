@@ -195,7 +195,7 @@
   // Tasks: Friday's to-dos (Home) and goals, orbiting what matters now.
   const URGENCY = ['Due now', 'High priority', 'Waiting for you', 'Later', 'Done'];
   const urgencyOf = t => {
-    if (t.status === 'completed' || t.status === 'rejected' || t.status === 'cancelled') return 'Done';
+    if (['completed', 'rejected', 'cancelled', 'met_verified', 'met_unverified', 'abandoned', 'archived'].includes(t.status)) return 'Done';
     const due = secs(t.deadline), now = Date.now() / 1000;
     if (due && due < now + 86400 * 2) return 'Due now';
     if (t.priority === 'high') return 'High priority';

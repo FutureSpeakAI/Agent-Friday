@@ -262,11 +262,12 @@ rules.
 
 ### Money and routines
 
-- **A monthly ceiling**, asked only if the cloud is in play: **No cap**, **$5
-  a month**, **$10 a month** (recommended) or **$25 a month**, or type an
-  amount. When the ceiling is reached, cloud work stops and Friday tells you
-  once; models on this PC keep working. It sets the monthly hard stop in
-  **Settings > Spending**. Skipping leaves nothing capped.
+- **The daily spending cap**, asked only if the cloud is in play. It is
+  already on ($2.00 a day on a new install) and Friday says so: **Keep $2.00
+  a day** (recommended), **$1 a day**, **$5 a day**, **$10 a day** or **No
+  daily cap**, or type an amount. When the cap is reached, paid cloud work
+  pauses with a card; models on this PC keep working. It is the daily cap in
+  **Settings > Spending**. Skipping keeps it as it is.
 - **Scheduled jobs on a cloud model**, asked only if you skipped the privacy
   question, this PC has no local model, and you have not answered it before.
   It names the model each job would use and its estimated monthly cost.

@@ -71,6 +71,10 @@ def _deny_dirs() -> list[tuple[Path, str]]:
         (f / "google_accounts" / "tokens", "your Google account tokens folder"),
         (f / "mcp_oauth", "your connector sign-in tokens folder"),
         (f / "phone" / "secrets", "your phone-service secrets folder"),
+        # Read, deleted and switched only from the privacy map (A20): a tool
+        # that could delete the owner's fingerprints-only choice would turn
+        # keeping back on; one that could plant an entry would forge a receipt.
+        (f / "vault" / "sent-text", "the full text of what left this PC"),
     ]
 
 
@@ -88,6 +92,7 @@ def _deny_files() -> list[tuple[Path, str]]:
         (f / "secret_key", "my web session secret"),
         (f / "vault" / ".vault_config.json", "the vault key-derivation salt"),
         (f / "vault" / ".governance-key", "the governance signing key"),
+        (f / "vault" / "sent-text-choice.json", "your choice to keep only fingerprints of what left this PC"),
         (f / "runtime" / "laya_safe_writes" / "salt", "the key that keys Laya's log hashes"),
         (a / ".env", "the API keys an earlier release kept beside the app"),
         (a / "secrets.yaml", "the API keys an earlier release kept beside the app"),
