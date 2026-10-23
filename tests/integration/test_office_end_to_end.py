@@ -24,8 +24,12 @@ from agent_friday.services import office_engine as oe
 _REAL_HOME = Path(os.environ.get("FRIDAY_REAL_HOME") or Path.home())
 _REAL_BINARY = _REAL_HOME / ".friday" / "runtime" / "officecli" / "officecli.exe"
 
+#: CI's Windows legs install the pinned binary first and set this, so a missing
+#: or broken install fails these tests instead of skipping them.
+_REQUIRED = os.environ.get("FRIDAY_REQUIRE_OFFICECLI") == "1"
+
 pytestmark = pytest.mark.skipif(
-    not _REAL_BINARY.exists(),
+    not _REQUIRED and not _REAL_BINARY.exists(),
     reason="officecli is not installed on this machine (%s)" % _REAL_BINARY)
 
 

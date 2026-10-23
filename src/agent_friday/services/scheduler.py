@@ -1836,6 +1836,11 @@ def _run_task_inner(rec):
     # through here, so "pause all background and scheduled jobs" is one check
     # rather than a flag each job has to remember to read.
     try:
+        # Stop everything (services/global_stop): a scheduled or Run-now job is
+        # skipped with its reason while stopped, like a stand-down.
+        from agent_friday.services import global_stop as _gs
+        if _gs.active():
+            raise StoodDown("Everything is stopped (you pressed Stop); press Resume to let jobs run.")
         from agent_friday.services import stand_down as _sd
         if _sd.is_stood_down():
             raise StoodDown(_sd.reason() or "Friday is stood down.")
@@ -1843,6 +1848,12 @@ def _run_task_inner(rec):
         raise
     except Exception:
         pass                      # never block the roster on our own bug
+    # Safe mode (services/safe_mode.py): schedules are paused. Skipped like a
+    # stand-down, never failed and never run late.
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("scheduler")
+    if _why:
+        raise StoodDown(_why)
     task = rec.get("task") or {}
     kind = task.get("kind", "builtin")
     if kind == "builtin":
