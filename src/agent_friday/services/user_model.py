@@ -170,7 +170,11 @@ def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
                 cur, ev = _SESSION_TRAITS[key]
             else:
                 durable = _durable_trait(key)
-                cur, ev = (float(durable) if _isfloat(durable) else 0.5), 0
+                if durable is not None:
+                    # The owner set this one: what Friday infers never
+                    # out-ranks it (§34.9-8), not even for a session.
+                    return
+                cur, ev = 0.5, 0
             new = round(cur + (target - cur) * weight, 4)
             _SESSION_TRAITS[key] = (max(0.0, min(1.0, new)), ev + 1)
     except Exception:
@@ -257,6 +261,16 @@ def observe_event(kind: str, value: str) -> Dict[str, Any]:
         return {"ok": False, "error": exception_text(e)}
 
 
+#: Sources that mean the owner entered or approved the fact (as
+#: core_memory.migrate_user_model_facts reads them); every other source is
+#: something Friday inferred.
+CONFIRMED_SOURCES = ("manual", "proposed:", "meeting:")
+
+
+def is_confirmed_source(source) -> bool:
+    return str(source or "").startswith(CONFIRMED_SOURCES)
+
+
 def note_fact(category: str, text: str, *, confidence: float = 0.6,
               source: str = "dream") -> Dict[str, Any]:
     """Store a durable fact (preference/expertise/workflow/bio). Dedups by text."""
@@ -283,9 +297,16 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
                 # confidence toward the cap purely from re-processing the same
                 # turns; a different day mentioning the same fact legitimately does.
                 if source and source != (dup[2] or ""):
+                    # An inference repeating what the owner confirmed keeps
+                    # the owner's mark; the owner's confirmation of what was
+                    # inferred replaces it and lifts it at least to the
+                    # confidence given (§34.9-8).
+                    keep = dup[2] if is_confirmed_source(dup[2]) and not is_confirmed_source(source) \
+                        else source
                     conn.execute(
                         "UPDATE facts SET confidence=?, source=?, ts=? WHERE fact_id=?",
-                        (min(0.98, float(dup[1]) + 0.1), source, time.time(), fid))
+                        (min(0.98, max(float(confidence), float(dup[1]) + 0.1)), keep,
+                         time.time(), fid))
                 else:
                     conn.execute("UPDATE facts SET ts=? WHERE fact_id=?",
                                  (time.time(), fid))
@@ -320,18 +341,23 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
         lines: List[str] = []
         formality = get_trait("comm.formality")
         verbosity = get_trait("comm.verbosity")
+        with _LOCK:
+            inferred = set(_SESSION_TRAITS)
         if formality is not None:
             lines.append(
                 "Communication style: "
                 + ("formal/professional" if formality > 0.6 else
                    "casual/relaxed" if formality < 0.4 else "balanced")
                 + (", prefers detail" if (verbosity or 0.5) > 0.6 else
-                   ", prefers terse answers" if (verbosity or 0.5) < 0.4 else ""))
+                   ", prefers terse answers" if (verbosity or 0.5) < 0.4 else "")
+                # Said apart from what the owner set (§34.9-8).
+                + (" (inferred from how they write this session, not stated by them)"
+                   if inferred & {"comm.formality", "comm.verbosity"} else ""))
         experts = []
         novices = []
         for key, val in _all_traits().items():
             if key.startswith("expertise.") and _isfloat(val):
-                dom = key.split(".", 1)[1]
+                dom = key.split(".", 1)[1] + (" (inferred)" if key in inferred else "")
                 fv = float(val)
                 if fv >= 0.7:
                     experts.append(dom)
