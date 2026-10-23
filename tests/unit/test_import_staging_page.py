@@ -36,5 +36,5 @@ def test_answers_go_through_the_pages_own_fetch_and_say_nothing_is_saved_first()
     comp = _component(FILES[0].read_text(encoding="utf-8"))
     assert "apiFetch('/api/import-staging/review'" in comp      # carries the desk key on this PC
     assert "Nothing is saved until you accept it." in comp
-    for word in ("'Accept'", "'Reject'", "'Later'", "'Accept all'", "'Reject all'"):
+    for word in ("'Accept'", "'Reject'", "'Later'", "'Accept all '", "'Reject all'"):
         assert word in comp

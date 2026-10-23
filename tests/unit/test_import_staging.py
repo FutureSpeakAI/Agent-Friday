@@ -149,6 +149,33 @@ def test_the_forget_registry_asks_import_staging(st):
     assert "import_staging" in fr.registered()
 
 
+def test_a_saved_item_keeps_no_content_in_staging(st):
+    """Once saved, the person lives in the store it was saved to, where forgetting reaches it."""
+    st.stage("testsrc", "thing", [{"key": "a", "label": "Ada Lane", "payload": {"name": "Ada Lane"},
+                                   "names": ["Ada Lane"], "emails": ["ada@example.test"]}])
+    it = st.list_items(source="testsrc")[0]
+    st.review(it["id"], "accept")
+    raw = (st.home / "wiki" / "_staging" / (it["id"] + ".json")).read_text(encoding="utf-8")
+    assert "Ada" not in raw and "ada@example.test" not in raw
+    assert json.loads(raw)["status"] == "accepted"
+
+
+def test_a_whole_list_is_answered_in_the_files_order(st):
+    rows = _rows("Zed", "Amy", "Kit", "Bea")
+    st.stage("testsrc", "thing", rows)
+    st.review_class("testsrc", "accept")
+    assert [c["name"] for c in st.committed] == ["Zed", "Amy", "Kit", "Bea"]
+
+
+def test_an_edit_cannot_save_a_forgotten_person(st, monkeypatch):
+    from agent_friday.services import forget_person as fp
+    st.stage("testsrc", "thing", _rows("Ada Lane"))
+    it = st.list_items(source="testsrc")[0]
+    monkeypatch.setattr(fp, "forgotten_names", lambda: {"bo kim"})
+    assert st.review(it["id"], "edit", edits={"name": "Bo Kim"})["ok"] is False
+    assert st.committed == []
+
+
 def test_library_drafts_are_not_mixed_in(st):
     d = st.home / "wiki" / "_staging"
     d.mkdir(parents=True, exist_ok=True)
