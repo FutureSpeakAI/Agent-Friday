@@ -171,7 +171,8 @@
       "chat_template_sha256": "7940f4ffa3275c36caa4a582f845aaad79da11018b3961e8fbcad6ae29733466",
       "chat_template_note": "sha256 of the UTF-8 chat template the Hub reports for this commit's GGUFs; the code-session seat (CT2) checks the file's template against it (CT-E21).",
       "published_speed": {"source": "https://recursive.com/updates/introducing-recursive-flint", "note": "vendor figures are for 48 GB Apple Silicon and RTX Spark with Recursive's engine; none apply to this runtime"},
-      "serve": {"serve_num_ctx": 65536, "serve_args": ["-np", "1", "--n-cpu-moe", "47", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0"]},
+      "serve": {"serve_num_ctx": 32768, "serve_args": ["-np", "1", "--n-cpu-moe", "20", "--load-mode", "none", "--cache-ram", "0", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0"]},
+      "serve_note": "Measured on an RTX 4070 12 GB with 32 GB RAM, the brain stood down: about 9.7 GB of VRAM, about 5.9 GB of host working set, available RAM >= 6.3 GB, ~54 tok/s. --load-mode none is also enforced at spawn by services/flint_seat.py: the default memory-mapped mode grew the seat to 11.3 GB of host memory.",
       "files": [
         {"file": "flint-UD-Q2_K_XL.gguf", "packing": "UD-Q2_K_XL", "bytes": 13562207680, "sha256": "7f43dd99e7d574c43c3f1b24e0e8269cf1ec92ba6c25f11b3ff126cde4c7a0cb", "default": true, "min_ram_mib": 32768, "note": "12 GB cards with 32 GB of memory: experts on the processor (CT-E07)"},
         {"file": "flint-UD-IQ2_XXS.gguf", "packing": "UD-IQ2_XXS", "bytes": 11855541696, "sha256": "c1fa4a6d5ec67fbeff460c68829984e4aa3eea95dc9d2067691f19e5406deeee", "min_ram_mib": 32768, "note": "8 GB cards with 32 GB of memory; not offered until measured"},
