@@ -14665,13 +14665,19 @@ def _run_card_prior(ctx, key):
     executor carry out that change. If the run then makes the same call again, the grant alone
     would let it through and the task would be completed, created or changed twice. So for the
     run-grantable tools, before any grant is used, the call's own card (same subject as
-    `_taint_card`: conversation key plus fingerprint) is looked up:
+    `_taint_card`: conversation key plus fingerprint, including the suffixed subjects it uses
+    for a re-raised card after one expired) are looked up, every one of them:
 
-      approved and carried out (or being carried out)  ->  "[ALREADY DONE]", nothing runs
-      approved, not yet claimed                         ->  this call claims it and runs once;
-                                                            the executor then finds it taken
-      waiting                                           ->  returned, so the caller withdraws it
-                                                            if the grant lets the call through
+      any approved and carried out (or being carried out)  ->  "[ALREADY DONE]", nothing runs
+      any approved, not yet claimed      ->  this call claims it, passes the checkpoint's
+                                             integrity check and signed receipt, and runs once;
+                                             the executor then finds it taken
+      the newest waiting                 ->  returned, so the caller withdraws it if the grant
+                                             lets the call through
+      the newest declined or blocked by the owner  ->  "[DECLINED]": a grant never overrides
+                                             the owner's no to this exact change
+      withdrawn as friday:superseded     ->  "[ALREADY DONE]" (the grant carried it out)
+      expired only, or none              ->  nothing to say; the checkpoint decides
 
     Returns (verdict or None, waiting card or None).
     """
@@ -14681,31 +14687,67 @@ def _run_card_prior(ctx, key):
             return None, None
         from agent_friday.services import approvals as _appr
         subject = f"taint:{key}:{_taint_mod.fingerprint(ctx.tool_name, ctx.input or {})}"
-        rec = _appr.find_for_subject("tool_action", subject, "tainted_action")
+        recs = [r for r in _appr.list_approvals(subject_type="tool_action", kind="tainted_action")
+                if r.get("subject_id") == subject
+                or str(r.get("subject_id") or "").startswith(subject + ":")]   # newest first
     except Exception as e:
         _log.warning("run card lookup failed: %s", type(e).__name__)
         return _hooks.DENY(
             f"[NOT RUN] '{ctx.tool_name}' was NOT executed: Friday could not check whether "
             f"this change already has a card, so it did not risk doing it twice. Tell the "
             f"user."), None
-    if not rec:
+    if not recs:
         return None, None
-    status = rec.get("status")
+    approved = [r for r in recs if r.get("status") == "approved"]
+    done = [r for r in approved if r.get("consumed") or r.get("executing_at")]
+    if done:
+        return _run_card_claim(ctx, done[0]), None
+    if approved:
+        return _run_card_claim(ctx, approved[0]), None
+    newest = recs[0]
+    status = newest.get("status")
     if status == "pending":
-        return None, rec
-    if status == "denied" and rec.get("decided_by") == "friday:superseded":
+        return None, newest
+    superseded = [r for r in recs if r.get("decided_by") == "friday:superseded"]
+    if status in ("denied", "blocked") and newest.get("decided_by") != "friday:superseded":
+        return _run_card_declined(ctx), None
+    if superseded:
         # Withdrawn because the run's grant already carried this change out.
-        return _run_card_claim(ctx, dict(rec, consumed=True)), None
-    if status != "approved":
-        return None, None             # declined or expired: `_taint_card` says so, or asks anew
-    return _run_card_claim(ctx, rec), None
+        return _run_card_claim(ctx, dict(superseded[0], consumed=True)), None
+    return None, None                 # expired only: the checkpoint decides, or asks anew
+
+
+def _run_card_declined(ctx):
+    return _hooks.DENY(
+        f"[DECLINED] The user declined '{ctx.tool_name}' with these details on an approval "
+        f"card. It was NOT executed. Do not retry it.")
 
 
 def _run_card_claim(ctx, rec):
-    """Carry out an approved run card's change in this call, once, or say it is already done."""
+    """Carry out an approved run card's change in this call, once, or say it is already done.
+
+    The run's own call carrying out the card gets what the executor's would: the cLaws
+    integrity check and a signed receipt naming the card (action_gate.record_external). If
+    either fails the change does not run and the card is spent with ok False."""
     from agent_friday.services import approvals as _appr
     aid = rec.get("approval_id")
+    if rec.get("consumed") and (rec.get("used_detail") or {}).get("ok") is False:
+        return _hooks.DENY(
+            f"[NOT RUN] '{ctx.tool_name}' with these details was approved on a card, but it "
+            f"could not be carried out then and was not run. It was NOT run now either. Tell "
+            f"the user; a fresh request raises a new card.")
     if not rec.get("consumed") and _appr.claim_for_execution(aid):
+        from agent_friday.governance import action_gate as _gate
+        inp = ctx.input or {}
+        try:
+            _gate.record_external(ctx.tool_name, surface="approval_card", approval_id=aid,
+                                  target=str(inp.get("title") or inp.get("task_id") or ""))
+        except Exception as e:
+            _appr.mark_used(aid, f"tool:{ctx.tool_name}",
+                            detail={"ok": False, "error": "held: %s" % e})
+            return _hooks.DENY(
+                f"[NOT RUN] '{ctx.tool_name}' was approved on a card but held at the "
+                f"checkpoint: {e}. It was NOT executed. Tell the user.")
         _appr.mark_used(aid, f"tool:{ctx.tool_name}")
         try:
             from agent_friday.services import run_grants as _rg
