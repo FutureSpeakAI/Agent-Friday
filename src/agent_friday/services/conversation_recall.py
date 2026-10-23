@@ -77,15 +77,27 @@ def format_hits(hits: list) -> str:
 
 
 def recent_voice_pin(max_sessions: int = 3, max_chars: int = 900, windows=None) -> str:
-    """What recent voice calls were about, from turns already spoken to Gemini."""
+    """What recent voice calls were about, from turns already spoken to Gemini.
+    A turn forget-person took out (conversation_fts.forgotten_ids) is left
+    out of the pin entirely: its text never reaches the call again."""
     if windows is None:
         windows = prov.gemini_windows()
-    sessions = {}
+    picked = []
     for conv, cid, m in _iter_messages():
         meta = m.get("meta") or {}
         if meta.get("via") != "voice" or prov.is_off_record(m):
             continue
         if prov.GEMINI not in prov.sent_to(m, windows):
+            continue
+        picked.append((conv, cid, m))
+    try:
+        from agent_friday.services import conversation_fts as _fts
+        gone = _fts.forgotten_ids([m.get("id") for _c, _i, m in picked if m.get("id")])
+    except Exception:
+        gone = set()                     # fail open, as the chat's replay does
+    sessions = {}
+    for conv, cid, m in picked:
+        if gone and str(m.get("id")) in gone:
             continue
         ts = float(m.get("ts") or 0)
         key = (cid, time.strftime("%Y-%m-%d", time.localtime(ts)))

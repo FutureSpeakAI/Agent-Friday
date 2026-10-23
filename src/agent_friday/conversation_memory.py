@@ -301,7 +301,7 @@ class ConversationMemory:
 
     # ── writes ───────────────────────────────────────────────────────
     def index(self, text, role, session_id="default", timestamp=None,
-              topic_keywords=None, msg_id=None):
+              topic_keywords=None, msg_id=None, rebuild=False):
         """Index a single chat message. Returns the stored id, or None on no-op.
 
         text           the message body
@@ -310,6 +310,8 @@ class ConversationMemory:
         timestamp      ISO-8601; defaults to now
         topic_keywords list[str] | comma-string; auto-extracted when omitted
         msg_id         stable id for idempotent upserts; uuid when omitted
+        rebuild        True from a bulk rebuild from the transcripts: the
+                       forgotten-turn check is strict (see below)
         """
         text = (text or "").strip()
         # A key is withheld before it is embedded, stored as a document,
@@ -319,6 +321,29 @@ class ConversationMemory:
         text = withhold(text)[0]
         if not text:
             return None
+        # A turn forget-person took out stays out (NS-15.7-2): a rebuild from
+        # the transcripts, or a turn still being indexed when the forget ran,
+        # re-indexes through here with the transcript id, which forget-person
+        # keeps durably (conversation_fts: forgotten-turns.json beside the
+        # tombstones, mirrored in the search index's `forgotten` table).
+        # A bulk rebuild (rebuild=True, or inside conversation_fts.rebuilding())
+        # is strict: when the durable list cannot be read, every turn is
+        # skipped rather than one the owner forgot re-indexed. The live
+        # single-turn path skips only an id KNOWN to be forgotten: if the list
+        # cannot be read the turn is indexed and the failure logged (memory
+        # keeps working; the forget's own deletion already ran).
+        try:
+            from agent_friday.services import conversation_fts as _fts
+            if rebuild or _fts.rebuild_state() is not None:
+                if _fts.skip_on_rebuild(msg_id):
+                    return None
+            elif msg_id and _fts.is_forgotten(msg_id):
+                return None
+        except Exception as e:
+            if rebuild:
+                print(f"  [MEMORY] forgotten-turn check failed during a rebuild (turn skipped): {type(e).__name__}")
+                return None
+            print(f"  [MEMORY] forgotten-turn check failed (indexing anyway): {type(e).__name__}")
         if not self._ensure():
             return None
         # D5: verify the embedding space BEFORE the broad handler below, which
@@ -678,6 +703,28 @@ class ConversationMemory:
         except Exception as e:
             print(f"  [MEMORY] delete failed (non-fatal): {e}")
         return removed
+
+    def matching(self, predicate):
+        """Every stored turn whose text `predicate` accepts, as
+        [{id, text, date}]; None when the store cannot be read. For
+        forget-person (services/forget_derived), which then delete()s them."""
+        if not self._ensure():
+            return None
+        try:
+            with self._lock:
+                res = self._collection.get(include=["documents", "metadatas"])
+        except Exception as e:
+            print(f"  [MEMORY] matching failed (non-fatal): {e}")
+            return None
+        out = []
+        for did, doc, meta in zip(res.get("ids") or [], res.get("documents") or [],
+                                  res.get("metadatas") or []):
+            if doc and predicate(doc):
+                meta = meta or {}
+                out.append({"id": did, "text": doc,
+                            "date": meta.get("date") or str(meta.get("timestamp") or "")[:10]
+                            or meta.get("session_id")})
+        return out
 
     def get_session(self, session_id, limit=500):
         """Return every stored turn for one conversation, oldest-first.

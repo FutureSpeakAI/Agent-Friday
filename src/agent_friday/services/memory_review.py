@@ -297,6 +297,23 @@ def forget_text(text: str) -> int:
     return dropped
 
 
+def forget_matching(match) -> int:
+    """Forget-person (services/forget_derived): every buffered exchange whose
+    user or Friday side `match` accepts leaves the review buffers, including
+    one buffered after the forget's transcript scan began (a turn in flight).
+    A review already running keeps the window it copied. Returns how many
+    buffered exchanges were dropped."""
+    dropped = 0
+    with _LOCK:
+        for key, buf in list(_BUFFERS.items()):
+            keep = [ex for ex in buf if not (match(str(ex.get("user") or ""))
+                                             or match(str(ex.get("friday") or "")))]
+            dropped += len(buf) - len(keep)
+            if len(keep) != len(buf):
+                _BUFFERS[key] = deque(keep, maxlen=WINDOW)
+    return dropped
+
+
 def _reset_for_tests() -> None:
     with _LOCK:
         _BUFFERS.clear()

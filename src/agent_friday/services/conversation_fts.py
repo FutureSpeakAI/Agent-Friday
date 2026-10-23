@@ -14,6 +14,14 @@ What never reaches the index:
   egress gate, the tool-output redactor and the conversation store share). If
   that module cannot be loaded, nothing is indexed: the index fails closed.
 * **Off-the-record turns**, and messages that are not conversation turns.
+* **Turns taken out by forget-person** (``forget_turns``): their ids are kept
+  durably in ``forgotten-turns.json`` beside the forget-person tombstones (ids
+  only, written atomically) and mirrored into the ``forgotten`` table here, so
+  a rebuild from the transcripts never brings them back, even when this index
+  (a rebuildable cache) was deleted. A bulk rebuild (``build``, ``resync``, a
+  rebuild of the vector memory inside ``rebuilding()``) that cannot read the
+  durable list indexes nothing rather than risk a forgotten turn; the live
+  single-turn paths fail open (``forgotten_ids``).
 
 Deleting is total and immediate: ``delete_message`` removes the line from the
 transcript, this index, Friday's vector memory (ChromaDB) and the chat mirror
@@ -25,8 +33,10 @@ so a cloud caller can be given only what that provider already heard.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
 import re
 import sqlite3
 import threading
@@ -49,6 +59,23 @@ BACKGROUND_BUILD = True
 _LOCK = threading.RLock()
 _BUILT: Dict[str, bool] = {}
 
+#: Stands in for a turn forget-person took out wherever a transcript is
+#: replayed to a model (routes/chat, voice, Crew): the owner's history still
+#: shows it, the model does not read it again, and the roles still alternate.
+FORGOTTEN_NOTE = "[This message was removed from Friday's memory at the owner's request.]"
+
+#: The durable forgotten-turn list, beside the forget-person tombstones.
+FORGOTTEN_FILE = "forgotten-turns.json"
+#: Serialises writers of the durable list only (never held by a reader, and
+#: never the index's _LOCK, so a lookup does not wait for a build).
+_DURABLE_LOCK = threading.Lock()
+_REBUILD = threading.local()
+
+
+class ForgottenListUnreadable(RuntimeError):
+    """The durable forgotten-turn list exists but cannot be read: a bulk
+    rebuild refuses rather than index a turn the owner had forgotten."""
+
 
 def _path() -> Path:
     """Beside the transcripts it indexes (the store's own root)."""
@@ -57,6 +84,114 @@ def _path() -> Path:
         return conversations._root() / "index.sqlite"
     except Exception:
         return friday_home() / "conversations" / "index.sqlite"
+
+
+# ── the durable forgotten-turn list ──────────────────────────────────────────
+def _durable_path() -> Path:
+    """Beside the forget-person tombstones (forgotten-people.json), outside the
+    conversations folder whose index is a rebuildable cache."""
+    try:
+        from agent_friday.services import forget_person as fp
+        return fp._tombstone_path().with_name(FORGOTTEN_FILE)
+    except Exception:
+        return friday_home() / FORGOTTEN_FILE
+
+
+def _read_durable(strict: bool = False) -> set:
+    """The forgotten message ids kept durably. No file: no forget has run (an
+    empty set). A file that cannot be read or parsed: with `strict` (the bulk
+    rebuild paths) ForgottenListUnreadable; otherwise logged and empty (the
+    live paths fail open)."""
+    p = _durable_path()
+    try:
+        if not p.exists():
+            return set()
+        data = json.loads(p.read_text(encoding="utf-8"))
+        ids = data.get("ids") if isinstance(data, dict) else None
+        if not isinstance(ids, list):
+            raise ValueError("no id list")
+        return {str(i) for i in ids if str(i or "").strip()}
+    except Exception as e:
+        if strict:
+            raise ForgottenListUnreadable(
+                "the forgotten-turn list could not be read (%s)" % type(e).__name__) from e
+        _log.warning("conversation search: the forgotten-turn list could not be read: %s", type(e).__name__)
+        return set()
+
+
+def _add_durable(mids: Iterable[str]) -> None:
+    """Add ids to the durable list (atomic: temp file, then os.replace). An
+    existing list that cannot be read is not overwritten: raises, so the
+    forget says it could not be kept (and running it again retries)."""
+    new = {str(m) for m in (mids or ()) if str(m or "").strip()}
+    if not new:
+        return
+    with _DURABLE_LOCK:
+        have = _read_durable(strict=True)
+        if new <= have:
+            return
+        p = _durable_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps({"version": 1, "ids": sorted(have | new)}, indent=0), encoding="utf-8")
+        os.replace(tmp, p)
+
+
+def _mirror_durable(conn, gone: set) -> None:
+    """Copy the durable ids into this index's `forgotten` table (the mirror
+    _insert checks), so a rebuilt index honours every earlier forget."""
+    if gone:
+        conn.executemany("INSERT OR IGNORE INTO forgotten(mid) VALUES(?)", [(m,) for m in sorted(gone)])
+
+
+@contextlib.contextmanager
+def rebuilding():
+    """For a bulk rebuild of the vector memory from the transcripts (M4's
+    rebuild_from_transcripts re-indexes each line through
+    ConversationMemory.index with its id): inside this block index() skips
+    every forgotten id, read ONCE from the durable list and this index; when
+    the durable list cannot be read, index() skips every turn (the rebuild
+    indexes nothing rather than a turn the owner forgot)."""
+    prev = getattr(_REBUILD, "state", None)
+    try:
+        gone = _read_durable(strict=True) | _mirror_ids(None)
+        _REBUILD.state = {"gone": gone, "refused": False}
+    except ForgottenListUnreadable:
+        _log.error("conversation memory rebuild: the forgotten-turn list cannot be read; nothing is re-indexed")
+        _REBUILD.state = {"gone": set(), "refused": True}
+    try:
+        yield _REBUILD.state
+    finally:
+        _REBUILD.state = prev
+
+
+def rebuild_state() -> Optional[Dict[str, Any]]:
+    """The current thread's rebuild context ({"gone", "refused"}), or None."""
+    return getattr(_REBUILD, "state", None)
+
+
+def skip_on_rebuild(mid) -> bool:
+    """For ConversationMemory.index(..., rebuild=True) outside rebuilding():
+    True when `mid` is forgotten, or when the durable list cannot be read
+    (a bulk rebuild skips everything rather than risk a forgotten turn)."""
+    state = rebuild_state()
+    if state is not None:
+        return state["refused"] or (bool(mid) and str(mid) in state["gone"])
+    try:
+        return bool(mid) and str(mid) in (_read_durable(strict=True) | _mirror_ids([str(mid)]))
+    except ForgottenListUnreadable:
+        _log.error("conversation memory rebuild: the forgotten-turn list cannot be read; turn skipped")
+        return True
+
+
+def _mirror_ids(mids) -> set:
+    """_table_forgotten, failing open: the index is a cache; the durable list
+    is the record a strict reader relies on."""
+    try:
+        return _table_forgotten(mids)
+    except Exception as e:
+        _log.warning("conversation search: the forgotten-turn mirror could not be read: %s", type(e).__name__)
+        return set()
 
 
 def _redactor():
@@ -94,6 +229,7 @@ def _connect() -> sqlite3.Connection:
             role TEXT, via TEXT, sent_to TEXT);
         CREATE INDEX IF NOT EXISTS msgs_cid ON msgs(cid);
         CREATE TABLE IF NOT EXISTS superseded(mid TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS forgotten(mid TEXT PRIMARY KEY);
         CREATE VIRTUAL TABLE IF NOT EXISTS msgs_fts USING fts5(text, tokenize='porter unicode61');
         """)
     try:
@@ -119,6 +255,10 @@ def _indexable(m: dict) -> bool:
 
 def _insert(conn, cid: str, m: dict) -> bool:
     if not _indexable(m):
+        return False
+    # A turn taken out by forget-person stays out: a rebuild or a resync from
+    # the transcript (which keeps it) never indexes it again (forget_turns).
+    if conn.execute("SELECT 1 FROM forgotten WHERE mid=?", (str(m["id"]),)).fetchone():
         return False
     text = _clean(m["text"])
     if text is None or not text.strip():
@@ -185,11 +325,22 @@ def resync(cid: str) -> int:
     """Make the index match one conversation's transcript, now (after a clear,
     a prune or a rewrite). Returns rows indexed."""
     from agent_friday.services import conversations as cv
+    # The durable forgotten list first: when it cannot be read, the
+    # conversation's old rows still go (a clear must clear) and nothing is
+    # indexed from the transcript until a later resync or build can read it.
+    try:
+        gone, refused = _read_durable(strict=True), False
+    except ForgottenListUnreadable as e:
+        gone, refused = set(), True
+        _log.error("conversation search: %s; conversation %s is not re-indexed", e, cid)
     with _LOCK:
         conn = _connect()
         try:
             _delete_cid(conn, cid)
-            n = sum(1 for m in cv._stored_messages(cid) if _insert(conn, cid, m))
+            n = 0
+            if not refused:
+                _mirror_durable(conn, gone)
+                n = sum(1 for m in cv._stored_messages(cid) if _insert(conn, cid, m))
             conn.commit()
         finally:
             conn.close()
@@ -207,7 +358,12 @@ def forget_conversation(cid: str) -> None:
 
 
 def build(force: bool = False) -> Dict[str, Any]:
-    """Index every stored conversation from its transcript."""
+    """Index every stored conversation from its transcript.
+
+    Every earlier forget is honoured: the durable forgotten list is read
+    (strictly) and mirrored into ``forgotten`` before anything is indexed.
+    When that list cannot be read the build is refused before the index is
+    touched (ForgottenListUnreadable): the old index stays as it was."""
     from agent_friday.services import conversations as cv
     t0 = time.time()
     n = 0
@@ -216,6 +372,8 @@ def build(force: bool = False) -> Dict[str, Any]:
         try:
             if not force and (conn.execute("SELECT v FROM meta WHERE k='version'").fetchone() or [None])[0] == str(VERSION):
                 return {"ok": True, "skipped": True}
+            gone = _read_durable(strict=True)          # raises: nothing below runs
+            _mirror_durable(conn, gone)
             conn.execute("DELETE FROM msgs")
             conn.execute("DELETE FROM msgs_fts")
             if _has_trigram(conn):
@@ -404,6 +562,98 @@ def mark_superseded(mids, on: bool = True) -> int:
         finally:
             conn.close()
     return len(mids)
+
+
+def forget_turns(match, mids: Iterable[str] = (), apply: bool = True) -> Dict[str, Any]:
+    """Forget-person (services/forget_derived, NS-15.7-2): the indexed turns
+    whose text `match` accepts, and the transcript message ids `mids`, leave
+    this index and stay out of it (the `forgotten` table survives a rebuild,
+    like `superseded`). The transcript itself is not touched. With
+    `apply=False` only counts. Returns {"removed", "mids", "dates",
+    "durable"}: "durable" is False when the ids could not be added to the
+    durable list (forgotten-turns.json), so a rebuild after the index is
+    deleted might not know them; the caller says so in the receipt.
+
+    The ids go to the durable list FIRST, then this index's mirror."""
+    extra = {str(m) for m in (mids or ()) if str(m or "").strip()}
+    if not _path().exists() and not extra:
+        return {"removed": 0, "mids": [], "dates": [], "durable": True}
+    durable = True
+    with _LOCK:
+        conn = _connect()
+        try:
+            hits = []
+            for mid, ts, text in conn.execute(
+                    "SELECT m.mid, m.ts, f.text FROM msgs m JOIN msgs_fts f ON f.rowid = m.id"):
+                if text and match(text):
+                    hits.append((str(mid), ts))
+            indexed = {h[0] for h in hits}
+            for mid in extra:
+                row = conn.execute("SELECT ts FROM msgs WHERE mid=?", (mid,)).fetchone()
+                if row and mid not in indexed:
+                    hits.append((mid, row[0]))
+                    indexed.add(mid)
+            removed = len(indexed)
+            if apply:
+                try:
+                    _add_durable(indexed | extra)
+                except Exception as e:
+                    durable = False
+                    _log.error("conversation search: the forgotten-turn list could not be saved: %s",
+                               type(e).__name__)
+                for mid in indexed:
+                    _delete_mid(conn, mid)
+                conn.executemany("INSERT OR IGNORE INTO forgotten(mid) VALUES(?)",
+                                 [(m,) for m in sorted(indexed | extra)])
+                conn.commit()
+        finally:
+            conn.close()
+    dates = sorted({datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d") for _m, ts in hits if ts})
+    return {"removed": removed, "mids": sorted(indexed), "dates": dates, "durable": durable}
+
+
+def _table_forgotten(mids) -> set:
+    """The ids in this index's `forgotten` mirror (all of them when `mids` is
+    None). Read-only and WITHOUT the index's _LOCK: a lookup never waits
+    behind a build (SQLite WAL readers do not block on its writer; a short
+    busy timeout covers the rest). Raises when it cannot be read."""
+    p = _path()
+    if not p.exists():
+        return set()
+    conn = sqlite3.connect(str(p), timeout=1.0)          # queries only; never written here
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='forgotten'").fetchone():
+            return set()
+        if mids is None:
+            return {str(r[0]) for r in conn.execute("SELECT mid FROM forgotten")}
+        out = set()
+        for i in range(0, len(mids), 500):
+            chunk = mids[i:i + 500]
+            out |= {str(r[0]) for r in conn.execute(
+                "SELECT mid FROM forgotten WHERE mid IN (%s)" % ",".join("?" * len(chunk)), chunk)}
+        return out
+    finally:
+        conn.close()
+
+
+def forgotten_ids(mids: Iterable[str]) -> set:
+    """The ids among `mids` that forget-person took out (``forget_turns``):
+    the durable list (forgotten-turns.json) and this index's mirror. For the
+    live paths (a turn indexed, a transcript replayed to a model): takes no
+    index lock, and fails open, each source on its own: a source that cannot
+    be read reports nothing and is logged, and callers then keep (or index)
+    the turn as before. Bulk rebuilds read strictly instead (build, resync,
+    rebuilding(), skip_on_rebuild)."""
+    want = [str(m) for m in (mids or ()) if str(m or "").strip()]
+    if not want:
+        return set()
+    return (_read_durable(strict=False) & set(want)) | _mirror_ids(want)
+
+
+def is_forgotten(mid) -> bool:
+    """True when forget-person took this message id out (ConversationMemory.index
+    refuses it, so a rebuild through it cannot bring the turn back)."""
+    return bool(mid) and str(mid) in forgotten_ids([str(mid)])
 
 
 def _snippet(text: str, terms: Iterable[str]) -> str:
