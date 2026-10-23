@@ -3,6 +3,7 @@
 //
 // SCRATCH server only (FRIDAY_BASE must be set; the live :3000 is refused). Writes are answered by the test.
 import { test, expect, type Page } from '../fixtures';
+import { settle } from '../helpers/settle';
 import { BASE, openApp, openWorkspace } from '../harness';
 import { showSettingsTab } from '../helpers/settings_tab';
 
@@ -38,7 +39,7 @@ test('with 3D off the desktop makes no WebGL context and stays usable', async ({
   // The dock and a workspace still work.
   const dock = page.locator('.dock-btn').first();
   await expect(dock).toBeVisible();
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 10000 });
   expect(await page.evaluate(() => (window as any).__webglMade), 'a WebGL context was created').toBe(0);
 });
 
@@ -49,7 +50,7 @@ test('with 3D off the knowledge view is Pages only and still makes no WebGL cont
   const tabs = page.locator('.kw-views .kw-view');
   await expect(tabs).toHaveCount(1);
   await expect(tabs.first()).toHaveText('Pages');
-  await page.waitForTimeout(1500);
+  await settle(page, { quietMs: 1000, timeout: 10000 });
   expect(await page.evaluate(() => (window as any).__webglMade), 'the galaxy made a WebGL context').toBe(0);
 });
 
