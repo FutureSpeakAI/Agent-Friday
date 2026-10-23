@@ -389,7 +389,13 @@ def _c_update_signature():
         return "degraded", "last_release_refused:%s" % verification
     if not state.get("last_success_ts"):
         return "unverified", "not_checked_yet"
-    return "unverified", "last_release_%s" % (verification or "not_verified")
+    if verification is None and not state.get("update_available"):
+        # Checked, and nothing newer was published: there was no release to verify.
+        return "healthy", "no_newer_release"
+    if verification == "no_trusted_key":
+        return "unverified", "last_release_checked_before_the_key"
+    # Only fixed codes reach the report (it is shareable): an unknown stored value is not echoed.
+    return "unverified", "last_release_unknown"
 
 
 def _c_boot():

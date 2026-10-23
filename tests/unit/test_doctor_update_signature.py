@@ -52,3 +52,21 @@ def test_a_refused_release_is_degraded_and_named(check, bad):
 def test_never_checked_is_unverified(check):
     fn, state, *_ = check
     assert fn() == ("unverified", "not_checked_yet")
+
+
+def test_up_to_date_is_not_a_failure(check):
+    fn, state, *_ = check
+    state.update(verification=None, last_success_ts=1.0, update_available=False)
+    assert fn() == ("healthy", "no_newer_release")
+
+
+def test_a_check_from_before_the_key_is_unverified(check):
+    fn, state, *_ = check
+    state.update(verification="no_trusted_key", last_success_ts=1.0, update_available=True)
+    assert fn() == ("unverified", "last_release_checked_before_the_key")
+
+
+def test_an_unexpected_stored_value_is_never_echoed_into_the_report(check):
+    fn, state, *_ = check
+    state.update(verification="C:\\Users\\someone\\secret", last_success_ts=1.0, update_available=True)
+    assert fn() == ("unverified", "last_release_unknown")
