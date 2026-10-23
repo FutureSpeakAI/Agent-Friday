@@ -207,6 +207,16 @@ def _parse(raw: Any) -> Dict[str, list]:
     return out
 
 
+def _loggable(raw: Any, limit: int) -> str:
+    """Model text for a log or an exception: cut, or withheld when it touches
+    a special category (services/sensitive_categories). Cannot check: withheld."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        return _sc.loggable(raw, limit)
+    except Exception:
+        return "[withheld: could not check it for special categories]"
+
+
 def _norm(s: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", str(s or "").lower()).split())
 
@@ -243,7 +253,9 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
                                  max_tokens=1200, temperature=0.1, orb_label="Memory review",
                                  schema=SCHEMA)
         if is_refusal(raw):
-            raise RuntimeError("no local model could run the memory review: " + str(raw)[:160])
+            # The text goes to a log (_run_and_release): withheld when it
+            # touches a special category (NS-15.4-3).
+            raise RuntimeError("no local model could run the memory review: " + _loggable(raw, 160))
     plan = _parse(raw)
     added = queued = dropped = 0
     token = core_memory.ACTOR.set("review")

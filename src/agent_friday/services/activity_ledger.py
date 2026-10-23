@@ -113,6 +113,14 @@ def record(kind, /, **fields):
             _unsaved = False
         if _unsaved:
             rec["off_record"] = True
+        # The row came from an off-record turn: nothing may LEARN from it
+        # (NS-15.8-2; services/avatar_growth's nightly signals read this),
+        # even when the owner keeps off-record content (no storage mark).
+        try:
+            if _unsaved or _off.excludes_learning():
+                rec["no_learning"] = True
+        except Exception:
+            rec["no_learning"] = True
         if kind == "notification" and "kind" in fields:
             fields = dict(fields, notification_kind=fields.pop("kind"))
         for key, val in fields.items():

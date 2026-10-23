@@ -41,12 +41,24 @@ RECEIPT_FIELDS = ("tool", "tool_name", "name", "kind", "class", "action_class",
                   "off_record")
 
 
+class _Unreadable(dict):
+    """The settings could not be read. Empty, so `active()` (storage) still
+    fails open as before: failing closed there would silently drop an
+    on-record transcript the owner expects kept whenever the settings file
+    could not be read. `excludes_learning()` (learning) reads it the other
+    way: a turn whose off-record state is unknown is treated as off the
+    record, and nothing is learned from it (NS-15.8-2)."""
+
+
 def _settings() -> dict:
     try:
         from agent_friday.core import _load_settings
-        return _load_settings() or {}
+        s = _load_settings()
     except Exception:
+        return _Unreadable()
+    if s is None:
         return {}
+    return s if isinstance(s, dict) else _Unreadable()
 
 
 def stops_storage(settings: dict | None) -> bool:
@@ -72,11 +84,18 @@ def excludes_learning(settings: dict | None = None) -> bool:
     """True while off-record is on: Friday learns nothing from the turn.
 
     NS-15.8-2: off-record content stays out of learning, introspection,
-    personalization and background summaries. Unlike `active()` this does not
-    depend on `off_record_stops_storage`: an owner who keeps the transcript
-    still has an off-record turn, and nothing is inferred from it."""
-    s = _settings() if settings is None else (settings or {})
-    return bool(s.get("off_record"))
+    personalization, background summaries and forensic snapshots. Unlike
+    `active()` this does not depend on `off_record_stops_storage`: an owner
+    who keeps the transcript still has an off-record turn, and nothing is
+    inferred from it. Settings that cannot be read count as off-record (fail
+    closed); `active()` keeps failing open (see `_Unreadable`)."""
+    try:
+        s = _settings() if settings is None else (settings or {})
+        if isinstance(s, _Unreadable):
+            return True
+        return bool(s.get("off_record"))
+    except Exception:
+        return True
 
 
 def skip_learning(learner: str, settings: dict | None = None,

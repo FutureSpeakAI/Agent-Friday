@@ -5399,11 +5399,18 @@ def _task_set(task_id, **fields):
 
 
 def _off_record_active():
+    # The task's `off_record` mark is what forensic snapshots
+    # (ops/forensics-snapshot.py) and the desktop views read to leave a task
+    # out, so it follows the learning check (NS-15.8-2: off-record content
+    # stays out of forensic snapshots), not storage: a task started off the
+    # record is marked whether or not off-record transcripts are kept. What
+    # the task journal writes stays governed by storage (task_journal uses
+    # off_record.skip). Cannot tell: marked.
     try:
         from agent_friday.services import off_record as _off
-        return _off.active()
+        return bool(_off.active() or _off.excludes_learning())
     except Exception:
-        return False
+        return True
 
 
 def _task_snapshot(task_id=None):

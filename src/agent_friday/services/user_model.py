@@ -305,11 +305,20 @@ def observe_event(kind: str, value: str, *,
 #: Sources that mean the owner entered or approved the fact (as
 #: core_memory.migrate_user_model_facts reads them); every other source is
 #: something Friday inferred.
+#: "manual" (routes/user_model), "setup" (setup_steps.FACT_SOURCE) and
+#: "user_stated" (interest_model.record_constraint) match exactly; only
+#: "proposed:<day>" and "meeting:<id>" (memory_proposals, an approved
+#: proposal) are prefixes, colon included. A prefix match on the bare names
+#: would let an inferred source such as "setup_research" or "manual_guess"
+#: pass as the owner's.
 CONFIRMED_SOURCES = ("manual", "proposed:", "meeting:", "setup", "user_stated")
+_CONFIRMED_EXACT = frozenset(s for s in CONFIRMED_SOURCES if not s.endswith(":"))
+_CONFIRMED_PREFIXES = tuple(s for s in CONFIRMED_SOURCES if s.endswith(":"))
 
 
 def is_confirmed_source(source) -> bool:
-    return str(source or "").startswith(CONFIRMED_SOURCES)
+    s = str(source or "")
+    return s in _CONFIRMED_EXACT or s.startswith(_CONFIRMED_PREFIXES)
 
 
 def note_fact(category: str, text: str, *, confidence: float = 0.6,

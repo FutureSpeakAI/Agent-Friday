@@ -155,11 +155,13 @@ def _cloud_reader() -> bool:
 
 
 def _special_category(text: str):
+    """services/sensitive_categories.special_category; a check that fails
+    counts as special (fail closed, like dreaming and proposals)."""
     try:
         from agent_friday.services.sensitive_categories import special_category
         return special_category(text)
     except Exception:
-        return None
+        return "special_category"
 
 
 def _ask_first(target: str, action: str, inp: dict, why: str, *,
@@ -203,6 +205,13 @@ def _tool_update_core_memory(inp=None) -> str:
         return "NOT DONE: action is add, replace, remove or show."
     if target not in core_memory.TARGETS:
         return "NOT DONE: target is user or friday."
+    if not _owner_decided() and _off_record_turn(_ctx(), "update_core_memory"):
+        # NS-15.8-2: an off-record turn teaches Friday nothing. Nothing is
+        # saved and nothing is queued on the card (pending.jsonl) unless the
+        # owner approved a card for exactly this call.
+        return ("NOT SAVED: this conversation is off the record, so Friday keeps nothing from it, "
+                "on the memory card or in its review queue. Tell the user in one sentence; if they "
+                "want it kept, they can add it on their Memory card themselves or turn off-record off.")
     actor = _actor()
     if actor != "friday" and action in ("replace", "remove"):
         # The background review may add; anything it would rewrite or drop
@@ -388,6 +397,19 @@ def _minor_profile(profile_id) -> bool:
         return True
 
 
+def _off_record_turn(ctx: dict, learner: str) -> bool:
+    """True when this turn is off the record, so nothing from it reaches the
+    card (NS-15.8-2). The turn's snapshot (ctx["off_record_turn"]) when the
+    caller took one; else services/off_record.skip_learning reads the setting,
+    failing closed. Cannot tell: off."""
+    snap = (ctx or {}).get("off_record_turn") if isinstance(ctx, dict) else None
+    try:
+        from agent_friday.services import off_record as _off
+        return _off.skip_learning(learner, off_record=snap if isinstance(snap, bool) else None)
+    except Exception:
+        return True
+
+
 def capture_household(message: str, ctx: dict) -> dict:
     """Save the household basics the owner just typed, under the card's rule.
 
@@ -407,6 +429,9 @@ def capture_household(message: str, ctx: dict) -> dict:
       * no household line is on the card yet: a different statement is
         queued as a replace, never rewritten silently.
     A phone, channel or background origin, or a minor profile, keeps nothing.
+    An off-record turn keeps nothing either, saved or queued (NS-15.8-2):
+    the turn's own snapshot (ctx["off_record_turn"], set by the chat routes)
+    decides when present, else the current setting; cannot tell is off.
 
     Returns {"status": "saved"|"queued"|"unchanged"|"none"|"skipped", "text", "note"};
     `note` is one paragraph for the model's turn context, empty when nothing changed.
@@ -414,6 +439,8 @@ def capture_household(message: str, ctx: dict) -> dict:
     from agent_friday.services import household_facts as hf
     ctx = ctx if isinstance(ctx, dict) else {}
     out = {"status": "none", "text": "", "note": ""}
+    if _off_record_turn(ctx, "household_capture"):
+        return {**out, "status": "skipped", "off_record": True}
     try:
         facts = hf.extract(message)
     except Exception:

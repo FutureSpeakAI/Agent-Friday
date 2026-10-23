@@ -395,7 +395,7 @@ def propose(day: Optional[str] = None, *, memory=None,
             "memory proposal for %s read %d turns and proposed NOTHING. That "
             "is a result worth looking at, not a green tick. Model=%s, "
             "raw response began: %r",
-            day, len(turns), s["model"], (raw or "")[:200])
+            day, len(turns), s["model"], _loggable_raw(raw, 200))
 
     stored = 0
     if store and facts:
@@ -430,6 +430,17 @@ def propose(day: Optional[str] = None, *, memory=None,
     if dropped:
         out["dropped_sensitive"] = dropped           # a count; the text was not kept
     return out
+
+
+def _loggable_raw(raw: Any, limit: int) -> str:
+    """The start of the model's raw response for a log line, or a placeholder
+    when it touches a special category (NS-15.4-3): the log would keep what
+    the filter dropped. Cannot check: withheld."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        return _sc.loggable(raw, limit)
+    except Exception:
+        return "[withheld: could not check it for special categories]"
 
 
 def _drop_special(facts: List[Dict[str, Any]], where: str):

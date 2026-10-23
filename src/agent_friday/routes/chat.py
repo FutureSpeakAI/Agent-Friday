@@ -1372,6 +1372,17 @@ def _note_recall_turn(session_id, conversation_id):
         pass
 
 
+def _turn_learning_off():
+    """This turn's off-record state for everything that LEARNS from it
+    (services/off_record.excludes_learning, NS-15.8-2), read once at the
+    start of the turn. Cannot tell: off the record, nothing is learned."""
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.excludes_learning(_load_settings() or {}))
+    except Exception:
+        return True
+
+
 def _end_grant_turn(sess_ctx, session_id, conversation_id):
     """The turn is over, however it ended (an instant reply returns before
     the turn's context exists): a skill read in it stops counting as in use
@@ -1428,13 +1439,18 @@ def chat():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
+        # Off-record is read ONCE, here, and this snapshot decides every
+        # learning step of the turn (the user model, the household capture,
+        # epistemic scoring, skill capture, recall indexing): a toggle mid-turn
+        # cannot let half a turn be learned (NS-15.8-2).
+        _turn_off_record = _turn_learning_off()
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
         # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
             _um.observe_message(message, role='user', workspace=workspace,
-                                off_record=bool((_load_settings() or {}).get('off_record')))
+                                off_record=_turn_off_record)
         except Exception:
             pass
         # An empty message with no image is unanswerable — refuse it cleanly
@@ -2434,6 +2450,9 @@ def chat():
             # outcome back into this chat when the owner approves the card
             # later -- possibly from the System workspace with no turn running.
             "conversation_id": _conv_id_from(data) or "",
+            # The turn's off-record snapshot, for the household capture in
+            # prepare_confirmation_ctx (NS-15.8-2).
+            "off_record_turn": _turn_off_record,
         }
         # Every metered call in a codebase chat is that codebase's spend, under
         # whose key it runs (salon spec §4.7): the meter reads both from here.
@@ -3165,7 +3184,8 @@ def chat():
                           _route_info, locals().get('_conv_seat'))
 
         # ── Context log: append both turns unless off-record. ──
-        if not settings.get('off_record'):
+        # (The turn's snapshot from its start, like the learning steps below.)
+        if not _turn_off_record:
             _log_context("chat_user", {
                 "message": message,
                 "workspace": workspace,
@@ -3179,7 +3199,7 @@ def chat():
 
         # Epistemic scoring — score this turn in background. It is Friday's
         # introspection on the turn: an off-record turn is not scored (NS-15.8-2).
-        if not settings.get('off_record'):
+        if not _turn_off_record:
             try:
                 from agent_friday.epistemic_engine import get_epistemic_engine
                 threading.Thread(
@@ -3193,7 +3213,7 @@ def chat():
         # metrics in the background. Feeds the nightly SkillOpt optimizer.
         # Off the record nothing is learned from the turn (NS-15.8-2), even
         # when the owner lets the transcript be stored.
-        if not settings.get('off_record'):
+        if not _turn_off_record:
             try:
                 import agent_friday.skill_capture as _skcap
                 threading.Thread(
@@ -3206,8 +3226,9 @@ def chat():
 
         # Persistent conversation memory — index both turns into ChromaDB in the
         # background so future sessions can recall and cite this exchange. Skip
-        # when the user is off-record. Best-effort; never blocks the response.
-        if not settings.get('off_record'):
+        # when the user is off-record (the turn's snapshot from its start).
+        # Best-effort; never blocks the response.
+        if not _turn_off_record:
             try:
                 threading.Thread(
                     target=_index_chat_turn,
@@ -3518,13 +3539,15 @@ def chat_send():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
+        # Off-record read ONCE for the turn's learning steps (as /api/chat).
+        _turn_off_record = _turn_learning_off()
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
         # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
             _um.observe_message(message, role='user', workspace=workspace,
-                                off_record=bool((_load_settings() or {}).get('off_record')))
+                                off_record=_turn_off_record)
         except Exception:
             pass
         include_vision = data.get('includeVision', False)
@@ -3797,6 +3820,7 @@ def chat_send():
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "conversation_id": _conversation_id,
+            "off_record_turn": _turn_off_record,        # household capture (NS-15.8-2)
         }
         # Every metered call in a codebase chat is that codebase's spend, under
         # whose key it runs (salon spec §4.7): the meter reads both from here.
@@ -3962,8 +3986,9 @@ def chat_send():
         _save_chat_history(CHAT_HISTORY)
 
         # Persistent conversation memory + emotional arc — index this exchange in
-        # the background (skip when off-record). Best-effort; never blocks.
-        if not settings.get('off_record'):
+        # the background (skip when off-record: the turn's snapshot from its
+        # start, NS-15.8-2). Best-effort; never blocks.
+        if not _turn_off_record:
             try:
                 threading.Thread(
                     target=_index_chat_turn,

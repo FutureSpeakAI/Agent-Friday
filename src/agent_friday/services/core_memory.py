@@ -373,15 +373,20 @@ def _special(text: str, where: str, prefix: str = "NOT SAVED: ") -> Optional[Dic
     """The refusal for an INFERRED line that states or implies a special
     category (health, sexuality, politics, religion, ethnicity, union
     membership, genetic or biometric data, criminal record, immigration;
-    services/sensitive_categories), counted with no text kept; else None."""
+    services/sensitive_categories), counted with no text kept; else None.
+    A check that cannot run refuses (fail closed, like dreaming and proposals)."""
     try:
         from agent_friday.services import sensitive_categories as _sc
         cat = _sc.special_category(text)
-        if not cat:
-            return None
+    except Exception:
+        cat = "special_category"
+    if not cat:
+        return None
+    try:
+        from agent_friday.services import sensitive_categories as _sc
         _sc.note_dropped(where, cat)
     except Exception:
-        return None
+        pass
     return {**_err(prefix + SPECIAL_REFUSAL.format(cat=cat.replace("_", " "))),
             "sensitive": cat}
 

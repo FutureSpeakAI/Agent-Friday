@@ -467,3 +467,295 @@ def test_setup_research_uses_the_same_filter_unchanged():
     assert sr.sensitive_category("She lives in Oak Street.") == "home_address"
     assert sr.sensitive_category("a heart condition") == "health"
     assert sr.compact_sensitive("sam_health_diary") == "health"
+
+
+# ── review fixes: an off-record turn reaches neither the card nor its queue ──
+
+HOUSEHOLD = "I am 52, my husband is 50, our son is 9. Please make a note of that."
+
+
+def _typed_turn(message, monkeypatch, conv="conv-hh", **extra):
+    """A typed chat turn prepared the way routes/chat does it (the household
+    capture runs inside agent.prepare_confirmation_ctx)."""
+    monkeypatch.setattr("agent_friday.services.laya_personal.is_minor", lambda *a, **k: False)
+    extra.setdefault("owner_surface", True)
+    return agent.prepare_confirmation_ctx("sess-" + conv, message,
+                                          {"conversation_id": conv, **extra})
+
+
+@pytest.mark.parametrize("stops_storage", [True, False])
+def test_an_off_record_household_statement_is_neither_saved_nor_queued(monkeypatch, stops_storage):
+    """capture_household runs on every typed turn: off the record it keeps
+    nothing on ME.md or in pending.jsonl, stored transcript or not."""
+    _off_record(True, stops_storage=stops_storage)
+    ctx = _typed_turn(HOUSEHOLD, monkeypatch)
+    assert cm.entries("user") == [] and cm.pending() == [], "an off-record turn reached the card"
+    assert "household_capture" not in ctx
+
+    _off_record(False)
+    ctx = _typed_turn(HOUSEHOLD, monkeypatch, conv="conv-hh2")
+    assert (ctx.get("household_capture") or {}).get("status") == "saved"
+    assert len(cm.entries("user")) == 1
+
+
+def test_the_turns_off_record_snapshot_decides_the_household_capture(monkeypatch):
+    """The chat routes read off-record once at the start of the turn and pass
+    it in the ctx; a later toggle does not let the turn be learned."""
+    _off_record(False)
+    _typed_turn(HOUSEHOLD, monkeypatch, off_record_turn=True)
+    assert cm.entries("user") == [] and cm.pending() == []
+
+
+@pytest.mark.parametrize("stops_storage", [True, False])
+def test_friday_saves_and_queues_nothing_off_the_record(monkeypatch, stops_storage):
+    _off_record(True, stops_storage=stops_storage)
+    for inp, said in (({"action": "add", "target": "user", "text": "Takes coffee black."},
+                       "Remember that I take my coffee black."),
+                      ({"action": "add", "target": "user", "text": "Likes trains."}, "what's on?"),
+                      ({"action": "add", "target": "friday", "text": "Keep answers short."},
+                       "Keep answers short.")):
+        out = _friday_tool(inp, said)
+        assert out.startswith("NOT SAVED: this conversation is off the record"), out
+    assert cm.entries("user") == [] and cm.entries("friday") == []
+    assert cm.pending() == [], "an off-record turn was queued for the card"
+
+    # A card the owner approved for exactly this call is their explicit OK.
+    monkeypatch.setattr(cmt, "_owner_decided", lambda: True)
+    out = _friday_tool({"action": "add", "target": "user", "text": "Takes coffee black."}, "")
+    assert out.startswith("Saved in core memory"), out
+    assert cm.entries("user") == ["Takes coffee black."]
+
+
+# ── the learners key on the learning check, not on storage ──────────────────
+
+def test_laya_and_the_behavioural_monitor_learn_nothing_off_record_with_storage_on():
+    from agent_friday.governance import behavioral_monitor as bm
+    from agent_friday.services import laya_personal as lp
+    _off_record(True, stops_storage=False)
+    assert lp._off_record() is True, "Laya learned from an off-record turn whose transcript is kept"
+    assert bm._off_record() is True, "the monitor kept a full trace of an off-record session"
+    _off_record(False)
+    assert lp._off_record() is False and bm._off_record() is False
+
+
+def test_cognitive_memory_writes_nothing_off_record_with_storage_on(tmp_path):
+    from agent_friday.cognitive_memory import CognitiveMemory
+    mem = CognitiveMemory(memory_dir=tmp_path / "cog")
+    _off_record(True, stops_storage=False)
+    out = mem.write_memory("pref.tea", "Likes green tea.")
+    assert out.get("written") is False and not (tmp_path / "cog" / "pref.tea.json").exists()
+    _off_record(False)
+    mem.write_memory("pref.tea", "Likes green tea.")
+    assert (tmp_path / "cog" / "pref.tea.json").exists()
+
+
+@pytest.mark.parametrize("stops_storage", [True, False])
+def test_the_end_of_turn_review_index_and_emotional_arc_learn_nothing_off_record(monkeypatch, stops_storage):
+    from agent_friday.services import model_router
+    seen = []
+    monkeypatch.setattr(mrev, "note_turn", lambda m, r, k, **kw: seen.append("review"))
+    monkeypatch.setattr(model_router, "_get_conversation_memory",
+                        lambda: type("M", (), {"index_exchange":
+                                               lambda self, *a, **k: seen.append("index")})())
+    monkeypatch.setattr(model_router, "_get_emotional_arc",
+                        lambda: type("A", (), {"record": lambda self, *a, **k: seen.append("arc")})())
+    _off_record(True, stops_storage=stops_storage)
+    model_router._index_chat_turn_body(CASUAL, "Sure.", "s-off")
+    assert seen == [], "an off-record turn was reviewed, indexed or scored: %s" % seen
+    _off_record(False)
+    model_router._index_chat_turn_body(CASUAL, "Sure.", "s-on")
+    assert seen == ["review", "index", "arc"]
+
+
+def test_task_and_process_records_made_off_record_are_marked_for_forensic_snapshots():
+    """ops/forensics-snapshot.py leaves out a task or process marked
+    off_record: the mark follows off-record itself, not storage."""
+    _off_record(True, stops_storage=False)
+    assert agent._off_record_active() is True
+    assert core._off_record_now() is True
+    _off_record(False)
+    assert agent._off_record_active() is False and core._off_record_now() is False
+
+
+def test_an_off_record_activity_row_never_feeds_the_avatars_growth(tmp_path, monkeypatch):
+    from agent_friday.services import activity_ledger as al
+    from agent_friday.services import avatar_growth as gr
+    monkeypatch.setattr(al, "LEDGER_FILE", tmp_path / "activity_ledger.jsonl")
+    _off_record(True, stops_storage=False)
+    assert al.record("tool_call", tool="search_wiki", ok=True)
+    _off_record(False)
+    assert al.record("tool_call", tool="search_wiki", ok=True)
+    rows = [json.loads(x) for x in (tmp_path / "activity_ledger.jsonl").read_text().splitlines()]
+    assert rows[0].get("no_learning") is True and "no_learning" not in rows[1]
+
+    monkeypatch.setattr(gr.g, "AVATAR_DIR", tmp_path / "avatar")
+    monkeypatch.setattr(gr, "_ledger_rows", lambda since, until: [rows[0]])
+    assert gr.nightly_signals(day=DAY) is None, "an off-record row grew the avatar"
+    monkeypatch.setattr(gr, "_ledger_rows", lambda since, until: rows)
+    assert gr.nightly_signals(day=DAY)["tools"] == 1
+
+
+# ── fail closed ──────────────────────────────────────────────────────────────
+
+def test_settings_that_cannot_be_read_count_as_off_record_for_learning_only(monkeypatch):
+    from agent_friday.services import off_record
+
+    def broken(*a, **k):
+        raise OSError("settings unreadable")
+    monkeypatch.setattr(core, "_load_settings", broken)
+    assert off_record.excludes_learning() is True
+    assert off_record.skip_learning("probe") is True
+    # Storage keeps failing open: an unreadable file must not drop the
+    # owner's on-record transcript.
+    assert off_record.active() is False
+    before = _learned()
+    um.observe_message(CASUAL, role="user", workspace="code")
+    assert _learned() == before
+
+
+def test_a_special_category_check_that_fails_refuses(monkeypatch):
+    from agent_friday.services import sensitive_categories as sc
+
+    def broken(text):
+        raise RuntimeError("filter unavailable")
+    monkeypatch.setattr(sc, "special_category", broken)
+    r = cm.add("user", "Takes coffee black.", actor="friday")
+    assert not r["ok"] and r.get("sensitive")
+    q = cm.queue("user", "add", text="Takes coffee black.", source="dream:" + DREAM_DAY)
+    assert not q["ok"] and cm.pending() == []
+    assert cmt._special_category("Takes coffee black.")
+    assert cm.add("user", "Takes coffee black.", actor="owner")["ok"], "the owner's own line was filtered"
+
+
+# ── the filter: the review's misses and false alarms ────────────────────────
+
+@pytest.mark.parametrize("category, text", [
+    ("health", "Was diagnosed with depression."), ("health", "Talks to my therapist on Mondays."),
+    ("health", "Sees a therapist weekly."), ("sexuality", "I'm gay."),
+    ("politics", "Votes Republican."), ("religion", "Is a practising Muslim."),
+    ("health", "Is HIV positive."), ("health", "Is on antidepressants."), ("health", "Is pregnant."),
+    ("sexuality", "Is trans."), ("sexuality", "Their sister is transgender."),
+    ("health", "Is disabled."), ("health", "Sam is blind."), ("health", "Her father is deaf."),
+    ("ethnicity", "Is Black."), ("ethnicity", "Is Black British."),
+    ("politics", "Supports Labour."), ("politics", "Is a Conservative voter."),
+    ("politics", "Tory voter since 2010."), ("politics", "Lib Dem member."),
+    ("politics", "Is a member of the Green party."),
+    ("health", "Takes Prozac every morning."), ("health", "Is on sertraline."),
+    ("health", "Takes lithium for their mood."), ("health", "Is on PrEP."),
+    ("health", "Goes to AA on Tuesdays."), ("health", "Attends Alcoholics Anonymous."),
+    ("health", "Is in recovery."), ("criminal", "Is on probation."), ("criminal", "Is on parole."),
+    ("religion", "Goes to temple on Saturdays."), ("religion", "Goes to mosque on Fridays."),
+    ("religion", "Goes to synagogue."), ("health", "Has long covid."),
+    ("health", "Has cancer."), ("health", "Was diagnosed with cancer."),
+    ("health", "Is having chemotherapy."), ("religion", "Keeps kosher."),
+    ("ethnicity", "Is Asian."), ("ethnicity", "Is of Asian heritage."),
+    ("criminal", "Was sentenced to two years."), ("health", "Has been sober for three years."),
+])
+def test_the_special_category_filter_catches(category, text):
+    from agent_friday.services.sensitive_categories import special_category
+    assert special_category(text) == category
+
+
+@pytest.mark.parametrize("text", [
+    "Lives in Denver.", "Works on Python.", "Prefers union types.", "Fix the race condition.",
+    "Party on Friday.", "Uses SQL UNION queries.", "Reads Churchill biographies.",
+    "Pays with a Visa card.", "Uses a genetic algorithm.",
+    "Lives on Church Street.", "Office is on Church Road.", "Church Lane depot.", "Meets at 4 Church St.",
+    "Loves Asian food.", "Likes Asian cuisine.", "Booked an Asian restaurant.",
+    "Works on medical imaging software.", "Donates to cancer research.",
+    "Handles vaccine scheduling for the clinic app.", "Wife is a therapist.", "Enjoys retail therapy.",
+    "Keeps a style bible for the brand.", "That approach is not kosher.",
+    "Wants a spiritual successor to Myst.", "Plays Prison Architect.", "Is addicted to coffee.",
+    "Is sober about estimates.", "Was sentenced to refactor the auth module.", "Saw a praying mantis.",
+    "Drinks black coffee.", "Buys AA batteries in bulk.", "Does meal prep on Sundays.",
+    "Researches lithium-ion batteries.", "Has a blind spot for CSS.", "Is blind to criticism.",
+])
+def test_the_special_category_filter_leaves_ordinary_lines_alone(text):
+    from agent_friday.services.sensitive_categories import special_category
+    assert special_category(text) is None
+
+
+# ── raw model text is not logged when it holds a special category ───────────
+
+def _propose_raw(raw, day=DAY):
+    seat = {"assigned": True, "model": "gemma4:12b", "provider": "ollama-local", "reason": ""}
+    turns = [{"role": "user", "text": f"turn {i} about the week"} for i in range(5)]
+    with patch.object(mp, "seat", return_value=seat), \
+         patch.object(mp, "_ask_seat", return_value=raw), \
+         patch("agent_friday.services.memory_dreaming._pull_turns", return_value=(turns, False)):
+        return mp.propose(day)
+
+
+def test_a_barren_proposal_run_does_not_log_special_category_model_text(caplog):
+    with caplog.at_level(logging.WARNING):
+        out = _propose_raw("Notes: the user has bipolar disorder and votes Labour.")
+    assert out["barren"]
+    assert "proposed NOTHING" in caplog.text and "withheld" in caplog.text
+    assert "bipolar" not in caplog.text and "Labour" not in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        _propose_raw("Notes: nothing durable came up today.")
+    assert "nothing durable came up" in caplog.text
+
+
+def test_a_refused_review_does_not_carry_special_category_model_text(monkeypatch):
+    from agent_friday.services import model_router
+    monkeypatch.setattr(model_router, "_generate_text",
+                        lambda messages, **kw: "I can't help: the user is HIV positive.")
+    monkeypatch.setattr(model_router, "is_refusal", lambda raw: True)
+    with pytest.raises(RuntimeError) as err:
+        mrev.review([{"user": "hello there", "friday": "hi", "owner": True}])
+    assert "HIV" not in str(err.value) and "withheld" in str(err.value)
+
+
+# ── the chat routes read off-record once per turn ───────────────────────────
+
+def test_the_chat_routes_read_off_record_once_and_reuse_it():
+    """/api/chat and /api/chat/send take one snapshot at the start of the turn
+    and every learning step reads it, not the settings again."""
+    import pathlib
+    from agent_friday.routes import chat as chat_route
+    src = pathlib.Path(chat_route.__file__).read_text(encoding="utf-8-sig")
+    body_chat = src[src.index("\ndef chat():"):src.index("\ndef chat_send(")]
+    body_send = src[src.index("\ndef chat_send("):]
+    body_send = body_send[:body_send.index("\n@chat_bp.route", 1)]
+    for body in (body_chat, body_send):
+        assert body.count("_turn_off_record = _turn_learning_off()") == 1
+        assert "settings.get('off_record')" not in body
+        assert "_load_settings() or {}).get('off_record')" not in body
+        assert '"off_record_turn": _turn_off_record' in body
+        assert "off_record=_turn_off_record" in body
+    for step in ("get_epistemic_engine", "_skcap.capture", "target=_index_chat_turn"):
+        at = body_chat.index(step)
+        assert "if not _turn_off_record:" in body_chat[max(0, at - 600):at], step
+
+
+def test_the_routes_turn_snapshot_fails_closed(monkeypatch):
+    from agent_friday.routes import chat as chat_route
+
+    def broken(*a, **k):
+        raise OSError("settings unreadable")
+    monkeypatch.setattr(chat_route, "_load_settings", broken)
+    assert chat_route._turn_learning_off() is True
+    monkeypatch.setattr(chat_route, "_load_settings",
+                        lambda *a, **k: {"off_record": True, "off_record_stops_storage": False})
+    assert chat_route._turn_learning_off() is True
+    monkeypatch.setattr(chat_route, "_load_settings", lambda *a, **k: {"off_record": False})
+    assert chat_route._turn_learning_off() is False
+
+
+# ── confirmed sources match exactly (prefix only for proposed: / meeting:) ──
+
+def test_confirmed_sources_match_exactly_except_the_two_prefixes():
+    from agent_friday.services import setup_steps
+    for s in ("manual", "setup", "user_stated", "proposed:2026-08-23", "meeting:m-1",
+              setup_steps.FACT_SOURCE):
+        assert um.is_confirmed_source(s), s
+    for s in ("setup_research", "manual_guess", "user_stated_by_model", "proposed", "meeting",
+              "proposedX", "dream:2026-08-23", "friday", "review", ""):
+        assert not um.is_confirmed_source(s), s
+    # core_memory.queue reads it: an inferred source that merely starts like
+    # an owner one is still filtered.
+    q = cm.queue("user", "add", text="Has bipolar disorder.", source="setup_research")
+    assert not q["ok"] and q.get("sensitive") and cm.pending() == []
+    assert cm.queue("user", "add", text="Has bipolar disorder.", source="setup")["ok"]
