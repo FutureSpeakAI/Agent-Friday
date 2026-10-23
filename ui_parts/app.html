@@ -1498,6 +1498,13 @@ function SnapMenu({
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r3", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('chat_left', f, 'Chat on the left, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('left', f), traySide === 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat'), zone('rest', 1 - f, 'The workspace in the rest', () => onTray('left', f), false)))));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "t4", className: "snap-menu-title" }, "Chat on the right"));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r4", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('rest', 1 - f, 'The workspace in the rest', () => onTray('right', f), false), zone('chat_right', f, 'Chat on the right, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('right', f), traySide !== 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat')))));
+    // The tray's height without dragging its top edge (WCAG 2.5.7; north star 33.1-14).
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t5", className: "snap-menu-title" }, "Height"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r5", className: "snap-menu-row" }, [['full', 'Full height'], ['half', 'Half height']].map(([v, label]) => /*#__PURE__*/React.createElement("button", { key: v, type: "button", role: "menuitem", className: "btn", "data-chat-height": v, onClick: e => {
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent('friday:chat-height', { detail: v }));
+        onClose(false);
+      } }, label))));
     if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
         e.stopPropagation();
         onHide();
@@ -2462,7 +2469,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
       </div>
       {newChatState.error&&newChatState.revision===newChatOwner.current.revision&&<div role="alert" style={{color:'#ffab9f',fontSize:11,padding:'8px 14px',overflowWrap:'anywhere'}}>{newChatState.error}</div>}
       <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
-        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to {fridayName()}. Type, speak, or drop a file.</div>}
+        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to {fridayName()}. Type, speak, or attach a file.</div>}
         {pausePending&&pausePending.kind==='privacy_hold'&&<PrivacyHoldCard hold={pausePending.hold} msg={pausePending.message}
           onChoose={(id)=>pausePending.onVoiceChoice?pausePending.onVoiceChoice(id)
             :sendChat(pausePending.message,{skipForecast:true,alreadyShown:true,privacyOverride:id==='send_anyway'})}
@@ -8815,7 +8822,9 @@ function TimelinePanel({onCreated}){
           style={{flexShrink:0,width:88,borderRadius:6,overflow:'hidden',cursor:'grab',border:'1px solid '+(drag===i?'#00d4ff':'rgba(127,182,201,0.25)'),background:'#0a0e1a',position:'relative'}}>
           <video src={u} muted style={{width:88,height:50,objectFit:'cover',display:'block',pointerEvents:'none'}}/>
           <div style={{position:'absolute',top:2,left:3,fontSize:9,fontFamily:'Orbitron, sans-serif',color:'#00d4ff',background:'rgba(0,0,0,0.6)',borderRadius:3,padding:'0 4px'}}>{i+1}</div>
-          <div onClick={()=>removeClip(n)} title="remove" style={{position:'absolute',top:2,right:3,fontSize:11,color:'#ff7ab8',background:'rgba(0,0,0,0.6)',borderRadius:3,cursor:'pointer',width:14,textAlign:'center',lineHeight:'14px'}}>×</div>
+          {i>0&&<button type="button" aria-label={'Move clip '+(i+1)+' earlier'} title="Move earlier" onClick={()=>reorder(i,i-1)} style={{position:'absolute',bottom:2,left:3,minWidth:24,minHeight:24,padding:0,fontSize:11,color:'#7fb6c9',background:'rgba(0,0,0,0.6)',border:'none',borderRadius:3,cursor:'pointer'}}>◀</button>}
+          {i<clips.length-1&&<button type="button" aria-label={'Move clip '+(i+1)+' later'} title="Move later" onClick={()=>reorder(i,i+1)} style={{position:'absolute',bottom:2,right:3,minWidth:24,minHeight:24,padding:0,fontSize:11,color:'#7fb6c9',background:'rgba(0,0,0,0.6)',border:'none',borderRadius:3,cursor:'pointer'}}>▶</button>}
+          <button type="button" aria-label={'Remove clip '+(i+1)} onClick={()=>removeClip(n)} title="remove" style={{border:'none',padding:0,minWidth:24,minHeight:24,position:'absolute',top:2,right:3,fontSize:11,color:'#ff7ab8',background:'rgba(0,0,0,0.6)',borderRadius:3,cursor:'pointer',width:14,textAlign:'center',lineHeight:'14px'}}>×</button>
           {i<clips.length-1&&<div style={{position:'absolute',right:-1,top:'50%',transform:'translateY(-50%)',fontSize:9,color:'#7fb6c9'}}>›</div>}
         </div>);})}
     </div>
@@ -12765,7 +12774,7 @@ function CalendarWS(){
             {e.countdown&&<span className="cal-countdown">⏳ {e.title.split(' ')[0]} in {e.countdown}</span>}
             {window.CalendarViews&&window.CalendarViews.reminderText(e)&&<span className="cal-ev-remind">{window.CalendarViews.reminderText(e)}</span>}
             {window.CalendarViews&&<window.CalendarViews.RsvpButtons ev={e}/>}
-            {window.CalendarViews&&<window.CalendarViews.DeleteButton ev={e}/>}
+            {window.CalendarViews&&<window.CalendarViews.DeleteButton ev={e}/>}{window.CalendarViews&&window.CalendarViews.MoveButtons&&<window.CalendarViews.MoveButtons ev={e}/>}
             {e.prep_available&&<span className="cal-prep-badge">Prep available</span>}
             {e.related_emails&&e.related_emails.length>0&&<span style={{color:'#00d4ff'}}>✉ {e.related_emails.length} related</span>}
           </div>
@@ -26744,6 +26753,18 @@ function App(){
     return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[chatResize]);
   useEffect(()=>{try{localStorage.setItem('friday_chat_w',String(Math.round(chatW)))}catch(_){}},[chatW]);
   useEffect(()=>{try{if(chatH)localStorage.setItem('friday_chat_h',String(Math.round(chatH)))}catch(_){}},[chatH]);
+  // "Where the chat goes" > Height: the tray's height without dragging its edge (WCAG 2.5.7).
+  useEffect(() => {
+    const on = e => {
+      const v = e && e.detail;
+      if (v === 'full') {
+        try { localStorage.removeItem('friday_chat_h'); } catch (_) {}
+        setChatH(0);
+      } else if (v === 'half') setChatH(clampChatH(Math.round(vh() * 0.5)));
+    };
+    window.addEventListener('friday:chat-height', on);
+    return () => window.removeEventListener('friday:chat-height', on);
+  }, []);
   // Keep within viewport when the window is resized.
   useEffect(()=>{const on=()=>{let f=0;try{f=parseFloat(localStorage.getItem('friday_chat_frac'))||0}catch(_){}setChatW(w=>clampChatW(f>0.1&&f<0.9?Math.round(vw()*f):w));setChatH(h=>h?clampChatH(h):0)};addEventListener('resize',on);return()=>removeEventListener('resize',on)},[]);
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);

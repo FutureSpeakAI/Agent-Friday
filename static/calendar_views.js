@@ -301,6 +301,19 @@
     const ns = shifted(ev.start_time, days, minutes), ne = shifted(ev.end_time || ev.start_time, days, minutes);
     window.dispatchEvent(new CustomEvent(MOVE_EVENT, { detail: { ev, start: withOffset(ns), end: withOffset(ne) } }));
   }
+  // Moving an event without dragging (WCAG 2.5.7; north star 33.1-14): the same proposal a drag makes,
+  // so the same confirmation follows before anything changes.
+  function MoveButtons(props) {
+    const ev = props.ev;
+    if (!canMove(ev)) return null;
+    const b = (label, days, minutes, text) => h('button', {
+      type: 'button', className: 'calv-move', title: label, 'aria-label': label + ': “' + ev.title + '”',
+      style: { marginLeft: 4 },
+      onClick: e => { e.stopPropagation(); propose(ev, days, minutes); } }, text);
+    return h('span', { className: 'calv-move-btns', role: 'group', 'aria-label': 'Move “' + ev.title + '”', 'data-no-drag': 'on' },
+      b('15 minutes earlier', 0, -STEP_MIN, '−15m'), b('15 minutes later', 0, STEP_MIN, '+15m'),
+      b('A day earlier', -1, 0, '−1 day'), b('A day later', 1, 0, '+1 day'));
+  }
   function dragProps(ev, opts) {
     if (!canMove(ev)) return {};
     const o = Object.assign({ mode: 'day', hourPx: HOUR_PX }, opts || {});
@@ -308,7 +321,7 @@
       'data-cal-drag': 'on',
       'data-cal-event-id': String(ev.id),
       'data-cal-event-key': String(ev.calendar_key || ''),
-      'aria-description': 'Drag, or Alt and an arrow key, to move it. You confirm before anything changes.',
+      'aria-description': 'Drag, Alt and an arrow key, or the move buttons in the Day view, to move it. You confirm before anything changes.',
       onClickCapture: e => { if (Date.now() < suppressClickUntil) { e.stopPropagation(); e.preventDefault(); } },
       onKeyDownCapture: e => {
         if (!e.altKey) return;
@@ -798,6 +811,9 @@
 .calv-rsvp-btn:focus-visible{box-shadow:var(--fr-focus);outline:none}
 .calv-delete{background:none;border:1px solid transparent;border-radius:6px;color:var(--fr-error);font-size:10px;padding:1px 6px;cursor:pointer;min-height:20px}
 .calv-delete:hover,.calv-delete:focus-visible{border-color:var(--fr-error);outline:none}
+.calv-move{background:none;border:1px solid rgba(127,182,201,0.35);border-radius:6px;color:var(--fr-accent,#00d4ff);font-size:10px;padding:1px 6px;cursor:pointer;min-height:24px;min-width:24px}
+.calv-move:hover,.calv-move:focus-visible{border-color:var(--fr-accent,#00d4ff);outline:none}
+.cal-event:has(.calv-move-btns):hover,.cal-event:has(.calv-move-btns):focus-within{height:auto!important;overflow:visible!important;z-index:7}
 .calv-danger{color:var(--fr-error);border-color:var(--fr-error)}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
 `;
@@ -810,5 +826,5 @@
   }
   if (document.head) injectStyle(); else document.addEventListener('DOMContentLoaded', injectStyle);
 
-  window.CalendarViews = { DeleteButton, DeleteLayer, RsvpButtons, RsvpLayer, VIEWS, ViewSwitch, Nav, WeekView, MonthView, FreeBusyView, CalendarsPanel, OnlyChip, useCalendars, slug, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
+  window.CalendarViews = { DeleteButton, MoveButtons, DeleteLayer, RsvpButtons, RsvpLayer, VIEWS, ViewSwitch, Nav, WeekView, MonthView, FreeBusyView, CalendarsPanel, OnlyChip, useCalendars, slug, State, Errors, useRange, reminderText, MoveLayer, QuickAddPreview, dragProps, canMove, withOffset, MOVE_EVENT, rangeFor, step, title, iso, parseDay, addDays, weekStart, daysCovered, lanes, START_HOUR, END_HOUR, HOUR_PX };
 })();
