@@ -94,6 +94,34 @@ def test_an_empty_memory_is_rebuilt_from_the_transcripts_keeping_corrections_and
     assert history.get("The berth number is 12.") is True
 
 
+def test_a_rebuild_keeps_the_library_and_recalled_memory_out_as_the_live_path_does(world):
+    from agent_friday.services.library import cite
+    mem = world
+    cid = cv.create("Reading")["id"]
+    cv.append(cid, {"role": "assistant", "text": "Clause 7 of the lease says the deposit is 1,200 pounds.",
+                    "library": True, "meta": {"kind": "turn", "via": "chat", "library": True}})
+    _say(cid, 'Earlier <recalled-memory source="past_conversations">I live in Boston.</recalled-memory> '
+              'but what about the garden fence?')
+    mem.rebuild_from_transcripts()
+    docs = [d for d, _ in mem._collection.rows.values()]
+    assert not any("deposit is 1,200" in d for d in docs), "the Library's words went into memory"
+    assert cite.ELIDED in docs
+    assert not any("Boston" in d for d in docs), "a recalled-memory span was indexed again"
+    assert any("garden fence" in d for d in docs)
+
+
+def test_an_older_corrected_row_with_the_same_words_keeps_the_new_row_corrected(world):
+    mem = world
+    cid = cv.create("Boat")["id"]
+    mid = _say(cid, "The mooring fee is 400 pounds a year.")
+    mem._collection.upsert(ids=["legacy-fee"], documents=["The mooring fee is 400 pounds a year."],
+                           metadatas=[{"role": "user", "timestamp": "2025-01-01T00:00:00", "date": "2025-01-01",
+                                       "session_id": "2025-01-01"}])
+    mem.supersede(["legacy-fee"], "the owner corrected the fee")
+    mem.rebuild_from_transcripts()
+    assert mid not in {h["id"] for h in mem.search("mooring fee", n=10)}
+
+
 def test_a_rebuild_refreshes_in_place_and_never_drops_rows(world):
     mem = world
     cid = cv.create("Home")["id"]
