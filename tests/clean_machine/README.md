@@ -17,7 +17,7 @@
    is offered; `friday bundle schedule on` and `run` make one verified
    scheduled bundle; the offer ends; Doctor's backup check is healthy; `off`
    removes the kept passphrase. `packaging/windows/tests/verify-bundle-uninstall-restore.ps1`
-   runs the same check on the installed build.
+   runs the same check on the installed build, after its restore.
 
 They refuse to run outside CI (`GITHUB_ACTIONS=true`), because they write to
 the OS keychain of the machine they run on.
