@@ -159,20 +159,20 @@ def _on_decision(record: dict) -> None:
     search_card = _pq.is_public_query_card(record)
     if search_card and not _pq.approved_texts(record):
         # A search card whose input is not exactly what it showed: not run.
-        if _ap.claim_for_execution(aid):
+        if _ap.claim_for_execution(aid, by="approval_executor"):
             _ap.mark_used(aid, "approval_executor",
                           detail={"ok": False, "error": "card text does not match its input"})
             _post_back(record, "The search card you approved did not match what it "
                                "would send, so nothing was sent.")
         return
-    if not _ap.claim_for_execution(aid):
+    if not _ap.claim_for_execution(aid, by="approval_executor"):
         return                                  # someone else already has it
 
     # The two steps every outward action gets, for an executor acting outside a
     # tool call: the cLaws are intact, and a signed receipt exists. If either
     # fails the action does NOT run.
-    from agent_friday.governance import action_gate as _gate
     try:
+        from agent_friday.governance import action_gate as _gate
         _gate.record_external(tool, surface="approval_card", approval_id=aid,
                               target=str(args.get("path") or args.get("title") or ""))
     except Exception as e:
@@ -202,13 +202,20 @@ def _on_decision(record: dict) -> None:
             workspace = str(result).split(":", 1)[1].split()[0]
             shown = open_on_desktop("workspace", workspace=workspace)
             result, ok = shown["text"], shown.get("status") == "opened"
-    except Exception as e:
+    except BaseException as e:
+        # Even an exit raised inside the tool records the card's end first:
+        # a claimed card with no end is what a crash looks like (card_recovery).
         result, ok = "%s: %s" % (type(e).__name__, e), False
+        _reraise = None if isinstance(e, Exception) else e
+    else:
+        _reraise = None
 
     took = int((time.time() - started) * 1000)
     _ap.mark_used(aid, "approval_executor",
                   detail={"ok": ok, "took_ms": took,
                           "result": str(result)[:800]})
+    if _reraise is not None:
+        raise _reraise
 
     if search_card:
         # A search card's report names the card, not the query, and its result

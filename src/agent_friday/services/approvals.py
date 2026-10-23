@@ -636,7 +636,7 @@ def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
                   used_at=time.time(), used_detail=detail or {})
 
 
-def claim_for_execution(approval_id: str) -> bool:
+def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
     """Claim an approved card for a single execution. True for exactly one caller.
 
     An approved card has to be RUN by something (services/approval_executor),
@@ -661,6 +661,10 @@ def claim_for_execution(approval_id: str) -> bool:
             if r.get("consumed") or r.get("executing_at"):
                 return False
             r["executing_at"] = time.time()
+            if by:
+                # Who claimed it: services/card_recovery judges only claimers
+                # that always record their end (§34.16-1).
+                r["executing_by"] = str(by)[:40]
             _write_store(recs)
             return True
     return False
@@ -703,7 +707,9 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     — was_first is True only the FIRST time this is observed."""
     if approval.get("status") != "approved" or approval.get("consumed"):
         return approval, False
-    updated = _patch(approval["approval_id"], consumed=True)
+    # When it was burned: a crash after this and before mark_used is judged
+    # from this moment (services/card_recovery), never from the decision.
+    updated = _patch(approval["approval_id"], consumed=True, consumed_at=time.time())
     return (updated or approval), True
 
 
