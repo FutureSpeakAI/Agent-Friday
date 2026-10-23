@@ -2885,6 +2885,15 @@ def _run_session_summary_job():
     days that already have a summary are skipped.
     """
     try:
+        # Days whose summary a correction took away are written again first,
+        # whatever their age (services/memory_derived).
+        try:
+            from agent_friday.services import memory_derived as _md
+            redone = _md.redo_summaries()
+            if redone:
+                print(f"  [SUMMARY] wrote {redone} summary(ies) again after a correction")
+        except Exception as _e:
+            print(f"  [SUMMARY] corrected days not written again: {_e}")
         today = datetime.now().date()
         made = 0
         for back in range(0, 3):  # today, yesterday, day before
