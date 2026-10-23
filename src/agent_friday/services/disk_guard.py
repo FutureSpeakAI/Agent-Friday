@@ -35,7 +35,7 @@ ESSENTIAL_JOBS = frozenset({"approvals_expiry_sweep", "calendar_reminders", "con
 CARD_KEY = "disk-full"
 
 _lock = threading.Lock()
-_state: Dict[str, Any] = {"low": False, "checked": 0.0, "free_mib": None, "since": None}
+_state: Dict[str, Any] = {"low": False, "checked": 0.0, "free_mib": None, "since": None, "carded": False}
 
 
 def _data_dir():
@@ -60,14 +60,19 @@ def _words(free_mib: float) -> str:
             "yours by itself, and the paused work runs once space is back." % max(0, int(free_mib)))
 
 
-def _enter(free: float) -> None:
+def _card(free: float) -> bool:
+    """Raise the card; False if it could not be written (it is tried again on the next check)."""
     try:
         from agent_friday import notifications_engine as ne
         ne.push(title="Friday's drive is almost full", body=_words(free), priority="high",
                 source="disk", kind="disk_full", emitter="DF1", dedupe_key=CARD_KEY,
                 resolve_key=CARD_KEY, target={"type": "url", "url": "/doctor"})
+        return True
     except Exception:
-        pass
+        return False
+
+
+def _enter(free: float) -> None:
     try:
         from agent_friday.services import activity_ledger
         activity_ledger.record("disk_full", free_mib=int(free), state="paused")
@@ -91,7 +96,7 @@ def _leave(free: float) -> None:
 def check(*, force: bool = False, now: Optional[float] = None) -> Dict[str, Any]:
     """Read the drive (at most once a minute unless forced) and move between ok and low."""
     now = time.time() if now is None else now
-    entered = left = None
+    entered = left = card_due = None
     with _lock:
         if force or now - _state["checked"] >= CHECK_EVERY_S:
             free = _free_mib()
@@ -99,14 +104,20 @@ def check(*, force: bool = False, now: Optional[float] = None) -> Dict[str, Any]
             _state["free_mib"] = free
             if free is not None:
                 if not _state["low"] and free < LOW_MIB:
-                    _state["low"], _state["since"] = True, now
+                    _state["low"], _state["since"], _state["carded"] = True, now, False
                     entered = free
                 elif _state["low"] and free >= RESUME_MIB:
-                    _state["low"], _state["since"] = False, None
+                    _state["low"], _state["since"], _state["carded"] = False, None, False
                     left = free
+            if _state["low"] and not _state["carded"]:
+                card_due = _state["free_mib"]
         snap = dict(_state)
     if entered is not None:
         _enter(entered)
+    if card_due is not None and _card(card_due):
+        with _lock:
+            if _state["low"]:
+                _state["carded"] = True
     if left is not None:
         _leave(left)
     return snap
@@ -116,11 +127,21 @@ def paused() -> bool:
     return bool(check()["low"])
 
 
+def job_ref(rec: Optional[dict]) -> str:
+    """A built-in job's registered name (its record id is 'sch_<ref>'); any other job's id."""
+    rec = rec or {}
+    task = rec.get("task") if isinstance(rec.get("task"), dict) else {}
+    if task.get("kind") == "builtin" and task.get("ref"):
+        return str(task["ref"])
+    sid = str(rec.get("id") or "")
+    return sid[4:] if sid.startswith("sch_") else sid
+
+
 def holds(rec: Optional[dict]) -> bool:
     """True when this scheduled job must wait for disk space."""
     if not paused():
         return False
-    return str((rec or {}).get("id") or "") not in ESSENTIAL_JOBS
+    return job_ref(rec) not in ESSENTIAL_JOBS
 
 
 def status() -> Dict[str, Any]:

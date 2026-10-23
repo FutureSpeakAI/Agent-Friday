@@ -59,6 +59,35 @@ def test_a_damaged_index_is_index_corruption(fs):
     assert fs.classify(sqlite3.OperationalError("database is locked")) is None
 
 
+def test_sqlite_saying_the_disk_is_full_is_disk_full(fs):
+    assert fs.classify(sqlite3.OperationalError("database or disk is full")) == "disk_full"
+
+
+@pytest.mark.parametrize("exc", [BrokenPipeError(errno.EPIPE, "Broken pipe"),
+                                 ConnectionResetError(errno.ECONNRESET, "reset by peer")])
+def test_a_closed_pipe_or_reset_is_not_offline(fs, exc):
+    assert fs.classify(exc) is None
+
+
+def test_a_retry_wrapper_is_judged_by_its_reason(fs):
+    MaxRetryError = type("MaxRetryError", (Exception,), {})
+    over_500s = MaxRetryError("too many 500 error responses")
+    assert fs.classify(over_500s) is None
+    unreachable = MaxRetryError("max retries")
+    unreachable.reason = ConnectionRefusedError(errno.ECONNREFUSED, "refused")
+    assert fs.classify(unreachable) == "offline"
+
+
+def test_a_cause_hidden_with_from_none_is_not_followed(fs):
+    try:
+        try:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        except OSError:
+            raise RuntimeError("could not save") from None
+    except RuntimeError as outer:
+        assert fs.classify(outer) is None
+
+
 def test_the_cause_is_followed(fs):
     try:
         try:

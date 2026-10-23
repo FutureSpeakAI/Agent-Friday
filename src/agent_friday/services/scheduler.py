@@ -3013,16 +3013,16 @@ def _tick():
     today = now.strftime("%Y-%m-%d")
     for rec in recs:
         try:
+            if _disk_holds(rec):
+                # A full disk (services/disk_guard, NS-32.13-1): checked before anything else, so a
+                # held job writes nothing (no missed or late-run rows, no deferral notices) and is
+                # left unmarked; it is judged again on the first tick after space is back.
+                continue
             cu = rec.get("catch_up")
             if cu and cu.get("date") != today:
                 _record_missed(rec)
                 rec = dict(rec, catch_up=None)
             if _is_due(rec, now):
-                if _disk_holds(rec):
-                    # A full disk (services/disk_guard, NS-32.13-1): the job is left unmarked and
-                    # runs on the first tick after space is back; the owner has the card.
-                    _log.info("holding %s: the drive with Friday's data is almost full", rec.get('id'))
-                    continue
                 if held and _uses_gpu(rec):
                     _log.info("holding %s: the %s job holds the GPU; it will "
                               "run on the first tick after that releases",
@@ -3032,7 +3032,10 @@ def _tick():
         except Exception as e:
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
     _reclaim_expired_lease()
-    _away_drain_tick()
+    if not _disk_holds({"id": "away_drain"}):
+        # The away-time drain runs queued background work: it waits for space too. Meeting
+        # retention runs on: it only removes what the owner chose to stop keeping.
+        _away_drain_tick()
     _meeting_retention_tick()
 
 

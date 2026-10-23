@@ -45,15 +45,19 @@ PAUSES_BACKGROUND = frozenset({DISK_FULL})
 #: Windows: ERROR_HANDLE_DISK_FULL (39), ERROR_DISK_FULL (112).
 _WIN_DISK_FULL = frozenset({39, 112})
 _DISK_FULL_ERRNOS = frozenset({errno.ENOSPC} | ({errno.EDQUOT} if hasattr(errno, "EDQUOT") else set()))
+#: Cannot reach the other side at all. A reset or broken pipe is NOT offline (a local child
+#: process that closed its pipe raises those too).
 _OFFLINE_ERRNOS = frozenset(e for e in (getattr(errno, n, None) for n in (
-    "ENETUNREACH", "ENETDOWN", "EHOSTUNREACH", "ECONNREFUSED", "ECONNRESET", "ECONNABORTED",
-    "ETIMEDOUT")) if e is not None)
+    "ENETUNREACH", "ENETDOWN", "EHOSTUNREACH", "ECONNREFUSED", "ETIMEDOUT")) if e is not None)
+#: Windows sockets: WSAENETDOWN, WSAENETUNREACH, WSAETIMEDOUT, WSAECONNREFUSED, WSAEHOSTUNREACH.
+_WIN_OFFLINE = frozenset({10050, 10051, 10060, 10061, 10065})
 #: Exception class names from HTTP libraries Friday may use, matched by name so this module
-#: imports none of them.
-_OFFLINE_NAMES = frozenset({"ConnectionError", "ConnectError", "ConnectTimeout", "NewConnectionError",
-                            "MaxRetryError", "NameResolutionError", "ServerNotFoundError"})
+#: imports none of them. A retry wrapper (urllib3 MaxRetryError) is judged by its `reason`.
+_OFFLINE_NAMES = frozenset({"ConnectError", "ConnectTimeout", "NewConnectionError",
+                            "NameResolutionError", "ServerNotFoundError"})
 _CORRUPT_WORDS = ("malformed", "not a database", "file is encrypted or is not a database",
                   "database disk image is malformed")
+_SQLITE_FULL_WORDS = ("database or disk is full",)
 
 #: Goal / plan blockers (services/goal_state.BLOCKERS) that are already one of the states.
 _BLOCKERS = {EXTERNAL_WAIT: EXTERNAL_WAIT, NEEDS_USER_INPUT: NEEDS_USER_INPUT}
@@ -65,20 +69,28 @@ def _from_exception(exc: BaseException, depth: int = 0) -> Optional[str]:
     if depth > 4 or exc is None:
         return None
     if isinstance(exc, OSError):
-        if exc.errno in _DISK_FULL_ERRNOS or getattr(exc, "winerror", None) in _WIN_DISK_FULL:
+        win = getattr(exc, "winerror", None)
+        if exc.errno in _DISK_FULL_ERRNOS or win in _WIN_DISK_FULL:
             return DISK_FULL
-        if isinstance(exc, (socket.gaierror, ConnectionError)) or exc.errno in _OFFLINE_ERRNOS:
+        if (isinstance(exc, (socket.gaierror, ConnectionRefusedError)) or exc.errno in _OFFLINE_ERRNOS
+                or win in _WIN_OFFLINE):
             return OFFLINE
-    if isinstance(exc, sqlite3.DatabaseError) and any(w in str(exc).lower() for w in _CORRUPT_WORDS):
-        return INDEX_CORRUPTION
+    if isinstance(exc, sqlite3.DatabaseError):
+        text = str(exc).lower()
+        if any(w in text for w in _SQLITE_FULL_WORDS):
+            return DISK_FULL
+        if any(w in text for w in _CORRUPT_WORDS):
+            return INDEX_CORRUPTION
     if type(exc).__name__ in _OFFLINE_NAMES:
         return OFFLINE
-    reason = getattr(exc, "reason", None)            # urllib.error.URLError(reason=gaierror(...))
+    reason = getattr(exc, "reason", None)            # URLError / MaxRetryError(reason=...)
     if isinstance(reason, BaseException):
         found = _from_exception(reason, depth + 1)
         if found:
             return found
-    return _from_exception(exc.__cause__ or exc.__context__, depth + 1) if (exc.__cause__ or exc.__context__) else None
+    nxt = exc.__cause__ if exc.__cause__ is not None else (
+        None if getattr(exc, "__suppress_context__", False) else exc.__context__)
+    return _from_exception(nxt, depth + 1) if nxt is not None else None
 
 
 def classify(exc: Optional[BaseException] = None, *, blocker: Optional[str] = None,
