@@ -25,6 +25,7 @@ import uuid
 from pathlib import Path
 from typing import Iterator
 
+from agent_friday.services import recall_dedupe
 from agent_friday.services.library import embed, route, tree, versions
 from agent_friday.services.library.store import OWNER, Store, VaultLocked, store_for
 
@@ -376,6 +377,8 @@ def build_evidence(ctx: _Ctx, limit: int, max_chars: int) -> list[dict]:
     doc_label: dict[int, int] = {}
     per_doc: dict[int, int] = {}
     out, chars = [], 0
+    kept_sigs: list = []
+    suppressed = 0
     for c in ranked:
         if len(out) >= limit:
             break
@@ -388,6 +391,14 @@ def build_evidence(ctx: _Ctx, limit: int, max_chars: int) -> list[dict]:
             continue
         if out and chars + len(text) > max_chars:
             continue
+        # A passage that says what a better-ranked one already said (a second
+        # copy of a document, an overlapping chunk) leaves its slot to
+        # distinct evidence (NS-14.6-2, services/recall_dedupe).
+        sig = recall_dedupe.signature(text)
+        if any(recall_dedupe.is_near_duplicate(sig, s) for s in kept_sigs):
+            suppressed += 1
+            continue
+        kept_sigs.append(sig)
         blk = _best_block(ctx.store, json.loads(c["block_ids"] or "[]"), c["shelf"], ctx.question)
         d = doc_label.setdefault(doc["id"], len(doc_label) + 1)
         per_doc[doc["id"]] = per_doc.get(doc["id"], 0) + 1
@@ -400,6 +411,8 @@ def build_evidence(ctx: _Ctx, limit: int, max_chars: int) -> list[dict]:
             "score": round(c["score"], 3), "sure": confidence_word(c["score"], ctx.cfg),
         })
         chars += len(text)
+    if suppressed:
+        recall_dedupe.note_suppressed("library", suppressed)
     return out
 
 

@@ -2953,8 +2953,14 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             _qvec = _tv.compute(message)
         except Exception:
             _qvec = None
-        hits = (mem.search(message, n=n, query_embedding=_qvec)
-                if _qvec is not None else mem.search(message, n=n))
+        # Near-duplicates must not crowd out distinct evidence (NS-14.6-2,
+        # services/recall_dedupe): fetch a few more than the slots, then keep
+        # one line per near-duplicate group (the newest), so the freed slots
+        # go to things that say something else.
+        from agent_friday.services import recall_dedupe as _rd
+        _want = _rd.overfetch(n)
+        hits = (mem.search(message, n=_want, query_embedding=_qvec)
+                if _qvec is not None else mem.search(message, n=_want))
         kept = []
         for h in hits:
             rel = h.get("relevance")
@@ -2964,6 +2970,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             if not text:
                 continue
             kept.append(h)
+        kept = _rd.select(kept, n, path="conversation_memory")
         if not kept:
             return live_block
         # The guidance sits OUTSIDE the fence below: inside it, everything is
@@ -3851,7 +3858,15 @@ def _get_career_context():
 
 
 def _get_wiki_context(topic):
-    """Search wiki for content matching a topic."""
+    """Search wiki for content matching a topic.
+
+    Up to three excerpts. A page that repeats one already chosen (the same
+    note in both wiki folders, a copied page) does not take a slot: a few more
+    are read and near-duplicates collapsed to the first (NS-14.6-2,
+    services/recall_dedupe)."""
+    from agent_friday.services import recall_dedupe as _rd
+    slots = 3
+    want = _rd.overfetch(slots, factor=2)
     results = []
     for wiki_dir in [HOME / "wiki", WIKI_DIR_FRIDAY]:
         if not wiki_dir.exists():
@@ -3864,11 +3879,14 @@ def _get_wiki_context(topic):
                         'file': str(md_file.relative_to(wiki_dir)),
                         'excerpt': content[:500],
                     })
-                    if len(results) >= 3:
-                        return results
+                    if len(results) >= want:
+                        break
             except Exception:
                 continue
-    return results
+        if len(results) >= want:
+            break
+    return _rd.select(results, slots, text=lambda r: r['excerpt'],
+                      ident=lambda r: None, keep="first", path="wiki")
 
 
 def _detect_context_needs(message, workspace):

@@ -57,11 +57,19 @@ def _iter_messages():
 def search(query: str, since=None, until=None, limit: int = 8, windows=None) -> list:
     """Matching turns, best first, from the full-text index
     (services/conversation_fts: keys withheld, off-record turns never there).
-    It replaced a linear substring scan over every transcript."""
+    It replaced a linear substring scan over every transcript.
+
+    Near-duplicate turns are collapsed to the newest of each group, from a
+    slightly larger fetch, so repeats do not crowd out distinct matches
+    (NS-14.6-2, services/recall_dedupe)."""
     if not _terms(query):
         return []
     from agent_friday.services import conversation_fts
-    return conversation_fts.search(query, since=since, until=until, limit=limit)
+    from agent_friday.services import recall_dedupe
+    limit = max(1, int(limit))
+    hits = conversation_fts.search(query, since=since, until=until,
+                                   limit=recall_dedupe.overfetch(limit))
+    return recall_dedupe.select(hits, limit, path="conversation_search")
 
 
 def split_by_provenance(hits: list, provider: str = prov.GEMINI):
