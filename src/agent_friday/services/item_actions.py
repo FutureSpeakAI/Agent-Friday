@@ -1914,14 +1914,15 @@ def run_calendar(ops: list[dict], *, approval_id: str | None = None, conversatio
 
 
 def undo_calendar(receipt: dict) -> dict:
-    """Put each event back at the times the receipt found it."""
+    """Put each calendar change back as the receipt found it: a move back to its times, an event
+    Friday created deleted, changed fields set back, a deleted event made again
+    (services/change_receipts)."""
+    from agent_friday.services import change_receipts as _cr
     cw = _cw()
     back, failed = 0, 0
     for r in (receipt.get("undo") or {}).get("calendar") or []:
         try:
-            res = cw.update_event(r["id"], start=r["start"], end=r["end"], account_id=r.get("account") or None,
-                                  calendar_id=r.get("calendar") or "primary")
-            ok = not res.get("error")
+            ok = _cr.undo_calendar_row(cw, r)
         except Exception:
             ok = False
         back += 1 if ok else 0
@@ -1929,6 +1930,25 @@ def undo_calendar(receipt: dict) -> dict:
     journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed)
     said = "Put back %s%s." % (_plural(back, "event"), ("; %d could not be" % failed) if failed else "")
     return journal.record("undo_action", "undo", "calendar", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
+                          status="complete" if not failed else ("partial" if back else "failed"),
+                          conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})
+
+
+def undo_tasks(receipt: dict) -> dict:
+    """Put each Google Tasks change back as the receipt found it (services/change_receipts)."""
+    from agent_friday.services import change_receipts as _cr
+    from agent_friday.services import google_accounts as ga
+    back, failed = 0, 0
+    for r in (receipt.get("undo") or {}).get("tasks") or []:
+        try:
+            ok = _cr.undo_task_row(ga, r)
+        except Exception:
+            ok = False
+        back += 1 if ok else 0
+        failed += 0 if ok else 1
+    journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed)
+    said = "Put back %s%s." % (_plural(back, "task"), ("; %d could not be" % failed) if failed else "")
+    return journal.record("undo_action", "undo", "tasks", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
                           status="complete" if not failed else ("partial" if back else "failed"),
                           conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})
 
@@ -2074,6 +2094,8 @@ def classify_undo(args: dict, conversation_id: str | None = None) -> tuple[str, 
         return "outward", "putting mail back changes Gmail"
     if rec and rec.get("domain") == "calendar":
         return "outward", "putting events back changes Google Calendar"
+    if rec and rec.get("domain") == "tasks":
+        return "outward", "putting tasks back changes Google Tasks"
     if rec and rec.get("domain") == "file_write":
         # Putting a file back writes over it, so it is judged as that write was:
         # inside Friday's output folders it runs, anywhere else it is asked.
@@ -2120,11 +2142,25 @@ def undo(receipt_id: str = "", *, conversation_id: str | None = None, owner_word
         detail = {"handler": HANDLER, "domain": "calendar_undo", "action": "undo",
                   "receipt_id": rec["receipt_id"], "count": n,
                   "conversation_id": conversation_id or "", "asked_with": words_hash(owner_words)}
-        body = "Friday proposes to undo: %s\nThat puts %s back at the times they had." % (
-            rec.get("summary") or "", _plural(n, "event"))
+        moved = all((r.get("op") or "move") == "move" for r in (rec.get("undo") or {}).get("calendar") or [])
+        body = "Friday proposes to undo: %s\nThat puts %s back %s." % (
+            rec.get("summary") or "", _plural(n, "event"),
+            "at the times they had" if moved else "as they were")
         card = _raise_card("calendar_undo", "undo", detail, requested_by=requested_by,
                            title="Friday wants to put back %s" % _plural(n, "event"), body=body)
-        return {**card, "count": n, "readback": "Shall I put back the %s I moved?" % _plural(n, "event")}
+        return {**card, "count": n, "readback": "Shall I put back the %s I %s?" % (
+            _plural(n, "event"), "moved" if moved else "changed")}
+    if dom == "tasks" and not by_owner:
+        # Putting tasks back writes to Google Tasks (outward since A24): one card.
+        n = len((rec.get("undo") or {}).get("tasks") or [])
+        detail = {"handler": HANDLER, "domain": "tasks_undo", "action": "undo",
+                  "receipt_id": rec["receipt_id"], "count": n,
+                  "conversation_id": conversation_id or "", "asked_with": words_hash(owner_words)}
+        body = "Friday proposes to undo: %s\nThat puts %s back as they were." % (
+            rec.get("summary") or "", _plural(n, "task"))
+        card = _raise_card("tasks_undo", "undo", detail, requested_by=requested_by,
+                           title="Friday wants to put back %s" % _plural(n, "task"), body=body)
+        return {**card, "count": n, "readback": "Shall I put back the %s I changed?" % _plural(n, "task")}
     if dom == "file_write":
         from agent_friday.services import file_write_receipts as _fwr
         out = _fwr.undo(rec)
@@ -2132,7 +2168,7 @@ def undo(receipt_id: str = "", *, conversation_id: str | None = None, owner_word
         return {"status": out["status"], "receipt_id": out["receipt_id"], "text": _said(out)}
     out = (undo_email(rec) if dom == "email" else undo_files(rec) if dom == "files"
            else undo_wiki(rec) if dom == "wiki" else undo_media(rec) if dom == "media"
-           else undo_calendar(rec) if dom == "calendar" else None)
+           else undo_calendar(rec) if dom == "calendar" else undo_tasks(rec) if dom == "tasks" else None)
     if out is None:
         raise Refused("Friday cannot undo that kind of change")
     _tell_pages(dom, rec["receipt_id"])
@@ -2161,6 +2197,13 @@ def _execute(detail: dict, approval_id: str | None) -> dict:
         if rec.get("undone"):
             raise Refused("those events were already put back")
         return undo_calendar(rec)
+    if dom == "tasks_undo":
+        rec = journal.get(detail.get("receipt_id") or "")
+        if not rec:
+            raise Refused("the receipt to undo is gone")
+        if rec.get("undone"):
+            raise Refused("those tasks were already put back")
+        return undo_tasks(rec)
     if dom == "files":
         return run_files(detail.get("ops") or [], approval_id=approval_id,
                          conversation_id=detail.get("conversation_id"))

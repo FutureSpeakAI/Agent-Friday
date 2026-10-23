@@ -1982,6 +1982,19 @@ def _summarize_multi_account_errors(result):
     return list(by_id.values())
 
 
+def _with_receipt(res, receipt):
+    """A change's result as the model sees it: its receipt named (so "undo that" can find it),
+    and the whole before-values Undo keeps (services/change_receipts) left out."""
+    if not isinstance(res, dict):
+        return res
+    out = {k: v for k, v in res.items() if k != "undo_before"}
+    if receipt:
+        out["receipt_id"] = receipt.get("receipt_id")
+        if receipt.get("undo"):
+            out["undo"] = "Say \u201cundo that\u201d to put it back (it asks first)."
+    return out
+
+
 def _calendar_write_summary(res, what, change=True):
     """Render a write result as prose Friday can repeat truthfully."""
     if not isinstance(res, dict):
@@ -2023,7 +2036,8 @@ def _tool_create_calendar_event(inp):
         description=(inp.get("description") or "").strip(),
         attendees=inp.get("attendees") or None,
         account_id=(inp.get("account_id") or "").strip() or None)
-    out = _calendar_write_summary(res, "create that event")
+    _receipt_rec = _change_receipts.calendar_created(res, conversation_id=_CURRENT_CONVERSATION.get())
+    out = _calendar_write_summary(_with_receipt(res, _receipt_rec), "create that event")
     if isinstance(res, dict) and res.get("ok"):
         out += _travel_postcheck(res, inp)
     return out
@@ -2072,7 +2086,8 @@ def _tool_update_calendar_event(inp):
         description=inp.get("description"),
         allow_clearing=bool(inp.get("allow_clearing")),
         account_id=(inp.get("account_id") or "").strip() or None)
-    return _calendar_write_summary(res, "update that event")
+    _receipt_rec = _change_receipts.calendar_updated(res, conversation_id=_CURRENT_CONVERSATION.get())
+    return _calendar_write_summary(_with_receipt(res, _receipt_rec), "update that event")
 
 
 def _tool_delete_calendar_event(inp):
@@ -2085,7 +2100,8 @@ def _tool_delete_calendar_event(inp):
     res = cw.delete_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
                           account_id=(inp.get("account_id") or "").strip() or None,
                           notify_guests=_notify_guests_arg(inp))
-    return _calendar_write_summary(res, "delete that event")
+    _receipt_rec = _change_receipts.calendar_deleted(res, conversation_id=_CURRENT_CONVERSATION.get())
+    return _calendar_write_summary(_with_receipt(res, _receipt_rec), "delete that event")
 
 
 def _notify_guests_arg(inp):
@@ -2789,12 +2805,12 @@ def _tool_complete_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.complete_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.complete_task(account_id=_a, tasklist_id=_l, task_id=_t)
+    _rec = _change_receipts.task_changed(result, _before, tool="complete_task", changed=["status"],
+                                         tasklist_id=_l, conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_create_task(inp):
@@ -2812,7 +2828,10 @@ def _tool_create_task(inp):
         notes=(inp.get('notes') or '').strip(),
         due=(inp.get('due') or '').strip(),
     )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _rec = _change_receipts.task_created(
+        result, tasklist_id=(inp.get('tasklist_id') or '').strip() or "@default",
+        conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_update_task(inp):
@@ -2823,16 +2842,17 @@ def _tool_update_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.update_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-        title=(inp.get('title') or '').strip() or None,
-        notes=inp.get('notes') if inp.get('notes') is not None else None,
-        due=(inp.get('due') or '').strip() or None,
-        status=(inp.get('status') or '').strip() or None,
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _fields = dict(title=(inp.get('title') or '').strip() or None,
+                   notes=inp.get('notes') if inp.get('notes') is not None else None,
+                   due=(inp.get('due') or '').strip() or None,
+                   status=(inp.get('status') or '').strip() or None)
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.update_task(account_id=_a, tasklist_id=_l, task_id=_t, **_fields)
+    _rec = _change_receipts.task_changed(result, _before, tool="update_task",
+                                         changed=[k for k, v in _fields.items() if v is not None],
+                                         tasklist_id=_l, conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_delete_task(inp):
@@ -2843,12 +2863,12 @@ def _tool_delete_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.delete_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.delete_task(account_id=_a, tasklist_id=_l, task_id=_t)
+    _rec = _change_receipts.task_deleted(result, _before, tasklist_id=_l,
+                                         conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_search_contacts(inp):
@@ -13714,6 +13734,7 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import connector_outcome as _conn_outcome
+from agent_friday.services import change_receipts as _change_receipts
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
 from agent_friday.services import tool_output as _tool_output
