@@ -431,10 +431,6 @@ def _held_detail_cards_off(request, monkeypatch):
     yield
 
 
-class HomeEnvLeakWarning(Warning):
-    """A test changed where Friday's home is and did not put it back."""
-
-
 _HOME_ENV_KEYS = ("FRIDAY_HOME", "HOME", "USERPROFILE")
 
 
@@ -458,9 +454,11 @@ def _home_env_does_not_outlive_its_file(request):
         now = os.environ.get(k)
         if now == v:
             continue
+        # A built-in category: xdist sends warnings to the controller by class,
+        # and a class defined in this conftest cannot be found there.
         import warnings as _warnings
-        _warnings.warn(HomeEnvLeakWarning(
-            "%s left %s changed (%r, was %r); put back" % (request.node.nodeid, k, now, v)))
+        _warnings.warn(RuntimeWarning(
+            "HomeEnvLeak: %s left %s changed (%r, was %r); put back" % (request.node.nodeid, k, now, v)))
         if v is None:
             os.environ.pop(k, None)
         else:
