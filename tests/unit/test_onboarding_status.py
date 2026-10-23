@@ -37,8 +37,10 @@ def ob(tmp_path, monkeypatch):
     return mod
 
 
-def _acks(ob, **kw):
-    (ob.home / "onboarding.json").write_text(json.dumps(kw), encoding="utf-8")
+def _answers(ob, **kw):
+    d = ob.home / "first_synthesis"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "onboarding.json").write_text(json.dumps(kw), encoding="utf-8")
 
 
 def _met(ob):
@@ -55,8 +57,8 @@ def test_setup_complete_alone_is_not_onboarding_done(ob):
 def test_all_six_make_it_done(ob):
     ob.state.update(reviewed=True, goals=[{"id": "g"}],
                     outcomes=[{"status": "ok", "approval": "ap-1", "tool": "send_email", "_seq": 7, "_ts": 1.0}],
-                    journal=[{"actor": "owner", "op": "add"}])
-    _acks(ob, action_place_ack=True)
+                    journal=[{"actor": "owner", "op": "replace"}])
+    _answers(ob, saw_where_it_ran_seq=7)
     out = ob.status()
     assert out["done"] is True and out["receipt"]["seq"] == 7
 
@@ -72,23 +74,38 @@ def test_a_failed_action_does_not_count(ob):
     assert _met(ob)["action"] is False
 
 
-def test_where_it_ran_needs_the_receipt_and_the_owners_ack(ob):
-    _acks(ob, action_place_ack=True)
+def test_where_it_ran_is_tied_to_that_receipt(ob):
+    _answers(ob, saw_where_it_ran_seq=3)
     assert _met(ob)["where_ran"] is False                      # no receipt yet
     ob.state["outcomes"] = [{"status": "ok", "approval": "ap-1", "tool": "t", "_seq": 3}]
     assert _met(ob)["where_ran"] is True
+    ob.state["outcomes"] = [{"status": "ok", "approval": "ap-2", "tool": "t", "_seq": 9}]
+    assert _met(ob)["where_ran"] is False                      # an answer about another action
+
+
+def test_the_owners_answers_are_checked(ob):
+    assert ob.answer("saw_where_it_ran", seq=1)["ok"] is False   # nothing ran yet
+    ob.state["outcomes"] = [{"status": "ok", "approval": "ap-1", "tool": "t", "_seq": 4}]
+    assert ob.answer("saw_where_it_ran", seq=5)["ok"] is False
+    assert ob.answer("saw_where_it_ran", seq=4)["ok"] is True
+    assert ob.answer("skip_goal")["ok"] is True
+    m = _met(ob)
+    assert m["where_ran"] and m["goal"]
 
 
 def test_friday_writing_her_own_memory_is_not_a_confirmation(ob):
-    ob.state["journal"] = [{"actor": "friday", "op": "add"}]
-    assert _met(ob)["memory"] is False
+    ob.state["journal"] = [{"actor": "friday", "op": "replace"}, {"actor": "owner", "op": "add"}]
+    assert _met(ob)["memory"] is False                         # an owner add (or a migration) is not one
+    ob.state["journal"].append({"actor": "owner", "op": "remove"})
+    assert _met(ob)["memory"] is True
+    ob.state["journal"] = []
     ob.state["corrections"] = 1
     assert _met(ob)["memory"] is True
 
 
 def test_an_explicit_skip_counts_for_the_goal(ob):
     assert _met(ob)["goal"] is False
-    _acks(ob, goal_skipped=True)
+    _answers(ob, goal_skipped_ts=1.0)
     assert _met(ob)["goal"] is True
 
 

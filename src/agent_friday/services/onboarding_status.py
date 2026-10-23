@@ -5,18 +5,22 @@ and the tray read it, and it keeps that meaning). It never meant the person got 
 is done only when all six of section 9.6 hold:
 
     reviewed     the owner has marked at least one "What I see so far" item
-    action       Friday has completed one useful action the owner approved (a ledger receipt)
+    action       Friday has completed one useful action the owner approved (a ledger outcome
+                 with status ok that names the approval it ran under)
     receipt      that action has its receipt (the same ledger entry, by its sequence number)
-    where_ran    the owner has said they saw where it ran (onboarding.json action_place_ack)
-    memory       at least one memory confirmed or corrected by the owner
-    goal         a goal exists, or the owner explicitly skipped it (onboarding.json goal_skipped)
+    where_ran    the owner said, by their own press, that they saw where THAT action ran
+    memory       the owner confirmed or corrected a memory: "Remember this" or "Wrong" on an
+                 item, or their own edit or deletion of a line on the memory card
+    goal         a goal exists, or the owner explicitly skipped it by their own press
 
-Each check reads a record that already exists; none of them writes. A check that cannot be read
-counts as not met (never as met).
+Each check reads a record that already exists; a check that cannot be read counts as not met
+(never as met). The owner's two answers live in ~/.friday/first_synthesis/onboarding.json.
 """
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -31,20 +35,16 @@ LABELS = {
 }
 
 
-def _home() -> Path:
+def _path() -> Path:
     from agent_friday import paths
-    return paths.friday_home()
+    d = paths.friday_home() / "first_synthesis"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "onboarding.json"
 
 
-def _acks() -> dict:
-    """routes/core_routes /api/onboarding/acks writes this file under core.FRIDAY_DIR."""
+def _answers() -> dict:
     try:
-        try:
-            from agent_friday import core
-            base = Path(core.FRIDAY_DIR)
-        except Exception:
-            base = _home()
-        d = json.loads((base / "onboarding.json").read_text(encoding="utf-8"))
+        d = json.loads(_path().read_text(encoding="utf-8"))
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
@@ -60,34 +60,28 @@ def _action_receipt() -> Optional[dict]:
     the approval it ran under. A reading tool's outcome names no approval, so it never counts."""
     from agent_friday.services import action_ledger
     for r in action_ledger.records("outcome"):
-        if r.get("status") == "ok" and r.get("approval"):
-            return {"seq": r.get("_seq"), "tool": str(r.get("tool") or "")[:60], "ts": r.get("_ts"),
-                    "approval": str(r.get("approval"))[:60]}
+        if r.get("status") == "ok" and r.get("approval") and r.get("_seq") is not None:
+            return {"seq": r.get("_seq"), "tool": str(r.get("tool") or "")[:60], "ts": r.get("_ts")}
     return None
 
 
 def _memory() -> bool:
-    from agent_friday.services import core_memory
-    rows = core_memory._read_jsonl(core_memory._journal_path())
-    if any(isinstance(r, dict) and r.get("actor") == "owner" for r in rows):
-        return True
     try:
         from agent_friday.services import first_synthesis
         if first_synthesis.corrections():
             return True
     except Exception:
         pass
-    try:
-        from agent_friday.services import import_staging
-        if (import_staging.counts() or {}).get("accepted"):
-            return True
-    except Exception:
-        pass
-    return False
+    # The owner's own edit or deletion of a card line. An owner add is not counted: a migration
+    # writes those by itself, and adding is neither confirming nor correcting.
+    from agent_friday.services import core_memory
+    rows = core_memory._read_jsonl(core_memory._journal_path())
+    return any(isinstance(r, dict) and r.get("actor") == "owner" and r.get("op") in ("replace", "remove")
+               for r in rows)
 
 
 def _goal() -> bool:
-    if _acks().get("goal_skipped") is True:
+    if _answers().get("goal_skipped_ts"):
         return True
     from agent_friday.services import goals
     return bool(goals.list_goals())
@@ -107,7 +101,7 @@ def status() -> Dict[str, Any]:
         receipt = None
     met["action"] = receipt is not None
     met["receipt"] = bool(receipt and receipt.get("seq") is not None)
-    met["where_ran"] = met["receipt"] and _acks().get("action_place_ack") is True
+    met["where_ran"] = bool(met["receipt"] and _answers().get("saw_where_it_ran_seq") == receipt["seq"])
     try:
         met["memory"] = bool(_memory())
     except Exception:
@@ -124,6 +118,27 @@ def status() -> Dict[str, Any]:
     return {"ok": True, "done": all(met[k] for k in CHECKS), "setup_complete": setup,
             "checks": [{"id": k, "label": LABELS[k], "met": met[k]} for k in CHECKS],
             "receipt": receipt}
+
+
+def answer(which: str, seq=None) -> Dict[str, Any]:
+    """The owner's own answer (routes/first_synthesis, behind the desk press)."""
+    a = _answers()
+    if which == "saw_where_it_ran":
+        r = _action_receipt()
+        if not r:
+            return {"ok": False, "error": "There is no completed action with a receipt yet."}
+        if seq != r["seq"]:
+            return {"ok": False, "error": "That is not the action whose receipt is shown; look again."}
+        a["saw_where_it_ran_seq"] = r["seq"]
+    elif which == "skip_goal":
+        a["goal_skipped_ts"] = time.time()
+    else:
+        return {"ok": False, "error": "unknown answer"}
+    p = _path()
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(a), encoding="utf-8")
+    os.replace(tmp, p)
+    return {"ok": True, "status": status()}
 
 
 def done() -> bool:

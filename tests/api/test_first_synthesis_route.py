@@ -1,7 +1,8 @@
-"""Routes for 'What I see so far' and the onboarding status (routes/first_synthesis, core_routes).
+"""Routes for 'What I see so far' and the onboarding status (routes/first_synthesis).
 
-A mark is the owner's press on this PC: without the desk proof it is refused. On the old tree
-the routes do not exist, so these fail by assertion on the status code.
+A mark, and each of the owner's onboarding answers, is the owner's press on this PC: without the
+desk proof it is refused. On the old tree the routes do not exist, so these fail by assertion on
+the status code.
 """
 from __future__ import annotations
 
@@ -14,49 +15,65 @@ def _with_an_item(monkeypatch):
         {"id": "route-f1", "person": "Route Person", "note": "call back", "status": "open"}])
 
 
+def _briefing(client):
+    r = client.get("/api/first-synthesis", headers=page_headers())
+    assert r.status_code == 200, (r.status_code, r.get_data(as_text=True)[:200])
+    return r.get_json()
+
+
 def test_the_briefing_is_served_with_its_marks(client, monkeypatch):
     _with_an_item(monkeypatch)
-    r = client.get("/api/first-synthesis", headers=page_headers())
-    assert r.status_code == 200, r.get_json()
-    d = r.get_json()
+    d = _briefing(client)
     assert d["ok"] and len(d["items"]) <= 5 and "remember" in d["marks"]
-    assert any(i["kind"] == "follow_up" for i in d["items"])
+    item = next(i for i in d["items"] if i["kind"] == "follow_up")
+    assert "remember_text" not in item and "remember" in item["marks"]
 
 
-def test_a_mark_needs_the_press_on_this_pc(client, monkeypatch):
+def test_a_mark_needs_the_press_on_this_pc_and_the_text_that_was_shown(client, monkeypatch):
     _with_an_item(monkeypatch)
-    items = client.get("/api/first-synthesis", headers=page_headers()).get_json()["items"]
-    item = next(i for i in items if i["kind"] == "follow_up")
-    refused = client.post("/api/first-synthesis/mark", json={"id": item["id"], "mark": "useful"},
-                          headers=page_headers())
+    item = next(i for i in _briefing(client)["items"] if i["kind"] == "follow_up")
+    body = {"id": item["id"], "mark": "useful", "observation": item["observation"]}
+    refused = client.post("/api/first-synthesis/mark", json=body, headers=page_headers())
     assert refused.status_code == 403 and refused.get_json()["code"] == "desk_proof_required"
-    ok = client.post("/api/first-synthesis/mark", json={"id": item["id"], "mark": "useful"},
-                     headers=desk_headers())
+    stale = client.post("/api/first-synthesis/mark", json=dict(body, observation="something else"),
+                        headers=desk_headers())
+    assert stale.status_code == 400
+    ok = client.post("/api/first-synthesis/mark", json=body, headers=desk_headers())
     assert ok.status_code == 200, ok.get_json()
     assert ok.get_json()["ok"] is True
 
 
 def test_the_onboarding_status_is_not_setup_complete(client):
     r = client.get("/api/onboarding/status", headers=page_headers())
-    assert r.status_code == 200
+    assert r.status_code == 200, r.status_code
     d = r.get_json()
-    assert set(c["id"] for c in d["checks"]) == {"reviewed", "action", "receipt", "where_ran", "memory", "goal"}
+    assert [c["id"] for c in d["checks"]] == ["reviewed", "action", "receipt", "where_ran", "memory", "goal"]
     assert "setup_complete" in d and isinstance(d["done"], bool)
 
 
-def test_the_goal_skip_and_where_it_ran_are_acks(client):
-    import agent_friday.core as core
-    from pathlib import Path
-    path = Path(core.FRIDAY_DIR) / "onboarding.json"
-    before = path.read_text(encoding="utf-8") if path.exists() else None
+def test_skipping_the_goal_is_the_owners_press(client):
+    from agent_friday import paths
+    p = paths.friday_home() / "first_synthesis" / "onboarding.json"
+    before = p.read_text(encoding="utf-8") if p.exists() else None
     try:
-        r = client.post("/api/onboarding/acks", json={"goal_skipped": True, "action_place_ack": True},
-                        headers=page_headers())
-        assert r.status_code == 200
-        acks = r.get_json()["acks"]
-        assert acks["goal_skipped"] is True and acks["action_place_ack"] is True
+        refused = client.post("/api/onboarding/answer", json={"answer": "skip_goal"}, headers=page_headers())
+        assert refused.status_code == 403
+        ok = client.post("/api/onboarding/answer", json={"answer": "skip_goal"}, headers=desk_headers())
+        assert ok.status_code == 200, ok.get_json()
+        goal = next(c for c in ok.get_json()["status"]["checks"] if c["id"] == "goal")
+        assert goal["met"] is True
+        assert client.post("/api/onboarding/answer", json={"answer": "done_everything"},
+                           headers=desk_headers()).status_code == 400
     finally:
         if before is None:
-            path.unlink(missing_ok=True)
+            p.unlink(missing_ok=True)
         else:
-            path.write_text(before, encoding="utf-8")
+            p.write_text(before, encoding="utf-8")
+
+
+def test_the_old_acks_route_cannot_claim_section_9_6(client):
+    r = client.post("/api/onboarding/acks", json={"goal_skipped": True, "action_place_ack": True},
+                    headers=page_headers())
+    assert r.status_code == 200
+    acks = r.get_json()["acks"]
+    assert acks.get("goal_skipped") is None and acks.get("action_place_ack") is None

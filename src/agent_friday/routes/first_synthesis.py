@@ -41,7 +41,19 @@ def _gate():
 @first_synthesis_bp.route("/api/first-synthesis", methods=["GET"])
 @login_required
 def first_synthesis_get():
+    from agent_friday.services import screen_click
+    if screen_click.is_cross_site(request):
+        return jsonify({"ok": False, "error": "cross-site request refused"}), 403
     return jsonify(first_synthesis.build())
+
+
+@first_synthesis_bp.route("/api/onboarding/status", methods=["GET"])
+@login_required
+def onboarding_status_get():
+    """Section 9.6: onboarding is done only when all six checks are met. `setup_complete` (the
+    setup steps ran) is reported beside it and is not the same thing."""
+    from agent_friday.services import onboarding_status
+    return jsonify(onboarding_status.status())
 
 
 @first_synthesis_bp.route("/api/first-synthesis/mark", methods=["POST"])
@@ -59,5 +71,27 @@ def first_synthesis_mark():
                               {"screen_click": True, "surface": "first-synthesis"})
     if v.action != "allow":
         return jsonify({"ok": False, "error": "held: %s" % v.reason}), 403
-    out = first_synthesis.mark(item, answer, by="owner:ui")
+    out = first_synthesis.mark(item, answer, shown_text=str(b.get("observation") or "")[:400], by="owner:ui")
+    return jsonify(out), (200 if out.get("ok") else 400)
+
+
+#: Section 9.6 answers only the owner gives (services/onboarding_status).
+_ONBOARDING_ANSWERS = ("saw_where_it_ran", "skip_goal")
+
+
+@first_synthesis_bp.route("/api/onboarding/answer", methods=["POST"])
+@login_required
+def onboarding_answer():
+    """{answer: saw_where_it_ran, seq} -- the owner saw where that receipt's action ran;
+    {answer: skip_goal} -- the owner chose not to set a goal now. Each is the owner's press here."""
+    from agent_friday.services import screen_click
+    if not screen_click.screen_session(request):
+        return jsonify({"ok": False, "code": "desk_proof_required",
+                        "error": "This is answered only by your own press in Friday's window on this PC."}), 403
+    b = request.get_json(silent=True) or {}
+    answer = str(b.get("answer") or "")
+    if answer not in _ONBOARDING_ANSWERS:
+        return jsonify({"ok": False, "error": "unknown answer"}), 400
+    from agent_friday.services import onboarding_status
+    out = onboarding_status.answer(answer, seq=b.get("seq"))
     return jsonify(out), (200 if out.get("ok") else 400)

@@ -441,7 +441,7 @@
     const labels = data.mark_labels || {};
     const mark = (item, value) => {
       setBusy(item.id); setSaid('');
-      api('/api/first-synthesis/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, mark: value }) })
+      api('/api/first-synthesis/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, mark: value, observation: item.observation }) })
         .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.ok ? x.said : (x.error || 'Nothing changed.')); load(); })
         .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
         .finally(() => { if (live.current) setBusy(''); });
@@ -454,7 +454,7 @@
         h('p', { className: 'fx-see-so-far-observation' }, item.observation),
         h('dl', { className: 'fx-see-so-far-fields' }, SEE_SO_FAR_FIELDS.map(([k, label]) => h(React.Fragment, { key: k }, h('dt', null, label), h('dd', null, k === 'related' ? related(item.related) : String(item[k] || ''))))),
         item.marked ? h('p', { className: 'fx-meta' }, 'Marked: ' + (labels[item.marked] || item.marked)) :
-          h('div', { className: 'fx-see-so-far-marks', role: 'group', 'aria-label': 'Mark this' }, (data.marks || []).map(m => h('button', { key: m, type: 'button', className: 'fx-action-secondary', disabled: !!busy, onClick: () => mark(item, m) }, labels[m] || m))),
+          h('div', { className: 'fx-see-so-far-marks', role: 'group', 'aria-label': 'Mark this' }, (item.marks || data.marks || []).map(m => h('button', { key: m, type: 'button', className: 'fx-action-secondary', disabled: !!busy, onClick: () => mark(item, m) }, labels[m] || m))),
         item.open && onNavigate && h('button', { type: 'button', className: 'fx-action-secondary', onClick: () => onNavigate(item.open) }, 'Open')))),
       said && h('p', { className: 'fx-meta', role: 'status' }, said));
   }

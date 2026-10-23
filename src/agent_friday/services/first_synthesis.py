@@ -111,10 +111,16 @@ def _freshness(ts) -> str:
 
 
 def _item(kind: str, key: str, *, observation: str, why: str, source: str, freshness: str,
-          confidence: str, related: Optional[dict], next_step: str, open_view: str = "") -> dict:
+          confidence: str, related: Optional[dict], next_step: str, open_view: str = "",
+          remember_text: str = "") -> dict:
+    """`remember_text` is the line "Remember this" would save: built only from the owner's own
+    records (never a mail subject or a note someone else wrote). Without one, the item offers
+    no "Remember this"."""
+    marks = [m for m in MARKS if m != "remember" or remember_text]
     return {"id": _iid(kind, key), "kind": kind, "observation": observation[:240], "why": why[:240],
             "source": source[:120], "freshness": freshness[:40], "confidence": confidence,
-            "related": related, "next_step": next_step[:160], "open": open_view}
+            "related": related, "next_step": next_step[:160], "open": open_view,
+            "remember_text": remember_text[:200], "marks": marks}
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -176,7 +182,8 @@ def _follow_ups() -> List[dict]:
             why=("It is due " + due[:10] + "." if due else "It is still open."),
             source="your follow-ups", freshness=_freshness(f.get("created")), confidence="certain",
             related={"kind": "follow_up", "id": str(f.get("id") or "")[:60]},
-            next_step="Write to %s, or close the follow-up if it is done." % who, open_view="contacts"))
+            next_step="Write to %s, or close the follow-up if it is done." % who, open_view="contacts",
+            remember_text="I mean to follow up with %s." % who[:80]))
     return out
 
 
@@ -194,7 +201,8 @@ def _commitments() -> List[dict]:
             why=str(c.get("why") or "It has a date and it is coming up."),
             source=str(c.get("source") or "your commitments"), freshness="as of today", confidence="certain",
             related={"kind": "commitment", "id": str(c.get("id") or "")[:60]},
-            next_step="Decide what the next step on it is.", open_view="calendar"))
+            next_step="Decide what the next step on it is.", open_view="calendar",
+            remember_text=("%s is due on %s." % (str(c["label"])[:100], c.get("date")) if c.get("date") else "")))
     return out
 
 
@@ -212,7 +220,11 @@ def _cold_threads() -> List[dict]:
                 who, t.get("days"), (' ("%s")' % subject[:80]) if subject else ""),
             why="A thread you started may be waiting on them, or on a nudge from you.",
             source="your mail headers", freshness=_freshness(t.get("at")), confidence="likely",
-            related=None, next_step="Nudge %s, or let it go." % who, open_view="messages"))
+            related=None, next_step="Nudge %s, or let it go." % who, open_view="messages",
+            # The subject is someone else's words: never saved as the owner's.
+            remember_text=("I am waiting on a reply from %s since %s." % (
+                str(t.get("email") or who)[:80], _day(t.get("at")))
+                           if _day(t.get("at")) else "")))
     return out
 
 
@@ -295,32 +307,45 @@ def build(save: bool = True) -> Dict[str, Any]:
         if save:
             _write(_dir() / "briefing.json", {"generated_ts": time.time(), "items": items})
     marked = {m.get("item"): m.get("mark") for m in _marks()}
+    public = []
     for it in items:
-        it["marked"] = marked.get(it["id"])
-    return {"ok": True, "items": items, "failed": failed, "marks": list(MARKS),
+        row = {k: v for k, v in it.items() if k != "remember_text"}
+        row["marked"] = marked.get(it["id"])
+        public.append(row)
+    return {"ok": True, "items": public, "failed": failed, "marks": list(MARKS),
             "mark_labels": MARK_LABELS, "receipt": receipt()}
 
 
 # ── marks ─────────────────────────────────────────────────────────────────────
 
-def mark(item_id: str, answer: str, *, by: str = "owner") -> Dict[str, Any]:
-    """The owner's mark on one item of the last briefing. "remember" saves the observation to
-    the memory card as the owner's words; nothing else writes memory."""
+def mark(item_id: str, answer: str, *, shown_text: str = "", by: str = "owner") -> Dict[str, Any]:
+    """The owner's mark on one item of the last briefing.
+
+    `shown_text` is the observation the page showed when the owner pressed: the mark applies
+    only if the item still says exactly that (a later build may have changed it). "remember"
+    saves the item's remember_text (built from the owner's own records) to the memory card as
+    the owner's words; nothing else writes memory."""
     answer = str(answer or "")
     if answer not in MARKS:
         return {"ok": False, "error": "unknown mark"}
     if _off_record():
         return {"ok": False, "error": "Off the record is on, so nothing is marked or remembered."}
     with _lock:
-        shown = (_read(_dir() / "briefing.json", {}) or {}).get("items") or []
+        p = _dir() / "briefing.json"
+        briefing = _read(p, {}) or {}
+        shown = briefing.get("items") or []
         it = next((x for x in shown if isinstance(x, dict) and x.get("id") == str(item_id or "")), None)
         if it is None:
             return {"ok": False, "error": "That item is no longer shown; refresh the list."}
+        if str(shown_text or "") != str(it.get("observation") or ""):
+            return {"ok": False, "error": "That item has changed since it was shown; look at it again."}
+        if answer not in (it.get("marks") or MARKS):
+            return {"ok": False, "error": "That mark is not offered for this item."}
         said = ""
         if answer == "remember":
             from agent_friday.services import core_memory
             try:
-                res = core_memory.add("user", it.get("observation") or "", actor="owner")
+                res = core_memory.add("user", it.get("remember_text") or "", actor="owner", dedupe=True)
             except Exception as e:
                 res = {"ok": False, "error": str(e)}
             if not (isinstance(res, dict) and res.get("ok")):
@@ -336,6 +361,10 @@ def mark(item_id: str, answer: str, *, by: str = "owner") -> Dict[str, Any]:
         row = {"ts": time.time(), "item": it["id"], "kind": it.get("kind"), "mark": answer, "by": str(by)[:40]}
         with open(_dir() / "marks.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
+        if answer in _HIDES_ITEM:
+            # Not shown again, so its text does not wait in the briefing file either.
+            briefing["items"] = [x for x in shown if isinstance(x, dict) and x.get("id") != it["id"]]
+            _write(p, briefing)
         _note_first_mark(row["ts"])
     return {"ok": True, "mark": answer, "said": said or "Thank you; noted.", "receipt": receipt()}
 
