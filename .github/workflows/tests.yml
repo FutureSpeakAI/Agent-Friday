@@ -149,7 +149,7 @@ jobs:
           studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
           activity_never_collapses.spec.ts connect_services.spec.ts laya_settings.spec.ts
-          posting_screens.spec.ts
+          posting_screens.spec.ts accessibility_keyboard.spec.ts
       # The run's output folder, uploaded on success as well as failure: it holds
       # the Settings walk table, failure traces, and the screenshots specs save
       # for a person to look at (posting_screens.spec.ts: posting-*.png).
