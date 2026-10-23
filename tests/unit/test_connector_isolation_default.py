@@ -327,6 +327,23 @@ def test_running_it_unisolated_needs_a_press_on_this_pc_and_is_recorded(state, m
     assert mine and mine[-1]["decided_source"] == "desktop_press" and gate.verify_receipt(mine[-1])
 
 
+def test_a_press_on_a_stale_card_does_not_run_a_changed_add_on_unisolated(state, monkeypatch):
+    from agent_friday.services import approvals as ap
+    monkeypatch.setenv("FRIDAY_HOME", str(state))
+    monkeypatch.setenv("LOCALAPPDATA", str(state / "Local"))
+    cfg = {"servers": {"slack": {"command": "npx", "args": ["-y", "x"], "isolation": "appcontainer"}}}
+    _fake_agent(monkeypatch, cfg)
+    card = ci.offer_runtime_choice("slack", r"C:\Program Files\nodejs\npx.cmd", "npx", ["-y", "x"])
+    cfg["servers"]["slack"]["args"] = ["-y", "something-else"]       # the entry changed
+    from tests.desk_press_support import pressed
+    with pressed():
+        from flask import request
+        from agent_friday.services import screen_click
+        ap.decide(card["approval_id"], "approve",
+                  decided_by=screen_click.decided_by(request, "owner:ui", for_ids=[card["approval_id"]]))
+    assert cfg["servers"]["slack"]["isolation"] == "appcontainer"
+
+
 def test_declining_keeps_it_isolated_and_is_not_asked_again_for_that_program(state, monkeypatch):
     ap, cfg, card, _r = _runtime_card(state, monkeypatch)
     ap.decide(card["approval_id"], "deny")
@@ -340,13 +357,22 @@ def test_a_node_installed_for_this_account_is_used_for_an_isolated_add_on(state,
     mine = local / "Programs" / "nodejs"
     mine.mkdir(parents=True)
     (mine / "npx.cmd").write_text("@echo off", encoding="utf-8")
+    (mine / "npx").write_text("#!/bin/sh", encoding="utf-8")
     monkeypatch.setenv("LOCALAPPDATA", str(local))
     sp, started, _p = _server(monkeypatch, {"isolation": "appcontainer"})
     sp.command = "npx"
-    monkeypatch.setattr(sp, "_resolve_command", lambda: r"C:\Program Files\nodejs\npx.cmd")
+    system = r"C:\Program Files\nodejs\npx.cmd"
+    monkeypatch.setattr(sp, "_resolve_command", lambda: system)
+    # The all-users Node.js shuts isolated apps out; the per-user one does not.
+    monkeypatch.setattr(_ac(), "readable_by_containers", lambda p, sid=None: str(p) != system)
     sp._spawn()
-    assert started and Path(started[-1]["argv"][0]) == mine / "npx.cmd"
+    assert started and Path(started[-1]["argv"][0]) == mine / ("npx.cmd" if os.name == "nt" else "npx")
     assert started[-1]["env"]["PATH"].startswith(str(mine))
+    # A working all-users program is never replaced by what sits in the per-user folder.
+    started.clear()
+    monkeypatch.setattr(_ac(), "readable_by_containers", lambda p, sid=None: True)
+    sp._spawn()
+    assert started[-1]["argv"][0] == system
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows AppContainer")
