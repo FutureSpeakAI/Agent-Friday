@@ -136,6 +136,12 @@ def _friday_store() -> list[tuple[str, float]]:
             # answerable, and the model is never a candidate again.
             if rec.get("retired"):
                 continue
+            # Held stays out too: installed and verified, but its seat does
+            # not exist yet (model_shortlist.held_reason, the same rule
+            # model_store.available() applies).
+            from agent_friday.services import model_shortlist as _sl
+            if _sl.held_reason(mid, rec):
+                continue
             # Same resolution order as model_store.seat_files, without the
             # core import: explicit local copy, then the store directory,
             # then the recorded path. A copy under runtime/models/gguf wins

@@ -31,9 +31,11 @@ _wire_after_install()
 
 
 def _installed_ids() -> set:
+    """Usable models, plus held ones (on disk and verified, no seat yet), so a
+    held model's row never offers a second download."""
     try:
         from agent_friday.services import model_store
-        return set(model_store.available().keys())
+        return set(model_store.available().keys()) | set(model_store.held_installed().keys())
     except Exception:
         return set()
 

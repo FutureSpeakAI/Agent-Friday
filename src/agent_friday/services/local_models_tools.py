@@ -135,7 +135,11 @@ def advise(inp: dict | None) -> dict:
                                                                  "why": best.get("why"), "installed": m.get("installed")}}
 
         # biggest, the default
-        cands = [(m, f) for m in models for f in m["files"] if "brain" in (m.get("roles") or ["brain"]) or True]
+        # "Biggest" is a question about the model that would talk with you, so a
+        # model whose only role is writing code (Flint) is never the answer; ask
+        # "could I run Flint" for that one.
+        cands = [(m, f) for m in models if (m.get("roles") or ["brain"]) != ["coder"]
+                 for f in m["files"]]
         well = [(m, f) for m, f in cands if f["verdict"] == "runs_well"]
         runs = [(m, f) for m, f in cands if f["verdict"] in ("tight", "partial")]
         if well:

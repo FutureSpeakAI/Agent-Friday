@@ -442,6 +442,7 @@ either by the installer or on first use, and are governed by their own terms.
 | ggml-org/Qwen3-1.7B-GGUF (Q4_K_M) | runtime (local voice front beside the brain, offered download) | Apache-2.0 (Qwen3) |
 | prism-ml/Ternary-Bonsai-1.7B-gguf (PQ2_0) | runtime (default local voice front, offered download) | Apache-2.0 |
 | prism-ml/Ternary-Bonsai-8B-gguf (PQ2_0) | runtime (offered on the model shortlist) | Apache-2.0 |
+| unsloth/flint-GGUF (UD-Q2_K_XL default; IQ2_XXS, IQ3_XXS, Q3_K_XL, Q4_K_XL) at commit 20468edfc38ab43d6914cc88b08cbecb05d0fc62, quantizations of RecursiveSI/flint (Recursive Flint, 39.8B MoE) | runtime (shortlist, experimental; per-file SHA-256 pinned in resources/model_shortlist.json; installed held, used by no seat until its code-session seat ships; never bundled) | Apache-2.0 (Copyright Recursive Superintelligence, Inc.; quantization by Unsloth AI). Recursive's hosted API and Model Terms are not used and do not govern the weights (Model Terms §1.3) |
 | nvidia/tts_en_fastpitch + nvidia/tts_hifigan | runtime (optional GPU voice tier) | NVIDIA NeMo model terms (CC-BY-4.0 on NGC cards) - unverified |
 | spaCy en_core_web_lg (Presidio NER) | runtime (Presidio needs one; installer does not fetch it explicitly - confirm) | MIT |
 | Ternary-Bonsai-2-27B (PTQ1_0) + mmproj | no (operator-provisioned) | mmproj GGUF says apache-2.0; main GGUF has no license key (Qwen3.5 base) - unverified |
@@ -461,6 +462,7 @@ either by the installer or on first use, and are governed by their own terms.
 * **Orbitron, Inter, JetBrains Mono** - OFL-1.1. Shipped in `static/fonts/g/` as the unmodified .woff2 files Google Fonts serves for the page, with Google's own @font-face rules in `static/fonts/fonts.css` (only the url() paths changed) and each family's OFL-1.1 text in `static/fonts/`. The page renders as it did from Google and never requests Google Fonts.
 * **OfficeCLI (officecli-win-x64.exe)** v1.0.152 - Apache-2.0. Not in the archive; downloaded by the installer from the OfficeCLI GitHub release into ~/.friday/runtime/officecli, sha256-pinned in `packaging/windows/lib/OfficeCli.ps1`.
 * **llama.cpp llama-server (runtime/llama.cpp, llama.cpp-bonsai, llama.cpp-ollama)** unrecorded - MIT. no (operator-provisioned under ~/.friday/runtime; no downloader in the tree)
+* **llama.cpp b11803 (runtime/llama.cpp-flint; ggml-org/llama.cpp official release, Windows CUDA 13.4 or CPU build, plus NVIDIA's cudart DLL pack for CUDA)** b11803 - MIT (llama.cpp); NVIDIA CUDA runtime redistributable EULA (cudart pack). no (downloaded by services/model_download.py only when the owner installs Flint; each archive sha256-pinned in resources/model_shortlist.json)
 * **ComfyUI** unrecorded - GPL-3.0-only. no (operator-provisioned under ~/.friday/runtime/ComfyUI; driven over HTTP)
 * **ComfyUI-GGUF / ComfyUI-CogVideoXWrapper custom nodes** unrecorded - Apache-2.0 (both, upstream) - confirm. no (operator-provisioned)
 * **kokoro-onnx wheel + voices-v1.0.bin** >=0.4 / model-files-v1.0 - MIT (kokoro-onnx); voices Apache-2.0 (Kokoro-82M). no (optional; fetched by services/voice_installer.py on user request)

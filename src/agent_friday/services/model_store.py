@@ -217,9 +217,31 @@ def all_models() -> dict:
         return models
 
 
+def held_reason(model_id: str, rec: dict | None) -> str | None:
+    """Why ``model_id`` is held out of every seat, or None (see
+    model_shortlist.held_reason: the record's field OR the shipped list)."""
+    from agent_friday.services import model_shortlist as _sl
+    return _sl.held_reason(model_id, rec)
+
+
+def held_installed() -> dict:
+    """model_id -> hold reason, for every held model whose weights are on disk:
+    installed and verified, used by nothing yet. Screens count these as
+    installed so a second download is never offered."""
+    out = {}
+    for k, v in all_models().items():
+        if not isinstance(v, dict) or v.get("retired"):
+            continue
+        why = held_reason(k, v)
+        if why and seat_files(v).get("gguf"):
+            out[k] = why
+    return out
+
+
 def _usable(rec: dict) -> bool:
-    """On disk (or reachable), and not retired."""
-    if not isinstance(rec, dict) or rec.get("retired"):
+    """On disk (or reachable), not retired, and not held by its own record
+    (`available()` also applies the shipped list's holds, which need the id)."""
+    if not isinstance(rec, dict) or rec.get("retired") or rec.get("held"):
         return False
     files = seat_files(rec)
     return bool(files.get("gguf"))
@@ -242,10 +264,15 @@ def available() -> dict:
     `gemma4:e2b-friday-v1` (a possibly no-op merge) is kept out
     of `local_seats.resolve()`'s smallest-candidate fallback while its file
     stays where it is.
+
+    A `held` record is not available either: the file is installed and
+    verified, but the role that may serve it does not exist yet (Flint waits
+    for its code-session lease; spec core_models_flint_laya_bonsai2, CT-E24),
+    so no planner, seat map or fallback may pick it up in the meantime.
     """
     out = {}
     for k, v in all_models().items():
-        if _usable(v):
+        if _usable(v) and not held_reason(k, v):
             files = seat_files(v)
             if v.get("lora") and not files.get("lora"):
                 continue
@@ -261,6 +288,10 @@ def missing() -> dict:
             continue
         if v.get("retired"):
             out[k] = dict(v, why="retired: %s" % v["retired"])
+            continue
+        why_held = held_reason(k, v)
+        if why_held:
+            out[k] = dict(v, why="held: %s" % why_held)
             continue
         files = seat_files(v)
         if not files.get("gguf"):
@@ -361,7 +392,8 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
              verify: bool = False, label: str | None = None,
              local_files: dict | None = None, engine=None,
              serve_args: list | None = None,
-             serve_num_ctx: int | None = None) -> dict:
+             serve_num_ctx: int | None = None,
+             held: str | None = None) -> dict:
     """Record a model Friday holds, with its facts read from the file.
 
     `engine` is the server binary that can load this file, when stock
@@ -432,6 +464,9 @@ def register(model_id: str, path, *, source: str = SOURCE_LOCAL,
         entry["serve_args"] = [str(a) for a in serve_args]
     if serve_num_ctx:
         entry["serve_num_ctx"] = int(serve_num_ctx)
+    if held:
+        # Installed and verified, but no seat may use it yet; see available().
+        entry["held"] = str(held)
 
     data = _load()
     data.setdefault("version", REGISTRY_VERSION)
