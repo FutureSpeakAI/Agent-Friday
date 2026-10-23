@@ -175,6 +175,9 @@ def test_an_approved_card_not_yet_run_is_claimed_once_by_the_run(cards):
     try:
         assert verdict is not None and verdict.action == "allow"
         assert ctx.meta["owner_decided"] == rec["approval_id"]
+        r = _last_receipt()
+        assert r["tool"] == "create_task" and r["approval"] == rec["approval_id"], \
+            "the run carrying out its card still gets the checkpoint's signed receipt"
         assert cards.get_approval(rec["approval_id"])["consumed"]
         assert not cards.claim_for_execution(rec["approval_id"]), "the executor cannot run it a second time"
         again, _ = agent._run_card_prior(_call("t_test_a24_claim"), key)
@@ -198,6 +201,49 @@ def test_a_waiting_card_is_withdrawn_when_the_grant_carries_out_the_change(cards
     assert out["status"] == "denied", "approving the withdrawn card later cannot do it a second time"
     again, _ = agent._run_card_prior(_call("t_test_a24_wait"), key)
     assert again.action == "deny" and "[ALREADY DONE]" in again.reason
+
+
+def test_the_owners_no_to_one_change_is_not_overridden_by_the_runs_grant(cards):
+    from agent_friday.services import agent
+    a, b = _call("t_test_a24_no"), _call("t_test_a24_no", inp={"title": "Cancel the trip"})
+    _, card_a = _raise_card(cards, a)
+    key, card_b = _raise_card(cards, b)
+    cards.decide_with_outcome(card_a["approval_id"], "approve", decided_by="owner:chat")
+    g = _rg().mint_on_approval(cards.get_approval(card_a["approval_id"]))
+    cards.decide_with_outcome(card_b["approval_id"], "deny", decided_by="owner:chat")
+    try:
+        verdict, _ = agent._run_card_prior(b, key)
+        assert verdict is not None and verdict.action == "deny" and "[DECLINED]" in verdict.reason
+        assert [x for x in ag.list_grants() if x["grant_id"] == g["grant_id"]][0]["uses_left"] == g["uses_left"]
+    finally:
+        ag.revoke_grant(g["grant_id"])
+
+
+def test_a_change_re_carded_after_its_first_card_expired_is_still_done_once(cards):
+    from agent_friday.services import agent
+    ctx = _call("t_test_a24_exp")
+    key, first = _raise_card(cards, ctx)
+    cards._patch(first["approval_id"], status="expired")
+    second = cards.create_approval(
+        kind="tainted_action", subject_type="tool_action", subject_id=first["subject_id"] + ":a1b2c3",
+        title="Create task", action_description="create_task", description="test", force_gate=True,
+        payload=dict(first["payload"]), action_class="outward", requested_by="taint_gate")
+    cards.decide_with_outcome(second["approval_id"], "approve", decided_by="owner:chat")
+    assert cards.claim_for_execution(second["approval_id"])          # the executor ran it
+    cards.mark_used(second["approval_id"], "approval_executor")
+    verdict, _ = agent._run_card_prior(_call("t_test_a24_exp"), key)
+    assert verdict is not None and "[ALREADY DONE]" in verdict.reason
+
+
+def test_a_card_held_at_the_checkpoint_is_not_reported_as_done(cards):
+    from agent_friday.services import agent
+    ctx = _call("t_test_a24_held")
+    key, rec = _raise_card(cards, ctx)
+    cards.decide_with_outcome(rec["approval_id"], "approve", decided_by="owner:chat")
+    assert cards.claim_for_execution(rec["approval_id"])
+    cards.mark_used(rec["approval_id"], "approval_executor", detail={"ok": False, "error": "held"})
+    verdict, _ = agent._run_card_prior(ctx, key)
+    assert verdict.action == "deny" and "[NOT RUN]" in verdict.reason
 
 
 def test_if_the_owner_approved_the_waiting_card_first_it_still_runs_once(cards):
