@@ -35,7 +35,8 @@ ESSENTIAL_JOBS = frozenset({"approvals_expiry_sweep", "calendar_reminders", "con
 CARD_KEY = "disk-full"
 
 _lock = threading.Lock()
-_state: Dict[str, Any] = {"low": False, "checked": 0.0, "free_mib": None, "since": None, "carded": False}
+_state: Dict[str, Any] = {"low": False, "checked": 0.0, "free_mib": None, "since": None, "carded": False,
+                          "card_busy": False}
 
 
 def _data_dir():
@@ -61,15 +62,35 @@ def _words(free_mib: float) -> str:
 
 
 def _card(free: float) -> bool:
-    """Raise the card; False if it could not be written (it is tried again on the next check)."""
+    """Raise the card; True only once it is saved (the store swallows a failed save, so it is
+    read back). False -> it is tried again at the next reading of the drive."""
     try:
         from agent_friday import notifications_engine as ne
         ne.push(title="Friday's drive is almost full", body=_words(free), priority="high",
                 source="disk", kind="disk_full", emitter="DF1", dedupe_key=CARD_KEY,
                 resolve_key=CARD_KEY, target={"type": "url", "url": "/doctor"})
-        return True
+        return any(isinstance(n, dict) and n.get("dedupe_key") == CARD_KEY and not n.get("dismissed")
+                   for n in ne._load())
     except Exception:
         return False
+
+
+#: Tests set this to raise the card on the calling thread.
+SYNC_CARD = False
+
+
+def _raise_card(free: float) -> None:
+    """On its own thread: the scheduler's tick never waits on the card (it may text the owner)."""
+    def run():
+        ok = _card(free)
+        with _lock:
+            _state["card_busy"] = False
+            if ok and _state["low"]:
+                _state["carded"] = True
+    if SYNC_CARD:
+        run()
+    else:
+        threading.Thread(target=run, name="disk-guard-card", daemon=True).start()
 
 
 def _enter(free: float) -> None:
@@ -98,7 +119,8 @@ def check(*, force: bool = False, now: Optional[float] = None) -> Dict[str, Any]
     now = time.time() if now is None else now
     entered = left = card_due = None
     with _lock:
-        if force or now - _state["checked"] >= CHECK_EVERY_S:
+        read = force or now - _state["checked"] >= CHECK_EVERY_S
+        if read:
             free = _free_mib()
             _state["checked"] = now
             _state["free_mib"] = free
@@ -109,15 +131,15 @@ def check(*, force: bool = False, now: Optional[float] = None) -> Dict[str, Any]
                 elif _state["low"] and free >= RESUME_MIB:
                     _state["low"], _state["since"], _state["carded"] = False, None, False
                     left = free
-            if _state["low"] and not _state["carded"]:
+            # The card is tried when the drive is read (not on every call), one try at a time.
+            if _state["low"] and not _state["carded"] and not _state.get("card_busy"):
                 card_due = _state["free_mib"]
+                _state["card_busy"] = True
         snap = dict(_state)
     if entered is not None:
         _enter(entered)
-    if card_due is not None and _card(card_due):
-        with _lock:
-            if _state["low"]:
-                _state["carded"] = True
+    if card_due is not None:
+        _raise_card(card_due)
     if left is not None:
         _leave(left)
     return snap
