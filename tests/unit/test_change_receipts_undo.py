@@ -255,6 +255,19 @@ def test_an_event_that_gained_guests_is_not_deleted_by_undo(world):
     assert done and done["status"] == "failed" and new in cal.store, "guests would be cancelled on silently"
 
 
+def test_an_event_created_with_guests_is_undone_and_they_are_told(world, monkeypatch):
+    from agent_friday.services import calendar_write as cw
+    cal, _ = world
+    told = []
+    real = cw.delete_event
+    monkeypatch.setattr(cw, "delete_event", lambda eid, **k: told.append(k.get("notify_guests")) or real(eid, **k))
+    rid = _rid(agent._tool_create_calendar_event({"title": "Team lunch", "start": "2026-11-03T12:00:00+00:00",
+                                                  "end": "2026-11-03T13:00:00+00:00",
+                                                  "attendees": ["ann@example.com"]}))
+    _undo_on_card(rid)
+    assert not [k for k in cal.store if k.startswith("new")] and told == [True]
+
+
 def test_a_repeating_event_deleted_says_undo_cannot_make_it_again(world):
     cal, _ = world
     cal.store["rec1"] = {"id": "rec1", "summary": "Standup", "recurrence": ["RRULE:FREQ=DAILY"],
