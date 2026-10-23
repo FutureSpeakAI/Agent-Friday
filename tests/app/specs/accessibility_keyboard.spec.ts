@@ -97,3 +97,73 @@ test('in Windows high-contrast mode the focus ring is drawn in the system highli
   const ring = await focusRing(page);
   expect(ring && ring.outline !== 'none' && ring.width >= 2, 'a visible focus ring in forced colours: ' + JSON.stringify(ring)).toBeTruthy();
 });
+
+test('arrow keys move through a radio group and pick, and the scene does not take them', async ({ page }) => {
+  await desktop(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__sceneSteps = 0;
+    if (w.fridayVibe) {
+      w.fridayVibe.nextStructure = () => { w.__sceneSteps++; };
+      w.fridayVibe.prevStructure = () => { w.__sceneSteps++; };
+    }
+    const g = document.createElement('div');
+    g.setAttribute('role', 'radiogroup');
+    g.setAttribute('aria-label', 'Probe');
+    g.id = 'ax3-probe';
+    ['a', 'b', 'c'].forEach((v, i) => {
+      const r = document.createElement('div');
+      r.setAttribute('role', 'radio');
+      r.tabIndex = 0;
+      r.id = 'ax3-' + v;
+      r.textContent = v;
+      r.setAttribute('aria-checked', i === 0 ? 'true' : 'false');
+      r.addEventListener('click', () => {
+        g.querySelectorAll('[role="radio"]').forEach(x => x.setAttribute('aria-checked', String(x === r)));
+      });
+      g.appendChild(r);
+    });
+    document.body.appendChild(g);
+    (document.getElementById('ax3-a') as HTMLElement).focus();
+  });
+  await expect(page.locator('#ax3-a')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#ax3-b')).toBeFocused();
+  await expect(page.locator('#ax3-b')).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#ax3-c')).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('ArrowDown');          // wraps
+  await expect(page.locator('#ax3-a')).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(page.locator('#ax3-c')).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('#ax3-b')).toHaveAttribute('aria-checked', 'true');
+  expect(await page.evaluate(() => (window as any).__sceneSteps), 'the 3D scene took arrow keys from the radios').toBe(0);
+});
+
+test('a radio group that handles its own arrows keeps them (the display-style picker previews, never commits)', async ({ page }) => {
+  await desktop(page);
+  const clicks = await page.evaluate(() => {
+    const g = document.createElement('div');
+    g.setAttribute('role', 'radiogroup');
+    const counts = { click: 0 };
+    ['x', 'y'].forEach((v, i) => {
+      const r = document.createElement('button');
+      r.setAttribute('role', 'radio');
+      r.id = 'ax3-own-' + v;
+      r.setAttribute('aria-checked', String(i === 0));
+      r.addEventListener('click', () => { counts.click++; });
+      r.addEventListener('keydown', e => { if (e.key === 'ArrowDown') e.preventDefault(); });
+      g.appendChild(r);
+    });
+    document.body.appendChild(g);
+    (window as any).__ownCounts = counts;
+    (document.getElementById('ax3-own-x') as HTMLElement).focus();
+    return counts.click;
+  });
+  expect(clicks).toBe(0);
+  await expect(page.locator('#ax3-own-x')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#ax3-own-x'), 'its own handler kept the key').toBeFocused();
+  expect(await page.evaluate(() => (window as any).__ownCounts.click), 'nothing was clicked for it').toBe(0);
+});
