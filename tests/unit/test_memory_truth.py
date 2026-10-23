@@ -2,54 +2,70 @@
 §34.9-2 source citation, §34.9-3 the current state wins, §34.9-4 a correction
 reaches every store, §34.9-9 rebuilding an index brings nothing back).
 
-Real stores where the store is the question (Chroma with a tiny deterministic
-embedder, the conversation full-text index, the transcript); a stand-in only
-for what is not (the model). Synthetic text; nothing reaches a network."""
+The real ConversationMemory, conversation full-text index and transcript;
+CI does not install Chroma (the "local" extra), so the vector collection
+under ConversationMemory is a small in-memory one with Chroma's interface
+(word overlap as distance). Synthetic text; nothing reaches a network."""
 from __future__ import annotations
+
+import re
 
 import pytest
 
 from agent_friday.services import conversation_fts as fts
 from agent_friday.services import conversations as cv
 
-chromadb = pytest.importorskip("chromadb", reason="chromadb not installed")
-from chromadb import Documents, EmbeddingFunction, Embeddings  # noqa: E402
+
+def _words(text):
+    return {w for w in re.findall(r"[a-z0-9]+", str(text).lower()) if len(w) > 2}
 
 
-class _Embed(EmbeddingFunction[Documents]):
-    """Deterministic, word-bag embedder: texts sharing words land close."""
+class FakeCollection:
+    """Chroma's collection interface, as ConversationMemory uses it."""
 
     def __init__(self):
-        pass
+        self.rows = {}                       # id -> [document, metadata]
 
-    def __call__(self, input: Documents) -> Embeddings:  # noqa: A002
-        out = []
-        for text in input:
-            v = [0.0] * 32
-            for w in str(text).lower().split():
-                v[hash(w.strip(".,!?")) % 32] += 1.0
-            norm = sum(x * x for x in v) ** 0.5 or 1.0
-            out.append([x / norm for x in v])
-        return out
+    def count(self):
+        return len(self.rows)
 
-    @staticmethod
-    def name() -> str:
-        return "memory-truth-test-embed"
+    def upsert(self, ids, documents, metadatas, embeddings=None):
+        for i, d, m in zip(ids, documents, metadatas):
+            self.rows[str(i)] = [d, dict(m)]
 
-    def get_config(self):
-        return {}
+    def query(self, query_texts=None, query_embeddings=None, n_results=5, where=None, include=None):
+        q = _words((query_texts or [""])[0])
+        scored = []
+        for i, (d, m) in self.rows.items():
+            overlap = len(q & _words(d)) / max(1, len(q))
+            scored.append((1.0 - overlap, i, d, m))
+        scored.sort(key=lambda s: s[0])
+        top = scored[:max(1, int(n_results))]
+        return {"ids": [[s[1] for s in top]], "documents": [[s[2] for s in top]],
+                "metadatas": [[dict(s[3]) for s in top]], "distances": [[s[0] for s in top]]}
 
-    @staticmethod
-    def build_from_config(config):
-        return _Embed()
+    def get(self, ids=None, include=None, where=None, limit=None):
+        keys = [str(i) for i in ids if str(i) in self.rows] if ids is not None else list(self.rows)
+        return {"ids": keys, "documents": [self.rows[k][0] for k in keys],
+                "metadatas": [dict(self.rows[k][1]) for k in keys]}
+
+    def update(self, ids, metadatas=None, documents=None):
+        for i, m in zip(ids, metadatas or []):
+            if str(i) in self.rows:
+                self.rows[str(i)][1] = dict(m)
+
+    def delete(self, ids=None):
+        for i in ids or []:
+            self.rows.pop(str(i), None)
 
 
 @pytest.fixture
 def mem(tmp_path, monkeypatch):
     from agent_friday.conversation_memory import ConversationMemory
     m = ConversationMemory(persist_dir=tmp_path / "conv_mem")
-    monkeypatch.setattr(m, "_build_embedding_function", lambda: _Embed())
+    m._collection = FakeCollection()          # ready: _ensure() returns True
     monkeypatch.setattr(m, "_assert_embedding_space", lambda: None)
+    monkeypatch.setattr(m, "_shared_query_ok", lambda: False)
     assert m.available()
     return m
 
