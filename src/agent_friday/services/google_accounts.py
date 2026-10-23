@@ -189,7 +189,10 @@ _ACCOUNT_ID = re.compile(r"[0-9a-f]{16}")
 def _token_path(account_id: str) -> Path:
     if not isinstance(account_id, str) or not _ACCOUNT_ID.fullmatch(account_id):
         raise ValueError("not a Google account id")
-    return TOKENS_DIR / f"{account_id}.token.enc"
+    # contained() also proves the joined path stays in the tokens folder (the check CodeQL's
+    # path-injection query recognises; the id pattern above already allows nothing else).
+    from agent_friday.paths import contained as _contained
+    return _contained(TOKENS_DIR, f"{account_id}.token.enc")
 
 
 # ── index (non-secret metadata) ──────────────────────────────────────────────

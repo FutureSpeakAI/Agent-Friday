@@ -86,8 +86,8 @@ def _isolated(tmp_path, monkeypatch):
 
 
 def _no_keystore(monkeypatch):
-    """Make Friday's keystore unavailable (not locked), so protect() takes the
-    legacy vault -> DPAPI -> plaintext chain."""
+    """Make Friday's keystore unavailable (not locked). protect() then refuses: there is no
+    legacy write chain any more (BD-08)."""
     def _unavailable(data):
         raise RuntimeError("keystore unavailable in this test")
     monkeypatch.setattr(ks, "encrypt", _unavailable)
@@ -145,35 +145,35 @@ class TestFailClosedUnderOsMode:
         assert not cs._provider_key_path("openai").exists()
 
 
-# ── Acceptance criterion 2: FRIDAY_PASSWORD set -> vault magic present ──────
+# ── Acceptance criterion 2 (BD-08, 2026-10-21): a vault key is no fallback ───
+#    With the keystore unusable, a passphrase-derived key used to take the write.
+#    That is a secret under a key the next process may not derive: the keystore
+#    is the only write tier now, and the vault key only READS old blobs.
 
-class TestVaultPathStillWorksUnderOsMode:
-    def test_protect_encrypts_with_vault_key_when_password_set(self, monkeypatch):
+class TestNoFallbackToTheVaultKeyUnderOsMode:
+    def test_protect_refuses_even_when_a_vault_key_could_encrypt(self, monkeypatch):
         monkeypatch.setenv("FRIDAY_OS_MODE", "1")
         monkeypatch.setenv("FRIDAY_PASSWORD", "correct-horse-battery-staple-TEST")
-        _no_dpapi(monkeypatch)  # prove the vault path wins even with no DPAPI
+        _no_dpapi(monkeypatch)
 
-        blob, method = cs.protect(b"a-fake-test-secret-not-real")
+        with pytest.raises(cs.CredentialProtectionUnavailable, match="FRIDAY_OS_MODE"):
+            cs.protect(b"a-fake-test-secret-not-real")
 
-        assert method == "vault"
-        assert blob.startswith(vc.MAGIC), "vault magic (FRIDAYVAULT) missing from blob"
-        assert cs.looks_protected(blob) == "vault"
-
-    def test_write_secret_succeeds_and_file_carries_vault_magic(self, monkeypatch, tmp_path):
+    def test_write_secret_writes_nothing_and_an_old_vault_blob_still_reads(self, monkeypatch, tmp_path):
         monkeypatch.setenv("FRIDAY_OS_MODE", "1")
         monkeypatch.setenv("FRIDAY_PASSWORD", "correct-horse-battery-staple-TEST")
         _no_dpapi(monkeypatch)
 
         target = tmp_path / "creds" / "google_token.json"
-        method = cs.write_secret(target, b'{"fake": "not-a-real-token"}')
+        with pytest.raises(cs.CredentialProtectionUnavailable):
+            cs.write_secret(target, b'{"fake": "not-a-real-token"}')
+        assert not target.exists() and not target.parent.exists()
 
-        assert method == "vault"
-        on_disk = target.read_bytes()
-        assert on_disk.startswith(vc.MAGIC), "the file on disk does not carry the vault magic"
-        assert b"not-a-real-token" not in on_disk, "the plaintext leaked into the blob"
-
-        # Round-trips back to the original plaintext.
-        assert cs.read_secret(target) == b'{"fake": "not-a-real-token"}'
+        # A blob an earlier version wrote under the vault key still opens (the migration reads it).
+        key = cs._vault_key()
+        assert key is not None
+        old = vc.encrypt(b'{"fake": "not-a-real-token"}', key)
+        assert cs.unprotect(old) == b'{"fake": "not-a-real-token"}'
 
 
 # ── Acceptance criterion 3 (Windows-default regression guard) ──────────────

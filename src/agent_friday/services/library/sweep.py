@@ -227,7 +227,12 @@ def _tasks(fp) -> tuple[int, str | None]:
     n, problem = 0, None
     try:
         from agent_friday.services import task_journal
-        n += task_journal.redact(lambda t: scrub(t, fp))["records"]
+        _r = task_journal.redact(lambda t: scrub(t, fp))
+        n += _r["records"]
+        if _r.get("left_unchanged"):
+            # protected records that could not be rewritten (nothing can encrypt right now, or
+            # the key that wrote them no longer opens them): the forget is not finished there
+            problem = ("the task journal (%d record(s) could not be rewritten)" % _r["left_unchanged"])
     except Exception as e:  # noqa: BLE001
         problem = "the task journal (%s)" % type(e).__name__
     try:

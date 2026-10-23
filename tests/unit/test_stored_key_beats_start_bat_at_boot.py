@@ -58,7 +58,7 @@ def stored(monkeypatch):
     monkeypatch.setattr(cs, "list_provider_keys", lambda: ["anthropic"],
                         raising=False)
     monkeypatch.setattr(cs, "get_provider_key",
-                        lambda p: "fake-key-SAVED-in-settings", raising=False)
+                        lambda p, **_kw: "fake-key-SAVED-in-settings", raising=False)
     monkeypatch.setattr(cs, "_env_key_for_provider", lambda p: ENV,
                         raising=False)
 

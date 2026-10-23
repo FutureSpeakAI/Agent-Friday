@@ -46,7 +46,7 @@ def test_a_traversing_account_id_never_reads_a_file_outside_the_tokens_folder(go
 def test_a_real_account_id_still_names_its_token_file(google):
     ga, tokens = google
     aid = ga._account_id("someone@example.com")
-    assert ga._token_path(aid) == tokens / (aid + ".token.enc")
+    assert ga._token_path(aid) == (tokens / (aid + ".token.enc")).resolve()
 
 
 # -- podcast episode ids ------------------------------------------------------

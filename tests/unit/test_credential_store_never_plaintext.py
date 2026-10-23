@@ -59,8 +59,9 @@ def test_protect_refuses_instead_of_returning_the_secret_as_it_is(monkeypatch):
     assert isinstance(e, RuntimeError) and isinstance(e, UserFacingError)
     words = e.user_message
     assert "did not save" in words and "Nothing was written" in words
-    assert "vault passphrase" in words and "friday vault-setup" in words, words    # the fix is offered
+    assert "key store" in words and "friday doctor" in words, words    # what failed, and the fix offered
     assert "not-a-real-token" not in words
+    assert "keystore unavailable in this test" not in words, "exception text reached the person's words"
 
 
 def test_write_secret_writes_nothing_when_it_cannot_encrypt(monkeypatch, tmp_path):
@@ -87,19 +88,18 @@ def test_a_locked_keystore_is_still_its_own_refusal(monkeypatch):
         cs.protect(FAKE)
 
 
-def test_the_encrypting_tiers_still_work(monkeypatch):
+def test_the_keystore_is_the_only_write_tier(monkeypatch):
     # Friday's own keystore on a healthy host
     blob, method = cs.protect(FAKE)
     assert method == "keystore" and FAKE not in blob and cs.unprotect(blob) == FAKE
-    # a vault key when the keystore is unavailable
+    # a keystore that cannot be used is a refusal, even with a vault key and DPAPI at hand (BD-08)
     def _unavailable(data):
         raise RuntimeError("keystore unavailable in this test")
     monkeypatch.setattr(ks, "encrypt", _unavailable)
-    from agent_friday.privacy import vault_crypto as vc
-    key = bytes(range(32))
-    monkeypatch.setattr(cs, "_vault_key", lambda: key)
-    blob, method = cs.protect(FAKE)
-    assert method == "vault" and blob.startswith(vc.MAGIC) and FAKE not in blob
+    monkeypatch.setattr(cs, "_vault_key", lambda: bytes(range(32)))
+    monkeypatch.setattr(cs, "_dpapi", lambda data, encrypt: b"would-have-been-dpapi")
+    with pytest.raises(cs.CredentialProtectionUnavailable):
+        cs.protect(FAKE)
 
 
 def test_an_old_plaintext_blob_can_still_be_read_so_the_migration_can_move_it():
@@ -109,4 +109,9 @@ def test_an_old_plaintext_blob_can_still_be_read_so_the_migration_can_move_it():
 def test_the_status_report_says_when_nothing_can_encrypt(monkeypatch):
     _nothing_can_encrypt(monkeypatch)
     monkeypatch.setattr(ks, "root_key", lambda: (_ for _ in ()).throw(RuntimeError("no keystore")))
-    assert cs.protection_method() == "plaintext"      # the label the status screens already show
+    # the truth: a write would be refused (never "plaintext", which nothing writes, nor "vault")
+    assert cs.protection_method() == "unavailable"
+    monkeypatch.setattr(cs, "_vault_key", lambda: bytes(range(32)))
+    assert cs.protection_method() == "unavailable"
+    monkeypatch.setattr(ks, "root_key", lambda: (_ for _ in ()).throw(ks.KeystoreLocked("locked")))
+    assert cs.protection_method() == "locked"
