@@ -905,6 +905,166 @@ def _run_posix_shell(argv, workdir: Path, env: dict, timeout_s, memory_mb, cap, 
                                  "no OS isolation on this platform."}}
 
 
+# ── Keeping Low processes out of Friday's own state ─────────────────────────
+#
+# A Low-integrity process can still READ what the owner's account can read
+# (HOST_BOUNDARY_NOTE). Friday's state folder gets a Medium mandatory label with
+# no-read-up and no-write-up, inherited by everything in it, so the sandboxed
+# Python and the no-card read-only commands cannot read it whatever spelling
+# they use. Friday herself (Medium) is unaffected. Her output folders inside it
+# get a protected label without no-read-up, so a read-only command can still
+# read what she made.
+
+_FENCE_SDDL = "S:(ML;OICI;NRNW;;;ME)"
+_OPEN_SDDL = "S:(ML;OICI;NW;;;ME)"
+
+
+def _set_label(api, path, sddl: str, protected: bool) -> None:
+    c, W = api.ctypes, api.W
+    psd = W.LPVOID()
+    if not api.a.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, c.byref(psd), None):
+        raise _err(api, "building a label")
+    try:
+        present, defaulted, sacl = W.BOOL(), W.BOOL(), W.LPVOID()
+        if not api.a.GetSecurityDescriptorSacl(psd, c.byref(present), c.byref(sacl), c.byref(defaulted)):
+            raise _err(api, "reading a label")
+        info = 0x10 | (0x40000000 if protected else 0)   # LABEL [| PROTECTED_SACL]
+        rc = api.a.SetNamedSecurityInfoW(str(path), 1, info, None, None, None, sacl)
+        if rc != 0:
+            raise SandboxError(f"labelling {Path(path).name} failed (Windows error {rc})")
+    finally:
+        api.k.LocalFree(psd)
+
+
+#: Written in the state folder once the walk has labelled what was there; files made
+#: later inherit the label, so the (slow, ~150k items) walk is not repeated each boot.
+_FENCE_MARK = ".low-fence-v1"
+
+
+def fence_from_low(state_dir, open_subdirs=()) -> bool:
+    """Windows: keep Low-integrity processes out of `state_dir` (read and write), leaving
+    `open_subdirs` readable. True when the labels are in place; False elsewhere, when
+    switched off (FRIDAY_FENCE_STATE=0, which also removes the labels), or when
+    Python itself lives inside the folder (the sandbox could not start). Raises on a
+    Windows failure; the caller logs it, and the text rules in action_gate still apply."""
+    if sys.platform != "win32":
+        return False
+    state = Path(state_dir)
+    mark = state / _FENCE_MARK
+    if os.environ.get("FRIDAY_FENCE_STATE", "1").strip() == "0":
+        if mark.exists():
+            unfence_from_low(state, open_subdirs)
+        return False
+    try:
+        rs = state.resolve(strict=False)
+        inside = [p for p in [_python_exe(), *_package_paths()]
+                  if p and str(Path(p).resolve(strict=False)).casefold().startswith(str(rs).casefold())]
+    except Exception:
+        inside = []
+    if inside:
+        return False
+    if mark.exists():
+        return True
+    api = _win_api()
+    # The open folders first (an explicit label beats the inherited one), so there is
+    # no moment when they are closed. PROTECTED_SACL needs SeSecurityPrivilege, so a
+    # plain explicit label is used.
+    for d in open_subdirs:
+        if Path(d).exists():
+            try:
+                _set_label(api, d, _OPEN_SDDL, protected=False)
+            except SandboxError:
+                pass
+    _set_label(api, state, _FENCE_SDDL, protected=False)
+    try:
+        mark.write_text("labelled\n", encoding="ascii")
+    except OSError:
+        pass
+    return True
+
+
+def unfence_from_low(state_dir, open_subdirs=()) -> None:
+    """Remove the labels fence_from_low set (an empty label on the folder and the open
+    folders). The off switch and the way back."""
+    if sys.platform != "win32":
+        return
+    api = _win_api()
+    for d in list(open_subdirs) + [state_dir]:
+        if Path(d).exists():
+            try:
+                _set_label(api, d, "S:", protected=False)
+            except SandboxError:
+                pass
+    try:
+        (Path(state_dir) / _FENCE_MARK).unlink()
+    except OSError:
+        pass
+
+
+# ── Long-running helpers (MCP stdio servers) ────────────────────────────────
+#
+# A connector's stdio server is a program Friday starts and keeps talking to. It
+# needs the network and its own caches, so it is not run at Low integrity; it is
+# put in a job object before its first instruction runs: a memory ceiling per
+# process, a cap on how many processes it may start, and everything it started
+# ends when Friday closes the job (stop, restart, or Friday exiting).
+
+HELPER_MEMORY_MB = 4096
+HELPER_PROCESSES = 32
+#: Popen creation flag: start suspended, so the job holds it before it runs.
+CREATE_SUSPENDED = 0x4
+
+
+def contain_helper(proc, *, memory_mb: int = HELPER_MEMORY_MB,
+                   max_processes: int = HELPER_PROCESSES):
+    """Put a process started with CREATE_SUSPENDED into its own job and let it run.
+    Returns the job handle (keep it; closing it ends the whole tree). Raises
+    SandboxError when the job cannot be made, after killing the process: a helper
+    is never left running unheld."""
+    api = job = None
+    try:
+        api = _win_api()
+        c = api.ctypes
+        job = api.k.CreateJobObjectW(None, None)
+        if not job:
+            raise _err(api, "creating the job object")
+        lim = api.EXTENDED_LIMIT()
+        b = lim.BasicLimitInformation
+        b.LimitFlags = 0x8 | 0x100 | 0x2000        # ACTIVE_PROCESS | PROCESS_MEMORY | KILL_ON_JOB_CLOSE
+        b.ActiveProcessLimit = int(max_processes)
+        lim.ProcessMemoryLimit = int(memory_mb) * 1024 * 1024
+        if not api.k.SetInformationJobObject(job, 9, c.byref(lim), c.sizeof(lim)):
+            raise _err(api, "setting the job limits")
+        handle = api.W.HANDLE(int(proc._handle))
+        if not api.k.AssignProcessToJobObject(job, handle):
+            raise _err(api, "placing the process in its job")
+        ntdll = c.WinDLL("ntdll")
+        ntdll.NtResumeProcess.argtypes = [api.W.HANDLE]
+        if ntdll.NtResumeProcess(handle) != 0:
+            raise SandboxError("the held process could not be resumed")
+        return job
+    except Exception:
+        # Never left behind suspended or half-held.
+        try:
+            proc.kill()
+            proc.wait(5)
+        except Exception:
+            pass
+        if api is not None and job:
+            api.k.CloseHandle(job)
+        raise
+
+
+def release_helper(job) -> None:
+    """Close a helper's job: everything in it ends."""
+    if not job:
+        return
+    try:
+        _win_api().k.CloseHandle(job)
+    except Exception:
+        pass
+
+
 def run_shell(command: str, *, read_only: bool, timeout_s=SHELL_DEFAULT_TIMEOUT_S, output_cap=SHELL_OUTPUT_CAP) -> dict:
     """Run one PowerShell command line held in as described above. Returns a dict (never raises
     for the command's own failures). `ok` is False when the sandbox itself could not be set up;

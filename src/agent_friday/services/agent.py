@@ -3109,9 +3109,14 @@ def _tool_run_command(inp):
         return _second
     # The governance check already refuses these; this is the backstop.
     from agent_friday.governance.action_gate import classify_command
-    if classify_command(cmd)[0] == "forbidden":
-        return ("Blocked: this command addresses Friday's own local API, which "
-                "trusts this machine as the owner. It was not run.")
+    _klass, _kwhy = classify_command(cmd)
+    if _klass == "forbidden":
+        if "local API" in _kwhy:
+            return ("Blocked: this command addresses Friday's own local API, which "
+                    "trusts this machine as the owner. It was not run.")
+        return ("[SANDBOX DENY] Not run, even with approval: %s. Commands follow the same "
+                "folder rules as Friday's file tools (Settings > Privacy > Folder grants). "
+                "Do not try another spelling of the same path." % _kwhy)
     # The command runs held in (services/code_sandbox.run_shell), never as the owner's bare process.
     # A command the gate classed as read-only runs without a card, so it gets the full box: Low
     # integrity, a job object, a scrubbed environment, a scratch folder. A command the owner

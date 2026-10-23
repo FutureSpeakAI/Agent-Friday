@@ -533,6 +533,24 @@ if not _TESTING:
               "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
               "Leave it there or with `friday safe-mode off`, then restart."
               % _safe.state().get("why"))
+
+
+    # Windows: Low-integrity processes (the code sandbox, read-only commands) are
+    # kept out of Friday's state folder by a mandatory label; her output folders in
+    # it stay readable (services/code_sandbox.fence_from_low). In the background:
+    # labelling walks the folder. A failure is logged; the command rules still hold.
+    def _fence_state_folder():
+        try:
+            from agent_friday.services import code_sandbox as _sbx
+            from agent_friday.services import path_policy as _pp
+            _state = _Path(FRIDAY_DIR)
+            _open = [d for d in _pp.output_dirs() if _pp._within(d, _state.resolve(strict=False))]
+            if _sbx.fence_from_low(_state, _open):
+                print("  [sandbox] Friday's state folder is closed to Low-integrity processes")
+        except Exception as _fe:
+            print(f"  [sandbox] could not label Friday's state folder: {_fe}")
+    threading.Thread(target=_fence_state_folder, name="fence-state", daemon=True).start()
+
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
