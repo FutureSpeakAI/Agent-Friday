@@ -200,15 +200,23 @@ def test_the_approvals_store_answers_in_time_at_a_realistic_size(tmp_path, monke
 
 # ── §34.15-2 receipt verification ────────────────────────────────────────────
 
-def test_ten_thousand_receipts_verify_in_time(tmp_path, monkeypatch):
-    from agent_friday.governance import action_gate as ag
+def test_ten_thousand_receipts_verify_in_time(tmp_path):
+    """Signed exactly as action_gate._receipt signs (HMAC-SHA256 over the
+    canonical JSON). Written here rather than through _receipt, which the test
+    suite's conftest keeps from writing receipts."""
+    import hashlib
+    import hmac
     from agent_friday.privacy import vault_crypto as vc
     key = b"synthetic-governance-key-for-tests-0000000000000000"
-    monkeypatch.setattr(ag, "friday_home", lambda: str(tmp_path))
-    monkeypatch.setattr(ag, "_governance_key", lambda: key)
-    for i in range(10_000):
-        ag._receipt({"tool": "read_file", "class": "internal", "decision": "allow", "task_id": f"t{i % 50}"})
-    took, report = _timed(vc.verify_bom_file, ag.receipts_path(), key)
+    bom = tmp_path / "decision-bom.jsonl"
+    with open(bom, "w", encoding="utf-8") as f:
+        for i in range(10_000):
+            entry = {"tool": "read_file", "class": "internal", "decision": "allow", "task_id": f"t{i % 50}",
+                     "timestamp": f"2026-10-23T00:00:{i % 60:02d}Z"}
+            canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
+            entry["hmac"] = hmac.new(key, canonical, hashlib.sha256).hexdigest()
+            f.write(json.dumps(entry) + "\n")
+    took, report = _timed(vc.verify_bom_file, bom, key)
     print(f"[perf] 10,000 receipts verified in {took:.2f} s")
     assert report["total"] == 10_000 and report["valid"] == 10_000
     assert took < 30
