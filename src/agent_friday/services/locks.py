@@ -19,6 +19,7 @@ import json
 import logging
 import time
 from datetime import datetime
+from agent_friday.user_errors import error_text
 
 _log = logging.getLogger("friday.locks")
 
@@ -105,8 +106,8 @@ def _today_egress() -> dict:
                         e = json.loads(ln)
                     except ValueError:
                         continue
-                    if float(e.get("ts") or 0) < start:
-                        continue
+                    if float(e.get("ts") or 0) < start or e.get("kind") == "call":
+                        continue          # a call row summarises its field rows
                     row = by.setdefault(str(e.get("provider") or "?"), {"sent": 0, "stopped": 0})
                     row["sent" if e.get("action") == "allow" else "stopped"] += 1
         return by
@@ -254,7 +255,7 @@ def remove_never_send(entry: str) -> dict:
     try:
         removed = ps.remove("never_send", entry)
     except RuntimeError as e:
-        return {"ok": False, "message": str(e)}
+        return {"ok": False, "message": error_text(e, "The never-send list could not be changed.")}
     if not removed:
         return {"ok": False, "message": "That entry is not on your never-send list."}
     label = nsd.LABELS.get(next((c for c in nsd.ENTRIES if c.casefold() == entry.casefold()), ""), entry)

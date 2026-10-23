@@ -232,10 +232,8 @@ def test_output_that_reaches_the_model_has_the_provider_keys_withheld():
 # ── a refusal is a signed receipt on disk, written before the denial ─────────
 
 def _bom(test_home):
-    p = test_home / ".friday" / "decision-bom.jsonl"
-    if not p.exists():
-        return []
-    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    from agent_friday.governance import action_gate
+    return action_gate.receipts()              # the action ledger's decisions
 
 
 @pytest.mark.parametrize("tool,args", [

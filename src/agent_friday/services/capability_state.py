@@ -55,6 +55,35 @@ _WORDS = {
 }
 
 
+# ── health, in the north star's nine states (§28.3) ──────────────────────────
+#
+# The five words above are what the model reads. People read the nine health
+# states Doctor uses (services/doctor.STATES), grouped so that what is off on
+# purpose never reads as a failure (§28.3: the UI distinguishes deliberate
+# inactivity from failure):
+#
+#   working     healthy
+#   off         unavailable_by_configuration, unavailable_by_hardware,
+#               blocked_by_policy: nothing is wrong; a choice, a setting or
+#               this machine keeps it off
+#   attention   degraded, misconfigured, broken: something is wrong
+#   pending     unverified, repairing: not proven yet, or being put right
+
+HEALTH_STATES = ("healthy", "degraded", "unavailable_by_configuration", "unavailable_by_hardware",
+                 "misconfigured", "blocked_by_policy", "broken", "repairing", "unverified")
+GROUPS = ("working", "off", "attention", "pending")
+_GROUP_OF = {"healthy": "working",
+             "unavailable_by_configuration": "off", "unavailable_by_hardware": "off",
+             "blocked_by_policy": "off",
+             "degraded": "attention", "misconfigured": "attention", "broken": "attention",
+             "unverified": "pending", "repairing": "pending"}
+#: Capabilities that reach the web, and those that reach the owner's Google
+#: account: safe mode and a revocation of authority keep them off.
+_WEB_KEYS = frozenset({"brave", "firecrawl", "duckduckgo"})
+_UNCHECKED = "whether a rule keeps it off could not be checked"
+_ACCOUNT_KEYS = frozenset({"google"})
+
+
 @dataclass(frozen=True)
 class CapabilityState:
     key: str
@@ -63,6 +92,7 @@ class CapabilityState:
     needs: tuple = field(default_factory=tuple)   # env vars / settings keys
     fix: str = ""                                  # one sentence, user-facing
     detail: str = ""                               # what was observed
+    health: str = ""                               # a probe's own health state, if finer
 
     def line(self) -> str:
         word = _WORDS.get(self.state, self.state)
@@ -173,7 +203,8 @@ def google_accounts_state() -> CapabilityState:
                                f"{names}; reconnect under {fix}")
     if s.get("degraded"):
         return CapabilityState("google", label, PRESENT_FAILING, (), "",
-                               f"{s['healthy']} of {s['total']} working; broken: {names}")
+                               f"{s['healthy']} of {s['total']} working; broken: {names}",
+                               health="degraded")
     return CapabilityState("google", label, WORKING, (), "",
                            f"all {s['total']} account(s) connected and working")
 
@@ -192,10 +223,60 @@ def snapshot() -> list:
     return out
 
 
+def _policy_hold(key: str) -> str:
+    """Why a policy keeps this capability off right now, or ""."""
+    try:
+        from agent_friday.services import safe_mode
+        if key in _WEB_KEYS:
+            why = safe_mode.refusal("web")
+            if why:
+                return why
+        if key in _ACCOUNT_KEYS:
+            why = safe_mode.refusal("connector_reads")
+            if why:
+                return why
+            from agent_friday.services import authority
+            why = authority.hold_reason()
+            if why:
+                return why
+    except Exception as e:  # noqa: BLE001 - a check that cannot run is said
+        return _UNCHECKED + " (%s)" % type(e).__name__
+    return ""
+
+
+def health_of(c: CapabilityState) -> tuple:
+    """(health state, why) for one capability, in the nine states."""
+    hold = _policy_hold(c.key)
+    if hold.startswith(_UNCHECKED):
+        return "unverified", hold
+    if hold:
+        return "blocked_by_policy", hold
+    if c.health in HEALTH_STATES:
+        return c.health, c.detail
+    if c.state == WORKING:
+        return "healthy", c.detail
+    if c.state == PRESENT_UNVERIFIED:
+        return "unverified", c.detail
+    if c.state == PRESENT_FAILING:
+        return "broken", c.detail
+    if c.state == UNCONFIGURED:
+        return "unavailable_by_configuration", c.fix or c.detail
+    if c.state == ABSENT:
+        # not installed is a choice; a module or store that could not be read is a failure
+        if c.detail.startswith(("module unavailable", "could not be read", "account store unreadable")):
+            return "broken", c.detail
+        return "unavailable_by_configuration", c.detail
+    return "unverified", c.detail
+
+
 def as_dicts() -> list:
-    return [{"key": c.key, "label": c.label, "state": c.state,
-             "needs": list(c.needs), "fix": c.fix, "detail": c.detail}
-            for c in snapshot()]
+    out = []
+    for c in snapshot():
+        health, why = health_of(c)
+        out.append({"key": c.key, "label": c.label, "state": c.state,
+                    "needs": list(c.needs), "fix": c.fix, "detail": c.detail,
+                    "health": health, "health_why": why, "group": _GROUP_OF[health]})
+    return out
 
 
 RULE = (
