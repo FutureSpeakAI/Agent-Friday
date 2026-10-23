@@ -2,8 +2,11 @@
 
 A connector's contract says, per operation Friday can perform through it: the tool name,
 the service, whether it only reads or changes something at the provider, the provider
-permission (OAuth scope) it needs, and its action class at Friday's checkpoint
-(governance/action_gate). The connect card and GET /api/google/accounts/contract read it;
+permission (OAuth scope) it needs (`scopes` lists the permissions any one of which lets it
+run, or the ones it needs for the kind of file it reads), and its action class at Friday's
+checkpoint (governance/action_gate). GET /api/google/accounts/contract serves it (no screen reads
+it yet); answer_card, which carries out cards the operations below raised, is not an operation of
+its own;
 tests/unit/test_google_connector_contract.py fails when the code and the declaration drift
 apart (a Google tool with no declaration, a change declared as a read, an action class the
 checkpoint does not give, a change permission asked for on an ordinary connect).
@@ -36,9 +39,12 @@ _CAL_WRITE = [CALENDAR_RW, CALENDAR_EVENTS]      # either one allows the change
 
 
 def _op(tool: str, service: str, access: str, scopes: List[str], action_class: str,
-        note: str = "") -> Dict[str, Any]:
-    return {"tool": tool, "service": service, "access": access, "scopes": list(scopes),
-            "action_class": action_class, "note": note}
+        note: str = "", *, by_argument: bool = False, send_scopes: List[str] = ()) -> Dict[str, Any]:
+    out = {"tool": tool, "service": service, "access": access, "scopes": list(scopes),
+           "action_class": action_class, "note": note, "by_argument": bool(by_argument)}
+    if send_scopes:
+        out["send_scopes"] = list(send_scopes)
+    return out
 
 
 GOOGLE_OPERATIONS: List[Dict[str, Any]] = [
@@ -61,8 +67,13 @@ GOOGLE_OPERATIONS: List[Dict[str, Any]] = [
     _op("career_inbox", "gmail", "read", [GMAIL_READ], "internal"),
     _op("draft_email", "gmail", "write", [GMAIL_MODIFY], "internal",
         "saves a draft in the owner's own mailbox; with send=true it sends (gmail.send) and "
-        "is outward, by its arguments"),
-    _op("organize_email", "gmail", "write", [GMAIL_MODIFY], "outward"),
+        "is outward, by its arguments", send_scopes=[GMAIL_SEND]),
+    _op("organize_email", "gmail", "write", [GMAIL_MODIFY], "outward",
+        "read/unread, star and label changes run without a card (item_actions EMAIL_NO_CARD); "
+        "archive, trash, spam, mute and unsubscribe wait for one"),
+    _op("check_email", "gmail", "read", [GMAIL_READ], "internal", "the voice path's mail read"),
+    _op("undo_action", "gmail", "write", [GMAIL_MODIFY] + _CAL_WRITE, "outward",
+        "classified by the receipt it undoes: outward for mail and calendar changes", by_argument=True),
     _op("list_sending_accounts", "gmail", "read", [], "internal",
         "reads which accounts may send from Friday's own record; no call to Google"),
     # Drive, Docs, Sheets
@@ -88,14 +99,11 @@ GOOGLE_CHANGE_SCOPES = [GMAIL_SEND, GMAIL_MODIFY, CALENDAR_RW, CALENDAR_EVENTS, 
 
 
 def google_contract() -> Dict[str, Any]:
-    """The Google connector's declaration, as the connect card and the API show it."""
+    """The Google connector's declaration, as GET /api/google/accounts/contract serves it."""
     reads = [o for o in GOOGLE_OPERATIONS if o["access"] == "read"]
     writes = [o for o in GOOGLE_OPERATIONS if o["access"] == "write"]
-    try:
-        from agent_friday.services import google_accounts as ga
-        connect_scopes = list(ga.GOOGLE_MULTI_SCOPES)
-    except Exception:
-        connect_scopes = []
+    from agent_friday.services import google_accounts as ga
+    connect_scopes = list(ga.GOOGLE_MULTI_SCOPES)
     return {
         "connector": "google",
         "connect_scopes": connect_scopes,
