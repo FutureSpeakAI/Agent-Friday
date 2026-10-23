@@ -90,10 +90,30 @@ def test_the_offer_turns_nothing_on(fb, monkeypatch):
     assert calls == []
 
 
-def test_a_planted_state_file_is_read_with_its_fields_checked(fb):
-    _setup_done(fb)
+def _plant(fb, **d):
     fb._path().parent.mkdir(parents=True, exist_ok=True)
-    fb._path().write_text(json.dumps({"asked": 99, "last_asked": time.time() + 10 ** 9,
-                                      "answer": "whatever"}), encoding="utf-8")
+    fb._path().write_text(json.dumps(d), encoding="utf-8")
+
+
+def test_a_planted_count_is_held_to_its_bounds(fb):
+    _setup_done(fb)
+    _plant(fb, asked=99, answer="whatever")
     s = fb.status()
-    assert s["asked"] == 0 and s["answer"] is None and s["due"] is True
+    assert s["asked"] == fb.MAX_ASKS and s["answer"] is None and s["why"] == "asked_enough"
+    _plant(fb, asked=-5)
+    assert fb.status()["asked"] == 0
+
+
+def test_a_time_ahead_of_the_clock_counts_as_now(fb):
+    _setup_done(fb)
+    _plant(fb, asked=1, last_asked=time.time() + 10 ** 9)
+    assert fb.status()["why"] == "asked_recently"
+
+
+def test_a_state_file_that_cannot_be_written_raises_no_card(fb, monkeypatch):
+    _setup_done(fb)
+
+    def no_room(st):
+        raise OSError(28, "no space")
+    monkeypatch.setattr(fb, "_save", no_room)
+    assert fb.tick() is None and fb.pushed == []
