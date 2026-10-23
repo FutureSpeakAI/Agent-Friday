@@ -258,3 +258,33 @@ def test_receipts_carry_no_undo_data(home, tmp_path):
 def test_a_cloud_synced_folder_is_recognised(path, synced):
     from agent_friday.services import readable_export
     assert readable_export.cloud_synced(Path(path)) is synced
+
+
+def test_a_key_in_a_conversation_title_names_no_file(home, tmp_path):
+    p = home / "conversations" / "c1" / "conversation.json"
+    p.write_text(json.dumps({"id": "c1", "title": PROJ, "created_at": time.time()}), encoding="utf-8")
+    f = Path(_run(home, tmp_path, only=["conversations"])["folder"])
+    for q in f.rglob("*"):
+        assert PROJ not in q.name, q
+    assert PROJ not in (f / "manifest.json").read_text(encoding="utf-8")
+
+
+def test_receipt_lines_stay_json_and_carry_no_key(home, tmp_path):
+    from agent_friday.services import action_ledger
+    action_ledger.append("action", {"summary": "sent", "detail": {"note": "key " + PROJ, "list": [PROJ]}})
+    f = Path(_run(home, tmp_path, only=["receipts"])["folder"])
+    lines = (f / "receipts" / "receipts.jsonl").read_text(encoding="utf-8").splitlines()
+    assert lines and all(json.loads(x) for x in lines)
+    assert all(PROJ not in x for x in lines)
+
+
+def test_settings_that_are_not_secrets_stay_as_they_are(home, tmp_path):
+    (home / "settings.json").write_text(json.dumps({"auth_mode": "oauth", "author": "Sam", "max_tokens": 4096,
+                                                    "session_timeout": 30, "oauth_provider": "google",
+                                                    "auth_token": "plain-token-value-12345"}),  # pragma: allowlist secret
+                                        encoding="utf-8")
+    f = Path(_run(home, tmp_path, only=["settings"])["folder"])
+    s = json.loads((f / "settings" / "settings.json").read_text(encoding="utf-8"))
+    assert s["auth_mode"] == "oauth" and s["author"] == "Sam" and s["max_tokens"] == 4096
+    assert s["session_timeout"] == 30 and s["oauth_provider"] == "google"
+    assert s["auth_token"] in ("", "(blanked)")          # the bundle's scrubber blanks to ""

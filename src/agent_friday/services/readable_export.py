@@ -45,7 +45,10 @@ CATEGORIES = ("wiki", "memories", "conversations", "goals", "receipts", "contact
 
 #: A key name that may hold a credential (anywhere in the name, any case).
 _SECRET_NAME = re.compile(r"(?i)(secret|token|passw|passphrase|pwd|api.?key|apikey|private.?key|"
-                          r"credential|auth|bearer|cookie|session|webhook|signing|_pat$|^pat$|_pass$|^pass$)")
+                          r"credential|auth_?(?:token|key|header)|authorization|bearer|cookie|"
+                          r"session_?(?:id|key|token)|webhook|signing|_pat$|^pat$|_pass$|^pass$)")
+#: Fields of a ledger entry that are its chain, not its content.
+_CHAIN_FIELDS = frozenset({"v", "seq", "ts", "t", "kind", "principal", "kid", "prev", "hash", "sig"})
 #: Values that carry a credential whatever their name: a webhook, a token or
 #: key in a query, a user and password in a URL.
 _SECRET_VALUE = re.compile(r"(?i)(hooks\.slack\.com/|discord(?:app)?\.com/api/webhooks/|"
@@ -95,10 +98,21 @@ def _scrub_text(text: str, whole: bool = False) -> str:
     return pasted_secrets.withhold(text, whole=whole)[0]
 
 
+def _blank_strings(obj):
+    """Every string inside obj blanked; numbers, switches and shape kept."""
+    if isinstance(obj, str):
+        return BLANKED if obj else obj
+    if isinstance(obj, dict):
+        return {k: _blank_strings(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_blank_strings(v) for v in obj]
+    return obj
+
+
 def _scrub_value(obj, key=None):
     """Blank what may be a credential in a parsed document."""
     if key is not None and isinstance(key, str) and _SECRET_NAME.search(key):
-        return BLANKED if obj not in (None, "", [], {}) else obj
+        return _blank_strings(obj)
     if isinstance(obj, dict):
         return {k: _scrub_value(v, k) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -121,7 +135,12 @@ class _Out:
         self.files: dict = {}
 
     def write(self, rel: str, text: str) -> None:
-        text = _scrub_text(text)
+        # a name taken from a title or a page can carry a key too
+        rel = _scrub_text(rel)
+        if not rel.endswith((".json", ".jsonl")):
+            # JSON is scrubbed value by value before it is written: a text
+            # pass over it could cut a string and break the file
+            text = _scrub_text(text)
         p = self.root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         data = text.encode("utf-8")
@@ -235,6 +254,7 @@ def _conversations(out: _Out, notes: list) -> int:
         if not msgs:
             continue
         title = conv.get("title") or "Untitled"
+        title = _scrub_text(str(title), whole=True)
         name = "%s %s" % (_when(conv.get("created_at") or msgs[0].get("ts"))[:10] or "undated", _safe(title))
         base, k = name, 2
         while name.lower() in used:
@@ -299,13 +319,17 @@ def _goals(out: _Out, notes: list) -> int:
 
 
 def _public(e: dict) -> dict:
-    """An entry as the Ledger shows it: no undo data, credentials blanked."""
-    e = dict(e)
-    rec = e.get("rec")
-    if isinstance(rec, dict):
-        rec = {k: v for k, v in rec.items() if k != "undo"}
-        e["rec"] = _scrub_value(rec)
-    return e
+    """An entry as the Ledger shows it: no undo data, credentials blanked in
+    every field but the chain's own (seq, hash, signature and the rest)."""
+    out = {}
+    for k, v in e.items():
+        if k in _CHAIN_FIELDS:
+            out[k] = v
+        elif k == "rec" and isinstance(v, dict):
+            out[k] = _scrub_value({rk: rv for rk, rv in v.items() if rk != "undo"})
+        else:
+            out[k] = _scrub_value(v, k)
+    return out
 
 
 def _receipts(out: _Out, notes: list) -> int:
@@ -445,6 +469,7 @@ def export(dest_parent: Path, *, only: Optional[list] = None, by: str = "owner")
         except Exception as e:  # noqa: BLE001 - one category never stops the rest
             counts[c] = 0
             notes.append("%s: could not be exported (%s)" % (c, type(e).__name__))
+    notes = [_scrub_text(n) for n in notes]          # page and folder names can carry a key
     readme = ["# Your Friday data, in plain files", "",
               "Made %s. Every file opens without Friday: Markdown (.md) in any text editor, "
               ".csv in a spreadsheet, .json and .jsonl in any text editor." % time.strftime("%Y-%m-%d %H:%M"),
@@ -452,8 +477,9 @@ def export(dest_parent: Path, *, only: Optional[list] = None, by: str = "owner")
     readme += ["- **%s**: %d" % (c, counts.get(c, 0)) for c in cats]
     readme += ["", "## Never in an export", "",
                "- Friday's credential files: account tokens, stored API keys, Friday's own keys.",
-               "- Values that look like a password, key or token, wherever they appear: they read "
-               "\"%s\" or are withheld." % BLANKED,
+               "- Values under a name such as password, token or API key, and keys of the kinds "
+               "Friday recognises wherever they appear: they read \"%s\" or are withheld. "
+               "Other text is copied as it is, so check before you share this folder." % BLANKED,
                "- Files that link outside Friday's data folder.",
                "- Messages said off the record (Friday never saves them).",
                "", "manifest.json lists every file with its SHA-256, so you can check nothing changed.",
