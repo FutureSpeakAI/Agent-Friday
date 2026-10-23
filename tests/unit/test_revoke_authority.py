@@ -53,9 +53,8 @@ def test_revoking_all_authority_takes_everything_back_and_holds(home, monkeypatc
     assert revoked_sends == ["sg-1"]
     v = _outward()
     assert v.action == "deny" and "revoked all action authority" in v.reason
-    read = action_gate.authorize("gmail_search", {"query": "x"}, {"is_background_task": True})
-    if action_gate.classify("gmail_search", {"query": "x"})[0] == action_gate.OBSERVE:
-        assert read.action == "deny" and "revoked" in read.reason
+    read = action_gate.authorize("search_email", {"query": "x"}, {"is_background_task": True})
+    assert read.action == "deny" and "revoked" in read.reason, read
     kinds = [e["rec"]["event"] for e in L.entries(["authority"], newest_first=False)]
     assert kinds[:2] == ["revoked", "revoked_detail"]
 
