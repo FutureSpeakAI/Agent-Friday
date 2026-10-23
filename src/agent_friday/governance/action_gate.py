@@ -1111,8 +1111,9 @@ _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
                             "plan_version")
 
 
-def _receipt(entry: dict) -> None:
-    """Sign and append. Raises on failure, so the caller can hold the action."""
+def _receipt(entry: dict) -> dict:
+    """Sign and append; returns the ledger entry. Raises on failure, so the
+    caller can hold the action."""
     try:
         from agent_friday.services import off_record as _off
         if _off.active():
@@ -1128,7 +1129,41 @@ def _receipt(entry: dict) -> None:
     # the action runs. The entry keeps its own HMAC as well, so a decision can
     # still be checked on its own (verify_receipt).
     from agent_friday.services import action_ledger
-    action_ledger.append("decision", entry, durable=True)
+    return action_ledger.append("decision", entry, durable=True)
+
+
+#: The checkpoint's last decision in this context (set by authorize only):
+#: the governance hook stores it on the call, so the call's outcome names the
+#: exact decision it carried out (north star §18.9, NS-34.17-7).
+LAST_RECEIPT: ContextVar = ContextVar("friday_last_decision_receipt", default=None)
+
+#: Outcome statuses an outcome entry may carry.
+OUTCOMES = ("ok", "error", "refused", "held")
+
+
+def record_outcome(tool: str, decision: Optional[dict], status: str, *,
+                   approval: Optional[str] = None, duration_ms: Optional[float] = None,
+                   detail: str = "") -> None:
+    """The terminal receipt of an outward or reading action: what happened
+    after the decision (it ran: ok or error; the handler refused; a later
+    check held it), linked to the decision's seq and hash. `detail` is a
+    fixed code, never free text, and is left out off the record. Never raises."""
+    try:
+        from agent_friday.services import action_ledger
+        try:
+            from agent_friday.services import off_record as _off
+            if _off.active():
+                detail = ""
+        except Exception:
+            pass
+        action_ledger.try_append("outcome", {
+            "tool": tool, "status": status if status in OUTCOMES else "error",
+            "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
+            "approval": approval or (decision or {}).get("approval"),
+            "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
+            "detail": str(detail or "")[:120]})
+    except Exception:
+        pass
 
 
 def receipts_path() -> Path:
@@ -1205,7 +1240,7 @@ def _interactive(ctx: dict) -> bool:
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
               *, tainted: bool = False, clean: bool = False,
-              grant_tainted: Optional[bool] = None) -> Verdict:
+              grant_tainted: Optional[bool] = None, via: str = "") -> Verdict:
     """Decide whether this action may run now. Never raises.
 
     `tainted`: a detail came from outside content badly enough to need a card.
@@ -1250,8 +1285,11 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
+        _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
+                  # "tool_call": the governance hook of _execute_tool, whose
+                  # call writes an outcome (services/receipt_audit expects one)
+                  "via": via or None,
                   "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
                                                          default=str).encode()).hexdigest(),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
@@ -1264,6 +1302,9 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "chosen_by": _chosen_by(ctx),
                   "plan_version": _plan_version(),
                   "turn_id": _turn_id()})
+        _out = _out if isinstance(_out, dict) else {}
+        LAST_RECEIPT.set({"seq": _out.get("seq"), "hash": _out.get("hash"), "tool": tool_name,
+                          "class": v.klass, "decision": v.action})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
@@ -1334,12 +1375,18 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     if tool_name in SAFE_MODE_HELD_TOOLS:
         try:
             from agent_friday.services import safe_mode as _sm
-            _why = _sm.refusal("connectors") if _sm.active() else None
-        except Exception:
-            _why = None
+            _why = _sm.refusal("connectors") if _sm.active() else _authority_hold()
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
+        if str(tool_name).lower().startswith("mcp_"):
+            # a connector tool judged internal (a clean read under the card
+            # setting) still reaches a connected service
+            _why = _authority_hold()
+            if _why:
+                return Verdict("deny", klass, f"held: {_why}")
         if tainted and _own_mailbox_draft(tool_name, args):
             # A recipient read in an email is the normal case for a reply. The
             # draft reaches nobody; the send that could is asked separately.
@@ -1350,9 +1397,9 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         # a connected service is held too.
         try:
             from agent_friday.services import safe_mode as _sm
-            _why = _sm.refusal("connector_reads")
-        except Exception:
-            _why = None
+            _why = _sm.refusal("connector_reads") or _authority_hold()
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
         # A read at a connected service: runs unasked, receipted as observe.
@@ -1418,7 +1465,9 @@ def outward_hold() -> Optional[str]:
       north star §27.6);
     * the action ledger has a break the owner has not looked at
       (services/action_ledger.hold_reason): a receipt changed, removed or
-      reordered on disk.
+      reordered on disk;
+    * the owner revoked all action authority (services/authority.py) and
+      has not restored it.
 
     A check that cannot run holds: the reason names what failed."""
     try:
@@ -1439,7 +1488,18 @@ def outward_hold() -> Optional[str]:
         why = action_ledger.hold_reason()
     except Exception as e:  # noqa: BLE001 - fail closed
         why = "the action ledger could not be checked (%s)" % type(e).__name__
-    return why or None
+    if why:
+        return why                       # a break is named first: it is the true reason
+    return _authority_hold() or None
+
+
+def _authority_hold() -> Optional[str]:
+    """The owner revoked all action authority (services/authority.py)."""
+    try:
+        from agent_friday.services import authority
+        return authority.hold_reason()
+    except Exception as e:  # noqa: BLE001 - fail closed
+        return "the owner's revocation of authority could not be checked (%s)" % type(e).__name__
 
 
 class Held(RuntimeError):
@@ -1519,6 +1579,12 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         ok, integrity = verify_claws()
         if not ok:
             return Verdict("deny", OUTWARD, f"held: {integrity}")
+        # the same hold every outward action takes (safe mode, a restore, the
+        # owner's revocation of authority, a ledger break): before any card
+        # is looked up or raised, so an approved card cannot slip past it
+        hold = outward_hold()
+        if hold:
+            return Verdict("deny", OUTWARD, f"held: {hold}")
         subject = external_subject(action, detail)
         rec = None
         if approval_id:

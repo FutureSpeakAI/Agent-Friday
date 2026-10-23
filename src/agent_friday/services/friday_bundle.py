@@ -115,7 +115,7 @@ _EXCLUDED_TOPS = {"runtime", "local_voice", "models", "cache", "backups", "logs"
                   "browser-sessions"}
 #: Exact paths (and folders) never carried, relative, POSIX, lower case.
 _EXCLUDED_PATHS = {"vault/.governance-key", "vault/.attestation-key-ed25519",
-                   "vault/.attestation-key-ed25519.pub", "vault/.action-ledger-anchor",
+                   "vault/.attestation-key-ed25519.pub", "vault/.action-ledger-anchor", "vault/.bundle-schedule-passphrase",
                    "secret_key", "friday_server.lock", "friday_server.pid",
                    "friday_server.port", "startup-report.json", "friday.log",
                    "server_stderr.log", "ledger/.lock", "phone/secrets",
@@ -583,6 +583,11 @@ def create(out: Path, passphrase: str, *, home: Optional[Path] = None,
     home = Path(home or friday_home())
     if len(passphrase or "") < MIN_PASSPHRASE:
         raise BundleError("The bundle passphrase must be at least %d characters." % MIN_PASSPHRASE)
+    from agent_friday.services import passphrase_strength
+    weak = passphrase_strength.refusal(passphrase)
+    if weak:
+        # the bundle carries the vault passphrase and the governance key
+        raise BundleError(weak)
     cats = [c for c in categories if c in CATEGORIES]
     if not cats:
         raise BundleError("Choose at least one category.")
@@ -698,6 +703,11 @@ def _add_ledger(tar, home: Path, ledger_files, manifest_files) -> Optional[dict]
     state = None
     lock = action_ledger._FileLock(home / "ledger" / action_ledger.LOCK_NAME)
     with lock:
+        if ledger_files:
+            # listed again under the lock: an archive step (A22) that ran since
+            # the plan moved a segment into ledger/archive/
+            ledger_files = [(r, c) for r, c in plan(home, {"receipts"})["files"]
+                            if r.parts[0].lower() == "ledger"]
         for rel, cat in ledger_files:
             got = _add_file(tar, "home/" + rel.as_posix(), home / Path(*rel.parts))
             if got is None:
@@ -705,6 +715,10 @@ def _add_ledger(tar, home: Path, ledger_files, manifest_files) -> Optional[dict]
             manifest_files.append({"path": rel.as_posix(), "size": got[0],
                                    "sha256": got[1], "category": cat})
         try:
+            if os.path.normcase(os.path.abspath(str(action_ledger.ledger_dir()))) == \
+                    os.path.normcase(os.path.abspath(str(home / "ledger"))):
+                seq, tip = action_ledger._read_tip_locked()
+                return {"last_seq": seq, "tip": tip} if seq else None
             live = home / "ledger" / action_ledger.LIVE_NAME
             last = None
             if live.exists():

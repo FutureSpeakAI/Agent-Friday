@@ -206,14 +206,15 @@ def checkpoint(action: str, target: str, *, approval: Optional[dict] = None) -> 
     # so they take the same two steps here and hold if either fails.
     try:
         from agent_friday.governance import action_gate as _gate
-        ok, why = _gate.verify_claws()
-        if not ok:
-            refuse("held: the cLaws integrity check failed (%s)" % why)
-        _gate._receipt({"tool": "phone:%s" % action, "class": _gate.OUTWARD,
-                        "decision": "allow", "surface": "phone",
-                        "reason": "approved card" if approval else "phone checkpoint",
-                        "approval": (approval or {}).get("approval_id"),
-                        "target": mask(target)})
+        # the same steps every outward executor takes (action_gate.record_external):
+        # the cLaws intact, no hold (safe mode, a ledger break, a restore), then
+        # the signed receipt
+        try:
+            _gate.record_external("phone:%s" % action, surface="phone",
+                                  approval_id=(approval or {}).get("approval_id"),
+                                  target=mask(target))
+        except _gate.Held as h:
+            refuse("held: %s" % h)
     except PhoneRefused:
         raise
     except Exception as e:

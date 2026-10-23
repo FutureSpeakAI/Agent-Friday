@@ -24,7 +24,7 @@ import pytest
 
 from agent_friday.governance import proof_of_integrity as poi
 
-PASS = "correct horse battery staple 42"   # pragma: allowlist secret
+PASS = "orbit lantern pepper tundra violet 42"   # pragma: allowlist secret
 VAULT_PASS = "vault passphrase for the test"  # pragma: allowlist secret
 
 

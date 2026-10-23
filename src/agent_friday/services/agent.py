@@ -13722,6 +13722,33 @@ def _web_task_scope(fn):
     return dispatch
 
 
+def _outcome_recorder(name, decision, ctx):
+    """The outcome receipt for one call: written once, only for a call whose
+    checkpoint decided an outward or reading action (or that runs on the
+    owner's approved card), linked to that decision. Internal calls get none."""
+    from agent_friday.governance import action_gate as _g
+    approved = ctx.meta.get("owner_decided")
+    approval = None
+    if isinstance(approved, dict):
+        approval = approved.get("approval_id") or approved.get("id")
+    elif isinstance(approved, str):
+        approval = approved
+    klass = (decision or {}).get("class")
+    wanted = klass in (_g.OUTWARD, _g.OBSERVE) or bool(approval)
+    if (decision or {}).get("decision") == "deny" and not approval:
+        wanted = False                    # the decision itself says nothing ran
+    done = []
+
+    def _write(status, detail=""):
+        if done or not wanted:
+            return
+        done.append(status)
+        t0 = ctx.meta.get("t_start")
+        _g.record_outcome(name, decision, status, approval=approval,
+                          duration_ms=((_time.time() - t0) * 1000.0) if t0 else None, detail=detail)
+    return _write
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
@@ -13853,7 +13880,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
 
     # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
     # A DENY short-circuits; the deny message is what the model sees as the result.
+    # The governance hook keeps the decision it wrote on the call, so the
+    # call's outcome receipt names it (governance/action_gate.record_outcome).
     verdict = _hooks.run_pre_hooks(ctx)
+    _outcome = _outcome_recorder(name, ctx.meta.get("decision_receipt"), ctx)
     # Trusted hooks can restore a deferred Crew task's identity. Handlers and
     # subsequent checks use that scope, while the original host origin stays fixed.
     if _host_scoped:
@@ -13861,9 +13891,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     session_ctx = ctx.session_ctx
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
+        _outcome("held", "crew_host")
         return _own(_crew_denial)
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
+        _outcome("held", "pre_hook")              # a later check held what the checkpoint allowed
         return _own(verdict.reason)
 
     # Say what is about to happen BEFORE it happens, and only once it will
@@ -13962,15 +13994,18 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _CURRENT_CONVERSATION.reset(_tok)
         _crew_denial = _host_action_denial(name, session_ctx)
         if _crew_denial:
+            _outcome("ok", "ran; the crew host withheld the result")
             return _crew_denial
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
         _crew_denial = _host_action_denial(name, session_ctx)
         if _crew_denial:
+            _outcome("error", type(e).__name__)
             return _crew_denial
         traceback.print_exc()
         _receipts.record(name, ok=False, detail=str(e))
+        _outcome("error", type(e).__name__)
         return ExceptionText(f"Tool error ({name}): {e}")
 
     # Receipt written only after the handler actually returned. This is the
@@ -13980,8 +14015,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     if _refused:
         _receipt_credential_refusal(name, ctx.input, "refused by the handler")
         _receipts.record(name, ok=False, denied=True, detail=result)
+        _outcome("refused", "credential refusal")
     else:
         _receipts.record(name, ok=True)
+        _outcome("ok", "")
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
@@ -14689,9 +14726,15 @@ def _hook_governance(ctx):
     # the owner pre-approved does not stop the grant (`_taint_clean` checks
     # every other flag); everywhere else the flag stands as it is.
     _clean = _taint_clean(d, key, ctx.session_ctx)
-    v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
-                        tainted=(d.action == "ask"), clean=_clean,
-                        grant_tainted=(d.action == "ask" and not _clean))
+    _lr = _gate.LAST_RECEIPT.set(None)
+    try:
+        v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
+                            tainted=(d.action == "ask"), clean=_clean,
+                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call")
+        # this call's own decision, for its outcome receipt (_outcome_recorder)
+        ctx.meta["decision_receipt"] = _gate.LAST_RECEIPT.get()
+    finally:
+        _gate.LAST_RECEIPT.reset(_lr)
     ctx.meta["governance"] = v
     if (v.detail or {}).get("grant_withheld"):
         # A pre-approval names these recipients but the call drew on outside

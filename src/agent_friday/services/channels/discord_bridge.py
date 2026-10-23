@@ -79,7 +79,11 @@ class DiscordBridge(ChannelAdapter):
             reply = self._handler(self.name, chat_id, message.content or "") \
                 if self._handler else None
             if reply:
-                await message.channel.send(reply[:2000])
+                # the same door as every other send: the egress gate and the
+                # action checkpoint's receipt (base.prepare_outbound)
+                gated = self.prepare_outbound(chat_id, reply)
+                if gated:
+                    await message.channel.send(gated[:2000])
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

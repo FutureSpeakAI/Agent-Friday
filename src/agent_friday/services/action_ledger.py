@@ -68,6 +68,24 @@ moved whole to ``ledger/quarantine/`` and a ``legacy_reappeared`` entry is a
 break the owner must look at. Planting an old-format file can never put
 "history" into the ledger.
 
+Two years live, then archived (amendment A22)
+-------------------------------------------
+Entries older than ``ledger_archive_after_days`` (Settings; 730 by default; 0
+turns archiving off) leave the live files that Activity and the Ledger read day
+to day. Whole sealed segments only: the live file is sealed when a new
+calendar month begins, so a segment holds at most one month and an entry stays
+live at most about a month past the period, never less. An archived segment is
+encrypted (AES-256-GCM, a key derived from the ledger key) into
+``ledger/archive/actions-NNNNNN.jsonl.enc`` and listed in a signed
+``ledger/archive/manifest.json`` (first and last seq, the link into it, its last
+hash, record count, SHA-256 of the plain and the encrypted file). Nothing is
+deleted: every Friday Bundle and backup carries the archive. ``verify()``
+starts the chain from the manifest's last hash, so a missing, edited or
+substituted archive file, an edited manifest, or a live ledger cut at the
+boundary is a break like any other; a forced check decrypts every archived
+file and walks its chain. ``entries(archive=True)`` (and every strict reader,
+such as revocations) reads the archive too.
+
 Tests: with ``FRIDAY_TESTING=1`` the directory may be moved with
 ``FRIDAY_LEDGER_DIR`` (the root conftest gives every test its own) and the
 anchor lives in this process's memory. The real app ignores both.
@@ -103,6 +121,14 @@ ANCHOR_EVERY_S = 30.0
 MAX_PROBLEMS = 50
 #: Entries that are themselves a break the owner must look at.
 FLAG_KINDS = ("truncation_detected", "torn_tail", "legacy_reappeared")
+#: The archive (amendment A22).
+ARCHIVE_DIR = "archive"
+ARCHIVE_MANIFEST = "manifest.json"
+ARCHIVE_SETTING = "ledger_archive_after_days"
+DEFAULT_ARCHIVE_AFTER_DAYS = 730
+MIN_ARCHIVE_AFTER_DAYS = 30
+_ARCHIVE_INFO = b"agent-friday/action-ledger/archive/v1"
+_ARCHIVE_MAGIC = b"FRIDAYLEDGERARCHIVE\x01"
 
 ANCHOR_SERVICE = "agent-friday"
 _KEY_INFO = b"agent-friday/action-ledger/v1"
@@ -116,7 +142,8 @@ _STATE: dict[str, Any] = {}
 def _fresh_state(d: Optional[str]) -> dict:
     return {"dir": d, "tip": None, "verified": None, "full_at": 0.0,
             "migrated": False, "seg_cache": {}, "max_seen": 0,
-            "anchor_at": 0.0, "anchor_seq": None}
+            "anchor_at": 0.0, "anchor_seq": None, "live_first": None,
+            "arch_rows": {}, "arch_cache": {}}
 
 
 _STATE.update(_fresh_state(None))
@@ -260,11 +287,28 @@ def entry_ok(e: dict, key: Optional[bytes]) -> bool:
 # ── The anchor outside the data folder ──────────────────────────────────────
 
 def _anchor_account() -> str:
-    try:
-        where = str(ledger_dir().resolve())
-    except OSError:
-        where = str(ledger_dir())
+    """One keychain account per data folder, named from the folder as Friday
+    is configured to use it: never from where a link or junction points, so
+    a junction swapped in for ledger/ cannot pick another (empty) account."""
+    where = os.path.normcase(os.path.abspath(str(ledger_dir())))
     return "action-ledger:" + hashlib.sha256(where.encode("utf-8")).hexdigest()[:16]
+
+
+def _is_link(p: Path) -> bool:
+    """A symlink or (on Windows) a junction or other reparse point."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    import stat as _st
+    if _st.S_ISLNK(st.st_mode):
+        return True
+    if not getattr(st, "st_file_attributes", 0) & 0x400:
+        return False
+    tag = getattr(st, "st_reparse_tag", None)
+    # a name surrogate (symlink, junction, mount point) points elsewhere;
+    # cloud-file and dedup tags do not
+    return True if tag is None else bool(tag & 0x20000000)
 
 
 def _anchor_file() -> Path:
@@ -508,9 +552,9 @@ def _reverse_lines(path: Path) -> Iterator[bytes]:
             rest = parts[0]
             for line in reversed(parts[1:]):
                 if line.strip():
-                    yield line.rstrip(b"\r")
+                    yield line[:-1] if line.endswith(b"\r") else line
         if rest.strip():
-            yield rest.rstrip(b"\r")
+            yield rest[:-1] if rest.endswith(b"\r") else rest
 
 
 def _safe_json(raw: bytes):
@@ -522,7 +566,7 @@ def _safe_json(raw: bytes):
 
 def _read_tip_locked() -> tuple[int, str]:
     """The newest (seq, hash) on disk: the last line that reads as an entry."""
-    for p in reversed(segments()):
+    for p in reversed(_reader_segments()):
         skip_first = not _ends_cleanly(p)
         try:
             for raw in _reverse_lines(p):
@@ -534,6 +578,9 @@ def _read_tip_locked() -> tuple[int, str]:
                     return e["seq"], e["hash"]
         except OSError:
             continue
+    tail = _manifest_tail(_read_manifest())
+    if tail:
+        return tail
     return 0, GENESIS
 
 
@@ -631,7 +678,12 @@ def _repair_torn_tail_locked(live: Path) -> Optional[dict]:
 def _seal_live_locked(d: Path, live: Path) -> None:
     sd = d / SEGMENTS_DIR
     sd.mkdir(parents=True, exist_ok=True)
-    n = max([_segment_index(p) for p in sd.glob("actions-*.jsonl")] + [0]) + 1
+    ad = d / ARCHIVE_DIR
+    used = [_segment_index(p) for p in sd.glob("actions-*.jsonl")]
+    if ad.is_dir():
+        used += [_segment_index(Path(p.name[:-len(".enc")])) for p in ad.glob("actions-*.jsonl.enc")]
+    used += [_segment_index(Path(n)) for n in _covered_names()]
+    n = max(used + [0]) + 1
     for _ in range(1000):
         dst = sd / f"actions-{n:06d}.jsonl"
         try:
@@ -667,8 +719,9 @@ def _append_locked(key: bytes, items: list, durable: bool) -> dict:
     else:
         seq, prev = tip[0], tip[1]
     try:
-        if live.exists() and live.stat().st_size >= SEGMENT_MAX:
+        if live.exists() and (live.stat().st_size >= SEGMENT_MAX or _new_month_locked(live)):
             _seal_live_locked(d, live)
+            _STATE["live_first"] = None
     except OSError:
         pass                                   # sealed next time
     # the file stats a cached verify result covers: only worth reading when
@@ -751,35 +804,113 @@ def try_append(kind: str, rec: dict, **kw) -> Optional[dict]:
 def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             limit: Optional[int] = None,
             where: Optional[Callable[[dict], bool]] = None,
-            verified: bool = False, strict: bool = False) -> list[dict]:
+            verified: bool = False, strict: bool = False,
+            archive: Optional[bool] = None, gate: Optional[bool] = None) -> list[dict]:
     """Entries (whole lines), optionally filtered by kind and a predicate.
 
     `verified`: only lines whose hash and signature hold under this device's
     key (for readers that act on what they read, such as Undo).
     `strict`: raise LedgerError instead of returning what could be read (for
     readers that must fail closed, such as revoked grants). Otherwise never
-    raises, and an unreadable line is skipped (verify() reports it)."""
+    raises, and an unreadable line is skipped (verify() reports it).
+    `archive`: read the encrypted archive (A22) as well; by default only a
+    strict reader does (a revocation two years old still counts).
+    `gate`: refuse while the ledger has an open break (by default a strict
+    reader does; the Ledger workspace reads on, to show the break). A strict
+    read also refuses a matching line whose signature does not hold."""
     want = set(kinds) if kinds else None
+    if archive is None:
+        archive = strict
+    if gate is None:
+        gate = strict
+    if gate:
+        try:
+            ok = verify(force=False).get("ok")
+        except Exception:
+            ok = False
+        if not ok:
+            raise LedgerError("the action ledger has a break to review; strict readers wait")
     key = None
-    if verified:
+    if verified or archive or strict:
         try:
             key = _key()
         except Exception:
             if strict:
                 raise LedgerError("the ledger key is not available")
-            return []
+            if verified:
+                return []
+            archive = False
     with _TLOCK:
         _check_dir()
         _ensure_migrated()
     for attempt in range(2):
         out: list[dict] = []
         try:
-            segs = segments()
-            order = list(reversed(segs)) if newest_first else segs
+            segs = _reader_segments()
+            sources: list = list(segs)
+            if archive and key is not None:
+                try:
+                    with _TLOCK:
+                        _check_dir()
+                        arch = _archived_entries(key, want)
+                except FileNotFoundError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    if strict:
+                        raise LedgerError("the action ledger's archive could not be read (%s)" % e)
+                    arch = []
+                sources = list(arch) + sources
+            order = list(reversed(sources)) if newest_first else sources
+            check = strict and gate and not verified
+            acked_raw = set(_STATE.get("acked_raw") or ()) if check else set()
             for p in order:
-                it = ((_safe_json(raw) for raw in _reverse_lines(p)) if newest_first
-                      else (e for e, _r, _n, _t in _iter_lines(p)))
-                for e in it:
+                cache_key = None
+                if (check and not isinstance(p, list) and p.name != LIVE_NAME
+                        and want is not None and where is None and limit is None):
+                    try:
+                        st_ = p.stat()
+                        cache_key = (str(p), st_.st_size, st_.st_mtime_ns, _tail_digest(p),
+                                     frozenset(want), frozenset(acked_raw), key_id(key))
+                    except OSError:
+                        cache_key = None
+                    hit = _STATE.setdefault("strict_rows", {}).get(cache_key) if cache_key else None
+                    if hit is not None:
+                        out.extend(reversed(hit) if newest_first else hit)
+                        continue
+                if cache_key is not None:
+                    # a sealed file checked line by line once; its rows of these kinds kept
+                    rows_ = []
+                    for e, raw, _n, _t in _iter_lines(p):
+                        if not isinstance(e, dict) or not entry_ok(e, key):
+                            if raw is None or hashlib.sha256(raw).hexdigest() not in acked_raw:
+                                raise LedgerError("a line of the action ledger does not hold its signature")
+                            if not isinstance(e, dict):
+                                continue
+                        if e.get("kind") in want:
+                            rows_.append(e)
+                    sr = _STATE.setdefault("strict_rows", {})
+                    if len(sr) > 512:
+                        sr.clear()
+                    sr[cache_key] = rows_
+                    out.extend(reversed(rows_) if newest_first else rows_)
+                    continue
+                if isinstance(p, list):
+                    it = ((e, None) for e in (reversed(p) if newest_first else p))
+                else:
+                    it = (((_safe_json(raw), raw) for raw in _reverse_lines(p)) if newest_first
+                          else ((e, r) for e, r, _n, _t in _iter_lines(p)))
+                    if check and p.name == LIVE_NAME and _unfinished_tail(p):
+                        # a write another process has not finished: not a line yet
+                        it = _drop_unfinished(it, newest_first)
+                for e, raw in it:
+                    if check and (not isinstance(e, dict) or not entry_ok(e, key)):
+                        # every line, of every kind, before any filter: a line
+                        # changed or garbled within the cache window is refused,
+                        # unless the owner reviewed exactly this line
+                        if raw is None or hashlib.sha256(raw).hexdigest() not in acked_raw:
+                            raise LedgerError("a line of the action ledger does not hold its signature")
+                        if not isinstance(e, dict):
+                            continue
                     if not isinstance(e, dict):
                         continue
                     if want is not None and e.get("kind") not in want:
@@ -809,6 +940,75 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
     return []
 
 
+def _unfinished_tail(path: Path) -> bool:
+    """The file ends in bytes after its last newline that are more than
+    whitespace: a write not finished (whitespace alone is no line at all)."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as f:
+            f.seek(max(0, size - 65536))
+            tail = f.read()
+    except OSError:
+        return False
+    i = tail.rfind(b"\n")
+    rest = tail[i + 1:] if i >= 0 else tail
+    return bool(rest.strip())
+
+
+def _drop_unfinished(it, newest_first: bool):
+    """Leave out the live file's unterminated last line."""
+    if newest_first:
+        first = True
+        for x in it:
+            if first:
+                first = False
+                continue
+            yield x
+    else:
+        prev = None
+        for x in it:
+            if prev is not None:
+                yield prev
+            prev = x
+
+
+def newest_since(kinds: Iterable[str], since_seq: int,
+                 where: Optional[Callable[[dict], bool]] = None) -> tuple[Optional[dict], int]:
+    """(the newest signed entry of `kinds` after `since_seq` that `where`
+    picks, or None; the newest seq on disk). Reads from the end and stops at
+    `since_seq`, so a caller that remembers the seq reads only what is new.
+    A tip below `since_seq` means the ledger went back (cut or rolled back);
+    -1 means a segment could not be read."""
+    want = set(kinds)
+    try:
+        key = _key()
+    except Exception:
+        return None, since_seq
+    with _TLOCK:
+        _check_dir()
+    tip = 0              # the newest signed seq actually on disk: a caller sees a rollback
+    for p in reversed(_reader_segments()):
+        try:
+            for raw in _reverse_lines(p):
+                e = _safe_json(raw)
+                if not isinstance(e, dict) or not isinstance(e.get("seq"), int):
+                    continue
+                if not entry_ok(e, key):
+                    continue              # an unsigned line moves neither the tip nor the stop
+                tip = max(tip, e["seq"])
+                if e["seq"] <= since_seq:
+                    return None, tip
+                if e.get("kind") in want:
+                    try:
+                        if where is None or where(e):
+                            return e, tip
+                    except Exception:
+                        continue
+        except OSError:
+            return None, -1      # a segment could not be read: the caller reads strictly
+    return None, tip
+
+
 def records(kind: str, *, newest_first: bool = False, limit: Optional[int] = None) -> list[dict]:
     """The `rec` of every entry of one kind, each with `_seq` and `_ts` added."""
     out = []
@@ -817,6 +1017,608 @@ def records(kind: str, *, newest_first: bool = False, limit: Optional[int] = Non
         if isinstance(r, dict):
             out.append({**r, "_seq": e.get("seq"), "_ts": e.get("ts")})
     return out
+
+
+# ── The archive (amendment A22) ─────────────────────────────────────────────
+
+def archive_dir() -> Path:
+    return ledger_dir() / ARCHIVE_DIR
+
+
+def archive_after_days() -> int:
+    """The retention period of the live record, in days (0: archiving off).
+    Settings `ledger_archive_after_days`; anything unreadable is the default."""
+    try:
+        from agent_friday.core import _load_settings
+        v = (_load_settings() or {}).get(ARCHIVE_SETTING, DEFAULT_ARCHIVE_AFTER_DAYS)
+    except Exception:
+        return DEFAULT_ARCHIVE_AFTER_DAYS
+    return normalise_archive_days(v)
+
+
+def normalise_archive_days(v: Any) -> int:
+    """0 (off) or a whole number of days, at least MIN_ARCHIVE_AFTER_DAYS.
+    Anything else is the default."""
+    if isinstance(v, bool):
+        return DEFAULT_ARCHIVE_AFTER_DAYS
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return DEFAULT_ARCHIVE_AFTER_DAYS
+    if n == 0:
+        return 0
+    if n < MIN_ARCHIVE_AFTER_DAYS:
+        return MIN_ARCHIVE_AFTER_DAYS
+    return min(n, 36500)
+
+
+def _archive_key(key: bytes) -> bytes:
+    return _hmac.new(key, _ARCHIVE_INFO, hashlib.sha256).digest()
+
+
+def _seal_blob(key: bytes, name: str, plain: bytes) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    nonce = os.urandom(12)
+    return _ARCHIVE_MAGIC + nonce + AESGCM(_archive_key(key)).encrypt(
+        nonce, plain, name.encode("ascii"))
+
+
+def _open_blob(key: bytes, name: str, blob: bytes) -> bytes:
+    """The archived file's bytes; raises LedgerError when it does not open
+    under this key (changed, substituted, or another device's key)."""
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    if not blob.startswith(_ARCHIVE_MAGIC) or len(blob) < len(_ARCHIVE_MAGIC) + 28:
+        raise LedgerError("not an archived ledger file")
+    nonce = blob[len(_ARCHIVE_MAGIC):len(_ARCHIVE_MAGIC) + 12]
+    try:
+        return AESGCM(_archive_key(key)).decrypt(nonce, blob[len(_ARCHIVE_MAGIC) + 12:],
+                                                 name.encode("ascii"))
+    except Exception:
+        raise LedgerError("the archived file does not open under this device's key")
+
+
+def _manifest_sig(key: bytes, body: dict) -> str:
+    return _hmac.new(key, b"archive:" + canon(body), hashlib.sha256).hexdigest()
+
+
+def _read_manifest() -> Optional[dict]:
+    """The archive list as stored (signature not checked here), or None."""
+    try:
+        m = json.loads((archive_dir() / ARCHIVE_MANIFEST).read_text(encoding="utf-8"))
+        return m if isinstance(m, dict) else {"ranges": "unreadable"}
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return {"ranges": "unreadable"}
+
+
+def _manifest_body(m: dict) -> dict:
+    return {k: v for k, v in m.items() if k != "sig"}
+
+
+def _manifest_tail(m: Optional[dict]) -> Optional[tuple[int, str]]:
+    rs = (m or {}).get("ranges")
+    if isinstance(rs, list) and rs and isinstance(rs[-1], dict):
+        try:
+            return int(rs[-1]["last_seq"]), str(rs[-1]["last_hash"])
+        except (KeyError, TypeError, ValueError):
+            return None
+    return None
+
+
+def _write_manifest(key: bytes, ranges: list) -> None:
+    body = {"v": 1, "ranges": ranges, "kid": key_id(key)}
+    m = dict(body, sig=_manifest_sig(key, body))
+    ad = archive_dir()
+    ad.mkdir(parents=True, exist_ok=True)
+    p = ad / ARCHIVE_MANIFEST
+    tmp = p.with_name(p.name + f".{os.getpid()}.tmp")
+    with open(tmp, "wb") as f:
+        f.write(json.dumps(m, indent=1).encode("utf-8"))
+        f.flush()
+        if _fsync_durable():
+            os.fsync(f.fileno())
+    _replace(tmp, p)
+
+
+def _check_archive(key: Optional[bytes], deep: bool) -> dict:
+    """The archive's part of verify(): the signed list, every file named in
+    it (present, its SHA-256), and with `deep` each file opened and its chain
+    walked. Returns where the live chain must continue from."""
+    out = {"last_seq": 0, "last_hash": GENESIS, "records": 0, "problems": [],
+           "files": 0, "bytes": 0, "through_ts": None, "first_ts": None, "covered": {}}
+    m = _read_manifest()
+    ad = archive_dir()
+    stray = sorted(p.name for p in ad.glob("actions-*.jsonl.enc")) if ad.is_dir() else []
+    if m is None:
+        if [x for x in stray if not _pending_move(key, x)]:
+            out["problems"].append({"segment": "archive", "line": 0, "seq": None,
+                                    "reason": "archived files are present but their signed list is missing",
+                                    "raw_sha256": ""})
+        return out
+    raw_m = canon(m) if isinstance(m, dict) else b""
+    rs = m.get("ranges")
+    if not isinstance(rs, list):
+        out["problems"].append(_problem("archive/" + ARCHIVE_MANIFEST, 0, raw_m,
+                                        "the archive list cannot be read"))
+        return out
+    if key is not None and (m.get("kid") != key_id(key) or not _hmac.compare_digest(
+            _manifest_sig(key, _manifest_body(m)), str(m.get("sig")))):
+        out["problems"].append(_problem("archive/" + ARCHIVE_MANIFEST, 0, raw_m,
+                                        "the archive list was changed"))
+        return out          # the live chain is then checked from the start: a break
+    last_seq, last_hash = 0, GENESIS
+    cache = _STATE.setdefault("arch_cache", {})
+    for r in rs:
+        name = str((r or {}).get("name") or "")
+        label = f"{ARCHIVE_DIR}/{name}.enc"
+        try:
+            first_seq, lseq = int(r["first_seq"]), int(r["last_seq"])
+            first_prev, lhash = str(r["first_prev"]), str(r["last_hash"])
+        except (KeyError, TypeError, ValueError):
+            out["problems"].append(_problem(label, 0, canon(r), "an archive entry cannot be read"))
+            return out
+        if first_seq != last_seq + 1 or first_prev != last_hash:
+            out["problems"].append(_problem(label, 0, canon(r),
+                                            "the archive does not follow the record before it",
+                                            first_seq))
+        f = ad / (name + ".enc")
+        try:
+            st = f.stat()
+            sig = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            out["problems"].append(_problem(label, 0, canon(r), "an archived file is missing",
+                                            first_seq))
+            last_seq, last_hash = lseq, lhash
+            continue
+        hit = cache.get(name)
+        if hit and hit[0] == sig and not deep and hit[1] is not None:
+            reason = hit[1]
+        else:
+            reason = ""
+            try:
+                blob = f.read_bytes()
+                if hashlib.sha256(blob).hexdigest() != r.get("sha256_enc"):
+                    reason = "an archived file was changed or replaced"
+                elif deep and key is not None:
+                    plain = _open_blob(key, name, blob)
+                    if hashlib.sha256(plain).hexdigest() != r.get("sha256_plain"):
+                        reason = "an archived file was changed or replaced"
+                    else:
+                        reason = _walk_archived(plain, key, r)
+            except LedgerError as e:
+                reason = str(e)
+            except OSError:
+                reason = "an archived file cannot be read"
+            cache[name] = (sig, reason)
+        if reason:
+            out["problems"].append(_problem(label, 0, canon(r), reason, first_seq))
+        out["covered"][name] = str(r.get("sha256_plain"))
+        out["files"] += 1
+        out["bytes"] += st.st_size
+        out["records"] += int(r.get("records") or 0)
+        out["first_ts"] = out["first_ts"] or r.get("first_ts")
+        out["through_ts"] = r.get("last_ts")
+        last_seq, last_hash = lseq, lhash
+    listed = {str((r or {}).get("name")) + ".enc" for r in rs}
+    for n in stray:
+        if n not in listed and not _pending_move(key, n):
+            out["problems"].append({"segment": "archive", "line": 0, "seq": None,
+                                    "reason": "an archived file is not in the signed list (%s)" % n,
+                                    "raw_sha256": ""})
+    out["last_seq"], out["last_hash"] = last_seq, last_hash
+    return out
+
+
+def _pending_move(key: Optional[bytes], enc_name: str) -> bool:
+    """An encrypted copy written by a move that stopped before the list was:
+    its sealed segment is still in place and the copy opens to its bytes."""
+    if key is None:
+        return False
+    seg = ledger_dir() / SEGMENTS_DIR / enc_name[:-len(".enc")]
+    try:
+        return _enc_holds(key, seg.name, hashlib.sha256(seg.read_bytes()).hexdigest())
+    except OSError:
+        return False
+
+
+def _walk_archived(plain: bytes, key: bytes, r: dict) -> str:
+    """'' when the archived file's own chain is whole and matches its entry."""
+    w = _walk_bytes(plain, key, str(r.get("name") or "archived"))
+    if w["problems"]:
+        return "an archived file's own chain does not hold"
+    if (w["first_seq"] != r.get("first_seq") or w["first_prev"] != r.get("first_prev")
+            or w["last_seq"] != r.get("last_seq") or w["last_hash"] != r.get("last_hash")
+            or w["records"] != r.get("records")):
+        return "an archived file does not match its entry in the list"
+    return ""
+
+
+def _strict_anchor_check(m: Optional[dict]) -> None:
+    """A strict reader refuses a ledger that does not hold its anchor (the
+    record kept outside the data folder): cut, rolled back, or replaced."""
+    try:
+        anchor = anchor_get()[0]
+    except Exception:
+        raise LedgerError("the ledger's anchor could not be read")
+    if not anchor or anchor[0] <= 0:
+        return
+    aseq, ahash = anchor
+    for p in reversed(_reader_segments()):
+        try:
+            for raw in _reverse_lines(p):
+                e = _safe_json(raw)
+                if not isinstance(e, dict) or not isinstance(e.get("seq"), int):
+                    continue
+                if e["seq"] == aseq:
+                    if e.get("hash") != ahash or body_hash(e) != ahash:
+                        raise LedgerError("the record kept outside the data folder was replaced")
+                    return
+                if e["seq"] < aseq:
+                    break
+        except FileNotFoundError:
+            raise                        # sealed or archived meanwhile: the reader lists again
+        except OSError:
+            raise LedgerError("the ledger could not be read")
+    tail = _manifest_tail(m) if isinstance(m, dict) else None
+    if tail and aseq <= tail[0]:
+        if aseq == tail[0] and tail[1] != ahash:
+            raise LedgerError("the record kept outside the data folder was replaced")
+        return                           # inside the archive (its signed list holds it)
+    raise LedgerError("entries are missing: the ledger is behind the record kept outside the data folder")
+
+
+def _archived_entries(key: bytes, kinds: Optional[Iterable[str]] = None) -> list[list[dict]]:
+    """Every archived file's entries (of `kinds`, when given), oldest file
+    first. Rows of a kind filter are kept in memory per file (a strict reader
+    such as revocations asks again often); a read of everything is not kept.
+    Raises when the ledger does not hold its anchor."""
+    m = _read_manifest()
+    _strict_anchor_check(m)
+    if m is None:
+        if _archive_gone(key):
+            raise LedgerError("the action ledger's archive is missing")
+        return []
+    rs = m.get("ranges")
+    if not isinstance(rs, list):
+        raise LedgerError("the archive list cannot be read")
+    if not rs:
+        return []
+    if m.get("kid") != key_id(key) or not _hmac.compare_digest(
+            _manifest_sig(key, _manifest_body(m)), str(m.get("sig"))):
+        raise LedgerError("the archive list was changed")
+    # the live record must continue from the list's end, and no archived file
+    # may lie outside it: a list put back from an earlier copy is refused
+    tail = _manifest_tail(m)
+    listed = {str((r or {}).get("name")) + ".enc" for r in rs}
+    for f in archive_dir().glob("actions-*.jsonl.enc"):
+        if f.name not in listed and not _pending_move(key, f.name):
+            raise LedgerError("an archived file is not in the signed list")
+    cov = {str((r or {}).get("name")) for r in rs}
+    first = None
+    for p in segments():
+        if p.name != LIVE_NAME and p.name in cov:
+            continue
+        try:
+            first = next((e for e, _r, _n, _t in _iter_lines(p) if isinstance(e, dict)), None)
+        except OSError:
+            first = None
+        if first is not None:
+            break
+    if first is not None and tail and (first.get("seq") != tail[0] + 1 or first.get("prev") != tail[1]):
+        raise LedgerError("the live record does not continue from the archive")
+    want = frozenset(kinds) if kinds else None
+    rows_cache = _STATE.setdefault("arch_rows", {})
+    out = []
+    for r in rs:
+        name = str(r.get("name"))
+        sha = str(r.get("sha256_enc"))
+        ck = (name, sha, want)
+        if want is not None and ck in rows_cache:
+            out.append(rows_cache[ck])
+            continue
+        blob = (archive_dir() / (name + ".enc")).read_bytes()
+        if hashlib.sha256(blob).hexdigest() != sha:
+            raise LedgerError("an archived file was changed or replaced")
+        plain = _open_blob(key, name, blob)
+        rows = [e for e in (_safe_json(x) for x in plain.split(b"\n") if x.strip())
+                if isinstance(e, dict) and (want is None or e.get("kind") in want)]
+        if want is not None:
+            if len(rows_cache) >= 4096:
+                rows_cache.pop(next(iter(rows_cache)))
+            rows_cache[ck] = rows
+        out.append(rows)
+    return out
+
+
+def _covered_names() -> dict:
+    """{segment name: sha256 of its plain bytes} for every archived segment,
+    from the list only when its signature holds (a forged list hides nothing)."""
+    m = _read_manifest()
+    rs = (m or {}).get("ranges")
+    if not isinstance(rs, list) or not rs:
+        return {}
+    try:
+        key = _key()
+    except Exception:
+        return {}
+    if m.get("kid") != key_id(key) or not _hmac.compare_digest(
+            _manifest_sig(key, _manifest_body(m)), str(m.get("sig"))):
+        return {}
+    return {str(r.get("name")): str(r.get("sha256_plain")) for r in rs if isinstance(r, dict)}
+
+
+def _reader_segments() -> list[Path]:
+    """segments() less any sealed file under an archived name: the archive
+    holds those entries, and a file put back under that name is never read."""
+    cov = _covered_names()
+    if not cov:
+        return segments()
+    return [p for p in segments() if p.name == LIVE_NAME or p.name not in cov]
+
+
+def _archive_gone(key: Optional[bytes] = None) -> bool:
+    """No archive list, yet the live record does not start at the first entry
+    (or archived files lie about without their list): the archive was removed.
+    A copy written by a move that stopped before its list is not that."""
+    ad = archive_dir()
+    if ad.is_dir() and any(not _pending_move(key, p.name) for p in ad.glob("actions-*.jsonl.enc")):
+        return True
+    for p in segments():
+        try:
+            for e, _raw, _n, _t in _iter_lines(p):
+                if isinstance(e, dict):
+                    return e.get("seq") != 1 or e.get("prev") != GENESIS
+        except OSError:
+            return True
+    return False
+
+
+def _new_month_locked(live: Path) -> bool:
+    """The live file's first entry is from an earlier calendar month (UTC):
+    it is sealed, so a sealed segment holds at most one month (A22)."""
+    try:
+        st = live.stat()
+    except OSError:
+        return False
+    if st.st_size == 0:
+        return False
+    ident = (st.st_ino, st.st_dev)
+    lf = _STATE.get("live_first")
+    if not lf or lf[0] != ident:
+        t = None
+        try:
+            with open(live, "rb") as f:
+                e = _safe_json(f.readline())
+                if isinstance(e, dict) and isinstance(e.get("t"), (int, float)):
+                    t = float(e["t"])
+        except OSError:
+            return False
+        lf = (ident, t)
+        _STATE["live_first"] = lf
+    if lf[1] is None:
+        return False
+    a, b = time.gmtime(lf[1]), time.gmtime(time.time())
+    return (a.tm_year, a.tm_mon) < (b.tm_year, b.tm_mon)
+
+
+def _unlink_retry(p: Path) -> bool:
+    for i in range(10):
+        try:
+            os.unlink(p)
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            time.sleep(0.02 * (i + 1))
+        except OSError:
+            return False
+    return False
+
+
+def _fsync_dir(d: Path) -> None:
+    if os.name == "nt" or not _fsync_durable():
+        return
+    try:
+        fd = os.open(str(d), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def _enc_holds(key: bytes, name: str, sha_plain: str, sha_enc: Optional[str] = None) -> bool:
+    """The archived copy of `name` is on disk and opens to exactly those bytes."""
+    try:
+        blob = (archive_dir() / (name + ".enc")).read_bytes()
+        if sha_enc is not None and hashlib.sha256(blob).hexdigest() != sha_enc:
+            return False
+        return hashlib.sha256(_open_blob(key, name, blob)).hexdigest() == sha_plain
+    except (OSError, LedgerError):
+        return False
+
+
+def _walk_bytes(plain: bytes, key: bytes, name: str = "archived") -> dict:
+    return _walk(Path(SEGMENTS_DIR) / name, key, False, data=plain)
+
+
+def archive_old(*, now: Optional[float] = None, days: Optional[int] = None) -> dict:
+    """Move sealed segments whose newest entry is older than the period into
+    the encrypted archive (A22). Only while the ledger has no open break, only
+    whole segments, oldest first and contiguous, and never one with a break in
+    it (a flagged entry only once the owner acknowledged it). One segment per
+    hold of the locks, so writers wait for one file at most. Nothing is
+    deleted: the plain segment is removed only after its encrypted copy
+    (checked to open to the same bytes) and the signed list are on disk."""
+    days = archive_after_days() if days is None else normalise_archive_days(days)
+    if days == 0:
+        return {"archived": 0, "why": "archiving is off"}
+    now = time.time() if now is None else float(now)
+    cutoff = now - days * 86400.0
+    key = _key()
+    moved: list[dict] = []
+    with _TLOCK:
+        _check_dir()
+        _ensure_migrated()
+    if _legacy_present():
+        return {"archived": 0, "why": "older receipt files are still being brought in"}
+    # the deep check (every archived file opened and walked) runs without the
+    # locks; under them only what changed since is checked again
+    if not verify(force=True).get("ok"):
+        return {"archived": 0, "why": "the ledger has a break; nothing is archived until it is reviewed"}
+    why = None
+    for _ in range(100000):
+        with _TLOCK:
+            _check_dir()
+            with _lock():
+                _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
+                try:
+                    step = _archive_one_locked(key, cutoff, days)
+                finally:
+                    _HELD_HERE.n -= 1
+        if step.get("why"):
+            why = step["why"]
+        if step.get("moved"):
+            moved.append(step["moved"])
+        if not step.get("more"):
+            break
+    out = {"archived": len(moved), "records": sum(x["records"] for x in moved),
+           "through": moved[-1]["last_ts"] if moved else None, "after_days": days}
+    if why and not moved:
+        out["why"] = why
+    return out
+
+
+def _acked_flags(report: dict) -> set:
+    return set(_STATE.get("acked_flag_keys") or ())
+
+
+def _next_first(after: Path) -> Optional[dict]:
+    """The first entry of the file after `after` (the next sealed one or the live file)."""
+    segs = segments()
+    try:
+        i = [x.name for x in segs].index(after.name)
+    except ValueError:
+        return None
+    for nxt in segs[i + 1:]:
+        try:
+            e = next((e for e, _r, _n, _t in _iter_lines(nxt) if isinstance(e, dict)), None)
+        except OSError:
+            return None
+        if e is not None:
+            return e
+    return None
+
+
+def _archive_one_locked(key: bytes, cutoff: float, days: int) -> dict:
+    """One step of archive_old; the caller holds both locks. Returns
+    {"moved": entry} or {"why": ...}, and "more" when another step may follow."""
+    # checked again under the write lock, so nothing changes between the
+    # check and the move (the cached deep result when no file changed)
+    r = verify(force=False, migrate=False)
+    if not r.get("ok"):
+        return {"why": "the ledger has a break; nothing is archived until it is reviewed"}
+    acked = _acked_flags(r)
+    m = _read_manifest()
+    ranges = list((m or {}).get("ranges") or [])
+    tail = _manifest_tail(m) or (0, GENESIS)
+    ad = archive_dir()
+    for left in (list(ad.glob("*.tmp")) if ad.is_dir() else []):
+        try:
+            left.unlink()                        # a crash's leftovers (writers hold this lock)
+        except OSError:
+            pass
+    for p in [x for x in segments() if x.name != LIVE_NAME]:
+        plain = p.read_bytes()
+        name = p.name
+        sha_plain = hashlib.sha256(plain).hexdigest()
+        done = next((x for x in ranges if x.get("name") == name), None)
+        if done is not None:
+            # a move cut short after the list was written: finish it,
+            # only when the archived copy opens to these very bytes
+            if (done.get("sha256_plain") == sha_plain
+                    and _enc_holds(key, name, sha_plain, done.get("sha256_enc"))):
+                if _unlink_retry(p):
+                    _append_locked(key, [("archived", {"segments": [], "finished": [name],
+                                                       "after_days": days})], True)
+                    return {"more": True}
+                continue
+            return {"why": "a file under an archived name holds other bytes"}
+        w = _walk_bytes(plain, key, name)
+        unacked = [f for f in w["flagged"]
+                   if ("seq", f.get("seq"), f.get("hash"), _flag_reason(f)) not in acked]
+        if (w["problems"] or unacked or not w["records"]
+                or w["first_seq"] != tail[0] + 1 or w["first_prev"] != tail[1]):
+            return {"why": "a segment with a break or an unreviewed flag stays live"}
+        nxt = _next_first(p)
+        if nxt is not None and (nxt.get("seq") != w["last_seq"] + 1 or nxt.get("prev") != w["last_hash"]):
+            return {"why": "the next file does not follow this one; nothing is archived"}
+        ts = [e["t"] for e, _r, _n, _t in _lines_of(plain)
+              if isinstance(e, dict) and isinstance(e.get("t"), (int, float))]
+        if not ts or max(ts) >= cutoff:
+            return {}
+        ad.mkdir(parents=True, exist_ok=True)
+        dst = ad / (name + ".enc")
+        if dst.exists():
+            # an earlier run stopped after writing the copy: adopt it
+            # when it opens to the same bytes, otherwise stop here
+            if not _enc_holds(key, name, sha_plain):
+                return {"why": "an archived copy under this name holds other bytes"}
+            blob = dst.read_bytes()
+        else:
+            blob = _seal_blob(key, name, plain)
+            tmp = ad / (name + f".{os.getpid()}.tmp")
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(blob)
+                    f.flush()
+                    if _fsync_durable():
+                        os.fsync(f.fileno())
+                _move_no_overwrite(tmp, dst)
+            finally:
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            if not _enc_holds(key, name, sha_plain):
+                return {"why": "the archived copy did not read back"}
+        entry = {"name": name, "first_seq": w["first_seq"], "last_seq": w["last_seq"],
+                 "first_prev": w["first_prev"], "last_hash": w["last_hash"],
+                 "records": w["records"],
+                 "first_ts": datetime.fromtimestamp(min(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "last_ts": datetime.fromtimestamp(max(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "sha256_plain": sha_plain,
+                 "sha256_enc": hashlib.sha256(blob).hexdigest(),
+                 "archived_at": _now()[0]}
+        ranges.append(entry)
+        _write_manifest(key, ranges)
+        _fsync_dir(ad)
+        _unlink_retry(p)        # still open in a reader on Windows: removed next time
+        _STATE["seg_cache"] = {}
+        with _CACHE_LOCK:
+            _STATE["verified"] = None
+        _append_locked(key, [("archived", {"segments": [name], "finished": [],
+                                           "first_seq": entry["first_seq"], "last_seq": entry["last_seq"],
+                                           "last_hash": entry["last_hash"], "records": entry["records"],
+                                           "through": entry["last_ts"], "after_days": days})], True)
+        return {"moved": entry, "more": True}
+    return {}
+
+
+def archive_summary() -> dict:
+    """What the Ledger page says about the archive: counts and dates, no content."""
+    with _TLOCK:
+        _check_dir()
+    m = _read_manifest()
+    rs = (m or {}).get("ranges") if isinstance(m, dict) else None
+    rs = rs if isinstance(rs, list) else []
+    return {"after_days": archive_after_days(), "files": len(rs),
+            "records": sum(int((r or {}).get("records") or 0) for r in rs),
+            "first_ts": rs[0].get("first_ts") if rs else None,
+            "through_ts": rs[-1].get("last_ts") if rs else None,
+            "last_seq": (_manifest_tail(m) or (0, ""))[0]}
 
 
 # ── Verification ────────────────────────────────────────────────────────────
@@ -834,16 +1636,40 @@ def _ack_key(p: dict) -> tuple:
     return ("line", p.get("segment"), p.get("line"), p.get("raw_sha256"), p.get("reason"))
 
 
-def _walk(path: Path, key: Optional[bytes], is_live: bool) -> dict:
+def _lines_of(data: bytes) -> Iterator[tuple[Optional[dict], bytes, int, bool]]:
+    """_iter_lines over bytes already in memory (archived files are never
+    written out in plain)."""
+    n = 0
+    for raw in data.splitlines(keepends=True):
+        n += 1
+        terminated = raw.endswith(b"\n")
+        if terminated:
+            raw = raw[:-1]
+        if raw.endswith(b"\r"):
+            raw = raw[:-1]
+        if not raw.strip():
+            continue
+        if not terminated:
+            yield None, raw, n, False
+            continue
+        try:
+            e = json.loads(raw)
+            yield (e if isinstance(e, dict) else None), raw, n, True
+        except ValueError:
+            yield None, raw, n, True
+
+
+def _walk(path: Path, key: Optional[bytes], is_live: bool, data: Optional[bytes] = None) -> dict:
     """One file's lines: their internal links, hashes and signatures. The link
-    from the file before is checked by the caller (first_seq, first_prev)."""
+    from the file before is checked by the caller (first_seq, first_prev).
+    `data`: the file's bytes, already read (nothing is written to disk)."""
     kid = key_id(key) if key else None
     label = _seg_label(path)
     res = {"records": 0, "first_seq": None, "first_prev": None, "first_line": 1,
            "first_raw": b"", "last_seq": None, "last_hash": None,
            "problems": [], "acks": [], "flagged": [], "foreign": 0}
     last_seq = last_hash = None
-    rows = list(_iter_lines(path))
+    rows = list(_lines_of(data) if data is not None else _iter_lines(path))
     for idx, (e, raw, n, terminated) in enumerate(rows):
         if e is None:
             if (is_live and not terminated and idx == len(rows) - 1
@@ -897,7 +1723,7 @@ def _walk(path: Path, key: Optional[bytes], is_live: bool) -> dict:
 def _hash_at(seq: int) -> Optional[str]:
     """The stored hash of record `seq`, read from the newest end (the anchor
     is usually near the tip)."""
-    for p in reversed(segments()):
+    for p in reversed(_reader_segments()):
         try:
             for raw in _reverse_lines(p):
                 e = _safe_json(raw)
@@ -909,6 +1735,18 @@ def _hash_at(seq: int) -> Optional[str]:
                     return None
         except OSError:
             continue
+    m = _read_manifest()
+    tail = _manifest_tail(m)
+    if tail and seq <= tail[0]:
+        if seq == tail[0]:
+            return tail[1]
+        try:
+            for rows in _archived_entries(_key()):
+                for e in rows:
+                    if e.get("seq") == seq:
+                        return e.get("hash")
+        except Exception:
+            return None
     return None
 
 
@@ -921,18 +1759,44 @@ def _flag_reason(f: dict) -> str:
     return "an unfinished write was set aside (%s bytes)" % r.get("bytes")
 
 
-def _verify_files(key: Optional[bytes]) -> dict:
-    """Every line of every segment, the head, the anchor and what this process
-    wrote. The whole report."""
+def _verify_files(key: Optional[bytes], deep: bool = False) -> dict:
+    """Every line of every segment, the archive it continues from (A22), the
+    head, the anchor and what this process wrote. The whole report. `deep`
+    also opens every archived file and walks its chain."""
+    # What this process had written, taken before any file is read: an append
+    # by another thread while the files are read (no write lock here) is then
+    # never mistaken for records that went missing.
+    seen_before = _STATE.get("max_seen") or 0
     problems: list[dict] = []
-    total, last_seq, last_hash = 0, 0, GENESIS
     acks: list[dict] = []
     flagged: list[dict] = []
     foreign = 0
+    arch = _check_archive(key, deep)
+    problems.extend(arch["problems"])
+    for linked in (ledger_dir(), ledger_dir() / SEGMENTS_DIR, ledger_dir() / ARCHIVE_DIR):
+        if _is_link(linked):
+            problems.append({"segment": "folder", "line": 0, "seq": None,
+                             "reason": "a ledger folder is a link or junction to somewhere else (%s)"
+                                       % linked.name, "raw_sha256": ""})
+    total, last_seq, last_hash = 0, arch["last_seq"], arch["last_hash"]
     segs = segments()
     cache = _STATE.setdefault("seg_cache", {})
+    covered = arch.get("covered") or {}
     for i, p in enumerate(segs):
         is_live = p.name == LIVE_NAME
+        if not is_live and p.name in covered:
+            # a move into the archive that stopped before the plain file was
+            # removed: the same bytes are already in the chain (archive_old
+            # finishes it); different bytes under an archived name are a break
+            try:
+                got = hashlib.sha256(p.read_bytes()).hexdigest()
+            except OSError:
+                got = "unreadable"
+            if got != covered[p.name]:
+                problems.append({"segment": _seg_label(p), "line": 0, "seq": None,
+                                 "reason": "a sealed file has the name of an archived one but other content",
+                                 "raw_sha256": got})
+            continue
         try:
             st = p.stat()
             sig = (p.name, st.st_size, st.st_mtime_ns, _tail_digest(p))
@@ -999,7 +1863,7 @@ def _verify_files(key: Optional[bytes]) -> dict:
             problems.append({"segment": "anchor", "line": 0, "seq": aseq,
                              "reason": "the record kept outside the data folder was replaced",
                              "raw_sha256": ahash})
-    seen = _STATE.get("max_seen") or 0
+    seen = seen_before
     if last_seq < seen:
         problems.append({"segment": "process", "line": 0, "seq": seen,
                          "reason": "%d record(s) this session wrote are gone" % (seen - last_seq),
@@ -1011,6 +1875,10 @@ def _verify_files(key: Optional[bytes]) -> dict:
              if isinstance(a, dict) and isinstance(a.get("key"), list)}
     for pr in problems:
         pr["acknowledged"] = list(_ack_key(pr)) in [list(k) for k in acked]
+    _STATE["acked_flag_keys"] = {tuple(_ack_key(pr)) for pr in problems
+                                 if pr["acknowledged"] and pr.get("segment") == "entry"}
+    _STATE["acked_raw"] = {pr.get("raw_sha256") for pr in problems
+                           if pr["acknowledged"] and pr.get("raw_sha256")}
     open_problems = [pr for pr in problems if not pr["acknowledged"]]
     return {
         "records": total, "last_seq": last_seq, "tip": last_hash,
@@ -1024,6 +1892,8 @@ def _verify_files(key: Optional[bytes]) -> dict:
         "foreign_records": foreign,
         "segments": len(segs),
         "bytes": sum((p.stat().st_size for p in segs if p.exists()), 0),
+        "archived_records": arch["records"], "archive_files": arch["files"],
+        "archive_bytes": arch["bytes"], "archived_through": arch["through_ts"],
     }
 
 
@@ -1046,18 +1916,20 @@ def _stats() -> tuple:
     out = []
     d = ledger_dir()
     for where, keep in ((d / SEGMENTS_DIR, lambda n: n.startswith("actions-") and n.endswith(".jsonl")),
-                        (d, lambda n: n in (LIVE_NAME, HEAD_NAME))):
+                        (d, lambda n: n in (LIVE_NAME, HEAD_NAME)),
+                        (d / ARCHIVE_DIR, lambda n: n == ARCHIVE_MANIFEST or n.endswith(".enc"))):
         try:
             with os.scandir(where) as it:
                 for e in it:
                     if keep(e.name):
+                        tag = where.name + "/" + e.name
                         try:
                             st = e.stat()
-                            out.append((e.name, st.st_size, st.st_mtime_ns))
+                            out.append((tag, st.st_size, st.st_mtime_ns))
                         except OSError:
-                            out.append((e.name, -1, -1))
+                            out.append((tag, -1, -1))
         except OSError:
-            pass
+            out.append((where.name + "/", -2, -2))
     return tuple(sorted(out))
 
 
@@ -1083,22 +1955,28 @@ def verify(*, force: bool = True, migrate: bool = True) -> dict:
             fresh = time.time() - (_STATE.get("full_at") or 0.0) < FULL_RECHECK_S
         if not force and cached and cached[0] == stats and fresh:
             return dict(cached[1])
+        full = force or not fresh
         # a forced or periodic full check re-reads sealed segments too: an
         # edit that put back a segment's size and mtime is caught here
-        _STATE["seg_cache"] = {}
+        if force or not fresh:
+            _STATE["seg_cache"] = {}
+            _STATE["arch_cache"] = {}
+            _STATE["arch_rows"] = {}
     try:
         key = _key()
     except Exception:
         key = None
     t0 = time.perf_counter()
-    report = _verify_files(key)
+    report = _verify_files(key, deep=force)
     report["verify_ms"] = round((time.perf_counter() - t0) * 1000, 1)
     report["checked_at"] = _now()[0]
     if key is not None:                          # a result without the key is never kept
         with _CACHE_LOCK:
             if _stats() == stats:
                 _STATE["verified"] = (stats, report)
-                _STATE["full_at"] = time.time()
+                if full:
+                    # only a check that re-read every file restarts the clock
+                    _STATE["full_at"] = time.time()
     return dict(report)
 
 
@@ -1162,6 +2040,13 @@ def acknowledge(by: str, note: str = "", *, reviewed: Optional[list] = None) -> 
         # read of the tip, which could take in a change made since the review)
         with _lock():
             _move_anchor_locked(out["seq"], out["hash"], force=True)
+            try:
+                kept = anchor_get()[0]
+            except Exception:
+                kept = None
+        if kept != (out["seq"], out["hash"]):
+            raise LedgerError("the acknowledgement was written, but the record kept outside the "
+                              "data folder could not be updated; try again")
         _STATE["max_seen"] = out["seq"]
     return {"acknowledged": len(items), "report": verify(force=True)}
 
@@ -1173,7 +2058,8 @@ def summary(*, migrate: bool = True) -> dict:
     return {k: r.get(k) for k in ("records", "last_seq", "intact", "ok", "key_available",
                                   "anchor", "problem_count", "open_problem_count",
                                   "verify_ms", "checked_at", "foreign_records",
-                                  "segments", "bytes")}
+                                  "segments", "bytes", "archived_records",
+                                  "archive_files", "archived_through")}
 
 
 # ── The stores this ledger replaced ─────────────────────────────────────────
@@ -1258,11 +2144,26 @@ def _legacy_check(kind: str, rec: dict) -> Optional[bool]:
 
 
 def _migration_state_locked() -> dict:
+    """What the switch from the old receipt files has done so far: archived
+    entries count too (A22), and an archive that cannot be read counts as a
+    finished switch, so an old file planted later is quarantined, never read."""
     counts: dict[str, int] = {}
     done: set = set()
     complete = False
-    for p in segments():
-        for e, _raw, _n, _t in _iter_lines(p):
+    sources: list = []
+    if _archive_trace() or _chain_start_missing() or not _chain_is_genuine():
+        # an archive exists only once old files were dealt with (archive_old
+        # waits for them), and a chain whose start is gone was not started by
+        # this switch: either way the switch is over, and an old file that
+        # appears now is quarantined, never read
+        complete = True
+        try:
+            sources = list(_archived_entries(_key()))
+        except Exception:
+            return {"counts": counts, "done": done, "complete": True}
+    for src in sources + list(segments()):
+        rows = ((e, b"", 0, True) for e in src) if isinstance(src, list) else _iter_lines(src)
+        for e, _raw, _n, _t in rows:
             if not isinstance(e, dict):
                 continue
             r = e.get("rec") or {}
@@ -1278,6 +2179,62 @@ def _migration_state_locked() -> dict:
             if isinstance(m, dict) and m.get("file_sha256"):
                 counts[m["file_sha256"]] = counts.get(m["file_sha256"], 0) + 1
     return {"counts": counts, "done": done, "complete": complete}
+
+
+def _archive_trace() -> bool:
+    """Any sign an archive was made: its list (readable or not) or a file."""
+    ad = archive_dir()
+    try:
+        return ad.is_dir() and ((ad / ARCHIVE_MANIFEST).exists()
+                                or any(ad.glob("actions-*.jsonl.enc")))
+    except OSError:
+        return True
+
+
+def _first_on_disk() -> Optional[dict]:
+    for p in segments():
+        try:
+            for e, _raw, _n, _t in _iter_lines(p):
+                if isinstance(e, dict):
+                    return e
+        except OSError:
+            continue
+    return None
+
+
+def _chain_is_genuine() -> bool:
+    """The chain on disk is this device's own, whole and anchored: its first
+    entry is signed, seq 1 from the genesis link, and a full check finds no
+    open break but an unfinished last write. Only then may an import that
+    stopped halfway continue; anything else ends the switch (quarantine)."""
+    try:
+        key = _key()
+    except Exception:
+        return False
+    first = _first_on_disk()
+    if first is None:
+        try:
+            a = anchor_get()[0]
+        except Exception:
+            return False
+        return a is None or a[0] == 0
+    if not (entry_ok(first, key) and first.get("seq") == 1 and first.get("prev") == GENESIS):
+        return False
+    rep = _verify_files(key)
+    for p in rep.get("problems", []):
+        if p.get("acknowledged"):
+            continue
+        if p.get("reason") == "an unfinished write" and p.get("segment") == LIVE_NAME:
+            continue
+        if p.get("segment") == "entry" and "unfinished write was set aside" in str(p.get("reason")):
+            continue
+        return False
+    return True
+
+
+def _chain_start_missing() -> bool:
+    e = _first_on_disk()
+    return e is not None and (e.get("seq") != 1 or e.get("prev") != GENESIS)
 
 
 def _file_sha256(p: Path) -> str:
@@ -1336,11 +2293,19 @@ def migrate_legacy() -> dict:
             _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
             try:
                 present = _legacy_present()
-                empty = not any(p.exists() and p.stat().st_size for p in segments())
+                # empty: no entry anywhere (bytes that are not an entry count
+                # as nothing) and no sign of an archive
+                empty = _first_on_disk() is None and not _archive_trace()
                 if not present and not empty:
                     return {"migrated": moved}
-                state = _migration_state_locked() if not empty else {"counts": {}, "done": set(),
-                                                                     "complete": False}
+                try:
+                    anchored = (anchor_get()[0] or (0, ""))[0] > 0
+                except Exception:
+                    anchored = True
+                # an empty ledger that was anchored was removed: an old file
+                # found now is quarantined, never read into a fresh chain
+                state = (_migration_state_locked() if not empty
+                         else {"counts": {}, "done": set(), "complete": anchored})
                 d = ledger_dir()
                 for kind, paths in _legacy_stores():
                     for p in paths:
@@ -1375,20 +2340,16 @@ def migrate_legacy() -> dict:
                             batch.append((kind, rec))
                             n_imported += 1
                             if len(batch) >= 2000:
-                                _append_locked(key, batch, False)
+                                _append_locked(key, batch, True)
                                 batch = []
                         if batch:
-                            _append_locked(key, batch, False)
+                            _append_locked(key, batch, True)
                         kept = _set_aside(p, d / "legacy", digest)
                         _append_locked(key, [("migration", {
                             "store": kind, "from": _rel(p), "file_sha256": digest,
                             "lines": n_lines, "imported": n_imported + already,
                             "unreadable": n_unreadable, "kept_as": kept})], True)
                         moved.append({"store": kind, "from": _rel(p), "lines": n_lines})
-                try:
-                    anchored = anchor_get()[0] is not None
-                except Exception:
-                    anchored = True
                 if empty and anchored:
                     pass        # an anchored ledger that is now empty was removed: verify() says so
                 elif not state["complete"] and not _legacy_present():

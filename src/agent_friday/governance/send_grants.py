@@ -556,14 +556,24 @@ def list_grants(include_revoked: bool = False) -> list:
     revoked counts as revoked. `changed` says why a job or skill grant no
     longer covers its job or skill ("" when it does)."""
     rows = _read()
-    revoked, dup = _revoked_in_log(), _duplicated(rows)
+    held = None
+    try:
+        revoked = _revoked_in_log()
+    except Exception:
+        # the action ledger cannot be read in full (a break to review): every
+        # row is still listed, so the owner can see and revoke it, none in force
+        revoked, held = set(), "held until the action ledger is reviewed"
+    dup = _duplicated(rows)
     out = []
     for g in rows:
         gone = bool(g.get("revoked_at")) or str(g.get("grant_id") or "") in revoked
         if gone and not include_revoked:
             continue
         row = dict({k: v for k, v in g.items() if k != "sig"},
-                   in_force=_signed_ok(g) and str(g.get("grant_id") or "") not in dup and not gone)
+                   in_force=(held is None and _signed_ok(g)
+                             and str(g.get("grant_id") or "") not in dup and not gone))
+        if held:
+            row["held"] = held
         if g.get("scope") in ("job", "skill"):
             row["changed"] = changed(g)
         out.append(row)

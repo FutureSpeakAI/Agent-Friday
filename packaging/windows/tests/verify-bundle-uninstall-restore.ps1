@@ -50,7 +50,7 @@ $py          = Join-Path $InstallRoot 'python\python.exe'
 $BundleDir   = Join-Path $WorkDir 'bundles'
 $Expected    = Join-Path $WorkDir 'expected.json'
 $env:PYTHONUTF8 = '1'
-$env:FRIDAY_BUNDLE_PASSPHRASE = 'ci clean machine bundle passphrase'   # pragma: allowlist secret
+$env:FRIDAY_BUNDLE_PASSPHRASE = 'ci clean machine walnut harbour quartz'   # pragma: allowlist secret
 $env:SEED_VAULT_PASSPHRASE    = 'ci clean machine vault passphrase'    # pragma: allowlist secret
 
 if (Test-Path $InstallRoot) { throw "not a fresh machine: $InstallRoot exists" }

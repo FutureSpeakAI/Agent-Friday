@@ -262,3 +262,23 @@ def test_a_receipt_that_cannot_be_written_still_holds_the_action(scratch_home, m
     monkeypatch.setattr(builtins, "open", guarded_open)
     with pytest.raises(action_gate.Held):
         action_gate.record_external("send_email", surface="test", approval_id="card-1")
+
+
+def test_an_append_while_the_files_are_read_is_not_a_missing_record(scratch_home, monkeypatch):
+    """CI on #308 (test_chat_and_card_approval_race_runs_once): verify reads the
+    files without the write lock; an append by another thread in that window
+    was reported as "record(s) this session wrote are gone" and held everything."""
+    import threading
+    from agent_friday.services import action_ledger as L
+    _decision("probe_0")
+    _decision("probe_1")
+    real = L.anchor_get
+
+    def mid_read_append():
+        t = threading.Thread(target=_decision, args=("probe_meanwhile",))
+        t.start()
+        t.join()
+        return real()
+    monkeypatch.setattr(L, "anchor_get", mid_read_append)
+    report = L.verify(force=True)
+    assert not [p for p in report.get("problems", []) if p.get("segment") == "process"], report

@@ -37,7 +37,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine bundle passphrase
+      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine walnut harbour quartz
       SEED_VAULT_PASSPHRASE: ci clean machine vault passphrase
       PYTHONUTF8: "1"
     steps:
@@ -66,7 +66,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine bundle passphrase
+      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine walnut harbour quartz
       PYTHONUTF8: "1"
     steps:
       - run: echo "FRIDAY_HOME=$env:RUNNER_TEMP\b\.friday" >> $env:GITHUB_ENV
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine bundle passphrase
+      FRIDAY_BUNDLE_PASSPHRASE: ci clean machine walnut harbour quartz
       SEED_VAULT_PASSPHRASE: ci clean machine vault passphrase
       PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
     steps:

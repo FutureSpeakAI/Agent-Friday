@@ -183,6 +183,10 @@ def bundle_create():
     if not isinstance(pw, str) or len(pw) < fb.MIN_PASSPHRASE:
         return jsonify({"status": "error", "error": "The passphrase must be at least %d characters."
                         % fb.MIN_PASSPHRASE}), 400
+    from agent_friday.services import passphrase_strength
+    weak = passphrase_strength.refusal(pw)
+    if weak:
+        return jsonify({"status": "error", "code": "weak_passphrase", "error": weak}), 400
     cats = body.get("categories") or list(fb.CATEGORIES)
     if not isinstance(cats, list) or not all(c in fb.CATEGORIES for c in cats):
         return jsonify({"status": "error", "error": "Unknown category."}), 400
@@ -216,3 +220,161 @@ def bundle_create():
 @login_required
 def bundle_status():
     return jsonify({"status": "ok", **{k: v for k, v in _BUNDLE_JOB.items()}})
+
+
+# ── Scheduled bundles and the strength meter (services/backup_schedule.py) ──
+
+@doctor_bp.route("/api/bundle/strength", methods=["POST"])
+@login_required
+def bundle_strength():
+    """How hard a bundle passphrase is to guess. This PC only; nothing kept."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "On this PC only."}), 403
+    from agent_friday.services import passphrase_strength
+    body = request.get_json(silent=True) or {}
+    pw = body.get("passphrase")
+    a = passphrase_strength.assess(pw if isinstance(pw, str) else "")
+    return jsonify({"status": "ok", **a})
+
+
+@doctor_bp.route("/api/bundle/schedule", methods=["GET"])
+@login_required
+def bundle_schedule_get():
+    from agent_friday.core import _is_local_request
+    from agent_friday.services import backup_schedule
+    try:
+        st = backup_schedule.public_state()
+        if not _is_local_request() and st.get("folder"):
+            st["folder"] = "(shown on this PC only)"      # a share name can say a lot
+        return jsonify({"status": "ok", "schedule": st})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The backup schedule could not be read.")
+
+
+@doctor_bp.route("/api/bundle/schedule", methods=["POST"])
+@login_required
+def bundle_schedule_set():
+    """{"enabled", "every", "folder", "keep", "rehearse_days", "passphrase"}.
+    A press on Friday's own page, on this PC."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Change the backup schedule on Friday's own page, on this PC."}), 403
+    from agent_friday.services import backup_schedule
+    body = request.get_json(silent=True) or {}
+    try:
+        st = backup_schedule.set_schedule(
+            enabled=body.get("enabled"), every=str(body.get("every") or "weekly"),
+            folder=body.get("folder"), keep=body.get("keep", backup_schedule.DEFAULT_KEEP),
+            rehearse_days=body.get("rehearse_days", backup_schedule.DEFAULT_REHEARSE_DAYS),
+            passphrase=(body.get("passphrase") or None) if isinstance(body.get("passphrase"), str) else None)
+        return jsonify({"status": "ok", "schedule": st})
+    except backup_schedule.ScheduleError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The backup schedule could not be changed.")
+
+
+@doctor_bp.route("/api/bundle/schedule/<what>", methods=["POST"])
+@login_required
+def bundle_schedule_act(what):
+    """run: make a scheduled bundle now; rehearse: the restore rehearsal now.
+    A press on Friday's own page, on this PC. Runs in the background."""
+    if what not in ("run", "rehearse"):
+        return jsonify({"status": "error", "error": "Unknown action."}), 404
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Do this on Friday's own page, on this PC."}), 403
+    from agent_friday.services import backup_schedule
+
+    def _go():
+        try:
+            if what == "run":
+                backup_schedule.run_now()
+            else:
+                backup_schedule.rehearse()
+        except Exception:  # noqa: BLE001 - the state says what happened
+            pass
+    _threading.Thread(target=_go, name="bundle-schedule-" + what, daemon=True).start()
+    return jsonify({"status": "ok", "started": what})
+
+
+# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
+
+@doctor_bp.route("/api/doctor/weekly", methods=["GET"])
+@login_required
+def doctor_weekly_status():
+    from agent_friday.services import doctor_weekly
+    return jsonify({"status": "ok", **doctor_weekly.status()})
+
+
+@doctor_bp.route("/api/doctor/weekly/<what>", methods=["POST"])
+@login_required
+def doctor_weekly_act(what):
+    """answer {choice, local_only_too} | prepare | send {sha256, account_id} | skip.
+    prepare shows the exact text; every other step is a press on Friday's own
+    page, on this PC. Send raises the normal approval card: nothing leaves until
+    the owner approves it there."""
+    from agent_friday.core import _is_local_request
+    from agent_friday.services import doctor_weekly
+    if what not in ("answer", "prepare", "send", "skip"):
+        return jsonify({"status": "error", "error": "Unknown action."}), 404
+    if what == "prepare":
+        if not _is_local_request():
+            return jsonify({"status": "error", "error": "On this PC only."}), 403
+    elif not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Decide this on Friday's own page, on this PC."}), 403
+    body = request.get_json(silent=True) or {}
+    try:
+        if what == "answer":
+            return jsonify({"status": "ok", **doctor_weekly.answer(
+                str(body.get("choice") or ""), local_only_too=body.get("local_only_too") is True)})
+        if what == "prepare":
+            return jsonify({"status": "ok", **doctor_weekly.prepare()})
+        if what == "send":
+            return jsonify({"status": "ok", **doctor_weekly.send(
+                str(body.get("sha256") or ""), account_id=body.get("account_id") or None)})
+        return jsonify({"status": "ok", **doctor_weekly.skip()})
+    except doctor_weekly.WeeklyError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "That could not be done.")
+
+
+# ── Revoke all action authority (north star §18.12; services/authority.py) ──
+
+@doctor_bp.route("/api/authority", methods=["GET"])
+@login_required
+def authority_status():
+    from agent_friday.services import authority
+    return jsonify({"status": "ok", **authority.status()})
+
+
+@doctor_bp.route("/api/authority/revoke-all", methods=["POST"])
+@login_required
+def authority_revoke_all():
+    """Take back all action authority. The owner's own session (the page's
+    token), from this PC or the owner's remote session: taking authority away
+    is never made harder than giving it. Restoring is on this PC only."""
+    from agent_friday import core
+    from agent_friday.services import authority
+    if not core._api_token_valid(request.headers.get("X-Friday-Token")):
+        return jsonify({"status": "error", "error": "Do this from Friday's own page."}), 403
+    try:
+        return jsonify({"status": "ok", **authority.revoke_all("owner:ui")})
+    except authority.AuthorityError as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@doctor_bp.route("/api/authority/restore", methods=["POST"])
+@login_required
+def authority_restore():
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Restore action authority on Friday's own page, on this PC."}), 403
+    from agent_friday.services import authority
+    try:
+        return jsonify({"status": "ok", **authority.restore("owner:ui")})
+    except authority.AuthorityError as e:
+        return jsonify({"status": "error", "error": str(e)}), 500

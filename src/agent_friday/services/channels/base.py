@@ -16,6 +16,12 @@ _CHANNEL_SEND_WITHHELD = ("[withheld by egress gate — this message stayed "
                           "on this device]")
 
 
+def _mask_chat(chat_id) -> str:
+    """A chat id in a receipt: enough to tell two chats apart, not to find one."""
+    c = str(chat_id or "")
+    return ("…" + c[-4:]) if len(c) > 4 else "…"
+
+
 def _gate_channel_text(text: str, channel: str) -> str:
     """Gate any text before it reaches a channel adapter's transport.
     FAIL-CLOSED: any gate exception, including NeverSendBlocked, withholds
@@ -133,7 +139,28 @@ class ChannelAdapter:
     # only guarded door, and no future adapter can add a new one.
     def send(self, chat_id: str, text: str) -> Dict[str, Any]:
         gated = _gate_channel_text(text, self.name)
+        if not self._checkpoint(chat_id):
+            return {"ok": False, "error": "held by the action checkpoint"}
         return self._send_raw(chat_id, gated)
+
+    def prepare_outbound(self, chat_id: str, text: str):
+        """What may leave on this channel, for an adapter that sends on its
+        own (a gateway's reply): the egress gate's text after the action
+        checkpoint's receipt, or None when the checkpoint holds it."""
+        gated = _gate_channel_text(text, self.name)
+        return gated if self._checkpoint(chat_id) else None
+
+    def _checkpoint(self, chat_id: str) -> bool:
+        """The action checkpoint's signed receipt for this send
+        (action_gate.record_external: the cLaws intact, no hold)."""
+        try:
+            from agent_friday.governance import action_gate as _gate
+            _gate.record_external("channel:%s:send" % self.name, surface="channel",
+                                  target=_mask_chat(chat_id))
+            return True
+        except Exception as e:  # Held, or the receipt could not be written
+            self._last_error = "held: %s" % e
+            return False
 
     # ── inbound dispatch (adapters call this per received message) ────────────
     def _dispatch(self, chat_id: str, text: str) -> None:

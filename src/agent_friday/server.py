@@ -577,7 +577,39 @@ if not _TESTING:
                 print(f"  Action ledger: {rep.get('open_problem_count')} break(s) to review in Activity; outward actions held")
         except Exception as _al_err:
             print(f"  Action ledger: could not be checked at start ({_al_err})")
+        # A22: entries past the retention period (Settings, 2 years by
+        # default) move into the encrypted archive, never deleted; then once a day.
+        while True:
+            try:
+                _out = _al.archive_old()
+                if _out.get("archived"):
+                    print(f"  Action ledger: {_out.get('records')} older entries archived (through {_out.get('through')})")
+            except Exception as _ar_err:
+                print(f"  Action ledger: archive step skipped ({_ar_err})")
+            __import__("time").sleep(86400)
     threading.Thread(target=_ledger_boot, daemon=True, name="action-ledger-boot").start()
+
+    # Scheduled Friday Bundles and the restore rehearsal (services/backup_schedule.py,
+    # §27.4): off until the owner turns them on; checked every 15 minutes. Kept in
+    # safe mode (a backup is part of repairing Friday).
+    def _backup_schedule_loop():
+        from agent_friday.services import backup_schedule as _bs
+        from agent_friday.services import doctor_weekly as _dw0   # hears off-the-record ends
+        _dw0.install_hooks()
+        __import__("time").sleep(120)
+        while True:
+            try:
+                _bs.tick()
+            except Exception as _bs_err:
+                print(f"  Scheduled bundles: skipped ({_bs_err})")
+            try:
+                # the weekly Doctor ask (A3): a quiet card at most once a week; it sends nothing
+                from agent_friday.services import doctor_weekly as _dw
+                _dw.tick()
+            except Exception:
+                pass
+            __import__("time").sleep(900)
+    threading.Thread(target=_backup_schedule_loop, daemon=True, name="backup-schedule").start()
 
     # Adopt whatever was running when the previous process died.
     #

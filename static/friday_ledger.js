@@ -87,13 +87,15 @@
         }).catch(() => { setBusy(false); setNote('Not recorded.'); });
     };
     const line = ok
-      ? 'Ledger intact · ' + (ledger.records || 0) + ' records' + (ledger.key_available === false ? ' · signatures not checked (key unavailable)' : '')
+      ? 'Ledger intact · ' + (ledger.records || 0) + ' records' + (ledger.archived_records ? ' · ' + ledger.archived_records + ' archived' : '') + (ledger.key_available === false ? ' · signatures not checked (key unavailable)' : '')
       : 'The ledger was changed on disk · outward actions are held';
     return h('div', { 'data-testid': 'ledger-strip', role: 'status',
       style: { padding: '5px 10px', borderBottom: '1px solid rgba(255,255,255,0.06)', fontSize: 9, fontFamily: MONO,
         color: ok ? '#7fd8a8' : '#fbbf24', background: ok ? 'transparent' : 'rgba(251,191,36,0.07)' } },
       h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
         h('span', { style: { flex: 1 } }, line),
+        h('a', { href: '/ledger', target: '_blank', rel: 'noopener', 'data-testid': 'ledger-open',
+          style: { color: '#00d4ff', fontSize: 9, fontFamily: MONO } }, 'Open the Ledger'),
         h('button', { onClick: review, disabled: busy, 'data-testid': 'ledger-review',
           style: { background: 'none', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 4, color: '#ccd', cursor: 'pointer', fontSize: 9, fontFamily: MONO, padding: '1px 6px' } },
           ok ? 'Check now' : 'Review')),
@@ -107,5 +109,34 @@
                 style: { marginTop: 4, background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.4)', borderRadius: 4, color: '#fbbf24', cursor: 'pointer', fontSize: 9, fontFamily: MONO, padding: '2px 8px' } },
                 'I have looked at this: let Friday act again'))),
       note && h('div', { style: { marginTop: 3, color: '#aab' } }, note));
+  };
+
+  // Settings > Privacy & Data > Action record (amendment A22): how long entries
+  // stay live before they move to the encrypted archive (kept, never deleted).
+  window.FridayLedgerRetentionRow = function FridayLedgerRetentionRow() {
+    const [a, setA] = useState(null);
+    const [note, setNote] = useState('');
+    const get = (window.apiFetch || fetch);
+    const load = () => get('/api/ledger/retention').then(r => r.json()).then(d => setA(d.archive || null)).catch(() => setA(null));
+    React.useEffect(() => { load(); }, []);
+    const choose = v => {
+      setNote('');
+      get('/api/ledger/retention', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days: Number(v) }) })
+        .then(r => r.json().then(d => ({ ok: r.ok, d })))
+        .then(({ ok, d }) => { setNote(ok ? 'Saved.' + (d.result && d.result.archived ? ' ' + d.result.records + ' older entries moved to the archive.' : '') : (d.error || 'Not saved.')); load(); })
+        .catch(() => setNote('Not saved.'));
+    };
+    if (!a) return null;
+    const opts = [[365, '1 year'], [730, '2 years'], [1825, '5 years'], [3650, '10 years'], [0, 'always (never archive)']];
+    if (!opts.some(o => o[0] === a.after_days)) opts.push([a.after_days, a.after_days + ' days']);
+    return h('div', { 'data-testid': 'ledger-retention', style: { fontSize: 11 } },
+      h('label', null, 'Keep entries live for ',
+        h('select', { className: 'input', 'aria-label': 'How long action record entries stay live', value: String(a.after_days), onChange: e => choose(e.target.value) },
+          opts.map(o => h('option', { key: o[0], value: String(o[0]) }, o[1])))),
+      h('div', { style: { color: '#999', marginTop: 3 } },
+        'Older entries move into an encrypted archive. They are never deleted, every Friday Bundle and backup carries them, and they are still checked as part of the chain. ' +
+        (a.files ? a.records + ' entries archived so far, through ' + (a.through_ts || '') + '.' : 'Nothing is archived yet.')),
+      h('a', { href: '/ledger', target: '_blank', rel: 'noopener', style: { color: '#00d4ff' } }, 'Open the Ledger'),
+      note && h('div', { role: 'status', style: { marginTop: 3, color: '#aab' } }, note));
   };
 })();

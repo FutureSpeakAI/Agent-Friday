@@ -153,6 +153,12 @@ def get_adapter(name: str):
 def start_channel(name: str) -> Dict[str, Any]:
     from agent_friday.services import safe_mode as _sm
     _why = _sm.refusal("channels")
+    if not _why:
+        try:
+            from agent_friday.services import authority as _auth
+            _why = _auth.hold_reason()
+        except Exception:
+            _why = "the owner's revocation of authority could not be checked"
     if _why:
         return {"ok": False, "error": _why}
     cfg = load_config()
