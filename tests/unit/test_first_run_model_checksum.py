@@ -36,7 +36,7 @@ def _job_for(monkeypatch, url: str, payload: bytes, sha: str) -> str:
     monkeypatch.setattr(sl, "file_entry", lambda mid, packing=None: fake)
     monkeypatch.setattr(sl, "file_url", lambda mid, f: url)
     monkeypatch.setattr(sl, "companions", lambda mid: [])
-    monkeypatch.setattr(md, "runtime_binary", lambda: Path("llama-server.exe"))
+    monkeypatch.setattr(md, "runtime_binary", lambda *a, **k: Path("llama-server.exe"))
     job = md.start_model(model_id, start_thread=False)
     assert job["status"] == "queued", job
     assert job["items"][0]["sha256"] == sha
