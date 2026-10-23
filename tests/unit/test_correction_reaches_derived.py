@@ -60,7 +60,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "friday_home", lambda: tmp_path)
     monkeypatch.setattr(model_router, "SESSION_SUMMARY_DIR", tmp_path / "memory" / "session_summaries")
     graph = []
-    monkeypatch.setattr(md, "retract_from_graph", lambda texts, store=None: graph.append(list(texts)) or {})
+    monkeypatch.setattr(md, "queue_graph_retraction", lambda texts: graph.append(list(texts)) or {})
     mem = ConversationMemory(persist_dir=tmp_path / "conv_mem")
     mem._collection = FakeCollection()
     monkeypatch.setattr(mem, "_assert_embedding_space", lambda: None)
@@ -83,16 +83,27 @@ def test_a_correction_takes_the_day_s_summary_away_and_queues_it_again(home, mon
     other = _summary("2026-09-02", "A walk by the harbour.")
     assert old.exists()
     mem.supersede(["m-fee"], "the owner corrected the fee")
+    assert md.drain()
     assert not old.exists(), "the day's summary still states the corrected fact"
     assert other.exists()
-    assert json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text()) == ["2026-09-01"]
+    assert list(json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text())) == ["2026-09-01"]
     assert graph == [["Our mooring fee is 400 pounds a year."]]
 
     written = []
-    monkeypatch.setattr(model_router, "_generate_session_summary",
-                        lambda d, force=False: written.append((d, force)) or "fresh")
-    assert md.redo_summaries() == 1 and written == [("2026-09-01", True)]
-    assert json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text()) == []
+    def _fail(d, force=False):
+        written.append((d, force))
+        return None                                  # the model was not there
+    monkeypatch.setattr(model_router, "_generate_session_summary", _fail)
+    assert md.redo_summaries() == 0, "a day whose summary was not written left the queue"
+    assert list(json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text())) == ["2026-09-01"]
+
+    def _write(d, force=False):
+        written.append((d, force))
+        model_router._save_session_summary(d, "The mooring fee was discussed.")
+        return "ok"
+    monkeypatch.setattr(model_router, "_generate_session_summary", _write)
+    assert md.redo_summaries() == 1 and written[-1] == ("2026-09-01", True)
+    assert json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text()) == {}
 
 
 def test_a_restore_requeues_the_summary_but_takes_nothing_from_the_graph(home):
@@ -100,9 +111,11 @@ def test_a_restore_requeues_the_summary_but_takes_nothing_from_the_graph(home):
     mem.index("Our mooring fee is 520 pounds a year.", "user", session_id="2026-09-03",
               timestamp="2026-09-03T10:00:00", msg_id="m-fee2")
     mem.supersede(["m-fee2"], "x")
+    assert md.drain()
     graph.clear()
     _summary("2026-09-03", "Summary written while the turn was corrected.")
     mem.unsupersede(["m-fee2"])
+    assert md.drain()
     assert graph == []
     assert "2026-09-03" in json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text())
 
@@ -124,10 +137,25 @@ def test_the_graph_drops_what_only_the_corrected_turn_said(tmp_path):
         {"id": "rel_peter_harwich", "source": "ent_peter", "target": "ent_harwich", "description": "works at",
          "tier": "B", "provenance": {"conversations": [tid], "sensitivity": 1}},
     ])
-    out = md.retract_from_graph([text], store=store)
+    from agent_friday.services.knowledge_graph import indexer
+    out = indexer.purge_conversation_turns(md._turn_ids([text]), store=store)
     ents = {e["id"]: e for e in store.load("entities")}
     assert "ent_peter" not in ents, "a node only the corrected turn supported is still there"
     assert ents["ent_harwich"]["description"] == "" and ents["ent_harwich"]["provenance"]["wiki_pages"]
     assert "fact_0001" in ents, "an approved fact was touched"
     assert store.load("relationships") == []
-    assert out["dropped"] >= 1 and out["blanked"] >= 1
+    assert out["entities"] == 1 and out["described_again"] >= 1 and not out["refused"]
+
+
+def test_a_correction_during_a_graph_pass_waits_for_the_pass(tmp_path, monkeypatch):
+    from agent_friday.routes import knowledge_graph as kg_routes
+    monkeypatch.setattr(md, "_pending_path", lambda: tmp_path / "kg-retract-pending.json")
+    applied = []
+    monkeypatch.setattr(md, "apply_pending_graph_retractions",
+                        lambda store=None: applied.append(sorted(md._read_pending())) or {})
+    monkeypatch.setitem(kg_routes._TIER_B_STATE, "running", True)
+    out = md.queue_graph_retraction(["A turn long enough to have been given a graph id."])
+    assert out.get("deferred") and applied == [] and len(md._read_pending()) == 1
+    monkeypatch.setitem(kg_routes._TIER_B_STATE, "running", False)
+    md.queue_graph_retraction(["Another corrected turn of a decent length."])
+    assert applied and len(applied[-1]) == 2
