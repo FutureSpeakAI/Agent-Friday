@@ -53,7 +53,8 @@ def edit_line():
 @login_required
 def delete_line():
     d = _body()
-    return jsonify(public_result(core_memory.owner_delete(str(d.get("target") or ""), d.get("index")),
+    return jsonify(public_result(core_memory.owner_delete(str(d.get("target") or ""), d.get("index"),
+                                                          wrong=bool(d.get("wrong"))),
                                  "Couldn't delete that line"))
 
 

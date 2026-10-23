@@ -358,12 +358,17 @@ def _content_words(text: str) -> set:
         _STOPWORDS = set()
     # A plain "s" is taken off ("lives"/"live", "peanuts"/"peanut") so the
     # card's wording and the message's need not match letter for letter.
-    return {w[:-1] if w.endswith("s") and len(w) > 3 else w
-            for w in _re.findall(r"[a-z0-9][a-z0-9'-]+", (text or "").lower())
-            if len(w) >= 3 and w not in _STOPWORDS}
+    out = set()
+    for w in _re.findall(r"[a-z0-9][a-z0-9'-]+", (text or "").lower()):
+        if len(w) < 3 or w in _STOPWORDS:
+            continue
+        s = w[:-1] if w.endswith("s") and len(w) > 3 else w
+        if s not in _STOPWORDS:
+            out.add(s)
+    return out
 
 
-def _supersede_turns(old_line: str, why: str) -> int:
+def _supersede_turns(old_line: str, why: str) -> list:
     """North star §34.9-3/-4: when the owner corrects or deletes a card line,
     the owner's own earlier messages that stated it stop being recalled as
     evidence (conversation memory and conversation search). The messages stay
@@ -371,18 +376,29 @@ def _supersede_turns(old_line: str, why: str) -> int:
     raises."""
     want = _content_words(old_line)
     if len(want) < MIN_CONTENT_WORDS:
-        return 0
+        return []
     try:
         from agent_friday.services import model_router
         mem = model_router._get_conversation_memory()
         if not mem.available():
-            return 0
+            return []
         hits = mem.search(old_line, n=20, roles=["user"])
         ids = [h["id"] for h in hits
                if h.get("id") and want <= _content_words(h.get("text") or "")]
         if not ids:
-            return 0
-        return len(mem.supersede(ids, why).get("superseded") or [])
+            return []
+        return list(mem.supersede(ids, why).get("superseded") or [])
+    except Exception:
+        return []
+
+
+def restore_superseded(ids) -> int:
+    """The owner puts messages a card correction retired back into recall
+    (the ids a correction returned). Returns how many. Never raises."""
+    try:
+        from agent_friday.services import model_router
+        mem = model_router._get_conversation_memory()
+        return len(mem.unsupersede([str(i) for i in (ids or [])]).get("superseded") or [])
     except Exception:
         return 0
 
@@ -455,13 +471,16 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
         if actor == "owner":
             _purge_text(before)
     out = {"ok": True, "change_id": cid, "usage": usage(target)}
-    if actor == "owner" and supersede:
-        out["superseded_turns"] = _supersede_turns(before, "the owner corrected this on the memory card")
+    # Only a correction retires what was said: a re-save, a typo fix or a line
+    # that keeps every word and adds detail still states the old fact.
+    if actor == "owner" and supersede and not (_content_words(before) <= _content_words(text)):
+        ids = _supersede_turns(before, "the owner corrected this on the memory card")
+        out["superseded_turns"], out["superseded_ids"] = len(ids), ids
     _changed(actor, "core memory line edited by the owner")
     return out
 
 
-def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = True) -> Dict[str, Any]:
+def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = False) -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     with _LOCK:
@@ -476,8 +495,11 @@ def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = Tr
         if actor == "owner":
             _purge_text(before)
     out = {"ok": True, "change_id": cid, "usage": usage(target)}
+    # A delete makes room or keeps something private; only a delete the owner
+    # marks as wrong retires the messages that said it.
     if actor == "owner" and supersede:
-        out["superseded_turns"] = _supersede_turns(before, "the owner deleted this from the memory card")
+        ids = _supersede_turns(before, "the owner marked this wrong and deleted it from the memory card")
+        out["superseded_turns"], out["superseded_ids"] = len(ids), ids
     _changed(actor, "core memory line deleted by the owner")
     return out
 
@@ -494,7 +516,7 @@ def owner_set(target: str, index: int, text: str) -> Dict[str, Any]:
     return replace(target, items[index], text, actor="owner")
 
 
-def owner_delete(target: str, index: int) -> Dict[str, Any]:
+def owner_delete(target: str, index: int, wrong: bool = False) -> Dict[str, Any]:
     items = entries(target) if target in TARGETS else []
     try:
         index = int(index)
@@ -502,7 +524,7 @@ def owner_delete(target: str, index: int) -> Dict[str, Any]:
         return _err("index must be a number")
     if not 0 <= index < len(items):
         return _err("that line is no longer there; reload the panel")
-    return remove(target, items[index], actor="owner")
+    return remove(target, items[index], actor="owner", supersede=bool(wrong))
 
 
 # ── what Friday changed, and undoing it ───────────────────────────────────────
@@ -627,7 +649,7 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
             if op == "add":
                 res = add(t, row.get("text") or "", actor="owner", dedupe=True)
             elif op == "replace":
-                res = replace(t, row.get("old") or "", row.get("text") or "", actor="owner")
+                res = replace(t, row.get("old") or "", row.get("text") or "", actor="owner", supersede=False)
             else:
                 res = remove(t, row.get("old") or "", actor="owner")
             if not res.get("ok") and not res.get("unchanged"):
