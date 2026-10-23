@@ -17,16 +17,19 @@ def dg(tmp_path, monkeypatch):
         mod = importlib.import_module("agent_friday.services.disk_guard")
     except ImportError:
         pytest.fail("a full disk pauses nothing: services/disk_guard does not exist")
-    mod._state.update(low=False, checked=0.0, free_mib=None, since=None, carded=False)
+    mod._state.update(low=False, checked=0.0, free_mib=None, since=None, carded=False, card_busy=False)
+    monkeypatch.setattr(mod, "SYNC_CARD", True, raising=False)
     free = {"mib": 50_000.0}
     monkeypatch.setattr(mod, "_free_mib", lambda: free["mib"])
     from agent_friday import notifications_engine as ne
     cards, closed = [], []
     monkeypatch.setattr(ne, "push", lambda **k: cards.append(k) or {"ok": True})
     monkeypatch.setattr(ne, "resolve", lambda key: closed.append(key) or 1)
+    # The store as the guard reads it back: what push really saved.
+    monkeypatch.setattr(ne, "_load", lambda: [{"dedupe_key": c.get("dedupe_key")} for c in cards])
     mod.free, mod.cards, mod.closed = free, cards, closed
     yield mod
-    mod._state.update(low=False, checked=0.0, free_mib=None, since=None, carded=False)
+    mod._state.update(low=False, checked=0.0, free_mib=None, since=None, carded=False, card_busy=False)
 
 
 def test_plenty_of_space_pauses_nothing(dg):
@@ -142,13 +145,48 @@ def test_a_card_that_could_not_be_written_is_tried_again(dg, monkeypatch):
         tries.append(1)
         if len(tries) == 1:
             raise OSError(28, "No space left on device")
+        if len(tries) == 2:
+            return {"ok": True}                  # the store swallowed a failed save: not there
+        dg.cards.append(k)
         return {"ok": True}
     monkeypatch.setattr(ne, "push", flaky)
     dg.free["mib"] = 300.0
-    dg.check(force=True)
-    dg.check(force=True)
-    dg.check(force=True)
+    for _ in range(5):
+        dg.check(force=True)
+    assert len(tries) == 3 and len(dg.cards) == 1
+
+
+def test_the_card_is_retried_only_when_the_drive_is_read(dg, monkeypatch):
+    from agent_friday import notifications_engine as ne
+    tries = []
+
+    def failing(**k):
+        tries.append(1)
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(ne, "push", failing)
+    dg.free["mib"] = 300.0
+    dg.check(force=True, now=1000.0)
+    for t in range(1001, 1050):
+        dg.check(now=float(t))                   # cached readings: no new try
+    assert len(tries) == 1
+    dg.check(now=1061.0)
     assert len(tries) == 2
+
+
+def test_a_failed_save_keeps_the_cards_already_saved(tmp_path, monkeypatch):
+    from agent_friday import notifications_engine as ne
+    path = tmp_path / "notifications.json"
+    path.write_text('{"items": [{"id": "keep"}], "dismissed_jobs": {}}', encoding="utf-8")
+    monkeypatch.setattr(ne, "NOTIF_FILE", path)
+    real_write = type(path).write_text
+
+    def full(self, *a, **k):
+        if self.name.endswith(".tmp"):
+            raise OSError(28, "No space left on device")
+        return real_write(self, *a, **k)
+    monkeypatch.setattr(type(path), "write_text", full)
+    ne._save([{"id": "new"}], {})
+    assert '"keep"' in path.read_text(encoding="utf-8")
 
 
 def test_the_doctor_names_the_pause(dg):
