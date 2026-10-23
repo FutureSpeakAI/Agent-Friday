@@ -70,6 +70,7 @@ class FakeTasks:
     def __init__(self):
         self.store = {"k1": {"id": "k1", "title": "Buy stamps", "notes": "the blue ones",
                              "status": "needsAction", "due": ""}}
+        self.patches = []
 
     def tasks(self):
         return self
@@ -89,6 +90,8 @@ class FakeTasks:
         return _Exec(run)
 
     def patch(self, tasklist, task, body):
+        self.patches.append(dict(body))
+
         def run():
             self.store[task].update(body)
             return dict(self.store[task])
@@ -140,7 +143,9 @@ def _undo_on_card(receipt_id):
 
 
 def _rid(text):
+    assert "{" in text, text
     res, _end = json.JSONDecoder().raw_decode(text[text.index("{"):])   # a travel note may follow
+    assert "receipt_id" in res, "the change must leave a receipt Undo can find"
     assert "undo_before" not in res, "the whole before-values stay in the receipt, not the model's view"
     return res["receipt_id"]
 
@@ -227,6 +232,67 @@ def test_a_deleted_task_is_made_again_by_undo(world):
     _undo_on_card(rid)
     again = [t for t in tasks.store.values() if t["title"] == "Buy stamps"]
     assert len(again) == 1 and again[0]["notes"] == "the blue ones"
+
+
+def test_the_card_says_undo_will_delete_what_friday_created(world):
+    rid = _rid(agent._tool_create_calendar_event({"title": "Lunch", "start": "2026-11-03T12:00:00+00:00",
+                                                  "end": "2026-11-03T13:00:00+00:00"}))
+    out = ia.undo(rid)
+    card = ap.get_approval(out["approval_id"])
+    assert any("Delete" in line and "Lunch" in line for line in card["payload"]["lines"])
+    assert "Delete" in out["readback"]
+
+
+def test_an_event_that_gained_guests_is_not_deleted_by_undo(world):
+    cal, _ = world
+    rid = _rid(agent._tool_create_calendar_event({"title": "Lunch", "start": "2026-11-03T12:00:00+00:00",
+                                                  "end": "2026-11-03T13:00:00+00:00"}))
+    new = [k for k in cal.store if k.startswith("new")][0]
+    cal.store[new]["attendees"] = [{"email": "guest@example.com"}]
+    out = ia.undo(rid)
+    ap.decide_with_outcome(out["approval_id"], "approve", decided_by="owner")
+    done = ia.wait_for(out["approval_id"], 10)
+    assert done and done["status"] == "failed" and new in cal.store, "guests would be cancelled on silently"
+
+
+def test_a_repeating_event_deleted_says_undo_cannot_make_it_again(world):
+    cal, _ = world
+    cal.store["rec1"] = {"id": "rec1", "summary": "Standup", "recurrence": ["RRULE:FREQ=DAILY"],
+                         "start": {"dateTime": "2026-11-02T09:00:00+00:00"},
+                         "end": {"dateTime": "2026-11-02T09:15:00+00:00"}}
+    rec = journal.get(_rid(agent._tool_delete_calendar_event({"event_id": "rec1", "notify_guests": False})))
+    assert not rec["undo"] and "repeating" in rec["summary"]
+
+
+def test_a_due_date_friday_set_is_cleared_again_with_null(world):
+    _, tasks = world
+    rid = _rid(agent._tool_update_task({"account_id": "acct_t1", "tasklist_id": "tl1", "task_id": "k1",
+                                        "due": "2026-11-09T00:00:00Z"}))
+    _undo_on_card(rid)
+    assert tasks.patches[-1].get("due", "missing") is None, "Google Tasks clears a due date with null"
+
+
+def test_reopening_a_task_clears_its_completed_time(world):
+    _, tasks = world
+    rid = _rid(agent._tool_complete_task({"account_id": "acct_t1", "tasklist_id": "tl1", "task_id": "k1"}))
+    _undo_on_card(rid)
+    assert tasks.patches[-1].get("status") == "needsAction" and "completed" in tasks.patches[-1] \
+        and tasks.patches[-1]["completed"] is None
+
+
+def test_a_change_already_put_back_is_never_put_back_twice(world):
+    _, tasks = world
+    rec = journal.record("delete_task", "delete", "tasks", items=[], summary="two", status="complete",
+                         undo={"tasks": [
+                             {"op": "recreate", "id": "gone1", "title": "Again", "account": "acct_t1",
+                              "tasklist": "tl1", "fields": {"title": "Again", "notes": "", "due": "",
+                                                            "status": "needsAction"}},
+                             {"op": "restore", "id": "nope", "title": "Missing", "account": "acct_t1",
+                              "tasklist": "tl1", "fields": {"notes": "x"}}]})
+    first = ia.undo_tasks(journal.get(rec["receipt_id"]))
+    assert first["status"] == "partial"
+    ia.undo_tasks(journal.get(rec["receipt_id"]))
+    assert sum(1 for t in tasks.store.values() if t["title"] == "Again") == 1
 
 
 def test_undo_twice_puts_back_once(world):
