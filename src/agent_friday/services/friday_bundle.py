@@ -1421,11 +1421,18 @@ def _roll_back(home: Path, jr: dict) -> dict:
         _replace(aside, home)
     if stage.exists():
         shutil.rmtree(stage, ignore_errors=True)
-    out.update(_undo_governance_key(jr.get("keys") or {}))
-    try:
-        _journal_path(home).unlink()
-    except FileNotFoundError:
-        pass
+    keys = jr.get("keys") or {}
+    out.update(_undo_governance_key(keys))
+    if keys.get("kept_previous_key"):
+        out["kept_previous_key"] = keys["kept_previous_key"]
+    if str(out.get("governance_key", "")).startswith("could not"):
+        # the journal stays, so the next start tries the keychain again
+        out["journal_kept"] = True
+    else:
+        try:
+            _journal_path(home).unlink()
+        except FileNotFoundError:
+            pass
     try:
         if home.exists():
             from agent_friday.services import action_ledger
@@ -1460,7 +1467,7 @@ def recover_interrupted_restore(home: Optional[Path] = None) -> Optional[dict]:
                                % lk.denied}
             return {"rolled": "none", "stop": True,
                     "why": "a restore is running on this data folder; start Friday when it ends"}
-        if not journal:
+        if not _journal_path(home).exists():       # looked at again under the lock
             return None
         try:
             return _recover_locked(home)
@@ -1560,12 +1567,26 @@ def _plan_governance_key(current_home: Path, secrets: dict, cats: set) -> dict:
         return {"governance_key": "not restored", "install": False}
     gk = gk.decode("ascii").strip()
     bytes.fromhex(gk)                                                   # validates
-    kr, _no = _keyring()
+    kr, no_kr = _keyring()
     old = _current_governance_key(current_home)
+    if old == "unreadable":
+        raise BundleError("This Windows account's keychain did not answer, so Friday cannot tell "
+                          "whether another Friday's governance key is there. Nothing was restored; "
+                          "try again when the keychain opens.")
+    in_kc = None
+    if kr is not None:
+        try:
+            in_kc = kr.get_password("agent-friday", "governance-key")
+        except no_kr:
+            in_kc = None
+        except Exception as e:  # noqa: BLE001
+            raise BundleError("This Windows account's keychain did not answer. Nothing was "
+                              "restored; try again when the keychain opens.") from e
     plan = {"install": True, "keychain": kr is not None,
-            "had_previous_key": bool(old and old != "unreadable"),
+            "had_previous_key": bool(old),
             "bundle_key_sha256": hashlib.sha256(gk.encode("ascii")).hexdigest()}
-    if old and old not in ("unreadable", gk) and kr is not None:
+    # a key is kept aside in the keychain only when the keychain is where it is
+    if in_kc and in_kc.strip() != gk:
         plan["kept_previous_key"] = "governance-key-kept-" + time.strftime("%Y%m%d-%H%M%S") + \
             "-" + uuid.uuid4().hex[:6]
     return plan
