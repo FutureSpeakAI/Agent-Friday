@@ -3367,6 +3367,23 @@ window.addEventListener('DOMContentLoaded',function(){
             animation:slidein 0.22s ease;
         }
         @keyframes slidein { from{transform:translateX(28px);opacity:0;} to{transform:translateX(0);opacity:1;} }
+        /* Reduced motion, animation by animation (north star NS-33.1-9). Decorative
+           and attention-seeking loops stop and the element stays as it is (a privacy
+           light stays lit; a status dot stays visible). Activity indicators keep
+           moving, slowly, so "still working" is still shown. Inline React pulses are
+           matched by what the browser writes back ("1.6s infinite pulse"). Transitions and the
+           window open/close animations are not touched here: they have their own
+           reduced-motion handling, and a blanket rule broke them. */
+        @media (prefers-reduced-motion: reduce) {
+            .kill-switch, .cc-indicator, .cc-indicator .cc-dot, .task-card-edge,
+            .camera-pip .cam-active .pulse, .camera-privacy-banner .pulse,
+            .thread-dot.in-progress, .fp-anchor-dot, .breaking-badge,
+            .dock, .dock-btn, .dock-btn.active .dot, .dock-btn.active .ico img, .dock-btn:active,
+            .task-card-spinner,
+            [style*="infinite"][style*="pulse" i] { animation: none !important; }
+            .gen-spinner, .liq-indet,
+            .typing-indicator .dot, .ws-typing-dot { animation-duration: 3s !important; }
+        }
         .news-side h3 { font-family:'Orbitron', sans-serif; font-size:12px; color:#00d4ff; letter-spacing:0.08em; margin:0 0 12px; }
         .manage-row {
             display:flex; align-items:center; justify-content:space-between; gap:8px;
