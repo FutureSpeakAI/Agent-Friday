@@ -1018,6 +1018,12 @@ def _friday_store_entries_uncached(exclude: set | None = None) -> list:
         if rec.get("retired"):
             continue
         try:
+            from agent_friday.services import model_shortlist as _sl
+            if _sl.held_reason(mid, rec):
+                continue                            # installed, no seat yet
+        except Exception:
+            pass
+        try:
             if not _reachable(rec, "path"):
                 continue                            # listed is not present
             if rec.get("lora") and not _reachable(rec, "lora"):

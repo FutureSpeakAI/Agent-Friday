@@ -240,10 +240,29 @@ def _write(rows: list) -> None:
     tmp.replace(p)
 
 
+_REVOKED_CACHE: dict = {}
+
+
 def _log(event: str, **fields) -> None:
     row = {"at": time.time(), "event": event, **fields}
-    with open(_log_path(), "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    # the one action ledger (services/action_ledger.py), kind "send_grant";
+    # _log_path() is where these rows were kept before it. Raises when it
+    # cannot be written, as the file write did.
+    from agent_friday.services import action_ledger
+    action_ledger.append("send_grant", row, durable=(event == "revoked"))
+
+
+def _log_rows(limit=None, strict=False) -> list:
+    """The log, newest first, from the action ledger. `strict` raises when the
+    ledger cannot be read in full (revocations fail closed)."""
+    from agent_friday.services import action_ledger
+    out = []
+    for e in action_ledger.entries(["send_grant"], newest_first=True, limit=limit,
+                                   strict=strict):
+        rec = e.get("rec")
+        if isinstance(rec, dict):
+            out.append({k: v for k, v in rec.items() if k != "_migrated"})
+    return out
 
 
 def recipient_refusal(r) -> Optional[str]:
@@ -487,17 +506,18 @@ def _revoked_in_log() -> set:
     """Grant ids the log says were revoked. A grant restored from an earlier
     copy of send_grants.json (rows are signed one by one, with no generation)
     would otherwise come back to life."""
+    from agent_friday.services import action_ledger
+    token = action_ledger.stats_token()
+    hit = _REVOKED_CACHE.get("v")
+    if hit and hit[0] == token:
+        return set(hit[1])
     out = set()
-    try:
-        for ln in _log_path().read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(ln)
-            except ValueError:
-                continue
-            if isinstance(row, dict) and row.get("event") == "revoked" and row.get("grant_id"):
-                out.add(str(row["grant_id"]))
-    except FileNotFoundError:
-        pass
+    # Fails closed: a ledger that cannot be read raises, and the caller treats
+    # every grant as unusable rather than one revoked grant as live.
+    for row in _log_rows(strict=True):
+        if row.get("event") == "revoked" and row.get("grant_id"):
+            out.add(str(row["grant_id"]))
+    _REVOKED_CACHE["v"] = (token, frozenset(out))
     return out
 
 
@@ -536,14 +556,24 @@ def list_grants(include_revoked: bool = False) -> list:
     revoked counts as revoked. `changed` says why a job or skill grant no
     longer covers its job or skill ("" when it does)."""
     rows = _read()
-    revoked, dup = _revoked_in_log(), _duplicated(rows)
+    held = None
+    try:
+        revoked = _revoked_in_log()
+    except Exception:
+        # the action ledger cannot be read in full (a break to review): every
+        # row is still listed, so the owner can see and revoke it, none in force
+        revoked, held = set(), "held until the action ledger is reviewed"
+    dup = _duplicated(rows)
     out = []
     for g in rows:
         gone = bool(g.get("revoked_at")) or str(g.get("grant_id") or "") in revoked
         if gone and not include_revoked:
             continue
         row = dict({k: v for k, v in g.items() if k != "sig"},
-                   in_force=_signed_ok(g) and str(g.get("grant_id") or "") not in dup and not gone)
+                   in_force=(held is None and _signed_ok(g)
+                             and str(g.get("grant_id") or "") not in dup and not gone))
+        if held:
+            row["held"] = held
         if g.get("scope") in ("job", "skill"):
             row["changed"] = changed(g)
         out.append(row)
@@ -575,18 +605,9 @@ def _live_trusted() -> list:
 
 def log(limit: int = 50) -> list:
     try:
-        lines = _log_path().read_text(encoding="utf-8").splitlines()
+        return _log_rows(limit=max(0, int(limit)))
     except Exception:
         return []
-    out = []
-    for ln in reversed(lines):
-        try:
-            out.append(json.loads(ln))
-        except ValueError:
-            continue
-        if len(out) >= limit:
-            break
-    return out
 
 
 #: The kinds of outside content, as the card names them: (words in the plain source, the kind).
@@ -877,6 +898,10 @@ def use_refusal(tool_name: str, args, ctx=None) -> str:
     a voice request (unless the owner allowed voice), or a message that
     does not screen as TIER_1. Fails closed: an error is a reason."""
     if _is_voice(ctx) and not options().get("voice_may_use"):
+        return VOICE_WHY
+    if _is_voice(ctx) and not ((ctx or {}).get("owner_local") or (ctx or {}).get("voice_owner_local")):
+        # Voice may spend a pre-approval only on a call from Friday's own page on this PC
+        # (the desk key on the socket, routes/voice.py), never through a tunnel or a forward.
         return VOICE_WHY
     try:
         tier = content_tier(args)
