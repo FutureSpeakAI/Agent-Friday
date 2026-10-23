@@ -209,7 +209,7 @@ def _server(monkeypatch, network, available=True):
     from agent_friday.services import connector_secrets, connector_folders
     started, popened = [], []
     monkeypatch.setattr(ac, "available", lambda: available)
-    monkeypatch.setattr(ac, "start", lambda argv, **k: started.append(k) or types.SimpleNamespace(
+    monkeypatch.setattr(ac, "start", lambda argv, **k: started.append(dict(k, argv=list(argv))) or types.SimpleNamespace(
         stdin=None, stdout=None, stderr=None, poll=lambda: None, pid=7))
     monkeypatch.setattr(ac, "server_profile", lambda n: "AgentFriday.MCP.t")
     monkeypatch.setattr(ac, "set_server_access", lambda *a, **k: None)
@@ -279,12 +279,74 @@ def test_a_failure_under_isolation_says_so_and_shows_how_to_declare_folders(monk
     assert "isolated" not in plain.error
 
 
-def test_a_program_isolated_apps_cannot_run_is_named_plainly(monkeypatch):
+def test_a_program_isolated_apps_cannot_run_is_named_plainly_with_one_card(state, monkeypatch):
+    from agent_friday.services import approvals as ap
     sp, started, _p = _server(monkeypatch, {"isolation": "appcontainer"})
     monkeypatch.setattr(_ac(), "readable_by_containers", lambda p, sid=None: False)
     assert sp.start() is False and started == []
-    assert "cannot run its program" in sp.error and '"isolation": "off"' in sp.error
+    assert "cannot run its program" in sp.error and "safe fix" in sp.error and "un-isolated" in sp.error
     assert "folders" not in sp.error, "listing folders would not help here; it must not suggest it"
+    sp.start()                                                  # fails again: still one card
+    cards = [r for r in ap.list_approvals() if r.get("kind") == ci.RUNTIME_KIND]
+    assert len(cards) == 1 and cards[0]["status"] == "pending"
+
+
+def _runtime_card(state, monkeypatch, program=r"C:\Program Files\nodejs\npx.cmd"):
+    from agent_friday.services import approvals as ap
+    monkeypatch.setenv("FRIDAY_HOME", str(state))
+    monkeypatch.setenv("LOCALAPPDATA", str(state / "Local"))
+    cfg = {"servers": {"slack": {"command": "npx", "args": ["-y", "x"], "isolation": "appcontainer"}}}
+    reloads = _fake_agent(monkeypatch, cfg)
+    card = ci.offer_runtime_choice("slack", program)
+    return ap, cfg, card, reloads
+
+
+def test_the_card_offers_the_safe_fix_and_spells_out_the_risk(state, monkeypatch):
+    ap, cfg, card, _r = _runtime_card(state, monkeypatch)
+    text = card["description"]
+    assert ci.NODE_DOWNLOAD in text and ".zip" in text and str(ci.per_user_node_dir()) in text
+    assert "full access" in text and "files" in text and "sign-ins" in text and "ledger" in text
+    assert "on this PC" in text
+
+
+def test_running_it_unisolated_needs_a_press_on_this_pc_and_is_recorded(state, monkeypatch):
+    ap, cfg, card, reloads = _runtime_card(state, monkeypatch)
+    ap.decide(card["approval_id"], "approve")                       # a typed or remote yes
+    assert cfg["servers"]["slack"]["isolation"] == "appcontainer", "un-isolated without a press"
+    from tests.desk_press_support import pressed
+    import agent_friday.core as core
+    with pressed():
+        from flask import request
+        from agent_friday.services import screen_click
+        by = screen_click.decided_by(request, "owner:ui", for_ids=[card["approval_id"]])
+        ap.decide(card["approval_id"], "approve", decided_by=by)
+    assert cfg["servers"]["slack"]["isolation"] == "off"
+    from agent_friday.governance import action_gate as gate
+    rows = [json.loads(x) for x in gate.receipts_path().read_text(encoding="utf-8").splitlines() if x.strip()]
+    mine = [r for r in rows if r.get("tool") == "connector_run_unisolated" and r.get("target") == "slack"]
+    assert mine and mine[-1]["decided_source"] == "desktop_press" and gate.verify_receipt(mine[-1])
+
+
+def test_declining_keeps_it_isolated_and_is_not_asked_again_for_that_program(state, monkeypatch):
+    ap, cfg, card, _r = _runtime_card(state, monkeypatch)
+    ap.decide(card["approval_id"], "deny")
+    assert cfg["servers"]["slack"]["isolation"] == "appcontainer"
+    assert ci.offer_runtime_choice("slack", r"C:\Program Files\nodejs\npx.cmd") is None
+    assert ci.offer_runtime_choice("slack", r"D:\other\npx.cmd") is not None
+
+
+def test_a_node_installed_for_this_account_is_used_for_an_isolated_add_on(state, monkeypatch):
+    local = state / "Local"
+    mine = local / "Programs" / "nodejs"
+    mine.mkdir(parents=True)
+    (mine / "npx.cmd").write_text("@echo off", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    sp, started, _p = _server(monkeypatch, {"isolation": "appcontainer"})
+    sp.command = "npx"
+    monkeypatch.setattr(sp, "_resolve_command", lambda: r"C:\Program Files\nodejs\npx.cmd")
+    sp._spawn()
+    assert started and Path(started[-1]["argv"][0]) == mine / "npx.cmd"
+    assert started[-1]["env"]["PATH"].startswith(str(mine))
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows AppContainer")
