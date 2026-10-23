@@ -44,6 +44,9 @@ def test_a_failed_open_is_swallowed_not_raised(monkeypatch):
 def test_write_file_auto_opens_on_write_not_append(monkeypatch, tmp_path):
     opened = []
     monkeypatch.setattr(ag, "_maybe_auto_open", lambda p: opened.append(str(p)))
+    # The test's files live in pytest's temp folder: make it the folder file tools may use
+    # (services/path_policy confines them to the home folder by default).
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     target = tmp_path / "note.txt"
 
     ag._tool_write_file({"path": str(target), "content": "hello", "mode": "write"})
