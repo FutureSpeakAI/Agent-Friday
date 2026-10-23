@@ -741,6 +741,9 @@
    },
    "type": "object"
   },
+  "ledger_archive_after_days": {
+   "type": "number"
+  },
   "library_cloud_answers": {
    "type": "boolean"
   },
@@ -927,6 +930,9 @@
       "choice": {}
      },
      "type": "object"
+    },
+    "cloud_fallback_order": {
+     "type": "string"
     },
     "cloud_provider": {
      "type": "string"

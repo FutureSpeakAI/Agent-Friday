@@ -140,10 +140,13 @@ def setting_problems(config_md: Path, defaults: dict) -> list:
 def app_facts():
     """(cli commands, url_map rules, DEFAULT_SETTINGS) from the real code."""
     sys.path.insert(0, str(ROOT / "src"))
+    # Importing the app writes into its home; never the person's own. Under
+    # the test suite (FRIDAY_TESTING already set) the run's own test home is
+    # used, and the environment is left as it was found.
+    if not os.environ.get("FRIDAY_TESTING"):
+        import tempfile
+        os.environ.setdefault("FRIDAY_HOME", tempfile.mkdtemp(prefix="friday-check-"))
     os.environ.setdefault("FRIDAY_TESTING", "1")
-    # Importing the app writes into its home; never the person's own.
-    import tempfile
-    os.environ.setdefault("FRIDAY_HOME", tempfile.mkdtemp(prefix="friday-check-"))
     from agent_friday import cli
     from agent_friday.core import DEFAULT_SETTINGS
     from agent_friday import server
