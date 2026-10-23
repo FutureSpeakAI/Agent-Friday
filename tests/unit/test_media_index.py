@@ -52,6 +52,9 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(misc_engine, "CONTENT_DIR", fd / "content")
     monkeypatch.setattr(misc_engine, "CONTENT_PIPELINE_FILE", fd / "content" / "pipeline.json")
     monkeypatch.setattr(provenance, "PROVENANCE_DIR", fd / "provenance", raising=False)
+    # bound from FRIDAY_DIR when provenance is first imported, which may be here:
+    # Media's credentials mint the owner's id there, never among the originals
+    monkeypatch.setattr(provenance, "_USER_ID_FILE", fd / "provenance" / "user_id", raising=False)
     monkeypatch.setattr(approvals, "APPROVALS_FILE", fd / "approvals.json", raising=False)
 
     # a creation with its sidecar
@@ -161,13 +164,17 @@ def test_a_migration_loses_nothing_and_an_edit_never_touches_the_original(home):
     before = _digest(home["tmp"])
     mi.reindex()
     mi.reindex()
-    assert _digest(home["tmp"]) == before, "indexing rewrites nothing"
+    after = _digest(home["tmp"])
+    assert after == before, ("indexing rewrites nothing",
+                             sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k)))
     draft = [c for c in mi.query(view="all")["cards"] if c["source_kind"] == "draft_html"][0]
     assert mi.get(draft["id"])["body"].startswith("Thanks for the figures.")
     res = mi.set_body(draft["id"], "Thanks for the figures. Three questions.")
     assert res["status"] == "ok"
     assert mi.get(draft["id"])["body"] == "Thanks for the figures. Three questions."
-    assert _digest(home["tmp"]) == before, "the Draft HTML copy is untouched; the edit lives in Media's own body"
+    after = _digest(home["tmp"])
+    assert after == before, ("the Draft HTML copy is untouched; the edit lives in Media's own body",
+                             sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k)))
     mi.patch(draft["id"], status="review", project="Harbour series")
     mi.reindex()
     again = mi.get(draft["id"])
