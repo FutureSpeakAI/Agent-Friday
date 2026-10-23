@@ -26,13 +26,18 @@ import pytest
 
 try:
     from agent_friday.services import egress_proxy as ep
-except ImportError:          # the old tree: every test fails by assertion, not at collection
-    ep = None
+except ImportError:          # the old tree: each test fails by assertion, not at collection
+    class _NoProxy:
+        def __getattr__(self, name):
+            raise AssertionError("no egress proxy on this tree (services/egress_proxy.%s)" % name)
+    ep = _NoProxy()
 
 
 @pytest.fixture(autouse=True)
 def _fresh():
-    assert ep is not None, "no egress proxy on this tree (services/egress_proxy)"
+    if not isinstance(ep, types.ModuleType):
+        yield
+        return
     ep._shutdown_for_tests()
     yield
     ep._shutdown_for_tests()
