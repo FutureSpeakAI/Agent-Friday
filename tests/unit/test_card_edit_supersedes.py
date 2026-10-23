@@ -113,15 +113,35 @@ def test_correcting_a_card_line_retires_the_messages_that_stated_it(world):
         "conversation search still returns the corrected statement"
 
 
-def test_deleting_a_card_line_retires_them_too(world):
+def test_deleting_a_line_marked_wrong_retires_them_and_a_plain_delete_does_not(world):
     mem = world
     cid = cv.create("Diet")["id"]
     old = _said(mem, cid, "Please remember I am allergic to peanuts and cashews.")
+    room = _said(mem, cid, "My dentist is Dr Okafor at Riverside Dental Clinic.")
     fts.ensure_built()
+    cm.add("user", "Dentist is Dr Okafor at Riverside Dental Clinic.", actor="owner")
     cm.add("user", "Allergic to peanuts and cashews.", actor="owner")
-    res = cm.owner_delete("user", 0)
+    plain = cm.owner_delete("user", 0)                     # making room: still true
+    assert plain["ok"] and "superseded_turns" not in plain
+    assert room in _recalled_ids(mem, "dentist okafor riverside dental clinic")
+    res = cm.owner_delete("user", 0, wrong=True)
     assert res["ok"] and res["superseded_turns"] == 1
     assert old not in _recalled_ids(mem, "allergic peanuts cashews")
+    assert cm.restore_superseded(res["superseded_ids"]) == 1
+    assert old in _recalled_ids(mem, "allergic peanuts cashews")
+
+
+def test_a_rewording_that_still_says_it_retires_nothing(world):
+    mem = world
+    cid = cv.create("Food")["id"]
+    said = _said(mem, cid, "I really like spicy Thai food, the hotter the better.")
+    cm.add("user", "Likes spicy Thai food.", actor="owner")
+    same = cm.owner_set("user", 0, "Likes spicy Thai food, especially green curry.")
+    assert same["ok"] and "superseded_turns" not in same
+    assert said in _recalled_ids(mem, "spicy thai food")
+    changed = cm.owner_set("user", 0, "Avoids spicy food now.")
+    assert changed["superseded_turns"] == 1, "a third-person line did not match the owner's words"
+    assert said not in _recalled_ids(mem, "spicy thai food")
 
 
 def test_a_short_line_or_friday_s_own_words_are_never_retired(world):
