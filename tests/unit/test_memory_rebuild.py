@@ -131,5 +131,21 @@ def test_a_rebuild_refreshes_in_place_and_never_drops_rows(world):
                                        "session_id": "2025-01-01"}])
     assert mem.rebuild_from_transcripts()["indexed"] == 1
     assert {"legacy-0001", mid} <= set(mem._collection.rows)
-    assert mem.rebuild_from_transcripts()["indexed"] == 1        # idempotent: same ids, no copies
+    again = mem.rebuild_from_transcripts()                        # what is there is left as it is
+    assert again["indexed"] == 0 and again["kept"] == 1
     assert len(mem._collection.rows) == 2
+
+
+def test_a_row_already_here_is_never_rewritten(world):
+    """Its text is what the live path stored (recalled sentences dropped);
+    its correction stands. A rebuild must change neither."""
+    mem = world
+    cid = cv.create("Kept")["id"]
+    mid = _say(cid, "We agreed the launch is on the ninth. As you recalled, it was moved once.")
+    mem.index("We agreed the launch is on the ninth.", "user", session_id="2026-09-01", msg_id=mid)
+    mem.supersede([mid], "the owner corrected the date")
+    mem.unsupersede([mid])                                       # and then put it back
+    mem.rebuild_from_transcripts()
+    doc, meta = mem._collection.rows[mid]
+    assert doc == "We agreed the launch is on the ninth."
+    assert str(meta.get("superseded") or "") != "1", "a rebuild undid the owner restoring a turn"
