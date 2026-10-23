@@ -428,6 +428,11 @@ REVIEWED_BUILTINS = {
                          "local timeline, and raises local notifications only",
     "calendar_reminders": "reads the owner's calendar events and raises local reminder "
                           "notifications at the minutes Google holds; writes nothing to Google, runs no model",
+    "tasks_inbox": "does nothing until the owner turns it on with a press on screen; then posts the "
+                   "waiting cards' code-built words to the owner's own Google Tasks list, each through "
+                   "the egress gate and action_gate.record_external, and reads back ticks and deletes. "
+                   "A tick approves nothing (approvals refuses its label); a delete declines only "
+                   "don't-do-it kinds",
     "laya_personal_refit": "refits Laya's personal phrasings and calibration from the owner's "
                            "own sealed corrections on this PC; only tightens, reaches no one",
     "avatar_growth_check": "asks the owner's chosen model for a look change (numbers "
