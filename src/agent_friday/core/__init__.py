@@ -1101,6 +1101,7 @@ def _setup_friday_logging() -> None:
             datefmt="%Y-%m-%dT%H:%M:%S",
         ))
         root.addHandler(sh)
+        _install_log_redaction()
         return
 
     try:
@@ -1124,6 +1125,22 @@ def _setup_friday_logging() -> None:
     sh.setLevel(logging.WARNING)
     sh.setFormatter(logging.Formatter("[FRIDAY] %(levelname)s %(message)s"))
     root.addHandler(sh)
+    _install_log_redaction()
+
+
+def _install_log_redaction() -> None:
+    """Every handler of the "friday" logger passes the one redaction filter (secrets out,
+    the request's correlation id in: services/log_redaction). A filter that cannot be
+    installed is said once on stderr; logging itself keeps working."""
+    try:
+        from agent_friday.services import log_redaction
+        log_redaction.install(logging.getLogger("friday"))
+    except Exception as e:  # noqa: BLE001
+        try:
+            sys.stderr.write("[FRIDAY] the log redaction filter could not be installed (%s)\n"
+                             % type(e).__name__)
+        except Exception:
+            pass
 
 
 if not _TESTING:
@@ -1742,6 +1759,11 @@ _TURNS = {}
 _TURNS_LOCK = threading.Lock()
 _TURN_LOCAL = threading.local()
 
+#: Set while everything is stopped (services/global_stop owns it). Every turn,
+#: task, stream and gate check reads this one Event, so a stop reaches them all
+#: before any lane is walked.
+GLOBAL_STOP = threading.Event()
+
 #: How long a turn may go with no orb activity before it is *reported* as
 #: quiet. Reported, not killed: a single model call legitimately runs minutes
 #: with nothing to say, so this is a fact the UI may show, never a verdict.
@@ -1844,7 +1866,10 @@ def turn_request_stop(turn_id):
 
 
 def turn_stop_requested(turn_id=None):
-    """Has a stop been asked for? Defaults to the turn on THIS thread."""
+    """Has a stop been asked for? Defaults to the turn on THIS thread.
+    Always True while everything is stopped (GLOBAL_STOP)."""
+    if GLOBAL_STOP.is_set():
+        return True
     tid = turn_id or getattr(_TURN_LOCAL, "turn_id", None)
     if not tid:
         return False
@@ -2212,6 +2237,18 @@ def _degraded_settings() -> "_DegradedSettings":
             out = _DegradedSettings(_copy.deepcopy(_SETTINGS_LAST_GOOD["value"]))
         else:
             out = _DegradedSettings(_copy.deepcopy(DEFAULT_SETTINGS))
+            out.from_defaults = True
+            # North-star A17: a new install's daily cap is on even while its
+            # settings.json cannot be read (the record says new; nothing is
+            # decided here).
+            try:
+                if install_choices_state().get("install") == NEW_INSTALL:
+                    from agent_friday.services import spending_caps as _sc
+                    out["cost_budget"] = dict(out.get("cost_budget") or {},
+                                              hard_stop_daily_enabled=True,
+                                              hard_stop_daily=_sc.DAILY_CAP_DEFAULT_USD)
+            except Exception:
+                pass
     out[DEGRADED_READ_KEY] = gen
     return out
 
@@ -2789,18 +2826,23 @@ DEFAULT_SETTINGS = {
     # drive budget-alert notifications: crossing 80% warns, 100% alerts. The
     # alert cap never blocks — Friday is never silently stopped by it.
     #
-    # hard_stop_* (maintainer ruling: "we do want a stopping cap available
-    # to the user") is the SECOND cap: when its enabled period's
-    # spend reaches the limit, services/spend_guard refuses every further
-    # cloud call (local models keep working), loudly — ledger row +
-    # notification naming what stopped and how to resume. Off by default;
-    # the user chooses, neither cap is imposed.
+    # hard_stop_* is the SECOND cap, the one that stops: when its enabled
+    # period's spend reaches the limit, services/spend_guard pauses every
+    # further paid cloud call (local models keep working), with a card naming
+    # what paused and how to go on. The DAILY one is ON for a new install at a
+    # modest figure (north-star A17, the owner's ruling of 2026-10-21; the
+    # figure is services/spending_caps.DAILY_CAP_DEFAULT_USD), changeable at
+    # setup and in Settings > Spending. It is switched on by the new install's
+    # first settings (spending_caps.seed_choices / migrate_daily_cap), not
+    # here: these defaults are also what an existing install's missing keys
+    # read as, and those keep the cap they had (off unless they set one). The
+    # monthly one ships off.
     "cost_budget": {
         "daily": 5.0,
         "monthly": 50.0,
         "daily_enabled": False,
         "monthly_enabled": False,
-        "hard_stop_daily": 0.0,
+        "hard_stop_daily": 2.0,
         "hard_stop_monthly": 0.0,
         # THE STUCK-MODEL GUARD, shown beside the spending limits because that
         # is where the owner decides what may stop his work.
@@ -3362,6 +3404,12 @@ DEFAULT_SETTINGS = {
         "cloud_consent": {"answered": False, "choice": None, "at": None,
                           "capability_snapshot": None},
         "fallback_to_cloud": True,
+        # A6: when a cloud provider fails, Friday never moves to another cloud
+        # provider on her own. "ask" (the default) says so and offers the other
+        # one; "anthropic_then_openai" / "openai_then_anthropic" is an order the
+        # owner set in advance (services/provider_fallback.py). Changed only
+        # through POST /api/models/cloud-fallback-order, a press on the page.
+        "cloud_fallback_order": "ask",
         "cost_tracking": True,
         # ── OpenAI-compatible cloud provider (opt-in) ──
         # Set cloud_provider="openai" to route cloud turns through an
@@ -3566,6 +3614,9 @@ DEFAULT_SETTINGS = {
     "dock_by_asking": "apply_with_undo",
     # Deleting a calendar event: whether "notify guests" starts ticked.
     "calendar_delete_notify_guests": False,
+    # A22: entries older than this leave the live action record for its encrypted
+    # archive (never deleted). 0 turns archiving off; at least 30 days.
+    "ledger_archive_after_days": 730,
 }
 
 # capability_routing keys that mirror a legacy flat *_model setting.
@@ -3763,6 +3814,154 @@ def _migrate_spending_caps(settings: dict):
         return None
 
 
+def _seed_install_choices(seed: dict) -> None:
+    try:
+        from agent_friday.services import spending_caps as _sc
+        _sc.seed_choices(seed, install_origin())
+    except Exception:
+        # Undecided: leave the daily cap key out, so the migration on the next
+        # read decides it, rather than writing the defaults' off down for good.
+        cb = seed.get("cost_budget")
+        if isinstance(cb, dict):
+            seed["cost_budget"] = {k: v for k, v in cb.items()
+                                   if k != "hard_stop_daily_enabled"}
+
+
+def _migrate_daily_cap(settings: dict, stored: dict):
+    """services/spending_caps.migrate_daily_cap (north-star A17): an install
+    from before the daily cap shipped on keeps the daily cap it had, and gets
+    one card about it. Changes `settings` in place; returns the delta to
+    persist, or None."""
+    try:
+        from agent_friday.services import spending_caps as _sc
+        return _sc.migrate_daily_cap(settings, stored, install_origin())
+    except Exception as e:
+        try:
+            import logging as _lg
+            _lg.getLogger("friday.settings").warning(
+                "daily cap migration skipped (%s: %s)", type(e).__name__, e)
+        except Exception:
+            pass
+        return None
+
+
+def _merge_migration_deltas(a, b):
+    """Two settings deltas as one, merged a block deep (both may carry spending_caps)."""
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in (a or {}).items()}
+    for k, v in (b or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = dict(out[k], **v)
+        else:
+            out[k] = v
+    return out
+
+
+# ── Is this a new install? (north-star A16 and A17) ─────────────────────────
+#
+# A16 (no AI route pre-selected) and A17 (the daily spending cap on by
+# default) treat a NEW install differently from one that already existed: an
+# existing install keeps the choices it had. Which one this is gets decided
+# once, the first time anything reads or writes settings (or the terminal
+# setup starts), and is kept in its own file beside settings.json, because
+# several writers rebuild settings.json wholesale (the terminal setup from
+# config.yaml, `friday config set`). New means nothing of a previous install
+# is here: no settings.json, no setup marker, no cost history.
+
+INSTALL_ORIGIN_NAME = "install_choices.json"
+NEW_INSTALL, EXISTING_INSTALL = "new", "existing"
+_INSTALL_ORIGIN_LOCK = threading.Lock()
+_INSTALL_ORIGIN_CACHE: dict = {}
+
+
+def install_origin_file() -> Path:
+    return Path(FRIDAY_DIR) / INSTALL_ORIGIN_NAME
+
+
+def install_choices_state() -> dict:
+    """The install-origin record ({} when there is none or it cannot be read)."""
+    try:
+        data = json.loads(install_origin_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def update_install_choices_state(**fields) -> None:
+    """Merge `fields` into the install-origin record (atomic replace)."""
+    with _INSTALL_ORIGIN_LOCK:
+        cur = install_choices_state()
+        known = _INSTALL_ORIGIN_CACHE.get(str(install_origin_file()))
+        if known and "install" not in cur:
+            cur["install"] = known
+        cur.update(fields)
+        p = install_origin_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(cur, indent=1), encoding="utf-8")
+        os.replace(str(tmp), str(p))
+        _INSTALL_ORIGIN_CACHE[str(p)] = cur.get("install")
+
+
+def install_origin() -> str:
+    """NEW_INSTALL or EXISTING_INSTALL, decided once and then read back.
+
+    Unreadable or unwritable means EXISTING: an install whose record cannot be
+    kept must never have its choices changed by a default."""
+    p = install_origin_file()
+    key = str(p)
+    cached = _INSTALL_ORIGIN_CACHE.get(key)
+    if cached in (NEW_INSTALL, EXISTING_INSTALL):
+        return cached
+    got = install_choices_state().get("install")
+    if got in (NEW_INSTALL, EXISTING_INSTALL):
+        _INSTALL_ORIGIN_CACHE[key] = got
+        return got
+    home = Path(FRIDAY_DIR)
+    fresh = not (Path(SETTINGS_FILE).exists() or (home / ".setup_complete").exists()
+                 or (home / "costs.db").exists() or (home / "config.yaml").exists())
+    origin = NEW_INSTALL if fresh else EXISTING_INSTALL
+    # Kept for this process even if the record cannot be written now (a
+    # sharing lock, say): the answer must not change once anything acted on
+    # it. The write is tried again by update_install_choices_state's callers.
+    _INSTALL_ORIGIN_CACHE[key] = origin
+    try:
+        update_install_choices_state(install=origin,
+                                     decided_at=datetime.now().isoformat(timespec="seconds"))
+    except Exception:
+        pass
+    return origin
+
+
+#: How the terminal setup records a route it kept without asking (quick mode,
+#: a skipped routing screen). Not a pick (A16) and not consent (it is not one
+#: of privacy/cloud_consent.ROUTING_CONSENT_VIAS).
+ROUTE_KEPT_VIA = "kept"
+
+
+def route_pick_pending(settings=None) -> bool:
+    """True on a new install whose owner has not picked an AI route yet (A16).
+
+    The pick is the owner's own routing change (Settings, the setup chat,
+    setup completion, an answered terminal-setup routing question), which
+    records `model_routing.mode_chosen` for the stored mode. A mode the
+    terminal setup kept without asking (`mode_chosen_via` ROUTE_KEPT_VIA) is
+    not a pick. An install that already existed is never pending: its stored
+    route is its choice."""
+    try:
+        if install_origin() != NEW_INSTALL:
+            return False
+        s = _load_settings_raw() if settings is None else settings
+        mr = (s or {}).get("model_routing")
+        mr = mr if isinstance(mr, dict) else {}
+        mode = str(mr.get("mode") or "").strip().lower()
+        chosen = str(mr.get("mode_chosen") or "").strip().lower()
+        if not mode or chosen != mode:
+            return True
+        return str(mr.get("mode_chosen_via") or "") == ROUTE_KEPT_VIA
+    except Exception:
+        return False
+
+
 def _persist_spending_caps_migration(delta: dict):
     """Write the one-time spending-caps migration (and its stamp) once per
     process. A failed write is retried by the next process; every read in
@@ -3802,6 +4001,9 @@ def _load_settings_raw():
         # Fresh installs start on the trimmed core dock; existing installs (that
         # had ~/.friday before this version added the setting) keep the full set.
         seed["show_all_workspaces"] = not _FRESH_INSTALL
+        # North-star A17: the daily spending cap starts on only on a new
+        # install; an install that lost its settings.json keeps none.
+        _seed_install_choices(seed)
         _sync_capability_routing(seed)
         # The seed is written whole or not at all, and never over a file:
         # a hard link fails when the target exists, so a settings.json that
@@ -3868,6 +4070,9 @@ def _load_settings_raw():
         merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
         _smart_found = _migrate_smart_routing_mode(merged)
         _caps_delta = _migrate_spending_caps(merged)
+        _daily_cap_delta = _migrate_daily_cap(merged, data)
+        if _daily_cap_delta:
+            _caps_delta = _merge_migration_deltas(_caps_delta, _daily_cap_delta)
         _sync_capability_routing(merged)
         _remember_good_settings(merged)
         with _SETTINGS_CACHE_LOCK:
@@ -3888,8 +4093,7 @@ def _load_settings_raw():
         out = _degraded_settings()
         try:
             import logging as _lg
-            _have_last = ({k: v for k, v in out.items()
-                           if k != DEGRADED_READ_KEY} != DEFAULT_SETTINGS)
+            _have_last = not getattr(out, "from_defaults", False)
             _lg.getLogger("friday.settings").error(
                 "settings.json exists but could not be read (%s: %s) — %s. "
                 "A save of anything derived from this read is refused. "
@@ -3996,7 +4200,8 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
                    owner_safe_writes_change: bool = False,
                    routing_change_via: str = "",
-                   owner_room_approvals_change: bool = False):
+                   owner_room_approvals_change: bool = False,
+                   owner_fallback_order_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
         return _save_settings_locked(data,
@@ -4004,7 +4209,8 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
             owner_routing_change=owner_routing_change,
             owner_safe_writes_change=owner_safe_writes_change,
             routing_change_via=routing_change_via,
-            owner_room_approvals_change=owner_room_approvals_change)
+            owner_room_approvals_change=owner_room_approvals_change,
+            owner_fallback_order_change=owner_fallback_order_change)
 
 
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`
@@ -4017,7 +4223,8 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
                    owner_routing_change: bool = False,
                    owner_safe_writes_change: bool = False,
                    routing_change_via: str = "",
-                   owner_room_approvals_change: bool = False):
+                   owner_room_approvals_change: bool = False,
+                   owner_fallback_order_change: bool = False):
     """`_internal_cloud_consent_write` exists for exactly one caller:
     `privacy.cloud_consent.record_consent()`. Every other path into this
     function — the generic `/api/settings` POST included — has
@@ -4180,6 +4387,21 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             _mr_in = {k: v for k, v in _mr_in.items()
                       if k not in ("mode_chosen", "mode_chosen_at", "mode_chosen_via")}
             data["model_routing"] = _mr_in
+    # THE CLOUD FALLBACK ORDER IS THE OWNER'S, SET BY A PRESS (A6).
+    #
+    # `model_routing.cloud_fallback_order` pre-approves moving from one cloud
+    # provider to another when the first fails. Only its own route (a press on
+    # Friday's page, owner_fallback_order_change) may write it; any other write
+    # that carries it (a whole settings dict read earlier, a script, a model's
+    # tool) has the key dropped and logged, and the stored order is kept.
+    _mr_fb = (data or {}).get("model_routing")
+    if isinstance(_mr_fb, dict) and "cloud_fallback_order" in _mr_fb and not owner_fallback_order_change:
+        import logging as _lg
+        _lg.getLogger("friday.settings").warning(
+            "REFUSED a change of model_routing.cloud_fallback_order: not the owner's press "
+            "(caller %s); the rest of the write is kept", _routing_mode_caller())
+        data = dict(data)
+        data["model_routing"] = {k: v for k, v in _mr_fb.items() if k != "cloud_fallback_order"}
     # LAYA'S SAFE WRITES WIDEN ONLY ON AN EXPLICIT OWNER ACTION.
     #
     # `laya_safe_writes` lets Laya raise approval cards for changes to the
@@ -4223,6 +4445,22 @@ def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
             data.pop("voice_room_approvals_require_name", None)
     merged = dict(DEFAULT_SETTINGS)
     merged.update({k: v for k, v in existing.items()})
+    # North-star A17: a NEW install's daily cap is on. A save onto its store
+    # before it has a cost_budget (the terminal setup wrote settings.json
+    # without one) writes the cap down as on, never the defaults' off.
+    if not isinstance(existing.get("cost_budget"), dict):
+        try:
+            _new = install_origin() == NEW_INSTALL
+        except Exception:
+            _new = False
+        if _new:
+            try:
+                from agent_friday.services import spending_caps as _sc
+                merged["cost_budget"] = dict(merged.get("cost_budget") or {},
+                                             hard_stop_daily_enabled=True,
+                                             hard_stop_daily=_sc.DAILY_CAP_DEFAULT_USD)
+            except Exception:
+                pass
     for k, v in (data or {}).items():
         if (k in _DEEP_MERGED_BLOCKS and isinstance(v, dict)
                 and isinstance(existing.get(k), dict)):
@@ -4383,7 +4621,12 @@ def _apply_offline_routing_overlay(settings):
     try:
         with _NETWORK_LOCK:
             offline = NETWORK_STATE["status"] == "offline"
-        if not offline or not settings.get("offline_auto_local", True):
+        try:
+            from agent_friday.services import safe_mode as _sm
+            safe = _sm.active()          # safe mode: local only for this run
+        except Exception:
+            safe = False
+        if not safe and (not offline or not settings.get("offline_auto_local", True)):
             return settings
         mr = dict(settings.get("model_routing") or {})
         if mr.get("mode") != "local_only" or mr.get("fallback_to_cloud") is not False:
@@ -4722,6 +4965,40 @@ def _frame_gate_reason():
 
 
 @app.before_request
+def _begin_correlation():
+    """One correlation id for this request, before anything else runs (services/correlation):
+    the caller's X-Request-Id when it is a plain token, else a new one. Every friday.log line
+    and decision receipt this request writes carries it, and the answer names it."""
+    try:
+        from agent_friday.services import correlation as _corr
+        _corr.begin(request.headers.get(_corr.REQUEST_HEADER))
+    except Exception:  # noqa: BLE001 - an id is a label; its absence blocks nothing
+        pass
+    return None
+
+
+@app.after_request
+def _answer_correlation(resp):
+    try:
+        from agent_friday.services import correlation as _corr
+        cid = _corr.current()
+        if cid:
+            resp.headers[_corr.RESPONSE_HEADER] = cid
+    except Exception:  # noqa: BLE001
+        pass
+    return resp
+
+
+@app.teardown_request
+def _end_correlation(_exc=None):
+    try:
+        from agent_friday.services import correlation as _corr
+        _corr.clear()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.before_request
 def check_auth():
     # Observer credential (services/observer_access; task-visibility.md §4.5):
     # a request presenting X-Friday-Observer is READ-ONLY for the whole
@@ -4809,6 +5086,8 @@ OWN_PAGE_ENDPOINTS = frozenset({
     "core_routes.serve_workspace_tab",
     "core_routes.serve_widget",
     "core_routes.serve_friday_live",
+    "doctor.doctor_page",
+    "ledger.ledger_page",
     "login",
 })
 
@@ -4954,6 +5233,89 @@ def _apply_isolation_headers(resp):
     except Exception:
         pass
     return _isolation_headers(resp)
+
+
+# ── Idempotency keys (services/idempotency; BD-11a) ─────────────
+# Registered after check_auth, so only a request that passed the front door is
+# kept or replayed. The same key twice runs once.
+
+@app.before_request
+def _idempotency_begin():
+    key = request.headers.get("Idempotency-Key")
+    if not key:
+        return None
+    try:
+        from agent_friday.services import idempotency as _idem
+    except Exception:  # noqa: BLE001 - without the module the request runs as before
+        return None
+    if not _idem.applies(request.method, request.path):
+        return None
+    if not _idem.valid_key(key):
+        return jsonify({"status": "error", "code": "bad_idempotency_key",
+                        "message": "Idempotency-Key must be 8 to 128 letters, digits, '.', '_', ':' or '-'. "
+                                   "Nothing was run."}), 400
+    # Who is asking, so one caller's key never answers another: the principal, where the request
+    # comes from (this PC or not, and its address), whether it carries the page's valid session
+    # token (its validity, not its value, so a rotation does not split one page's retries), and
+    # whether its session is signed in (read after check_auth, which may sign a first request in:
+    # the session cookie's own bytes change when it does, which would split a request from its
+    # retry).
+    try:
+        _local = bool(_is_local_request())
+    except Exception:  # noqa: BLE001
+        _local = False
+    try:
+        _tok_ok = bool(_api_token_valid(request.headers.get("X-Friday-Token")))
+    except Exception:  # noqa: BLE001
+        _tok_ok = False
+    caller = "%s|%s|%s|%s|%s" % (getattr(g, "friday_principal", "user") or "user", _local,
+                                 request.remote_addr or "", _tok_ok,
+                                 bool(session.get("authenticated")))
+    decision, got = _idem.begin(key, caller, "",
+                                _idem.fingerprint(request.method, request.path, request.get_data(cache=True)))
+    if decision == "run":
+        g._idempotency_scope = got
+        return None
+    if decision == "replay":
+        resp = Response(got["body"], status=got["status"], mimetype=got["mimetype"])
+        resp.headers[_idem.REPLAYED] = "true"
+        return resp
+    words = {
+        "running": ("idempotency_in_progress", 409,
+                    "A request with this Idempotency-Key is still running; it was not run again."),
+        "stream": ("idempotency_used", 409,
+                   "A request with this Idempotency-Key was already handled, and its answer was a stream "
+                   "that cannot be sent again. It was not run again."),
+        "mismatch": ("idempotency_key_reused", 422,
+                     "This Idempotency-Key was already used for a different request. Nothing was run."),
+    }[decision]
+    return jsonify({"status": "error", "code": words[0], "message": words[2]}), words[1]
+
+
+@app.after_request
+def _idempotency_finish(resp):
+    scope = getattr(g, "_idempotency_scope", None)
+    if scope:
+        try:
+            from agent_friday.services import idempotency as _idem
+            streamed = bool(resp.is_streamed or resp.direct_passthrough)
+            body = None if streamed else resp.get_data()
+            _idem.finish(scope, resp.status_code, body, resp.mimetype, streamed)
+            g._idempotency_scope = None
+        except Exception:  # noqa: BLE001
+            pass
+    return resp
+
+
+@app.teardown_request
+def _idempotency_forget(_exc=None):
+    scope = getattr(g, "_idempotency_scope", None)
+    if scope:
+        try:
+            from agent_friday.services import idempotency as _idem
+            _idem.forget(scope)          # the request failed before an answer: a retry runs
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @app.route('/api/session/token')

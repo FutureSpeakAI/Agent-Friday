@@ -737,7 +737,22 @@ def unpublish(slug: str) -> bool:
             try:
                 from agent_friday.services import publish_hosting as _ph
                 _ph.unpublish_remote(entry)
+                try:
+                    from agent_friday.services import egress_gate as _eg
+                    _eg.record_service_send("web_publish", ("publish-web:" + str(entry.get("adapter")))[:80],
+                                            destination=str(entry.get("url") or entry.get("adapter") or ""),
+                                            content={"take_down": slug}, part="take down")
+                except Exception:
+                    pass
             except Exception:
+                try:
+                    from agent_friday.services import egress_gate as _eg
+                    _eg.record_service_send("web_publish", ("publish-web:" + str(entry.get("adapter")))[:80],
+                                            destination=str(entry.get("url") or entry.get("adapter") or ""),
+                                            content={"take_down": slug}, part="take down",
+                                            result="sent_unconfirmed")
+                except Exception:
+                    pass
                 # Remote timeouts can be ambiguous. Keep the local receipt and
                 # mirror so a failed request cannot be presented as taken down.
                 raise UserFacingValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None
@@ -772,6 +787,24 @@ def _post_back(record: dict, text: str) -> None:
         from agent_friday.services import notice_registry as _nr
         _nr.bus_broadcast("E74", {"type": "approval_result", "conversation_id": cid,
                                   "approval_id": record.get("approval_id")}, kind="chat")
+    except Exception:
+        pass
+
+
+def _record_egress(adapter: str, label: str, bundle: "Bundle", result: str, url: str = "") -> None:
+    """The page in the egress ledger and on the privacy map (§26.7): where it
+    went and what it held (text files as text; other files by size and hash),
+    fingerprinted and kept encrypted by default (A20)."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        files = {}
+        for path, data in sorted(bundle.files.items()):
+            try:
+                files[path] = data.decode("utf-8")
+            except Exception:
+                files[path] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        _eg.record_service_send("web_publish", ("publish-web:" + adapter)[:80], destination=label + (f" ({url})" if url else ""),
+                                content={"slug": bundle.slug, "files": files}, result=result, part="page")
     except Exception:
         pass
 
@@ -815,8 +848,10 @@ def _on_decision(record: dict) -> None:
             url = _ph.publish_remote(adapter, bundle)
     except Exception as e:
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": str(e)})
+        _record_egress(adapter, label, bundle, "failed")
         _post_back(record, 'Publishing "%s" via %s failed: %s. Nothing is up.' % (title, label, e))
         return
+    _record_egress(adapter, label, bundle, "sent", url)
     with _LOCK:
         items = [i for i in _read_index() if i.get("slug") != bundle.slug]
         items.append({"slug": bundle.slug, "title": bundle.title, "kind": bundle.kind,
