@@ -1,8 +1,4 @@
 """Revoke all action authority (north star §18.12, NS-18.12-1).
-
-Red on the old code by assertion: there was no way to take back all action
-authority at once; pending cards, grants, jobs and channels had to be found
-and withdrawn one by one, and nothing held outward actions afterwards.
 """
 from __future__ import annotations
 
@@ -118,7 +114,7 @@ def test_the_hold_reads_only_new_entries_each_time(home, monkeypatch):
 
 
 def test_an_approved_card_outside_a_tool_call_is_held_too(home):
-    """Review round 1 (B1): authorize_external skipped the hold."""
+    """authorize_external is held like any tool call."""
     from agent_friday.services import authority
     authority.revoke_all("owner:test")
     v = action_gate.authorize_external("mail: archive 3 messages", {"ids": [1, 2, 3]},
@@ -127,7 +123,6 @@ def test_an_approved_card_outside_a_tool_call_is_held_too(home):
 
 
 def test_websites_are_narrowed_to_reading(home, monkeypatch):
-    """Review round 1 (S1)."""
     from agent_friday.governance import web_sites
     from agent_friday.services import authority
     narrowed = []
@@ -140,7 +135,6 @@ def test_websites_are_narrowed_to_reading(home, monkeypatch):
 
 
 def test_a_failed_marker_write_still_revokes_everything(home, monkeypatch):
-    """Review round 1 (S2)."""
     from agent_friday.services import authority, scheduler
     paused = []
     monkeypatch.setattr(scheduler, "list_schedules", lambda: [{"id": "job-1", "enabled": True}])
@@ -154,14 +148,13 @@ def test_a_failed_marker_write_still_revokes_everything(home, monkeypatch):
 
 
 def test_the_hold_fails_closed_when_the_record_cannot_be_read(home, monkeypatch):
-    """Review round 1 (S3)."""
     from agent_friday.services import authority
     monkeypatch.setattr(authority, "_newest_receipt", lambda: (_ for _ in ()).throw(OSError("x")))
     assert authority.revoked() is not None and _outward().action == "deny"
 
 
 def test_an_unsigned_line_cannot_hide_a_fresh_revocation(home):
-    """Review round 1 (S4): a planted huge seq moved the cache past the receipt."""
+    """A planted huge seq never moves the cache past the receipt."""
     from agent_friday.services import authority
     L.append("activity", {"kind": "x"})
     lines = L.live_path().read_text(encoding="utf-8").splitlines()
@@ -180,7 +173,6 @@ def test_an_unsigned_line_cannot_hide_a_fresh_revocation(home):
 
 
 def test_a_revocation_moved_into_the_archive_still_holds(home):
-    """Review round 1 (S5)."""
     from agent_friday.services import authority
     authority.revoke_all("owner:test")
     with L._TLOCK:
@@ -196,7 +188,6 @@ def test_a_revocation_moved_into_the_archive_still_holds(home):
 
 
 def test_a_channel_cannot_be_started_while_authority_is_revoked(home):
-    """Review round 1 (S6)."""
     from agent_friday.services import authority
     from agent_friday.services.channels import manager
     authority.revoke_all("owner:test")
@@ -205,7 +196,7 @@ def test_a_channel_cannot_be_started_while_authority_is_revoked(home):
 
 
 def test_the_detail_names_what_was_taken_back(home, monkeypatch):
-    """Review round 1 (L1): the owner can give back what they want."""
+    """The detail lets the owner give back what they want."""
     from agent_friday.governance import send_grants
     from agent_friday.services import authority
     monkeypatch.setattr(send_grants, "list_grants", lambda *a, **k: [{"grant_id": "sg-9"}])
@@ -216,7 +207,7 @@ def test_the_detail_names_what_was_taken_back(home, monkeypatch):
 
 
 def test_an_approved_card_not_yet_used_is_withdrawn(home):
-    """Review round 2 (M1): it would otherwise run by itself after a restore."""
+    """An approved, unused card is withdrawn so it cannot run by itself after a restore."""
     from agent_friday.services import approvals, authority
     card = approvals.create_approval(kind="governed_action", title="Archive mail", subject_type="external_action",
                                      subject_id="mail:abc", action_description="x", payload={}, force_gate=True)
@@ -228,7 +219,6 @@ def test_an_approved_card_not_yet_used_is_withdrawn(home):
 
 
 def test_one_grant_that_will_not_go_does_not_leave_the_others(home, monkeypatch):
-    """Review round 2 (L1)."""
     from agent_friday.governance import send_grants
     from agent_friday.services import authority
     monkeypatch.setattr(send_grants, "list_grants", lambda *a, **k: [{"grant_id": "a"}, {"grant_id": "b"}])
@@ -246,7 +236,6 @@ def test_one_grant_that_will_not_go_does_not_leave_the_others(home, monkeypatch)
 
 
 def test_a_connector_tool_in_capitals_is_held_too(home):
-    """Review round 2 (L4)."""
     from agent_friday.services import authority
     authority.revoke_all("owner:test")
     v = action_gate._decide("MCP_bank_get_balance", action_gate.INTERNAL, "", {}, False, {}, True)
@@ -254,7 +243,7 @@ def test_a_connector_tool_in_capitals_is_held_too(home):
 
 
 def test_a_ledger_break_is_named_not_called_a_revocation(monkeypatch, tmp_path):
-    """CI on #308: with a broken ledger the hold must say the ledger, never
+    """With a broken ledger the hold says the ledger, never
     that the owner revoked authority they did not revoke; restore refuses."""
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     from agent_friday.governance import action_gate
@@ -273,7 +262,7 @@ def test_a_ledger_break_is_named_not_called_a_revocation(monkeypatch, tmp_path):
 
 
 def test_an_unreadable_archive_never_locks_the_owner_out(monkeypatch, tmp_path):
-    """Review of the CI fix (1): with no open break, the owner's restore is
+    """With no open break, the owner's restore is
     written even though an archived part stays unreadable, and clears the hold."""
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     from agent_friday.services import action_ledger, authority
@@ -308,9 +297,9 @@ def test_an_open_break_still_refuses_restore(monkeypatch, tmp_path):
 
 
 def test_a_moment_the_record_cannot_be_opened_is_tried_again(monkeypatch, tmp_path):
-    """CI on #308 (windows py3.11, test_reflex_chat): a file being replaced by
-    an append cannot be opened for a moment on Windows; one failed strict read
-    held every action. It is tried again; a break that stays holds."""
+    """A file being replaced by an append cannot be opened for a moment on
+    Windows; one failed strict read does not hold every action. It is tried
+    again; a break that stays holds."""
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     from agent_friday.services import action_ledger, authority
     monkeypatch.setattr(authority.time, "sleep", lambda s: None)
@@ -331,9 +320,9 @@ def test_a_moment_the_record_cannot_be_opened_is_tried_again(monkeypatch, tmp_pa
 
 
 def test_the_archive_is_always_read_strictly_on_a_cold_start(monkeypatch, tmp_path):
-    """Review of 6de27267a: skipping the strict read when the archive folder
-    is missing let a deleted archive (or a rolled-back live file) hide a
-    revocation from connected reads; the cold look and a rollback read strictly."""
+    """The cold look and a rollback read strictly, even when the archive folder
+    is missing, so a deleted archive (or a rolled-back live file) cannot hide a
+    revocation from connected reads."""
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     from agent_friday.services import action_ledger, authority
     seen = []
@@ -350,7 +339,7 @@ def test_the_archive_is_always_read_strictly_on_a_cold_start(monkeypatch, tmp_pa
 
 
 def test_an_old_restore_in_a_rolled_back_file_does_not_stand(monkeypatch, tmp_path):
-    """Re-review (1): on a cold start a quick-read "restored" is checked
+    """On a cold start a quick-read "restored" is checked
     strictly; a strict read that refuses (a rolled-back file fails the anchor)
     holds, it never lifts the hold."""
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
@@ -370,8 +359,8 @@ def test_an_old_restore_in_a_rolled_back_file_does_not_stand(monkeypatch, tmp_pa
 
 
 def test_a_segment_that_cannot_be_read_is_not_skipped(monkeypatch, tmp_path):
-    """Confirmation review (1): newest_since skipped an unreadable segment and
-    the look was cached; now the caller reads strictly (and holds if it cannot)."""
+    """newest_since reports an unreadable segment instead of skipping it, and
+    the caller reads strictly (and holds if it cannot)."""
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     from agent_friday.services import action_ledger, authority
     monkeypatch.setattr(authority.time, "sleep", lambda s: None)

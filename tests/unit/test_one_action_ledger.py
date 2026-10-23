@@ -5,15 +5,14 @@ edited, removed or reordered), §36.9-2 and §37.2-5 (one receipt system, not
 one per feature), burn-down BD-11b ("editing one receipt on disk makes the next
 outward action hold with a visible reason").
 
-Red on the old code by assertion: each writer kept its own file
-(decision-bom.jsonl, actions/receipts.jsonl, activity_ledger.jsonl,
-governance/dissent_events.jsonl, governance/send_grants_log.jsonl,
-governance/web_sites_history.jsonl, media diet and inbox-cleanup receipts),
-and editing, deleting or reordering a decision line held nothing.
+The legacy receipt files (decision-bom.jsonl, actions/receipts.jsonl,
+activity_ledger.jsonl, governance/dissent_events.jsonl,
+governance/send_grants_log.jsonl, governance/web_sites_history.jsonl, media
+diet and inbox-cleanup receipts) are imported into the one ledger, and
+editing, deleting or reordering a decision line holds outward actions.
 
-These tests use only functions that exist before and after the change, and
-find the store by looking at which files changed, so they judge behaviour,
-not the module layout.
+These tests use only public functions, and find the store by looking at
+which files changed, so they judge behaviour, not the module layout.
 """
 from __future__ import annotations
 
@@ -192,11 +191,11 @@ def test_a_held_send_from_an_executor_is_refused_too(scratch_home):
 
 
 def test_old_receipt_files_are_brought_in_once_and_kept(scratch_home):
-    """Receipts written before the change still show, and the old files are
+    """Receipts in the legacy files show in the ledger, and the legacy files are
     kept whole (moved, never edited or deleted)."""
     from agent_friday.services import action_journal, activity_ledger
     from agent_friday.services import morning_receipt
-    # the key first, then write lines in the old formats where the old code kept them
+    # the key first, then lines in each legacy receipt file's format at its legacy path
     key = poi.get_governance_key()
     old = {"tool": "probe_legacy_send", "class": "outward", "decision": "allow",
            "surface": "test", "timestamp": "2026-10-01T10:00:00Z"}
@@ -265,9 +264,9 @@ def test_a_receipt_that_cannot_be_written_still_holds_the_action(scratch_home, m
 
 
 def test_an_append_while_the_files_are_read_is_not_a_missing_record(scratch_home, monkeypatch):
-    """CI on #308 (test_chat_and_card_approval_race_runs_once): verify reads the
-    files without the write lock; an append by another thread in that window
-    was reported as "record(s) this session wrote are gone" and held everything."""
+    """verify reads the files without the write lock; an append by another
+    thread in that window is not reported as "record(s) this session wrote are
+    gone" and holds nothing."""
     import threading
     from agent_friday.services import action_ledger as L
     _decision("probe_0")

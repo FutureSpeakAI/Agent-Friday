@@ -1,7 +1,6 @@
 """The Doctor page's scheduled-bundle controls and strength meter.
 
-Red on the old code by assertion: the routes did not exist (404), and the
-one-off bundle accepted a weak passphrase of 12 characters or more.
+The one-off bundle refuses a weak passphrase, whatever its length.
 """
 from __future__ import annotations
 
@@ -49,10 +48,10 @@ def test_the_schedule_takes_the_press_and_never_shows_the_passphrase(client, tmp
     assert PASS not in g.get_data(as_text=True)
     assert client.post("/api/bundle/schedule/run", json={}).status_code == 403
     assert client.post("/api/bundle/schedule/nope", json={}, headers=_press()).status_code == 404
-    # a pressed POST without a clear on/off changes nothing (review round 1, L1)
+    # a pressed POST without a clear on/off changes nothing
     r = client.post("/api/bundle/schedule", json={"folder": str(tmp_path / "out")}, headers=_press())
     assert r.status_code == 400 and client.get("/api/bundle/schedule").get_json()["schedule"]["enabled"]
-    # the folder is shown on this PC only (L3)
+    # the folder is shown on this PC only
     far = client.get("/api/bundle/schedule", environ_base={"REMOTE_ADDR": "203.0.113.7"})
     if far.status_code == 200:
         assert str(tmp_path) not in far.get_data(as_text=True)

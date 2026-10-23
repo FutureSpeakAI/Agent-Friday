@@ -1,7 +1,5 @@
 """The weekly Doctor ask from the Doctor page (A3): each step is the owner's
 press on this PC; nothing leaves without the approval card.
-
-Red on the old code by assertion: the routes did not exist (404).
 """
 from __future__ import annotations
 

@@ -1,8 +1,7 @@
 """Activity reads the one action ledger.
 
-Red on the old code by assertion: /api/ledger did not exist (404), activity
-rows carried no place in any chain, and a break could not be reviewed or
-acknowledged from the page.
+/api/ledger serves it, activity rows carry their place in the chain, and a
+break is reviewed and acknowledged from the page.
 """
 from __future__ import annotations
 

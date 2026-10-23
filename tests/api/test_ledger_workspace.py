@@ -1,9 +1,8 @@
 """The Ledger workspace: a readable receipt viewer with filters (north star
 §18.10, NS-18.10-1/-3), export, and the retention setting of amendment A22.
 
-Red on the old code by assertion: /ledger, /api/ledger/export and
-/api/ledger/retention were 404, /api/ledger ignored every filter but kind, and
-entries carried no verification or plain line.
+/api/ledger honours every filter, and each entry carries its verification and
+a plain line.
 """
 from __future__ import annotations
 

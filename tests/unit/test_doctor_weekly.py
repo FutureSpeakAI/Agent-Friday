@@ -1,7 +1,6 @@
 """The weekly "send a Doctor report to FutureSpeak?" ask (amendment A3).
 
-Red on the old code: there was no ask; a report could only be saved and
-attached by hand (which stays true: nothing here sends by itself).
+Nothing here sends by itself.
 """
 from __future__ import annotations
 
@@ -68,7 +67,7 @@ def test_the_card_shows_exactly_what_would_be_sent_and_send_sends_only_that(week
     out = weekly.send(p["sha256"])
     assert out["how"] == "approval_card" and out["approval_id"] == "ap-1"
     with pytest.raises(weekly.WeeklyError):
-        weekly.send(p["sha256"])                                     # once a week (review round 1, low 1)
+        weekly.send(p["sha256"])                                     # once a week
     assert len(mail.sent) == 1
     s = mail.sent[0]
     assert s["to"] == weekly.FUTURESPEAK_DOCTOR_ADDRESS and s["account_id"] == "acct-1"
@@ -153,7 +152,7 @@ def test_nothing_is_ever_sent_by_the_daily_tick(weekly, monkeypatch):
 
 
 def test_a_standing_send_pre_approval_never_covers_the_weekly_email(weekly, monkeypatch):
-    """Review round 1 (1): the send is made outside any tool decision."""
+    """The send is made outside any tool decision."""
     from agent_friday.governance import action_gate
     from agent_friday.services import gmail_send
     seen = []
@@ -171,7 +170,6 @@ def test_a_standing_send_pre_approval_never_covers_the_weekly_email(weekly, monk
 
 
 def test_an_unanswered_question_is_asked_once_then_again_in_four_weeks(weekly, monkeypatch):
-    """Review round 1 (3)."""
     from agent_friday import notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **k: {})
     assert weekly.tick() == {"offered": "ask"}
@@ -181,7 +179,6 @@ def test_an_unanswered_question_is_asked_once_then_again_in_four_weeks(weekly, m
 
 
 def test_the_emailed_report_says_it_was_chosen_and_a_partly_off_record_week_leaves_out_counts(weekly, monkeypatch):
-    """Review round 1 (4, 5)."""
     from agent_friday.services import off_record
     weekly.answer("weekly")
     p = weekly.prepare()
@@ -195,7 +192,7 @@ def test_the_emailed_report_says_it_was_chosen_and_a_partly_off_record_week_leav
 
 
 def test_the_page_reuses_this_weeks_text_and_planted_text_is_never_shown_or_sent(weekly, monkeypatch):
-    """Review round 1 (low 3, 4) and round 2 (1): the text lives in memory only."""
+    """The text lives in memory only."""
     import hashlib as _h
     mail = _Mail().install(monkeypatch)
     weekly.answer("weekly")
@@ -213,14 +210,14 @@ def test_the_page_reuses_this_weeks_text_and_planted_text_is_never_shown_or_sent
 
 
 def test_the_answer_comes_from_its_signed_receipt_not_a_file(weekly):
-    """Review round 2 (2): a planted file cannot say yes, or yes in local-only mode."""
+    """A planted file cannot say yes, or yes in local-only mode."""
     weekly._path().parent.mkdir(parents=True, exist_ok=True)
     weekly._path().write_text(json.dumps({"answer": "weekly", "local_only_ok": True}), encoding="utf-8")
     assert weekly.status()["answer"] is None and weekly.next_item() == "ask"
 
 
 def test_an_off_record_session_keeps_counts_out_for_thirty_days(weekly, monkeypatch):
-    """Review round 2 (3, 4): heard at the session's end, not only by the tick."""
+    """The off-record session is heard at its end, not only by the tick."""
     from agent_friday.services import off_record
     weekly.answer("weekly")
     weekly.install_hooks()
@@ -248,7 +245,7 @@ def test_the_weekly_text_passes_the_privacy_gate_whole(weekly):
 
 
 def test_a_cleared_file_does_not_bring_off_record_figures_back(weekly):
-    """Closing review (F3): the mark is kept in memory too."""
+    """The mark is kept in memory too."""
     from agent_friday.services import off_record
     weekly.answer("weekly")
     weekly.install_hooks()
@@ -258,7 +255,7 @@ def test_a_cleared_file_does_not_bring_off_record_figures_back(weekly):
 
 
 def test_a_ledger_with_a_break_offers_nothing(weekly):
-    """Closing review (F2): the answer is read strictly; a break answers never."""
+    """The answer is read strictly; a break answers never."""
     from agent_friday.services import action_ledger as L
     weekly.answer("weekly")
     p = L.live_path()
@@ -269,7 +266,7 @@ def test_a_ledger_with_a_break_offers_nothing(weekly):
 
 
 def test_a_never_still_holds_after_its_receipt_is_archived(weekly, monkeypatch):
-    """Closing review (F1): the answer is read from the archive too."""
+    """The answer is read from the archive too."""
     import time as _t
     from agent_friday.services import action_ledger as L
     weekly.answer("never")

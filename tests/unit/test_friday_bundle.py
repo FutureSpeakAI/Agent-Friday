@@ -6,9 +6,8 @@ North star §27.1 (carry Friday's durable self to another device), §27.2
 re-established on the device), §34.3-7 (restore from a portable bundle);
 burn-down BD-17.
 
-Red on the old code by assertion: `friday bundle` and `friday restore` did not
-exist (the command line refused them), and `friday export --full` had no way
-back in. The rest pins the bundle itself.
+The command line makes, verifies and restores a bundle (`friday bundle`,
+`friday restore`); the rest pins the bundle itself.
 """
 from __future__ import annotations
 
@@ -305,7 +304,7 @@ def test_what_a_fresh_install_left_is_moved_aside_not_merged(homes, tmp_path, mo
     assert not (b / "skills" / "bundled").exists()
 
 
-# ── security review round 1 ─────────────────────────────────────────────────
+# ── what never travels, the key a restore keeps, names, key settings ─────────
 
 class _FakeKeyring:
     """A keychain for one Windows account, in memory."""
@@ -404,7 +403,7 @@ def test_a_header_asking_for_absurd_key_settings_is_refused_cleanly(homes, tmp_p
         fb.verify(out, PASS)
 
 
-# ── security review round 2 ─────────────────────────────────────────────────
+# ── sign-ins that stay behind, the keychain, a late restore step ─────────────
 
 def test_old_sign_ins_client_secrets_browser_profiles_and_grants_stay_behind(homes, tmp_path, monkeypatch):
     from agent_friday.services import friday_bundle as fb

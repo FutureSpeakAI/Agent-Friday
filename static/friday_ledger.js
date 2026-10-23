@@ -2,7 +2,7 @@
  *
  * Activity reads one store: GET /api/ledger. Every row there is one entry of
  * the hash-chained ledger: activity rows (model calls, tool calls, spawns,
- * traces) and the receipts that used to live in files of their own
+ * traces) and the receipts kept in the legacy receipt files
  * (checkpoint decisions, changes to the owner's things, goal receipts, dissent,
  * pre-approved sends, website trust, inbox cleanup, media diet).
  *

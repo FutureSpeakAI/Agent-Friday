@@ -1,7 +1,5 @@
 """Backup and restore from the Doctor page: making a bundle and resuming
 outward actions after a restore take the owner's press on this PC.
-
-Red on the old code by assertion: the routes did not exist (404).
 """
 from __future__ import annotations
 

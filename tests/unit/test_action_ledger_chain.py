@@ -155,7 +155,7 @@ def test_a_half_done_migration_continues_without_duplicates(tmp_path, monkeypatc
     assert len(L.entries(["activity"])) == 6
 
 
-# ── the end of the chain, the old files, the key (security review round 1) ──
+# ── the end of the chain, the old files, the key ─────────────────────────────
 
 def test_cutting_the_end_and_putting_an_old_head_back_still_holds():
     for i in range(3):
@@ -249,7 +249,7 @@ def test_undo_reads_only_lines_the_ledger_signed():
     assert action_journal.get("rcpt_forged00001") is None
 
 
-# ── security review round 2 ─────────────────────────────────────────────────
+# ── a deleted or older ledger, sealed edits, durable writes ──────────────────
 
 def test_a_deleted_ledger_is_not_covered_by_the_next_start():
     import shutil
