@@ -36,7 +36,7 @@ def _stream(monkeypatch, chunks, *, error=None, elapsed=1.995):
 
     response = Response()
     monkeypatch.setattr(mc, "time", SimpleNamespace(time=lambda: clock["now"]))
-    monkeypatch.setattr(mc.urllib.request, "urlopen", lambda *a, **k: response)
+    monkeypatch.setattr(mc, "_open", lambda *a, **k: response)
     server = mc.MCPServerHTTP("example", "http://127.0.0.1:1/mcp")
     monkeypatch.setattr(server, "_bearer", lambda: None)
     return server, response

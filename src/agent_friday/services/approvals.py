@@ -174,6 +174,9 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # the consent, as it is for a file grant.
     "library_add_request": frozenset({"owner:ui"}),
     "library_remove_request": frozenset({"owner:ui"}),
+    # A remote add-on (MCP) server host Friday may reach (services/mcp_host_cards): the
+    # server is sent what each call with its tools contains, so a press on screen only.
+    "mcp_host": frozenset({"owner:ui"}),
     "library_forget_request": frozenset({"owner:ui"}),
     # Loosening one of Laya's learned thresholds (services/laya_personal_fit, swot spec
     # decision 15): only the owner, per head, by a click on the report card. A spoken "yes"
@@ -996,6 +999,10 @@ def refusal_for(approval_id: str, decision: str, decided_by: str) -> str:
             and decided_by not in PUBLIC_QUERY_CARD_APPROVERS):
         return ("A search card is sent only with its own Send button in the app, where you see the exact "
                 "text that would go out. It cannot be approved from here.")
+    if (rec.get("status") == "pending" and rec.get("kind") == "mcp_host"
+            and decided_by not in SCREEN_ONLY_KINDS["mcp_host"]):
+        return ("A new add-on server host is allowed only with a press on its card's Approve button "
+                "in Friday's window. It cannot be approved from here.")
     if rec.get("status") == "pending" and _is_cloud_release_card(rec) and not _cloud_release_send(approval_id):
         return ("Private text goes to the cloud only with its card's own Send button in the app, where you "
                 "see exactly the words and where they would go. It cannot be approved from here.")

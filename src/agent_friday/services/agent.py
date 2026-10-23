@@ -15591,6 +15591,7 @@ except Exception as _mcp_imp_err:  # noqa: BLE001 — degrade gracefully if abse
 MCP_SERVERS_FILE = FRIDAY_DIR / "mcp_servers.json"
 
 _MCP_MANAGER = None                       # set by _mcp_boot()
+_MCP_BOOTED_ONCE = {"done": False}        # the host carry-over runs at the first boot, never at a reload
 _MCP_TOOL_MAP: dict[str, tuple] = {}      # registered tool name -> (server, raw tool)
 _MCP_SERVER_TOOLS: dict[str, list] = {}   # server name -> [registered tool names]
 _MCP_REG_LOCK = threading.Lock()
@@ -16045,6 +16046,10 @@ def _mcp_boot() -> None:
     if not _sm.allows("mcp"):
         print("  [mcp] safe mode: no MCP server is started")
         return
+    # The host carry-over may run only at the first boot, so the flag is set before any work:
+    # a reload after a failed first boot never adopts a server added since (governance/mcp_hosts).
+    first_boot = not _MCP_BOOTED_ONCE["done"]
+    _MCP_BOOTED_ONCE["done"] = True
     try:
         cfg = _load_mcp_servers()
         # Extension security: scan every configured server before launch and
@@ -16056,6 +16061,20 @@ def _mcp_boot() -> None:
             cfg = gate_mcp_config(cfg)
         except Exception as _sec_err:
             print(f"  [mcp] extension security scan skipped: {_sec_err}")
+        if first_boot:
+            try:
+                # Once ever, at the first start with the host list: hosts of remote servers
+                # configured now stay reachable (governance/mcp_hosts.carry_over_at_boot).
+                from agent_friday.governance import mcp_hosts as _mh
+                _mh.carry_over_at_boot(cfg)
+            except Exception as _mh_err:
+                _log.warning("MCP host carry-over failed: %s", type(_mh_err).__name__)
+        try:
+            # A host card approved after a restart is still applied (governance/mcp_hosts).
+            from agent_friday.services import mcp_host_cards as _mhc
+            _mhc.ensure_hook()
+        except Exception as _mh_err:
+            _log.warning("MCP host card hook not registered: %s", type(_mh_err).__name__)
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
