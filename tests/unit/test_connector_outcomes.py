@@ -85,6 +85,7 @@ def marked(monkeypatch):
     from agent_friday.services import google_accounts as ga
     seen = []
     monkeypatch.setattr(ga, "_mark_status", lambda aid, status, touch_sync=False: seen.append((aid, status)))
+    monkeypatch.setattr(ga, "_LAST_PROBLEM", {})
     return seen
 
 
@@ -266,9 +267,54 @@ def _co():
     (HttpError(500), "unconfirmed"), (HttpError(503), "unconfirmed"), (TimeoutError(), "unconfirmed"),
     (HttpError(404), "refused"), (HttpError(409), "refused"), (HttpError(403, "forbidden"), "refused"),
     (ConnectionError(), "unreachable"), (ValueError("odd"), "failed"),
+    # a connection that broke after the request went out may have been applied
+    (ConnectionResetError(), "unconfirmed"), (BrokenPipeError(), "unconfirmed"),
+    # an id the model chose, in the URL of a 404, does not make the grant revoked
+    (HttpError(404, "<HttpError 404 when requesting .../tasks/invalid_grant?alt=json>"), "refused"),
 ], ids=lambda v: v if isinstance(v, str) else type(v).__name__)
 def test_each_failure_has_one_kind(exc, kind):
     assert _co().classify(exc) == kind
+
+
+def test_not_done_is_never_counted_as_a_completed_call():
+    from agent_friday.services import completion_receipts as cr
+    entry = {"name": "create_task", "result": _co().NOT_DONE + '{"error": "Google refused"}'}
+    assert cr.receipt_ok(entry) is False, "an approved card or a claim must not count it as done"
+    assert cr.receipt_status(entry) != "ok"
+
+
+def test_a_result_that_says_ok_is_done_even_with_a_side_note():
+    with _co().call() as notes:
+        _co().settle({"ok": True, "error": "the other holds could not be released"})
+    assert notes == [], "the booking happened; a note about the other holds does not undo it"
+
+
+class _Sequence(FakeGoogle):
+    """Answers the first insert, then raises."""
+
+    def insert(self, **kw):
+        self.writes.append(("insert", kw))
+        return _Exec({"id": "h1"} if len(self.writes) == 1 else HttpError(503))
+
+
+def test_holds_partly_placed_keep_their_series_and_are_not_not_done(holds, monkeypatch):
+    from agent_friday.services import scheduling as sch
+    svc = _Sequence(None)
+    monkeypatch.setattr(sch, "_write_setup", lambda aid: ("acct_c1", svc))
+    with _co().call() as notes:
+        res = sch.hold_slots(title="Planning", slots=[
+            {"start": "2026-11-02T10:00:00+00:00", "end": "2026-11-02T11:00:00+00:00"},
+            {"start": "2026-11-03T10:00:00+00:00", "end": "2026-11-03T11:00:00+00:00"}])
+    assert res["ok"] is True and res["partial"] is True and res["series_id"]
+    assert [h["id"] for h in res["holds"]] == ["h1"] and len(res["not_held"]) == 1
+    assert "1 of 2" in res["warning"] and notes == []
+
+
+def test_deleting_what_is_already_gone_is_done(calendar, tasks):
+    res = calendar("delete_calendar_event", HttpError(410))
+    assert res.get("ok") is True and res.get("already_gone")
+    res = tasks("delete_task", HttpError(404))
+    assert res.get("deleted") is True and res.get("already_gone")
 
 
 @pytest.mark.parametrize("fixture,op,account", CHANGES, ids=IDS)
