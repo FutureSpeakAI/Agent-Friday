@@ -93,6 +93,7 @@ def _connect() -> sqlite3.Connection:
             id INTEGER PRIMARY KEY, mid TEXT UNIQUE, cid TEXT, ts REAL,
             role TEXT, via TEXT, sent_to TEXT);
         CREATE INDEX IF NOT EXISTS msgs_cid ON msgs(cid);
+        CREATE TABLE IF NOT EXISTS superseded(mid TEXT PRIMARY KEY);
         CREATE VIRTUAL TABLE IF NOT EXISTS msgs_fts USING fts5(text, tokenize='porter unicode61');
         """)
     try:
@@ -357,8 +358,11 @@ def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str,
             meta = {}
             if rows:
                 marks = ",".join("?" * len(rows))
+                # A turn superseded in memory is not returned as evidence
+                # (§34.9-4); it stays in the transcript, flagged there.
                 for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to FROM msgs "
-                                      f"WHERE id IN ({marks})", list(rows)):
+                                      f"WHERE id IN ({marks}) "
+                                      f"AND mid NOT IN (SELECT mid FROM superseded)", list(rows)):
                     meta[r[0]] = r
         finally:
             conn.close()
@@ -381,6 +385,25 @@ def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str,
                      "sent_to": json.loads(sent or "[]"), "score": -float(rank)})
     hits.sort(key=lambda h: (-h["score"], -h["ts"]))
     return hits[:max(1, int(limit))]
+
+
+def mark_superseded(mids, on: bool = True) -> int:
+    """Record (or clear) that these message ids are superseded, so search
+    leaves them out. Survives a rebuild of the index. Returns how many."""
+    mids = [str(m) for m in (mids or []) if str(m).strip()]
+    if not mids:
+        return 0
+    with _LOCK:
+        conn = _connect()
+        try:
+            if on:
+                conn.executemany("INSERT OR IGNORE INTO superseded(mid) VALUES(?)", [(m,) for m in mids])
+            else:
+                conn.executemany("DELETE FROM superseded WHERE mid = ?", [(m,) for m in mids])
+            conn.commit()
+        finally:
+            conn.close()
+    return len(mids)
 
 
 def _snippet(text: str, terms: Iterable[str]) -> str:

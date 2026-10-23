@@ -414,6 +414,8 @@ def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
         return []
     out = []
     for t in turns or []:
+        if t.get("superseded"):             # history, not evidence (§34.9-4)
+            continue
         content = str(t.get("text") or "")
         if len(content.strip()) < 40:      # skip trivia
             continue
