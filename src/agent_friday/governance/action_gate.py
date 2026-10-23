@@ -145,6 +145,10 @@ OUTWARD_TOOLS = frozenset({
     # expiring grant for holds is a later refinement, not a default.
     "hold_slots", "book_slot",
     "delete_task",
+    # A24 (owner ruling 2026-10-22): completing, creating and editing Google Tasks ask first.
+    # In a run nobody watches, one card approves the run's task changes (services/run_grants);
+    # each change still writes its own receipt.
+    "complete_task", "create_task", "update_task",
     "install_package",
     "spawn_interactive_session", "send_to_session",
     # A Claude Code session launched from the Code workspace: the launch and
@@ -235,8 +239,7 @@ INTERNAL_TOOLS = frozenset({
     "add_knowledge",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",
-    "search_drive", "read_doc", "list_tasks", "complete_task", "create_task",
-    "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
+    "search_drive", "read_doc", "list_tasks", "search_contacts", "read_wiki", "search_wiki", "search_news",
     "open_url", "navigate", "switch_model", "list_sending_accounts",
     # The owner's own desktop: navigate_to opens an item in Friday's UI,
     # set_workspace_layout lays a workspace out (fullscreen with chat),

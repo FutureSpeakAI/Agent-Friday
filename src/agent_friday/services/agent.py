@@ -14597,6 +14597,13 @@ def _taint_card(ctx, decision, key):
             why_text = (flags[0].text if flags else
                         "This acts outside the conversation, and nobody could be "
                         "asked about it in chat.")
+            try:
+                from agent_friday.services import run_grants as _rg
+                _extras = _rg.card_extras(name, ctx.session_ctx)
+                if _extras:
+                    why_text = why_text + " " + _rg.card_words(_extras)
+            except Exception:
+                pass
             _ptok = _taint_mod.CURRENT.set(decision)
             try:
                 rec = _appr.create_approval(
@@ -14611,7 +14618,8 @@ def _taint_card(ctx, decision, key):
                     # it an approval decided in the System workspace completes
                     # in silence, which is how five events that never existed
                     # went unnoticed for four turns.
-                    payload=_approval_tool_payload(name, inp, ctx.session_ctx),
+                    payload=_run_grant_payload(_approval_tool_payload(name, inp, ctx.session_ctx),
+                                               name, ctx.session_ctx),
                     # WHAT THIS ACTION IS, from the gate that just classified
                     # it, instead of a substring scan over the card's text.
                     # Five identical create_calendar_event cards came out
@@ -14640,6 +14648,19 @@ def _taint_card(ctx, decision, key):
         f"Do NOT call it again this turn and do not ask for a yes in chat "
         f"instead. Tell the user plainly that a card is waiting and what it is "
         f"for" + (", and where the flagged detail came from." if srcs else "."))
+
+
+def _run_grant_payload(payload, name, session_ctx):
+    """A24: a Google Tasks change in a run nobody watches asks once for the run. The card's payload
+    carries the grant its approval mints (services/run_grants); its title and description say so."""
+    try:
+        from agent_friday.services import run_grants as _rg
+        extras = _rg.card_extras(name, session_ctx)
+    except Exception:
+        extras = None
+    if extras:
+        payload = dict(payload, run_grant=extras)
+    return payload
 
 
 def _taint_title(name, inp):
