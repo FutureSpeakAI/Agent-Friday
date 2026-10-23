@@ -476,8 +476,9 @@ _UNANSWERED_STATUSES = ("received", "unanswered")
 
 #: Stands in for a turn forget-person took out of Friday's memory
 #: (services/forget_derived): the owner's history still shows it, the model
-#: does not read it again, and the roles still alternate.
-_FORGOTTEN_NOTE = "[This message was removed from Friday's memory at the owner's request.]"
+#: does not read it again, and the roles still alternate. One text for every
+#: replay path (chat, voice, Crew): conversation_fts.FORGOTTEN_NOTE.
+from agent_friday.services.conversation_fts import FORGOTTEN_NOTE as _FORGOTTEN_NOTE  # noqa: E402
 
 
 def _forgotten_ids(rows):

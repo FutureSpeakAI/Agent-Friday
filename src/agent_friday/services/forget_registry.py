@@ -52,6 +52,12 @@ and the other aliases are still forgotten: the owner's own name (and each word
 of it), Friday's name, and a one-word alias that is also a common word or
 month or day ("Will", "May", "Grace", "Friday"). Names shorter than three
 characters are not matched in free text either.
+
+That refusal is for FREE TEXT. Record-level stores matched by an exact name
+(the people graph, knowledge-graph entity titles, the tombstone) keep every
+alias, a common word included (a node titled exactly "Will" is that person's
+node), and refuse there only the owner's and Friday's names
+(``exact_match_refused``).
 """
 from __future__ import annotations
 
@@ -83,6 +89,8 @@ COMMON_WORDS = frozenset({
     "january", "february", "march", "july", "september", "october", "november", "december",
     "christian", "page", "price", "young", "long", "white", "black", "brown", "green", "gray",
     "grey", "rich", "noble", "golden", "cash", "penny", "sandy", "misty", "dusty", "rusty",
+    "hazel", "olive", "violet", "daisy", "poppy", "heather", "willow", "sage", "drew", "grant",
+    "lance", "nick", "gene", "reed", "wade", "lane", "ginger", "cherry",
 })
 
 _REASON_OWNER = "your own name: matching it would remove what you said about yourself"
@@ -289,6 +297,20 @@ def name_guard(names) -> Dict[str, str]:
     return out
 
 
+def exact_match_refused(guard: Dict[str, str]) -> Dict[str, str]:
+    """The part of a ``name_guard`` result that also applies to record-level
+    exact-match stores (people graph, graph entity titles, the tombstone):
+    only the owner's and Friday's names. A common word is refused in free
+    text only."""
+    return {n: r for n, r in (guard or {}).items() if r in (_REASON_OWNER, _REASON_FRIDAY)}
+
+
+def owner_full_name() -> str:
+    """The owner's whole name as set up, lowercased; "" when none is known."""
+    names = _owner_names()
+    return max(names, key=len) if names else ""
+
+
 class _Matcher:
     """`.forms` the name forms matched (for the receipt), `.names` the
     lowercased names matched, `.skipped` names too short to match, `.refused`
@@ -309,6 +331,16 @@ class _Matcher:
 
     def __bool__(self) -> bool:
         return bool(self.patterns)
+
+    def sub(self, text, replacement: str = "[removed]"):
+        """`text` with every match replaced (prose scrubs: community reports).
+        Same rules as matching; non-strings are returned unchanged."""
+        if not text or not isinstance(text, str):
+            return text
+        out = _nfc(text)
+        for p in self.patterns:
+            out = p.sub(replacement, out)
+        return out if out != _nfc(text) else text
 
     def notes(self) -> List[Dict[str, str]]:
         """The not-removable receipt entries for the refused and short names."""

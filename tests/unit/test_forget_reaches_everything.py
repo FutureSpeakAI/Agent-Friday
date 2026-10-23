@@ -272,7 +272,9 @@ def test_a_common_word_that_is_also_the_name_is_untouched(home):
     assert [t for batch in graph for t in batch] == [will_turn]
     refused = rows["names"]["not_removable"]
     assert len(refused) == 1 and "'will'" in refused[0]["what"] and "ordinary word" in refused[0]["reason"]
-    assert not any(str(a).lower() == "will" for e in fp.list_forgotten() for a in e.get("aliases") or [])
+    # Refused in free text only: the tombstone (an exact-match store) keeps
+    # the alias, so a record titled exactly "Will" is not built again.
+    assert any(str(a) == "Will" for e in fp.list_forgotten() for a in e.get("aliases") or [])
 
 
 # ── review findings: the forgotten stay forgotten, the receipt is exact ──────
@@ -550,10 +552,11 @@ def test_fridays_name_and_common_words_are_refused_as_aliases(home):
 
 # ── pre-existing collisions ──────────────────────────────────────────────────
 
-def test_the_community_summary_scrub_takes_whole_words_only():
+def test_the_community_summary_scrub_takes_whole_words_only(matcher):
     from agent_friday.services import forget_person as fp
     out = fp._scrub_name_from_text({"summary": "Ann led Annual planning with ANN and annabel."}, ["ann"])
-    assert out["summary"] == "[removed] led Annual planning with [removed] and annabel."
+    # A one-word name is matched as cased (subject_matcher): "ANN" is not "Ann".
+    assert out["summary"] == "[removed] led Annual planning with ANN and annabel."
 
 
 def test_forgetting_a_person_keeps_proposals_that_only_say_will(home):
@@ -572,3 +575,284 @@ def test_forgetting_a_person_keeps_proposals_that_only_say_will(home):
     left = [r[0] for r in conn.execute("SELECT fact_id FROM proposed_facts")]
     conn.close()
     assert left == ["p1"]
+
+
+# ── confirmation review: every replay path, a durable forgotten list ─────────
+
+def _voice_msg(mid, role, text, hour):
+    return {"id": mid, "role": role, "text": text, "ts": _ts(DAY1, hour), "meta": {"via": "voice"}}
+
+
+def test_a_forgotten_turn_never_reaches_the_voice_pin_the_local_voice_history_or_crew(monkeypatch):
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import conversation_provenance as prov
+    from agent_friday.services import conversation_recall as cr
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import crew_runtime
+    from agent_friday.services import voice_delivery
+    msgs = [_voice_msg("m-dana", "user", DANA_TURN, 10), _voice_msg("m-reply", "friday", DANA_REPLY, 10),
+            _voice_msg("m-fee", "user", FEE_TURN, 11)]
+    monkeypatch.setattr(fts, "forgotten_ids", lambda mids: {m for m in mids if m in ("m-dana", "m-reply")})
+
+    # (a) The pin a new voice call starts with: the forgotten turn is left out.
+    monkeypatch.setattr(cr, "_iter_messages", lambda: iter([({"title": "Boat"}, CID, m) for m in msgs]))
+    monkeypatch.setattr(prov, "sent_to", lambda m, windows=None: {prov.GEMINI})
+    monkeypatch.setattr(prov, "is_off_record", lambda m: False)
+    pin = cr.recent_voice_pin(windows=[])
+    assert "mooring fee" in pin and "Dana" not in pin and "survey" not in pin
+
+    # (b) The local voice model's history: the placeholder, roles kept.
+    monkeypatch.setattr(cv, "load", lambda cid: {"id": cid})
+    monkeypatch.setattr(cv, "messages", lambda cid, limit=None: list(msgs))
+    hist = voice_delivery.local_history(CID)
+    assert [h["role"] for h in hist] == ["user", "assistant", "user"]
+    assert [h["content"] for h in hist] == [fts.FORGOTTEN_NOTE, fts.FORGOTTEN_NOTE, FEE_TURN]
+
+    # (c) A Crew member's shared history: the placeholder.
+    profile = {"id": "crew-1", "revision": 3}
+    crew = [{"id": mid, "role": "user", "text": text,
+             "meta": {"kind": "crew_request", "project_id": "p1", "shared_with": {"crew-1": 3}}}
+            for mid, text in (("m-dana", DANA_TURN), ("m-fee", FEE_TURN))]
+    monkeypatch.setattr(cv, "messages", lambda cid, limit=None: list(crew))
+    text = crew_runtime._history(CID, profile, "p1")
+    assert "Dana" not in text and fts.FORGOTTEN_NOTE in text and FEE_TURN in text
+
+
+def _drop_index(tmp):
+    for suffix in ("", "-wal", "-shm"):
+        p = tmp / "conversations" / ("index.sqlite" + suffix)
+        if p.exists():
+            p.unlink()
+
+
+def test_the_forgotten_list_is_durable_and_a_rebuild_after_the_index_is_deleted_keeps_them_out(home):
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_person as fp
+    _seed(tmp, mem, DANA, TURNS)
+
+    fp.forget("Dana Okafor")
+
+    durable = json.loads((tmp / fts.FORGOTTEN_FILE).read_text(encoding="utf-8"))
+    assert {"m-dana", "m-reply"} <= set(durable["ids"]) and "m-fee" not in durable["ids"]
+    assert set(durable) == {"version", "ids"}, "the durable list holds ids only"
+    # The search index is a cache: delete it, and the list still answers.
+    _drop_index(tmp)
+    assert fts.forgotten_ids(["m-dana", "m-fee"]) == {"m-dana"}
+    fts.build(force=True)
+    assert fts.search("Dana") == [], "a rebuild after the index was deleted brought a forgotten turn back"
+    assert fts.search("Priya") and fts.search("mooring")
+    # The vector memory's rebuild path (rebuild=True, or inside rebuilding()) reads the same list.
+    for mid, role, day, hour, text in TURNS:
+        mem.index(text, role, session_id=day, timestamp="%sT%02d:00:00" % (day, hour), msg_id=mid, rebuild=True)
+    assert "m-dana" not in mem._collection.rows and "m-reply" not in mem._collection.rows
+    with fts.rebuilding():
+        assert mem.index(DANA_TURN, "user", session_id=DAY1, msg_id="m-dana") is None
+        assert mem.index(FEE_TURN, "user", session_id=DAY1, msg_id="m-fee") == "m-fee"
+
+
+def test_a_bulk_rebuild_refuses_when_the_durable_list_cannot_be_read_and_the_live_path_fails_open(home):
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_person as fp
+    _seed(tmp, mem, DANA, TURNS)
+    fp.forget("Dana Okafor")
+    (tmp / fts.FORGOTTEN_FILE).write_text("{not json", encoding="utf-8")
+    _drop_index(tmp)
+
+    with pytest.raises(fts.ForgottenListUnreadable):
+        fts.build(force=True)
+    assert fts.search("Dana") == [] and fts.search("Priya") == [], "a refused build indexed something"
+    assert fts.resync(CID) == 0, "a resync indexed turns without the forgotten list"
+    with fts.rebuilding() as state:
+        assert state["refused"]
+        assert mem.index(FEE_TURN, "user", session_id=DAY1, msg_id="m-fee2") is None, \
+            "a vector-memory rebuild indexed a turn without the forgotten list"
+    assert mem.index(FEE_TURN, "user", session_id=DAY1, msg_id="m-fee3", rebuild=True) is None
+    # The live single-turn path keeps working (fail-open): a new turn is indexed.
+    assert mem.index("The crane is booked for Tuesday.", "user", session_id=DAY2, msg_id="m-live") == "m-live"
+    assert fts.forgotten_ids(["m-dana"]) == set()
+
+
+def test_the_forgotten_lookup_does_not_wait_for_the_index_lock(home):
+    import threading
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_person as fp
+    _seed(tmp, mem, DANA, TURNS)
+    fp.forget("Dana Okafor")
+    held, release, answer = threading.Event(), threading.Event(), {}
+
+    def build_holding_the_lock():
+        with fts._LOCK:
+            held.set()
+            release.wait(10)
+    holder = threading.Thread(target=build_holding_the_lock)
+    holder.start()
+    try:
+        assert held.wait(5)
+        worker = threading.Thread(target=lambda: answer.update(ids=fts.forgotten_ids(["m-dana", "m-fee"])))
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive(), "forgotten_ids waited for the index lock a build holds"
+        assert answer["ids"] == {"m-dana"}
+    finally:
+        release.set()
+        holder.join(5)
+
+
+def test_a_common_word_alias_still_reaches_exact_match_records_but_not_free_text(home):
+    tmp, mem, graph = home
+    from agent_friday.services import core_memory
+    from agent_friday.services import forget_person as fp
+    _seed(tmp, mem, {"pat_example": ("Pat Example", ["Pat"])}, TURNS,
+          card=["Pat Example lent the owner a dinghy.", "Pat said the dinghy leaks.",
+                "We pat the dog when we leave."])
+    kg = tmp / "knowledge-graph"
+    kg.mkdir()
+    (kg / "entities.json").write_text(json.dumps(
+        [{"id": "e1", "title": "Pat"}, {"id": "e2", "title": "Pat Example"}, {"id": "e3", "title": "Patrick"}]),
+        encoding="utf-8")
+
+    receipt = fp.forget("Pat Example")
+
+    left = json.loads((kg / "entities.json").read_text(encoding="utf-8"))
+    assert [e["title"] for e in left] == ["Patrick"], "the graph entity titled exactly 'Pat' was kept"
+    assert fp.is_forgotten("Pat") and fp.is_forgotten("Pat Example")
+    assert fp.filter_entities([{"title": "Pat"}, {"title": "Patrick"}]) == [{"title": "Patrick"}]
+    # Free text follows the free-text rules: "Pat" on its own is an ordinary word there.
+    assert core_memory.entries("user") == ["Pat said the dinghy leaks.", "We pat the dog when we leave."]
+    assert fp.redact_forgotten_names("We pat the dog; Pat Example came.") == "We pat the dog; [removed] came."
+    refused = {x["what"]: x["reason"] for x in {r["store"]: r for r in receipt["stores"]}["names"]["not_removable"]}
+    assert "ordinary word" in refused["the name 'pat' on its own"]
+    assert "named exactly this" in refused["the name 'pat' on its own"]
+
+
+def test_a_bare_word_of_the_owners_name_resolves_to_the_person_record(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import core_memory
+    from agent_friday.services import forget_person as fp
+    from agent_friday.services import forget_registry as fr
+    monkeypatch.setattr(fr, "_owner_names", lambda: {"sam lee", "sam", "lee"})
+    _seed(tmp, mem, {"sam_patel": ("Sam Patel", ["Sam"])}, TURNS,
+          card=["Sam Patel fixed the mast.", "Sam will sail to Harwich in June."])
+
+    receipt = fp.forget("Sam")
+
+    assert not receipt.get("refused") and receipt["forgotten_as"] == "Sam Patel"
+    assert core_memory.entries("user") == ["Sam will sail to Harwich in June."]
+    entry = fp.list_forgotten()[0]
+    assert entry["name"] == "Sam Patel" and "Sam" not in (entry.get("aliases") or [])
+    assert not fp.is_forgotten("Sam"), "the owner's own first name was tombstoned"
+    refused = {r["store"]: r for r in receipt["stores"]}["names"]["not_removable"]
+    assert any("'sam'" in x["what"] and "your own name" in x["reason"] for x in refused)
+    assert receipt["owner_name_unknown"] is False and receipt["notes"] == []
+    # The owner's own full name is refused; so is the bare word when no fuller record exists.
+    assert "your own name" in fp.forget("Sam Lee")["refused"]
+    (tmp / "people_graph.json").write_text(json.dumps({"people": {}}), encoding="utf-8")
+    assert "your own name" in fp.forget("Lee")["refused"]
+
+
+def test_the_receipt_says_so_when_the_owners_name_is_not_known(home):
+    tmp, mem, graph = home
+    from agent_friday.services import forget_person as fp
+    _seed(tmp, mem, DANA, TURNS)                       # the fixture knows no owner name
+
+    receipt = fp.forget("Dana Okafor")
+
+    assert receipt["owner_name_unknown"] is True
+    assert receipt["notes"] and "not set up" in receipt["notes"][0] and receipt["notes"][0] in receipt["note"]
+
+
+def test_the_community_summary_scrub_follows_the_free_text_rules(matcher):
+    from agent_friday.services import forget_person as fp
+    out = fp._scrub_name_from_text(
+        [{"summary": "Will Hartley said we will meet. WILL HARTLEY agreed; Will nodded."}],
+        ["will hartley", "will"])
+    assert out[0]["summary"] == "[removed] said we will meet. [removed] agreed; Will nodded."
+    out = fp._scrub_name_from_text({"s": "Dana sent dana.txt to Dana."}, ["dana"])
+    assert out["s"] == "[removed] sent dana.txt to [removed]."
+
+
+def test_the_dreaming_log_summary_line_loses_their_topics_and_a_failed_rewrite_is_reported(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import forget_derived as fd
+    from agent_friday.services import memory_dreaming as dr
+    day3 = "2026-09-12"
+    (tmp / "dreams").mkdir()
+    log = tmp / "dreams" / ("%s.md" % day3)          # a day log with no row in dreams.db
+    log.write_text("\n".join([
+        "# Dream — %s" % day3, "",
+        "*Reviewed 3 turns from %s. Top topics: dana okafor, dana, mooring. Consolidated 0 durable fact(s); "
+        "counted 0 low-value turn(s).*" % day3, "",
+        "## Top topics", "- dana okafor (2)", "- dana (1)", "- mooring (1)"]) + "\n", encoding="utf-8")
+    m = fd._matcher({"dana okafor", "dana"}, set())
+
+    c = dr.forget_matching(m, keyword=fd._keyword_matcher(m))
+
+    text = log.read_text(encoding="utf-8")
+    assert "Top topics: mooring." in text and "dana" not in text.lower()
+    assert c["lines"] == 3 and c["not_removable"] == []
+    assert not list((tmp / "dreams").glob("*.tmp")), "the rewrite left a temp file behind"
+
+    # A row-backed day: the database is cleaned and committed even when its
+    # day log cannot be written again, and the receipt says which log.
+    topics = [{"topic": "dana", "mentions": 2}, {"topic": "mooring", "mentions": 1}]
+    summary = dr._summarize(DAY1, 3, topics, [], 0)
+    dr._persist(DAY1, 3, topics, [], 0, summary)
+    dr._write_markdown(DAY1, 3, topics, [], 0, summary)
+    log.write_text("- Dana Okafor (1)\n", encoding="utf-8")
+
+    def refuse(path, text):
+        raise PermissionError("locked")
+    monkeypatch.setattr(dr, "_write_atomic", refuse)
+    c = dr.forget_matching(m, keyword=fd._keyword_matcher(m))
+
+    assert [t["topic"] for t in dr.recent_dreams(5)[0]["topics"]] == ["mooring"]
+    whats = [x["what"] for x in c["not_removable"]]
+    assert whats == ["the dreaming log for %s" % DAY1, "the dreaming log for %s" % day3]
+    assert c["topics"] == 1 and c["lines"] == 0, "lines not written were counted as removed"
+    assert log.read_text(encoding="utf-8") == "- Dana Okafor (1)\n"
+
+
+def test_identical_card_lines_naming_them_all_go_and_a_failed_write_is_reported(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import core_memory
+    from agent_friday.services import forget_derived as fd
+    cm = tmp / "core_memory"
+    cm.mkdir(parents=True, exist_ok=True)
+    (cm / "ME.md").write_text("- Dana Okafor is the surveyor.\n- Dana Okafor is the surveyor.\n"
+                              "- Dana Okafor\n- The owner sails in June.\n", encoding="utf-8")
+    m = fd._matcher({"dana okafor"}, set())
+
+    def refuse(target, items):
+        raise PermissionError("locked")
+    with monkeypatch.context() as mp:
+        mp.setattr(core_memory, "_write", refuse)
+        failed = core_memory.forget_matching(m)
+    assert failed["lines"] == 0 and failed["not_removable"][0]["count"] == 3
+
+    done = core_memory.forget_matching(m)
+
+    assert done["lines"] == 3 and done["not_removable"] == []
+    assert core_memory.entries("user") == ["The owner sails in June."]
+
+
+def test_a_review_buffer_failure_and_an_unsaved_durable_list_reach_the_receipt(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_person as fp
+    from agent_friday.services import memory_review
+    _seed(tmp, mem, DANA, TURNS)
+
+    def boom(*a, **k):
+        raise RuntimeError("no")
+    monkeypatch.setattr(memory_review, "forget_matching", boom)
+    monkeypatch.setattr(fts, "_add_durable", boom)
+
+    row = {r["store"]: r for r in fp.forget("Dana Okafor")["stores"]}["conversation_recall"]
+
+    whats = " | ".join(x["what"] for x in row["not_removable"])
+    assert "waiting for the next memory review" in whats
+    assert "lasting record of the forgotten turns" in whats
+    assert fts.search("Dana") == [], "the index mirror still keeps them out"

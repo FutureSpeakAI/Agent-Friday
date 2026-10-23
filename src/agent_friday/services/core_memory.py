@@ -600,22 +600,28 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
 
 
 # ── forget-person (services/forget_derived, NS-15.7-2) ───────────────────────
-def forget_matching(match, apply: bool = True) -> Dict[str, int]:
+def forget_matching(match, apply: bool = True) -> Dict[str, Any]:
     """Lines on the card, queued suggestions and journal rows whose text
     `match` accepts. Forgetting a person is the owner's own action, so the
     lines go at once (no review card), as an owner delete does: no copy is
     left in the journal or the queue. With `apply=False` only counts.
-    Returns {"lines", "pending", "journal"}.
+    Returns {"lines", "pending", "journal", "not_removable"}.
+
+    Lines are removed by position (the card is written once per file, without
+    the lines that name them), so two identical lines, or a line that is part
+    of another, both go; a file that cannot be written is listed in
+    "not_removable" and its lines are not counted.
 
     The one-time move of the old user-model facts runs FIRST: run after the
     purge, it would copy a line naming the person back onto the card or into
     the queue (the facts themselves go through forget_derived's user_model
     store as well)."""
     ensure_migrated()
-    out = {"lines": 0, "pending": 0, "journal": 0}
+    out: Dict[str, Any] = {"lines": 0, "pending": 0, "journal": 0, "not_removable": []}
 
     def _names(r) -> bool:
         return any(match(str(r.get(k) or "")) for k in ("text", "old", "before", "after", "reason"))
+    changed = False
     with _LOCK:
         for key, p in (("pending", _pending_path()), ("journal", _journal_path())):
             rows = _read_jsonl(p)
@@ -624,9 +630,28 @@ def forget_matching(match, apply: bool = True) -> Dict[str, int]:
             if apply and len(keep) != len(rows):
                 _write_jsonl(p, keep)
         for t in TARGETS:
-            for line in [e for e in entries(t) if match(e)]:
-                if not apply or remove(t, line, actor="owner").get("ok"):
-                    out["lines"] += 1
+            items = entries(t)
+            gone = [e for e in items if match(e)]
+            if not gone:
+                continue
+            if not apply:
+                out["lines"] += len(gone)
+                continue
+            try:
+                _write(t, [e for e in items if not match(e)])
+            except Exception as e:
+                out["not_removable"].append({
+                    "what": "%d line(s) on the memory card (%s)" % (len(gone), t), "count": len(gone),
+                    "reason": "the card could not be written (%s); running forget again retries"
+                              % type(e).__name__})
+                continue
+            out["lines"] += len(gone)
+            changed = True
+            _journal({"actor": "owner", "op": "remove", "target": t, "before": None, "after": None})
+            for line in dict.fromkeys(gone):
+                _purge_text(line)
+    if changed:
+        _changed("owner", "core memory lines deleted by the owner (forget a person)")
     return out
 
 

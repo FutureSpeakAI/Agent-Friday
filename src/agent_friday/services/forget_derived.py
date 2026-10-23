@@ -16,15 +16,21 @@ still carried a line about Dana. This module registers those stores:
                          (ConversationMemory, ChromaDB) and conversation search
                          (services/conversation_fts). The turns that name the
                          person are DELETED from both, so they are never
-                         recalled or searched again; conversation search keeps
-                         their ids (``forgotten``) so a rebuild from the
-                         transcripts does not bring them back, and
+                         recalled or searched again; their ids are kept
+                         durably (forgotten-turns.json beside the tombstones,
+                         mirrored in conversation search's ``forgotten``) so a
+                         rebuild from the transcripts does not bring them
+                         back, and
                          ConversationMemory.index refuses those ids too (a turn
                          being indexed while the forget ran, or a rebuild of the
                          vector memory). The in-memory review buffer
                          (memory_review) drops every exchange naming them, and
-                         the chat replays those turns to the model only as a
-                         "removed" placeholder (routes/chat).
+                         the chat, the local voice model's history and Crew
+                         replay those turns to a model only as a "removed"
+                         placeholder (routes/chat, voice_delivery.local_history,
+                         crew_runtime._history); a new voice call's pin of
+                         recent calls leaves them out
+                         (conversation_recall.recent_voice_pin).
 ``conversation_graph``   the knowledge graph's nodes extracted from those turns:
                          retraction is requested through memory_derived's queue
                          (indexer.purge_conversation_turns, the rules a
@@ -300,6 +306,11 @@ def recall_purge(names, emails) -> Dict[str, Any]:
             # the vector memory still holds it (listed as not removable above).
             removed_ids |= set(got["mids"]) - left
             days |= set(got["dates"])
+            if got.get("durable") is False:
+                not_removable.append({
+                    "what": "the lasting record of the forgotten turns",
+                    "reason": "it could not be saved, so if the search index were rebuilt from scratch these "
+                              "turns could come back; running forget again retries"})
         except Exception as e:
             not_removable.append({"what": "conversation search",
                                   "reason": _scrubbed(e, "it could not be updated")})
@@ -310,8 +321,9 @@ def recall_purge(names, emails) -> Dict[str, Any]:
         try:
             from agent_friday.services import memory_review
             memory_review.forget_matching(m)
-        except Exception:
-            pass
+        except Exception as e:
+            not_removable.append({"what": "conversation turns waiting for the next memory review",
+                                  "reason": _scrubbed(e, "they could not be dropped")})
 
     # 3. The knowledge graph's nodes made from those turns (only turns this run
     #    took out: a second forget queues nothing again).
@@ -376,6 +388,7 @@ def card_purge(names, emails) -> Dict[str, Any]:
     from agent_friday.services import core_memory
     c = core_memory.forget_matching(m) if m else {"lines": 0, "pending": 0, "journal": 0}
     return {"removed": c["lines"], "kind": "memory card lines",
+            "not_removable": list(c.get("not_removable") or []),
             "also": [{"store": "memory_card_pending", "removed": c["pending"],
                       "kind": "memory card suggestions awaiting review"},
                      {"store": "memory_card_history", "removed": c["journal"],
@@ -415,7 +428,8 @@ def dreams_purge(names, emails) -> Dict[str, Any]:
         from agent_friday.services import memory_dreaming
         c = memory_dreaming.forget_matching(m, keyword=_keyword_matcher(m))
     return {"removed": c["facts"] + c["topics"] + c["lines"],
-            "kind": "items in the nightly dreaming log (consolidated facts and topics)"}
+            "kind": "items in the nightly dreaming log (consolidated facts and topics)",
+            "not_removable": list(c.get("not_removable") or [])}
 
 
 def receipts_find(names, emails) -> int:

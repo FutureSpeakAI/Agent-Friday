@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sqlite3
 import threading
 import time
 import uuid
 from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
 from agent_friday.user_errors import exception_text
@@ -329,43 +331,75 @@ def _persist(day, n_turns, topics, consolidated, pruned, summary) -> None:
             pass
 
 
+def _render_markdown(day, n_turns, topics, consolidated, pruned, summary) -> str:
+    lines = [f"# Dream — {day}", "", f"*{summary}*", "",
+             f"- Turns reviewed: {n_turns}", f"- Low-value turns (counted): {pruned}",
+             "", "## Top topics"]
+    for t in topics:
+        lines.append(f"- {t['topic']} ({t['mentions']})")
+    lines += ["", "## Consolidated facts"]
+    if consolidated:
+        for f in consolidated:
+            lines.append(f"- **[{f['category']}]** {f['text']}")
+    else:
+        lines.append("- (none)")
+    return "\n".join(lines) + "\n"
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write `text` to `path` via a temp file and os.replace: a crash leaves
+    the old file or the new one, never half of one. Raises on failure."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _write_markdown(day, n_turns, topics, consolidated, pruned, summary) -> None:
     try:
-        DREAMS_DIR.mkdir(parents=True, exist_ok=True)
-        lines = [f"# Dream — {day}", "", f"*{summary}*", "",
-                 f"- Turns reviewed: {n_turns}", f"- Low-value turns (counted): {pruned}",
-                 "", "## Top topics"]
-        for t in topics:
-            lines.append(f"- {t['topic']} ({t['mentions']})")
-        lines += ["", "## Consolidated facts"]
-        if consolidated:
-            for f in consolidated:
-                lines.append(f"- **[{f['category']}]** {f['text']}")
-        else:
-            lines.append("- (none)")
-        (DREAMS_DIR / f"{day}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        _write_atomic(DREAMS_DIR / f"{day}.md",
+                      _render_markdown(day, n_turns, topics, consolidated, pruned, summary))
     except Exception:
         pass
 
 
-def forget_matching(match, keyword=None, apply: bool = True) -> Dict[str, int]:
+def forget_matching(match, keyword=None, apply: bool = True) -> Dict[str, Any]:
     """Forget-person (services/forget_derived, NS-15.7-2): the consolidated
     facts whose text `match` accepts and the topics `keyword` (a predicate on
     one lowercase keyword) or `match` accepts leave each day's dream; the
     day's summary line is written again from what is left, and its
     ``dreams/<day>.md`` is rewritten from the cleaned row. A day log with no
-    row loses only the lines that name the person. With `apply=False` only
-    counts. Returns {"facts", "topics", "lines" (day logs with no row),
-    "days"}. Raises when the store cannot be read, so the receipt says it was
-    not checked."""
+    row loses only the lines that name the person, and its summary line
+    (``*Reviewed ... Top topics: ...*``) loses the topics that name them.
+    With `apply=False` only counts. Returns {"facts", "topics", "lines" (day
+    logs with no row: lines removed or edited), "days", "not_removable"}.
+    Raises when the store cannot be read, so the receipt says it was not
+    checked.
+
+    The database is committed BEFORE any day log is written again, and each
+    day log is written atomically (temp file, then os.replace) in its own
+    try: a log that cannot be rewritten is listed in "not_removable" (and,
+    for a log with no row, its lines are not counted as removed)."""
+    from agent_friday.user_errors import clip
     kw = keyword or (lambda _k: False)
 
-    def topic_named(t) -> bool:
-        k = str((t or {}).get("topic") or "")
+    def named(k) -> bool:
+        # A lowercase keyword (kw), or the matcher's rule on the topic as
+        # written (a multi-word name in any case, a one-word one as cased).
+        k = str(k or "").strip()
         return bool(k) and (kw(k.lower()) or match(k))
 
-    out = {"facts": 0, "topics": 0, "lines": 0, "days": 0}
+    def topic_named(t) -> bool:
+        return named((t or {}).get("topic"))
+
+    def failed(day, e) -> dict:
+        return {"what": "the dreaming log for %s" % day,
+                "reason": clip(exception_text(e, "it could not be written again, so it may still name them (%s)"),
+                               200)}
+
+    out: Dict[str, Any] = {"facts": 0, "topics": 0, "lines": 0, "days": 0, "not_removable": []}
     rewritten = set()
+    redo = []                                     # day logs written again after the commit
     if DB_PATH.exists():
         with _LOCK:
             conn = _connect()
@@ -389,28 +423,47 @@ def forget_matching(match, keyword=None, apply: bool = True) -> Dict[str, int]:
                     conn.execute("UPDATE dreams SET topics_json=?, consolidated_json=?, summary=? "
                                  "WHERE dream_id=?", (json.dumps(keep_t), json.dumps(keep_f), summary, did))
                     if day in rewritten:
-                        _write_markdown(day, tr, keep_t, keep_f, pr, summary)
+                        redo.append((day, tr, keep_t, keep_f, pr, summary))
                 if apply:
                     conn.commit()
             finally:
                 conn.close()
+        for day, tr, keep_t, keep_f, pr, summary in redo:
+            try:
+                _write_atomic(DREAMS_DIR / f"{day}.md", _render_markdown(day, tr, keep_t, keep_f, pr, summary))
+            except Exception as e:
+                out["not_removable"].append(failed(day, e))
     if DREAMS_DIR.exists():
         topic_line = re.compile(r"^- (.+) \(\d+\)$")
+        summary_line = re.compile(r"^(\*Reviewed .*?Top topics: )(.*?)(\. Consolidated .*)$")
         for p in sorted(DREAMS_DIR.glob("*.md")):
             if p.stem in rewritten:
                 continue
-            lines = p.read_text(encoding="utf-8").splitlines()
-            keep = []
-            for line in lines:
-                t = topic_line.match(line)
-                if match(line) or (t and kw(t.group(1).lower())):
+            try:
+                lines = p.read_text(encoding="utf-8").splitlines()
+                keep, changed = [], 0
+                for line in lines:
+                    edited = line
+                    s = summary_line.match(line)
+                    if s:
+                        tops = [x for x in s.group(2).split(", ") if x.strip() and x.strip() != "—"]
+                        left = [x for x in tops if not named(x)]
+                        if len(left) != len(tops):
+                            edited = s.group(1) + (", ".join(left) or "—") + s.group(3)
+                    t = topic_line.match(edited)
+                    if match(edited) or (t and named(t.group(1))):
+                        changed += 1                # the line goes
+                        continue
+                    changed += int(edited != line)  # the summary line loses the topics naming them
+                    keep.append(edited)
+                if not changed:
                     continue
-                keep.append(line)
-            if len(keep) != len(lines):
-                out["days"] += 1
-                out["lines"] += len(lines) - len(keep)
                 if apply:
-                    p.write_text("\n".join(keep) + "\n", encoding="utf-8")
+                    _write_atomic(p, "\n".join(keep) + "\n")
+                out["days"] += 1
+                out["lines"] += changed
+            except Exception as e:
+                out["not_removable"].append(failed(p.stem, e))
     return out
 
 
