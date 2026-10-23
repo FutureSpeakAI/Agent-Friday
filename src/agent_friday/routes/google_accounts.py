@@ -335,6 +335,15 @@ def google_account_callback():
         return html_error(e, "Token exchange failed")
 
 
+@google_accounts_bp.route("/api/google/accounts/contract")
+def google_connector_contract():
+    """What the Google connection lets Friday do (services/connector_contracts, NS-23.1-2): each
+    operation, read or change, the permission it needs and whether it waits for a card.
+    Read-only; holds no account data."""
+    from agent_friday.services import connector_contracts as cc
+    return jsonify({"status": "ok", "contract": cc.google_contract()})
+
+
 @google_accounts_bp.route("/api/google/accounts/mailbox-scopes")
 def google_mailbox_scopes():
     """Exactly what "Reconnect with sending" will ask Google for, in plain words.
