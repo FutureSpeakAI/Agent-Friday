@@ -1662,9 +1662,14 @@ def cmd_export(full: bool = False, out: str | None = None,
     if dest is None:
         return 1
 
+    from agent_friday.services import whole_file
+    # A run killed half-way leaves no torn archive under the real name, and its
+    # hidden partial file is cleared by the next export to this folder.
+    whole_file.sweep_partials(dest.parent, r"^friday-(backup|data-export)-")
     if not full:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        counts = _write_export_zip(dest, full=False)
+        counts = {}
+        whole_file.write_whole(dest, writer=lambda f: counts.update(
+            _write_export_zip(f, full=False)))
     else:
         if passphrase is None:
             console.print("  A full backup includes the keys that decrypt your stored API\n"
@@ -1681,8 +1686,7 @@ def cmd_export(full: bool = False, out: str | None = None,
         counts = _write_export_zip(buf, full=True)
         salt = os.urandom(_BACKUP_SALT_LEN)
         key = vc.derive_key(passphrase, salt, _backup_profile())
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(_BACKUP_MAGIC + salt + vc.encrypt(buf.getvalue(), key))
+        whole_file.write_whole(dest, _BACKUP_MAGIC + salt + vc.encrypt(buf.getvalue(), key))
 
     size_mb = dest.stat().st_size / (1024 * 1024)
     console.print(f"[green]Exported {counts['files']} files[/green] ({size_mb:.1f} MB) → [bold]{dest}[/bold]")
@@ -1724,7 +1728,12 @@ def cmd_decrypt_backup(src: str, out: str | None = None,
     dest = _export_destination(out or str(p.parent), p.with_suffix(".zip").name)
     if dest is None:
         return 1
-    dest.write_bytes(data)
+    from agent_friday.services import whole_file
+    # A decrypt killed half-way left readable keys in a hidden partial file:
+    # clear any before writing (and this one never takes the name torn).
+    import re as _re
+    whole_file.sweep_partials(dest.parent, r"^friday-backup-|^%s$" % _re.escape(dest.name))
+    whole_file.write_whole(dest, data)
     console.print(f"[green]Decrypted[/green] → [bold]{dest}[/bold]  [dim]It holds your "
                   "keys in readable form; delete it once restored.[/dim]")
     return 0
