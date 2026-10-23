@@ -89,9 +89,12 @@ def gemini_windows(path: Path | None = None) -> list:
     same_file = c.get("path") == str(path) and c.get("ino") == getattr(st, "st_ino", None)
     if same_file and c.get("size") == st.st_size and c.get("mtime") == st.st_mtime:
         return _windows_of(c)
-    if same_file and st.st_size >= int(c.get("offset") or 0):
+    if same_file and st.st_size >= int(c.get("offset") or 0) and _fingerprint(path, int(c.get("offset") or 0)) \
+            == c.get("print"):
         offset, closed, opened = int(c.get("offset") or 0), list(c.get("closed") or []), c.get("opened")
     else:
+        # Shrunk, replaced, or rewritten in place (the bytes already read are
+        # not the ones there now): read it all again, so no session is missed.
         offset, closed, opened = 0, [], None
     try:
         with open(path, "rb") as f:
@@ -100,7 +103,7 @@ def gemini_windows(path: Path | None = None) -> list:
     except OSError:
         return []
     end = data.rfind(b"\n") + 1                     # whole lines only
-    for raw_line in data[:end].decode("utf-8", errors="replace").splitlines():
+    for raw_line in data[:end].decode("utf-8", errors="replace").split("\n"):
         if "live voice session" not in raw_line:
             continue
         try:
@@ -122,11 +125,25 @@ def gemini_windows(path: Path | None = None) -> list:
             closed.append((opened, ts))
             opened = None
     state = {"key": None, "path": str(path), "ino": getattr(st, "st_ino", None), "size": st.st_size,
-             "mtime": st.st_mtime, "offset": offset + end, "closed": closed, "opened": opened}
+             "mtime": st.st_mtime, "offset": offset + end, "closed": closed, "opened": opened,
+             "print": _fingerprint(path, offset + end)}
     with _LOCK:
         _CACHE.clear()
         _CACHE.update(state)
     return _windows_of(state)
+
+
+def _fingerprint(path: Path, offset: int):
+    """The first bytes of the file and the bytes just before `offset`: if
+    either changed, what was read before is not what is there now."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(min(256, offset))
+            f.seek(max(0, offset - 64))
+            tail = f.read(min(64, offset))
+        return (head, tail)
+    except OSError:
+        return None
 
 
 def _windows_of(state: dict) -> list:
