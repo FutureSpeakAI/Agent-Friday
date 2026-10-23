@@ -1,9 +1,11 @@
 """Mailbox changes Friday proposes on its own initiative.
 
-The owner's own click in the Messages workspace acts at once, with undo: it is
-the owner acting through Friday's page, which the governance checkpoint leaves
-alone on purpose (docs/decisions/2026-09-24-injection-provenance-gate.md, "the
-owner's own REST actions").
+The owner's own press in the Messages workspace acts at once, with undo: it is
+the owner acting through Friday's page. Since 2026-10-21 it is taken only from
+the press itself, never from a body that says "ui:...", and a change that
+reaches Gmail passes the checkpoint's integrity check and signed receipt first
+(services/mail_owner; docs/decisions/2026-09-24-injection-provenance-gate.md,
+amendment of 2026-10-21).
 
 When Friday itself decides to delete, archive, mute, report spam or
 unsubscribe, that is a different thing, and it goes through the checkpoint
