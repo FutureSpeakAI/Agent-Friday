@@ -4,8 +4,9 @@ proportion to the data, not faster than it grows. Each is timed on a
 synthetic data folder and on one ten times larger; the larger may take at most
 twenty times as long (plus a fixed allowance for start-up costs such as the
 key derivation), and each stays under a wide ceiling so a slow shared runner
-does not fail it. Timings are reported as PerfNote warnings, which pytest
-shows in its summary on every run.
+does not fail it. Timings are reported as RuntimeWarnings starting "[perf]",
+which pytest shows in its summary on every run (a warning class of the test's
+own cannot cross from an xdist worker to the controller).
 
 The check itself is tested: a step that grows with the square of the data
 fails it."""
@@ -33,10 +34,6 @@ GROWTH = 20.0
 ALLOWANCE_S = 3.0
 #: No step on the 10x folder may take longer than this on a CI runner.
 CEILING_S = 120.0
-
-
-class PerfNote(Warning):
-    """A timing, for the test summary (not a problem)."""
 
 
 def grows_no_faster(t1: float, t10: float, *, growth: float = GROWTH, allowance: float = ALLOWANCE_S) -> bool:
@@ -114,8 +111,8 @@ def _round(tmp_path: Path, k: int, monkeypatch) -> dict:
     assert r["checked_in_place"]["ledger"]["records"] >= BASE["ledger_entries"] * k
     assert v["files"] == len(m["files"]) and "governance-key" in m["secrets"]
     files, size = len(m["files"]), out.stat().st_size
-    warnings.warn(PerfNote("[perf] bundle %dx: %d files, %.1f MB bundle; make %.2fs, verify %.2fs, "
-                           "restore %.2fs" % (k, files, size / 1e6, t_make, t_verify, t_restore)))
+    warnings.warn("[perf] bundle %dx: %d files, %.1f MB bundle; make %.2fs, verify %.2fs, restore %.2fs"
+                  % (k, files, size / 1e6, t_make, t_verify, t_restore), RuntimeWarning)
     return {"make": t_make, "verify": t_verify, "restore": t_restore, "files": files, "bytes": size,
             "redo": {"make": lambda: _timed(lambda: fb.create(tmp_path / ("y%d.fridaybundle" % k), PASS,
                                                               home=a, kdf_profile=vc.FAST_PROFILE))[0],
@@ -158,6 +155,6 @@ def test_the_check_catches_a_real_quadratic_step(tmp_path):
         return time.perf_counter() - t0
     t1 = min(step(300) for _ in range(7))    # the least disturbed of several short runs
     t10 = step(3000)                         # a slow long run only makes the check easier
-    warnings.warn(PerfNote("[perf] quadratic probe: 1x %.3fs, 10x %.3fs" % (t1, t10)))
+    warnings.warn("[perf] quadratic probe: 1x %.3fs, 10x %.3fs" % (t1, t10), RuntimeWarning)
     assert not grows_no_faster(t1, t10, allowance=0.0)
 
