@@ -1,5 +1,5 @@
-"""NS-23.1-2 / NS-8.9-2: the connect screen can read what the Google connection lets Friday do,
-reads and changes separately, with the permission each needs and whether it waits for a card."""
+"""NS-23.1-2 / NS-8.9-2: the API serves what the Google connection lets Friday do, reads and
+changes separately, with the permission each needs and whether it waits for a card."""
 from __future__ import annotations
 
 
