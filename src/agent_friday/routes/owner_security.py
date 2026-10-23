@@ -137,6 +137,21 @@ def security_keystore_status():
     return jsonify({"ok": True, **keystore_status()})
 
 
+@owner_security_bp.route("/api/security/credentials", methods=["GET"])
+@login_required
+def security_credentials():
+    """Every credential Friday holds: what it is, whose, how protected, last changed, last
+    used. Names and times only; never a value (credential_store.inventory)."""
+    from agent_friday.services import credential_store as cs
+    try:
+        return jsonify({"ok": True, "credentials": cs.inventory(),
+                        "protection": cs.protection_method()})
+    except Exception as e:
+        _log.error("credential inventory failed: %s", type(e).__name__)
+        return jsonify({"ok": False, "message": "The list of credentials could not be read (%s)."
+                                                % type(e).__name__}), 500
+
+
 @owner_security_bp.route("/api/security/keystore/wrap", methods=["POST"])
 @login_required
 def security_keystore_wrap():
@@ -163,6 +178,16 @@ def security_keystore_wrap():
         return jsonify({"ok": False, "message": "That is not the vault passphrase "
                                                 "Friday is using."}), 400
     from agent_friday.services import keystore as ks
+    if wrap == "passphrase":
+        from agent_friday.services import keystore_offer as _ko
+        if not _ko.passphrase_is_kept(pw):
+            # A21 review: a passphrase kept only in this process's environment would lock every
+            # saved key at the next start.
+            return jsonify({"ok": False, "message": "Your vault passphrase is not saved on this "
+                                                    "computer (credential manager or Friday's "
+                                                    "protected file), so the next start could not "
+                                                    "unlock the keys. Save the passphrase in Settings "
+                                                    "first, then lock the keys."}), 400
     try:
         ks.set_wrap(wrap, pw if wrap == "passphrase" else "")
         ks.root_key(use_cache=False)          # prove the next start can unwrap it
@@ -175,4 +200,10 @@ def security_keystore_wrap():
         return jsonify({"ok": False, "message": "The keystore was left protected by "
                                                 "file permissions (%s)."
                                                 % type(e).__name__}), 500
+    try:
+        # A21: the owner decided in Settings; the one-time card is not needed any more.
+        from agent_friday.services import keystore_offer as _ko
+        _ko.record("protected" if wrap == "passphrase" else "skipped", "settings")
+    except Exception:
+        pass
     return jsonify({"ok": True, **keystore_status()})

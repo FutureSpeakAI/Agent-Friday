@@ -248,6 +248,9 @@ def _cards_args(text: str, m=None) -> dict:
 
 
 def _task_args(text: str, m=None) -> dict:
+    # "Stop everything" (services/global_stop.STOP_PHRASE): every lane at once, no model needed.
+    if m is not None and m.groupdict().get("all"):
+        return {"op": "stop_all"}
     q = _clean_query(m.group("q")) if m is not None and m.groupdict().get("q") else ""
     return {"op": "stop", "target": q}
 
@@ -454,6 +457,12 @@ _CONNECT_NAMES = _connect_names()
 #: anchored at the start, so "don't play music" or "stop checking" never
 #: match: a negation is not an imperative.
 _ACTION_RULES: List[Tuple[str, re.Pattern]] = [(t, re.compile(p, re.I)) for t, p in [
+    # Stop everything: checked before the single-task stop, so "stop everything" never
+    # becomes "stop the task on screen". The same words as services/global_stop.STOP_PHRASE.
+    ("task_control",
+     _POLITE + r"(?P<all>(?:stop|halt|freeze|cancel)\s+(?:everything|it\s+all|all\s+of\s+it|"
+     r"all(?:\s+(?:the\s+)?(?:work|tasks|jobs))?)(?:\s+(?:now|right\s+now|immediately))?|"
+     r"emergency\s+stop|everybody\s+stop|stop\s+all\s+work)" + _END),
     ("task_control",
      _POLITE + r"(?:stop|cancel|halt|kill)\s+(?:the\s+|that\s+|my\s+)?(?:background\s+)?"
      r"(?:task|job|workflow|research|delegation)\b(?:\s+(?:called|named|about|for)\s+" + _Q + r")?" + _END),

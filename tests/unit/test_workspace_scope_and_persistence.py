@@ -150,5 +150,6 @@ def test_slow_salon_reply_cannot_overwrite_a_newer_workspace_change(intervening)
         assert current["chat"] == []
     retried = ws.workspace_chat_turn("news", "News", "Change the note", generate=lambda *_:
         'Applied.\n```friday-customize\n{"note":"Requested after refresh"}\n```')
-    assert retried["applied"] is True
+    assert retried["applied"] is False and retried["proposal"]["status"] == "pending"
+    ws.apply_proposal("news", retried["proposal"]["id"])
     assert ws.load_ws_doc("news")["customization"]["note"] == "Requested after refresh"

@@ -36,16 +36,7 @@ PAYLOAD = {
 
 
 def _receipts():
-    p = ag.receipts_path()
-    if not p.exists():
-        return []
-    out = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        try:
-            out.append(json.loads(line))
-        except Exception:
-            pass
-    return out
+    return ag.receipts()                       # the action ledger's decisions
 
 
 def _shares():

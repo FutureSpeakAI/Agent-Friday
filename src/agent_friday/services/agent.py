@@ -115,6 +115,7 @@ from agent_friday.services.model_router import (
 from agent_friday.services import tool_hooks as _hooks
 from agent_friday.services import taint as _taint_mod
 from agent_friday.services import reasoning_trace as _rtrace
+from agent_friday.services import untrusted_input as _untrusted
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -262,6 +263,9 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
     been gated for a different, less restrictive provider. Omit it (the
     default) to keep the previous single-prompt behavior unchanged.
     """
+    # Stop everything: no model call starts while stopped (services/global_stop).
+    from agent_friday.services import global_stop as _global_stop
+    _global_stop.raise_if_stopped("a model call")
     # Streaming deltas ride a context variable (see on_text_delta above). Run
     # the whole call inside a COPIED context with the sink set, so it is
     # scoped to this call and nothing has to be reset on any of the exits.
@@ -549,11 +553,24 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         raise
     except Exception:
         pass
+    # A6: no silent move from one cloud provider to another
+    # (services/provider_fallback). Outside the try above on purpose: a filter
+    # that failed must not leave the old silent ladder in place.
+    from agent_friday.services import provider_fallback as _pf
+    try:  # a codebase turn on a guest's key never moves to the owner's key
+        from agent_friday.services import codebases as _cb_pf
+        _pf_locked = bool(_cb_pf.guest_key_for_turn(session_ctx))
+    except Exception:
+        _pf_locked = False
+    attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg, locked=_pf_locked)
+    _pf_watch = _pf.LadderWatch(_pf_withheld, routing_cfg)
+    _pf_before = list(attempts)
     try:
         from agent_friday.services.model_router import _health_order
         attempts = _health_order(attempts, routed_provider_name)
     except Exception:
         pass
+    _pf_watch.reordered(_pf_before, attempts)
 
     # A TURN PINNED TO ITS SEAT RUNS THERE OR FAILS. The local voice path
     # promises the owner a local mind; a dead or busy seat must surface as an
@@ -579,10 +596,13 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         try:
             text, trace = fn(use_model)
             if text and text.strip():
+                _pf_watch.leg_succeeded(name)
                 return text, (trace or [])
             errors.append(f"{_leg}: empty response")
+            _pf_watch.leg_failed(name, "empty response")
         except Exception as e:
             errors.append(ExceptionText(f"{_leg}: {e}"))
+            _pf_watch.leg_failed(name, e)
         # Task journal (TV4, point=ladder_fallback): a leg failed; say which
         # and what comes next, from the ladder already in hand.
         try:
@@ -633,6 +653,13 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
                 "was NOT sent to any cloud provider. This is a local-model "
                 "problem, not a permissions one: check that the local seat is "
                 "up, then retry."), []
+    # A cloud provider failed and the move to another one was withheld (A6): the
+    # caller gets the offer (ProviderSwitchWithheld), not a generic failure.
+    try:
+        _pf_watch.exhausted()
+    except _pf.ProviderSwitchWithheld:
+        _pilot_outcome(session_ctx, "error")
+        raise
     _mode_now = str(routing_cfg.get('mode') or '').lower()
     if _cloud_intent.is_local_mode(_mode_now) and not _cloud_intent.opens_cloud(_mode_now):
         _pilot_outcome(session_ctx, "error")
@@ -716,7 +743,7 @@ CLAUDE_TOOLS = [
          "newest_first": {"type": "boolean", "description": "Default true."},
          "limit": {"type": "integer", "description": "Default 20."},
      }, "required": []}},
-    {"name": "write_file", "description": "Write or append content to any file on the local filesystem. Creates parent directories automatically.",
+    {"name": "write_file", "description": "Write or append content to any file on the local filesystem. Creates parent directories automatically. A replaced file's earlier version is kept; undo_action restores it.",
      "input_schema": {"type": "object", "properties": {
          "path": {"type": "string", "description": "Absolute or home-relative path"},
          "content": {"type": "string", "description": "Text to write"},
@@ -898,7 +925,7 @@ CLAUDE_TOOLS = [
          "query": {"type": "string", "description": "The user's words for the thing."},
          "id": {"type": "string", "description": "An exact id: Gmail thread id, file path, wiki path, graph node id, YYYY-MM-DD, meeting or post id."},
          "workspace": {"type": "string", "description": "For kind=workspace: which workspace."},
-         "section": {"type": "string", "description": "A tab or section by name or id, e.g. 'feed', 'Models', 'Hard stop'."}},
+         "section": {"type": "string", "description": "A tab or section by name or id, e.g. 'feed', 'Models', 'Spending caps'."}},
          "required": ["kind"]}},
     {"name": "queue_status", "description": "Read the Local AI queue: background work on the local model, what waits and why. Read-only.",
      "input_schema": {"type": "object", "properties": {}}},
@@ -917,9 +944,9 @@ CLAUDE_TOOLS = [
          "pin": {"type": "boolean"}}}},
     {"name": "set_setting", "description": "Change one Settings row by its path; op=undo changes nothing and says where the row's own Undo is (30 days). It shows old and new and waits for the user's own yes (SETTING_NEEDS_YES); a conditional yes does not count. Paths: settings.models.chat_model, .display.start_screen, .display.workspace_layout.<ws>, .accessibility.big_mode, .hologram.window.<dial>, .calls.stand_back, .podcasts.format.<show>, .podcasts.hosts.<a|b> (host name), .display.dock.<ws> (value show or hide; op=list says what the dock shows and hides).",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "value": {"type": "string"}, "op": {"type": "string"}}, "required": ["path"]}},
-    {"name": "task_control", "description": "Stop or steer background work. op=stop ends a running workflow or task after the step it is on: that step finishes, the next never starts, nothing done is undone; with no target it stops the steps on the user's screen. op=steer messages a running task without stopping it. target: workflow name, task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what happened.",
+    {"name": "task_control", "description": "Stop or steer background work. op=stop ends a running workflow or task after the step it is on: that step finishes, the next never starts, nothing done is undone; with no target it stops the steps on the user's screen. op=stop_all stops everything at once (only when the user asks to stop everything). op=steer messages a running task without stopping it. target: workflow name, task id, or words from a task's name. TASK_STOPPED, TASK_STEERED and TASK_NONE report what happened.",
      "input_schema": {"type": "object", "properties": {
-         "op": {"type": "string", "enum": ["stop", "steer"]},
+         "op": {"type": "string", "enum": ["stop", "stop_all", "steer"]},
          "target": {"type": "string", "description": "A workflow name, a task id or words from a task's name; empty for what is on their screen."},
          "message": {"type": "string", "description": "For op=steer: what to tell the task."}},
          "required": ["op"]}},
@@ -1007,7 +1034,7 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string"},
          "why": {"type": "string"}},
       "required": ["action"]}},
-    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki): the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
+    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki) or a write_file: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
      "input_schema": {"type": "object", "properties": {
          "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
     {"name": "answer_card", "description": "Record the user's answer to an organize, undo_action or money-paragraph card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer; if it returns a read-back, say it and ask.",
@@ -1429,24 +1456,50 @@ def _tool_write_file(inp):
         return "write_file error: 'path' is required."
     if mode not in ('write', 'append'):
         mode = 'write'
+    from agent_friday.services import file_write_receipts as _fwr
     try:
         p = Path(raw).expanduser().resolve()
+    except Exception as e:
+        return f"Write error: {e}"
+    if p.is_dir():
+        return f"Write error: {p} is a folder, not a file. Nothing was written."
+    # The backup and the receipt come first: an existing file is copied (and
+    # checked) and the receipt naming it is written before the first byte
+    # changes. No backup, no write.
+    try:
+        _conv = _CURRENT_CONVERSATION.get()
+    except Exception:
+        _conv = None
+    try:
+        receipt = _fwr.begin(p, mode, len(content), conversation_id=_conv)
+    except _fwr.BackupFailed as e:
+        return f"Write error: nothing was written, because {e}."
+    rid = receipt["receipt_id"]
+    try:
         p.parent.mkdir(parents=True, exist_ok=True)
         if mode == 'append':
             with open(p, 'a', encoding='utf-8') as f:
                 f.write(content)
         else:
             p.write_text(content, encoding='utf-8')
-        _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode})
-        if mode == 'write':
-            # Not on append: a document being appended to (a log, a journal)
-            # popping open on every single line written would be the exact
-            # "multiple viewers in a row" case the setting's own default-off
-            # exists for.
-            _maybe_auto_open(p)
-        return f"{'Appended' if mode == 'append' else 'Wrote'} {len(content)} chars to {p}"
     except Exception as e:
-        return f"Write error: {e}"
+        _fwr.finish(rid, False, error=str(e))
+        return (f"Write error: {e}. Receipt {rid}"
+                + (" keeps the earlier version; undo_action with this receipt_id puts it back."
+                   if receipt["items"][0].get("existed") else "."))
+    _fwr.finish(rid, True)
+    _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode, "receipt_id": rid})
+    if mode == 'write':
+        # Not on append: a document being appended to (a log, a journal)
+        # popping open on every single line written would be the exact
+        # "multiple viewers in a row" case the setting's own default-off
+        # exists for.
+        _maybe_auto_open(p)
+    done = f"{'Appended' if mode == 'append' else 'Wrote'} {len(content)} chars to {p}"
+    if receipt["items"][0].get("existed"):
+        return (f"{done}. The earlier version is kept (receipt_id {rid}); "
+                f"undo_action with that receipt_id puts it back.")
+    return f"{done} (new file; receipt_id {rid}; undo_action moves it to Friday's trash)."
 
 
 def _learn_skill_fields(content):
@@ -4768,6 +4821,14 @@ def _tool_answer_card(inp):
     from agent_friday.services import item_actions as _ia
     inp = inp or {}
     surface = _CURRENT_SURFACE.get() or "chat"
+    _dec = str(inp.get("decision") or "").strip().lower()
+    if (surface.startswith("voice") and _dec not in ("decline", "deny", "no", "reject", "cancel")):
+        from agent_friday.services import approvals as _appr_desk
+        if _appr_desk.voice_off_this_desk():
+            # services/approvals refuses it too; this says why, in words Friday can speak.
+            return ("NOT RECORDED: a spoken yes approves a card only on a voice call from "
+                    "Friday's own page on this PC. Ask them to press Approve on the screen; "
+                    "saying no still declines it.")
     try:
         from agent_friday.services import cloud_release as _cr
         if _cr.is_card(str(inp.get("card_id") or "")):
@@ -5239,6 +5300,10 @@ _FOLLOW_UP_LOCK = threading.Lock()
 # Every mutation below is written to disk before it returns, so a restart can
 # rebuild this dict and mark whatever was running as interrupted instead of
 # forgetting it. Journal writes never raise into the worker (TV12).
+#: How a task's result says the owner's spending cap paused it (north-star A17).
+SPEND_CAP_PAUSE_MARK = '[Paused by your spending cap]'
+
+
 def _is_terminal_status(status):
     from agent_friday.services.task_journal import is_terminal
     return is_terminal(status)
@@ -5357,6 +5422,25 @@ def _task_set(task_id, **fields):
         name = snap.get('name')
         created = snap.get('created')
         ended = snap.get('ended')
+    if 'verified' in fields:
+        # §17.11: the task's ledger records whether its result was checked.
+        try:
+            from agent_friday.services import task_ledger as _tl
+            _tl.note_verification(task_id, verified=bool(fields.get('verified')),
+                                  evidence=fields.get('verification_evidence'))
+        except Exception:
+            pass
+    elif new_status != prev_status and 'status' in fields:
+        # Any end (a stop, an error, a spend cap) writes the ledger's
+        # bookkeeping, which is otherwise written with the task's steps.
+        try:
+            if _journal().is_terminal(new_status):
+                from agent_friday.services import task_ledger as _tl
+                _led = _tl.load(task_id)
+                if _led is not None:
+                    _tl.save(task_id, _led)
+        except Exception:
+            pass
     # Disk BEFORE memory (TV1: the journal is the source of truth, TASKS is
     # its cache). This used to update TASKS first and write afterwards, so a
     # reader polling /api/tasks could see a terminal status that state.json
@@ -5408,10 +5492,21 @@ def _off_record_active():
         return False
 
 
-def _task_snapshot(task_id=None):
+def _task_snapshot(task_id=None, follow=False):
+    """One task (or all). `follow`: a task the owner moved elsewhere (status
+    'superseded', `superseded_by` set: a cloud spill) answers with the task that
+    replaced it, so a caller waiting on the original id (a goal milestone) sees the
+    work that actually runs instead of timing out on a record that never will."""
     with TASKS_LOCK:
         if task_id is not None:
             t = TASKS.get(task_id)
+            hops = 0
+            while (follow and t and t.get('status') == 'superseded' and t.get('superseded_by')
+                   and hops < 5):
+                nxt = TASKS.get(t['superseded_by'])
+                if not nxt:
+                    break
+                t, hops = nxt, hops + 1
             if not t:
                 return None
             t = dict(t)
@@ -5455,6 +5550,12 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 TASKS[tid] = st
                 loaded += 1
         summary['loaded'] = loaded
+        try:
+            # A task that waited on a card while Friday was down: its card may have been decided
+            # (or its run cut off) in the meantime. Settle what can be settled now.
+            summary['waiting_settled'] = sweep_waiting_tasks(force=True)
+        except Exception:
+            summary['waiting_settled'] = 0
         # Which of the casualties still have a transcript on disk. The journal
         # can only say a task was interrupted; services/task_resume is what can
         # say it is recoverable, so the two notices are separate and the
@@ -5849,20 +5950,172 @@ def _evidence_verdict(tool_trace):
     an approval card and stopped, was held, declined, denied or errored did
     nothing: it counts only once the owner has decided and approved it and the
     tool's own result says it ran. Returns (verified, summary, final_status),
-    and shows the check on the lattice as one verification pass (§13)."""
+    and shows the check on the lattice as one verification pass (§13).
+
+    WAITING IS NOT DONE. A task that raised an approval card is waiting for the
+    owner, whatever else it did: a read that worked beside a card that has not
+    been decided does not make the task complete (NS-17.7-2). Its status is
+    WAITING_APPROVAL until every card it raised is decided
+    (`settle_waiting_task`, called from the card's decision)."""
     from agent_friday.services.completion_receipts import receipt_ok as _ran
-    evidence = [t for t in (tool_trace or [])
-                if t.get('name') not in ('spawn_task',)
-                and _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
-    verified = len(evidence) > 0
-    summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
-               if evidence else 'no tools used')
+    calls = [t for t in (tool_trace or []) if t.get('name') not in ('spawn_task',)]
+    evidence = [t for t in calls if _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
+    waiting = [t for t in calls if _tool_call_status(t.get('result')) == 'pending']
+    verified = len(evidence) > 0 and not waiting
+    if waiting:
+        summary = 'waiting for your decision on: ' + ', '.join(
+            dict.fromkeys(str(t.get('name') or '?') for t in waiting[:10]))
+    else:
+        summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
+                   if evidence else 'no tools used')
     try:
         from agent_friday.services import presence as _presence
         _presence.emit("verify", "once", ok=verified, turn=_presence.current_turn())
     except Exception:
         pass
+    if waiting:
+        return False, summary, WAITING_APPROVAL
     return verified, summary, ('complete' if verified else 'completed_unverified')
+
+
+#: A task whose work raised an approval card the owner has not decided yet. The worker
+#: is finished (task_journal counts it terminal, so a restart never re-runs it); what is
+#: left is the owner's decision, which the card carries and `settle_waiting_task` closes.
+WAITING_APPROVAL = 'waiting_approval'
+#: Every card the task waited on was declined or expired: nothing it asked for ran.
+DECLINED = 'declined'
+
+
+def settle_waiting_task(task_id, *, from_worker=False):
+    """Close a WAITING_APPROVAL task once every card it raised has been decided.
+
+    Called by the approval executor after it acts on (or declines) a card whose payload
+    names this task. With a card still pending, nothing changes. Then:
+      * every card approved and its action ran -> 'complete', verified by those runs,
+        and a workflow continues with its next step;
+      * any approved action that did not go through -> 'failed', with why;
+      * otherwise (declined or expired) -> DECLINED: nothing it asked for ran.
+    Returns the new status, or None when the task is not waiting or still has a card.
+
+    Also called by the task's own worker the moment it finishes waiting, because a card
+    can be decided while the task is still running (the decision then found nothing to
+    settle). Only the cards the approval executor runs (a tool call held for the owner)
+    count; other cards that happen to name the task (a cloud spill offer) are not its
+    action. One settle wins: the check and the write happen under one lock."""
+    task_id = str(task_id or '')
+    if not task_id:
+        return None
+    from agent_friday.services import approvals as _ap
+    with _SETTLE_LOCK:
+        with TASKS_LOCK:
+            rec = dict(TASKS.get(task_id) or {})
+        if rec.get('status') != WAITING_APPROVAL:
+            return None
+        mine = [r for r in _ap.list_approvals()
+                if str(((r or {}).get('payload') or {}).get('task_id') or '') == task_id
+                and r.get('kind') in _SETTLE_KINDS and (r.get('payload') or {}).get('tool')]
+        if not mine:
+            return None
+
+        def _outcome(r):
+            """'pending' | 'running' | 'ran' | 'ran_unchecked' | 'failed' | 'not_approved'."""
+            st = r.get('status')
+            if st == 'pending':
+                return 'pending'
+            if st != 'approved':
+                return 'not_approved'           # denied, expired or blocked
+            detail = r.get('used_detail') or {}
+            if 'ok' in detail:                  # the executor ran it and recorded how it went
+                return 'ran' if detail.get('ok') is True else 'failed'
+            started = r.get('executing_at')
+            if started:
+                # claimed by the executor and not reported back: running, unless far too long ago
+                # (a restart mid-run), which is said as a failure rather than waited on forever
+                return 'running' if _time.time() - float(started) < _SETTLE_STALE_S else 'failed'
+            # used without the executor (the task's own identical call went through on the
+            # approved card) or about to be claimed by it
+            return 'ran_unchecked' if r.get('consumed') else 'running'
+
+        outcomes = [(r, _outcome(r)) for r in mine]
+        if any(o in ('pending', 'running') for _r, o in outcomes):
+            return None                 # a card still waits, or an approved one is still running
+        ran = [r for r, o in outcomes if o == 'ran']
+        unchecked = [r for r, o in outcomes if o == 'ran_unchecked']
+        failed = [r for r, o in outcomes if o == 'failed']
+        tools = lambda rows: ', '.join(dict.fromkeys(str((r.get('payload') or {}).get('tool') or '?')
+                                                     for r in rows[:10]))
+        if failed:
+            status, verified = 'failed', False
+            summary = 'approved but did not go through: ' + tools(failed)
+        elif ran and len(ran) == len(mine):
+            status, verified = 'complete', True
+            summary = 'approved and ran: ' + tools(ran)
+        elif ran or unchecked:
+            ran = ran + unchecked
+            rest = [r for r in mine if r not in ran]
+            status, verified = 'completed_unverified', False
+            summary = 'approved and ran: %s%s%s' % (
+                tools(ran), ('; not approved: ' + tools(rest)) if rest else '',
+                ('; not checked by the card runner: ' + tools(unchecked)) if unchecked else '')
+        else:
+            status, verified = DECLINED, False
+            summary = 'not approved (declined, expired or blocked): ' + tools(mine)
+        _task_set(task_id, status=status, verified=verified, verification_evidence=summary,
+                  settled=_time.time())
+    _task_log(task_id, 'Your decision closed this task: %s (%s).' % (status, summary))
+    if from_worker:
+        return status                   # the worker reports and continues the run itself
+    if rec.get('run_id'):
+        # A workflow step told the owner it was waiting: say how it ended (its delivery
+        # record was used by the waiting notice).
+        try:
+            _task_set(task_id, delivery={'status': 'pending', 'reason': 'settled by your decision'})
+            _report_task_completion(task_id, rec.get('name') or 'Workflow', status, rec.get('result') or '')
+        except Exception as ne:
+            _task_log(task_id, f'Completion notice could not be sent: {ne}')
+    if status in ('complete', 'completed_unverified'):
+        # what the worker does for a finished step: the run continues, and the next step is
+        # told what the owner's decision did (the step's own reply only said a card waited)
+        try:
+            _advance_task_chain(task_id, ((rec.get('result') or '').rstrip()
+                                          + '\n\n(Your decision on its approval card: ' + summary + '.)').strip())
+        except Exception as ce:
+            _task_log(task_id, f'Chain advance error: {ce}')
+    return status
+
+
+_LAST_SWEEP = [0.0]
+#: How often the tray's poll may re-check waiting tasks.
+_SWEEP_EVERY_S = 300
+
+
+def sweep_waiting_tasks(*, force=False):
+    """Settle every waiting task whose cards have all been decided or have stopped reporting
+    (an approved card a restart left half-run is closed after _SETTLE_STALE_S). Called at boot
+    and, at most every _SWEEP_EVERY_S, from the task list the tray polls. Returns how many
+    tasks it closed."""
+    now = _time.time()
+    if not force and now - _LAST_SWEEP[0] < _SWEEP_EVERY_S:
+        return 0
+    _LAST_SWEEP[0] = now
+    with TASKS_LOCK:
+        waiting = [tid for tid, t in TASKS.items() if (t or {}).get('status') == WAITING_APPROVAL]
+    closed = 0
+    for tid in waiting:
+        try:
+            if settle_waiting_task(tid):
+                closed += 1
+        except Exception as e:
+            _log.warning("could not settle waiting task %s: %s", tid, type(e).__name__)
+    return closed
+
+
+#: The card kinds whose action is a task's own tool call (services/approval_executor).
+_SETTLE_KINDS = ('tainted_action', 'tool_confirm')
+_SETTLE_LOCK = threading.Lock()
+#: An approved card claimed for running this long ago with no outcome recorded did not
+#: report back (a restart mid-run): the task is closed as failed rather than left waiting.
+_SETTLE_STALE_S = 1800
 
 
 def _background_model_binding(explicit_model, default_model):
@@ -6211,7 +6464,9 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                       % (reply or '').strip()[:200])
 
         _checked_outcome = None
-        if final_status != 'failed':
+        # A task waiting on a card is not graded as done or not done: the owner's
+        # decision settles it (settle_waiting_task).
+        if final_status not in ('failed', WAITING_APPROVAL):
             outcome = _verify_workflow_task(task_id, reply or '', tool_trace)
             _checked_outcome = outcome
             if outcome is not None:
@@ -6247,6 +6502,21 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         result_text = _summarize_task_outcome(name, reply, tool_trace, status=final_status)
         _task_set(task_id, status=final_status, result=result_text, ended=_time.time(),
                   verified=verified, verification_evidence=verification_summary)
+        _settled_elsewhere = False
+        if final_status == WAITING_APPROVAL:
+            # A card can be decided while the task is still running: that decision found no
+            # waiting task to settle, so settle now (nothing changes while a card still waits).
+            _settled = settle_waiting_task(task_id, from_worker=True)
+            if _settled:
+                final_status = _settled
+                with TASKS_LOCK:
+                    verified = bool((TASKS.get(task_id) or {}).get('verified'))
+            else:
+                with TASKS_LOCK:
+                    _now = (TASKS.get(task_id) or {}).get('status')
+                # A decision landed between our write and our settle and settled it first: it
+                # has reported and continued the run, so this worker does neither again.
+                _settled_elsewhere = _now != WAITING_APPROVAL
 
         # ── Fresh-context evaluator ────────────────────────────────
         # Local seat only, resolved the way `local_only` schedules resolve
@@ -6313,25 +6583,27 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         # something polled it. By the output-liveness rule that is a failure
         # even though it exits zero: work completed that the user never hears
         # about is work that did not happen, from where they are sitting.
-        _report_task_completion(task_id, name, final_status, result_text)
+        if not _settled_elsewhere:
+            _report_task_completion(task_id, name, final_status, result_text)
 
-        # ── Task chaining: spawn the next link if this task defines one ──
-        try:
-            _advance_task_chain(task_id, result_text)
-        except Exception as ce:
-            _task_log(task_id, f'Chain advance error: {ce}')
+            # ── Task chaining: spawn the next link if this task defines one ──
+            try:
+                _advance_task_chain(task_id, result_text)
+            except Exception as ce:
+                _task_log(task_id, f'Chain advance error: {ce}')
     except Exception as e:
         traceback.print_exc()
-        # The hard spending cap (services/spend_guard) halts a task at its
-        # next cloud call. Say so in the task's own result, not as a generic
-        # error: the steps that ran are in the task log, files written stay
-        # written, and the task can be re-run once the cap is lifted.
+        # The owner's spending cap (services/spend_guard) pauses a task at its
+        # next paid cloud call. Say so in the task's own result, in plain words
+        # (north-star A17), not as a generic error: the steps that ran are in
+        # the task log, files written stay written, and the task can be asked
+        # for again once the cap allows.
         if type(e).__name__ == 'SpendCapReached':
             _task_set(task_id, status='failed',
-                      result=f'[Halted by hard spending cap] {e}', ended=_time.time())
-            _task_log(task_id, f'HALTED by hard spending cap: {e}')
+                      result=f'{SPEND_CAP_PAUSE_MARK} {e}', ended=_time.time())
+            _task_log(task_id, f'PAUSED by the spending cap: {e}')
             _report_task_completion(task_id, name, 'failed',
-                                    f'[Halted by hard spending cap] {e}')
+                                    f'{SPEND_CAP_PAUSE_MARK} {e}')
             return
         _task_set(task_id, status='failed', result=f'[Error] {e}', ended=_time.time())
         _task_log(task_id, f'Error: {e}')
@@ -6737,10 +7009,15 @@ def _report_workflow_completion(task_id, name, status, result_text):
         definition = rec.get('workflow_definition') or {}
         steps = definition.get('steps') or []
         index = int(rec.get('chain_step') or 0)
-        if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout'):
+        # A step waiting on a card holds the run there (the next step starts only once the
+        # owner decides), so the owner hears about it now, not when a later step finishes.
+        if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout',
+                                                     WAITING_APPROVAL):
             _task_set(task_id, delivery={'status': 'deferred', 'reason': 'Next workflow step owns delivery.'})
             return
-        if status in ('failed', 'error') and index < len(steps) and not str(result_text).startswith('[Halted by hard spending cap]'):
+        if (status in ('failed', 'error') and index < len(steps) and not rec.get('settled')
+                and not str(result_text).startswith(SPEND_CAP_PAUSE_MARK)):
+            # (a step the owner's card decision settled as failed is not retried: say so now)
             if int(rec.get('chain_retry') or 0) < int(steps[index].get('retries', 1)):
                 return
         if (rec.get('delivery') or {}).get('status') in ('delivered', 'suppressed'):
@@ -6764,12 +7041,22 @@ def _report_workflow_completion(task_id, name, status, result_text):
         # One delivery per completion, chosen by where the owner is.
         target = _nreg.completion_target(cid)
         label = {'completed_unverified': 'finished; output checks are incomplete',
-                 'cancelled': 'stopped', 'failed': 'failed', 'timeout': 'timed out'}.get(aggregate, 'finished')
+                 'cancelled': 'stopped', 'stopped': 'stopped', 'failed': 'failed', 'timeout': 'timed out',
+                 'waiting': 'is waiting for your decision on an approval card',
+                 WAITING_APPROVAL: 'is waiting for your decision on an approval card'}.get(aggregate, 'finished')
+        if status == DECLINED:
+            label = 'stopped: you did not approve its card'
         body = str(result_text or '').strip() or '(no output)'
         title = definition.get('name') or name
         text = f'Workflow "{title}" {label}.\n\n{body}'
         outputs = rec.get('outputs') or []
-        message_meta = {'kind': 'workflow_result', 'task_id': task_id, 'workflow_run_id': rid,
+        # The waiting notice is its own message: the run's result, when it comes, is another
+        # (keyed by the run), so posting one never counts as having posted the other.
+        waiting_note = status == WAITING_APPROVAL
+        mkey, mval = (('workflow_waiting_id', f'{rid}:{task_id}') if waiting_note
+                      else ('workflow_run_id', rid))
+        message_meta = {'kind': 'workflow_waiting' if waiting_note else 'workflow_result',
+                        'task_id': task_id, mkey: mval,
                         'status': aggregate, 'outputs': outputs, 'project_id': rec.get('project_id')}
         delivered, existing, reason = False, False, ''
         invalid_owner = False
@@ -6789,12 +7076,12 @@ def _report_workflow_completion(task_id, name, status, result_text):
                 if cid:
                     # The transcript is the receipt if a crash follows append
                     # but precedes the task snapshot, so retries cannot repeat it.
-                    existing = any((m.get('meta') or {}).get('workflow_run_id') == rid
+                    existing = any((m.get('meta') or {}).get(mkey) == mval
                                    for m in conversations.messages(cid))
                     if target == _nreg.CHAT and not existing:
                         _nreg.transcript_add('E77', cid, {'role': 'friday', 'text': text, 'pinned': False,
                                                           'meta': message_meta}, settings=delivery_settings)
-                    delivered = any((m.get('meta') or {}).get('workflow_run_id') == rid
+                    delivered = any((m.get('meta') or {}).get(mkey) == mval
                                     for m in conversations.messages(cid))
                     if target == _nreg.CHAT and not delivered:
                         reason = 'The result was not confirmed in its conversation.'
@@ -6817,7 +7104,9 @@ def _report_workflow_completion(task_id, name, status, result_text):
             try:
                 import agent_friday.notifications_engine as ne
                 notice = ne.push(title=f'Workflow {label}: {title}', body=body[:400],
-                                proactive_chat=False, emitter='E03', dedupe_key=f'workflow-run:{rid}',
+                                proactive_chat=False, emitter='E03',
+                                dedupe_key=(f'workflow-run:{rid}:waiting:{task_id}' if waiting_note
+                                            else f'workflow-run:{rid}'),
                                 target={'kind': 'task', 'id': task_id})
                 notification = 'delivered' if notice else 'unconfirmed'
                 delivered = bool(notice) or delivered
@@ -6866,12 +7155,18 @@ def _report_task_completion(task_id, name, status, result_text):
         return _report_workflow_completion(task_id, name, status, result_text)
     body = (result_text or '').strip()
     ok = status not in ('failed', 'error')
+    waiting = status == WAITING_APPROVAL
     cid = None
     try:
         cid = _task_conversation_id(task_id)
     except Exception:
         cid = None
-    text = (f"Background task \"{name}\" {'finished' if ok else 'FAILED'}.\n\n"
+    # A task that raised a card is waiting for the owner, never "finished" (NS-17.7-2):
+    # in the chat line, the panel card and the spoken notice alike.
+    said = ('is waiting for your decision on an approval card (Approvals, in the System '
+            'workspace); nothing it asked for has run yet' if waiting
+            else 'finished' if ok else 'FAILED')
+    text = (f"Background task \"{name}\" {said}.\n\n"
             f"{body or '(no output)'}")
 
     def card():
@@ -6882,8 +7177,10 @@ def _report_task_completion(task_id, name, status, result_text):
         import agent_friday.notifications_engine as notifications_engine
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
         notifications_engine.push(
-            title=f"Task {'finished' if ok else 'failed'}: {name}",
-            body=lede or ('Finished with no output.' if ok else 'Failed.'),
+            title=(f"Task needs your decision: {name}" if waiting
+                   else f"Task {'finished' if ok else 'failed'}: {name}"),
+            body=lede or ('Waiting for your decision.' if waiting
+                          else 'Finished with no output.' if ok else 'Failed.'),
             emitter='E02', dedupe_key=f'task-done:{task_id}',
             target={"kind": "task", "id": task_id},
         )
@@ -6924,13 +7221,35 @@ def _task_pinned(task_id) -> bool:
         return bool((TASKS.get(task_id) or {}).get('pin_to_seat'))
 
 
+def _principal_of(value) -> str:
+    """A task's principal (§17.6): "owner", or "crew:<agent id>" for a Crew
+    agent's work. Anything else (a goal's "you", text a model wrote) is the owner."""
+    v = str(value or "")
+    if re.fullmatch(r"crew:[A-Za-z0-9_.-]{1,64}", v):
+        return v
+    return "crew:unknown" if v.startswith("crew:") else "owner"
+
+
 def _spawn_task(name, prompt, description='', on_complete=None,
                 chain=None, chain_step=0, orb_icon='🛰', scope=None,
                 model=None, tools=None, conversation_id=None, schedule_id=None,
                 runner=None, pin_to_seat=False, workflow_context=None,
                 chain_retry=0, parent_task_id=None, task_id=None, inherited_policy=None,
-                crew_context=None, job=None, local_only_result=False):
+                crew_context=None, job=None, local_only_result=False,
+                principal=None, goal_ancestry=None, expected_outputs=None, verification_plan=None,
+                continuation=False):
     """Spawn a background task.
+
+    principal / goal_ancestry / expected_outputs / verification_plan (§17.6):
+        whose task it is, which goal and milestone it serves, what it should
+        produce and how that is checked. Set by callers that know (goals);
+        principal and goal ancestry are inherited from the parent task and are
+        never read from a model-written description.
+
+    A task spawned while another task runs is that task's subagent (§17.14):
+    if the parent is scoped, its scope must allow subagents and the child
+    may be no broader than the parent (no scope given = the parent's scope);
+    otherwise PermissionError and nothing is spawned.
 
     job: optional dict describing this task in the Local AI queue:
         ``kind`` (e.g. "wiki_distill"), ``key`` (dedupe: a second request with
@@ -7036,16 +7355,30 @@ def _spawn_task(name, prompt, description='', on_complete=None,
     with TASKS_LOCK:
         if task_id in TASKS:
             return task_id
-    if scope:
+    # §17.14: a child is no broader than the task that spawns it. A task
+    # spawned while another task runs is that task's child (its lineage, its
+    # stop, its outside-content flag), whether or not the caller said so.
+    # A continuation (chain step, follow-up, retry, requeue: _descendant_options
+    # says so) keeps its parent's scope; anything else a task starts is its
+    # subagent, even when the caller names the parent.
+    _continuation = bool(continuation) and parent_task_id is not None
+    if parent_task_id is None:
         try:
-            from agent_friday.services.subagents import register_scope_for_task
-            register_scope_for_task(task_id, scope)
-        except Exception as e:
-            import logging as _log
-            _log.getLogger(__name__).error(
-                "subagent scope %r could not be applied to task %s — "
-                "refusing to spawn UNSCOPED: %s", scope, task_id, e)
-            raise RuntimeError(f"could not apply required scope {scope!r}: {e}") from e
+            parent_task_id = _journal().current_task() or None
+        except Exception:
+            parent_task_id = None
+    _subagent_budget_from = None
+    if parent_task_id:
+        from agent_friday.services import subagents as _sa
+        _ok, _why, _inherit = _sa.nested_spawn_check(parent_task_id, scope, continuation=_continuation)
+        if not _ok:
+            raise PermissionError(_why)
+        if _inherit and not scope and not _continuation:
+            # A subagent shares its parent's remaining steps and time.
+            _subagent_budget_from = parent_task_id
+        scope = scope or _inherit
+    with TASKS_LOCK:
+        _parent_rec = dict(TASKS.get(parent_task_id) or {}) if parent_task_id else {}
     from agent_friday.services import crew_runtime as _crew_runtime
     _browser_origin = _crew_runtime.HOST_ORIGIN.get() or _crew_runtime.capture_host_origin()
     _browser_scope = None
@@ -7058,6 +7391,12 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                                   "project_id": _browser_conversation.get("project") or None}
         except Exception:
             pass  # Missing original scope disables browser use, not other task capabilities.
+    # Stop everything (services/global_stop): no task, crew run, website task or
+    # delegation starts while stopped. None is what a refused spawn already returns.
+    from agent_friday.services import global_stop as _global_stop
+    if _global_stop.active():
+        print(f"  [tasks] not started while everything is stopped: {name!r}")
+        return None
     with TASKS_LOCK:
         if task_id in TASKS:
             return task_id
@@ -7082,6 +7421,15 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'parent_task_id': parent_task_id,
             'scope': scope,
             'tools': tools,
+            # §17.6: whose task, which goal it serves, what it should produce
+            # and how that is checked. Inherited from the parent task; never
+            # parsed from a description a model wrote.
+            # Only "owner" or "crew:<id>": never free text a model shaped.
+            'principal': _principal_of(principal or _parent_rec.get('principal')
+                                       or (("crew:" + str(crew_context.get("agent_id"))) if crew_context else "owner")),
+            'goal_ancestry': goal_ancestry or _parent_rec.get('goal_ancestry'),
+            'expected_outputs': expected_outputs,
+            'verification_plan': verification_plan,
             **{k: v for k, v in (workflow_context or {}).items() if k in _WORKFLOW_CONTEXT_FIELDS},
             'model': model,
             'pin_to_seat': bool(pin_to_seat and model),
@@ -7127,6 +7475,21 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             'trace_id': "tr_" + uuid.uuid4().hex[:16],
             'parent_trace_id': _rtrace.current(),
         }
+    # The scope is registered once the record exists and before the worker
+    # thread starts (never for a duplicate or a refused spawn, which return
+    # above): no window in which the task's first tool call runs unscoped.
+    if scope:
+        try:
+            from agent_friday.services.subagents import register_scope_for_task
+            register_scope_for_task(task_id, scope, budget_from=_subagent_budget_from)
+        except Exception as e:
+            with TASKS_LOCK:
+                TASKS.pop(task_id, None)
+            import logging as _log
+            _log.getLogger(__name__).error(
+                "subagent scope %r could not be applied to task %s — "
+                "refusing to spawn UNSCOPED: %s", scope, task_id, e)
+            raise RuntimeError(f"could not apply required scope {scope!r}: {e}") from e
     # Durable from the first instant (TV2): the created event, the state
     # snapshot and the index row exist before the worker thread starts, so
     # a crash one millisecond later still leaves a record.
@@ -7135,7 +7498,9 @@ def _spawn_task(name, prompt, description='', on_complete=None,
         _tj.append(task_id, "created", name=name, description=description,
                    prompt=(prompt or '')[:4000], chain=chain, chain_step=chain_step,
                    model=model, run_id=(workflow_context or {}).get('run_id'),
-                   conversation_id=conversation_id, schedule_id=schedule_id)
+                   conversation_id=conversation_id, schedule_id=schedule_id,
+                   principal=TASKS[task_id]['principal'], goal_ancestry=TASKS[task_id]['goal_ancestry'],
+                   parent_task_id=parent_task_id, scope=scope)
         _tj.index_put(task_id, name, 'queued', TASKS[task_id]['created'])
         stored = _tj.write_state(task_id, TASKS[task_id])
         if workflow_context and not stored and not TASKS[task_id].get('off_record'):
@@ -7468,6 +7833,8 @@ def _descendant_options(rec, *, step=None, retry=0):
                "pin_to_seat": rec.get("pin_to_seat", False),
                "parent_task_id": rec.get("task_id"), "chain_retry": retry,
                "scope": rec.get("scope"),
+               "principal": rec.get("principal"), "goal_ancestry": rec.get("goal_ancestry"),
+               "continuation": True,
                "inherited_policy": {"cloud_pin": rec.get("cloud_pin"), "local_only": rec.get("local_only")}}
     if rec.get("run_id") and step is not None:
         options["task_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL,
@@ -7521,6 +7888,13 @@ def _prepare_task_start(task_id):
 def requeue_task(rec):
     """Recreate a never-started thread with its original owner and restrictions."""
     if not _prepare_task_start(rec['task_id']):
+        return None
+    # Crew work and engine-run jobs need their runner, which a record does not
+    # hold: re-admitting them as a plain agent loop would widen what they do.
+    if rec.get('crew_context') or rec.get('job_kind') == 'runner':
+        _task_set(rec['task_id'], status='interrupted', ended=_time.time(),
+                  status_reason='This ran on its own engine and could not be re-admitted '
+                                'after the restart; start it again from where it came from.')
         return None
     return _spawn_task(rec.get('name') or 'Task', rec.get('prompt') or '',
         description=rec.get('description') or '', chain=rec.get('chain'),
@@ -7690,8 +8064,19 @@ def chain_run_status(name, run_id=None):
                                     ((row.get('log') or [None])[-1] if status in
                                      ('interrupted', 'failed', 'timeout') else None)})
     statuses = {x['status'] for x in out_steps}
-    if statuses & {'queued', 'queued-for-seat', 'running', 'waiting', 'waiting_approval', 'waiting_for_approval'}:
+    if statuses & {'queued', 'queued-for-seat', 'running'}:
         state = 'running'
+    elif statuses & {'waiting', WAITING_APPROVAL, 'waiting_for_approval'}:
+        # Held at a step whose card the owner has not decided: waiting on you, not working.
+        state = 'waiting'
+    elif DECLINED in statuses:
+        state = 'stopped'
+        for x in out_steps:
+            if x['status'] == DECLINED:
+                x['reason'] = 'you declined its approval card'
+            elif x['status'] == 'pending':
+                x['status'] = 'skipped'
+                x['reason'] = "you declined an earlier step's approval card"
     elif statuses & {'failed', 'error', 'timeout'}:
         state = 'failed'
     elif 'cancelled' in statuses:
@@ -7794,8 +8179,26 @@ def _tool_task_control(inp):
     op = str(inp.get("op") or "").strip().lower()
     target = str(inp.get("target") or "").strip()
     quiet = _cloud_voice() or _voice_room()
+    if op == "stop_all":
+        # Stop everything (services/global_stop): every lane at once. Never needs approval;
+        # resuming is a press on the screen, so no tool can undo it.
+        from agent_friday.services import global_stop as _gs
+        _ctx_gs = _CURRENT_TOOL_CONTEXT.get() or {}
+        if _ctx_gs.get("is_background_task") or _ctx_gs.get("crew_agent_id"):
+            # Only the owner stops everything; a task or a working agent cannot.
+            return "NOT DONE: only the owner can stop everything. Stop this task instead (op=stop)."
+        _surf = str(_CURRENT_SURFACE.get() or _ctx_gs.get("surface") or "")
+        _voice = bool(_cloud_voice() or _voice_room() or _surf.startswith("voice"))
+        # Who: the owner's own words routed here (a voice rule, chat), or a model's call.
+        # Who: the owner's own words were the stop phrase (typed, or spoken through Laya's
+        # rule), or a model chose to call it.
+        _by = "owner" if _gs.is_stop_everything(_CURRENT_OWNER_TEXT.get()) else "model"
+        res = _gs.stop(by=_by, source="voice" if _voice else "tool",
+                       reason=str(inp.get("target") or "")[:120])
+        return "EVERYTHING_STOPPED: " + _gs.SPOKEN_STOPPED + (
+            "" if res.get("receipt") else " (The stop receipt could not be written.)")
     if op not in ("stop", "steer"):
-        return "NOT DONE: op is stop or steer."
+        return "NOT DONE: op is stop, stop_all or steer."
     if op == "steer":
         message = str(inp.get("message") or "").strip()
         if not message:
@@ -8029,6 +8432,17 @@ def _advance_task_chain_once(task_id, result_text):
         return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
         return None
+    if t.get('status') in (WAITING_APPROVAL, DECLINED) or (t.get('settled') and t.get('status') == 'failed'):
+        # The step raised a card: what follows may depend on it, so the next step does not
+        # start on a result that says the action is still waiting. The owner's decision
+        # continues the run (settle_waiting_task) or ends it here, declined; an approved action
+        # that did not go through ends it too (whichever path settled it).
+        _task_log(task_id, 'Waiting for your decision on its approval card: the next step '
+                           'starts once you approve it.' if t.get('status') == WAITING_APPROVAL
+                  else 'You declined its approval card: the next step did not start.'
+                  if t.get('status') == DECLINED
+                  else 'The action you approved did not go through: the next step did not start.')
+        return None
 
     # A "completed" chain link whose result is a provider-failure message did
     # not do its work — route it through the retry path instead of advancing.
@@ -8058,8 +8472,10 @@ def _advance_task_chain_once(task_id, result_text):
             step = steps[nxt]
             prompt = _workflow_prompt(chain, step['prompt'], t.get('workflow_baseline'))
             if step.get('with_context', True) and result_text:
+                # The previous step read mail, pages or files: what it produced is data
+                # for this step (services/untrusted_input), never part of its task.
                 prompt = (f"Context from the previous step "
-                          f"(\"{t.get('name')}\"):\n\n{result_text[:6000]}\n\n"
+                          f"(\"{t.get('name')}\"):\n\n{_untrusted.wrap(result_text[:6000])}\n\n"
                           f"---\n\nYour task:\n{prompt}")
             _task_log(task_id, f"→ chaining to step {nxt + 1}/{len(steps)}: {step['name']}")
             _journal().decision("chain_advance", f"step {nxt + 1}/{len(steps)}: {step['name']}",
@@ -8088,7 +8504,7 @@ def _advance_task_chain_once(task_id, result_text):
         prompt = (oc.get('prompt') or oc.get('spawn') or '').strip()
         if oc.get('with_context', True) and result_text:
             prompt = (f"Context from the previous task (\"{t.get('name')}\"):\n\n"
-                      f"{result_text[:6000]}\n\n---\n\nYour task:\n{prompt}")
+                      f"{_untrusted.wrap(result_text[:6000])}\n\n---\n\nYour task:\n{prompt}")
         _task_log(task_id, f"→ on_complete: spawning '{nxt_name}'")
         return _spawn_task(
             name=nxt_name, prompt=prompt,
@@ -8151,8 +8567,15 @@ def _tool_spawn_task(inp):
         _model = res.model
         _pin = bool(res.is_local and _model)
 
-    tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
-                      model=_model, pin_to_seat=_pin,
+    # §17.14: a task spawned from inside another task is that task's
+    # subagent: the nested-spawn check in _spawn_task needs to know whose.
+    try:
+        _parent = _journal().current_task()
+    except Exception:
+        _parent = None
+    try:
+        tid = _spawn_task(name, prompt, desc, on_complete=on_complete,
+                      model=_model, pin_to_seat=_pin, parent_task_id=_parent,
                       # WHERE THIS TASK REPORTS. `_spawn_task` has taken this
                       # since it was written and this caller never passed it, so
                       # a task spawned from a chat belonged to nobody: its
@@ -8161,6 +8584,11 @@ def _tool_spawn_task(inp):
                       # set by `_execute_tool` for precisely this, and
                       # `_tool_start_workflow` already reads it.
                       conversation_id=_CURRENT_CONVERSATION.get())
+    except PermissionError as e:
+        return json.dumps({'status': 'refused', 'message': "Did not spawn '%s': %s" % (name, e)})
+    if not tid:
+        return json.dumps({'status': 'refused', 'message': "Did not spawn '%s': the task it belongs to "
+                                                            "has been asked to stop." % name})
     return json.dumps({
         'task_id': tid,
         'status': 'running',
@@ -12312,6 +12740,16 @@ try:
 except Exception as _qte:  # never let optional deps break the agent import
     print(f"  [QUEUE] registration skipped: {_qte}")
 
+# draft_goal (north star §17.4): turn what the owner wants into a goal draft
+# that waits in System > Goals for the owner's confirming click. Loaded on
+# demand; it creates and starts nothing. See services/goal_tools.py.
+try:
+    from agent_friday.services import goal_tools as _goal_tools
+    _goal_tools.register(CLAUDE_TOOLS, CLAUDE_TOOL_HANDLERS, TOOL_RINGS,
+                         workspace_tools=WORKSPACE_TOOLS)
+except Exception as _gte:  # never let optional deps break the agent import
+    print(f"  [GOALS] draft_goal registration skipped: {_gte}")
+
 # What Laya has learned about the owner, and forgetting it (laya_learning): the
 # spoken side of Settings > Laya > What Laya learned. A shared text tool; voice
 # reaches it through the router's hand-off. See services/laya_learning_tools.py.
@@ -13203,6 +13641,14 @@ def _confirmation_question(name, tool_input):
         return f"I can switch you to {_WORKSPACE_LABELS.get(_resolve_workspace(tgt) or '', tgt)} — shall I?"
     if name == "write_file":
         tgt = inp.get("path") or "a file"
+        if not inp.get("path"):
+            return f"Would you like me to create {tgt}?"
+        from agent_friday.services import file_write_receipts as _fwr
+        what = _fwr.describe_target(tgt)
+        if what["exists"]:
+            verb = "add to" if str(inp.get("mode") or "").lower() == "append" else "replace"
+            return (f"Would you like me to {verb} {tgt}? It already exists; "
+                    f"I keep a copy of it first, so you can undo this.")
         return f"Would you like me to create {tgt}?"
     # Outward actions routed here by the governance check: say what it is.
     return f"{_taint_title(name, inp)} — shall I go ahead?"
@@ -13313,6 +13759,30 @@ def _resolve_tool_name(name):
     near = [n for n in CLAUDE_TOOL_HANDLERS
             if key and (key in _tool_name_key(n) or _tool_name_key(n) in key)]
     return None, sorted(near)[:6]
+
+
+def _same_name_spelled_differently(name, resolved) -> bool:
+    """`site-action`, `Site.Action` and `site action` are the name `site_action`, not a guess at
+    another tool: only separators and case differ, so it is the tool the model named."""
+    norm = re.sub(r"[\s.\-]+", "_", str(name or "").strip().lower())
+    return norm == str(resolved or "")
+
+
+def _resolution_may_run(resolved, tool_input, session_ctx=None) -> bool:
+    """A misnamed call may run under the resolved name only when that tool is internal for the
+    arguments it would really run with (governance/action_gate.classify, after the job's own
+    send setting is applied). A connector (mcp_) tool never runs under a guessed name, and a
+    classification that cannot run is not a yes."""
+    if str(resolved or "").lower().startswith("mcp_"):
+        return False
+    try:
+        from agent_friday.governance import action_gate as _ag
+        args = dict(tool_input) if isinstance(tool_input, dict) else {}
+        args = _job_send_args(resolved, args, session_ctx)
+        cls, _why = _ag.classify(resolved, args, session_ctx)
+        return cls == _ag.INTERNAL
+    except Exception:
+        return False
 
 
 def _restore_placeholders(value, pii_lookup):
@@ -13511,6 +13981,33 @@ def _web_task_scope(fn):
     return dispatch
 
 
+def _outcome_recorder(name, decision, ctx):
+    """The outcome receipt for one call: written once, only for a call whose
+    checkpoint decided an outward or reading action (or that runs on the
+    owner's approved card), linked to that decision. Internal calls get none."""
+    from agent_friday.governance import action_gate as _g
+    approved = ctx.meta.get("owner_decided")
+    approval = None
+    if isinstance(approved, dict):
+        approval = approved.get("approval_id") or approved.get("id")
+    elif isinstance(approved, str):
+        approval = approved
+    klass = (decision or {}).get("class")
+    wanted = klass in (_g.OUTWARD, _g.OBSERVE) or bool(approval)
+    if (decision or {}).get("decision") == "deny" and not approval:
+        wanted = False                    # the decision itself says nothing ran
+    done = []
+
+    def _write(status, detail=""):
+        if done or not wanted:
+            return
+        done.append(status)
+        t0 = ctx.meta.get("t_start")
+        _g.record_outcome(name, decision, status, approval=approval,
+                          duration_ms=((_time.time() - t0) * 1000.0) if t0 else None, detail=detail)
+    return _write
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
@@ -13529,25 +14026,47 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     voice surface's own helpers). It runs through exactly the same chain;
     there is no other way to invoke a tool handler.
     """
+    # Every return before the handler runs is Friday's own line about the call (a
+    # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
+    # to the model as Friday's words, outside the data envelope (services/untrusted_input).
+    _own = _untrusted.FridaysWords
+    # Stop everything (services/global_stop): while stopped no tool runs, from any
+    # surface. Only another stop may pass, so "stop everything" said twice still works.
+    from agent_friday.services import global_stop as _global_stop
+    if _global_stop.active() and not (
+            name == "task_control" and isinstance(tool_input, dict)
+            and str(tool_input.get("op") or "").strip().lower() in ("stop", "stop_all")):
+        _receipts.record(name, ok=False, denied=True, detail="everything is stopped")
+        return _own(_global_stop.refusal())
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
-        return _crew_denial
+        return _own(_crew_denial)
     if (session_ctx or {}).get("crew_agent_id"):
         from agent_friday.services import crew_runtime
         if (session_ctx or {}).get("crew_chat_only"):
             reason = "[CREW DENY] This conversation with a working agent has no tool authority."
             _receipts.record(name, ok=False, denied=True, detail=reason)
-            return reason
+            return _own(reason)
         if crew_runtime.pending_steering((session_ctx or {}).get("task_id")):
             reason = "[CREW STEER PENDING] A new user instruction is queued. This tool did not run; receive it at the next model round."
             _receipts.record(name, ok=False, denied=True, detail=reason)
-            return reason
+            return _own(reason)
     handler = handler or CLAUDE_TOOL_HANDLERS.get(name)
     if not handler:
         resolved, suggestions = _resolve_tool_name(name)
+        if (resolved and not _same_name_spelled_differently(name, resolved)
+                and not _resolution_may_run(resolved, tool_input, session_ctx)):
+            # BD-11a / NS-32.21-1: a misnamed call is never resolved to a tool that acts
+            # outside (sends, buys, writes where it is not internal, reaches someone). The model
+            # is told the exact name; that call then passes every gate as itself.
+            print(f"  [tools] '{name}' is not registered; '{resolved}' matches it but is not "
+                  f"internal, so it was not run under a guessed name")
+            return _own(f"TOOL CALL FAILED — no tool named '{name}' exists, so nothing ran. The "
+                        f"closest tool is '{resolved}', which is never run under a guessed name. If "
+                        f"'{resolved}' is what you meant, call it by that exact name.")
         if resolved:
             print(f"  [tools] '{name}' is not registered; resolved to "
-                  f"'{resolved}' (unambiguous match)")
+                  f"'{resolved}' (unambiguous match, internal)")
             name, handler = resolved, CLAUDE_TOOL_HANDLERS[resolved]
         else:
             # A bare "Unknown tool: x" is a dead end: it says the call failed
@@ -13557,11 +14076,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             hint = ("Closest registered tools: "
                     + ", ".join(suggestions)) if suggestions else \
                    "No similarly-named tool is registered."
-            return (f"TOOL CALL FAILED — no tool named '{name}' exists, so "
-                    f"nothing ran and no result was produced. {hint} "
-                    f"Retry with an exact name from your tool list, or tell "
-                    f"the user you could not do it. Do not describe an "
-                    f"outcome: there isn't one.")
+            return _own(f"TOOL CALL FAILED — no tool named '{name}' exists, so "
+                        f"nothing ran and no result was produced. {hint} "
+                        f"Retry with an exact name from your tool list, or tell "
+                        f"the user you could not do it. Do not describe an "
+                        f"outcome: there isn't one.")
 
     # Arguments are checked against the tool's own schema before any gate
     # sees them. A call that does not fit never runs: the model gets back
@@ -13572,7 +14091,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     if _arg_error:
         _receipts.record(name, ok=False, denied=True, detail="invalid arguments")
         _call_verifier.receipt(name, _checked, "verifier_fixit", "invalid arguments", session_ctx)
-        return _arg_error
+        return _own(_arg_error)
     tool_input = _restore_placeholders(_checked or {}, pii_lookup)
     # A scheduled job or workflow made to SEND its emails (kept sending by the one-time mark in
     # services/email_jobs, or switched to send on its Workflows card) sends, as it did before
@@ -13591,7 +14110,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
                                session_ctx)
         if _vout.kind != "cached":
             _receipts.record(name, ok=False, denied=True, detail=_vout.message)
-        return _vout.message
+            return _own(_vout.message)
+        return _vout.message          # an earlier result of this read: tool output, enveloped like any
     # The gate and handler must act on the same codebase even if the chat is
     # rebound while its turn runs. Pin implicit scope before every pre-hook.
     if name in ("codebase_edit", "codebase_undo", "codebase_read", "codebase_understand") and not str(tool_input.get("codebase_id") or "").strip():
@@ -13606,7 +14126,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         if not _scope_rec or not _scope_rec.get("id"):
             _reason = f"[NOT RUN] '{name}': this turn has no resolvable codebase. Open its codebase conversation before trying again."
             _receipts.record(name, ok=False, denied=True, detail=_reason)
-            return _reason
+            return _own(_reason)
         tool_input = dict(tool_input, codebase_id=_scope_rec["id"])
 
     _host_name = name if name in CLAUDE_TOOL_HANDLERS else _resolve_tool_name(name)[0]
@@ -13629,7 +14149,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
 
     # ── PreToolUse chain — confirmation, governance, vault, sandbox, rate limit.
     # A DENY short-circuits; the deny message is what the model sees as the result.
+    # The governance hook keeps the decision it wrote on the call, so the
+    # call's outcome receipt names it (governance/action_gate.record_outcome).
     verdict = _hooks.run_pre_hooks(ctx)
+    _outcome = _outcome_recorder(name, ctx.meta.get("decision_receipt"), ctx)
     # Trusted hooks can restore a deferred Crew task's identity. Handlers and
     # subsequent checks use that scope, while the original host origin stays fixed.
     if _host_scoped:
@@ -13637,10 +14160,12 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     session_ctx = ctx.session_ctx
     _crew_denial = _host_action_denial(name, session_ctx)
     if _crew_denial:
-        return _crew_denial
+        _outcome("held", "crew_host")
+        return _own(_crew_denial)
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-        return verdict.reason
+        _outcome("held", "pre_hook")              # a later check held what the checkpoint allowed
+        return _own(verdict.reason)
 
     # Say what is about to happen BEFORE it happens, and only once it will
     # happen: derived from the tool actually being invoked, after every gate
@@ -13738,15 +14263,18 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _CURRENT_CONVERSATION.reset(_tok)
         _crew_denial = _host_action_denial(name, session_ctx)
         if _crew_denial:
+            _outcome("ok", "ran; the crew host withheld the result")
             return _crew_denial
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
         _crew_denial = _host_action_denial(name, session_ctx)
         if _crew_denial:
+            _outcome("error", type(e).__name__)
             return _crew_denial
         traceback.print_exc()
         _receipts.record(name, ok=False, detail=str(e))
+        _outcome("error", type(e).__name__)
         return ExceptionText(f"Tool error ({name}): {e}")
 
     # Receipt written only after the handler actually returned. This is the
@@ -13756,8 +14284,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     if _refused:
         _receipt_credential_refusal(name, ctx.input, "refused by the handler")
         _receipts.record(name, ok=False, denied=True, detail=result)
+        _outcome("refused", "credential refusal")
     else:
         _receipts.record(name, ok=True)
+        _outcome("ok", "")
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
@@ -14469,9 +14999,15 @@ def _hook_governance(ctx):
     _prior, _waiting_cards = _run_card_prior(ctx, key)
     if _prior is not None:
         return _prior
-    v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
-                        tainted=(d.action == "ask"), clean=_clean,
-                        grant_tainted=(d.action == "ask" and not _clean))
+    _lr = _gate.LAST_RECEIPT.set(None)
+    try:
+        v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
+                            tainted=(d.action == "ask"), clean=_clean,
+                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call")
+        # this call's own decision, for its outcome receipt (_outcome_recorder)
+        ctx.meta["decision_receipt"] = _gate.LAST_RECEIPT.get()
+    finally:
+        _gate.LAST_RECEIPT.reset(_lr)
     ctx.meta["governance"] = v
     if v.action == "allow" and _waiting_cards:
         _prior = _run_card_supersede(ctx, _waiting_cards, v.grant)
@@ -14835,6 +15371,13 @@ def _taint_title(name, inp):
     if name in ("browse_web", "open_url"):
         return f"Open {_short_txt(inp.get('url'))}"
     if name == "write_file":
+        try:
+            from agent_friday.services import file_write_receipts as _fwr
+            if _fwr.describe_target(inp.get("path"))["exists"]:
+                return (f"Replace the existing file {_short_txt(inp.get('path'))} "
+                        f"(a copy is kept so it can be undone)")
+        except Exception:
+            pass
         return f"Write the file {_short_txt(inp.get('path'))}"
     if name == "open_path":
         return f"Open {_short_txt(inp.get('path') or inp.get('target'))} on this computer"
@@ -15222,6 +15765,7 @@ except Exception as _mcp_imp_err:  # noqa: BLE001 — degrade gracefully if abse
 MCP_SERVERS_FILE = FRIDAY_DIR / "mcp_servers.json"
 
 _MCP_MANAGER = None                       # set by _mcp_boot()
+_MCP_BOOTED_ONCE = {"done": False}        # the host carry-over runs at the first boot, never at a reload
 _MCP_TOOL_MAP: dict[str, tuple] = {}      # registered tool name -> (server, raw tool)
 _MCP_SERVER_TOOLS: dict[str, list] = {}   # server name -> [registered tool names]
 _MCP_REG_LOCK = threading.Lock()
@@ -15672,6 +16216,14 @@ def _mcp_boot() -> None:
     global _MCP_MANAGER
     if _MCPManager is None:
         return
+    from agent_friday.services import safe_mode as _sm
+    if not _sm.allows("mcp"):
+        print("  [mcp] safe mode: no MCP server is started")
+        return
+    # The host carry-over may run only at the first boot, so the flag is set before any work:
+    # a reload after a failed first boot never adopts a server added since (governance/mcp_hosts).
+    first_boot = not _MCP_BOOTED_ONCE["done"]
+    _MCP_BOOTED_ONCE["done"] = True
     try:
         cfg = _load_mcp_servers()
         # Extension security: scan every configured server before launch and
@@ -15683,6 +16235,20 @@ def _mcp_boot() -> None:
             cfg = gate_mcp_config(cfg)
         except Exception as _sec_err:
             print(f"  [mcp] extension security scan skipped: {_sec_err}")
+        if first_boot:
+            try:
+                # Once ever, at the first start with the host list: hosts of remote servers
+                # configured now stay reachable (governance/mcp_hosts.carry_over_at_boot).
+                from agent_friday.governance import mcp_hosts as _mh
+                _mh.carry_over_at_boot(cfg)
+            except Exception as _mh_err:
+                _log.warning("MCP host carry-over failed: %s", type(_mh_err).__name__)
+        try:
+            # A host card approved after a restart is still applied (governance/mcp_hosts).
+            from agent_friday.services import mcp_host_cards as _mhc
+            _mhc.ensure_hook()
+        except Exception as _mh_err:
+            _log.warning("MCP host card hook not registered: %s", type(_mh_err).__name__)
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
@@ -15701,6 +16267,10 @@ def _mcp_reload() -> dict:
     global _MCP_MANAGER
     if _MCPManager is None:
         return {"error": "MCP client module unavailable"}
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("mcp")
+    if _why:
+        return {"error": _why}
     # Unregister every server's tools.
     for name in list(_MCP_SERVER_TOOLS.keys()):
         _mcp_unregister_server_tools(name)
@@ -15730,14 +16300,15 @@ def _screenshot_result_to_block(tool_use_id, result):
     return {
         "type": "tool_result",
         "tool_use_id": tool_use_id,
-        "content": [
-            {"type": "text", "text": data.get('note', 'Screenshot captured.')},
+        # The picture (a web page, a document, the desktop) is the source's, like
+        # its text: both sit inside the one data envelope (services/untrusted_input).
+        "content": _untrusted.wrap_blocks(
+            data.get('note', 'Screenshot captured.'),
             {"type": "image", "source": {
                 "type": "base64",
                 "media_type": data.get('media_type', 'image/png'),
                 "data": b64,
-            }},
-        ],
+            }}),
     }
 
 
@@ -16566,6 +17137,11 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     _sink = _DS.get()
                     with _stream_fn(**kwargs) as _stream:
                         for _ev in _stream:
+                            if core.GLOBAL_STOP.is_set():
+                                # Stop everything (services/global_stop): leaving the
+                                # `with` closes the stream mid-reply.
+                                from agent_friday.services import global_stop as _gs_stream
+                                raise _gs_stream.EverythingStopped("the rest of this reply")
                             if _sink is None or getattr(_ev, "type", None) != "content_block_delta":
                                 continue
                             _delta = getattr(_ev, "delta", None)
@@ -16797,7 +17373,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         _tools_grew = True
 
                 # The tool the call will actually run (_execute_tool resolves a near-miss
-                # name the same way): the vault check and the search card judge that tool.
+                # name the same way, and only to an internal tool): the vault check and the search card judge that tool.
                 _pq_name = (tu.name if tu.name in CLAUDE_TOOL_HANDLERS
                             else (_resolve_tool_name(tu.name)[0] or tu.name))
                 # ── Zero-trust continuous vault authorization ──────────
@@ -16917,7 +17493,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tu.id,
-                    "content": result,
+                    # What the tool returned is data, never instructions: one envelope for every
+                    # result (services/untrusted_input). The trace and ledger above keep it raw.
+                    "content": _untrusted.wrap(result),
                 })
             convo.append({"role": "user", "content": tool_results})
             if _tool_changes:
@@ -17653,7 +18231,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                 continue
 
             # The tool the call will actually run (_execute_tool resolves a near-miss
-            # name the same way): the vault check and the search card judge that tool.
+            # name the same way, and only to an internal tool): the vault check and the search card judge that tool.
             _pq_name = (tname if tname in CLAUDE_TOOL_HANDLERS
                         else (_resolve_tool_name(tname)[0] or tname))
             # ── Zero-trust continuous vault authorization. ──
@@ -17802,13 +18380,15 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             # small window, so it gets the result without formatting
             # boilerplate; the data is unchanged and the trace keeps the
             # original. A cloud seat gets the result exactly as returned.
-            if _compact_seat == "local":
+            if _compact_seat == "local" and not isinstance(result, _untrusted.FridaysWords):
                 try:
                     from agent_friday.services.tool_result_compact import compact as _compact_result
                     result = _compact_result(result)
                 except Exception:
                     pass
-            convo.append({"role": "tool", "tool_call_id": tcid, "content": result})
+            # The tool's output is data, never instructions (services/untrusted_input),
+            # wrapped after compaction so the envelope itself is never compacted away.
+            convo.append({"role": "tool", "tool_call_id": tcid, "content": _untrusted.wrap(result)})
 
     # Reached only when a tool loop really did spend its whole budget: a
     # tool-less call always returns from the final-answer branch above, and
@@ -17860,8 +18440,17 @@ def _start_kill_hotkey():
                 _log_context("cc_action", {"action": "kill_hotkey_ctrl_shift_q"})
             except Exception:
                 pass
+        def _on_stop_everything():
+            # Stop everything (services/global_stop) from any app, even while Friday's
+            # page is frozen. Its own chord: Ctrl+Shift+Q is also a browser's Quit.
+            try:
+                from agent_friday.services import global_stop as _gs
+                _gs.stop(by="owner", source="keyboard", reason="Ctrl+Alt+Shift+S")
+            except Exception as _gs_err:
+                _log.warning("Ctrl+Alt+Shift+S: stop everything failed: %s", _gs_err)
 
-        hk = _kb.GlobalHotKeys({'<ctrl>+<shift>+q': _on_kill})
+        hk = _kb.GlobalHotKeys({'<ctrl>+<shift>+q': _on_kill,
+                                '<ctrl>+<alt>+<shift>+s': _on_stop_everything})
         hk.start()
         _log.info("Global kill hotkey active: Ctrl+Shift+Q")
     except ImportError:

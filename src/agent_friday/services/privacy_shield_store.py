@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import UserFacingRuntimeError
 
 _LOCK = threading.RLock()
 
@@ -45,7 +46,7 @@ def _read() -> dict:
     except (OSError, ValueError) as e:
         # A file that exists but cannot be read must not be overwritten with a
         # shorter list: that would silently drop the owner's own entries.
-        raise RuntimeError("privacy_shield.json is not readable; it was left as it is") from e
+        raise UserFacingRuntimeError("privacy_shield.json is not readable; it was left as it is") from e
     if isinstance(data, list):
         return {"watchlist": [str(x) for x in data]}
     return data if isinstance(data, dict) else {}
@@ -88,7 +89,7 @@ def add(kind: str, tokens, source: str) -> list:
         if existing is not None and not isinstance(existing, list):
             # Not the list its readers expect: leave the owner's file exactly
             # as it is rather than guess (a string would be read letter by letter).
-            raise RuntimeError("privacy_shield.json %s is not a list; it was left as it is" % kind)
+            raise UserFacingRuntimeError("privacy_shield.json %s is not a list; it was left as it is" % kind)
         cur = list(existing or [])                  # every entry kept, whatever its shape
         have = {str(c).casefold() for c in cur if isinstance(c, (str, int, float))}
         src = dict((data.get("sources") or {}).get(kind) or {})
@@ -118,7 +119,7 @@ def remove(kind: str, token: str) -> bool:
         data = _read()
         existing = data.get(kind)
         if existing is not None and not isinstance(existing, list):
-            raise RuntimeError("privacy_shield.json %s is not a list; it was left as it is" % kind)
+            raise UserFacingRuntimeError("privacy_shield.json %s is not a list; it was left as it is" % kind)
         cur = list(existing or [])
         keep = [c for c in cur if not (isinstance(c, (str, int, float)) and str(c).casefold() == t.casefold())]
         if len(keep) == len(cur):

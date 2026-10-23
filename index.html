@@ -54,6 +54,10 @@ window.addEventListener('error',function(e){
 <!-- The top-bar plugin slot's registry (documented in the file). Not deferred:
      add-ons may register before the desktop mounts. -->
 <script src="/static/js/friday_topbar_slot.js"></script>
+<!-- Stop everything: the top-bar Stop control and the stopped banner with Resume. -->
+<script src="/static/js/friday_stop_everything.js" defer></script>
+<!-- Settings > Privacy > When a cloud provider fails (A6). -->
+<script src="/static/js/friday_cloud_fallback_order.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -1288,7 +1292,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .lk-sub { margin: 4px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--st-dim); }
         .lk-line.lk-off .lk-title, .lk-line.lk-changed .lk-title { color: var(--st-warn); }
         .lk-line.lk-not_built .lk-title { color: var(--st-dim); }
-        .lk-limit { font-size: 12px; line-height: 1.6; color: var(--st-label); margin: 12px 0 0;
+        .lk-limit, .pm-limit { font-size: 12px; line-height: 1.6; color: var(--st-label); margin: 12px 0 0;
             padding: 10px 12px; border: 1px solid var(--st-line); border-radius: 8px; }
         .sc-option.off { opacity: .6; cursor: default; }
         .sc-option .sc-why { color: var(--st-warn); }
@@ -3833,6 +3837,8 @@ window.addEventListener('DOMContentLoaded',function(){
     <script src="/static/friday_instructions.js"></script>
     <!-- A tested change: both texts, the difference, the evidence, Keep current / Use new (defines window.FridayTrialCard). -->
     <script src="/static/friday_trial_card.js"></script>
+    <script src="/static/friday_ledger.js"></script>
+    <script src="/static/friday_safe_mode.js"></script>
     <script src="/static/friday_sites.js"></script>
     <script src="/static/friday_bundles.js"></script>
     <script src="/static/friday_salon.js"></script>
@@ -11630,6 +11636,14 @@ function apiFetch(url, opts) {
   window.fridayRefreshDeskKey = function () {
     return refreshDeskKey().then(ok => !!ok);
   };
+  /* A WebSocket cannot carry the desk key in a header, so the voice page puts it in the
+     socket's query (routes/voice.py reads `dk`). Refreshed first, so a key from an earlier
+     launch is never sent. A voice call without it can talk but never approve a card.
+     This hands the key to page script, as the fetch wrapper already lets page script use it;
+     a sandboxed frame (no allow-same-origin) cannot reach window here or the side door. */
+  window.fridayDeskSocketParam = function () {
+    return refreshDeskKey().then(ok => (ok && deskKey) ? 'dk=' + encodeURIComponent(deskKey) : '').catch(() => '');
+  };
   refreshDeskKey();
   if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => {
     if (!document.hidden) refreshDeskKey();
@@ -15158,11 +15172,13 @@ function WorkspaceChat({
         applied: d.applied,
         revert_to: d.revert_to,
         change: d.change,
+        proposal: d.proposal || null,
         time: new Date().toISOString()
       }]);
       if (d.customization !== undefined) setCust(wsId, d.customization);
       if (d.versions) setVersions(d.versions);
       if (d.applied) flash('✨ Applied: ' + (d.change || 'change'));
+      else if (d.proposal) flash(fridayName() + ' proposes a change. Nothing changes until you press Apply.');
     } catch (e) {
       if (!alive.current) return;
       setMustRefresh(true);
@@ -15225,6 +15241,24 @@ function WorkspaceChat({
       applyReply(d);
       flash('Workspace reset to default');
     }, 'Reset failed');
+  };
+  // A change Friday proposed: Apply is the owner's press (the server checks it),
+  // Not now keeps the proposal in the history as declined.
+  const answerProposal = async (pid, apply) => {
+    if (!begin()) return;
+    const ticket = operation.current;
+    try {
+      const d = await request('proposals/' + encodeURIComponent(pid) + '/' + (apply ? 'apply' : 'decline'), { method: 'POST' }, 'state');
+      if (!owns(ticket)) { if (alive.current) setMustRefresh(true); return; }
+      applyReply(d);
+      const p = d.proposal || {};
+      setMsgs(list => list.map(x => x.proposal && x.proposal.id === pid ? { ...x, proposal: { ...x.proposal, ...p },
+        applied: !!d.applied || !!x.applied, revert_to: d.revert_to || x.revert_to,
+        change: d.applied ? (p.summary || x.change) : x.change } : x));
+      flash(d.applied ? '✨ Applied: ' + (p.summary || 'change') : 'Not applied. The proposal stays in this history.');
+    } catch (e) {
+      if (owns(ticket)) flash(e.message || (apply ? 'Apply failed.' : 'Could not record that.'));
+    } finally { finish(); }
   };
   const clearChat = () => change('chat/clear', {
     method: 'POST'
@@ -15492,7 +15526,16 @@ function WorkspaceChat({
       fontSize: 10,
       padding: '1px 7px'
     }
-  }, "\u21A9 revert this")))), loading && /*#__PURE__*/React.createElement("div", {
+  }, "\u21A9 revert this")), m.proposal && m.proposal.status !== 'applied' && React.createElement('div', {
+    className: 'card friday-studio-proposal', role: 'group', 'aria-label': 'Proposed change',
+    style: { marginTop: 6, maxWidth: '90%', padding: '7px 10px', fontSize: 11.5 }
+  }, React.createElement('div', { style: { fontSize: 10.5, opacity: 0.75, marginBottom: 4 } },
+    m.proposal.status === 'declined' ? 'Not applied' : 'Proposed change \u00B7 nothing changes until you press Apply'),
+  React.createElement('ul', { style: { margin: '0 0 6px 16px', padding: 0 } },
+    (m.proposal.changes || []).map((c, j) => React.createElement('li', { key: j }, c))),
+  m.proposal.status === 'pending' && React.createElement('div', { style: { display: 'flex', gap: 6 } },
+    React.createElement('button', { type: 'button', className: 'btn', disabled: loading, onClick: () => answerProposal(m.proposal.id, true) }, 'Apply'),
+    React.createElement('button', { type: 'button', className: 'btn', disabled: loading, onClick: () => answerProposal(m.proposal.id, false) }, 'Not now'))))), loading && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 4,
@@ -15679,6 +15722,7 @@ window.fridayEnterSends = fridayEnterSends;
 // Off the record (services/off_record): one state every chat box reads, so
 // each one says that nothing is being saved while it lasts.
 const FRIDAY_OFF_RECORD_TEXT = 'Off the record: nothing is being saved';
+const FRIDAY_OFF_RECORD_NOTICE = 'Off the record, nothing about the conversation itself is saved. The minimum receipt of each outward action and each send to the cloud is still kept, and services you connected (mail, calendar, publishing) can still keep their own records of anything they are asked to do.';
 function fridayOffRecordFrom(s) {
   return !!(s && s.off_record) && s.off_record_stops_storage !== false;
 }
@@ -15718,7 +15762,7 @@ function FridayChatInput({ value, onChange, onSend, placeholder, disabled, input
     autoFocus: autoFocus,
     placeholder: placeholder,
     "aria-label": placeholder,
-    title: offRecord ? FRIDAY_OFF_RECORD_TEXT : undefined,
+    title: offRecord ? FRIDAY_OFF_RECORD_NOTICE : undefined,
     "data-chat-input": "",
     "data-off-record": offRecord ? "true" : undefined,
     onChange: e => {
@@ -15888,6 +15932,8 @@ function ChatSurface(props) {
     const src = msg.source_text || '';
     if (!src) return;
     setChatMsgs(p => p.map(x => x === msg ? { ...x, local_fallback: null } : x));
+    /* A6: a cloud provider failed; the owner chose the other one for this message only. */
+    if (id === 'use_alternative') { const c = ((msg.local_fallback || {}).choices || []).find(x => x.id === 'use_alternative'); sendChat(src, { skipForecast: true, alreadyShown: true, cloudFallback: (c && c.provider) || 'openai' }); return; }
     if (id === 'send_claude') sendChat(src, { skipForecast: true, alreadyShown: true, routeMode: 'cloud', confirmLocalOnly: true });
     else if (msg.local_fallback && msg.local_fallback.kind === 'local_only_confirm') return;
     else if (id === 'shorter') sendChat(src + '\n\n(Keep the answer short.)', { skipForecast: true, alreadyShown: true });
@@ -17270,6 +17316,7 @@ function ConversationWindow({
       turn_id: opts.turnId || ('turn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8))
     };
     if (opts.routeMode) body.route_mode = opts.routeMode;
+    if (opts.cloudFallback) body.cloud_fallback_choice = opts.cloudFallback;
     if (opts.privacyOverride) body.privacy_layer3_override = true;
     setMsgs(p => [...p, { role: 'friday', text: '', streaming: true, time: stamp() }]);
     try {
@@ -31396,6 +31443,8 @@ const WF_STATUS = {
   unverified: { color: 'var(--fr-warn)', label: 'Finished · not verified' },
   waiting: { color: 'var(--fr-warn)', label: 'Needs your decision' },
   awaiting_approval: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  waiting_approval: { color: 'var(--fr-warn)', label: 'Needs your decision' },
+  declined: { color: '#f59e0b', label: 'Declined by you' },
   interrupted: { color: 'var(--fr-warn)', label: 'Interrupted' },
   queued: { color: 'var(--fr-cyan)', label: 'Queued' },
   finished: {
@@ -33134,6 +33183,147 @@ function WhatFridayDidCard() {
     }
   }, "Only the newest ", acts.length, " are shown; narrow the window to see the rest.")));
 }
+function GoalsCard() {
+  // Goals (north star §17, services/goals.py): every goal, its state, what each
+  // milestone waits on, and what the owner can do with it (§17.13): pause,
+  // resume, end, mark it met on their own judgment, reopen, archive, re-plan,
+  // change the budget or the deadline, ask before every step, keep it on this
+  // PC, start a stopped step again (a click here, never a word).
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [finished, setFinished] = useState(false);
+  const [open, setOpen] = useState(null);
+  const [def, setDefRaw] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [drafts, setDrafts] = useState([]);
+  const load = useCallback(() => {
+    apiFetch('/api/goals/drafts').then(r => r.json()).then(x => setDrafts((x && x.drafts) || [])).catch(() => {});
+    apiFetch('/api/goals/summary' + (finished ? '?finished=1' : '')).then(r => r.json()).then(x => { setD(x); })
+      .catch(() => setMsg('Could not read your goals.'));
+  }, [finished]);
+  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+  const enc = encodeURIComponent;
+  const send = (url, method, body) => apiFetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+    .then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j }), () => ({ ok: r.ok, status: r.status, j: {} })));
+  const done = (x, words) => { setMsg(x.ok ? words : ((x.j && (x.j.message || x.j.error)) || 'That did not work.')); load(); };
+  const fail = () => setMsg('Could not reach the server.');
+  const move = (g, mv) => {
+    if (mv.to === 'abandoned' && !window.confirm('End “' + g.title + '”? Nothing more runs for it; you can reopen it later.')) return;
+    if (mv.to === 'met_unverified' && !window.confirm('Mark “' + g.title + '” met? It is recorded as your judgment, not as checked.')) return;
+    send('/api/goals/' + enc(g.goal_id) + '/transition', 'POST', { status: mv.to, reason: mv.label }).then(x => done(x, '“' + g.title + '”: ' + mv.label + '.')).catch(fail);
+  };
+  const patch = (g, body, words) => send('/api/goals/' + enc(g.goal_id), 'PATCH', body).then(x => done(x, words)).catch(fail);
+  const ask = (g, field, label, current, convert, words) => {
+    const v = window.prompt(label, current == null ? '' : String(current));
+    if (v == null) return;
+    const val = convert(v);
+    if (val === undefined) { setMsg('That value was not understood.'); return; }
+    patch(g, { [field]: val }, words);
+  };
+  const restart = (g, m) => {
+    const confirmIt = m.restart_needs_confirmation;
+    if (confirmIt && !window.confirm('Some of the earlier attempt’s steps may already have happened (a send, for example). Start “' + m.name + '” again anyway?')) return;
+    send('/api/goals/' + enc(g.goal_id) + '/milestones/' + enc(m.milestone_id) + '/restart', 'POST', confirmIt ? { confirm_unknown_outcome: true } : {})
+      .then(x => done(x, '“' + m.name + '” started again.')).catch(fail);
+  };
+  const runNow = (g, m) => send('/api/goals/' + enc(g.goal_id) + '/milestones/' + enc(m.milestone_id) + '/run', 'POST', {})
+    .then(x => done(x, '“' + m.name + '”: ' + ((x.j && x.j.status) || 'started') + '.')).catch(fail);
+  const routeWords = r => !r || !r.length ? 'any routing' : r.length === 1 && r[0] === 'local_only' ? 'only on this PC' : 'this PC first';
+  const ROUTES = [{ label: 'only on this PC', value: ['local_only'] }, { label: 'this PC first', value: ['local_only', 'local_preferred'] }, { label: 'with any routing', value: [] }];
+  const routeRank = r => !r || !r.length ? 2 : r.length === 1 && r[0] === 'local_only' ? 0 : 1;
+  // §17.4: define a goal with Friday. She asks only what the goal still
+  // needs, states it in plain words, and creates it only when you confirm
+  // that summary (any edit clears it, and the server checks it is the same).
+  const CATS = [['read', 'look things up'], ['draft', 'draft'], ['write', 'change files or settings'], ['send', 'send messages'], ['spend', 'spend money'], ['publish', 'publish'], ['delete', 'delete things']];
+  const LEVELS = [['on_its_own', 'on its own'], ['ask_me', 'asks me'], ['never', 'never']];
+  const NEW_DEF = { title: '', intent: '', done: '', proof: '', stop: '', steps: '', people: '', deadline: '', minutes: '', does: ['read', 'draft'], autonomy: { read: 'on_its_own', draft: 'on_its_own', write: 'ask_me', send: 'ask_me', spend: 'ask_me', publish: 'ask_me', delete: 'never' } };
+  const setDef = v => { setDefRaw(v); setPreview(null); };
+  const lines = s => String(s || '').split('\n').map(x => x.trim()).filter(Boolean);
+  const specOf = f => ({
+    title: f.title, intent: f.intent, completion_condition: f.done,
+    evidence_required: lines(f.proof), stop_conditions: lines(f.stop), people: lines(f.people),
+    deadline: /^\d{4}-\d{2}-\d{2}$/.test(f.deadline) ? f.deadline + 'T17:00:00Z' : null,
+    budget: { runtime_minutes: parseInt(f.minutes, 10) || 0 }, autonomy: f.autonomy,
+    milestones: lines(f.steps).map(n => ({ name: n, planned_actions: f.does })),
+  });
+  const showSummary = () => send('/api/goals/draft', 'POST', specOf(def)).then(x => x.ok ? setPreview(x.j) : setMsg((x.j && x.j.error) || 'Could not read that goal.')).catch(fail);
+  const confirmGoal = () => send('/api/goals/define', 'POST', { goal: specOf(def), summary_id: preview.summary_id })
+    .then(x => { if (x.ok) { setDefRaw(null); setPreview(null); } done(x, 'Goal created as you confirmed it. Start it when you are ready.'); }).catch(fail);
+  const field = (k, label, multi) => E('label', { key: k, style: { display: 'block', fontSize: 11, color: '#cdd', marginTop: 4 } }, label,
+    E(multi ? 'textarea' : 'input', { value: def[k], rows: multi ? 2 : undefined, 'aria-label': label, style: { display: 'block', width: '100%', fontSize: 11 }, onChange: e => setDef(Object.assign({}, def, { [k]: e.target.value })) }));
+  const goals = (d && d.goals) || [];
+  const btn = (label, onClick, extra) => E('button', Object.assign({ type: 'button', className: 'task-card-btn', style: { fontSize: 10, marginRight: 4, marginTop: 4 }, onClick }, extra || {}), label);
+  return E('div', { className: 'card', 'data-goals-card': 'true', style: { marginBottom: 10, padding: 10, border: '1px solid rgba(0,212,255,0.18)' } },
+    E('div', { className: 'card-title' }, 'Goals'),
+    E('div', { style: { fontSize: 11, color: '#888', padding: '4px 2px' } }, 'Goals you set, what each is doing or waiting on, and what you can change. They survive restarts; a step that was cut short never runs again without you.'),
+    !d && E('div', { style: { fontSize: 11, color: '#888' } }, msg || 'Reading…'),
+    d && goals.length === 0 && E('div', { style: { fontSize: 11, color: '#888' } }, 'No goals yet.'),
+    (d && d.unreadable || []).map(u => E('div', { key: u.goal_id, role: 'alert', style: { fontSize: 11, color: '#f59e0b' } }, 'A goal file could not be read: ' + u.file + '. It was left as it is.')),
+    goals.map(g => E('div', { key: g.goal_id, 'data-goal-state': g.status, style: { borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 2px' } },
+      E('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
+        E('button', { type: 'button', className: 'task-card-btn', 'aria-expanded': open === g.goal_id, style: { fontSize: 12, fontWeight: 700 }, onClick: () => setOpen(open === g.goal_id ? null : g.goal_id) }, g.title),
+        E('span', { style: { fontSize: 11, color: g.status === 'needs_owner' ? '#f59e0b' : '#9ab' } }, g.state_words),
+        E('span', { style: { fontSize: 10, color: '#888' } }, g.done + ' of ' + g.total + ' done' + (g.deadline ? ' · due ' + String(g.deadline).slice(0, 10) : '') + (g.budget_cap_mψ ? ' · ' + g.spent_mψ + ' of ' + g.budget_cap_mψ + ' mψ' : ''))),
+      g.risk && g.risk.length > 0 && E('div', { style: { fontSize: 11, color: '#f59e0b' } }, 'At risk: ' + g.risk.join('; ') + '.'),
+      g.health && E('div', { 'data-goal-health': g.health.level, style: { fontSize: 11, color: g.health.level === 'poor' ? '#f59e0b' : g.health.level === 'watch' ? '#cdd' : '#9ab' } },
+        'Health: ' + g.health.words + '. ' + (g.health.signals || []).filter(s => s.key !== 'progress').map(s => s.words).join(' ')),
+      g.completion && E('div', { style: { fontSize: 11, color: '#9ab' } }, g.completion.verified ? 'Met: every step passed its own check.' : 'Met on judgment, not on an automatic check' + (g.completion.note ? ' (' + g.completion.note + ')' : '') + '.'),
+      g.milestones.filter(m => m.waits).map(m => E('div', { key: m.milestone_id, style: { fontSize: 11, color: '#cdd', marginTop: 2 } }, m.waits,
+        m.can_restart && btn('Start it again', () => restart(g, m), { 'aria-label': 'Start ' + m.name + ' again' }))),
+      E('div', null, g.moves.map(mv => btn(mv.label, () => move(g, mv), { key: mv.to, 'aria-label': mv.label + ': ' + g.title }))),
+      open === g.goal_id && E('div', { role: 'region', 'aria-label': 'Details of ' + g.title, style: { marginTop: 6, paddingLeft: 8 } },
+        g.success_criteria && E('div', { style: { fontSize: 11, color: '#cdd' } }, 'What counts as done: ' + g.success_criteria),
+        E('ul', { style: { fontSize: 11, color: '#cdd', margin: '4px 0', paddingLeft: 16 } }, g.milestones.map(m => E('li', { key: m.milestone_id },
+          m.name + ' — ' + m.status + (m.due ? ', due ' + String(m.due).slice(0, 10) : '') + (m.status === 'done' ? (m.verified ? ' (checked)' : ' (on your say-so)') : ''),
+          m.can_run && btn('Run it now', () => runNow(g, m), { 'aria-label': 'Run ' + m.name + ' now' })))),
+        E('div', null,
+          btn('Change what counts as done', () => ask(g, 'success_criteria', 'What counts as done?', g.success_criteria, v => v.trim() || undefined, 'New plan saved; work that began before it stops and asks.')),
+          btn('Change the budget', () => ask(g, 'budget_cap_mψ', 'Budget in mψ (0 for none)', g.budget_cap_mψ, v => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : undefined; }, 'Budget changed.')),
+          btn('Change the deadline', () => ask(g, 'deadline', 'Deadline (YYYY-MM-DD, or empty for none)', g.deadline ? String(g.deadline).slice(0, 10) : '', v => { v = v.trim(); if (!v) return null; return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v + 'T17:00:00Z' : undefined; }, 'Deadline changed.')),
+          btn(g.approval_required ? 'Stop asking before every step' : 'Ask me before every step', () => {
+            // Loosening the owner's gate asks first; tightening it never does.
+            if (g.approval_required && !window.confirm('Let the steps of “' + g.title + '” that need no card run without asking you first?')) return;
+            patch(g, { approval_required: !g.approval_required }, g.approval_required ? 'Steps that need no card run on their own again.' : 'Every step now waits for your yes.');
+          }),
+          E('div', { role: 'group', 'aria-label': 'Where ' + g.title + ' may run', style: { fontSize: 11, color: '#cdd', marginTop: 4 } }, 'Where it may run (now: ' + routeWords(g.allowed_routes) + '): ',
+            ROUTES.map(r => btn(r.label, () => {
+              const now = routeRank(g.allowed_routes), next = routeRank(r.value);
+              if (now === next) return;
+              if (next > now && !window.confirm('Let “' + g.title + '” run ' + r.label + '? That is looser than now (' + routeWords(g.allowed_routes) + ').')) return;
+              patch(g, { allowed_routes: r.value }, 'This goal now runs ' + r.label + '.');
+            }, { key: r.label, 'aria-pressed': routeRank(g.allowed_routes) === routeRank(r.value) }))),
+          btn('Pre-approved sends', () => window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: 'settings', tab: 'privacy', section: 'Pre-approved sends' }), { title: 'Revoke a standing permission' }))))),
+    E('div', { style: { marginTop: 6 } }, btn(finished ? 'Hide archived goals' : 'Show archived goals', () => setFinished(!finished))),
+    drafts.map(dr => E('div', { key: dr.draft_id, role: 'region', 'aria-label': 'Goal draft: ' + dr.title, 'data-goal-draft': dr.draft_id, style: { marginTop: 8, padding: 6, border: '1px solid rgba(0,212,255,0.25)' } },
+      E('div', { className: 'card-title', style: { fontSize: 12 } }, 'Draft from your conversation: ' + dr.title),
+      dr.questions && dr.questions.length > 0 && E('ul', { 'aria-label': 'Still to answer', style: { fontSize: 11, color: '#f59e0b' } }, dr.questions.map(q => E('li', { key: q.key }, q.ask))),
+      E('pre', { style: { whiteSpace: 'pre-wrap', fontSize: 11, color: '#cdd' } }, dr.summary),
+      E('div', null,
+        dr.questions && dr.questions.length === 0 && btn('Create this goal as summarised', () => send('/api/goals/define', 'POST', { goal: dr.spec, summary_id: dr.summary_id, draft_id: dr.draft_id })
+          .then(x => done(x, 'Goal created as you confirmed it. Start it when you are ready.')).catch(fail)),
+        btn('Discard the draft', () => send('/api/goals/drafts/' + enc(dr.draft_id), 'DELETE').then(x => done(x, 'Draft discarded.')).catch(fail))))),
+    !def && E('div', null, btn('Define a new goal', () => setDef(NEW_DEF))),
+    def && E('div', { role: 'region', 'aria-label': 'Define a new goal', style: { marginTop: 8, padding: 6, border: '1px solid rgba(255,255,255,0.08)' } },
+      E('div', { className: 'card-title', style: { fontSize: 12 } }, 'A new goal'),
+      field('title', 'What should I call it?'), field('intent', 'What do you want, in your words?', true),
+      field('done', 'What would tell you it is done?', true), field('proof', 'What should I show you as proof? (one per line)', true),
+      field('stop', 'When should I stop and come back to you? (one per line)', true), field('steps', 'Steps, if you know them (one per line)', true),
+      field('people', 'Who will it reach, if it sends or publishes? (one per line)', true),
+      field('deadline', 'Deadline (YYYY-MM-DD, optional)'), field('minutes', 'Most minutes of work (optional)'),
+      E('div', { role: 'group', 'aria-label': 'What its steps will do', style: { fontSize: 11, color: '#cdd', marginTop: 4 } }, 'Its steps will: ',
+        CATS.map(([c, w]) => E('label', { key: c, style: { marginRight: 8 } }, E('input', { type: 'checkbox', checked: def.does.includes(c), onChange: e => setDef(Object.assign({}, def, { does: e.target.checked ? def.does.concat([c]) : def.does.filter(x => x !== c) })) }), ' ' + w))),
+      E('div', { role: 'group', 'aria-label': 'What I may do without asking', style: { fontSize: 11, color: '#cdd', marginTop: 4 } },
+        CATS.map(([c, w]) => E('label', { key: c, style: { display: 'inline-block', marginRight: 10 } }, w + ': ',
+          E('select', { value: def.autonomy[c], 'aria-label': 'When I ' + w, onChange: e => setDef(Object.assign({}, def, { autonomy: Object.assign({}, def.autonomy, { [c]: e.target.value }) })) },
+            LEVELS.map(([v, t]) => E('option', { key: v, value: v }, t)))))),
+      E('div', null, btn('Show me the summary', showSummary), btn('Cancel', () => setDef(null))),
+      preview && preview.questions && preview.questions.length > 0 && E('ul', { role: 'alert', 'aria-label': 'Still to answer', style: { fontSize: 11, color: '#f59e0b' } }, preview.questions.map(q => E('li', { key: q.key }, q.ask))),
+      preview && E('pre', { 'aria-label': 'The goal in plain words', style: { whiteSpace: 'pre-wrap', fontSize: 11, color: '#cdd' } }, preview.summary),
+      preview && preview.questions && preview.questions.length === 0 && btn('Create this goal as summarised', confirmGoal)),
+    E('div', { role: 'status', 'aria-live': 'polite', style: { fontSize: 11, color: '#9ab', marginTop: 4 } }, msg));
+}
+
 function TaskRecordsCard() {
   const [ret, setRet] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -33729,7 +33919,7 @@ function SystemWS() {
     a: a,
     busy: apBusy,
     onDecide: decideApproval
-  })), /*#__PURE__*/React.createElement(PreApprovedSendsList, null)), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement(FridayChangesCard, null), /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement(PreApprovedSendsList, null)), /*#__PURE__*/React.createElement(GoalsCard, null), /*#__PURE__*/React.createElement(TaskRecordsCard, null), /*#__PURE__*/React.createElement(WhatFridayDidCard, null), /*#__PURE__*/React.createElement(FridayChangesCard, null), /*#__PURE__*/React.createElement("div", {
     className: "card-title"
   }, "Disk Space"), disks.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "card",
@@ -50008,7 +50198,17 @@ function TaskCard({
       color: '#f59e0b',
       fontWeight: 700
     }
-  }, "\u26A0"), "UNVERIFIED"), status === 'failed' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }, "\u26A0"), "UNVERIFIED"), status === 'waiting_approval' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#f59e0b',
+      fontWeight: 700
+    }
+  }, "\u23F3"), "NEEDS YOUR DECISION"), status === 'declined' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#888',
+      fontWeight: 700
+    }
+  }, "\u25A0"), "DECLINED"), status === 'failed' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#ff0080',
       fontWeight: 700
@@ -50379,6 +50579,8 @@ function ConsentFlow({ onDone }) {
   const [i, setI] = React.useState(0);
   const [pass, setPass] = React.useState('');
   const [pass2, setPass2] = React.useState('');
+  // A21: the vault passphrase also locks the saved keys, on by default; the owner may untick it.
+  const [protectKeys, setProtectKeys] = React.useState(true);
   const [mode, setMode] = React.useState('');
   const [upd, setUpd] = React.useState('');
   const [calls, setCalls] = React.useState('');
@@ -50429,10 +50631,10 @@ function ConsentFlow({ onDone }) {
 
   const onVaultNext = (skip) => {
     setErr('');
-    if (skip) { setPass(''); ack({ vault_skipped: true }); advance(); return; }
+    if (skip) { setPass(''); ack({ vault_skipped: true, keys_unprotected: true }); advance(); return; }
     if (!pass) { setErr('Enter a passphrase, or choose Skip for now.'); return; }
     if (pass !== pass2) { setErr('The two passphrases do not match.'); return; }
-    ack({ vault_skipped: false });
+    ack({ vault_skipped: false, keys_unprotected: !protectKeys });
     advance();
   };
 
@@ -50489,6 +50691,13 @@ function ConsentFlow({ onDone }) {
           border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8
         }
       }),
+      s.keys_tick && React.createElement('label', {
+        style: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, fontSize: 14, color: '#cfd6dd', cursor: 'pointer' }
+      },
+        React.createElement('input', {
+          type: 'checkbox', checked: protectKeys, 'data-testid': 'vault-keys-tick',
+          onChange: e => setProtectKeys(e.target.checked)
+        }), s.keys_tick),
       err && React.createElement('div', {
         style: { color: '#ff0080', fontSize: 12, marginTop: 8 }
       }, err)),
@@ -56853,7 +57062,14 @@ function CloudConsentRow({ consent, onChanged, compact }) {
 
 function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const modes = d.routing_modes || [];
-  const modeButtons = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
+  // A16: nothing is pre-selected. With no mode picked, no button is pressed and
+  // the card says what Friday does until the owner picks.
+  const actualLabel = ((modes.filter(m => m.id === d.routing_mode)[0]) || {}).label || d.routing_mode || 'the starting setting';
+  const notPicked = !mode && E('div', {
+    'data-route-not-picked': '1',
+    style: { fontSize: 11.5, color: '#f59e0b', fontFamily: 'var(--st-font)', marginTop: 8, lineHeight: 1.5 },
+  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' uses its starting setting, ' + actualLabel + '.');
+  const modeButtonRow = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
     modes.map(m => {
       const on = mode === m.id;
       return E('button', {
@@ -56871,6 +57087,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
           savingMode === m.id && E('span', { style: { fontSize: 9, color: '#f59e0b' } }, 'saving...')),
         E('div', { style: { fontSize: 11.5, color: 'var(--st-dim)', fontFamily: 'var(--st-font)', marginTop: 3, lineHeight: 1.45 } }, m.help));
     }));
+  const modeButtons = E('div', null, modeButtonRow, notPicked);
   // An older server build answers without `soup`. Say so, and keep the mode
   // buttons: a control that vanishes because the payload is short is the
   // silent failure this card exists to end.
@@ -56894,7 +57111,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     : x.state === 'cloud' ? 'cloud'
     : x.state === 'cold' ? 'not loaded' : x.state === 'refused' ? 'unavailable' : x.state || '';
   const postureTxt = [
-    mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
+    !mode ? 'Route not chosen yet (starting setting: ' + actualLabel + ')' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');
@@ -57306,7 +57523,9 @@ function SettingsTabIntelligence({ s, save }) {
     // What answers you, where, at what cost, and the routing mode that
     // governs every job below it.
     E(ModelSoupCard, {
-      soup: d.soup, d: d, mode: d.routing_mode || 'local_preferred',
+      // North-star A16: on a new install no mode is pressed until the owner
+      // picks one (routing_mode_picked false); an older server omits the flag.
+      soup: d.soup, d: d, mode: d.routing_mode_picked === false ? '' : (d.routing_mode || ''),
       setMode: setMode, savingMode: savingMode, reload: reload,
     }),
 
@@ -59594,6 +59813,114 @@ function SettingsLocks() {
   }, "Check again"));
 }
 
+function SettingsPrivacyMap() {
+  // The privacy map (north star §26.22, services/privacy_map.py): what she
+  // keeps, where, for how long, what left this PC and to whom. Read-only; each
+  // entry links to the control that exports or deletes it.
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [rec, setRec] = useState(null);
+  const [sent, setSent] = useState(null);
+  const [man, setMan] = useState(null);
+  const load = useCallback(() => {
+    apiFetch('/api/privacy/map').then(r => r.json()).then(x => { setD(x); setMsg(''); }).catch(() => setMsg('Could not read the privacy map.'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const when = t => t ? new Date(t * 1000).toLocaleDateString() : '';
+  const go = c => {
+    if (c.href) window.open(c.href, '_blank');
+    else if (c.nav && window.fridayOpenWorkspace) window.fridayOpenWorkspace(c.nav);
+  };
+  const ctl = c => E('button', { type: 'button', key: c.kind + c.label, className: 'btn', style: { fontSize: 11, marginRight: 6, marginTop: 4 }, title: c.words, 'aria-label': c.label + ': ' + c.words, onClick: () => go(c) }, c.label);
+  const receipts = to => apiFetch('/api/privacy/map/left?to=' + encodeURIComponent(to)).then(r => r.json())
+    .then(x => setRec({ to, label: x.label, rows: x.rows || [] })).catch(() => setMsg('Could not read the receipts.'));
+  const showSent = sha => apiFetch('/api/privacy/map/sent/' + encodeURIComponent(sha)).then(r => r.json())
+    .then(x => x.ok ? setSent({ sha, text: x.text, model: x.model }) : setMsg(x.message || 'That text was not kept.')).catch(() => setMsg('Could not read the kept text.'));
+  const showManifest = id => apiFetch('/api/privacy/manifest/' + encodeURIComponent(id)).then(r => r.json())
+    .then(x => x.ok ? setMan(x.manifest) : setMsg(x.message || 'That manifest was not found.')).catch(() => setMsg('Could not read the manifest.'));
+  const manLines = m => [
+    'For: ' + (m.principal || 'unknown') + ' · ' + (m.purpose || 'a send') + ' · to ' + (m.destination || m.provider || 'unknown') + (m.model ? ' (' + m.model + ')' : ''),
+    'Parts: ' + ((m.sources || []).map(s => s.part + ' (' + s.sensitivity + (s.action !== 'allow' ? ', ' + s.action : '') + (s.count > 1 ? ', ' + s.count + ' times' : '') + ')').join('; ') || 'none recorded'),
+    'Sensitivity seen: ' + ((m.sensitivity_classes || []).join(', ') || 'none'),
+    'Withheld: ' + (m.withheld || 0) + (m.grants && m.grants.length ? ' · allowed by: ' + m.grants.join(', ') : ''),
+    'About ' + (m.estimated_tokens || 0) + ' tokens (an estimate from its size)',
+    m.previewed_words || (m.previewed ? 'You previewed it.' : 'Not previewed.'),
+  ].concat((m.assembled_sections || []).length ? ['Prompt sections this turn assembled: ' + m.assembled_sections.map(s => s.name + (s.sent === false ? ' (not sent)' : '')).join(', ')] : []);
+  const post = (url, body) => apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+  const setMode = mode => post('/api/privacy/sent-text', { mode })
+    .then(x => { setMsg(x.ok ? (mode === 'full' ? 'The full text of each new send is kept with its receipt again.' : 'Only fingerprints are kept now; ' + (x.deleted || 0) + ' kept text(s) deleted.') : (x.message || 'Nothing changed.')); load(); }).catch(() => setMsg('Could not reach the server.'));
+  const deleteKept = () => post('/api/privacy/sent-text/delete', {})
+    .then(x => { setMsg(x.ok ? (x.deleted || 0) + ' kept text(s) deleted. Their fingerprints stay in the receipts.' : (x.message || 'Nothing was deleted.')); load(); }).catch(() => setMsg('Could not reach the server.'));
+  const callLine = r => new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.purpose || 'a send') + (r.model ? ' · ' + r.model : '') + (r.destination ? ' · to ' + r.destination : '') + ' · ' + (r.result || '') + (r.withheld ? ' · ' + r.withheld + ' part(s) withheld' : '') + (r.grants && r.grants.length ? ' · allowed by: ' + r.grants.join(', ') : '') + (r.bytes ? ' · ' + r.bytes + ' bytes' : '') + (r.payload_fingerprint ? ' · fingerprint ' + r.payload_fingerprint.slice(0, 12) : '');
+  if (!d) return E(StSection, { title: 'Privacy map', desc: 'What is kept on this PC, where, for how long, and what has left it and to whom.' },
+    E('div', { className: 'sc-sub' }, msg || 'Reading…'));
+  const left = d.left || {};
+  const dests = left.destinations || [];
+  const mail = d.mail || {};
+  const svc = d.services || {};
+  const gr = d.grants || {};
+  return E(StSection, { title: 'Privacy map', desc: 'What is kept on this PC, where, for how long, and what has left it and to whom.' },
+    d.sent_text && E('div', { className: 'lk-words pm-mode', role: 'status' }, 'What left this PC: ' + (d.sent_text.words || '')),
+    E('h4', { className: 'pm-h' }, 'What is kept on this PC'),
+    E('ul', { className: 'pm-list', 'aria-label': 'What is kept on this PC' }, (d.stores || []).map(s => E('li', { key: s.key, className: 'pm-store pm-' + s.encrypted },
+      E('div', { className: 'lk-title' }, s.name),
+      E('div', { className: 'lk-words' }, s.holds),
+      E('div', { className: 'lk-words' }, 'Where: ' + (s.where || []).join(', ') + ' (in the data folder). ' + s.size_words),
+      E('div', { className: 'lk-words' }, s.encrypted_words),
+      E('div', { className: 'lk-words' }, s.retention_words),
+      E('div', null, (s.controls || []).map(ctl))))),
+    E('h4', { className: 'pm-h' }, 'What has left this PC, and to whom'),
+    left.readable === false && E('div', { className: 'lk-words' }, 'I couldn’t read the record of what left this PC.'),
+    dests.length === 0 && left.readable !== false && E('div', { className: 'lk-words' }, 'Nothing has left this PC through the privacy gate.'),
+    left.complete === false && E('div', { className: 'lk-words' }, 'The record is long, so these counts cover its newest part.'),
+    dests.length > 0 && E('ul', { className: 'pm-list', 'aria-label': 'What has left this PC' }, dests.map(x => E('li', { key: x.to, className: 'pm-dest' },
+      E('div', { className: 'lk-title' }, x.label),
+      x.calls > 0 && E('div', { className: 'lk-words' }, x.calls + ' send' + (x.calls === 1 ? '' : 's') + (x.calls_blocked ? ' (' + x.calls_blocked + ' stopped)' : '') + (x.hosts && x.hosts.length ? ' to ' + x.hosts.join(', ') : '') + (x.models && x.models.length ? ', model ' + x.models.join(', ') : '') + (x.texts_kept ? '; full text kept for ' + x.texts_kept : '; fingerprints only') + '.'),
+      E('div', { className: 'lk-words' }, x.sent + ' item' + (x.sent === 1 ? '' : 's') + ' sent' + (x.sent_with_parts_withheld ? ' (' + x.sent_with_parts_withheld + ' with parts withheld)' : '') + (x.stopped ? ', ' + x.stopped + ' stopped before leaving' : '') + (x.files_or_images ? ', ' + x.files_or_images + ' files or images' : '') + (x.background ? ', ' + x.background + ' from background work' : '') + (x.unrestricted_calls ? ', ' + x.unrestricted_calls + ' calls under Cloud for everything' : '') + '. ' + (x.first ? 'From ' + when(x.first) + ' to ' + when(x.last) + '.' : '')),
+      x.fields && x.fields.length > 0 && E('div', { className: 'lk-words' }, 'What kind: ' + x.fields.join(', ')),
+      E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, 'aria-label': 'Show the receipts for ' + x.label, onClick: () => receipts(x.to) }, 'Show the receipts')))),
+    rec && E('div', { className: 'pm-receipts', role: 'region', 'aria-label': 'Receipts for ' + rec.label },
+      E('div', { className: 'lk-title' }, 'Receipts: ' + rec.label),
+      rec.rows.length === 0 ? E('div', { className: 'lk-words' }, 'No rows.') : E('ul', { className: 'lk-sub' }, rec.rows.map((r, i) => r.kind === 'call'
+        ? E('li', { key: i, className: 'pm-call' }, callLine(r), r.still_kept && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'Show what was sent at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showSent(r.payload_fingerprint) }, 'Show what was sent'),
+            r.manifest_id && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginLeft: 6 }, 'aria-label': 'What went into the send at ' + new Date((r.ts || 0) * 1000).toLocaleString(), onClick: () => showManifest(r.manifest_id) }, 'What went into it'))
+        : E('li', { key: i }, new Date((r.ts || 0) * 1000).toLocaleString() + ' · ' + (r.field || '') + ' · ' + (r.action || '') + (r.reason ? ' · ' + r.reason : '')))),
+      sent && E('div', { className: 'pm-sent', role: 'region', 'aria-label': 'What was sent' },
+        E('div', { className: 'lk-title' }, 'Exactly what was sent' + (sent.model ? ' to ' + sent.model : '')),
+        E('pre', { className: 'pm-sent-text', style: { whiteSpace: 'pre-wrap', maxHeight: 320, overflow: 'auto', fontSize: 11 } }, String(sent.text || '')),
+        E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setSent(null) }, 'Close')),
+      man && E('div', { className: 'pm-manifest', role: 'region', 'aria-label': 'What went into this send' },
+        E('div', { className: 'lk-title' }, 'What went into this send'),
+        E('ul', { className: 'lk-sub' }, manLines(man).map((t, i) => E('li', { key: i }, t))),
+        E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setMan(null) }, 'Close')),
+      E('button', { type: 'button', className: 'btn', style: { fontSize: 11 }, onClick: () => setRec(null) }, 'Close the receipts')),
+    left.other_destinations > 0 && E('div', { className: 'lk-words' }, 'And ' + left.other_destinations + ' more destination' + (left.other_destinations === 1 ? '' : 's') + ' with older sends.'),
+    d.sent_text && E('div', { className: 'pm-keep', role: 'group', 'aria-label': 'The full text, or fingerprints only' },
+      E('div', { className: 'lk-title' }, 'The full text, or fingerprints only'),
+      E('div', { className: 'lk-words' }, 'Now: ' + (d.sent_text.words || '') + ((d.sent_text.kept || 0) > 0 ? ' (' + d.sent_text.kept + ' kept, ' + Math.round((d.sent_text.bytes || 0) / 1024) + ' KB)' : '')),
+      E('div', { className: 'lk-words' }, d.sent_text.explanation),
+      E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4 }, onClick: () => setMode(d.sent_text.mode === 'full' ? 'fingerprint' : 'full') },
+        d.sent_text.mode === 'full' ? 'Switch to fingerprints only (deletes the kept text)' : 'Keep the full text again'),
+      (d.sent_text.kept || 0) > 0 && E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 4, marginLeft: 6 }, onClick: deleteKept }, 'Delete the kept text')),
+    (left.not_recorded || []).length > 0 && E('div', { className: 'lk-words' }, 'Not in this list yet:'),
+    (left.not_recorded || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Not in this list yet' }, left.not_recorded.map(n => E('li', { key: n.key }, n.what + '. ' + n.record))),
+    E('h4', { className: 'pm-h' }, 'Mail sent for you'),
+    E('div', { className: 'lk-words' }, (mail.sent || 0) + ' sent' + (mail.failed ? ', ' + mail.failed + ' failed' : '') + '.'),
+    (mail.recipients || []).length > 0 && E('ul', { className: 'lk-sub', 'aria-label': 'Mail recipients' }, mail.recipients.map(r => E('li', { key: r.to }, r.to + ': ' + r.count + (r.last ? ', last ' + when(r.last) : '')))),
+    E('h4', { className: 'pm-h' }, 'Who and what can reach your things'),
+    E('div', { className: 'lk-words' }, (gr.actions == null ? 'I couldn’t read the pre-approved actions.' : gr.actions.length + ' pre-approved action' + (gr.actions.length === 1 ? '' : 's') + '.') + ' ' + (gr.files == null ? 'I couldn’t read the file permissions.' : gr.files + ' folder permission' + (gr.files === 1 ? '' : 's') + '.')),
+    gr.nav && ctl({ kind: 'nav', label: 'File access', words: 'Folders that may be read', nav: gr.nav }),
+    svc.readable === false ? E('div', { className: 'lk-words' }, 'I couldn’t read the connected services.') : E('ul', { className: 'lk-sub', 'aria-label': 'Connected services' }, (svc.connected || []).concat(svc.remote || []).map(c => E('li', { key: c.group + c.label }, c.label + (c.may && c.may.length ? ': ' + c.may.join('; ') : '')))),
+    E('div', { className: 'lk-words' }, (svc.remote || []).length ? (svc.remote.length + ' phone or remote channel' + (svc.remote.length === 1 ? '' : 's') + ' can reach ' + fridayName() + ' from outside this PC.') : 'No phone or remote channel can reach ' + fridayName() + ' from outside this PC.'),
+    d.vault_access && E('div', { className: 'lk-words' }, d.vault_access.allowed_7_days == null ? 'I couldn’t read the private-data access log.' : 'In the last 7 days, private data was used by a model on this PC or allowed to the cloud ' + d.vault_access.allowed_7_days + ' time' + (d.vault_access.allowed_7_days === 1 ? '' : 's') + ', and refused ' + d.vault_access.refused_7_days + ' time' + (d.vault_access.refused_7_days === 1 ? '' : 's') + '.'),
+    d.off_record && E('p', { className: 'lk-words', role: 'note' }, E('strong', null, 'When you go off the record. '), d.off_record.words),
+    E('div', null, d.export && ctl(d.export), d.erase && ctl(d.erase)),
+    E('p', { className: 'pm-limit', role: 'note' }, E('strong', null, 'The honest limit. '), d.honest_limit),
+    E('div', { role: 'status', 'aria-live': 'polite', className: 'sc-msgline' }, msg),
+    E('button', { type: 'button', className: 'btn', style: { fontSize: 11, marginTop: 6 }, onClick: load }, 'Check again'));
+}
+
 function SettingsTabPrivacy({
   s,
   save
@@ -59646,7 +59973,7 @@ function SettingsTabPrivacy({
     }).then(r => r.json()).then(d => setEraseMsg(d.status === 'ok' ? '✓ ' + (d.message || 'Erased.') : '✗ ' + (d.message || 'Failed'))).catch(() => setEraseMsg('✗ Could not reach the server.'));
   };
   const armed = vaultStatus && vaultStatus.encryption === 'AES-256-GCM';
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(SettingsPrivacyMap, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Vault"
   }, vaultStatus && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -59784,6 +60111,9 @@ function SettingsTabPrivacy({
     title: "Privacy check",
     desc: ("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")
   }, /*#__PURE__*/React.createElement(PrivacyCheckLayers, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "When a cloud provider fails",
+    desc: "If a cloud provider fails, " + fridayName() + " says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time."
+  }, window.FridayCloudFallbackOrder ? /*#__PURE__*/React.createElement(window.FridayCloudFallbackOrder, null) : null), /*#__PURE__*/React.createElement(StSection, {
     title: "Meeting recordings",
     desc: ("How long " + fridayName() + " keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes.")
   }, /*#__PURE__*/React.createElement(StRow, {
@@ -59915,7 +60245,9 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(CalendarDeleteGuestsRow, {
     s: s,
     save: save
-  })), /*#__PURE__*/React.createElement(StSection, {
+  })), React.createElement(StSection, {
+    title: "Action record"
+  }, window.FridayLedgerRetentionRow && React.createElement(window.FridayLedgerRetentionRow, null)), /*#__PURE__*/React.createElement(StSection, {
     title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"
@@ -60359,6 +60691,22 @@ function FileAccessPanel() {
     E('div', { style: Object.assign({}, muted, { marginTop: 6 }) },
       'By voice: “what files can the cloud see?”, “let it read my CV”, “take that away”. Asking by voice puts a card on screen; only your click there allows it.'),
     msg ? E('div', { role: 'status', style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg) : null);
+}
+// A skill package's install card: everything the skill would add (the whole procedure, its triggers,
+// tools and success criteria, what it replaces and what is left out). Only a press here installs it
+// (services/skill_import_review.py).
+function SkillImportCard({ a, busy, onDecide }) {
+  const E = React.createElement;
+  const p = a.payload || {};
+  return E('div', { className: 'card', style: { marginBottom: 6, padding: 8 }, 'data-testid': 'approval-card', 'data-approval-id': a.approval_id, 'data-kind': 'skill_import' },
+    E('div', { style: { fontSize: 12 } }, a.title),
+    E('div', { 'data-testid': 'skill-import-review', tabIndex: 0, 'aria-label': 'What this skill would add',
+      style: { fontSize: 11, marginTop: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 260, overflowY: 'auto' } },
+      p.review || a.description),
+    E(ApprovalProvenance, { p: a.provenance }),
+    E('div', { style: { display: 'flex', gap: 6, marginTop: 6 } },
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'approve') }, 'Install'),
+      E('button', { className: 'btn', style: { fontSize: 11, padding: '2px 10px' }, disabled: !!busy, onClick: () => onDecide(a.approval_id, 'deny') }, 'Decline')));
 }
 // The file-access approval card: one card for every path a turn asked for.
 // Each row is what Friday found on disk, not what was asked for. Approve
@@ -65244,7 +65592,7 @@ function SettingsTabCosts() {
       lineHeight: 1.5
     }, mono)
   }, ("Alert-only: crossing 80% warns, 100% alerts. " + fridayName() + " is never blocked from working."))), /*#__PURE__*/React.createElement(StSection, {
-    title: "Hard stop"
+    title: "Spending caps"
   }, /*#__PURE__*/React.createElement("div", {
     style: Object.assign({
       fontSize: 10,
@@ -65252,7 +65600,7 @@ function SettingsTabCosts() {
       marginBottom: 12,
       lineHeight: 1.5
     }, mono)
-  }, ("The cap that actually stops. When an enabled period's spend reaches its limit, " + fridayName() + " refuses every further cloud call until you raise it or switch it off. Local models keep working. Off by default — your choice, like local vs cloud.")), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
+  }, (hardStop && hardStop.plain ? hardStop.plain : (fridayName() + " stops spending on cloud AI when a cap below is reached. Work that reaches it pauses and asks you. Models on this computer are never capped.")) + " Change the amounts or switch a cap off here."), hardStop && hardStop.tripped && /*#__PURE__*/React.createElement("div", {
     style: {
       border: '1px solid #ff0080',
       background: 'rgba(255,0,128,0.08)',
@@ -65268,7 +65616,7 @@ function SettingsTabCosts() {
       color: '#ff0080',
       marginBottom: 4
     }
-  }, "🛑 Hard cap reached — cloud work is stopped"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
+  }, "Paused: your spending cap is reached"), usd(hardStop.tripped.spend), " of ", usd(hardStop.tripped.limit), " ", hardStop.tripped.period, " cap spent. ", hardStop.resume), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -65282,7 +65630,7 @@ function SettingsTabCosts() {
     onClick: () => saveBudget({
       hard_stop_daily_enabled: !costBudget.hard_stop_daily_enabled
     })
-  }, "Daily stop"), /*#__PURE__*/React.createElement("span", {
+  }, "Daily cap"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: dim
@@ -65320,7 +65668,7 @@ function SettingsTabCosts() {
     onClick: () => saveBudget({
       hard_stop_monthly_enabled: !costBudget.hard_stop_monthly_enabled
     })
-  }, "Monthly stop"), /*#__PURE__*/React.createElement("span", {
+  }, "Monthly cap"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: dim
@@ -67252,6 +67600,12 @@ function ApprovalCardBody({
   // The share card has its own body: the exact payload, edit, and four choices.
   // A file-access card lists every path it would allow; see FileGrantRequestCard.
   if (a && a.kind === 'file_grant_request') return /*#__PURE__*/React.createElement(FileGrantRequestCard, {
+    a: a,
+    busy: busy,
+    onDecide: onDecide
+  });
+  // A skill package to install: the whole of what it would add; see SkillImportCard.
+  if (a && a.kind === 'skill_import') return /*#__PURE__*/React.createElement(SkillImportCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
@@ -69354,6 +69708,8 @@ function App() {
     if (_crewCid || convIdRef.current) _qs.push('conversation_id=' + encodeURIComponent(_crewCid || convIdRef.current));
     if (_crewCid) _qs.push('crew=1');
     if (voicePrivacyOverrideRef.current) _qs.push('privacy_layer3_override=1');
+    /* The desk key (services/desk_press): only voice on this PC's own page may approve a card by voice. */
+    try { const _dk = window.fridayDeskSocketParam ? await window.fridayDeskSocketParam() : ''; if (_dk) _qs.push(_dk); } catch (_) {}
     const ws = new WebSocket(proto + '//' + location.host + _wsUrl + (_qs.length ? '?' + _qs.join('&') : ''));
     v.ws = ws;
     if (_crewCid) {
@@ -70391,11 +70747,17 @@ function App() {
   const [activityEvents, setActivityEvents] = useState([]);
   const [activityKind, setActivityKind] = useState('');
   const [activityFilter, setActivityFilter] = useState('');
+  // The one action ledger (static/friday_ledger.js): activity rows and every
+  // receipt, newest first, and whether the chain is intact.
+  const [activityLedger, setActivityLedger] = useState(null);
   useEffect(() => {
     if (!activityOpen || activityTab !== 'activity') return;
     let active = true;
-    const tick = () => fetch('/api/activity?limit=200' + (activityKind ? '&kind=' + encodeURIComponent(activityKind) : '')).then(r => r.json()).then(d => {
-      if (active) setActivityEvents(d.events || []);
+    const tick = () => fetch('/api/ledger?limit=200').then(r => r.json()).then(d => {
+      if (active) {
+        setActivityEvents(window.fridayLedgerEvents ? window.fridayLedgerEvents(d) : []);
+        setActivityLedger(d.ledger || null);
+      }
     }).catch(() => {});
     tick();
     const iv = setInterval(tick, 4000);
@@ -70403,7 +70765,7 @@ function App() {
       active = false;
       clearInterval(iv);
     };
-  }, [activityOpen, activityKind, activityTab]);
+  }, [activityOpen, activityTab]);
   const [threadSteps, setThreadSteps] = useState([]);
   const [taskLog, setTaskLog] = useState(null);
   const [taskMeta, setTaskMeta] = useState(null);
@@ -70795,7 +71157,7 @@ function App() {
           // Scheduled runs (heartbeat, job intelligence — description "scheduled:*")
           // must NOT post a "task complete" chat message every time; they surface
           // through the notifications panel's self-updating status entry instead.
-          const newlyDone = list.filter(t => !t.process && !(t.description || '').startsWith('scheduled:') && (t.status === 'complete' || t.status === 'completed_unverified' || t.status === 'failed') && !lastNotifiedComplete.has(t.task_id) && prev.some(p => p.task_id === t.task_id && p.status === 'running'));
+          const newlyDone = list.filter(t => !t.process && !(t.description || '').startsWith('scheduled:') && (t.status === 'complete' || t.status === 'completed_unverified' || t.status === 'failed' || t.status === 'waiting_approval') && !lastNotifiedComplete.has(t.task_id) && prev.some(p => p.task_id === t.task_id && p.status === 'running'));
           if (newlyDone.length > 0) {
             const seen = new Set(lastNotifiedComplete);
             newlyDone.forEach(t => seen.add(t.task_id));
@@ -70803,7 +71165,7 @@ function App() {
             newlyDone.forEach(t => {
               setChatMsgs(p => [...p, {
                 role: 'friday',
-                text: `✅ Task complete: **${t.name}**${t.result ? '\n\n' + fmtTaskResultForChat(t.result) : ''}`,
+                text: `${t.status === 'waiting_approval' ? '⏳ Task waiting for your decision (an approval card): ' : t.status === 'failed' ? '✕ Task did not finish: ' : '✅ Task complete: '}**${t.name}**${t.result ? '\n\n' + fmtTaskResultForChat(t.result) : ''}`,
                 time: new Date().toLocaleTimeString()
               }]);
             });
@@ -71787,6 +72149,7 @@ function App() {
         turn_id: inFlightTurn.current
       };
       if (opts.routeMode) body.route_mode = opts.routeMode;
+    if (opts.cloudFallback) body.cloud_fallback_choice = opts.cloudFallback;
       if (opts.confirmLocalOnly) body.confirm_local_only = true;
       if (opts.privacyOverride) body.privacy_layer3_override = true;
       if (focusWin) body.workspace = focusWin;
@@ -73296,7 +73659,15 @@ function App() {
     value: "subagent_spawn"
   }, "subagent spawns"), /*#__PURE__*/React.createElement("option", {
     value: "reasoning_trace"
-  }, "reasoning traces")), activityTab === 'activity' ? /*#__PURE__*/React.createElement("input", {
+  }, "reasoning traces"), /*#__PURE__*/React.createElement("option", {
+    value: "decision"
+  }, "checkpoint decisions"), /*#__PURE__*/React.createElement("option", {
+    value: "action"
+  }, "changes to your things"), /*#__PURE__*/React.createElement("option", {
+    value: "goal"
+  }, "goal receipts"), /*#__PURE__*/React.createElement("option", {
+    value: "dissent"
+  }, "pushback")), activityTab === 'activity' ? /*#__PURE__*/React.createElement("input", {
     value: activityFilter,
     onChange: e => setActivityFilter(e.target.value),
     placeholder: "filter\u2026",
@@ -73325,7 +73696,9 @@ function App() {
       cursor: 'pointer',
       fontSize: 12
     }
-  }, "\u2715")), activityTab === 'traces' ? /*#__PURE__*/React.createElement(TracesViewer, null) : /*#__PURE__*/React.createElement("div", {
+  }, "\u2715")), activityTab === 'activity' && window.FridayLedgerStrip && /*#__PURE__*/React.createElement(window.FridayLedgerStrip, {
+    ledger: activityLedger
+  }), activityTab === 'traces' ? /*#__PURE__*/React.createElement(TracesViewer, null) : /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       overflowY: 'auto',
@@ -73333,7 +73706,7 @@ function App() {
     }
   }, (() => {
     const f = activityFilter.trim().toLowerCase();
-    const shown = activityEvents.filter(ev => !f || JSON.stringify(ev).toLowerCase().includes(f));
+    const shown = activityEvents.filter(ev => (!activityKind || ev.kind === activityKind) && (!f || JSON.stringify(ev).toLowerCase().includes(f)));
     if (shown.length === 0) return /*#__PURE__*/React.createElement("div", {
       style: {
         textAlign: 'center',
@@ -73347,7 +73720,11 @@ function App() {
       model_invocation: '🧠',
       tool_call: '🔧',
       subagent_spawn: '🤖',
-      reasoning_trace: '💭'
+      reasoning_trace: '💭',
+      decision: '🛡',
+      action: '📁',
+      goal: '🎯',
+      dissent: '✋'
     };
     return shown.map((ev, i) => {
       const when = ev.ts ? new Date(ev.ts * 1000).toLocaleTimeString() : '';
@@ -73390,7 +73767,7 @@ function App() {
         style: {
           color: ev.ok ? '#3effa1' : '#f87171'
         }
-      }, ev.ok ? 'ok' : 'deny/err')) : ev.kind === 'subagent_spawn' ? /*#__PURE__*/React.createElement("span", null, "spawn ", ev.description || ev.task_id || '') : ev.kind === 'reasoning_trace' ? /*#__PURE__*/React.createElement("span", null, ev.parent_id ? '↳ ' : '', ev.trace_kind || 'trace', " \xB7 ", /*#__PURE__*/React.createElement("span", {
+      }, ev.ok ? 'ok' : 'deny/err')) : ev.kind === 'subagent_spawn' ? /*#__PURE__*/React.createElement("span", null, "spawn ", ev.description || ev.task_id || '') : ev.label ? /*#__PURE__*/React.createElement("span", null, ev.label, ev.summary ? ' · ' + ev.summary : '', ev.migrated ? ' · brought in from an older file' + (ev.legacy_verified === false ? ' (its own signature did not check)' : '') : '') : ev.kind === 'reasoning_trace' ? /*#__PURE__*/React.createElement("span", null, ev.parent_id ? '↳ ' : '', ev.trace_kind || 'trace', " \xB7 ", /*#__PURE__*/React.createElement("span", {
         style: {
           color: seatColor
         }
@@ -73819,7 +74196,11 @@ function App() {
     }
   }, agentSettings.off_record && agentSettings.off_record_stops_storage !== false ? FRIDAY_OFF_RECORD_TEXT : "Go off the record"), /*#__PURE__*/React.createElement("div", {
     className: `settings-toggle-switch ${agentSettings.off_record ? 'on' : ''}`
-  })), /*#__PURE__*/React.createElement("div", {
+  })), fridayOffRecordFrom(agentSettings) && /*#__PURE__*/React.createElement("div", {
+    role: "note",
+    "data-off-record-notice": "true",
+    style: { fontSize: 11, color: 'rgba(255,255,255,0.6)', padding: '0 12px 8px', lineHeight: 1.5 }
+  }, FRIDAY_OFF_RECORD_NOTICE), /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
     role: "button",
     tabIndex: 0,
@@ -74603,7 +74984,7 @@ function App() {
       /* Anything waiting on a decision takes the caption's place. Polled
          rather than pushed, because the widget must not depend on the React
          tree having mounted — in the PiP window it has not. */
-      var CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset'];
+      var CAPTION_NEVER_DECIDES = ['file_grant_request', 'file_access_reset', 'skill_import'];
       function pollApprovals() {
         if (approvalTimer) clearInterval(approvalTimer);
         var tick = function () {
