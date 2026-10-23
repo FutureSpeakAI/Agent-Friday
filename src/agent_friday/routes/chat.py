@@ -1006,6 +1006,12 @@ def _cloud_turn_decision(route_mode, mode, confirmed, vault_access):
         return ""
     if vault_access:
         return "vault"
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked as _unpicked
+        if _unpicked():
+            return "confirm"          # A16a: no route picked, no cloud turn, even confirmed
+    except Exception:
+        pass
     if str(mode or "").strip().lower() == "local_only" and not confirmed:
         return "confirm"
     return "allow"
@@ -2191,6 +2197,10 @@ def chat():
                 "Please install Ollama or switch to local routing mode."
             )
             _offer_cloud_switch = bool(_route_info.get('offer_cloud_switch'))
+            if _cloud_intent.route_unpicked():
+                # A16a: the prompt is "choose where Friday thinks", not a
+                # one-button switch to the cloud.
+                _offer_cloud_switch = False
             _refuse_offer = None
             if _route_info.get('local_unavailable'):
                 _refuse_offer = _local_offer.build(

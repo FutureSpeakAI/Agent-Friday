@@ -2492,11 +2492,19 @@ def _resolve_voice_engine(settings=None):
     # cloud_ok needs a key that actually AUTHENTICATES (cheap cached REST
     # probe), not merely a non-empty string — a revoked key must route the
     # mic to local voice instead of a doomed /ws/live session.
-    try:
-        _ki = resolve_gemini_key()
-        cloud_ok = bool(_ki.get("valid")) and not net.get("offline")
-    except Exception:
-        cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
+    # Local-only is decided first, so a local-only install (and, North-star
+    # A16a, an install whose route is not chosen yet) never probes Google with
+    # the key at all.
+    _local_only_first = str(((settings.get('model_routing') or {})
+                             .get('mode')) or '').strip().lower() == 'local_only'
+    if _local_only_first:
+        cloud_ok = False
+    else:
+        try:
+            _ki = resolve_gemini_key()
+            cloud_ok = bool(_ki.get("valid")) and not net.get("offline")
+        except Exception:
+            cloud_ok = bool(core.GEMINI_API_KEY) and not net.get("offline")
     # Local-only is an absolute override, the same guarantee routes/chat.py's
     # vision path already enforces — it
     # must win regardless of `voice_engine` preference or whether the Gemini
@@ -4002,7 +4010,17 @@ def voice_setup_status():
             from agent_friday.core import GEMINI_API_KEY
             _ki = {"key": GEMINI_API_KEY, "valid": bool(GEMINI_API_KEY),
                    "source": "server", "detail": ""}
-        if _ki.get("key") and _ki.get("valid"):
+        try:
+            from agent_friday.services.cloud_intent import route_unpicked as _ru
+            _unpicked = bool(_ru())
+        except Exception:
+            _unpicked = False
+        if _ki.get("key") and _unpicked:
+            # A16a: the key was not sent to Google, so it is not called "ok".
+            _kstat = "unknown"
+            _kdetail = ("Not checked yet: nothing goes to the cloud until you choose "
+                        "where Friday thinks (Settings > Models).")
+        elif _ki.get("key") and _ki.get("valid"):
             _kstat, _kdetail = "ok", f"key from {_ki.get('source')}"
         elif _ki.get("key"):
             _kstat = "invalid"

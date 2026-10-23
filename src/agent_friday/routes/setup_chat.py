@@ -85,8 +85,12 @@ def setup_chat_state():
 @setup_chat_bp.route("/api/setup-chat/begin", methods=["POST"])
 def setup_chat_begin():
     b = _body()
+    # A16a: the consent screen's route is a pick only when this is the page's
+    # own click (same-origin, the page's session token).
+    from agent_friday.services import screen_click as _screen_click
     return jsonify({"ok": True, **sc.begin(str(b.get("routing_mode") or ""),
-                                           str(b.get("vault_passphrase") or ""))})
+                                           str(b.get("vault_passphrase") or ""),
+                                           screen=bool(_screen_click.screen_session(request)))})
 
 
 @setup_chat_bp.route("/api/setup-chat/answer", methods=["POST"])

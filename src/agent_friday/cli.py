@@ -1068,8 +1068,24 @@ def cmd_status():
     console.print()
 
 
+def _not_checked_unpicked():
+    """North-star A16a: before a route is picked a key check sends nothing to
+    the cloud. Returns the (None, message) answer, or None to go ahead."""
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return None, ("Not checked yet: nothing goes to the cloud until you "
+                          "choose where Friday thinks")
+    except Exception:
+        pass
+    return None
+
+
 def _validate_anthropic_key(key: str):
     """Returns (True/False/None, message)."""
+    held = _not_checked_unpicked()
+    if held is not None:
+        return held
     try:
         from anthropic import Anthropic, AuthenticationError
         c = Anthropic(api_key=key)
@@ -1084,6 +1100,9 @@ def _validate_anthropic_key(key: str):
 
 def _validate_gemini_key(key: str):
     """Returns (True/False/None, message)."""
+    held = _not_checked_unpicked()
+    if held is not None:
+        return held
     try:
         from google import genai
         c = genai.Client(api_key=key)
