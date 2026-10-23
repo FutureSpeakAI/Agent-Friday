@@ -2431,6 +2431,16 @@ DEFAULT_SETTINGS = {
     # default. Read by services/agent.py::_maybe_auto_open and
     # services/creations.py::_notify_creation.
     "auto_open_created_files": False,
+    # Friday's loopback allow-list proxy (services/egress_proxy). An approved
+    # command reaches only these hosts; an MCP stdio server reaches its own
+    # `allow_hosts` (mcp_servers.json) or, without them, is "observe"d (every host
+    # recorded) unless this says "enforce". Not a boundary: a program that
+    # ignores proxy settings goes around it.
+    "command_network": {"allow_hosts": [
+        "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "registry.yarnpkg.com",
+        "github.com", "*.github.com", "objects.githubusercontent.com", "codeload.github.com",
+        "raw.githubusercontent.com"]},
+    "mcp_network_default": "observe",
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     # The Local beat is the owner's to name; nothing ships with a city.
