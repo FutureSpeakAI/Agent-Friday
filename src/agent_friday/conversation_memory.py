@@ -603,6 +603,61 @@ class ConversationMemory:
             out["missing"] = ids
         return out
 
+    def rebuild_from_transcripts(self, progress=None):
+        """Index every stored conversation turn again from the transcripts
+        (north star §34.9-9). What the transcripts no longer hold (a deleted
+        message, an off-the-record turn) is not indexed, and a turn that was
+        superseded stays superseded: its flag is read from this store and
+        from conversation search before the pass and put back after it.
+        Existing rows are refreshed in place (same message id), never
+        dropped. Returns {"ok", "indexed", "kept_superseded"}."""
+        if not self._ensure():
+            return {"ok": False, "error": "conversation memory is not available"}
+        say = progress or (lambda msg: None)
+        keep = {}
+        try:
+            with self._lock:
+                got = self._collection.get(include=["metadatas"])
+            for i, m in zip(got.get("ids") or [], got.get("metadatas") or []):
+                m = m or {}
+                if str(m.get(_SUPERSEDED_KEY) or "") == "1":
+                    keep[str(i)] = (m.get(_SUPERSEDED_REASON) or "superseded", m.get(_SUPERSEDED_BY) or "")
+        except Exception as e:
+            say(f"could not read the current supersession flags: {e}")
+            return {"ok": False, "error": "the current flags could not be read; nothing was changed"}
+        try:
+            from agent_friday.services import conversation_fts as _fts
+            for mid in _fts.superseded_ids():
+                keep.setdefault(str(mid), ("superseded", ""))
+        except Exception:
+            pass
+        from agent_friday.services import conversations as cv
+        from agent_friday.services import conversation_fts as fts
+        indexed = 0
+        for conv in cv.list_all(include_archived=True):
+            cid = conv.get("id")
+            if not cid:
+                continue
+            for m in cv._stored_messages(cid):
+                if not fts._indexable(m):          # text, an id, a turn, not off the record
+                    continue
+                try:
+                    ts = datetime.fromtimestamp(float(m.get("ts") or 0)).isoformat() if m.get("ts") else None
+                except (TypeError, ValueError, OSError):
+                    ts = None
+                if self.index(m["text"], m.get("role") or "user",
+                              session_id=(ts or datetime.now().isoformat())[:10],
+                              timestamp=ts, msg_id=str(m["id"])):
+                    indexed += 1
+        by_reason = {}
+        for i, (reason, by) in keep.items():
+            by_reason.setdefault((reason, by), []).append(i)
+        kept = 0
+        for (reason, by), ids in by_reason.items():
+            kept += len(self._set_supersession(ids, "1", reason, by).get("superseded") or [])
+        say(f"indexed {indexed} turns, {kept} kept superseded")
+        return {"ok": True, "indexed": indexed, "kept_superseded": kept}
+
     def find_ids(self, substring, limit=50):
         """Document ids whose text contains *substring* (case-insensitive).
 
