@@ -15,6 +15,8 @@
   table { border-collapse:collapse; width:100%; font:12px/1.4 'JetBrains Mono', monospace; }
   td, th { text-align:left; padding:3px 8px; border-bottom:1px solid rgba(255,255,255,0.06); }
   .healthy { color:#3effa1 } .degraded, .unverified { color:#fbbf24 } .broken, .misconfigured { color:#f87171 }
+  .unavailable_by_configuration, .unavailable_by_hardware, .blocked_by_policy, .repairing { color:#9aa8b8 }
+  #caps h3 { font-size:14px; margin:12px 0 4px; } #caps ul { margin:0; padding-left:20px; }
   .blocked_by_policy, .unavailable_by_configuration, .unavailable_by_hardware { color:#9aa8b8 }
   pre { white-space:pre-wrap; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; font:12px/1.4 'JetBrains Mono', monospace; max-height:420px; overflow:auto; }
   a { color:#00d4ff; }
@@ -37,6 +39,11 @@
   <p id="safe-note" role="status"></p>
 </section>
 
+<section id="capabilities" aria-labelledby="caps-h">
+  <h2 id="caps-h">What Friday can do right now</h2>
+  <p>Read live. <strong>Off</strong> means a setting, a choice of yours or this PC keeps something off: nothing is wrong. <strong>Needs attention</strong> means something is wrong, with what to do.</p>
+  <div id="caps" role="status">Checking...</div>
+</section>
 <section id="restore" aria-labelledby="restore-h" hidden>
   <h2 id="restore-h">After a restore</h2>
   <p id="restore-why" role="status"></p>
@@ -147,9 +154,42 @@
       safeState();
     });
   }
+  // The nine health states (services/doctor.STATES), in words, and what each
+  // means for the owner: what is off on purpose never reads as a failure.
+  const WORDS = { healthy: 'working', degraded: 'partly working', unavailable_by_configuration: 'off (a setting or a choice)',
+                  unavailable_by_hardware: 'not available on this PC', misconfigured: 'set up wrongly',
+                  blocked_by_policy: 'off by a rule you set', broken: 'not working', repairing: 'being repaired',
+                  unverified: 'not checked yet' };
+  const GROUP = { healthy: 'working', unavailable_by_configuration: 'off', unavailable_by_hardware: 'off',
+                  blocked_by_policy: 'off', degraded: 'attention', misconfigured: 'attention', broken: 'attention',
+                  unverified: 'pending', repairing: 'pending' };
+  const HEADS = { attention: 'Needs attention', working: 'Working', off: 'Off, and nothing is wrong', pending: 'Not checked yet' };
+  const MEANING = { working: 'fine', off: 'off on purpose', attention: 'needs attention', pending: 'not checked yet' };
+  function caps() {
+    api('/api/capabilities/state').then(({ ok, d }) => {
+      const box = $('caps'); box.textContent = '';
+      if (!ok) { box.textContent = 'Could not be read: ' + (d.error || 'unknown'); return; }
+      ['attention', 'working', 'off', 'pending'].forEach(g => {
+        const items = (d.capabilities || []).filter(c => (c.group || GROUP[c.health]) === g);
+        if (!items.length) return;
+        const h = document.createElement('h3'); h.textContent = HEADS[g]; box.appendChild(h);
+        const ul = document.createElement('ul');
+        items.forEach(c => {
+          const li = document.createElement('li');
+          const st = document.createElement('span'); st.className = String(c.health || '');
+          st.textContent = WORDS[c.health] || String(c.health || '');
+          li.appendChild(document.createTextNode(String(c.label || c.key) + ': '));
+          li.appendChild(st);
+          if (c.health_why) li.appendChild(document.createTextNode(' — ' + String(c.health_why)));
+          ul.appendChild(li);
+        });
+        box.appendChild(ul);
+      });
+    });
+  }
   function row(c) {
     const tr = document.createElement('tr');
-    [c.id, c.domain, c.state, c.code].forEach((v, i) => {
+    [c.id, c.domain, c.state, MEANING[GROUP[c.state]] || '', c.code].forEach((v, i) => {
       const td = document.createElement('td'); td.textContent = v == null ? '' : String(v);
       if (i === 2) td.className = String(v);
       tr.appendChild(td);
@@ -160,7 +200,7 @@
     const out = $('out'); out.textContent = '';
     const t = document.createElement('table');
     const head = document.createElement('tr');
-    ['check', 'domain', 'state', 'code'].forEach(h => { const th = document.createElement('th'); th.textContent = h; head.appendChild(th); });
+    ['check', 'domain', 'state', 'meaning', 'code'].forEach(h => { const th = document.createElement('th'); th.textContent = h; head.appendChild(th); });
     t.appendChild(head);
     (rep.checks || []).forEach(c => t.appendChild(row(c)));
     out.appendChild(t);
@@ -328,6 +368,7 @@
     .then(({ ok, d }) => { text($('auth-note'), ok ? 'Restored. Give back the permissions you want, one by one.' + (d.note ? ' ' + d.note : '') : (d.error || 'Not done.')); authState(); }));
   authState();
   weekly();
+  caps();
   schedState();
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
