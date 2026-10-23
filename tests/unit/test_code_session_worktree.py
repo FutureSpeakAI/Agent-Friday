@@ -96,6 +96,7 @@ def test_a_repository_task_starts_in_its_own_worktree_on_its_own_branch(env):
 
 def test_work_in_the_worktree_leaves_the_owners_branch_alone(env):
     entry = _launch(env, "t2", env.repo)
+    assert entry.get("worktree"), "the session was given no worktree"
     wt = Path(entry["worktree"])
     main_before = _git(env.repo, "rev-parse", "HEAD")
     (wt / "src" / "a.py").write_text("x = 2\n", encoding="utf-8")
@@ -145,14 +146,42 @@ def test_the_home_folders_own_repository_is_not_a_project_checkout(env):
     assert cwt.plan("t7", notes) == {}
 
 
+def test_a_retried_task_carries_on_in_its_own_worktree(env):
+    entry = _launch(env, "t12", env.repo)
+    assert entry.get("worktree"), "the session was given no worktree"
+    wt = entry["worktree"]
+    env.popen.clear()
+    entry2 = _launch(env, "t12", env.repo)
+    assert entry2["status"] == "running", entry2.get("error")
+    assert Path(env.popen[0][1]["cwd"]) == Path(wt)
+
+
 def _worktree_session(env, tid="t8"):
+    _git(env.repo, "config", "alias.co", "checkout")       # the owner's own alias
     entry = _launch(env, tid, env.repo)
     entry["status"] = "running"
+    assert entry.get("worktree"), "the session was given no worktree"
     return entry
 
 
 @pytest.mark.parametrize("tool,inp", [
     ("Write", {"file_path": "{repo}/src/a.py", "content": "x"}),
+    ("Write", {"file_path": "{wt}/.git", "content": "gitdir: {repo}/.git"}),
+    ("Edit", {"file_path": ".git", "old_string": "a", "new_string": "b"}),
+    ("Bash", {"command": "git checkout --ignore-other-worktrees main --"}),
+    ("Bash", {"command": "git checkout main -- ."}),
+    ("Bash", {"command": "git co main"}),
+    ("Bash", {"command": "git -c alias.p=push p"}),
+    ("Bash", {"command": 'bash -c "git push origin HEAD"'}),
+    ("PowerShell", {"command": "powershell -Command 'git push'"}),
+    ("Bash", {"command": "echo $(git push)"}),
+    ("PowerShell", {"command": "$env:GIT_DIR = 'x'; git log"}),
+    ("Bash", {"command": "GIT_DIR=x git log"}),
+    ("Bash", {"command": 'echo hi > "$(git rev-parse --git-common-dir)/hooks/pre-commit"'}),
+    ("Bash", {"command": "cp evil .git/hooks/pre-commit"}),
+    ("Bash", {"command": "git pull origin main:main"}),
+    ("Bash", {"command": "cd ../../Projects/proj && git commit -am x"}),
+    ("Bash", {"command": "git branch other"}),
     ("Edit", {"file_path": "{repo}/src/a.py", "old_string": "1", "new_string": "2"}),
     ("Bash", {"command": 'cd "{repo}" && git commit -am x'}),
     ("Bash", {"command": "git -C {repo} commit -am x"}),
@@ -172,13 +201,34 @@ def _worktree_session(env, tid="t8"):
 def test_the_gate_refuses_the_checkout_and_shared_git(env, tool, inp):
     entry = _worktree_session(env)
     repo = str(env.repo).replace("\\", "/")
-    inp = {k: (v.replace("{repo}", repo) if isinstance(v, str) else v) for k, v in inp.items()}
+    wt = str(entry["worktree"]).replace("\\", "/")
+    inp = {k: (v.replace("{repo}", repo).replace("{wt}", wt) if isinstance(v, str) else v)
+           for k, v in inp.items()}
     out = env.cct.gate("t8", entry["token"], tool, inp)
     assert out["decision"] == "deny", (tool, inp, out)
 
 
+def test_a_changed_hook_stops_the_session(env):
+    """A hook planted in the shared .git folder (however it got there) runs as the owner
+    the next time they commit: every later call is refused and the status says why."""
+    entry = _worktree_session(env, "t13")
+    assert env.cct.gate("t13", entry["token"], "Bash", {"command": "git status"})["decision"] == "allow"
+    hook = env.repo / ".git" / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\necho planted\n", encoding="utf-8")
+    out = env.cct.gate("t13", entry["token"], "Bash", {"command": "git status"})
+    assert out["decision"] == "deny" and "hooks or config" in out["reason"]
+
+
 @pytest.mark.parametrize("tool,inp", [
     ("Write", {"file_path": "{wt}/src/a.py", "content": "x"}),
+    ("Read", {"file_path": "{repo}/src/a.py"}),
+    ("Bash", {"command": "git submodule update --init"}),
+    ("Bash", {"command": "git remote -v"}),
+    ("Bash", {"command": "git tag --sort=-creatordate"}),
+    ("Bash", {"command": "git restore src/a.py"}),
+    ("Bash", {"command": "cat .gitignore && ls src/hooks"}),
+    ("Bash", {"command": "npm test"}),
     ("Edit", {"file_path": "src/a.py", "old_string": "1", "new_string": "2"}),
     ("Bash", {"command": "git status"}),
     ("Bash", {"command": "git commit -am 'session change'"}),
@@ -191,7 +241,9 @@ def test_the_gate_refuses_the_checkout_and_shared_git(env, tool, inp):
 def test_the_gate_lets_the_session_work_in_its_worktree(env, tool, inp):
     entry = _worktree_session(env, "t9")
     wt = str(entry["worktree"]).replace("\\", "/")
-    inp = {k: (v.replace("{wt}", wt) if isinstance(v, str) else v) for k, v in inp.items()}
+    repo = str(env.repo).replace("\\", "/")
+    inp = {k: (v.replace("{wt}", wt).replace("{repo}", repo) if isinstance(v, str) else v)
+           for k, v in inp.items()}
     out = env.cct.gate("t9", entry["token"], tool, inp)
     assert out["decision"] == "allow", (tool, inp, out)
 
