@@ -1,4 +1,5 @@
 <body>
+    <a class="skip-link" href="#ui-inner">Skip to Agent Friday™</a>
     <style>
     /* Native controls in a dark UI. A select's open list, and a date
        picker, are drawn by the browser from the page's colour scheme, not
@@ -192,7 +193,7 @@
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
-        <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
+        <div id="ui-inner" tabindex="-1" style="pointer-events:auto;height:100vh;outline:none"></div>
     </div>
 
     <!-- MediaPipe (head and hand tracking) is NOT loaded with the page. The
@@ -6704,9 +6705,39 @@ window.fridayAddThreadStep = function(orbId, step) {
 };
 
 // === KEYBOARD CONTROLS ===
+// Arrow keys belong to a focused control that uses them (radios, lists, menus,
+// tabs, sliders: NS-33.1-2); the scene takes them only when no such control
+// has focus.
+var FRIDAY_ARROW_WIDGETS = 'select, [role="radio"], [role="radiogroup"], [role="listbox"], [role="option"], ' +
+    '[role="menu"], [role="menuitem"], [role="menubar"], [role="tablist"], [role="tab"], [role="slider"], ' +
+    '[role="spinbutton"], [role="grid"], [role="tree"], [role="treeitem"], [role="combobox"]';
 document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.defaultPrevented || (e.target.closest && e.target.closest(FRIDAY_ARROW_WIDGETS))) return;
     if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
     if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
+});
+
+// A radio group is one Tab stop's worth of choices: the arrow keys move to the
+// next or previous choice and pick it, Home and End go to the first and last
+// (WAI-ARIA radio group pattern; NS-33.1-2).
+document.addEventListener('keydown', function(e) {
+    var step = {ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, Home: 'first', End: 'last'}[e.key];
+    // A group that handles its own arrows (the display-style picker previews
+    // without committing) has already taken the key: leave it alone.
+    if (step === undefined || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    var radio = e.target && e.target.closest && e.target.closest('[role="radio"]');
+    var group = radio && radio.closest('[role="radiogroup"]');
+    if (!group) return;
+    var all = Array.prototype.filter.call(group.querySelectorAll('[role="radio"]'), function(r) {
+        return r.closest('[role="radiogroup"]') === group && r.getAttribute('aria-disabled') !== 'true'
+            && !r.hasAttribute('disabled');
+    });
+    var at = all.indexOf(radio);
+    if (at < 0 || !all.length) return;
+    var to = step === 'first' ? 0 : step === 'last' ? all.length - 1 : (at + step + all.length) % all.length;
+    e.preventDefault();
+    all[to].focus();
+    if (all[to].getAttribute('aria-checked') !== 'true') all[to].click();
 });
 </script>

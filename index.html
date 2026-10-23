@@ -391,6 +391,40 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 4px;
         }
 
+        /* Accessibility (north star §33.1, BD-21 AX1). Every control that can
+           take keyboard focus shows it: the roles the rule above missed, and
+           over the few rules that hid the ring (the hand cursor's highlight,
+           the chat edge pill, the snap zones, the keys sheet). */
+        [role="radio"]:focus-visible, [role="switch"]:focus-visible,
+        [role="checkbox"]:focus-visible, [role="menuitem"]:focus-visible,
+        [role="option"]:focus-visible, summary:focus-visible,
+        .fr-snap:focus-visible, .chat-edge-pill:focus-visible,
+        .snap-zone:focus-visible, .keys-sheet-close:focus-visible {
+            outline: 2px solid #00d4ff !important;
+            outline-offset: 2px;
+        }
+        /* The first Tab stop: straight to the app, past the scene. */
+        .skip-link {
+            position: fixed; left: 12px; top: -60px; z-index: 2147483647;
+            padding: 10px 16px; border-radius: 8px; background: #00141c;
+            color: #fff; font: 600 14px Inter, sans-serif; text-decoration: none;
+            border: 2px solid #00d4ff;
+        }
+        .skip-link:focus, .skip-link:focus-visible { top: 12px; }
+        /* Windows high contrast (forced colours): the focus ring uses the
+           system's own highlight so it is never drawn in a colour the theme
+           replaced. */
+        @media (forced-colors: active) {
+            :focus-visible { outline: 3px solid Highlight !important; outline-offset: 2px; }
+            .dock-btn, .btn, .settings-toggle, [role="radio"], [role="switch"] { border: 1px solid ButtonText; }
+        }
+        /* "More contrast" asked for by the system: dim text and hairlines get
+           stronger, so nothing sits below a readable contrast. */
+        @media (prefers-contrast: more) {
+            :root { --st-dim: rgba(255,255,255,0.86); --fr-dim: rgba(255,255,255,0.86); }
+            :focus-visible { outline-width: 3px !important; }
+        }
+
         /* Base button (used by React UI) */
         .btn {
             background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.14); color: rgba(255, 255, 255, 0.78);
@@ -3682,6 +3716,7 @@ window.addEventListener('DOMContentLoaded',function(){
 </head>
 
 <body>
+    <a class="skip-link" href="#ui-inner">Skip to Agent Friday™</a>
     <style>
     /* Offline-first: desaturate the holographic scene when the network monitor
        reports we're offline, so the environment visibly (but calmly) reflects
@@ -3740,7 +3775,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
-        <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
+        <div id="ui-inner" tabindex="-1" style="pointer-events:auto;height:100vh;outline:none"></div>
     </div>
 
     <!-- Undocked chat mode (?chrome=chat), set as early as the body exists.
@@ -11493,10 +11528,40 @@ window.fridayAddThreadStep = function(orbId, step) {
 };
 
 // === KEYBOARD CONTROLS ===
+// Arrow keys belong to a focused control that uses them (radios, lists, menus,
+// tabs, sliders: NS-33.1-2); the scene takes them only when no such control
+// has focus.
+var FRIDAY_ARROW_WIDGETS = 'select, [role="radio"], [role="radiogroup"], [role="listbox"], [role="option"], ' +
+    '[role="menu"], [role="menuitem"], [role="menubar"], [role="tablist"], [role="tab"], [role="slider"], ' +
+    '[role="spinbutton"], [role="grid"], [role="tree"], [role="treeitem"], [role="combobox"]';
 document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.defaultPrevented || (e.target.closest && e.target.closest(FRIDAY_ARROW_WIDGETS))) return;
     if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
     if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
+});
+
+// A radio group is one Tab stop's worth of choices: the arrow keys move to the
+// next or previous choice and pick it, Home and End go to the first and last
+// (WAI-ARIA radio group pattern; NS-33.1-2).
+document.addEventListener('keydown', function(e) {
+    var step = {ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, Home: 'first', End: 'last'}[e.key];
+    // A group that handles its own arrows (the display-style picker previews
+    // without committing) has already taken the key: leave it alone.
+    if (step === undefined || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    var radio = e.target && e.target.closest && e.target.closest('[role="radio"]');
+    var group = radio && radio.closest('[role="radiogroup"]');
+    if (!group) return;
+    var all = Array.prototype.filter.call(group.querySelectorAll('[role="radio"]'), function(r) {
+        return r.closest('[role="radiogroup"]') === group && r.getAttribute('aria-disabled') !== 'true'
+            && !r.hasAttribute('disabled');
+    });
+    var at = all.indexOf(radio);
+    if (at < 0 || !all.length) return;
+    var to = step === 'first' ? 0 : step === 'last' ? all.length - 1 : (at + step + all.length) % all.length;
+    e.preventDefault();
+    all[to].focus();
+    if (all[to].getAttribute('aria-checked') !== 'true') all[to].click();
 });
 </script>
 
@@ -50702,10 +50767,12 @@ function ConsentFlow({ onDone }) {
         style: { color: '#ff0080', fontSize: 12, marginTop: 8 }
       }, err)),
 
-    s.name === 'routing' && React.createElement('div', { style: { marginBottom: 18 } },
+    s.name === 'routing' && React.createElement('div', {
+      role: 'radiogroup', 'aria-label': s.title, style: { marginBottom: 18 } },
       (s.choices || []).map(c => React.createElement('div', {
-        key: c.mode,
+        key: c.mode, role: 'radio', tabIndex: 0, 'aria-checked': mode === c.mode,
         onClick: () => setMode(c.mode),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMode(c.mode); } },
         style: {
           padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
           border: '1px solid ' + (mode === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
@@ -50906,7 +50973,7 @@ function CloudConsentGate({ onDone }) {
       err && React.createElement('div', {
         style: { color: '#ff0080', fontSize: 12, marginBottom: 12 }
       }, err),
-      [
+      React.createElement('div', { role: 'radiogroup', 'aria-label': 'Where ' + fridayName() + ' thinks' }, [
         { mode: 'local_private', label: 'Private (local)',
           detail: 'Reasoning, voice, image, and video stay on this device.' },
         { mode: 'cloud_guarded', label: 'Cloud, safeguards on',
@@ -50916,7 +50983,9 @@ function CloudConsentGate({ onDone }) {
           detail: 'Full context reaches your configured cloud provider — ' +
                   'no safeguard held back.' },
       ].map(c => React.createElement('div', {
-        key: c.mode, onClick: () => setChoice(c.mode),
+        key: c.mode, role: 'radio', tabIndex: 0, 'aria-checked': choice === c.mode,
+        onClick: () => setChoice(c.mode),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setChoice(c.mode); } },
         style: {
           padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
           border: '1px solid ' + (choice === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
@@ -50926,7 +50995,7 @@ function CloudConsentGate({ onDone }) {
         React.createElement('div', { style: { fontWeight: 600, color: '#fff' } }, c.label),
         React.createElement('div', {
           style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
-        }, c.detail))),
+        }, c.detail)))),
       React.createElement('button', {
         className: 'btn', disabled: saving || !choice, style: { marginTop: 8 },
         onClick: () => submit(choice)
@@ -74149,6 +74218,9 @@ function App() {
   dockShape.configured
     ? /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
+        role: "button",
+        tabIndex: 0,
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
         style: { opacity: 0.5, cursor: 'default' },
         title: "Your own dock arrangement is in use, so this no longer applies.",
         onClick: () => { window.__fridaySettingsTab = 'appearance'; setSettingsOpen(false); toggle('settings'); try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); } catch (e) {} }
@@ -74157,6 +74229,10 @@ function App() {
       }, "Show all workspaces — set in Settings → Appearance"))
     : /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
+        role: "switch",
+        "aria-checked": !!showAllWorkspaces,
+        tabIndex: 0,
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
         onClick: () => saveAgentSettings({
           show_all_workspaces: !showAllWorkspaces
         })
@@ -74167,6 +74243,10 @@ function App() {
       })),
   /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
+    role: "switch",
+    "aria-checked": !!agentSettings.off_record,
+    tabIndex: 0,
+    onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
     onClick: () => saveAgentSettings({
       off_record: !agentSettings.off_record
     })
@@ -74811,7 +74891,9 @@ function App() {
       })
     : null,
   shellChatPanel, threadOrb && React.createElement(ProcessOrbThread,{orb:threadOrb,meta:taskMeta,log:taskLog,steps:threadSteps,readState:threadReadState,position:threadPos,bodyRef:threadBodyRef,onDrag:startThreadDrag,onClose:closeThread}), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
-    className: `dock ${dockHidden ? 'hidden' : ''}`
+    className: `dock ${dockHidden ? 'hidden' : ''}`,
+    role: "navigation",
+    "aria-label": "Workspaces"
   }, dockShape.groups.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: g.name + ':' + gi
   }, gi > 0 && /*#__PURE__*/React.createElement("div", {
@@ -74824,6 +74906,7 @@ function App() {
     key: w.id,
     className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${noticeWs.has(w.id) && !openWins.has(w.id) ? 'has-notice' : ''}`,
     "data-ws": w.id,
+    "aria-pressed": openWins.has(w.id),
     // Ctrl/Cmd-click or middle-click: the workspace in a new BACKGROUND tab,
     // the way a link would -- the person chose to stay here. A plain click
     // still opens (or closes) the window.
