@@ -124,7 +124,7 @@ def _fb():
     return fb
 
 
-@pytest.mark.parametrize("step", ["staged", "keys", "aside"])
+@pytest.mark.parametrize("step", ["keys-pending", "keys", "aside"])
 def test_a_restore_stopped_before_its_swap_is_rolled_back(machines, step):
     a, b, bundle, scratch = machines
     fb = _fb()
