@@ -140,6 +140,13 @@ else:
     _sweep_stale_test_homes(Path(tempfile.gettempdir()))
     _TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_test_home_"))
     os.environ["_FRIDAY_TEST_HOME"] = f"{_PID_TAG}{_TEST_HOME}"
+    # A FRIDAY_HOME this process inherited is not this run's home. It may be a
+    # real Friday's folder (set in a developer's shell) or another test's
+    # scratch home, inherited by a test that runs pytest in a child process.
+    # The test home below is the only home: FRIDAY_HOME would win over it in
+    # paths.friday_home() and split state across two folders. A test that
+    # wants FRIDAY_HOME sets it itself (monkeypatch.setenv).
+    os.environ.pop("FRIDAY_HOME", None)
 os.environ["FRIDAY_TESTING"] = "1"
 # The Hugging Face cache stays the machine's shared one. Replacing the home
 # below would otherwise move it into the empty test home, and the first test
@@ -422,6 +429,42 @@ def _held_detail_cards_off(request, monkeypatch):
     if request.node.get_closest_marker("held_cards") is None:
         monkeypatch.setattr(cloud_release, "HELD_CARDS", False)
     yield
+
+
+class HomeEnvLeakWarning(Warning):
+    """A test changed where Friday's home is and did not put it back."""
+
+
+_HOME_ENV_KEYS = ("FRIDAY_HOME", "HOME", "USERPROFILE")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _home_env_does_not_outlive_its_file(request):
+    """Every test file ends with FRIDAY_HOME, HOME and USERPROFILE as it found them.
+
+    paths.friday_home() reads FRIDAY_HOME on every call while core read it once
+    at import. A FRIDAY_HOME left behind splits one worker's later tests across
+    two folders: a settings save lands in core's file while a reader that asks
+    friday_home() looks elsewhere (the intelligence card's key), and a test that
+    runs pytest in a child hands the stray home to the child, where it reads as
+    a brand-new install (A16a then holds platforms and mail). The value is put
+    back and the file that left it is named in the warnings summary. Per file,
+    not per test: a file's own module-scoped fixture may set a home for all of
+    its tests (tests/unit/test_browser_session.py) and puts it back itself.
+    """
+    before = {k: os.environ.get(k) for k in _HOME_ENV_KEYS}
+    yield
+    for k, v in before.items():
+        now = os.environ.get(k)
+        if now == v:
+            continue
+        import warnings as _warnings
+        _warnings.warn(HomeEnvLeakWarning(
+            "%s left %s changed (%r, was %r); put back" % (request.node.nodeid, k, now, v)))
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(autouse=True)
