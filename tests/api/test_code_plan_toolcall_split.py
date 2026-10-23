@@ -137,6 +137,12 @@ class TestOtherReplyShapes:
         reply = "Here is the plan:\n" + json.dumps(_plan(NEW_FILE)) + "\nDone {ok}."
         assert _only_file(_post(client, patch_app, repo, reply))["new_content"] == NEW_FILE
 
+    def test_non_text_new_content_is_skipped_not_a_crash(self, client, patch_app, repo):
+        reply = json.dumps({"summary": "s", "files": [
+            {"path": "package.json", "new_content": {"name": "pkg"}},
+            {"path": REL, "new_content": NEW_FILE}]})
+        assert _only_file(_post(client, patch_app, repo, reply))["new_content"] == NEW_FILE
+
     def test_no_json_is_502(self, client, patch_app, repo):
         resp = _post(client, patch_app, repo, "I could not work out a change.")
         assert resp.status_code == 502
@@ -182,8 +188,18 @@ class TestExtractPlanUnit:
         assert plan["summary"] == "outer"
 
     def test_deep_nesting_is_not_an_error(self):
-        assert self._extract("prose " + "[" * 100000) is None
-        assert self._extract("prose " + '{"a":' * 5000) is None
+        assert self._extract("[" * 100000) is None              # whole-reply parse
+        assert self._extract("prose " + '{"a":' * 5000) is None  # the scan
+
+    def test_a_truncated_answer_does_not_yield_an_inner_object(self):
+        inner = {"name": "pkg", "files": ["dist"]}
+        whole = json.dumps({"summary": "s", "files": [{"path": "package.json", "new_content": inner}]})
+        assert self._extract("Plan:\n" + whole[:-3]) is None
+
+    def test_brace_noise_in_prose_is_cheap(self):
+        t0 = time.monotonic()
+        assert self._extract("x {" * 150000 + json.dumps(_plan(NEW_FILE)))["summary"]
+        assert time.monotonic() - t0 < 10
 
     def test_fixture_shape_matches_the_split(self):
         reply = _split_reply(json.dumps(_plan(NEW_FILE)))
