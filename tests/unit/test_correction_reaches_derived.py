@@ -39,6 +39,8 @@ class FakeCollection:
 
     def get(self, ids=None, include=None, where=None, limit=None):
         keys = [str(i) for i in ids if str(i) in self.rows] if ids is not None else list(self.rows)
+        if isinstance(where, dict) and isinstance(where.get("session_id"), str):
+            keys = [k for k in keys if self.rows[k][1].get("session_id") == where["session_id"]]
         return {"ids": keys, "documents": [self.rows[k][0] for k in keys],
                 "metadatas": [dict(self.rows[k][1]) for k in keys]}
 
@@ -80,6 +82,9 @@ def test_a_correction_takes_the_day_s_summary_away_and_queues_it_again(home, mon
     from agent_friday.services import model_router
     mem.index("Our mooring fee is 400 pounds a year.", "user", session_id="2026-09-01",
               timestamp="2026-09-01T10:00:00", msg_id="m-fee")
+    # The day has more to summarise than the corrected turn.
+    mem.index("We also planned to repaint the hull in spring.", "user", session_id="2026-09-01",
+              timestamp="2026-09-01T10:05:00", msg_id="m-hull")
     old = _summary("2026-09-01", "The owner pays 400 pounds a year for the mooring.")
     other = _summary("2026-09-02", "A walk by the harbour.")
     assert old.exists()
@@ -105,6 +110,19 @@ def test_a_correction_takes_the_day_s_summary_away_and_queues_it_again(home, mon
     monkeypatch.setattr(model_router, "_generate_session_summary", _write)
     assert md.redo_summaries() == 1 and written[-1] == ("2026-09-01", True)
     assert json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text()) == {}
+
+
+def test_a_day_with_nothing_left_to_summarise_leaves_the_queue(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import model_router
+    mem.index("Our berth is number 12 on the east pontoon.", "user", session_id="2026-09-04",
+              timestamp="2026-09-04T10:00:00", msg_id="m-berth")
+    _summary("2026-09-04", "The berth is number 12.")
+    mem.supersede(["m-berth"], "the owner corrected the berth")
+    assert md.drain()
+    monkeypatch.setattr(model_router, "_generate_session_summary", lambda d, force=False: None)
+    assert md.redo_summaries() == 1
+    assert "2026-09-04" not in json.loads((tmp / "memory" / "session_summaries" / "redo.json").read_text())
 
 
 def test_a_restore_requeues_the_summary_but_takes_nothing_from_the_graph(home):
