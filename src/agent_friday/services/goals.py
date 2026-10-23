@@ -823,6 +823,14 @@ def _maybe_complete_goal(goal_id: str) -> Optional[Dict[str, Any]]:
     only when every milestone passed its own automated check; a milestone
     the owner accepted over a failed check, or confirmed by hand, makes it
     "met, unverified" (§17.3: only the verification engine sets verified)."""
+    # §17.12: the goal's own proof, judged on every milestone's run, outside
+    # the goal's lock (it reads the record files).
+    try:
+        from agent_friday.services import goal_evidence as _ge
+        goal_check = _ge.judge_goal(get_goal(goal_id) or {})
+    except Exception as e:
+        goal_check = {"met": False, "conditions": [], "errors": [type(e).__name__]}
+
     def _fn(goal):
         cur = goal_state.normalize(goal)
         if cur not in LIVE_STATUSES:
@@ -830,6 +838,11 @@ def _maybe_complete_goal(goal_id: str) -> Optional[Dict[str, Any]]:
         milestones = goal.get("milestones") or []
         if milestones and all(m.get("status") == "done" for m in milestones):
             verified = goal_state._all_verified(goal)
+            gj = goal_check
+            if gj.get("conditions") or gj.get("errors"):
+                goal["goal_check"] = gj
+            if gj.get("met") is not True:
+                verified = False
             goal["status"] = "met_verified" if verified else "met_unverified"
             goal["completion"] = {"by": "verification" if verified else "owner_accepted_milestones",
                                   "verified": verified, "at": _now_iso()}
@@ -1497,6 +1510,7 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         _note_run(goal_id, milestone_id, task_id=attempt_task_id, stage="dispatching",
                   attempt=attempt, attempt_started_at=time.time(), reserved_mψ=reserved_total)
         milestone["_task_id"] = attempt_task_id
+        _attempt_began = time.time()
         work = _execute_milestone_work(goal, milestone, critique_hint=critique_hint)
         total_cost += int(work.get("cost_mψ") or 0)
         if work.get("task_id") and work.get("task_id") != attempt_task_id:
@@ -1552,11 +1566,41 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
                     "approval_id": appr.get("approval_id")}
 
         criteria = milestone.get("success_criteria") or goal.get("success_criteria") or ""
-        verdict = qa_gates.evaluate_text(last_text, criteria, workspace=f"goal:{goal_id}")
+        # §17.12: the run's record first (its tool calls, signed receipts, the
+        # files it wrote), the words only for what only words can show.
+        verdict = _verify(goal, milestone, last_text, criteria,
+                          task_id=work.get("task_id") or attempt_task_id, since=_attempt_began)
         last_verdict = verdict
         # The attempt reached its check: whatever stopped it before is not
         # "the same stop again" (§17.10 counts runs of identical stops).
         _update_milestone(goal_id, milestone_id, blocker_history=[])
+        if verdict.get("status") == "skipped" and verdict.get("basis", "").startswith("receipts"):
+            # The record could not be read: that is not "the proof is
+            # missing", and another attempt would only redo the work. Stop
+            # and say so; the owner starts it again once the record reads.
+            _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
+            _update_milestone(goal_id, milestone_id, verification=verdict, artifacts=[last_text[:2000]])
+            _block(goal_id, milestone_id, goal_state.blocker(
+                "missing_evidence", f"I couldn't check “{milestone.get('name')}”: {verdict.get('critique')}.",
+                type="check_unavailable", needs_confirmation=True),
+                note="the check could not read the run's record; no further attempt")
+            return {"ok": False, "status": "check_unavailable", "verification": verdict}
+        if verdict.get("passed") and verdict.get("needs_owner_confirm"):
+            # Part of the proof is the owner's to give: their card, as for a
+            # goal they verify by hand. Friday never ticks it for them.
+            _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
+            appr = approvals.create_approval(
+                kind="goal_milestone_confirm", subject_type="goal_milestone",
+                subject_id=_card_subject(goal_id, milestone_id, "confirm", milestone),
+                title=f"Confirm milestone: {milestone.get('name')}",
+                description=last_text[:1000], action_description=action_description,
+                force_gate=True, cost_estimate_mψ=0, interest_model=_safe_interest_model(),
+                payload={"draft_text": last_text[:4000], "check": verdict.get("conditions")},
+            )
+            _update_milestone(goal_id, milestone_id, status="verifying", verification=verdict,
+                              approval_id=appr.get("approval_id"), artifacts=[last_text[:2000]],
+                              **_closed_run(goal_id, milestone_id))
+            return {"ok": False, "status": "pending_manual_confirmation", "approval_id": appr.get("approval_id")}
         if not verdict.get("passed"):
             why = goal_state.repeated(marks[:-1], critique=str(verdict.get("critique") or ""))
             marks[-1]["critique"] = goal_state.fingerprint(verdict.get("critique") or "")
@@ -1592,6 +1636,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         # Stop with a blocker that says so; never a generic failure, never
         # another identical attempt.
         _release_goal_budget(goal_id, max(0, reserved_total - total_cost))
+        if last_verdict:
+            # The last check stays on record (§17.12): the card says what the
+            # proof was missing, not only that nothing changed.
+            _update_milestone(goal_id, milestone_id, verification=last_verdict)
         _block(goal_id, milestone_id, goal_state.blocker(
             "no_progress", goal_state.no_progress_words(milestone.get("name") or "this milestone",
                                                         base_attempts + attempt, no_progress_why),
@@ -1785,9 +1833,33 @@ def _on_confirm_decided(approval: Dict[str, Any]) -> None:
 
 #: Blocker types that only the owner (or the task they resume) can clear.
 _OWNER_BLOCKERS = ("interrupted", "run_failed", "no_progress", "plan_changed",
-                   "approval_denied", "approval_expired", "approval_stale", "result_refused")
+                   "approval_denied", "approval_expired", "approval_stale", "result_refused",
+                   "check_unavailable")
 #: Of those, the ones stopped by a card: starting again asks on a new card.
 _CARD_BLOCKERS = ("approval_denied", "approval_expired", "approval_stale", "result_refused")
+
+
+def _check_words(v: Dict[str, Any]) -> List[str]:
+    """One line per condition a check judged: met or not, and on what."""
+    out = []
+    for c in (v.get("conditions") or [])[:10]:
+        cites = c.get("cites") or []
+        on = ", ".join(str(x.get("path") or x.get("tool") or x.get("url") or x.get("source")) for x in cites[:3])
+        out.append(("Met: " if c.get("met") else "Not met: ") + str(c.get("what") or "")
+                   + (f" (on record: {on})" if on else (f" ({c.get('why')})" if c.get("why") else "")))
+    if not out and v.get("basis") == "text":
+        out.append("Checked on the result's words only (this goal names no proof on record).")
+    return out
+
+
+def _verify(goal: Dict[str, Any], milestone: Dict[str, Any], text: str, criteria: str, *,
+            task_id: Optional[str], since: Optional[float]) -> Dict[str, Any]:
+    """A milestone's check, on its run's record before its words
+    (services/goal_evidence, §17.12)."""
+    from agent_friday.services import goal_evidence
+    gid = goal.get("goal_id")
+    return goal_evidence.verify(goal, milestone, text, criteria, task_id=task_id, since=since,
+                                grade=lambda t, c: qa_gates.evaluate_text(t, c, workspace=f"goal:{gid}"))
 
 
 def _card_subject(goal_id: str, milestone_id: str, suffix: str, milestone: Dict[str, Any]) -> str:
@@ -2149,7 +2221,11 @@ def _finish_adopted(goal_id: str, milestone_id: str, text: str, tid: str) -> Dic
                           **_closed_run(goal_id, milestone_id))
         return {"ok": False, "status": "pending_manual_confirmation",
                 "approval_id": appr.get("approval_id")}
-    verdict = qa_gates.evaluate_text(text, criteria_text, workspace=f"goal:{goal_id}")
+    # The original attempt's start (recorded before its work was dispatched):
+    # a file older than that cannot be this run's work.
+    _began = (milestone.get("run") or {}).get("attempt_started_at")
+    verdict = _verify(goal, milestone, text, criteria_text, task_id=tid,
+                      since=float(_began) if _began else None)
     if verdict.get("passed"):
         _update_milestone(goal_id, milestone_id, status="done", done_at=_now_iso(),
                           verification=verdict, artifacts=[text[:2000]],
@@ -2347,6 +2423,8 @@ def summary(goal: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]
             "can_run": m.get("status") == "pending" and status in LIVE_STATUSES,
             "verified": bool((m.get("verification") or {}).get("status") == "ok"
                              and not (m.get("verification") or {}).get("human_override")),
+            # §17.12: what the check rested on, condition by condition.
+            "check": _check_words(m.get("verification") or {}),
         })
     return {
         "goal_id": goal.get("goal_id"), "title": goal.get("title"),

@@ -10615,6 +10615,7 @@ function GoalsCard() {
         g.success_criteria && E('div', { style: { fontSize: 11, color: '#cdd' } }, 'What counts as done: ' + g.success_criteria),
         E('ul', { style: { fontSize: 11, color: '#cdd', margin: '4px 0', paddingLeft: 16 } }, g.milestones.map(m => E('li', { key: m.milestone_id },
           m.name + ' — ' + m.status + (m.due ? ', due ' + String(m.due).slice(0, 10) : '') + (m.status === 'done' ? (m.verified ? ' (checked)' : ' (on your say-so)') : ''),
+          (m.check || []).length > 0 && E('ul', { 'aria-label': 'What the check of ' + m.name + ' rested on', style: { fontSize: 10, color: '#9ab', margin: '2px 0', paddingLeft: 14 } }, m.check.map((c, i) => E('li', { key: i }, c))),
           m.can_run && btn('Run it now', () => runNow(g, m), { 'aria-label': 'Run ' + m.name + ' now' })))),
         E('div', null,
           btn('Change what counts as done', () => ask(g, 'success_criteria', 'What counts as done?', g.success_criteria, v => v.trim() || undefined, 'New plan saved; work that began before it stops and asks.')),

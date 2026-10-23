@@ -1010,7 +1010,7 @@ def test_the_records_of_a_tool_call_never_hold_library_passages(monkeypatch):
     monkeypatch.setattr(agent, "_journal", lambda: type("J", (), {"tool_call": staticmethod(lambda **kw: seen.setdefault("journal", kw["result"])),
                                                                   "current_task": staticmethod(lambda: "t1")})())
     import agent_friday.services.task_ledger as tl
-    monkeypatch.setattr(tl, "note_tool", lambda task, name, args, result: seen.setdefault("ledger", result))
+    monkeypatch.setattr(tl, "note_tool", lambda task, name, args, result, **k: seen.setdefault("ledger", result))
     agent._orb_tool_trace("", "search_library", {"question": "q"}, '{"refs":{}}\n\n<evidence-ab label="1.1">Margaret Ellison pays rent</evidence-ab>', 5)
     assert all("Margaret" not in str(v) for v in seen.values()) and seen["trace"] == envelope.KEPT_OUT
     seen.clear()
