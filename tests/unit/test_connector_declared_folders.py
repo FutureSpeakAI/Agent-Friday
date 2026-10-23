@@ -69,10 +69,20 @@ def test_declared_folders_are_judged_like_the_file_tools(home):
 
 
 def test_a_folder_that_contains_a_refused_zone_is_refused(home):
-    ps = _folder(home / "Documents" / "WindowsPowerShell")
-    (ps / "profile.ps1").write_text("# synthetic", encoding="utf-8")
+    # Documents holds (or could hold) WindowsPowerShell\\profile.ps1, which runs as the
+    # owner: writing all of Documents is refused even before that folder exists.
+    _folder(home / "Documents" / "Notes")
     _r, _w, _k, refused = cf.plan([{"path": str(home / "Documents"), "write": True}], "", [])
     assert refused and "contains" in refused[0]
+    _r, write, _k, refused = cf.plan([{"path": str(home / "Documents" / "Notes"), "write": True}], "", [])
+    assert refused == [] and (home / "Documents" / "Notes").resolve() in _paths(write)
+
+
+def test_a_write_folder_with_a_git_file_is_refused(home):
+    wt = _folder(home / "Projects" / "linked")
+    (wt / ".git").write_text("gitdir: C:/elsewhere/.git/worktrees/x\n", encoding="utf-8")
+    _r, _w, _k, refused = cf.plan([{"path": str(wt), "write": True}], "", [])
+    assert refused and ".git file" in refused[0]
 
 
 def test_inside_a_write_folder_git_and_editor_settings_stay_read_only(home):
@@ -86,26 +96,35 @@ def test_inside_a_write_folder_git_and_editor_settings_stay_read_only(home):
 
 def test_only_the_program_and_its_script_are_opened_never_another_argument(home, monkeypatch):
     import agent_friday.core as core
+    node = "C:/Program Files/nodejs/node.exe" if os.name == "nt" else "/usr/bin/node"
     tools = _folder(home / "Tools" / "server")
-    script = tools / "server.js"
+    (tools / "package.json").write_text("{}", encoding="utf-8")
+    _folder(tools / "dist")
+    script = tools / "dist" / "server.js"
     script.write_text("// synthetic", encoding="utf-8")
     appdata = _folder(home / "AppData" / "Roaming")
     monkeypatch.setenv("APPDATA", str(appdata))
     profile = _folder(appdata / "Browser" / "Profiles" / "x")
     db = profile / "places.sqlite"
     db.write_text("synthetic", encoding="utf-8")
-    read, _w, _k, _r = cf.plan([], "", [str(script), "--db", str(db)])
-    assert tools.resolve() in _paths(read)
+    read, _w, _k, _r = cf.plan([], node, [str(script), "--db", str(db)])
+    assert tools.resolve() in _paths(read)                   # its own package, from package.json
     assert profile.resolve() not in _paths(read), "an argument opened an app-data folder"
+    # A document as the first argument opens nothing; nor does a script for an unknown program.
+    docs = _folder(home / "Documents" / "Tax")
+    (docs / "return.pdf").write_text("synthetic", encoding="utf-8")
+    assert cf.plan([], node, [str(docs / "return.pdf")])[0] == []
+    assert cf.plan([], "", [str(script)])[0] == []
     hidden = _folder(Path(core.FRIDAY_DIR) / "plugins")
+    (hidden / "package.json").write_text("{}", encoding="utf-8")
     bad = hidden / "server.js"
     bad.write_text("// synthetic", encoding="utf-8")
-    read, _w, _k, _r = cf.plan([], "", [str(bad)])
+    read, _w, _k, _r = cf.plan([], node, [str(bad)])
     assert hidden.resolve() not in _paths(read)
     # A program installed per user under %APPDATA%\npm\node_modules: only its own package.
     pkg = _folder(appdata / "npm" / "node_modules" / "@acme" / "mcp-notes" / "dist")
     (pkg / "index.js").write_text("// synthetic", encoding="utf-8")
-    read, _w, _k, _r = cf.plan([], "", [str(pkg / "index.js")])
+    read, _w, _k, _r = cf.plan([], node, [str(pkg / "index.js")])
     assert (appdata / "npm" / "node_modules" / "@acme" / "mcp-notes").resolve() in _paths(read)
     assert (appdata / "npm" / "node_modules").resolve() not in _paths(read)
 
