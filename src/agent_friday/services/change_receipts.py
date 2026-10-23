@@ -64,6 +64,18 @@ def _safe(fn):
     return wrapped
 
 
+def _receipted(domain: str, item_id: str) -> bool:
+    """Whether a recent receipt already records making this item (F3: a repeated create)."""
+    try:
+        for r in _journal().recent(200):
+            if r.get("domain") == domain and r.get("action") == "create" and any(
+                    (i or {}).get("id") == item_id for i in r.get("items") or []):
+                return True
+    except Exception:  # noqa: BLE001 - then the repeat gets its own receipt; Undo still works once
+        return False
+    return False
+
+
 def _title(s: Any, fallback: str) -> str:
     s = str(s or "").strip()
     return (s[:80] + "…") if len(s) > 80 else (s or fallback)
@@ -73,7 +85,9 @@ def _title(s: Any, fallback: str) -> str:
 
 @_safe
 def calendar_created(res: dict, *, conversation_id: Optional[str] = None) -> Optional[dict]:
-    if not (isinstance(res, dict) and res.get("ok") and res.get("id")) or res.get("already_made"):
+    if not (isinstance(res, dict) and res.get("ok") and res.get("id")):
+        return None
+    if res.get("already_made") and _receipted("calendar", res["id"]):
         return None                     # a repeat of a create already receipted (F3)
     t = _title(res.get("title"), "an event")
     return _record("create_calendar_event", "create", "calendar",
@@ -173,7 +187,9 @@ def undo_calendar_row(cw, r: dict) -> bool:
 
 @_safe
 def task_created(res: dict, *, tasklist_id: str, conversation_id: Optional[str] = None) -> Optional[dict]:
-    if not (isinstance(res, dict) and res.get("id") and not res.get("error")) or res.get("already_made"):
+    if not (isinstance(res, dict) and res.get("id") and not res.get("error")):
+        return None
+    if res.get("already_made") and _receipted("tasks", res["id"]):
         return None                     # a repeat of a create already receipted (F3)
     t = _title(res.get("title"), "a task")
     return _record("create_task", "create", "tasks",

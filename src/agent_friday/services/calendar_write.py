@@ -589,8 +589,9 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
             _co._status(e) == 409 or kind == "unconfirmed") else None
         if ev is None:
             if body.get("id") and _co._status(e) == 409:
-                return _fail("create_failed", "An identical event was made and then deleted moments ago "
-                                              "in this request; nothing was changed. Ask again to make it.")
+                return _fail("create_failed", "An event from this same request already exists or was "
+                                              "removed since; nothing new was made. Look at the calendar, "
+                                              "or ask again in a new message to make another.")
             return _fail("create_failed", _co.failed(e, "Google Calendar", account_id=aid))
         already = _co._status(e) == 409
     _drop_calendar_cache()

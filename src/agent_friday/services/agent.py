@@ -2039,7 +2039,7 @@ def _tool_create_calendar_event(inp):
         idempotency_key=_conn_outcome.idem_key("create_calendar_event", inp))
     _receipt_rec = _change_receipts.calendar_created(res, conversation_id=_CURRENT_CONVERSATION.get())
     out = _calendar_write_summary(_with_receipt(res, _receipt_rec), "create that event")
-    if isinstance(res, dict) and res.get("ok"):
+    if isinstance(res, dict) and res.get("ok") and not res.get("already_made"):
         out += _travel_postcheck(res, inp)
     return out
 
