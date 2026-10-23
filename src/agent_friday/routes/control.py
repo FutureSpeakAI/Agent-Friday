@@ -206,6 +206,25 @@ def stop_everything_resume():
 # Friday's own page on this PC (screen_session AND _is_local_request). Revoking
 # only narrows, so any page request may do it.
 
+@control_bp.route('/api/network/egress-record', methods=['GET'])
+@login_required
+def egress_proxy_record():
+    """What commands and connector servers reached through Friday's allow-list proxy
+    (services/egress_proxy): when, which run or server, host, port, allowed or not.
+    No content. Local only: host names are the owner's business."""
+    import agent_friday.core as core
+    if not core._is_local_request():
+        return jsonify({"error": "local only"}), 403
+    from agent_friday.services import egress_proxy as _ep
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 2000))
+    except ValueError:
+        limit = 200
+    return jsonify({"rows": _ep.record(limit),
+                    "note": "Commands and connectors are sent through this proxy; a program that "
+                            "ignores proxy settings is not stopped by it."})
+
+
 @control_bp.route('/api/files/folder-grants', methods=['GET'])
 @login_required
 def folder_grants_list():
