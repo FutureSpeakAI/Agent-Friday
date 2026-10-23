@@ -110,10 +110,39 @@ def _egress_line(i, reason="sent", provider="anthropic"):
                        "channel": "chat"}) + "\n"
 
 
-def test_a_large_egress_log_does_not_slow_each_new_message(tmp_path):
+class _CountingFile:
+    """A file that counts the bytes read through it (text or binary)."""
+
+    def __init__(self, f, counter):
+        self._f, self._n = f, counter
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        self._f.close()
+        return False
+
+    def __iter__(self):
+        for line in self._f:
+            self._n[0] += len(line.encode("utf-8") if isinstance(line, str) else line)
+            yield line
+
+    def read(self, *a):
+        data = self._f.read(*a)
+        self._n[0] += len(data.encode("utf-8") if isinstance(data, str) else data)
+        return data
+
+    def __getattr__(self, name):
+        return getattr(self._f, name)
+
+
+def test_a_large_egress_log_does_not_slow_each_new_message(tmp_path, monkeypatch):
     """Every stored message asks which cloud models saw it (conversation_provenance
     reads the Gemini Live windows from the egress log). The log only grows; a
-    new line must cost the new line, not the whole log again."""
+    new line must cost the new line, not the whole log again - counted in
+    bytes read, so the answer does not depend on the runner's speed."""
+    import builtins
     from agent_friday.services import conversation_provenance as cp
     log = tmp_path / "egress-log.jsonl"
     with open(log, "w", encoding="utf-8") as f:
@@ -122,10 +151,15 @@ def test_a_large_egress_log_does_not_slow_each_new_message(tmp_path):
     first, _ = _timed(cp.gemini_windows, log)
     with open(log, "a", encoding="utf-8") as f:
         f.write(_egress_line(200_001, "live voice session opened", "gemini"))
+    read = [0]
+    real_open = builtins.open
+    monkeypatch.setattr(cp, "open", lambda *a, **k: _CountingFile(real_open(*a, **k), read), raising=False)
     again, windows = _timed(cp.gemini_windows, log)
-    print(f"[perf] egress log windows: first {first * 1000:.1f} ms, after one more line {again * 1000:.1f} ms")
+    size = log.stat().st_size
+    print(f"[perf] egress log windows: first {first * 1000:.1f} ms; after one more line "
+          f"{again * 1000:.1f} ms, {read[0]} of {size} bytes read")
     assert windows and windows[0][0] == 1_700_000_000 + 200_001
-    assert again < max(0.2 * first, 0.02), "one more line re-read the whole egress log"
+    assert read[0] < size // 100, f"one more line re-read the egress log ({read[0]} of {size} bytes)"
 
 
 def test_the_windows_stay_right_when_read_a_piece_at_a_time(tmp_path):
