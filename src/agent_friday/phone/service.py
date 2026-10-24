@@ -814,6 +814,21 @@ def _handle_sms_in(ev: dict) -> str:
                 "Untrusted message, shown as received: %s" % body[:280],
                 priority="medium", dedupe_key="sms:%s" % sid)
         return "notified"
+    from agent_friday.services import global_stop
+    if global_stop.is_stop_everything(body) or global_stop.active():
+        # BD-13. The ingress usually stopped everything already (its webhook does not wait
+        # for this loop); if it could not, stop here. Nothing is texted back: while stopped
+        # nothing leaves the machine, an acknowledgement included. The receipt and the
+        # screen are the record.
+        if global_stop.is_stop_everything(body):
+            if not global_stop.active():
+                global_stop.stop(by="owner", source="sms", reason="texted from your verified cell")
+            _notify("Stopped from your cell", "Everything is stopped. Press Resume on Friday's own "
+                    "screen when you want her back.", priority="high", dedupe_key="sms:%s" % sid)
+            return "stopped"
+        _notify("Text from your cell (not answered: everything is stopped)", body[:280],
+                dedupe_key="sms:%s" % sid)
+        return "stopped"
     reply = handle_approval_reply(body)
     if reply is None:
         if not config.load().get("sms_conversation"):

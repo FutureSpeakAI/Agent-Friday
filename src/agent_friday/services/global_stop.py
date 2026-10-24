@@ -53,7 +53,10 @@ _NEXT = [0]
 _LOADED = [False]
 
 #: Where a stop may come from. Anything else is recorded as "other".
-SOURCES = ("button", "keyboard", "typed", "voice", "tool", "tray", "test", "other")
+#: "sms", "telegram", "discord": the words arrived from the owner's verified cell or an
+#: allowlisted chat (BD-13); resume never comes from these (it is a press on Friday's own page).
+SOURCES = ("button", "keyboard", "typed", "voice", "tool", "tray", "sms", "telegram", "discord",
+           "test", "other")
 
 REFUSAL = ("[NOT RUN] Everything is stopped: the owner pressed Stop. Nothing new runs until "
            "they press Resume on Friday's own screen.")

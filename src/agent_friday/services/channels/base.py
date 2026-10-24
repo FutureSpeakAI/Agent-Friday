@@ -91,6 +91,8 @@ class ChannelAdapter:
         self._stop = threading.Event()
         self._running = False
         self._last_error: Optional[str] = None
+        self._turn_pool = None          # one worker: replies keep their order (BD-13)
+        self._turn_lock = threading.Lock()
 
     # ── configuration ────────────────────────────────────────────────────────
     def configure(self, config: Dict[str, Any]) -> None:
@@ -138,6 +140,10 @@ class ChannelAdapter:
     def stop(self) -> Dict[str, Any]:
         self._stop.set()
         self._running = False
+        with self._turn_lock:
+            pool, self._turn_pool = self._turn_pool, None
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)   # queued turns are dropped, not run
         return {"ok": True}
 
     def _loop(self) -> None:
@@ -201,6 +207,25 @@ class ChannelAdapter:
             return False
 
     # ── inbound dispatch (adapters call this per received message) ────────────
+    def _turns(self):
+        """The adapter's one turn worker. A turn runs there, not on the reading thread, so a
+        slow or stuck turn never stops the next message being read: that message may be
+        "stop everything" (BD-13)."""
+        with self._turn_lock:
+            if self._turn_pool is None:
+                from concurrent.futures import ThreadPoolExecutor
+                self._turn_pool = ThreadPoolExecutor(max_workers=1,
+                                                     thread_name_prefix="channel-%s" % self.name)
+            return self._turn_pool
+
+    @staticmethod
+    def is_stop(text: str) -> bool:
+        try:
+            from agent_friday.services import global_stop
+            return global_stop.is_stop_everything(text)
+        except Exception:
+            return False
+
     def _dispatch(self, chat_id: str, text: str) -> None:
         if not self._handler:
             return
@@ -208,10 +233,24 @@ class ChannelAdapter:
             text = "" if text is None else str(text)
         # Truncate hostile/oversized inbound payloads before the agent loop —
         # adapters also cap, but the shared funnel must not rely on it.
-        reply = self._handler(self.name, str(chat_id), text[:8000])
+        text = text[:8000]
+        if self.is_stop(text):
+            self._deliver(str(chat_id), text)        # at once, on the reading thread
+            return
+        try:
+            self._turns().submit(self._deliver, str(chat_id), text)
+        except RuntimeError as e:                    # the worker was shut down
+            self._last_error = str(e)
+
+    def _deliver(self, chat_id: str, text: str) -> None:
+        try:
+            reply = self._handler(self.name, chat_id, text)
+        except Exception as e:  # noqa: BLE001 - one turn failing never stops the reader
+            self._last_error = str(e)
+            return
         if reply:
             try:
-                self.send(str(chat_id), reply)
+                self.send(chat_id, reply)
             except Exception as e:
                 self._last_error = str(e)
 

@@ -30,8 +30,12 @@ WHAT EVERY REQUEST MUST PASS, in order, and each failure stops it:
 A failed signature also costs the client from a much smaller budget, so a scan
 runs out fast. Bodies over 32 KB are refused before parsing.
 
-What the ingress does NOT do is act. It writes the validated event to the
-spool and answers Twilio with fixed TwiML. Everything else, including deciding
+What the ingress does NOT do is act, with one exception: "stop everything" (the
+words services/global_stop knows) in a signed text from the owner's VERIFIED cell
+stops everything here, at once, before the event is spooled (BD-13). The service
+loop that reads the spool may be busy with a turn that is stuck, and a stop must not
+wait behind it. Stopping is the safe direction: nothing here can resume. Otherwise
+it writes the validated event to the spool and answers Twilio with fixed TwiML. Everything else, including deciding
 what an inbound text means, happens in service.py, with the text marked as
 untrusted input.
 """
@@ -161,6 +165,24 @@ def voicemail_twiml(cfg: dict) -> str:
                quoteattr(base + "/twilio/recording")))
 
 
+def _stop_if_the_owner_says_so(p: dict) -> bool:
+    """BD-13: "stop everything" texted from the verified owner cell stops everything now,
+    on the webhook's own thread. A bare "STOP" is Twilio's opt-out word and is left to Twilio;
+    a stranger's words stop nothing (the service shows them to the owner as untrusted)."""
+    try:
+        from agent_friday.services import global_stop
+        if not global_stop.is_stop_everything(p.get("Body", "")):
+            return False
+        owner = config.verified_owner_cell()
+        if not owner or p.get("From", "") != owner:
+            return False
+        global_stop.stop(by="owner", source="sms", reason="texted from your verified cell")
+        return True
+    except Exception as e:  # noqa: BLE001 - the spooled event still reaches the service
+        _log.error("stop from the phone failed here; the service will try: %s", type(e).__name__)
+        return False
+
+
 def create_app() -> Flask:
     app = Flask("friday_phone_ingress")
     app.config["MAX_CONTENT_LENGTH"] = MAX_BODY
@@ -184,6 +206,7 @@ def create_app() -> Flask:
             return refusal
         kind, _cfg, p = r
         if kind != "replay":
+            _stop_if_the_owner_says_so(p)
             err = _spool("sms_in", p.get("MessageSid", ""), _pick(p, _SMS_FIELDS))
             if err:
                 return err
