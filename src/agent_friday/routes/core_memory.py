@@ -14,7 +14,7 @@ Agent Friday — Memory card API (services/core_memory)
 
 Every write here is the owner's own, so it reaches every open conversation's
 next turn at once (services/prompt_freeze). The two reads are the owner's
-only: an observer credential is refused, the parameters are bounded, and
+only (principal "user"; an observer or any other is refused), the parameters are bounded, and
 neither the query nor a result is logged (services/memory_search).
 """
 from flask import Blueprint, g, jsonify, request
@@ -31,9 +31,10 @@ def _body():
 
 
 def _not_owner():
-    """A read-only observer may never read the owner's memory."""
+    """Only the owner's own principal reads the owner's memory: an observer, or any other principal
+    login_required lets through, is refused (as routes/lanes, routes/traces and the others check it)."""
     try:
-        return getattr(g, "friday_principal", "user") == "observer"
+        return (getattr(g, "friday_principal", "user") or "user") != "user"
     except Exception:
         return True
 

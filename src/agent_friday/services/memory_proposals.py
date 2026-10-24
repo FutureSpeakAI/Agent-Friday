@@ -500,11 +500,13 @@ def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]
     return out
 
 
-def rows(statuses=("pending", "approved"), limit: int = 500,
-         fact_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def rows(statuses=("pending", "approved"), limit: int = 200,
+         fact_id: Optional[str] = None, match=None) -> List[Dict[str, Any]]:
     """Proposals in these states (or the one `fact_id`), newest first, opened,
     for the owner's memory search. A row whose text is gone (a decided meeting
-    suggestion keeps none) or cannot be opened is left out."""
+    suggestion keeps none) or cannot be opened is left out. Each row's text is
+    unsealed once; with `match` (a predicate over the opened text), a row it
+    refuses is dropped before its evidence is unsealed at all."""
     sts = [s for s in (statuses or ()) if s in ("pending", "approved", "rejected")]
     if not sts and not fact_id:
         return []
@@ -528,6 +530,12 @@ def rows(statuses=("pending", "approved"), limit: int = 500,
         text = _open(r[4])
         if not (text or "").strip():
             continue
+        if match is not None:
+            try:
+                if not match(text):
+                    continue
+            except Exception:
+                continue
         d = {"fact_id": r[0], "ts": r[1], "day": r[2], "category": r[3], "text": text,
              "evidence": _open(r[5]), "confidence": r[6], "model": r[7], "status": r[8],
              "decided_ts": r[9]}

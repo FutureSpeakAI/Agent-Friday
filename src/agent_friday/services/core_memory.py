@@ -273,12 +273,63 @@ def _journal_path() -> Path:
     return _dir() / "changes.jsonl"
 
 
+_REF_KEYS: Dict[str, bytes] = {}
+_REF_KEY_LOCK = threading.Lock()
+
+
+def _ref_key_path() -> Path:
+    return _dir() / "line-ref.key"
+
+
+def _ref_key() -> Optional[bytes]:
+    """The local key line refs are made with: minted once, kept next to the
+    card through credential_store (sealed under the vault key or DPAPI when
+    either is there), never sent anywhere. A key file that exists but cannot
+    be read is not replaced (that would orphan every ref): None, no ref."""
+    path = _ref_key_path()
+    k = str(path)
+    if k in _REF_KEYS:
+        return _REF_KEYS[k]
+    with _REF_KEY_LOCK:
+        if k in _REF_KEYS:
+            return _REF_KEYS[k]
+        try:
+            from agent_friday.services import credential_store as _cs
+        except Exception:
+            return None
+        key = None
+        if path.exists():
+            try:
+                key = _cs.read_secret(path)
+            except Exception:
+                return None
+        if not key:
+            import secrets as _secrets
+            key = _secrets.token_bytes(32)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _cs.write_secret(path, key)
+            except Exception:
+                return None
+        _REF_KEYS[k] = key
+        return key
+
+
 def line_ref(text: Any) -> str:
-    """A short hash of one line (cleaned, lower case): how a change record names
-    the line it wrote without keeping a copy of the owner's own words."""
+    """A short keyed hash of one line (cleaned, lower case): how a change
+    record names the line it wrote without keeping a copy of the owner's own
+    words. Keyed (HMAC-SHA256 under a local key, ``_ref_key``), so a short or
+    guessable line cannot be confirmed from the journal by hashing guesses.
+    "" when there is no text or no key."""
     import hashlib
+    import hmac
     t = _clean(text).lower()
-    return hashlib.sha256(t.encode("utf-8")).hexdigest()[:16] if t else ""
+    if not t:
+        return ""
+    key = _ref_key()
+    if not key:
+        return ""
+    return hmac.new(key, t.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
 
 
 def _via(via: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -302,15 +353,18 @@ def _via(via: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return out or None
 
 
-def journal_for(text: str) -> List[Dict[str, Any]]:
+def journal_for(text: str, target: Optional[str] = None) -> List[Dict[str, Any]]:
     """Every change record that wrote this exact line, oldest first: the owner's
-    own (matched by its hash) and Friday's (matched by the text she wrote)."""
+    own (matched by its keyed hash) and Friday's (matched by the text she
+    wrote). With `target`, only that card's records: the same words on the
+    other card are another line."""
     ref, low = line_ref(text), _clean(text).lower()
-    if not ref:
+    if not low:
         return []
     return [r for r in _read_jsonl(_journal_path())
             if r.get("op") in ("add", "replace")
-            and (r.get("line_ref") == ref or _clean(r.get("after") or "").lower() == low)]
+            and (target is None or r.get("target") == target)
+            and ((ref and r.get("line_ref") == ref) or _clean(r.get("after") or "").lower() == low)]
 
 
 def journal_row(change_id: str) -> Optional[Dict[str, Any]]:
@@ -373,13 +427,21 @@ def _purge_text(text: str) -> None:
     def _about_it(r) -> bool:
         old = _clean(r.get("old") or "").lower()
         return bool(old) and old in low
+
+    def _in_via(r) -> bool:
+        # The parsed fields of where a kept line came from (its suggestion's reason, its source), each
+        # compared as text: not a JSON dump, whose escaping (a quote, a newline) would hide the line.
+        via = r.get("via")
+        if not isinstance(via, dict):
+            return False
+        return any(isinstance(v, str) and low in v.lower() for v in via.values())
     for p in (_journal_path(), _pending_path()):
         rows = _read_jsonl(p)
         keep = [r for r in rows
                 if low not in str(r.get("before") or "").lower()
                 and low not in str(r.get("after") or "").lower()
                 and low not in str(r.get("text") or "").lower()
-                and low not in json.dumps(r.get("via") or {}, ensure_ascii=False).lower()
+                and not _in_via(r)
                 and not (ref and r.get("line_ref") == ref)
                 and not _about_it(r)]
         if len(keep) != len(rows):

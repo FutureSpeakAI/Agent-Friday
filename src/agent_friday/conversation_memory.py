@@ -669,11 +669,13 @@ class ConversationMemory:
             print(f"  [MEMORY] get failed (non-fatal): {type(e).__name__}")
             return []
 
-    def delete(self, ids=(), exact_text=None):
+    def delete(self, ids=(), exact_text=None, deleted=None):
         """Remove stored turns for good: the given document ids, and any turn
         whose text is exactly `exact_text` (older turns were stored under a
         random id). Returns how many were removed. For deleting one message
-        from every index at once (services/conversation_fts.delete_message)."""
+        from every index at once (services/conversation_fts.delete_message).
+        A list passed as `deleted` gets the ids that were removed, so the
+        caller can drop them from records that name turns by id."""
         ids = [str(i) for i in (ids or []) if str(i).strip()]
         if not self._ensure():
             return 0
@@ -686,6 +688,8 @@ class ConversationMemory:
                     if found:
                         self._collection.delete(ids=found)
                         removed += len(found)
+                        if isinstance(deleted, list):
+                            deleted.extend(str(i) for i in found)
                 if exact_text and str(exact_text).strip():
                     want = " ".join(str(exact_text).split())
                     res = self._collection.get(include=["documents"])
@@ -694,6 +698,8 @@ class ConversationMemory:
                     if same:
                         self._collection.delete(ids=same)
                         removed += len(same)
+                        if isinstance(deleted, list):
+                            deleted.extend(str(i) for i in same)
         except Exception as e:
             print(f"  [MEMORY] delete failed (non-fatal): {e}")
         return removed

@@ -22,6 +22,7 @@ def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(cm, "_MIGRATION_CHECKED", {str(tmp_path / "core_memory"): True})
     monkeypatch.setattr(mi, "_path", lambda: tmp_path / "recall-log.jsonl")
     monkeypatch.setattr(ms, "_forgotten_names", lambda: set())
+    monkeypatch.setattr(ms, "_forgotten_emails", lambda: set())
     monkeypatch.setattr(ms, "_documents", lambda q: [])
     monkeypatch.setattr(ms, "_memory", lambda: None)
     prompt_freeze.reset()
@@ -44,6 +45,7 @@ def test_the_owner_searches_and_asks_why(client):
 @pytest.mark.parametrize("qs", [
     "", "q=", "q=" + "x" * 201, "q=Wren&kinds=card,nope", "q=Wren&limit=0", "q=Wren&limit=51",
     "q=Wren&limit=lots", "q=Wren&since=yesterday", "q=Wren&until=2026-13",
+    "q=Wren&since=2026-13-45", "q=Wren&until=2026-02-30",
 ])
 def test_search_parameters_are_bounded(client, qs):
     r = client.get("/api/memory/search?" + qs)
@@ -75,6 +77,29 @@ def test_an_observer_credential_never_reads_memory(client, monkeypatch, path):
     r = client.get(path, headers={obs.HEADER: "fobs_test"})
     assert r.status_code == 403
     assert "Wren" not in r.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("principal,refused", [
+    ("user", False), (None, False), ("observer", True), ("paired_phone", True), ("remote", True),
+])
+def test_only_the_owners_own_principal_reads_memory(app, principal, refused):
+    # As routes/lanes and routes/traces check it: "user" only, not "anything but the observer".
+    from flask import g
+    from agent_friday.routes import core_memory as routes
+    with app.test_request_context("/api/memory/search?q=Wren"):
+        if principal is not None:
+            g.friday_principal = principal
+        assert routes._not_owner() is refused
+
+
+def test_a_corrected_card_line_round_trips_through_why(client):
+    cm.add("user", "Moors Wren at Harwich.", actor="friday")
+    cm.replace("user", "Harwich", "Moors Wren at Ipswich.", actor="friday")
+    d = client.get("/api/memory/search?q=Wren+Harwich&kinds=card&superseded=1").get_json()
+    old = next(x for x in d["results"] if x["text"] == "Moors Wren at Harwich.")
+    assert old["kind"] == "card_change"
+    w = client.get("/api/memory/why", query_string={"kind": old["kind"], "id": old["id"]})
+    assert w.status_code == 200 and w.get_json()["ok"], w.get_data(as_text=True)[:300]
 
 
 def test_the_panel_is_in_both_ui_files():

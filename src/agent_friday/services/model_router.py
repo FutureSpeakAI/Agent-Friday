@@ -3006,7 +3006,8 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         # memory_influence): the owner's "why do you know this" reads it.
         try:
             from agent_friday.services import memory_influence as _mi
-            _mi.record("conversation", recalled_ids, session_id=session_id)
+            _mi.record("conversation", recalled_ids, session_id=session_id,
+                       settings=_load_settings())
         except Exception:
             pass
         if not lines:

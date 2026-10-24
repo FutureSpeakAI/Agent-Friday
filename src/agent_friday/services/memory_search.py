@@ -7,8 +7,9 @@ counts:
 
 * ``conversation``  a turn from a past conversation: the full-text index
   (services/conversation_fts) and the vector memory (conversation_memory).
-* ``card``          a line on the memory card (services/core_memory); with
-  ``include_superseded``, also lines Friday replaced or removed.
+* ``card``          a line on the memory card (services/core_memory).
+* ``card_change``   with ``include_superseded``, a line Friday replaced or
+  removed (asked for with the ``card`` kind).
 * ``suggestion``    a change waiting in the memory card's review queue.
 * ``fact``          a user-model fact (services/user_model), with its source.
 * ``proposal``      a suggested fact from the Memory keeper, pending or kept
@@ -27,11 +28,13 @@ fact, its source and confidence; for a proposal, the quote it rests on. Then
 the correction history, and how it was used lately: which turns recalled it
 (services/memory_influence, ids and dates only).
 
-Owner-only, local: the routes are login_required and refuse the observer
-credential. Searching is the owner reading their own data, so nothing here is
-gated by off-record (off-record turns are never stored to begin with). Results
-that name a person the owner asked Friday to forget (services/forget_person)
-are never returned. Nothing here logs a query or a result.
+Owner-only, local: the routes are login_required and serve only the owner's
+own principal ("user"). Searching is the owner reading their own data, so
+nothing here is gated by off-record (off-record turns are never stored to
+begin with). A result, or a why, in which any text names a person the owner
+asked Friday to forget, or carries one of their addresses
+(services/forget_person), is never returned. Nothing here logs a query or a
+result.
 
 Leaf module: no Flask; returns envelopes, never raises to a caller.
 """
@@ -48,6 +51,8 @@ QUERY_MAX = 200
 LIMIT_MAX = 50
 LIMIT_DEFAULT = 20
 ID_MAX = 120
+#: How many of the Memory keeper's newest suggestions one search opens (each is unsealed to be read).
+PROPOSALS_MAX = 200
 
 #: A semantic match below this is noise for a search the owner reads.
 SEMANTIC_FLOOR = 0.35
@@ -84,7 +89,14 @@ def check_params(query: Any, kinds: Any = None, since: Any = None, until: Any = 
         if not ks or len(ks) != len({str(x).strip() for x in raw if str(x).strip()}):
             raise BadRequest("Kinds are: " + ", ".join(KINDS) + ".")
     for name, v in (("since", since), ("until", until)):
-        if v not in (None, "") and not _DAY.match(str(v)):
+        if v in (None, ""):
+            continue
+        # The shape and a real calendar day: 2026-13-45 and 2026-02-30 are refused, not read as no date.
+        try:
+            if not _DAY.match(str(v)):
+                raise ValueError(v)
+            datetime.strptime(str(v), "%Y-%m-%d")
+        except ValueError:
             raise BadRequest(f"{name} is a date like 2026-10-24.")
     try:
         n = LIMIT_DEFAULT if limit in (None, "") else int(limit)
@@ -207,12 +219,52 @@ def _forgotten_names() -> set:
         return set()
 
 
+def _forgotten_emails() -> set:
+    try:
+        from agent_friday.services import forget_person
+        return set(forget_person.forgotten_emails())
+    except Exception:
+        return set()
+
+
 def _titles() -> Dict[str, str]:
     try:
         from agent_friday.services import conversations as cv
         return {c.get("id"): c.get("title") or "" for c in cv.list_all(include_archived=True)}
     except Exception:
         return {}
+
+
+class _Titles:
+    """Conversation titles, read at most once for one request (a search lists them once, not per hit)."""
+
+    def __init__(self):
+        self._map: Optional[Dict[str, str]] = None
+
+    def all(self) -> Dict[str, str]:
+        if self._map is None:
+            self._map = _titles()
+        return self._map
+
+    def get(self, cid: str, default: str = "") -> str:
+        return self.all().get(cid, default) if cid else default
+
+
+def _titles_of(cids) -> Dict[str, str]:
+    """Titles of just these conversations (a why lists at most a few), without listing every one."""
+    out: Dict[str, str] = {}
+    try:
+        from agent_friday.services import conversations as cv
+    except Exception:
+        return out
+    for cid in {str(c) for c in cids if c}:
+        try:
+            conv = cv.load(cid)
+        except Exception:
+            conv = None
+        if conv is not None:
+            out[cid] = conv.get("title") or ""
+    return out
 
 
 def _documents(query: str) -> List[Dict[str, Any]]:
@@ -230,16 +282,50 @@ def _document(doc_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _strings(obj, out: List[str], depth: int = 0) -> List[str]:
+    """Every string in a result or a why, keys and values, at any depth: what the forgotten-people check
+    reads. The parsed strings themselves, not a JSON dump, so an escaped quote or a newline between two
+    words cannot hide a name."""
+    if depth > 12:
+        return out
+    if isinstance(obj, str):
+        out.append(obj)
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            out.append(str(k))
+            _strings(v, out, depth + 1)
+    elif isinstance(obj, (list, tuple, set)):
+        for v in obj:
+            _strings(v, out, depth + 1)
+    elif obj is not None and not isinstance(obj, (int, float, bool)):
+        out.append(str(obj))
+    return out
+
+
 def _forgotten_filter():
-    """A predicate: does this text name someone the owner asked Friday to forget?"""
+    """A predicate over a whole result (or a whole why): does any text in it name someone the owner asked
+    Friday to forget, or carry one of their addresses?
+
+    The same rule forget_person uses for names (redact_forgotten_names) and the stores' purgers
+    (memory_proposals, meeting_capture): the tombstoned name and its aliases, whole words, any case, any
+    run of spaces between the words. An address recorded against a tombstoned person
+    (forget_person.forgotten_emails) matches in any case, not as part of a longer address."""
     pats = []
-    for name in _forgotten_names():
+    for name in sorted(_forgotten_names(), key=len, reverse=True):
         words = [re.escape(w) for w in str(name).split() if w]
         if words:
             pats.append(re.compile(r"\b" + r"\s+".join(words) + r"\b", re.IGNORECASE))
+    for email in _forgotten_emails():
+        e = str(email or "").strip()
+        if "@" in e:
+            pats.append(re.compile(r"(?<![\w.+-])" + re.escape(e) + r"(?![\w-]|\.\w)", re.IGNORECASE))
     if not pats:
-        return lambda *texts: False
-    return lambda *texts: any(p.search(str(t or "")) for p in pats for t in texts)
+        return lambda *objs: False
+
+    def names(*objs) -> bool:
+        hay = "\n".join(_strings(list(objs), []))
+        return any(p.search(hay) for p in pats)
+    return names
 
 
 # ── search ────────────────────────────────────────────────────────────────────
@@ -247,13 +333,13 @@ def _said_by(role: str) -> str:
     return "you" if role == "user" else "Friday"
 
 
-def _conversation(query, terms, since, until, lo, hi, include_superseded, n, notes):
+def _conversation(query, terms, since, until, lo, hi, include_superseded, n, notes, titles=None):
     from agent_friday.services import conversation_fts as fts
     out: Dict[str, Dict[str, Any]] = {}
-    titles = _titles()
+    titles = titles if titles is not None else _Titles()
     try:
         for h in fts.search(query, since=since, until=until, limit=n,
-                            include_superseded=include_superseded):
+                            include_superseded=include_superseded, titles=titles.all):
             mid = str(h.get("message_id") or "")
             if not mid:
                 continue
@@ -287,7 +373,7 @@ def _conversation(query, terms, since, until, lo, hi, include_superseded, n, not
                 except Exception:
                     loc = None
                 cid = (loc or {}).get("conversation_id") or ""
-                title = titles.get(cid, "") if cid else ""
+                title = titles.get(cid, "")
                 date = str(h.get("date") or "")[:10]
                 out[did] = {
                     "kind": "conversation", "id": did, "text": h.get("text") or "",
@@ -336,7 +422,7 @@ def _card(terms, phrase, lo, hi, include_superseded):
             sc = _score(line, terms, phrase)
             if not sc:
                 continue
-            rows = cm.journal_for(line)
+            rows = cm.journal_for(line, target=t)
             row = rows[-1] if rows else None
             ts = float(row.get("ts")) if row and row.get("ts") else None
             if (lo is not None or hi is not None) and not _in_window(ts, lo, hi):
@@ -360,7 +446,8 @@ def _card(terms, phrase, lo, hi, include_superseded):
                 continue
             reason = (f"{_who(r.get('actor'))} changed it to “{r.get('after')}” on {_when(ts)[:10]}"
                       if r.get("op") == "replace" else f"{_who(r.get('actor'))} removed it on {_when(ts)[:10]}")
-            out.append({"kind": "card", "id": f"card_change:{r.get('id')}", "text": before,
+            # Its own kind, so the id goes back to why() as it came: why("card_change", "card_change:<id>").
+            out.append({"kind": "card_change", "id": f"card_change:{r.get('id')}", "text": before,
                         "ts": ts, "when": _when(ts),
                         "source": {"label": "Was on the memory card", "card": r.get("target"),
                                    "change_id": r.get("id")},
@@ -411,7 +498,9 @@ def _facts(terms, phrase, lo, hi):
 def _proposals(terms, phrase, lo, hi):
     from agent_friday.services import memory_proposals as mp
     out = []
-    for p in mp.rows(("pending", "approved")):
+    # Each row is opened once, and its evidence only when its text matches (memory_proposals.rows).
+    for p in mp.rows(("pending", "approved"), limit=PROPOSALS_MAX,
+                     match=lambda text: _score(text, terms, phrase) > 0):
         sc = _score(p.get("text"), terms, phrase)
         ts = float(p.get("ts") or 0) or None
         if not sc or not _in_window(ts, lo, hi):
@@ -441,8 +530,10 @@ def search(query: str, kinds=None, since: Optional[str] = None, until: Optional[
     lo, hi = _day_ts(since), _day_ts(until, end=True)
     notes: List[str] = []
     results: List[Dict[str, Any]] = []
+    titles = _Titles()
     steps = {
-        "conversation": lambda: _conversation(q, terms, since, until, lo, hi, include_superseded, n, notes),
+        "conversation": lambda: _conversation(q, terms, since, until, lo, hi, include_superseded, n, notes,
+                                              titles=titles),
         "card": lambda: _card(terms, phrase, lo, hi, include_superseded),
         "suggestion": lambda: _suggestions(terms, phrase, lo, hi),
         "fact": lambda: _facts(terms, phrase, lo, hi),
@@ -469,9 +560,10 @@ def search(query: str, kinds=None, since: Optional[str] = None, until: Optional[
             notes.append(f"Could not search {k} memory right now.")
     if not include_superseded:
         results = [r for r in results if r["status"] != "superseded"]
+    # Every string a result carries (its text, its source and title, the reason it was corrected, the old
+    # line a suggestion would change, ...), not a chosen few: a forgotten name anywhere drops the result.
     names = _forgotten_filter()
-    kept = [r for r in results if not names(r.get("text"), (r.get("source") or {}).get("label"),
-                                            (r.get("source") or {}).get("conversation_title"))]
+    kept = [r for r in results if not names(r)]
     if len(kept) != len(results):
         notes.append("Results that name someone you asked Friday to forget are not shown.")
     kept.sort(key=lambda r: (-float(r.get("_score") or 0), -float(r.get("ts") or 0)))
@@ -497,14 +589,15 @@ def _influence_conversation(mid: str) -> Dict[str, Any]:
         u = memory_influence.uses("conversation", mid)
     except Exception:
         return {"recorded": False, "summary": "How it was used is not available right now."}
-    titles = _titles()
+    titles = _titles_of(r["session"] for r in u["recent"])
     recent = [{"ts": r["ts"], "when": _when(r["ts"]),
                "conversation_id": r["session"] if r["session"] in titles else None,
                "conversation_title": titles.get(r["session"], "")} for r in u["recent"]]
     if not u["count"]:
-        summary = "No reply has recalled it since Friday began keeping this record."
+        # The record keeps only its newest rows (memory_influence.KEEP), so "never" would overclaim.
+        summary = "No reply has recalled it recently."
     else:
-        summary = (f"Recalled into {u['count']} {'reply' if u['count'] == 1 else 'replies'}; "
+        summary = (f"Recalled into {u['count']} {'reply' if u['count'] == 1 else 'replies'} recently; "
                    f"most recently on {_when(u['last'])[:10]}.")
     return {"recorded": True, "count": u["count"], "first": _when(u["first"]), "last": _when(u["last"]),
             "recent": recent, "summary": summary}
@@ -566,10 +659,12 @@ def _why_card(item_id: str) -> Dict[str, Any]:
     if len(parts) != 3 or parts[1] not in cm.TARGETS:
         return {"ok": False, "error": "That id is not one this search gave."}
     target, ref = parts[1], parts[2]
+    if not ref:
+        return {"ok": False, "error": "That id is not one this search gave."}
     line = next((e for e in cm.entries(target) if cm.line_ref(e) == ref), None)
     if line is None:
         return {"ok": False, "error": "That line is no longer on the memory card."}
-    rows = cm.journal_for(line)
+    rows = cm.journal_for(line, target=target)
     history = []
     added_by = None
     for r in rows:
@@ -658,7 +753,8 @@ def _why_fact(item_id: str) -> Dict[str, Any]:
         try:
             from agent_friday.services import memory_proposals as mp
             low = str(f.get("text") or "").strip().lower()
-            pr = next((p for p in mp.rows(("approved",)) if str(p.get("text") or "").strip().lower() == low), None)
+            same = lambda text: str(text or "").strip().lower() == low      # noqa: E731
+            pr = next(iter(mp.rows(("approved",), limit=PROPOSALS_MAX, match=same)), None)
             if pr:
                 evidence = pr.get("evidence") or ""
                 hist.insert(0, _event(pr.get("ts"), f"Suggested from your conversations on {pr.get('day')}"))
@@ -740,9 +836,9 @@ def why(kind: str, item_id: str) -> Dict[str, Any]:
         out = fn(item_id)
     except Exception:
         return {"ok": False, "error": "Could not look that up right now."}
-    if out.get("ok"):
-        names = _forgotten_filter()
-        src = out.get("source") or {}
-        if names(out.get("text"), src.get("conversation_title"), src.get("replaced_by")):
-            return {"ok": False, "error": "That names someone you asked Friday to forget."}
+    # The whole answer (its text, source, evidence, history and influence), not a few fields: a forgotten
+    # name or address anywhere in it hides the lot.
+    if out.get("ok") and _forgotten_filter()(out):
+        return {"ok": False, "hidden": True, "kind": kind, "id": item_id,
+                "error": "That names someone you asked Friday to forget."}
     return out

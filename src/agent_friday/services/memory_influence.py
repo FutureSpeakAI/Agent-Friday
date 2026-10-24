@@ -8,8 +8,14 @@ the record shows the owner nothing they cannot already read in their own
 conversations. The memory search's "why do you know this"
 (services/memory_search) reads it to say how a remembered turn was used lately.
 
-Nothing is written while the conversation is off the record. The file is
-bounded (``KEEP`` rows). Leaf module: never raises to a caller.
+The search_past_conversations tool (chat and voice) writes a row too, for the
+matches it handed a model.
+
+Nothing is written while the conversation is off the record (the setting,
+whether or not it also stops storage). Deleting a message drops its ids;
+clearing a conversation drops its messages' ids and its own rows. The file
+is bounded (``KEEP`` rows), so it says what was recalled recently, not ever.
+Leaf module: never raises to a caller.
 """
 from __future__ import annotations
 
@@ -19,7 +25,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from agent_friday.paths import friday_home
 
@@ -33,12 +39,17 @@ def _path() -> Path:
     return friday_home() / "memory" / "recall-log.jsonl"
 
 
-def _off_record() -> bool:
+def _off_record(settings: Optional[dict] = None) -> bool:
+    """Is the conversation off the record? The setting itself, as conversation_fts treats an off-record
+    message (never indexed), whether or not ``off_record_stops_storage`` is on: a recall made in an
+    off-record conversation is not recorded either way. ``off_record.active()`` (storage stopped) also
+    counts. When the settings cannot be read, nothing is recorded."""
     try:
         from agent_friday.services import off_record
-        return bool(off_record.active())
+        s = off_record._settings() if settings is None else (settings or {})
+        return bool(s.get("off_record")) or bool(off_record.active(s))
     except Exception:
-        return False
+        return True
 
 
 def _read() -> List[Dict[str, Any]]:
@@ -57,13 +68,18 @@ def _read() -> List[Dict[str, Any]]:
     return out
 
 
-def record(kind: str, refs: Iterable[Any], *, session_id: str = "") -> bool:
-    """Note that these stored items were recalled into one turn's prompt."""
+def record(kind: str, refs: Iterable[Any], *, session_id: str = "",
+           settings: Optional[dict] = None, via: str = "") -> bool:
+    """Note that these stored items were recalled into one turn's prompt (or, `via` "tool", handed to
+    the model by search_past_conversations). `settings` is the turn's own settings when the caller
+    already read them."""
     ids = [str(r)[:64] for r in (refs or []) if str(r or "").strip()][:MAX_REFS]
-    if not ids or _off_record():
+    if not ids or _off_record(settings):
         return False
     row = {"ts": time.time(), "kind": str(kind or "conversation")[:24], "refs": ids,
            "session": str(session_id or "")[:80]}
+    if via:
+        row["via"] = str(via)[:16]
     p = _path()
     try:
         with _LOCK:
@@ -82,6 +98,22 @@ def record(kind: str, refs: Iterable[Any], *, session_id: str = "") -> bool:
         return False
 
 
+def record_tool_hits(hits: Iterable[Dict[str, Any]], session_id: Any = None) -> bool:
+    """search_past_conversations handed these full-text hits (services/conversation_fts) to a model:
+    note their message ids, as a recall into the prompt is noted. The conversation is the tool call's
+    own when `session_id` is not given."""
+    ids = [str(h.get("message_id")) for h in (hits or []) if isinstance(h, dict) and h.get("message_id")]
+    if not ids:
+        return False
+    if session_id is None:
+        try:
+            from agent_friday.services import agent
+            session_id = agent._CURRENT_CONVERSATION.get() or ""
+        except Exception:
+            session_id = ""
+    return record("conversation", ids, session_id=str(session_id or ""), via="tool")
+
+
 def uses(kind: str, ref: str, limit: int = 10) -> Dict[str, Any]:
     """How often, and in which turns lately, this item was recalled: a count,
     the first and last time, and the newest `limit` uses (time and
@@ -98,21 +130,17 @@ def uses(kind: str, ref: str, limit: int = 10) -> Dict[str, Any]:
             "recent": recent}
 
 
-def forget_refs(refs: Iterable[Any]) -> int:
-    """Drop these ids from every row (a deleted message leaves no trace here)."""
-    gone = {str(r) for r in (refs or []) if str(r or "").strip()}
-    if not gone:
-        return 0
+def _rewrite(edit: Callable[[Dict[str, Any]], Any]) -> int:
+    """Rewrite the record through `edit(row)` -> (row or None, how many refs it dropped)."""
     n = 0
     try:
         with _LOCK:
-            rows = _read()
             keep = []
-            for r in rows:
-                left = [x for x in (r.get("refs") or []) if x not in gone]
-                n += len(r.get("refs") or []) - len(left)
-                if left:
-                    keep.append({**r, "refs": left})
+            for r in _read():
+                new, dropped = edit(r)
+                n += dropped
+                if new is not None:
+                    keep.append(new)
             if n:
                 p = _path()
                 tmp = p.with_name(p.name + f".{uuid.uuid4().hex[:8]}.tmp")
@@ -123,3 +151,29 @@ def forget_refs(refs: Iterable[Any]) -> int:
     except Exception:
         return 0
     return n
+
+
+def forget_refs(refs: Iterable[Any]) -> int:
+    """Drop these ids from every row (a deleted message leaves no trace here)."""
+    gone = {str(r) for r in (refs or []) if str(r or "").strip()}
+    if not gone:
+        return 0
+
+    def edit(r):
+        refs_ = r.get("refs") or []
+        left = [x for x in refs_ if x not in gone]
+        return ({**r, "refs": left} if left else None), len(refs_) - len(left)
+    return _rewrite(edit)
+
+
+def forget_session(session_id: Any) -> int:
+    """Drop every row written for this conversation's replies (it was cleared)."""
+    sid = str(session_id or "")[:80]
+    if not sid:
+        return 0
+
+    def edit(r):
+        if (r.get("session") or "") == sid:
+            return None, max(1, len(r.get("refs") or []))
+        return r, 0
+    return _rewrite(edit)
