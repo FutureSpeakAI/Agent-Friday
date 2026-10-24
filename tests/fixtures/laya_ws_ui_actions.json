@@ -118,6 +118,7 @@
    {"id": "contacts.follow_up", "group": "create", "label": "set follow-up", "audit_status": "M"},
    {"id": "contacts.save_google", "group": "create", "label": "save to Google", "audit_status": "M"},
    {"id": "contacts.import_sync", "group": "create", "label": "import LinkedIn / sync", "audit_status": "N"},
+   {"id": "contacts.import_review", "group": "create", "label": "accept / reject / later for imported people", "audit_status": "new"},
    {"id": "contacts.forget_person", "group": "organize", "label": "forget person", "audit_status": "N"},
    {
     "id": "contacts.relationship_config",

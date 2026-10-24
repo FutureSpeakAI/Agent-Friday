@@ -100,6 +100,11 @@
    "reason": "Importing from another service is an account step the owner does themselves."
   },
   {
+   "action": "contacts.import_review",
+   "kind": "by_design",
+   "reason": "Saving an imported person is the owner's own press on this PC; nothing is saved until then."
+  },
+  {
    "action": "contacts.forget_person",
    "kind": "gap",
    "reason": "Deleting a person is a write; it waits for the safe-writes review.",

@@ -927,8 +927,42 @@ MAX_CSV_ROWS = 30000
 _LI_URL = re.compile(r"^https://(?:[a-z]{2,3}\.)?(?:www\.)?linkedin\.com/in/[^\s<>\"']+$", re.I)
 
 
-def import_linkedin_csv(text: str) -> dict:
-    """Read LinkedIn's Connections.csv export into the people graph.
+LINKEDIN_SOURCE = "linkedin_csv"
+LINKEDIN_KIND = "person"
+
+
+def _commit_person(payload: dict) -> dict:
+    """An accepted LinkedIn row becomes a person in the people graph (services/import_staging
+    calls this only on the owner's accept)."""
+    from agent_friday.people_graph import PeopleGraph
+    name = _clean(payload.get("name"))
+    if not name:
+        raise ValueError("no name")
+    email = (payload.get("email") or "").lower()
+    if email and not _EMAIL.match(email):
+        email = ""
+    url = payload.get("linkedin_url") or ""
+    graph = PeopleGraph(friday_dir=core.FRIDAY_DIR)
+    _, was_new = graph.merge_profile(
+        name, emails=[email] if email else [], source="linkedin",
+        company=_clean(payload.get("company")), position=_clean(payload.get("position")),
+        linkedin_url=url if _LI_URL.match(url) else "",
+        connected_on=_clean(payload.get("connected_on")))
+    return {"created": bool(was_new)}
+
+
+def _register_import_kind() -> None:
+    from agent_friday.services import import_staging
+    import_staging.register_kind(LINKEDIN_KIND, _commit_person,
+                                 editable=("name", "email", "company", "position"))
+
+
+def import_linkedin_csv(text: str, preview: bool = False) -> dict:
+    """Read LinkedIn's Connections.csv export into import staging for the owner's review.
+
+    Nothing reaches the people graph here: every row becomes a staged item
+    (services/import_staging) and becomes a person only when the owner accepts
+    it. ``preview=True`` only counts what the file holds and writes nothing.
 
     The file is untrusted data. Every cell is kept as plain text (control
     characters removed, length capped) and never interpreted: a cell that
@@ -960,11 +994,10 @@ def import_linkedin_csv(text: str) -> dict:
             return ""
         return _clean(row[i]) if i < len(row) else ""
 
-    from agent_friday.people_graph import PeopleGraph
-    graph = PeopleGraph(friday_dir=core.FRIDAY_DIR)
     f_names, f_emails = _forgotten()
-    created = updated = forgotten = 0
+    forgotten = 0
     skipped = []
+    rows = []
     for n, row in enumerate(reader, start=head + 2):
         if n - head - 1 > MAX_CSV_ROWS:
             skipped.append({"line": n, "reason": "row limit reached"})
@@ -982,15 +1015,28 @@ def import_linkedin_csv(text: str) -> dict:
             forgotten += 1
             continue
         url = col(row, "url")
-        _, was_new = graph.merge_profile(
-            name, emails=[email] if email else [], source="linkedin",
-            company=col(row, "company"), position=col(row, "position"),
-            linkedin_url=url if _LI_URL.match(url) else "",
-            connected_on=col(row, "connected on"))
-        if was_new:
-            created += 1
-        else:
-            updated += 1
-    return {"ok": True, "created": created, "updated": updated,
-            "skipped": skipped[:50], "skipped_count": len(skipped),
-            "skipped_forgotten": forgotten}
+        company, position = col(row, "company"), col(row, "position")
+        rows.append({
+            # The same person from the same export is the same item (a second import of the file
+            # proposes nothing new, and a rejected row is not proposed again).
+            "key": "%s|%s|%s" % (_norm(name), email, url if _LI_URL.match(url) else ""),
+            "label": name + (" · " + position if position else "") + (" at " + company if company else ""),
+            "payload": {"name": name, "email": email, "company": company, "position": position,
+                        "linkedin_url": url if _LI_URL.match(url) else "",
+                        "connected_on": col(row, "connected on")},
+            "observed_at": col(row, "connected on") or None,
+            "names": [name], "emails": [email] if email else [],
+            "sensitivity": "personal"})
+    base = {"skipped": skipped[:50], "skipped_count": len(skipped), "skipped_forgotten": forgotten}
+    if preview:
+        return dict(base, ok=True, preview=True, rows=len(rows),
+                    with_email=sum(1 for r in rows if r["payload"]["email"]))
+    from agent_friday.services import import_staging
+    _register_import_kind()
+    out = import_staging.stage(LINKEDIN_SOURCE, LINKEDIN_KIND, rows, source_ref="Connections.csv")
+    if not out.get("ok"):
+        return {"ok": False, "error": "The rows could not be staged for review."}
+    return dict(base, ok=True, staged=out["staged"], already_decided=out["already_decided"],
+                skipped_forgotten=forgotten + out["forgotten"],
+                waiting=import_staging.counts(LINKEDIN_SOURCE)["proposed"]
+                + import_staging.counts(LINKEDIN_SOURCE)["deferred"])
