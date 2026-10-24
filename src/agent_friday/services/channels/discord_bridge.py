@@ -81,13 +81,16 @@ class DiscordBridge(ChannelAdapter):
                 return
             text = (message.content or "")[:8000]
             if self.is_stop(text):
-                # "stop everything": handled at once on the gateway loop (BD-13)
-                reply = self._handler(self.name, chat_id, text)
+                # "stop everything" (BD-13): at once, on a thread of its own, not behind a turn
+                # and without holding the gateway loop while the lanes are walked.
+                reply = await asyncio.to_thread(self._handler, self.name, chat_id, text)
             else:
-                # Any other turn runs on the adapter's worker, so a stuck turn never blocks the
-                # gateway loop and the next message (perhaps a stop) is still read.
-                reply = await asyncio.get_running_loop().run_in_executor(
-                    self._turns(), self._handler, self.name, chat_id, text)
+                # Any other turn runs on the adapter's turn worker, so a stuck turn never blocks
+                # the gateway loop and the next message (perhaps a stop) is still read.
+                fut = self.submit_turn(self._handler, self.name, chat_id, text)
+                if fut is None:
+                    return
+                reply = await asyncio.wrap_future(fut)
             if reply:
                 # the same door as every other send: the egress gate and the
                 # action checkpoint's receipt (base.prepare_outbound), then the

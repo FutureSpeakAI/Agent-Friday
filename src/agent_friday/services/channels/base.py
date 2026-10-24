@@ -9,8 +9,11 @@ the adapter sends it.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any, Callable, Dict, Optional
+
+_log = logging.getLogger("friday.channels")
 
 _CHANNEL_SEND_WITHHELD = ("[withheld by egress gate — this message stayed "
                           "on this device]")
@@ -91,7 +94,7 @@ class ChannelAdapter:
         self._stop = threading.Event()
         self._running = False
         self._last_error: Optional[str] = None
-        self._turn_pool = None          # one worker: replies keep their order (BD-13)
+        self._turn_pool = None          # the turn worker's queue (submit_turn; BD-13)
         self._turn_lock = threading.Lock()
 
     # ── configuration ────────────────────────────────────────────────────────
@@ -141,9 +144,21 @@ class ChannelAdapter:
         self._stop.set()
         self._running = False
         with self._turn_lock:
-            pool, self._turn_pool = self._turn_pool, None
-        if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)   # queued turns are dropped, not run
+            q, self._turn_pool = self._turn_pool, None
+        if q is not None:
+            # Turns still waiting are dropped, not run (their messages were already read);
+            # the worker ends after the turn it is running, if any.
+            while True:
+                try:
+                    item = q.get_nowait()
+                except Exception:
+                    break
+                if item is not None:
+                    item[0].cancel()
+            try:
+                q.put_nowait(None)
+            except Exception:
+                pass
         return {"ok": True}
 
     def _loop(self) -> None:
@@ -207,16 +222,49 @@ class ChannelAdapter:
             return False
 
     # ── inbound dispatch (adapters call this per received message) ────────────
-    def _turns(self):
-        """The adapter's one turn worker. A turn runs there, not on the reading thread, so a
-        slow or stuck turn never stops the next message being read: that message may be
-        "stop everything" (BD-13)."""
+    #: Turns waiting behind a running one; more are refused (a flood behind a stuck turn).
+    MAX_QUEUED_TURNS = 50
+
+    def submit_turn(self, fn: Callable[..., Any], *args: Any):
+        """Run `fn(*args)` on the adapter's one turn worker; returns a Future, or None when the
+        turn was refused (the adapter is stopped, or too many are waiting).
+
+        A turn runs there, not on the reading thread, so a slow or stuck turn never stops the
+        next message being read: that message may be "stop everything" (BD-13). One worker keeps
+        replies in order. It is a daemon thread: a stuck turn never holds Friday's exit."""
+        import queue
+        from concurrent.futures import Future
+        fut: Future = Future()
         with self._turn_lock:
+            if self._stop.is_set():
+                self._last_error = "a message arrived after this channel stopped; not run"
+                return None
             if self._turn_pool is None:
-                from concurrent.futures import ThreadPoolExecutor
-                self._turn_pool = ThreadPoolExecutor(max_workers=1,
-                                                     thread_name_prefix="channel-%s" % self.name)
-            return self._turn_pool
+                q: "queue.Queue" = queue.Queue(maxsize=self.MAX_QUEUED_TURNS)
+                threading.Thread(target=self._work, args=(q,), name="channel-%s-turns" % self.name,
+                                 daemon=True).start()
+                self._turn_pool = q
+            try:
+                self._turn_pool.put_nowait((fut, fn, args))
+            except queue.Full:
+                self._last_error = "too many messages waiting behind a slow reply; one was dropped"
+                _log.warning("channel %s: turn queue full, a message was dropped", self.name)
+                return None
+        return fut
+
+    @staticmethod
+    def _work(q) -> None:
+        while True:
+            item = q.get()
+            if item is None:
+                return
+            fut, fn, args = item
+            if not fut.set_running_or_notify_cancel():
+                continue
+            try:
+                fut.set_result(fn(*args))
+            except BaseException as e:  # noqa: BLE001 - handed to whoever waits on the Future
+                fut.set_exception(e)
 
     @staticmethod
     def is_stop(text: str) -> bool:
@@ -237,16 +285,14 @@ class ChannelAdapter:
         if self.is_stop(text):
             self._deliver(str(chat_id), text)        # at once, on the reading thread
             return
-        try:
-            self._turns().submit(self._deliver, str(chat_id), text)
-        except RuntimeError as e:                    # the worker was shut down
-            self._last_error = str(e)
+        self.submit_turn(self._deliver, str(chat_id), text)
 
     def _deliver(self, chat_id: str, text: str) -> None:
         try:
             reply = self._handler(self.name, chat_id, text)
         except Exception as e:  # noqa: BLE001 - one turn failing never stops the reader
             self._last_error = str(e)
+            _log.warning("channel %s: a turn failed: %s", self.name, type(e).__name__)
             return
         if reply:
             try:

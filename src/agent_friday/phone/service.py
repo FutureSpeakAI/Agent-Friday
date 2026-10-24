@@ -821,7 +821,15 @@ def _handle_sms_in(ev: dict) -> str:
         # nothing leaves the machine, an acknowledgement included. The receipt and the
         # screen are the record.
         if global_stop.is_stop_everything(body):
+            resumed_at = float(global_stop.state().get("resumed_at") or 0)
             if not global_stop.active():
+                if float(ev.get("received_at") or time.time()) <= resumed_at:
+                    # A stale stop: it arrived before the owner's last Resume (the ingress
+                    # applied it then; this loop only reached it now). Not applied again.
+                    _notify("Stop text from your cell, already handled",
+                            "It arrived before you pressed Resume, so it was not applied again.",
+                            dedupe_key="sms:%s" % sid)
+                    return "stale_stop"
                 global_stop.stop(by="owner", source="sms", reason="texted from your verified cell")
             _notify("Stopped from your cell", "Everything is stopped. Press Resume on Friday's own "
                     "screen when you want her back.", priority="high", dedupe_key="sms:%s" % sid)
