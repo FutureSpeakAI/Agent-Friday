@@ -600,6 +600,12 @@ def classify_command(cmd: str) -> tuple:
     c = _literal_search_patterns(c)
     if _SELF_API.search(c):
         return "forbidden", "it addresses Friday's own local API"
+    # The file tools' policy, for commands too (services/path_policy, BD-26): no
+    # command, approved or not, reaches Friday's own state, a store of sign-ins,
+    # or a file a shell runs at start-up.
+    zone = _command_forbidden_reason(c)
+    if zone:
+        return "forbidden", zone
     if _DANGEROUS.search(c):
         return OUTWARD, "it chains, redirects, changes or reaches outside"
     if _GROUPING.search(c):
@@ -620,6 +626,139 @@ def classify_command(cmd: str) -> tuple:
     if reach:
         return OUTWARD, reach
     return INTERNAL, "read-only"
+
+
+def _command_path_tokens(cmd: str):
+    """(token, expanded text) for every word of a command that names a path by
+    absolute, home-relative or environment spelling. '..' relatives are left to
+    _command_reach_reason."""
+    import os as _os
+    import re as _re
+    try:
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return
+    for raw in _re.split(r"[\s,;()]+", cmd or ""):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        if not (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
+                or low.startswith(("$env:", "$home", "$pshome", "$profile"))):
+            continue
+        if drive and _os.name != "nt":
+            continue
+        yield tok, _expand_path_text(tok)
+
+
+#: Segment names that are a store of sign-ins or history wherever they appear
+#: (services/path_policy._SIGN_IN_STORES, first segments).
+_SIGN_IN_NAMES = (".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".claude", ".codex",
+                  ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".m2", ".terraform.d",
+                  ".bash_history", ".zsh_history", ".python_history", ".node_repl_history",
+                  ".psql_history", ".mysql_history", ".lesshst", ".viminfo")
+#: Start-up files a command that may write may not name (path_policy._AUTORUN dot-files).
+_AUTORUN_NAMES = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv",
+                  ".gitconfig", ".gitattributes", ".inputrc", ".wgetrc", ".curlrc")
+#: Friday's own output folders inside her state folder (core.DAILY_CREATIONS_DIR,
+#: office_engine.DOCUMENTS_DIR).
+_STATE_OUTPUT_SUBDIRS = ("creations", "documents", "friday-creations")
+#: Spellings of the home folder that may come right before a sign-in or start-up name.
+_HOME_MARKERS = ("~", "$home", "$env:userprofile", "${env:userprofile}", "%userprofile%",
+                 "$env:home", "${env:home}", "%homepath%")
+
+
+def _named_zone(cmd: str, state_name: str, op: str, home_name: str = "") -> str:
+    import fnmatch as _fn
+    import re as _re
+    segs = _re.findall(r"[^\\/\s'\"`,;()|={}<>]+", (cmd or "").casefold())
+    state = (state_name or ".friday").casefold()
+    homes = set(_HOME_MARKERS) | ({home_name.casefold()} if home_name else set())
+
+    def clean(seg: str) -> str:
+        return seg.split("::")[-1].split(":")[-1] if ":" in seg and not seg.startswith("$") else seg
+
+    def state_hit(seg: str) -> bool:
+        if seg == state:
+            return True
+        # A wildcard aimed at the state folder's own name ('.fri*', '.f?iday'): at
+        # least three literal characters, all of them a prefix-compatible pattern.
+        literal = sum(1 for ch in seg if ch not in "*?[]")
+        return (state.startswith(".") and seg.startswith(".") and literal >= 3
+                and any(ch in seg for ch in "*?[") and _fn.fnmatchcase(state, seg))
+
+    for i, raw in enumerate(segs):
+        seg = clean(raw)
+        if not seg:
+            continue
+        # Friday's state folder by name, in any spelling (only a dot-named one: a
+        # bare word like 'friday' is too common to refuse on).
+        if state.startswith(".") and state_hit(seg):
+            nxt = segs[i + 1] if i + 1 < len(segs) else ""
+            if nxt in _STATE_OUTPUT_SUBDIRS:
+                continue
+            return "it reaches Friday's own state folder"
+        # Sign-in stores and start-up files only where they ARE those: right under
+        # the home folder (a project's own .claude/ or .gitattributes is not).
+        prev = clean(segs[i - 1]) if i else ""
+        if prev in homes or raw in homes:
+            if seg in _SIGN_IN_NAMES:
+                return "it reaches a store of sign-ins or history"
+            if op == "write" and seg in _AUTORUN_NAMES:
+                return "it reaches a file run or obeyed at start-up"
+    return ""
+
+
+def _command_forbidden_reason(cmd: str) -> str:
+    """Why a command may not run even with the owner's approval, or "": it names (by
+    segment, in any spelling) Friday's own state folder, a store of sign-ins or history,
+    or, for a command that may write, a file a shell runs at start-up. Text matching:
+    for an APPROVED command (owner integrity) this is the protection; a read-only command
+    also runs at Low integrity, which Windows keeps out of Friday's state folder
+    (code_sandbox.fence_from_low)."""
+    try:
+        from agent_friday.services import path_policy as _pp
+    except Exception:
+        return ""
+    import os as _os
+    from pathlib import Path as _P
+    import agent_friday.core as _core
+    state = _P(_core.FRIDAY_DIR).resolve(strict=False)
+    outs = _pp.output_dirs()
+    # Start-up files are refused to commands that may write; a read-only command
+    # (every stage on the read-only list, nothing chained or redirected) may still
+    # read .gitconfig.
+    heads = [s.strip().split()[0].lower() for s in (cmd or "").split("|") if s.strip()]
+    op = ("read" if heads and all(h in READ_ONLY_COMMANDS for h in heads)
+          and not _DANGEROUS.search(cmd or "") else "write")
+    # By NAME first, whatever the spelling around it: a path segment that is (or a
+    # wildcard that matches) Friday's state folder or a sign-in store refuses. Path
+    # parsing alone misses -Path:x, ${env:..}, FileSystem::, a relative 'cd ~; gc
+    # .friday\x', Join-Path pieces. Matching too much only refuses more; Friday's
+    # own output folders inside the state folder stay allowed.
+    named = _named_zone(cmd, state.name, op, _P(_core.HOME).name)
+    if named:
+        return named
+    for _tok, expanded in _command_path_tokens(cmd):
+        why = _pp._text_reason(expanded)
+        if why:
+            continue                       # judged (and carded) by _command_reach_reason
+        try:
+            # Text only (normalised, not resolved): no filesystem access for a
+            # model-supplied path; a link is caught by the Low fence, not here.
+            p = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
+        except Exception:
+            continue
+        if any(_pp._within(p, d) for d in outs):
+            continue
+        if _pp._within_folded(p, state):
+            return "it reaches Friday's own state folder"
+        zone = _pp.off_limits_reason(p, op) or ""
+        if ("sign-ins" in zone or "start-up" in zone) and _pp._grant_for(p, op) is None:
+            return zone.replace("it is inside", "it reaches", 1)
+    return ""
 
 
 def _command_reach_reason(cmd: str) -> str:
