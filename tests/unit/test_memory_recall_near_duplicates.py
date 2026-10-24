@@ -389,7 +389,9 @@ def test_wiki_context_does_not_spend_its_slots_on_copies_of_one_page(tmp_path, m
     files = [r["file"] for r in out]
     assert "harbour.md" in files, "a distinct page was crowded out by copies: %s" % files
     assert files.count("mooring.md") == 1, files
-    assert out[0]["excerpt"].startswith("---\nupdated: 2026-01-04"), "the excerpt shown changed"
+    # Windows writes text files with CRLF; the excerpt is the file as read.
+    assert out[0]["excerpt"].replace("\r\n", "\n").startswith("---\nupdated: 2026-01-04"), \
+        "the excerpt shown changed"
     assert set(out[0]) == {"file", "excerpt"}
 
 
