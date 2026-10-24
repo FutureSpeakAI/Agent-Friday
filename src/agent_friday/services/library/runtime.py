@@ -62,6 +62,10 @@ def machine_is_free() -> tuple[bool, str]:
         return False, "off the record"
     if _on_battery() and not index_on_battery_allowed():
         return False, "on battery"
+    from agent_friday.services import thermal
+    hot, why = thermal.too_hot()
+    if hot:
+        return False, why
     return True, ""
 
 

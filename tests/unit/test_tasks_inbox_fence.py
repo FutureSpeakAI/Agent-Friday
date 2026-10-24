@@ -35,10 +35,10 @@ def planted(tmp_path, monkeypatch):
     monkeypatch.setattr(ga, "credentials_for", lambda account_id: object())
     monkeypatch.setattr(ga, "_gate_task_text", lambda body: (dict(body), ""))
     monkeypatch.setattr(ga, "_write_task_for_creds",
-                        lambda creds, tasklist_id, body, task_id: writes.append(("write", tasklist_id, task_id)) or
+                        lambda creds, tasklist_id, body, task_id, *_a: writes.append(("write", tasklist_id, task_id)) or
                         {"id": task_id or "new", "title": body.get("title", ""), "status": body.get("status", "")})
     monkeypatch.setattr(ga, "_delete_task_for_creds",
-                        lambda creds, tasklist_id, task_id: writes.append(("delete", tasklist_id, task_id)) or
+                        lambda creds, tasklist_id, task_id, *_a: writes.append(("delete", tasklist_id, task_id)) or
                         {"deleted": True, "id": task_id})
     return writes
 

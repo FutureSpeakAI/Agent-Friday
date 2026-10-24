@@ -45,11 +45,16 @@ from agent_friday.services.calendar_engine import (
 from agent_friday.user_errors import ExceptionText, UserFacingRuntimeError, exception_text
 
 # ── scopes ───────────────────────────────────────────────────────────────────
-# New connections request the fuller set the multi-account feature needs:
-# Gmail (read), Calendar (read/WRITE), Drive (read), Docs (read), Sheets
-# (read), Tasks (read), Contacts (read). Each account records the scopes it
-# was actually granted, so a write (or a not-yet-consented read) is only
-# attempted on accounts that granted it.
+# Read first (BD-06, connector contract): a new connection asks only to READ:
+# Gmail, Calendar, Drive, Docs, Sheets, Tasks and Contacts. Changing the
+# calendar or Google Tasks is asked for separately, per account, only when the
+# owner presses "Allow calendar changes" / "Allow task changes" (Settings ->
+# Connections -> Google; a refused write names the button), on the same terms
+# as sending mail below: `build_auth_flow(include_calendar_write=True)` /
+# `include_tasks_write=True`. Google keeps earlier grants (include_granted_scopes),
+# so an account that already granted writes keeps them. Each account records the
+# scopes it was actually granted, so a write (or a not-yet-consented read) is
+# only attempted on accounts that granted it.
 #
 # Scope growth rule: accounts consented BEFORE a scope was added to this set
 # do not hold it. Their tokens still work for everything already granted,
@@ -58,22 +63,28 @@ from agent_friday.user_errors import ExceptionText, UserFacingRuntimeError, exce
 # never silently. Each account must be reconnected (Settings -> Connections ->
 # Google -> the same Add Account flow) to pick up new scopes.
 #
-# Tasks is requested read/write (TASKS_RW) so complete_task/create_task/
-# update_task/delete_task have something to call; an account that only
-# granted tasks.readonly 403s with a clear per-account error until it is
-# reconnected. TASKS_READ is kept below only so old tokens are still
-# recognized/loadable; it is no longer requested for new connections.
+# A task write on an account that holds only tasks.readonly is refused before
+# Google is called, with the words that say how to allow it (tasks_writable).
 GMAIL_READ = "https://www.googleapis.com/auth/gmail.readonly"
+CALENDAR_READ = "https://www.googleapis.com/auth/calendar.readonly"
 CALENDAR_RW = "https://www.googleapis.com/auth/calendar"
 DRIVE_READ = "https://www.googleapis.com/auth/drive.readonly"
 DOCS_READ = "https://www.googleapis.com/auth/documents.readonly"
 SHEETS_READ = "https://www.googleapis.com/auth/spreadsheets.readonly"
-TASKS_READ = "https://www.googleapis.com/auth/tasks.readonly"  # legacy grant; no longer requested
+TASKS_READ = "https://www.googleapis.com/auth/tasks.readonly"
 TASKS_RW = "https://www.googleapis.com/auth/tasks"
 CONTACTS_READ = "https://www.googleapis.com/auth/contacts.readonly"
 USERINFO_EMAIL = "https://www.googleapis.com/auth/userinfo.email"
-GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_RW, DRIVE_READ, DOCS_READ, SHEETS_READ,
-                       TASKS_RW, CONTACTS_READ, USERINFO_EMAIL]
+GOOGLE_MULTI_SCOPES = [GMAIL_READ, CALENDAR_READ, DRIVE_READ, DOCS_READ, SHEETS_READ,
+                       TASKS_READ, CONTACTS_READ, USERINFO_EMAIL]
+
+#: The write scopes asked for only by their own button, and what each adds.
+CALENDAR_WRITE_SCOPES = (CALENDAR_RW, "https://www.googleapis.com/auth/calendar.events")
+ALLOW_CALENDAR_CHANGES = "Allow calendar changes"
+ALLOW_TASK_CHANGES = "Allow task changes"
+TASKS_NOT_ALLOWED = ("Friday can read this account's Google Tasks but has not been allowed to "
+                     "change them. Press \"%s\" for this account in Settings > Connections > "
+                     "Google, then ask again. Nothing was changed." % ALLOW_TASK_CHANGES)
 
 # Sending mail is NOT in the list above, and that is the whole design.
 #
@@ -110,11 +121,13 @@ _SCOPE_PLAIN = {
     GMAIL_READ: "Read your email",
     GMAIL_SEND: "Send email on your behalf. Each message still waits for your approval card.",
     GMAIL_MODIFY: "Change your mailbox: labels, archive, star, read/unread, and saving drafts. Never permanent delete.",
-    CALENDAR_RW: "See and edit your calendar",
+    CALENDAR_READ: "See your calendar",
+    CALENDAR_RW: "Add, change and delete calendar events. Each change still follows your approval rules.",
     DRIVE_READ: "Read Drive files",
     DOCS_READ: "Read Docs",
     SHEETS_READ: "Read Sheets",
-    TASKS_RW: "Google Tasks",
+    TASKS_READ: "See your Google Tasks",
+    TASKS_RW: "Add, change, complete and delete Google Tasks. Each change still follows your approval rules.",
     CONTACTS_READ: "Read contacts",
     CONTACTS_RW: "Create and edit contacts. Each save still waits for your approval.",
     USERINFO_EMAIL: "See your email address",
@@ -129,6 +142,22 @@ def mailbox_scopes(granted=None) -> list:
     return [{"scope": sc, "what": _SCOPE_PLAIN.get(sc, sc),
              "new": (sc not in have) if have is not None else sc in (GMAIL_SEND, GMAIL_MODIFY)}
             for sc in list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY]]
+
+
+def change_permissions(rec: dict) -> dict:
+    """Whether an account may change its calendar and its Google Tasks (granted, not requested)."""
+    sc = set((rec or {}).get("scopes") or [])
+    return {"calendar": bool(sc & set(CALENDAR_WRITE_SCOPES)), "tasks": TASKS_RW in sc}
+
+
+def tasks_writable(account_id: str) -> bool:
+    """False only when the account's recorded grant is known and lacks the Tasks write scope.
+    (A record without scopes is left to Google, which refuses with its own error.)"""
+    rec = get_account(account_id) if account_id else None
+    scopes = (rec or {}).get("scopes")
+    if not scopes:
+        return True
+    return TASKS_RW in set(scopes)
 
 
 def mail_permissions(rec: dict) -> dict:
@@ -383,6 +412,7 @@ def _public_record(rec: dict) -> dict:
     # raw status, so no surface has to (or gets to) invent its own answer.
     out["health"] = account_health(rec)
     out["mail"] = mail_permissions(rec)
+    out["changes"] = change_permissions(rec)
     return out
 
 
@@ -1463,11 +1493,17 @@ def _inbox_fenced(account_id, tasklist_id) -> bool:
 # completed, or deleted on someone else's list. Each function also requires
 # tasklist_id (except create_task, which may default to "@default") since
 # the Tasks API addresses a task by (tasklist, task), not by task id alone.
-def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | None) -> dict:
-    """Create (task_id=None) or patch (task_id given) one task."""
+def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | None,
+                          account_id: str | None = None) -> dict:
+    """Create (task_id=None) or patch (task_id given) one task.
+
+    A change Google refused, could not be asked for, or did not confirm (a reply that names no
+    task) comes back as an error and is noted as not done (services/connector_outcome)."""
+    from agent_friday.services import connector_outcome as _co
     try:
         from googleapiclient.discovery import build
     except Exception as e:
+        _co.not_done("failed", "Google Tasks")
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
         from agent_friday.services import egress_record as _er
@@ -1476,16 +1512,21 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
             result = svc.tasks().patch(tasklist=tasklist_id, task=task_id, body=body).execute()
         else:
             result = svc.tasks().insert(tasklist=tasklist_id, body=body).execute()
-        return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
-                "status": result.get("status", "needsAction"), "due": result.get("due", "")}
     except Exception as e:
-        return {"error": ExceptionText(f"Tasks write failed: {e}")}
+        return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
+    if not _co.confirmed(result):
+        return {"error": _co.not_done("unconfirmed", "Google Tasks"), "unconfirmed": True}
+    return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
+            "status": result.get("status", "needsAction"), "due": result.get("due", "")}
 
 
-def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
+def _delete_task_for_creds(creds, tasklist_id: str, task_id: str,
+                           account_id: str | None = None) -> dict:
+    from agent_friday.services import connector_outcome as _co
     try:
         from googleapiclient.discovery import build
     except Exception as e:
+        _co.not_done("failed", "Google Tasks")
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
     try:
         from agent_friday.services import egress_record as _er
@@ -1493,7 +1534,15 @@ def _delete_task_for_creds(creds, tasklist_id: str, task_id: str) -> dict:
         svc.tasks().delete(tasklist=tasklist_id, task=task_id).execute()
         return {"deleted": True, "id": task_id}
     except Exception as e:
-        return {"error": ExceptionText(f"Tasks delete failed: {e}")}
+        if _co._status(e) == 410:
+            return {"deleted": True, "id": task_id, "already_gone": True}
+        if _co._status(e) == 404:
+            # nothing was read first, and the ids are the model's: a wrong or stale id is not a
+            # delete that happened
+            _co.not_done("refused", "Google Tasks")
+            return {"error": "That task was not found in that list, so nothing was changed. "
+                             "List the tasks again to get its current id.", "not_found": True}
+        return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
 
 
 def _gate_task_text(body: dict) -> tuple[dict, str]:
@@ -1522,6 +1571,16 @@ def _gate_task_text(body: dict) -> tuple[dict, str]:
     return out, ""
 
 
+def _no_task_credentials(account_id: str) -> dict:
+    """The account produced no credentials before a Tasks change: nothing was sent. `error` keeps
+    its code ("needs_reauth", or "unreachable" when the refresh never got an answer) and
+    `message` says what to do."""
+    from agent_friday.services import connector_outcome as _co
+    message = _co.no_credentials(account_id, "Google Tasks")
+    code = "unreachable" if last_problem(account_id) == "unreachable" else "needs_reauth"
+    return {"error": code, "message": message, "account_id": account_id}
+
+
 def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict) -> dict:
     """Shared account-resolution + audit wrapper for complete/update/create."""
     body, gate_err = _gate_task_text(body)
@@ -1533,12 +1592,15 @@ def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body
     if not tasklist_id:
         return {"error": "tasklist_id is required for a task write — call "
                          "list_tasks first to find it."}
+    if not tasks_writable(account_id):
+        return {"error": TASKS_NOT_ALLOWED, "needs_permission": "tasks_write",
+                "account_id": account_id}
     if _inbox_fenced(account_id, tasklist_id):
         return {"error": INBOX_FENCE_REFUSAL, "fenced": True}
     creds = credentials_for(account_id)
     if not creds:
-        return {"error": "needs_reauth", "account_id": account_id}
-    result = _write_task_for_creds(creds, tasklist_id, body, task_id)
+        return _no_task_credentials(account_id)
+    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id)
     ok = "error" not in result
     cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
                    success=ok, error=None if ok else result.get("error"))
@@ -1595,12 +1657,15 @@ def delete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
         return {"error": "account_id, tasklist_id, and task_id are all "
                          "required for a task delete — call list_tasks first "
                          "to find them. Never guessed."}
+    if not tasks_writable(account_id):
+        return {"error": TASKS_NOT_ALLOWED, "needs_permission": "tasks_write",
+                "account_id": account_id}
     if _inbox_fenced(account_id, tasklist_id):
         return {"error": INBOX_FENCE_REFUSAL, "fenced": True}
     creds = credentials_for(account_id)
     if not creds:
-        return {"error": "needs_reauth", "account_id": account_id}
-    result = _delete_task_for_creds(creds, tasklist_id, task_id)
+        return _no_task_credentials(account_id)
+    result = _delete_task_for_creds(creds, tasklist_id, task_id, account_id)
     ok = "error" not in result
     cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
                    success=ok, error=None if ok else result.get("error"))
@@ -1714,7 +1779,8 @@ def active_client_kind() -> str:
 
 
 def build_auth_flow(state: str | None = None, include_send: bool = False,
-                    include_modify: bool = False, include_contacts_write: bool = False):
+                    include_modify: bool = False, include_contacts_write: bool = False,
+                    include_calendar_write: bool = False, include_tasks_write: bool = False):
     """Construct an OAuth Flow for a new account connection. Returns
     (flow, redirect_uri, client_type) or raises with a clear message.
 
@@ -1724,7 +1790,9 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
     clicking through at speed. BOTH legs of the OAuth round-trip must pass the
     same value — the callback rebuilds this flow from scratch, and a mismatch
     changes what the token is exchanged for. `include_contacts_write` adds
-    CONTACTS_RW on the same terms.
+    CONTACTS_RW on the same terms, and `include_calendar_write` /
+    `include_tasks_write` add CALENDAR_RW / TASKS_RW (read first: an ordinary
+    connect asks only to read the calendar and Tasks).
     """
     # Bundled client first-resort, the user's own always winning -- see
     # services/google_oauth_client.active_client for why that order matters.
@@ -1750,6 +1818,10 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
         scopes.append(GMAIL_MODIFY)
     if include_contacts_write:
         scopes.append(CONTACTS_RW)
+    if include_calendar_write:
+        scopes.append(CALENDAR_RW)
+    if include_tasks_write:
+        scopes.append(TASKS_RW)
     flow = Flow.from_client_config(
         cfg, scopes=scopes, redirect_uri=redirect_uri, state=state
     )

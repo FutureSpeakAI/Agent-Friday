@@ -19,11 +19,16 @@ import agent_friday.core as core
 from agent_friday.services import media_index as mi
 
 
+#: Friday's own install record: the first settings read in a home decides and
+#: writes it (core.install_origin, the daily-cap card), whichever call that is.
+_FRIDAY_STATE = {"install_choices.json"}
+
+
 def _digest(root: Path) -> dict:
     out = {}
     for p in sorted(root.rglob("*")):
         # Media's own files and the credentials it writes are new files, never rewrites of an original.
-        if p.is_file() and p.name != "index.sqlite" and "media" not in p.parts and "provenance" not in p.parts and not p.name.endswith(("-shm", "-wal")):
+        if p.is_file() and p.name != "index.sqlite" and p.name not in _FRIDAY_STATE and "media" not in p.parts and "provenance" not in p.parts and not p.name.endswith(("-shm", "-wal")):
             out[str(p.relative_to(root))] = hashlib.sha1(p.read_bytes()).hexdigest()
     return out
 
@@ -55,9 +60,6 @@ def home(tmp_path, monkeypatch):
     # bound from FRIDAY_DIR when provenance is first imported, which may be here:
     # Media's credentials mint the owner's id there, never among the originals
     monkeypatch.setattr(provenance, "_USER_ID_FILE", fd / "provenance" / "user_id", raising=False)
-    # an existing install's record, as Friday keeps it: otherwise the first
-    # settings read in this home (perhaps during a re-index) decides and writes it
-    core.update_install_choices_state(install=core.EXISTING_INSTALL)
     monkeypatch.setattr(approvals, "APPROVALS_FILE", fd / "approvals.json", raising=False)
 
     # a creation with its sidecar

@@ -32,7 +32,8 @@ def world(tmp_path, monkeypatch):
     state = {k: dict(v) for k, v in EVENTS.items()}
     calls = []
 
-    def get_event(eid, account_id=None):
+    def get_event(eid, account_id=None, calendar_id="primary", for_write=False):
+        assert for_write, "a move plan reads the event for a change (read first, BD-06)"
         if eid not in state:
             return {"error": "could not read event %s" % eid}
         e = state[eid]
