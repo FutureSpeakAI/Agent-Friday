@@ -134,7 +134,7 @@ ROUTE_MODULES = [
     'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'privacy_map', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
-    'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'todos', 'traces',
+    'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'tasks_inbox', 'todos', 'traces',
     'work_plan', 'updates', 'user_model', 'voice', 'voice_context', 'wiki', 'work_log', 'workflows',
     'workspace_bundles', 'workspace_studio', 'workspace_undo',
 ]

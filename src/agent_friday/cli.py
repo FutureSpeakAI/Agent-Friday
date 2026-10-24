@@ -1565,6 +1565,11 @@ examples:
     p_export.add_argument("--full", action="store_true",
                           help="Include keys and credentials, encrypted with a "
                                "passphrase you type")
+    p_export.add_argument("--readable", action="store_true",
+                          help="Write your data as plain files instead (Markdown, CSV, JSON): "
+                               "wiki, memories, conversations, goals, receipts, contacts, settings")
+    p_export.add_argument("--only", metavar="CATS",
+                          help="With --readable: comma-separated categories to include")
     p_decrypt = sub.add_parser(
         "decrypt-backup", help="Turn a `friday export --full` backup back into a zip")
     p_decrypt.add_argument("file", help="The .fbak file")
@@ -1702,6 +1707,30 @@ def _ask_backup_passphrase() -> str:
     return ""
 
 
+def cmd_export_readable(out: str | None = None, only: str | None = None) -> int:
+    """The human-readable export (services/readable_export.py): plain files
+    the owner can open without Friday, in a new folder under --out (default:
+    Documents/Friday Exports)."""
+    from agent_friday.services import friday_bundle, readable_export
+    parent = Path(out).expanduser() if out else friday_bundle.documents_dir() / "Friday Exports"
+    cats = [c.strip() for c in only.split(",") if c.strip()] if only else None
+    if readable_export.cloud_synced(parent):
+        print("Note: %s looks like a folder a sync service copies off this PC; the export is "
+              "not encrypted. Use --out to choose another folder." % parent)
+    try:
+        r = readable_export.export(parent, only=cats, by="owner:cli")
+    except readable_export.ExportError as e:
+        print("Not exported: %s" % e)
+        return 1
+    print("Exported %d files to %s" % (r["files"], r["folder"]))
+    for c, n in r["counts"].items():
+        print("  %-14s %d" % (c, n))
+    for n in r["notes"]:
+        print("  note: %s" % n)
+    print("It is your data, unencrypted: keep the folder somewhere safe.")
+    return 0
+
+
 def cmd_export(full: bool = False, out: str | None = None,
                passphrase: str | None = None):
     """Right of access: package the owner's Friday data into one archive.
@@ -1725,9 +1754,14 @@ def cmd_export(full: bool = False, out: str | None = None,
     if dest is None:
         return 1
 
+    from agent_friday.services import whole_file
+    # A run killed half-way leaves no torn archive under the real name, and its
+    # hidden partial file is cleared by the next export to this folder.
+    whole_file.sweep_partials(dest.parent, r"^friday-(backup|data-export)-")
     if not full:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        counts = _write_export_zip(dest, full=False)
+        counts = {}
+        whole_file.write_whole(dest, writer=lambda f: counts.update(
+            _write_export_zip(f, full=False)))
     else:
         if passphrase is None:
             console.print("  A full backup includes the keys that decrypt your stored API\n"
@@ -1744,8 +1778,7 @@ def cmd_export(full: bool = False, out: str | None = None,
         counts = _write_export_zip(buf, full=True)
         salt = os.urandom(_BACKUP_SALT_LEN)
         key = vc.derive_key(passphrase, salt, _backup_profile())
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(_BACKUP_MAGIC + salt + vc.encrypt(buf.getvalue(), key))
+        whole_file.write_whole(dest, _BACKUP_MAGIC + salt + vc.encrypt(buf.getvalue(), key))
 
     size_mb = dest.stat().st_size / (1024 * 1024)
     console.print(f"[green]Exported {counts['files']} files[/green] ({size_mb:.1f} MB) → [bold]{dest}[/bold]")
@@ -1787,7 +1820,12 @@ def cmd_decrypt_backup(src: str, out: str | None = None,
     dest = _export_destination(out or str(p.parent), p.with_suffix(".zip").name)
     if dest is None:
         return 1
-    dest.write_bytes(data)
+    from agent_friday.services import whole_file
+    # A decrypt killed half-way left readable keys in a hidden partial file:
+    # clear any before writing (and this one never takes the name torn).
+    import re as _re
+    whole_file.sweep_partials(dest.parent, r"^friday-backup-|^%s$" % _re.escape(dest.name))
+    whole_file.write_whole(dest, data)
     console.print(f"[green]Decrypted[/green] → [bold]{dest}[/bold]  [dim]It holds your "
                   "keys in readable form; delete it once restored.[/dim]")
     return 0
@@ -2330,6 +2368,8 @@ def main():
         rv = cmd_skills(delete_name=getattr(args, "delete", None))
     elif cmd == "vault-setup":
         rv = cmd_vault_setup()
+    elif cmd == "export" and getattr(args, "readable", False):
+        rv = cmd_export_readable(out=getattr(args, "out", None), only=getattr(args, "only", None))
     elif cmd == "export":
         rv = cmd_export(full=getattr(args, "full", False),
                         out=getattr(args, "out", None))
