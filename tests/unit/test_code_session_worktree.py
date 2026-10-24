@@ -323,3 +323,16 @@ def test_an_in_place_task_is_not_held_to_a_worktree(env):
     entry = _launch(env, "t10", notes)
     entry["status"] = "running"
     assert env.cct.gate("t10", entry["token"], "Bash", {"command": "git status"})["decision"] == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    "pwsh" * 20000,                      # the shell's name, over and over, with no space
+    "<<EOF\n" * 30000,                   # heredoc markers that never close
+    "powershell " + "-e " * 20000,
+], ids=["shell-name-run", "unclosed-heredocs", "many-flags"])
+def test_a_long_command_is_read_in_linear_time(command):
+    import time
+    assert cwt is not None, "no services/code_worktree on this tree"
+    started = time.perf_counter()
+    cwt._git_refusal(command)
+    assert time.perf_counter() - started < 2.0, "a command the session sends must not stall the gate"
