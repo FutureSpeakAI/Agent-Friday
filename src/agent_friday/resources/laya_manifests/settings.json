@@ -178,6 +178,7 @@
   {"action": "settings.preapproved_sends", "kind": "by_design", "reason": "A pre-approval is the owner's own decision: no tool may make, widen, re-approve or revoke one, or let voice use them; a skill's needs are approved as seen."},
   {"action": "settings.connectors", "kind": "by_design", "reason": "Connectors, accounts and keys are owner-only."},
   {"action": "settings.ai_history_import", "kind": "by_design", "reason": "Choosing an export file is the owner's own step, and saving an imported conversation is their press on this PC."},
+  {"action": "settings.tasks_inbox", "kind": "by_design", "reason": "Turning on the Google Tasks list, more text to Google and removing it are a press on this PC; voice can open the section."},
   {"action": "settings.locks_windows_page", "kind": "by_design", "reason": "Opens a Windows settings page on the owner's own press; the Locks lines themselves are read by opening the section."},
   {"action": "settings.connections_local_only", "kind": "by_design", "reason": "Choosing local AI only is the owner's press on Connect your services; by voice, \"connect local AI\" opens that card."},
   {"action": "settings.connection_test", "kind": "by_design", "reason": "A test sends the stored key to its provider, so it is the owner's press on the card the voice opened."},

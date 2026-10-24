@@ -38,6 +38,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -98,12 +99,26 @@ def _read_attempt() -> dict:
         return {"consecutive_failures": 0, "last_start": None, "last_ok": None}
 
 
-def _write(path: Path, obj) -> None:
+def _write(path: Path, obj) -> bool:
+    """Whole or not at all (stdlib only, like the rest of this module): a start
+    killed mid-write leaves the previous record, never a torn one that reads as
+    "no failures, no restore pending"."""
+    tmp = path.with_name(".%s.partial-%d-%d" % (path.name, os.getpid(), threading.get_ident()))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(obj, indent=2, default=str))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        return True
     except Exception as e:
         _log.warning("boot_guard: could not write %s: %s", path.name, e)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
 
 
 def note(message: str, **fields) -> None:
@@ -145,6 +160,10 @@ def mark_boot_started() -> dict:
     failure, which is what makes this detect a crash during boot rather than
     only a crash that had time to report itself.
     """
+    try:
+        finish_interrupted_restore()
+    except Exception as e:
+        _log.error("boot_guard: could not finish an interrupted rollback: %s", e)
     a = _read_attempt()
     if a.get("last_start") and not a.get("last_start_completed", True):
         a["consecutive_failures"] = int(a.get("consecutive_failures", 0)) + 1
@@ -467,6 +486,107 @@ def _verify_snapshot(manifest: dict) -> tuple:
     return True, None
 
 
+def _journal() -> Path:
+    """The rollback journal (follows STATE_DIR, which tests point elsewhere)."""
+    return STATE_DIR / "restore_journal.json"
+
+
+_INCOMING = ".friday-restore-incoming-"
+_ASIDE = ".friday-restore-aside-"
+
+
+def _swap_paths(p: Path, slug: str) -> tuple:
+    """Where a restore stages a path's known-good copy and where it sets the
+    live one aside: beside the path itself, so each swap is a rename on one
+    volume rather than a copy that a kill can catch half-way."""
+    return p.parent / (_INCOMING + slug), p.parent / (_ASIDE + slug)
+
+
+def _remove(p: Path) -> None:
+    if p.is_dir() and not p.is_symlink():
+        shutil.rmtree(p, ignore_errors=True)
+    else:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def finish_interrupted_restore() -> dict:
+    """Repair a rollback that was killed part-way (north star NS-34.16-3).
+
+    restore_known_good() writes a journal before it touches any live path and
+    removes it when it is done, so a journal here means the process died in
+    between. It ROLLS BACK: a path that is gone gets back the live copy that had
+    been set aside; only a path that was already missing before the rollback
+    gets the staged known-good copy (staged copies are complete: they take
+    their name only after the copy finished). Leftovers are cleared. If the
+    start is still failing, the guard then runs the rollback again from the
+    beginning, guarded-settings clamp included. Nothing is touched in safe mode.
+
+    The live package itself cannot be repaired from here (this module is inside
+    it); the repository-root launcher (server.py) puts a set-aside package back
+    before it starts anything. Returns what it did ({} when nothing to do)."""
+    if safe_mode():
+        return {}
+    try:
+        text = _journal().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        # A scanner holding the file for a moment: leave the journal for the
+        # next start rather than lose it.
+        _log.warning("boot_guard: could not read the rollback journal now: %s", e)
+        return {}
+    try:
+        journal = json.loads(text)
+    except ValueError:
+        journal = {}
+    if not isinstance(journal, dict):
+        journal = {}
+    put_back, filled, problems = [], [], []
+    for e in (journal.get("entries") or []):
+        try:
+            p, incoming, aside = Path(e["target"]), Path(e["incoming"]), Path(e["aside"])
+        except Exception:
+            continue
+        try:
+            if not p.exists() and not p.is_symlink():
+                if aside.exists():
+                    os.rename(aside, p)
+                    put_back.append(str(p))
+                elif incoming.exists():
+                    os.rename(incoming, p)
+                    filled.append(str(p))
+                else:
+                    problems.append({"path": str(p), "error": "missing, and no copy to put back"})
+            for left in (incoming, Path(str(incoming) + ".partial")):
+                if left.exists():
+                    _remove(left)
+            if aside.exists():
+                failed = Path(e.get("failed") or (STATE_DIR / "failed" / "interrupted"))
+                failed.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.move(str(aside), str(failed))
+                except Exception:
+                    problems.append({"path": str(p), "error": "set-aside copy left in %s" % aside})
+        except Exception as ex:
+            problems.append({"path": str(p), "error": str(ex)})
+    if not problems:
+        # Kept while anything is unrepaired, so the next start tries again.
+        try:
+            _journal().unlink()
+        except OSError:
+            pass
+    if put_back or filled or problems:
+        note("A rollback was interrupted. " + (
+             "Files it had moved are back in their place." if not problems else
+             "Some files could not be put back yet; Friday tries again at the next start."),
+             put_back=put_back, filled_from_known_good=filled, problems=problems or None,
+             takes_effect="If Friday still cannot start, the rollback runs again from the beginning.")
+    return {"put_back": put_back, "filled": filled, "problems": problems or None}
+
+
 def restore_known_good() -> dict:
     """Put the self-editable surfaces back to the last PROVEN-bootable state.
 
@@ -490,6 +610,14 @@ def restore_known_good() -> dict:
         return {"ok": False, "skipped": "safe mode — nothing restored so the "
                                         "broken state can be inspected"}
 
+    finish_interrupted_restore()
+    if _journal().exists():
+        # An earlier rollback could not be repaired yet (its journal could not
+        # be read, or a path could not be put back). Starting another would
+        # clear the copies that repair still needs.
+        note("Did not roll back: an earlier interrupted rollback is not repaired yet.",
+             journal=str(_journal()))
+        return {"ok": False, "error": "an earlier interrupted rollback is not repaired yet"}
     attempt = _read_attempt()
     if attempt.get("restore_pending"):
         return {"ok": False, "skipped": (
@@ -510,50 +638,81 @@ def restore_known_good() -> dict:
     failed_dir = STATE_DIR / "failed" / stamp
     failed_dir.mkdir(parents=True, exist_ok=True)
 
+    entries = manifest.get("entries") or {}
+    # The journal goes down before any live path is touched (NS-34.16-3): a
+    # kill anywhere below leaves it, and the next start's
+    # finish_interrupted_restore() makes every named path whole again.
+    plan = []
+    for target, meta in entries.items():
+        p = Path(target)
+        incoming, aside = _swap_paths(p, meta["slug"])
+        plan.append({"target": target, "incoming": str(incoming), "aside": str(aside),
+                     "failed": str(failed_dir / meta["slug"])})
+    if not _write(_journal(), {"started": stamp, "entries": plan}):
+        # Without the journal a kill below could not be repaired: do nothing.
+        note("Did not roll back: the rollback journal could not be written.")
+        return {"ok": False, "error": "the rollback journal could not be written"}
+
     restored, kept, problems = [], [], []
-    for target, meta in (manifest.get("entries") or {}).items():
+    for target, meta in entries.items():
         p = Path(target)
         stored = KNOWN_GOOD / meta["slug"]
-        staged = STATE_DIR / "restore_staging" / meta["slug"]
-        shutil.rmtree(staged.parent, ignore_errors=True)
+        staged, aside = _swap_paths(p, meta["slug"])
+        partial = Path(str(staged) + ".partial")
+        # Anything left here is from an earlier run that the repair above has
+        # already dealt with: a stale copy would only block the renames.
+        for left in (staged, partial, aside):
+            _remove(left)
         try:
             # Copy out of the store first, so the store itself is never the
-            # thing that gets moved and a failure here changes nothing.
-            _copy_into(stored, staged)
-            if p.exists():
-                shutil.move(str(p), str(failed_dir / meta["slug"]))
-                kept.append(target)
+            # thing that gets moved and a failure here changes nothing. The
+            # copy is staged BESIDE the live path: the swap below is then two
+            # renames on one volume, not a copy a kill can catch half-way.
             p.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(staged), str(p))
-            restored.append(target)
-            if p.name == "settings.json" and p.is_file():
+            _copy_into(stored, partial)
+            if p.name == "settings.json" and partial.is_file():
                 # A rollback is not the owner's click: a guarded setting (Laya's safe
                 # writes) comes back no wider than the live file had it, and a live
-                # file that is gone counts as the default, off.
+                # file that is gone counts as the default, off. Narrowed BEFORE the
+                # copy takes the live name, so no kill can leave it wider.
                 try:
-                    if _guarded_settings.clamp_file(p, (failed_dir / meta["slug"]) if target in kept else None):
+                    if _guarded_settings.clamp_file(partial, p if p.is_file() else None):
                         _log.warning("boot_guard: kept a guarded setting no wider than it was before the rollback")
                 except Exception as e:
                     _log.error("boot_guard: could not narrow the guarded settings in %s: %s", target, e)
                     problems.append({"path": target, "error": "guarded settings not narrowed: %s" % e})
+                    continue        # never put a wider settings file in place
+            os.rename(partial, staged)      # complete copies only take the name
+            if p.exists():
+                os.rename(p, aside)
+                kept.append(target)
+            os.rename(staged, p)
+            restored.append(target)
+            if aside.exists():
+                shutil.move(str(aside), str(failed_dir / meta["slug"]))
         except Exception as e:
             _log.error("boot_guard: could not restore %s: %s", target, e)
             problems.append({"path": target, "error": str(e)})
             # Put the live state back rather than leaving a hole.
-            aside = failed_dir / meta["slug"]
-            if aside.exists() and not p.exists():
-                try:
-                    shutil.move(str(aside), str(p))
-                except Exception:
-                    problems.append({"path": target,
-                                     "error": "left in %s" % aside})
+            for back in (aside, failed_dir / meta["slug"]):
+                if back.exists() and not p.exists():
+                    try:
+                        shutil.move(str(back), str(p))
+                    except Exception:
+                        problems.append({"path": target,
+                                         "error": "left in %s" % back})
         finally:
-            shutil.rmtree(staged.parent, ignore_errors=True)
+            _remove(staged)
+            _remove(partial)
 
     attempt["consecutive_failures"] = 0
     attempt["restore_pending"] = True
     attempt["restored_at"] = datetime.now().isoformat(timespec="seconds")
     _write(ATTEMPT_FILE, attempt)
+    try:
+        _journal().unlink()
+    except OSError:
+        pass
 
     takes_effect = ("Source changes land on the next start — this process "
                     "already loaded its code before the rollback ran.")
