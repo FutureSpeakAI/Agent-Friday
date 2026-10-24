@@ -5,13 +5,17 @@ The service module -- propose()/pending()/approve()/reject()/state() --
 needs a caller in the running app, and its own docstring is explicit that
 this is meant to be manual-first: "propose() is something the user RUNS, and
 its output is shown to them before any of it becomes durable." These routes
-are that door. No UI consumes them yet -- where review lives in the app is a
-separate, real design decision left for later.
+are that door. The Meetings view (static/meetings_ws.js) reviews a meeting's
+suggestions through them: Keep, Edit and keep, Not now, and "Don't suggest
+things like this".
 
   POST /api/memory/proposals/propose    — read a day, stage candidate facts
   GET  /api/memory/proposals/pending    — facts awaiting review
   POST /api/memory/proposals/approve    — promote reviewed facts to durable memory
+                                          ({fact_ids: [id], text}: keep the owner's edit of one)
   POST /api/memory/proposals/reject     — discard proposals
+  POST /api/memory/proposals/suppress   — {fact_id}: discard it and don't suggest things like it
+                                          (rules are listed and removed under /api/core-memory/suppressed)
   GET  /api/memory/proposals/state      — counts + whether the seat is usable
 """
 import traceback
@@ -59,11 +63,30 @@ def api_memory_proposals_approve():
         # model may later be told: only a click on the screen keeps it.
         return jsonify({"ok": False, "reason": "A suggestion from a meeting is kept only from the Meetings view in the "
                                               "Friday window."}), 403
+    ids = data.get("fact_ids") or []
+    text = data.get("text")
+    edits = None
+    if text is not None:
+        # "Edit and keep": the owner's own wording of exactly one suggestion.
+        if not isinstance(text, str) or len(ids) != 1:
+            return jsonify({"ok": False, "reason": "An edit keeps one suggestion: send one fact id and the text."})
+        edits = {str(ids[0]): text}
     try:
-        return jsonify(mp.approve(data.get("fact_ids") or []))
+        return jsonify(mp.approve(ids, edits=edits))
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't approve the memory", shape="ok", key="reason")
+
+
+@memory_proposals_bp.route("/api/memory/proposals/suppress", methods=["POST"])
+@login_required
+def api_memory_proposals_suppress():
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify(mp.suppress(str(data.get("fact_id") or "")))
+    except Exception as e:
+        traceback.print_exc()
+        return api_error(e, "Couldn't record that", shape="ok", key="reason")
 
 
 @memory_proposals_bp.route("/api/memory/proposals/reject", methods=["POST"])

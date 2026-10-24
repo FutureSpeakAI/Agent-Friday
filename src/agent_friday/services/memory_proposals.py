@@ -384,6 +384,17 @@ def propose(day: Optional[str] = None, *, memory=None,
     # stored or returned; only a count by category is kept.
     proposed = len(facts)
     facts, dropped = _drop_special(facts, "proposals.day")
+    # NS-15.5-1: a fact like one the owner said "Don't suggest things like
+    # this" about is not proposed again; counted, no text kept. A fact already
+    # in the table is skipped below as a duplicate, not counted as a drop.
+    if store and facts:
+        _dconn = _connect()
+        try:
+            facts, suppressed = _drop_suppressed(facts, "proposals.day", conn=_dconn)
+        finally:
+            _dconn.close()
+    else:
+        facts, suppressed = _drop_suppressed(facts, "proposals.day")
 
     # A barren run is NOT a success. The regex extractor's whole failure was
     # looking like one 215 turns at a time. (Facts dropped as special
@@ -429,6 +440,8 @@ def propose(day: Optional[str] = None, *, memory=None,
            "capped": capped, "took_ms": took_ms, "summary": summary}
     if dropped:
         out["dropped_sensitive"] = dropped           # a count; the text was not kept
+    if suppressed:
+        out["dropped_suppressed"] = suppressed       # a count; the owner asked not to be offered these
     return out
 
 
@@ -455,6 +468,27 @@ def _drop_special(facts: List[Dict[str, Any]], where: str):
         cat = _sc.first_special(f.get("text"), f.get("evidence"))
         if cat:
             _sc.note_dropped(where, cat)
+            dropped += 1
+            continue
+        kept.append(f)
+    return kept, dropped
+
+
+def _drop_suppressed(facts: List[Dict[str, Any]], where: str, conn=None):
+    """(facts no suppression rule matches, how many were dropped).
+    services/memory_suppress counts each drop by place; no text is kept.
+    With `conn`, a fact already in the table is kept here (the store skips it
+    as a duplicate) and is not counted as a drop."""
+    try:
+        from agent_friday.services import memory_suppress as _ms
+    except Exception:
+        return facts, 0
+    kept, dropped = [], 0
+    for f in facts:
+        if conn is not None and _already_proposed(conn, f.get("text") or ""):
+            kept.append(f)
+            continue
+        if _ms.check(f.get("text") or "", where):
             dropped += 1
             continue
         kept.append(f)
@@ -494,6 +528,8 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
                 continue
             if _already_proposed(conn, text) or _already_from_meeting(conn, str(meeting_id), text):
                 continue
+            if _drop_suppressed([{"text": text}], "proposals.meeting")[1]:
+                continue                     # the owner asked not to be offered this (NS-15.5-1)
             executing = str(c.get("model") or model)
             prov = json.dumps({"meeting_id": str(meeting_id),
                                "span": {"segment": int(span.get("i")), "t": float(span.get("t") or 0)},
@@ -544,15 +580,32 @@ def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]
     return out
 
 
-def approve(fact_ids: List[str]) -> Dict[str, Any]:
+def approve(fact_ids: List[str], edits: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Promote reviewed facts into durable memory.
 
     Approval is the human signal, so an approved fact carries
     APPROVED_CONFIDENCE -- above both a pattern match and the model's guess.
+
+    `edits` maps a fact id to the owner's own wording of it ("Edit and keep",
+    NS-15.5-1): exactly that text is kept, as the owner's line on the memory
+    card, and the suggested wording is not. It is checked like any owner edit
+    (length, instructions, secrets; services/core_memory.refusal) and, being
+    the owner's own words, not by the special-category filter. The row is
+    marked ``edited`` and keeps the suggestion as the record of what was said.
     """
     ids = [str(i) for i in (fact_ids or []) if str(i).strip()]
     if not ids:
         return {"ok": True, "approved": 0, "facts": []}
+    owner_text: Dict[str, str] = {}
+    for fid, raw in (edits or {}).items():
+        if str(fid) not in ids or raw is None:
+            continue
+        from agent_friday.services import core_memory
+        clean = core_memory._clean(raw)
+        why = core_memory.refusal(clean)
+        if why:
+            return {"ok": False, "approved": 0, "facts": [], "reason": "Not kept: " + why}
+        owner_text[str(fid)] = clean
     conn = _connect()
     promoted = []
     unopened: List[str] = []
@@ -567,6 +620,9 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
             if sealed and not text.strip():
                 unopened.append(fact_id)          # the keystore cannot open it: never an empty fact, never a blanked row
                 continue
+            edited = fact_id in owner_text and owner_text[fact_id] != text.strip()
+            if edited:
+                text = owner_text[fact_id]        # the owner's words, not the suggestion's
             origin = f"proposed:{day}"
             if prov:
                 try:
@@ -587,7 +643,8 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
             # full card leaves it in the review queue rather than dropping it.
             try:
                 from agent_friday.services import core_memory
-                _cm = core_memory.add("user", text, actor="owner", dedupe=True)
+                _cm = core_memory.add("user", text, actor="owner", dedupe=True,
+                                      via="edited_suggestion" if edited else "")
                 if not _cm.get("ok") and _cm.get("full"):
                     core_memory.queue("user", "add", text=text, source=origin,
                                       reason="You kept this, but the memory card was full.")
@@ -600,13 +657,14 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
                             source_key=origin, category=category)
             except Exception:                               # noqa: BLE001
                 pass
-            conn.execute("UPDATE proposed_facts SET status='approved', "
-                         "decided_ts=? WHERE fact_id=?", (time.time(), fact_id))
+            conn.execute("UPDATE proposed_facts SET status=?, "
+                         "decided_ts=? WHERE fact_id=?",
+                         ("edited" if edited else "approved", time.time(), fact_id))
             if _meeting_id_of(prov):
                 # a kept fact lives on in what Friday knows, under its own protection: the row keeps no copy
                 conn.execute("UPDATE proposed_facts SET text='', evidence='' WHERE fact_id=?", (fact_id,))
             promoted.append({"fact_id": fact_id, "category": category,
-                             "text": text})
+                             "text": text, **({"edited": True} if edited else {})})
         conn.commit()
     finally:
         conn.close()
@@ -638,6 +696,39 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
         conn.close()
 
 
+def suppress(fact_id: str) -> Dict[str, Any]:
+    """"Don't suggest things like this" (NS-15.5-1): reject one proposal AND
+    record a rule (services/memory_suppress: its normalised content words, not
+    its text), so a similar fact is not proposed again, here or on the card."""
+    fid = str(fact_id or "").strip()
+    if not fid:
+        return {"ok": False, "reason": "say which suggestion"}
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT text, provenance FROM proposed_facts WHERE fact_id=? AND status='pending'",
+                           (fid,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return {"ok": False, "reason": "That suggestion is gone."}
+    sealed = isinstance(row[0], str) and row[0].startswith(_SEALED)
+    text = _open(row[0])
+    if sealed and not text.strip():
+        return {"ok": False, "reason": "This suggestion cannot be opened on this PC right now, so no rule "
+                                       "was made. Use Not now to discard it."}
+    from agent_friday.services import memory_suppress as _ms
+    # A meeting's suggestion (sealed at rest) is about other people: its rule
+    # keeps keyed hashes of its words, never the words (shown as "From a meeting").
+    from_meeting = sealed or bool(_meeting_id_of(row[1]))
+    rule = _ms.add_rule(text, origin="meeting" if from_meeting else "proposals", hashed=from_meeting)
+    if not rule.get("ok"):
+        return {"ok": False, "reason": rule.get("error") or "The rule could not be saved."}
+    out = {**reject([fid]), "suppressed": True, "rule": rule.get("rule")}
+    if rule.get("note"):
+        out["message"] = rule["note"]
+    return out
+
+
 def state() -> Dict[str, Any]:
     """Counts by status, plus whether the seat is usable. For a status surface."""
     s = seat()
@@ -651,7 +742,8 @@ def state() -> Dict[str, Any]:
     return {"seat": s,
             "seat_usable": bool(s["assigned"] and _is_local(s["provider"])),
             "pending": counts.get("pending", 0),
-            "approved": counts.get("approved", 0),
+            "approved": counts.get("approved", 0) + counts.get("edited", 0),
+            "edited": counts.get("edited", 0),
             "rejected": counts.get("rejected", 0),
             "scheduled": False,
             "note": "Manual only. Nothing here runs unattended, and nothing "

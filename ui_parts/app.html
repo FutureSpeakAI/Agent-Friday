@@ -21555,18 +21555,24 @@ function MemoryCardPanel({s, save}) {
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState(null);
   const [draft, setDraft] = useState({user: '', friday: ''});
+  const [sedit, setSedit] = useState(null);
+  const [sup, setSup] = useState({rules: [], dropped_total: 0});
   const load = useCallback(() => {
     apiFetch('/api/core-memory')
       .then(r => r.json())
       .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
       .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+    apiFetch('/api/core-memory/suppressed')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setSup(d); })
+      .catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key, after) => {
     setBusy(key || path); setMsg('');
     apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
-      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(); load(); })
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else { if (d.suppressed && d.note) setMsg(d.note); if (after) after(); } load(); })
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
@@ -21618,14 +21624,30 @@ function MemoryCardPanel({s, save}) {
     rep && E('div', null,
       file('user'), file('friday'),
       (rep.pending || []).length > 0 && E('div', {style: head}, 'Waiting for your review'),
-      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card; Discard drops them.'),
+      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card. Edit and keep puts your own wording on the card instead. Discard drops them. Don’t suggest things like this drops them and holds back similar suggestions.'),
       (rep.pending || []).slice(0, 30).map(p => E('div', {key: p.id, style: row},
         E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, what(p)),
         E('div', {style: dim}, (p.target === 'friday' ? 'Working with you' : 'About you') + ' · from ' + from(p.source) + ' · ' + when(p.ts)),
         p.reason ? E('div', {style: dim}, p.reason) : null,
-        E('div', {style:{display:'flex', gap:6, marginTop:4}},
-          btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
-          btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard')))),
+        (sedit && sedit.id === p.id)
+          ? E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap', alignItems:'center'}},
+              E('input', {className:'input', 'aria-label':'Your wording of this suggestion', maxLength: 400, style:{flex:'1 1 240px', fontSize:12}, value: sedit.text,
+                onChange: e => setSedit({id: p.id, text: e.target.value})}),
+              btn('Keep my wording', () => post('review', {id: p.id, keep: true, text: sedit.text}, 'k' + p.id, () => setSedit(null)), 'keepmine',
+                {disabled: !!busy || !String(sedit.text || '').trim()}),
+              btn('Cancel', () => setSedit(null), 'cancel'))
+          : E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}},
+              btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
+              p.op !== 'remove' && btn('Edit and keep', () => setSedit({id: p.id, text: p.text || ''}), 'editkeep'),
+              btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard'),
+              btn('Don’t suggest things like this', () => post('suppress', {id: p.id}, 's' + p.id), 'suppress')))),
+      (sup.rules || []).length > 0 && E('div', {style: head}, 'Suppressed'),
+      (sup.rules || []).length > 0 && E('div', {style: dim}, 'Suggestions like these are held back. Each rule keeps only the main words of the suggestion you turned down (for a meeting, only a code made from them).' + (sup.dropped_total ? ' Held back so far: ' + sup.dropped_total + '.' : '') + ' Remove a rule to see suggestions like it again.'),
+      (sup.rules || []).map(r => E('div', {key: r.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+        E('div', {style:{flex:1}},
+          E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, r.from_meeting ? 'From a meeting (its words are not kept)' : (r.kind === 'remove' ? 'Removing a line about: ' : 'About: ') + (r.words || []).join(', ')),
+          E('div', {style: dim}, when(r.ts) + (r.hits ? ' · held back ' + r.hits + (r.hits === 1 ? ' time' : ' times') : ''))),
+        btn('Remove', () => post('suppressed/remove', {id: r.id}, 'r' + r.id), 'unsuppress'))),
       (rep.changes || []).length > 0 && E('div', {style: head}, 'What ' + fridayName() + ' changed'),
       (rep.changes || []).slice(0, 20).map(c => E('div', {key: c.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
         E('div', {style:{flex:1}},

@@ -172,6 +172,11 @@ def _ask_first(target: str, action: str, inp: dict, why: str, *,
         if r.get("sensitive"):
             return str(r.get("error"))
         return "NOT SAVED: " + str(r.get("error"))
+    if r.get("suppressed"):
+        # NS-15.5-1: the owner said "Don't suggest things like this" about a
+        # similar suggestion; nothing is queued and they are not asked again.
+        return ("NOT SAVED: the user asked not to be offered suggestions like this one, so it was "
+                "not queued. Do not ask them about it again.")
     if target == "friday" and action in ("add", "replace") and not r.get("unchanged"):
         # A lesson written after Friday read outside content starts as
         # "proposed" in its learning record: it applies only once the owner
@@ -221,6 +226,10 @@ def _tool_update_core_memory(inp=None) -> str:
         r = core_memory.queue(target, action, text=inp.get("text") or "",
                               old=inp.get("old") or "", source=actor,
                               reason=str(inp.get("reason") or ""))
+        if r.get("suppressed"):
+            # NS-15.5-1: the owner said "Don't suggest things like this"; nothing was queued.
+            return ("NOT QUEUED: the user asked not to be offered suggestions like this one, so it "
+                    "was not queued.")
         return ("QUEUED for the user's review (the background review never rewrites or removes "
                 "on its own)." if r.get("ok") else "NOT QUEUED: " + str(r.get("error")))
     if actor == "friday" and not _owner_decided():
@@ -490,6 +499,8 @@ def capture_household(message: str, ctx: dict) -> dict:
                                        if own_words else "A household statement in a chat turn. ") + why))
         if not q.get("ok"):
             return out
+        if q.get("suppressed"):
+            return {**out, "status": "suppressed"}     # the owner asked not to be offered this (NS-15.5-1)
         return {"status": "queued", "text": text,
                 "note": ("MEMORY CARD: the household facts the user just stated are waiting for "
                          "their OK on the Memory card (Settings > Privacy & Data > Memory card, "
