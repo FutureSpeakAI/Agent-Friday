@@ -467,12 +467,16 @@ def fingerprint(text: Any) -> str:
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
 
 
-def repeated(marks: Iterable[Dict[str, Any]], *, output: str = "", critique: str = "") -> Optional[str]:
+def repeated(marks: Iterable[Dict[str, Any]], *, output: str = "", critique: str = "",
+             error: str = "") -> Optional[str]:
     """Why the newest attempt is no progress, or None. `marks` are earlier
-    attempts' {"output", "critique"} fingerprints."""
+    attempts' {"output", "critique", "error"} fingerprints."""
     out_fp = fingerprint(output) if output else None
     cr_fp = fingerprint(critique) if critique else None
+    err_fp = fingerprint(error) if error else None
     for m in marks:
+        if err_fp and m.get("error") == err_fp:
+            return "it failed the same way as an earlier attempt"
         if out_fp and m.get("output") == out_fp:
             return "it produced the same result as an earlier attempt"
         if cr_fp and m.get("critique") == cr_fp:
@@ -491,4 +495,4 @@ def no_progress_words(name: str, attempts: int, why: str) -> str:
     return (f"I stopped working on “{name}” because {why} ({attempts} attempt"
             f"{'s' if attempts != 1 else ''} so far; what they did has happened). Trying again "
             "the same way would only repeat it. Change the plan or the criteria, or tell me "
-            "to start it again.")
+            "to start it again (after a change, start it again too: its attempts did run).")
