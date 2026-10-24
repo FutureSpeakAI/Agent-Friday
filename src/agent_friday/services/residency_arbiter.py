@@ -1635,6 +1635,26 @@ class LlamaServerBackend:
                 "[arbiter] %s runs on the CPU (-ngl 0): spawned with "
                 "--device none and CUDA_VISIBLE_DEVICES=-1 so it allocates "
                 "nothing on the GPU", model_id)
+        # A FLINT SEAT LOADS ITS WEIGHTS, NEVER MAPS THEM (services/flint_seat):
+        # applied last, after every declared and planned flag, so nothing a
+        # record or override says can bring the memory-mapped mode back.
+        try:
+            from agent_friday.services import model_store as _ms_fs
+            _rec_fs = _ms_fs.get(model_id) or {}
+        except Exception:
+            _rec_fs = {}
+        try:
+            from agent_friday.services import flint_seat as _fs
+        except Exception as e:
+            _fs = None
+            # Fail closed for Flint only: every other seat spawns as before.
+            if "llama.cpp-flint" in str(binary).lower() or \
+                    str(_rec_fs.get("architecture") or "").lower() == "flint":
+                raise TransitionError("%s: the Flint seat rule could not be loaded (%s); "
+                                      "not spawning it memory-mapped" % (model_id, e))
+        if _fs is not None and _fs.is_flint_seat(model_id, binary=binary, record=_rec_fs):
+            cmd = _fs.enforce(cmd)
+            spawn_env = _fs.spawn_env(spawn_env if spawn_env is not None else os.environ)
         # THE SEAT'S OWN BANNER, KEPT. This was stdout=DEVNULL/stderr=DEVNULL,
         # which threw away the only place llama.cpp ever states what it
         # actually did: the context it settled on, the KV cache type, whether

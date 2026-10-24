@@ -211,7 +211,13 @@ def mark_tool_pending(task_id, tool_name, tool_use_id=None) -> None:
         with _LOCK:
             blob = _journal().read_blob(task_id, BLOB)
             if not blob:
-                return
+                # The task's FIRST tool runs before any checkpoint exists. A
+                # crash inside it must still be known as "may have taken
+                # effect" (§34.16-1), so a marker-only record is written: it
+                # cannot be resumed (there is no transcript), but it says what
+                # was in flight.
+                blob = {"version": VERSION, "first_step": True, "convo": [], "iteration": 0,
+                        "attempts": 0, "saved": time.time()}
             blob["pending_tool"] = {"name": tool_name, "tool_use_id": tool_use_id,
                                     "started": time.time()}
             _journal().write_blob(task_id, BLOB, blob)
@@ -365,6 +371,16 @@ def _checkpoint_resumability(task_id) -> Dict[str, Any]:
     if blob.get("version") != VERSION:
         return {**out, "resumable": False,
                 "reason": f"checkpoint format v{blob.get('version')} is not v{VERSION}"}
+    if blob.get("first_step"):
+        pt = blob.get("pending_tool") or {}
+        name = pt.get("name") or ""
+        if pt and not replay_safe(name):
+            return {**out, "resumable": False, "may_have_acted": True,
+                    "announced": bool(blob.get("announced_at")),
+                    "reason": (f"'{name}' was running when the process stopped, and no "
+                               f"transcript was saved to resume from. Whether it took effect "
+                               f"is not known. Check before starting the task again.")}
+        return {**out, "resumable": False, "reason": "no checkpoint was written"}
     # Which loop wrote this. Only the Anthropic one can be re-entered today,
     # and resuming an OpenAI-shaped transcript through _call_claude_agent
     # would be a silent model substitution AND a malformed payload - the two
@@ -652,6 +668,56 @@ def resumable_after_boot() -> List[Dict[str, Any]]:
     except Exception as e:
         _log.warning("task resume: could not scan for resumable tasks (%s)", e)
     return out
+
+
+def may_have_acted_after_boot() -> List[Dict[str, Any]]:
+    """Interrupted tasks that cannot be resumed but had an outward step in
+    flight when the process stopped (§34.16-1): the owner must check them."""
+    out: List[Dict[str, Any]] = []
+    try:
+        tj = _journal()
+        for tid, row in tj.index_read().items():
+            if row.get("status") != "interrupted":
+                continue
+            v = resumability(tid)
+            if not v.get("resumable") and v.get("may_have_acted") and not v.get("announced"):
+                out.append({"task_id": tid, "name": row.get("name") or "", **v})
+    except Exception as e:
+        _log.warning("task resume: could not scan for in-flight steps (%s)", e)
+    return out
+
+
+def announce_may_have_acted(items: List[Dict[str, Any]]) -> None:
+    """Tell the owner which stopped tasks may have done their first outward
+    step. Nothing is retried."""
+    if not items:
+        return
+    names = ", ".join((r.get("name") or r["task_id"])[:40] for r in items[:5])
+    more = f" and {len(items) - 5} more" if len(items) > 5 else ""
+    body = (f"{names}{more} stopped while doing something outward (such as sending) as "
+            f"its first step. Whether it happened is not known, and Friday will not "
+            f"repeat it on its own. Check before starting {'it' if len(items) == 1 else 'them'} again.")
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.push(title=("A stopped task may have acted" if len(items) == 1
+                       else f"{len(items)} stopped tasks may have acted"),
+                body=body, priority="high", source="task-resume", kind="tasks_may_have_acted",
+                emitter="CR2",
+                dedupe_key="tasks_may_have_acted:" + _incident([r["task_id"] for r in items]),
+                target={"workspace": "system", "tab": "tasks"})
+    except Exception as e:
+        _log.warning("task resume: in-flight announcement failed (%s)", e)
+        return
+    # Told once: a later start does not announce the same task again.
+    for r in items:
+        try:
+            with _LOCK:
+                blob = _journal().read_blob(r["task_id"], BLOB)
+                if blob:
+                    blob["announced_at"] = time.time()
+                    _journal().write_blob(r["task_id"], BLOB, blob)
+        except Exception:
+            pass
 
 
 def _incident(task_ids) -> str:

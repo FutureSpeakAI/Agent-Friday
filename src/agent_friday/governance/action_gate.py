@@ -145,6 +145,10 @@ OUTWARD_TOOLS = frozenset({
     # expiring grant for holds is a later refinement, not a default.
     "hold_slots", "book_slot",
     "delete_task",
+    # A24 (owner ruling 2026-10-22): completing, creating and editing Google Tasks ask first.
+    # In a run nobody watches, one card approves the run's task changes (services/run_grants);
+    # each change still writes its own receipt.
+    "complete_task", "create_task", "update_task",
     "install_package",
     "spawn_interactive_session", "send_to_session",
     # A Claude Code session launched from the Code workspace: the launch and
@@ -238,8 +242,7 @@ INTERNAL_TOOLS = frozenset({
     "add_knowledge",
     "write_clipboard", "query_trust_graph", "query_calendar", "revert_workspace",
     "list_workspace_history", "find_calendar_events", "search_email",
-    "search_drive", "read_doc", "list_tasks", "complete_task", "create_task",
-    "update_task", "search_contacts", "read_wiki", "search_wiki", "search_news",
+    "search_drive", "read_doc", "list_tasks", "search_contacts", "read_wiki", "search_wiki", "search_news",
     "open_url", "navigate", "switch_model", "list_sending_accounts",
     # The owner's own desktop: navigate_to opens an item in Friday's UI,
     # set_workspace_layout lays a workspace out (fullscreen with chat),
@@ -1396,7 +1399,8 @@ SAFE_MODE_HELD_TOOLS = frozenset({"run_command", "run_sandboxed", "open_path", "
                                   "browser_open", "browse_web", "install_package",
                                   "codebase_run", "codebase_agent"})
 
-#: Built-in tools judged internal that still reach a connected service (the
+#: Built-in tools that reach a connected service (most judged internal; the
+#: Google Tasks changes are outward since A24) (the
 #: owner's Google account): mail (also the voice check and the career inbox),
 #: calendar (also free/busy and releasing holds), Drive and Docs, contacts,
 #: Tasks, Gmail drafts, the sending-account list and selecting mail on
@@ -1428,19 +1432,21 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             _why = "safe mode could not be checked (%s)" % type(e).__name__
         if _why:
             return Verdict("deny", klass, f"held: {_why}")
+    if tool_name in CONNECTED_SERVICE_TOOLS:
+        # a built-in tool that reaches the owner's Google account: off in
+        # safe mode (connectors off) and while authority is revoked, whatever
+        # its class (A24 made the Google Tasks changes outward; they are held
+        # here first, exactly as before)
+        try:
+            from agent_friday.services import safe_mode as _sm
+            _why = _sm.refusal("connector_reads") or _authority_hold()
+            if not _why and tool_name in CONNECTED_SERVICE_WRITES:
+                _why = outward_hold()
+        except Exception as e:  # noqa: BLE001 - a check that cannot run holds
+            _why = "safe mode could not be checked (%s)" % type(e).__name__
+        if _why:
+            return Verdict("deny", klass, f"held: {_why}")
     if klass == INTERNAL:
-        if tool_name in CONNECTED_SERVICE_TOOLS:
-            # a built-in tool that reaches the owner's Google account: off in
-            # safe mode (connectors off) and while authority is revoked
-            try:
-                from agent_friday.services import safe_mode as _sm
-                _why = _sm.refusal("connector_reads") or _authority_hold()
-                if not _why and tool_name in CONNECTED_SERVICE_WRITES:
-                    _why = outward_hold()
-            except Exception as e:  # noqa: BLE001 - a check that cannot run holds
-                _why = "safe mode could not be checked (%s)" % type(e).__name__
-            if _why:
-                return Verdict("deny", klass, f"held: {_why}")
         if str(tool_name).lower().startswith("mcp_"):
             # a connector tool judged internal (a clean read under the card
             # setting) still reaches a connected service
