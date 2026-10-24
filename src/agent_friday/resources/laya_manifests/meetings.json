@@ -213,9 +213,9 @@
    "tool": "create_task",
    "also_tools": [],
    "gate": {
-    "class": "internal",
+    "class": "outward",
     "ring": 2,
-    "card": "none"
+    "card": "required"
    },
    "laya_tier": "model_only",
    "phrasings": [

@@ -13,4 +13,5 @@ def test_the_contract_is_served_reads_and_changes_apart(client):
     assert changes.get("delete_calendar_event", {}).get("action_class") == "outward"
     assert "https://www.googleapis.com/auth/calendar" in changes["create_calendar_event"]["scopes"]
     assert "https://www.googleapis.com/auth/calendar" not in c.get("connect_scopes", [])
-    assert "complete_task" in c.get("changes_without_a_card", [])
+    assert "release_holds" in c.get("changes_without_a_card", [])
+    assert "complete_task" in c.get("outward_changes", []), "A24: completing a Google Task asks first"
