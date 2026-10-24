@@ -368,6 +368,97 @@ def _c_local_brain():
     return "unavailable_by_configuration", "no_local_model"
 
 
+def _c_gpu():
+    """The graphics card the local models use: read, never changed (§28.2-1)."""
+    from agent_friday.services import gpu_probe
+    g = gpu_probe.probe()
+    if not g.get("devices"):
+        if str(g.get("source") or "").upper().startswith("CUDA_VISIBLE_DEVICES"):
+            return "unavailable_by_configuration", "gpus_hidden_by_setting"
+        return "unavailable_by_hardware", "no_cuda_gpu"
+    cb = gpu_probe.cublas_status()
+    if not cb.get("ok"):
+        return "misconfigured", "cublas_missing"
+    if g.get("free_mib") is None:
+        return "unverified", "cuda_gpus:%d free_memory_unread" % int(g["devices"])
+    return "healthy", "cuda_gpus:%d" % int(g["devices"])
+
+
+def _c_local_voice():
+    """Speech in and out on this PC: whether its packages are there. The
+    voice models themselves are checked by the voice readiness card, not by
+    loading them here."""
+    from agent_friday.services import local_voice
+    if not local_voice.deps_installed():
+        return "unavailable_by_configuration", "local_voice_not_installed"
+    return "unverified", "packages_installed_models_not_loaded_here"
+
+
+def _c_document_engine():
+    """The document engine (OfficeCLI): present, and matching its pinned
+    checksum."""
+    from agent_friday.services import office_engine
+    if not office_engine.available():
+        return "unavailable_by_configuration", "not_installed"
+    ok, why = office_engine.verify_binary()
+    if ok:
+        return "healthy", "checksum_matches"
+    if "no pinned sha256" in why:
+        return "misconfigured", "no_pinned_checksum"
+    return "broken", "checksum_mismatch"
+
+
+def _c_browser_lane():
+    """The browser Friday drives for tasks: its automation library is there.
+    Nothing is started; a closed browser is normal (it closes when idle)."""
+    import importlib.util
+    if importlib.util.find_spec("playwright") is None:
+        return "unavailable_by_configuration", "playwright_not_installed"
+    from agent_friday.services import browser_session
+    s = browser_session.current()
+    return "healthy", ("running" if s is not None and getattr(s, "running", False) else "ready_closed")
+
+
+def _c_channels():
+    """Remote channels (Telegram, Discord): each switched on has a readable
+    token; one that should be listening and is held by a rule says so."""
+    from agent_friday.services import safe_mode
+    from agent_friday.services.channels import manager
+    st = manager.status()
+    if not st.get("enabled"):
+        return "unavailable_by_configuration", "channels_off"
+    on = {n: c for n, c in (st.get("channels") or {}).items() if c.get("enabled")}
+    if not on:
+        return "unavailable_by_configuration", "no_channel_switched_on"
+    bad = [n for n, c in on.items() if (c.get("health") or {}).get("source_state") not in
+           ("running", "not-running")]
+    if bad:
+        return "misconfigured", "token_problem:" + ",".join(sorted(bad))
+    idle = [n for n, c in on.items() if (c.get("health") or {}).get("source_state") == "not-running"]
+    if idle and not safe_mode.allows("channels"):
+        return "blocked_by_policy", "not_started_in_safe_mode:%d" % len(idle)
+    if idle:
+        return "degraded", "switched_on_not_running:" + ",".join(sorted(idle))
+    return "healthy", "running:%d" % len(on)
+
+
+def _c_phone():
+    """The phone line: switched off, or on with its credentials readable."""
+    from agent_friday.phone import config as phone_config
+    st = phone_config.status()
+    if not st.get("enabled"):
+        return "unavailable_by_configuration", "phone_off"
+    states = {k: st.get(k) for k in ("auth_token", "api_key_secret")}
+    if "unreadable" in states.values():
+        return "broken", "credential_unreadable"
+    if states.get("auth_token") != "stored":
+        return "misconfigured", "auth_token_missing"
+    from agent_friday.services import safe_mode
+    if not safe_mode.allows("phone"):
+        return "blocked_by_policy", "not_started_in_safe_mode"
+    return "healthy", "configured"
+
+
 def _c_crashes():
     from agent_friday.services import crash_forensics
     n = crash_forensics.crash_count()
@@ -401,6 +492,12 @@ CHECKS = (
     ("disk", "GPU and resource state", _c_disk),
     ("model_files", "model files and checksums", _c_models),
     ("local_brain", "GPU and resource state", _c_local_brain),
+    ("gpu", "GPU and resource state", _c_gpu),
+    ("local_voice", "voice", _c_local_voice),
+    ("document_engine", "document engine", _c_document_engine),
+    ("browser_lane", "browser lane", _c_browser_lane),
+    ("channels", "remote channels", _c_channels),
+    ("phone", "remote channels", _c_phone),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
 )
