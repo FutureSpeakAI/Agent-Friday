@@ -111,6 +111,9 @@ class _Entry:
     #: Read from the owner's own file on this computer (see owner_local_path).
     #: Still outside content for every role except a local write's path.
     local: bool = False
+    #: Instruction-shaped text found in it (services/injection_signals), even paraphrased or
+    #: encoded: an action that follows is shown to the owner though no value matches (BD-24).
+    signals: list = field(default_factory=list)
 
 
 class Ledger:
@@ -189,6 +192,7 @@ def note_user_message(key: str, text: str):
 CARRIED_LABELS = {
     "ledger": "the task's working notes (written from what it read earlier)",
     "summary": "a summary of earlier work (written from what was read then)",
+    "imported_history": "imported AI history (another assistant's conversation)",
 }
 
 
@@ -199,7 +203,8 @@ CARRIED_LABELS = {
 _CARRIED_CLEAN_BY_DEFAULT = {"summary"}
 
 
-def note_carried(key: str, carrier: str, text: str, outside: Optional[bool] = None):
+def note_carried(key: str, carrier: str, text: str, outside: Optional[bool] = None,
+                 signals_text: Optional[str] = None):
     """Record text Friday carries forward -- a task ledger, a compaction
     summary -- as something Friday READ. It is written from tool output, so a
     value in it keeps that provenance; unregistered, it would count as the
@@ -215,9 +220,22 @@ def note_carried(key: str, carrier: str, text: str, outside: Optional[bool] = No
     if outside is None:
         outside = carrier not in _CARRIED_CLEAN_BY_DEFAULT
     led = _ledger(key)
+    # `signals_text`: the part of the carried text that could instruct Friday (imported AI history
+    # passes only the other assistant's turns: the owner's own old prompts are not instructions
+    # from outside).
+    sig = _signals(raw if signals_text is None else str(signals_text)) if outside else []
     with _LOCK:
         led.carried[carrier] = _Entry("content", label, raw, normalize(raw), time.time(),
-                                      outside=bool(outside))
+                                      outside=bool(outside), signals=sig)
+
+
+def _signals(raw: str) -> list:
+    """Instruction signals in outside text (services/injection_signals). Never raises."""
+    try:
+        from agent_friday.services import injection_signals
+        return injection_signals.scan(raw)
+    except Exception:
+        return []
 
 
 # Tools whose output is the user's own data rather than something written by
@@ -256,6 +274,8 @@ def describe_source(tool_name: str, tool_input: Optional[dict]) -> str:
     """Plain words for where a tool's output came from."""
     inp = tool_input or {}
     t = tool_name or "a tool"
+    if t == "vision_description":
+        return "the description of an image you attached"
     if t in ("browse_web", "save_output") or t.endswith("get_webpage"):
         h = _host(str(inp.get("url") or ""))
         return "a web page" + (f" on {h}" if h else "")
@@ -551,7 +571,8 @@ def note_tool_output(key: str, tool_name: str, tool_input: Optional[dict], resul
              and _read_was_local(tool_name, tool_input, raw))
     _ledger(key).add(_Entry(kind, label, raw, normalize(raw), time.time(),
                             _segments(tool_name, raw, label) if kind == "content" and not approved else [],
-                            approved=str(approved or ""), local=local))
+                            approved=str(approved or ""), local=local,
+                            signals=_signals(raw) if kind == "content" and not approved else []))
 
 
 def approved_labels(key: str) -> set:
@@ -663,6 +684,25 @@ def _origin_in(n: str, s: str, entries: list, free_text: bool) -> Origin:
     return Origin("model")
 
 
+def recent_instructions(key: str, window: float = TTL_SECONDS) -> List[tuple]:
+    """(label, signals) of outside content read recently in this conversation that contains
+    instruction-shaped text (services/injection_signals), newest first. Carried text counts
+    whatever its age, as in `recent_content(for_grants=True)`."""
+    cut = time.time() - window
+    led = _ledger(key)
+    with _LOCK:
+        entries = list(led.entries)
+        carried = list(led.carried.values())
+    out, seen = [], set()
+    fresh = [e for e in reversed(entries) if e.ts >= cut]
+    for e in fresh + carried:
+        if e.kind != "content" or not e.signals or e.label in seen:
+            continue
+        seen.add(e.label)
+        out.append((e.label, list(e.signals)))
+    return out
+
+
 def recent_content(key: str, window: float = MEMORY_WINDOW_SECONDS, *,
                    for_grants: bool = False) -> List[str]:
     """Labels of third-party content read in this conversation recently.
@@ -715,6 +755,10 @@ POLICY = {
     "detail": "ask",
     "post_url": "ask",
     "message_body": "note",
+    # A change to a plan: a task's or a goal draft's own words (NS-19.5-4). Shown, not
+    # enforced, when copied from outside content; an instruction-shaped read just before it
+    # raises a card (see ACTING_ROLES).
+    "plan_edit": "note",
     # A file or wiki page to organize. The change stays on this PC and has an
     # undo, and a batch or a move that reaches further raises a card anyway,
     # so where the name came from is shown, not enforced.
@@ -741,6 +785,16 @@ TOOL_ROLES: Dict[str, Dict[str, str]] = {
     "organize_media": {"cards": "local_item", "value": "detail"},
     "organize_calendar": {"events": "local_item", "days": "detail", "minutes": "detail"},
     "task_control": {"message": "instruction"},
+    # A recurring job and a work order carry instructions that run later, unattended (BD-24).
+    "schedule_job": {"prompt": "instruction", "workflow": "instruction"},
+    "submit_work_order": {"goal": "instruction", "constraints": "instruction", "acceptance": "plan_edit"},
+    "set_follow_up": {"person": "recipient", "note": "plan_edit"},
+    # Google Tasks and goal drafts: the words of a plan (NS-19.5-4, BD-24).
+    "create_task": {"title": "plan_edit", "notes": "plan_edit"},
+    "update_task": {"title": "plan_edit", "notes": "plan_edit"},
+    "draft_goal": {"intent": "plan_edit", "completion_condition": "plan_edit", "constraints": "plan_edit",
+                   "stop_conditions": "plan_edit", "milestones": "plan_edit", "people": "recipient",
+                   "autonomy": "instruction"},
     "set_setting": {"value": "instruction"},
     "set_workspace_layout": {},
     "show_my_day": {},
@@ -808,7 +862,14 @@ SELF_CARDING = {"draft_email", "call_by_phone", "sign_pdf", "career_update_track
                 "browser_click", "browser_type", "browser_select"}
 
 #: Roles judged by overlap of word runs rather than exact match.
-FREE_TEXT_ROLES = {"command", "instruction", "memory_write", "publish_body"}
+FREE_TEXT_ROLES = {"command", "instruction", "memory_write", "publish_body", "plan_edit"}
+
+#: Roles that make Friday act or change a plan. After she has read instruction-shaped outside
+#: text, a call with one of these is shown to the owner first, even when none of its values
+#: matches what she read: a paraphrased or encoded instruction defeats matching (BD-24 U2).
+ACTING_ROLES = {"payment_account", "recipient", "write_path", "open_target", "upload_file",
+                "delete_target", "command", "instruction", "install", "memory_write", "publish_body",
+                "account_change", "post_url", "plan_edit", "message_body"}
 
 # For tools Friday does not know (MCP connectors), argument names decide.
 _GENERIC_KEYS = [
@@ -1114,6 +1175,10 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
                                         f"instructions from there."))
                     d.action = _stricter(d.action, "ask")
                     d.reasons.append("memory write after reading outside content")
+    if _ORDER[d.action] < _ORDER["ask"]:
+        # Also after a note-level flag (a task title copied from the page): the rule is what
+        # stops an instruction from changing a plan by itself.
+        _instruction_read_rule(key, tool_name, tool_input, d)
     low = (tool_name or "").lower()
     if (tool_name not in TOOL_ROLES and low.startswith("mcp_")
             and any(w in low for w in _DELETE_WORDS) and not d.warn):
@@ -1128,6 +1193,45 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
             d.action = _stricter(d.action, "ask")
             d.reasons.append("deletion after reading outside content")
     return d
+
+
+_LINKS_AND_ADDRESSES = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+|https?://[^\s\"'<>]+|\+?\d[\d \-]{7,}\d")
+
+
+def _instruction_read_rule(key: str, tool_name: str, tool_input: Optional[dict], d: "Decision") -> None:
+    """BD-24 U2: Friday read outside text written as an instruction to her (perhaps paraphrased
+    or encoded), and this call acts or changes a plan. Unless every acting value is the owner's
+    own words, the call is shown to the owner first."""
+    unknown = tool_name not in TOOL_ROLES          # a connector's own tool: every argument may act
+    acting = [(arg, role, value) for arg, role, value in roles_for(tool_name, tool_input or {})
+              if (role in ACTING_ROLES or (unknown and role == "detail")) and value not in (None, "", [], {})]
+    if not acting:
+        return
+    hits = recent_instructions(key)
+    if not hits:
+        return
+    for arg, role, value in acting:
+        text = value if isinstance(value, str) else json.dumps(value, default=str)
+        if origin_of(key, text, free_text=role in FREE_TEXT_ROLES or role == "message_body").kind != "user":
+            break
+        # Words that mostly repeat the owner's request still carry no address or link of their own:
+        # each one inside must also be the owner's.
+        if any(origin_of(key, a).kind != "user" for a in _LINKS_AND_ADDRESSES.findall(text)):
+            break
+    else:
+        return                       # every acting value is what the owner typed
+    label, signals = hits[0]
+    try:
+        from agent_friday.services import injection_signals
+        what = injection_signals.describe(signals)
+    except Exception:
+        what = "instruction-shaped text"
+    more = f" and {len(hits) - 1} other source(s)" if len(hits) > 1 else ""
+    d.flags.append(Flag("", "instruction_read", "", "content", label + more, "warn",
+                        f"Friday read {label}{more} just before this, and it contains {what}. "
+                        f"She may be carrying it out: check that you asked for this."))
+    d.action = _stricter(d.action, "ask")
+    d.reasons.append("action after reading instruction-shaped outside content")
 
 
 def fingerprint(tool_name: str, tool_input: Optional[dict]) -> str:

@@ -475,7 +475,7 @@ _NO_REPLY_NOTE = "[No reply was given to this message: the turn did not complete
 _UNANSWERED_STATUSES = ("received", "unanswered")
 
 
-def _conv_context(cid, limit=None, exclude_id=None):
+def _conv_context(cid, limit=None, exclude_id=None, taint_key=None):
     """This conversation's replayable turns — never another conversation's.
 
     The window starts where `_history_start` says: by token budget, in whole
@@ -489,6 +489,10 @@ def _conv_context(cid, limit=None, exclude_id=None):
     `exclude_id` is the running turn's own user row (stored when the turn was
     accepted); the caller appends that message itself. A user row whose turn
     never produced a reply stays in the context, followed by `_NO_REPLY_NOTE`.
+
+    `taint_key`: the turn's provenance ledger (services/taint). Imported AI history replayed
+    here is recorded there as something Friday READ (BD-24), so a value or an instruction
+    copied from it is flagged like one from an email.
     """
     from agent_friday.services import conversations as _conv
     rows = _conv.messages(cid)
@@ -500,6 +504,7 @@ def _conv_context(cid, limit=None, exclude_id=None):
     rows = [m for m in rows if m.get('role') not in ('system', 'system_report')
             and not (exclude_id and m.get('id') == exclude_id)]
     out = []
+    imported = []
     for i, m in enumerate(rows):
         role = 'user' if m.get('role') == 'user' else 'assistant'
         text = m.get('text') or ''
@@ -521,6 +526,7 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 # words nor as the owner asking anything now.
                 from agent_friday.services.untrusted_input import wrap as _data_envelope
                 who = 'the owner' if role == 'user' else 'that assistant'
+                imported.append((text, role))
                 text = _data_envelope('From the owner\'s %s, %s said: %s'
                                       % (m.get('via') or 'imported AI history', who, text))
             if (m.get('meta') or {}).get('local_only'):
@@ -534,7 +540,43 @@ def _conv_context(cid, limit=None, exclude_id=None):
                     and (m.get('meta') or {}).get('status') in _UNANSWERED_STATUSES
                     and (nxt is None or nxt.get('role') == 'user')):
                 out.append({"role": "assistant", "content": _NO_REPLY_NOTE})
+    if imported and taint_key:
+        try:
+            from agent_friday.services import taint as _taint
+            _taint.note_carried(str(taint_key), "imported_history", "\n".join(t for t, _ in imported),
+                                signals_text="\n".join(t for t, r in imported if r != 'user'))
+        except Exception:
+            pass
     return out
+
+
+def _turn_taint_key(session_id, conversation_id):
+    """The provenance ledger this turn's tool calls are judged against: the key
+    agent.prepare_confirmation_ctx stamps (the conversation when there is one, else the session)."""
+    return ("conversation:%s" % conversation_id) if conversation_id else session_id
+
+
+def _taint_key_of(sess_ctx):
+    try:
+        from agent_friday.services import taint as _taint
+        return _taint.ledger_key(sess_ctx)
+    except Exception:
+        return None
+
+
+def _note_vision_read(taint_key, description) -> None:
+    """An image's description is something Friday READ, not the owner's words (BD-24): it is
+    recorded in the turn's provenance ledger (services/taint), so an address, a link or an
+    instruction in the picture is flagged like one in an email."""
+    if not taint_key or not isinstance(description, str) or not description.strip():
+        return
+    if description.startswith("[Vision unavailable") or description == _NO_VISION_KEY:
+        return
+    try:
+        from agent_friday.services import taint as _taint
+        _taint.note_tool_output(str(taint_key), "vision_description", {}, description)
+    except Exception:
+        pass
 
 
 #: Transcript rows written by work that ran outside the chat turn (approval
@@ -1846,7 +1888,8 @@ def chat():
         # char count is above the soft limit — older turns get summarised.
         # THIS conversation's history. Reading the global list here is what
         # let two open chats contaminate each other's context.
-        raw_history = _conv_context(_conversation_id, exclude_id=_accepted_id)
+        raw_history = _conv_context(_conversation_id, exclude_id=_accepted_id,
+                                     taint_key=_turn_taint_key(session_id, _conversation_id))
         messages = _compress_trajectory(raw_history)
         # LIVE STATE IS NEVER ANSWERABLE FROM MEMORY. The transcript above is
         # memory too -- including this assistant's own earlier answers -- so a
@@ -2572,6 +2615,7 @@ def chat():
         # the confirmation gate is live, and grants a pending action when this
         # message is the user's "yes" to a question Friday asked last turn.
         _sess_ctx = prepare_confirmation_ctx(session_id, message, _sess_ctx)
+        _note_vision_read(_taint_key_of(_sess_ctx), vision_description)
         if _RECALL_MARKER in (_mem_part or ""):
             # Recalled past conversations are text Friday did not write in
             # this turn and cannot vouch for: no pre-approved send this turn
@@ -3950,6 +3994,7 @@ def chat_send():
         # Same ask-first action flow as /api/chat: enforce confirmation and honor
         # a "yes" reply to a question Friday asked on the previous turn.
         _sess_ctx = prepare_confirmation_ctx(_session_id, message, _sess_ctx)
+        _note_vision_read(_taint_key_of(_sess_ctx), vision_description)
         _confirmed_response = _confirmed_action_response(message, _sess_ctx)
         if _confirmed_response is not None:
             return _confirmed_response
