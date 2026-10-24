@@ -18609,6 +18609,17 @@ function StToggle({
     }
   })));
 }
+// Text size (Settings > Appearance; north star 33.1-8): the percentages offered, and the one place the page
+// applies one. The size is a CSS variable that window contents and the chat read (see .fwin-body).
+const FRIDAY_TEXT_SCALES = [100, 125, 150, 175, 200];
+function fridayTextScale(v) {
+  const n = Math.round(Number(v));
+  return FRIDAY_TEXT_SCALES.includes(n) ? n : 100;
+}
+function fridayApplyTextScale(v) {
+  try { document.documentElement.style.setProperty('--fr-text-zoom', String(fridayTextScale(v) / 100)); } catch (_) {}
+}
+window.fridayApplyTextScale = fridayApplyTextScale;
 function StSection({
   title,
   desc,
@@ -25436,6 +25447,37 @@ function SettingsTabAppearance({
       }));
     }
   }, FRIDAY_LANDING_MODE_NAMES[v]))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Text size"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Text size",
+    desc: "Makes what you read bigger: the text in every workspace window and in the chat. Windows keep their size and the text wraps inside them. Your browser's own zoom (Ctrl and +) still works too."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Text size",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, FRIDAY_TEXT_SCALES.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-text-scale": v,
+    "aria-checked": fridayTextScale(s.text_scale) === v,
+    className: 'settings-btn' + (fridayTextScale(s.text_scale) === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 14px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        text_scale: v
+      });
+      fridayApplyTextScale(v);
+    }
+  }, v + '%'))))), /*#__PURE__*/React.createElement(StSection, {
     title: "3D effects"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "3D dazzle",
@@ -27094,6 +27136,8 @@ function App(){
   // only in theirs); until then the name this browser last saw stands.
   if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name, ((agentSettings.identity || {}).name_in_lockup));
   useEffect(()=>{fridaySetOffRecord(fridayOffRecordFrom(agentSettings))},[agentSettings.off_record,agentSettings.off_record_stops_storage]);
+  // The saved text size, applied once settings have come from the server (Settings > Appearance).
+  useEffect(() => { fridayApplyTextScale(agentSettings.text_scale); }, [agentSettings.text_scale]);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);

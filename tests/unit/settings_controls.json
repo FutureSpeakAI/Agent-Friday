@@ -2665,6 +2665,20 @@
  {
   "section": "Appearance",
   "panel": "Appearance & 3D",
+  "label": "Text size: 100% to 200%",
+  "kind": "radio-buttons",
+  "keys": [
+   "text_scale"
+  ],
+  "route": "POST /api/settings",
+  "reader_file": "index.html",
+  "reader_needle": "fridayApplyTextScale(agentSettings.text_scale)",
+  "status": "ok",
+  "note": "Window contents, the chat transcript and its box scale by CSS zoom (--fr-text-zoom) and reflow inside their windows; frames, the dock and the scene keep their size."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
   "label": "Knowledge graph > Constellation grouping",
   "kind": "select",
   "keys": [
