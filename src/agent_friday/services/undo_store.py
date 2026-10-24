@@ -190,12 +190,15 @@ def _matching(names, emails):
         if _mentions(f, names, emails):
             yield t
     try:
-        _sts()._vault_key()               # forget may open the vault (a read never derives it)
+        if _sts()._passphrase_set():
+            _sts()._vault_key()           # forget may open the vault (a read never derives it)
     except Exception:
         pass
     d = _dir()
     for p in (d.glob("u*.bin") if d.is_dir() else []):
         token = p.stem
+        if not _TOKEN.fullmatch(token):
+            continue                      # not one of ours (and drop could not remove it)
         f = read(token)
         if f is None or _mentions(f, names, emails):
             yield token                   # unreadable counts as possibly naming them
