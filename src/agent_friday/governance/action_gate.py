@@ -1574,7 +1574,7 @@ class Held(RuntimeError):
 
 
 def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
-                    target: str = "") -> None:
+                    target: str = "") -> Optional[dict]:
     """The checkpoint's integrity check and signed receipt, for an executor
     that carries out an already-decided action outside a tool call (an
     approved email, an approved text).
@@ -1582,7 +1582,8 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     The decision itself (the card) is the caller's to verify. This adds the
     two steps every tool call gets in `authorize`: the cLaws are intact, and
     a signed receipt of the action is written. Raises `Held` if either fails,
-    so the caller stops before anything leaves the machine.
+    so the caller stops before anything leaves the machine. Returns the decision's ledger entry
+    (its seq and hash), so the caller's outcome receipt can name the decision it carried out.
     """
     import agent_friday.core as _core_gs
     if _core_gs.GLOBAL_STOP.is_set():
@@ -1598,12 +1599,13 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     if hold:
         raise Held(hold)
     try:
-        _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
-                  "surface": surface,
-                  "reason": "approved card" if approval_id else surface,
-                  "approval": approval_id, "target": target})
+        entry = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
+                          "surface": surface,
+                          "reason": "approved card" if approval_id else surface,
+                          "approval": approval_id, "target": target})
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
+    return entry if isinstance(entry, dict) else None
 
 
 def external_subject(action: str, detail: dict) -> str:

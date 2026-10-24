@@ -124,7 +124,9 @@ def test_a_recorded_skip_of_the_first_action_lets_onboarding_be_done(ob):
 
 def test_a_proposal_waiting_for_the_press_meets_nothing(ob):
     _first_action(ob, state="proposed", approval_id="ap-1")
-    m = _met(ob)
+    out = ob.status()
+    assert out["first_action"]["state"] == "proposed"
+    m = {c["id"]: c["met"] for c in out["checks"]}
     assert not m["action"] and not m["receipt"] and not m["where_ran"]
 
 
@@ -140,7 +142,10 @@ def test_the_first_actions_own_receipt_meets_action_and_receipt(ob):
 
 
 def test_skipping_the_first_action_is_an_owner_answer(ob, monkeypatch):
-    from agent_friday.services import first_action
+    try:
+        from agent_friday.services import first_action
+    except ImportError:
+        pytest.fail("there is no first governed action to skip: services/first_action does not exist")
     calls = []
     monkeypatch.setattr(first_action, "skip", lambda by="owner:ui": calls.append(by) or {"ok": True, "state": "skipped"})
     assert ob.answer("skip_first_action")["ok"] is True

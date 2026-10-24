@@ -136,7 +136,10 @@ def _is_public_query_card(rec: Dict[str, Any]) -> bool:
 PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff",
                                   # Website task cards carry the values to type, or a
                                   # question written after reading a page: never in a notice.
-                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question"})
+                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question",
+                                  # The first action (services/first_action) names a contact from
+                                  # the owner's mail: on Friday's page only.
+                                  "first_action"})
 
 
 def notice_title(rec: Dict[str, Any]) -> str:

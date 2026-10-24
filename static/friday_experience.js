@@ -464,6 +464,7 @@
    * with "What I see so far" and until all six are met. Both answers are the owner's own press. */
   function OnboardingChecks({ api }) {
     const [data, setData] = useState(null), [busy, setBusy] = useState(false), [said, setSaid] = useState('');
+    const [receiptText, setReceiptText] = useState('');
     const live = useRef(true);
     const load = () => api('/api/onboarding/status', { cache: 'no-store' }).then(r => r.json()).then(d => { if (live.current) setData(d && d.ok ? d : null); }).catch(() => { if (live.current) setData(null); });
     useEffect(() => { live.current = true; load(); return () => { live.current = false; }; }, []);
@@ -484,7 +485,7 @@
     const decide = decision => {
       setBusy(true); setSaid('');
       api('/api/approvals/' + encodeURIComponent(fa.approval_id) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, decided_by: 'owner:ui' }) })
-        .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.error ? x.error : (decision === 'approve' ? 'Done. Its receipt is in Activity.' : 'Skipped, and recorded.')); load(); })
+        .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.error || ''); load(); })
         .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
         .finally(() => { if (live.current) setBusy(false); });
     };
@@ -501,7 +502,13 @@
         fa.description && h('p', { className: 'fx-meta' }, fa.description),
         h('button', { type: 'button', className: 'fx-action', disabled: busy, onClick: () => decide('approve') }, 'Approve'), ' ',
         h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: () => answer({ answer: 'skip_first_action' }) }, 'Skip'));
-      if (fa.state === 'done') return h('p', { className: 'fx-meta' }, 'Your first action ran on this PC; receipt #' + fa.receipt_seq + ' is in Activity.');
+      if (fa.state === 'done') return h('div', { className: 'fx-first-action' },
+        h('p', { className: 'fx-meta' }, 'Your first action ran on this PC and sent nothing to anyone. Receipt #' + fa.receipt_seq + '.'), ' ',
+        fa.receipt_url && h('button', { type: 'button', className: 'fx-action-secondary', onClick: () => api(fa.receipt_url, { cache: 'no-store' }).then(r => r.json()).then(d => {
+          const e = ((d && d.entries) || [])[0];
+          setReceiptText(e ? JSON.stringify(e, null, 2) : 'The receipt could not be read.');
+        }).catch(() => setReceiptText('The receipt could not be read.')) }, 'Open the receipt'),
+        receiptText && h('pre', { className: 'fx-meta' }, receiptText));
       if (fa.state === 'skipped') return h('p', { className: 'fx-meta' }, 'You skipped the first action; that is recorded.');
       if (met('action')) return null;
       return h('div', { className: 'fx-first-action' },

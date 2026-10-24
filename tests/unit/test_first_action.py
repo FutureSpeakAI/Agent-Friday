@@ -49,9 +49,10 @@ def fa(tmp_path, monkeypatch):
     monkeypatch.setattr(ap, "mark_used", lambda aid, actor, detail=None: rec["used"].append((aid, detail)))
     monkeypatch.setattr(ap, "decide_with_outcome",
                         lambda aid, decision, **k: rec["decided"].append((aid, decision, k)) or ({}, True))
-    monkeypatch.setattr(gate, "record_external", lambda action, **k: rec["external"].append((action, k)))
+    monkeypatch.setattr(gate, "record_external", lambda action, **k: rec["external"].append((action, k))
+                        or {"seq": 7, "hash": "h7"})
     monkeypatch.setattr(gate, "record_outcome", lambda tool, decision, status, **k:
-                        rec["outcomes"].append({"tool": tool, "status": status, **k}))
+                        rec["outcomes"].append({"tool": tool, "status": status, "decision": decision, **k}))
     from agent_friday.services import action_ledger
     monkeypatch.setattr(action_ledger, "records", lambda kind, **k: [
         dict(o, approval=o.get("approval"), _seq=40 + i) for i, o in enumerate(rec["outcomes"])][::-1]
@@ -81,6 +82,9 @@ def test_one_proposal_built_from_a_held_record_waits_for_the_press(fa):
     assert card["action_class"] == "internal"
     assert card["payload"]["person"] == "dana@example.org" and card["payload"]["action"] == "follow_up"
     assert "sends nothing to anyone" in card["description"]
+    assert "dana" not in card["title"].lower()          # the title travels in notices; no names
+    from agent_friday.services import approvals as ap
+    assert "first_action" in ap.PRIVATE_DETAIL_KINDS
     assert fa.rec["follow_ups"] == [] and fa.rec["external"] == []      # nothing ran
     again = fa.propose("owner:home")
     assert again["approval_id"] == out["approval_id"] and len(fa.rec["cards"]) == 1
@@ -120,8 +124,11 @@ def test_the_press_runs_it_once_with_a_decision_receipt_and_an_outcome_receipt(f
     assert fa.rec["external"][0][1]["approval_id"] == rec["approval_id"]
     assert fa.rec["follow_ups"] == [("dana@example.org", "You wrote last on 2026-10-18 and there is no reply yet.", 2)]
     assert fa.rec["outcomes"][0]["status"] == "ok" and fa.rec["outcomes"][0]["approval"] == rec["approval_id"]
+    assert fa.rec["outcomes"][0]["decision"] == {"seq": 7, "hash": "h7"}   # the outcome names its decision
     assert fa.state()["state"] == "done" and fa.done_receipt() == 40
     assert fa.rec["used"][0][1]["receipt_seq"] == 40                     # the card links its receipt
+    assert fa.rec["used"][0][1]["receipt_url"] == "/api/ledger?kind=outcome&before=41&limit=1"
+    assert fa.state()["receipt_url"] == "/api/ledger?kind=outcome&before=41&limit=1"
     assert fa.run_approved(rec)["ok"] is False and len(fa.rec["follow_ups"]) == 1
 
 
@@ -134,6 +141,7 @@ def test_a_held_checkpoint_sets_nothing(fa, monkeypatch):
     out = fa.run_approved(_approved(fa))
     assert out["ok"] is False and fa.rec["follow_ups"] == []
     assert fa.state()["state"] == "failed"
+    assert [o["status"] for o in fa.rec["outcomes"]] == ["held"]       # the hold has its receipt too
 
 
 def test_skip_declines_the_card_and_is_recorded(fa, monkeypatch):
@@ -159,7 +167,10 @@ def test_the_owners_decline_on_the_card_is_a_skip_but_friday_declining_is_not(fa
     card = fa.rec["cards"][-1]
     fa._on_decision(dict(card, status="denied", decided_by="friday", decided_source="friday"))
     assert fa.state()["state"] == "proposed"
-    fa._on_decision(dict(card, status="denied", decided_by="owner", decided_source="page_without_desk_key"))
+    for src in ("page_without_desk_key", "text_message", "voice", "page_not_on_this_pc"):
+        fa._on_decision(dict(card, status="denied", decided_by="owner", decided_source=src))
+        assert fa.state()["state"] == "proposed", src           # declined, but not the owner's skip here
+    fa._on_decision(dict(card, status="denied", decided_by="owner:ui", decided_source="desktop_press"))
     assert fa.state()["state"] == "skipped"
 
 
@@ -171,6 +182,30 @@ def test_an_expired_card_is_not_an_answer_and_can_be_proposed_again(fa):
     again = fa.propose("owner:home")
     assert again["state"] == "proposed" and again["approval_id"] != first["approval_id"]
     assert fa.rec["cards"][1]["subject_id"] != fa.rec["cards"][0]["subject_id"]
+
+
+def test_a_card_that_does_not_match_the_proposal_never_runs(fa):
+    fa.propose("setup")
+    forged = _approved(fa)
+    forged["payload"] = dict(forged["payload"], person="someone-else@example.org")
+    assert fa.run_approved(forged)["ok"] is False
+    assert fa.rec["follow_ups"] == [] and fa.rec["external"] == []
+
+
+def test_a_reminder_without_its_receipt_is_not_done(fa, monkeypatch):
+    from agent_friday.services import action_ledger
+    monkeypatch.setattr(action_ledger, "records", lambda kind, **k: [])
+    fa.propose("setup")
+    out = fa.run_approved(_approved(fa))
+    assert out["ok"] is False and fa.state()["state"] == "failed" and fa.done_receipt() is None
+
+
+def test_a_skip_that_loses_to_an_approval_is_not_recorded(fa, monkeypatch):
+    from agent_friday.services import approvals as ap
+    fa.propose("setup")
+    monkeypatch.setattr(ap, "decide_with_outcome", lambda aid, decision, **k: ({"status": "approved"}, False))
+    out = fa.skip("owner:ui")
+    assert out["ok"] is False and fa.skipped() is False
 
 
 def test_the_end_of_setup_proposes_it(fa, monkeypatch):

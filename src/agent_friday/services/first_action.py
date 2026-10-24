@@ -77,6 +77,8 @@ def state() -> Dict[str, Any]:
     for k in ("approval_id", "title", "description", "receipt_seq", "skipped_at", "done_at", "why"):
         if d.get(k) is not None:
             out[k] = d[k]
+    if out.get("receipt_seq") is not None:
+        out["receipt_url"] = receipt_url(out["receipt_seq"])
     return out
 
 
@@ -139,6 +141,10 @@ def propose(requested_by: str = "setup") -> Dict[str, Any]:
         if d.get("state") in ("proposed", "done", "skipped"):
             return {"ok": True, **state()}
         attempt = int(d.get("attempt") or 0) + 1
+        # A fresh subject every time: create_approval is idempotent on its subject, so a reused one
+        # could hand back an older card (decided, or not made by this proposal).
+        import uuid
+        subject = "%s-%d-%s" % (SUBJECT_ID, attempt, uuid.uuid4().hex[:12])
         c = candidate()
         if c is None or _forgotten(c["person"]):
             d.update(state="nothing_to_propose", checked_at=time.time(),
@@ -147,23 +153,26 @@ def propose(requested_by: str = "setup") -> Dict[str, Any]:
             return {"ok": True, **state()}
         ensure_hook()
         from agent_friday.services import approvals as ap
-        title = "Remind you in %d days to follow up with %s" % (c["in_days"], c["label"])
+        # The title names no one: it travels in notices (the tray, a text offer). The name is in
+        # the description, which this kind keeps on Friday's own page (approvals.PRIVATE_DETAIL_KINDS).
+        title = "Your first action: a private reminder in %d days to follow up" % c["in_days"]
         description = ("Your first action with Friday, built from %s. If you approve it, Friday sets a "
                        "private reminder on this PC: \"%s\" It sends nothing to anyone, and you can close "
                        "the reminder any time. Approve it with a press here, or skip it."
                        % (c["basis"], c["note"]))
+        payload = {"handler": KIND, "action": c["action"], "person": c["person"], "note": c["note"],
+                   "in_days": c["in_days"], "basis": c["basis"]}
         card = ap.create_approval(
-            kind=KIND, subject_type=SUBJECT_TYPE, subject_id="%s-%d" % (SUBJECT_ID, attempt), title=title,
+            kind=KIND, subject_type=SUBJECT_TYPE, subject_id=subject, title=title,
             description=description, action_description="set a private follow-up reminder on this PC",
-            payload={"handler": KIND, "action": c["action"], "person": c["person"], "note": c["note"],
-                     "in_days": c["in_days"], "basis": c["basis"]},
-            requested_by=requested_by, action_class="internal", force_gate=True)
-        if card.get("status") != "pending":
+            payload=payload, requested_by=requested_by, action_class="internal", force_gate=True)
+        if card.get("status") != "pending" or (card.get("payload") or {}) != payload:
             # The card must wait for the press. Anything else (a standing grant, a block) is not this.
             d.update(state="failed", attempt=attempt, why="the card was not left waiting for your press")
             _write(d)
             return {"ok": False, **state()}
         d.update(state="proposed", approval_id=card.get("approval_id"), title=title, attempt=attempt,
+                 payload=payload,
                  description=description, proposed_at=time.time(), requested_by=str(requested_by)[:40])
         _write(d)
         return {"ok": True, **state()}
@@ -182,16 +191,18 @@ def run_approved(record: Dict[str, Any]) -> Dict[str, Any]:
     payload = record.get("payload") or {}
     with _LOCK:
         d = _read()
-        if d.get("approval_id") != aid:
+        if d.get("approval_id") != aid or d.get("state") != "proposed" or payload != d.get("payload"):
+            # Only the card this module raised, with exactly what it proposed, ever runs.
             return {"ok": False, "why": "this is not the proposal Friday made"}
         if not ap.claim_for_execution(aid):
             return {"ok": False, "why": "this card was already used"}
         from agent_friday.governance import action_gate as gate
         try:
-            gate.record_external("onboarding:first_action", surface="approval_card", approval_id=aid,
-                                 target="follow-up reminder")
+            decision = gate.record_external("onboarding:first_action", surface="approval_card",
+                                            approval_id=aid, target="follow-up reminder")
         except gate.Held as e:
             _log.info("first action held by the action checkpoint: %s", e)
+            gate.record_outcome(TOOL, None, "held", approval=aid, detail="checkpoint_held")
             out = {"ok": False, "why": "the action checkpoint held it; nothing was set"}
             ap.mark_used(aid, KIND, out)
             d.update(state="failed", why=out["why"])
@@ -205,7 +216,8 @@ def run_approved(record: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             res = {"ok": False, "error": type(e).__name__}
         ok = bool(isinstance(res, dict) and res.get("ok"))
-        gate.record_outcome(TOOL, None, "ok" if ok else "error", approval=aid,
+        gate.record_outcome(TOOL, decision if isinstance(decision, dict) else None,
+                            "ok" if ok else "error", approval=aid,
                             duration_ms=(time.time() - t0) * 1000.0,
                             detail="follow_up_set" if ok else "follow_up_refused")
         seq = _outcome_seq(aid)
@@ -217,12 +229,26 @@ def run_approved(record: Dict[str, Any]) -> Dict[str, Any]:
             _write(d)
             return out
         fu = res.get("follow_up") or {}
+        if seq is None:
+            # The reminder is set but its receipt could not be written: not counted as done.
+            out = {"ok": False, "why": "the reminder was set, but its receipt could not be written",
+                   "follow_up_id": fu.get("id")}
+            ap.mark_used(aid, KIND, out)
+            d.update(state="failed", why=out["why"], follow_up_id=fu.get("id"))
+            _write(d)
+            return out
         out = {"ok": True, "follow_up_id": fu.get("id"), "due": fu.get("due"), "receipt_seq": seq,
+               "receipt_url": receipt_url(seq),
                "where": "on this PC, in Friday's follow-ups; nothing was sent"}
         ap.mark_used(aid, KIND, out)
         d.update(state="done", done_at=time.time(), receipt_seq=seq, follow_up_id=fu.get("id"))
         _write(d)
         return out
+
+
+def receipt_url(seq: Optional[int]) -> Optional[str]:
+    """Where the receipt opens: the action ledger's own entry (signed, hash-chained)."""
+    return None if seq is None else "/api/ledger?kind=outcome&before=%d&limit=1" % (int(seq) + 1)
 
 
 def _outcome_seq(aid: str) -> Optional[int]:
@@ -261,21 +287,21 @@ def skip(by: str = "owner:ui") -> Dict[str, Any]:
         try:
             from agent_friday.services import approvals as ap
             # The route verified the press; the card is declined in the owner's name.
-            ap.decide_with_outcome(aid, "deny", decided_by="owner", note="skipped from onboarding")
+            rec, won = ap.decide_with_outcome(aid, "deny", decided_by="owner", note="skipped from onboarding")
+            if not won and (rec or {}).get("status") == "approved":
+                # The press to approve landed first: the action runs; there is no skip.
+                return {"ok": False, "why": "the first action was approved a moment ago", **state()}
         except Exception as e:  # noqa: BLE001
             _log.info("first action card not declined: %s", type(e).__name__)
     _record_skip(by, "skip")
     return {"ok": True, **state()}
 
 
-#: Where a decision came from (approvals.decision_source) that is not the owner answering.
-_NOT_THE_OWNER = frozenset({"friday", "system", "in_process", "local_program", "standing_grant", "other"})
-
-
 def _owner_answer(record: Dict[str, Any]) -> bool:
-    by = str(record.get("decided_by") or "")
-    src = str(record.get("decided_source") or "")
-    return by.startswith("owner") and src not in _NOT_THE_OWNER
+    """A Deny on the card counts as the owner's skip only when it is their press in Friday's window
+    on this PC, the same proof the Skip button needs (a text "no", voice or another device
+    declines the card but does not answer onboarding)."""
+    return str(record.get("decided_source") or "") == "desktop_press"
 
 
 def _on_decision(record: Dict[str, Any]) -> None:
