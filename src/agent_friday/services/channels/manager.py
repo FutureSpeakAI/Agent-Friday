@@ -356,8 +356,8 @@ def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
     if not _allowed(channel, chat_id):
         return None
     # BD-13: "stop everything" from an allowlisted chat stops everything before any model is
-    # asked; while stopped, nothing reaches the model and no reply can leave (the action
-    # checkpoint holds every send), so there is nothing to answer.
+    # asked, and answers that chat once with A28's fixed "Stopped."; while stopped, nothing
+    # reaches the model and no other reply can leave (the action checkpoint holds every send).
     try:
         from agent_friday.services import global_stop
         if global_stop.is_remote_stop(text):

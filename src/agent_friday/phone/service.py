@@ -817,9 +817,9 @@ def _handle_sms_in(ev: dict) -> str:
     from agent_friday.services import global_stop
     if global_stop.is_remote_stop(body) or global_stop.active():
         # BD-13. The ingress usually stopped everything already (its webhook does not wait
-        # for this loop); if it could not, stop here. Nothing is texted back: while stopped
-        # nothing leaves the machine, an acknowledgement included. The receipt and the
-        # screen are the record.
+        # for this loop); if it could not, stop here. While stopped nothing leaves the machine
+        # except A28's one fixed "Stopped." to the verified cell, once per stop (the ingress
+        # usually sent it as its webhook answer; global_stop.claim_ack keeps it to one).
         if global_stop.is_remote_stop(body):
             resumed_at = float(global_stop.state().get("resumed_at") or 0)
             if not global_stop.active():
