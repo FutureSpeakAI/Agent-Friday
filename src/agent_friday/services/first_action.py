@@ -9,7 +9,8 @@ gets a receipt."
     propose(requested_by)   at most one proposal, ever: a normal approval card (kind first_action,
                             screen-only: approved only by the owner's press in Friday's window)
     skip(by)                the owner's skip: the card is declined and the skip is recorded
-    state()                 none / nothing_to_propose / proposed / expired / done / skipped / failed
+    state()                 none / nothing_to_propose / proposed / declined / expired / done /
+                            skipped / failed
 
 The action: a private follow-up reminder on this PC (services/relationship_memory.set_follow_up)
 for the one thread the owner wrote last and nobody answered. It sends nothing to anyone and can be
@@ -140,6 +141,7 @@ def propose(requested_by: str = "setup") -> Dict[str, Any]:
         d = _read()
         if d.get("state") in ("proposed", "done", "skipped"):
             return {"ok": True, **state()}
+        # (declined elsewhere, expired, failed, nothing to propose: a new proposal may be made)
         attempt = int(d.get("attempt") or 0) + 1
         # A fresh subject every time: create_approval is idempotent on its subject, so a reused one
         # could hand back an older card (decided, or not made by this proposal).
@@ -156,10 +158,13 @@ def propose(requested_by: str = "setup") -> Dict[str, Any]:
         # The title names no one: it travels in notices (the tray, a text offer). The name is in
         # the description, which this kind keeps on Friday's own page (approvals.PRIVATE_DETAIL_KINDS).
         title = "Your first action: a private reminder in %d days to follow up" % c["in_days"]
+        who = c["label"] if c["label"] and c["label"] != c["person"] else c["person"]
+        if c["label"] and c["label"] != c["person"]:
+            who = "%s (%s)" % (c["label"], c["person"])
         description = ("Your first action with Friday, built from %s. If you approve it, Friday sets a "
-                       "private reminder on this PC: \"%s\" It sends nothing to anyone, and you can close "
-                       "the reminder any time. Approve it with a press here, or skip it."
-                       % (c["basis"], c["note"]))
+                       "private reminder on this PC in %d days to follow up with %s: \"%s\" It sends "
+                       "nothing to anyone, and you can close the reminder any time. Approve it with a press "
+                       "here, or skip it." % (c["basis"], c["in_days"], who, c["note"]))
         payload = {"handler": KIND, "action": c["action"], "person": c["person"], "note": c["note"],
                    "in_days": c["in_days"], "basis": c["basis"]}
         card = ap.create_approval(
@@ -310,8 +315,19 @@ def _on_decision(record: Dict[str, Any]) -> None:
     elif record.get("status") == "denied":
         # A decline is the owner's skip only when the owner made it: Friday (a model tool, a
         # background job) declining her own proposal must not count as onboarding answered.
-        if _read().get("approval_id") == record.get("approval_id") and _owner_answer(record):
+        if _read().get("approval_id") != record.get("approval_id"):
+            return
+        if _owner_answer(record):
             _record_skip(str(record.get("decided_by") or "owner"), "card_denied")
+            return
+        # Declined from somewhere else (a text, voice, another device): the card is gone, but
+        # onboarding is not answered. The owner can ask for a new proposal, or skip on this PC.
+        with _LOCK:
+            d = _read()
+            if d.get("approval_id") == record.get("approval_id") and d.get("state") == "proposed":
+                d.update(state="declined", why="The card was declined away from this PC. Skip here, or ask for "
+                                               "a new first action.")
+                _write(d)
     elif record.get("status") == "expired":
         # Not an answer from the owner: the proposal can be made again, or skipped.
         with _LOCK:

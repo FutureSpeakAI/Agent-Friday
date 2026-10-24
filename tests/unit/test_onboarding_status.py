@@ -125,7 +125,7 @@ def test_a_recorded_skip_of_the_first_action_lets_onboarding_be_done(ob):
 def test_a_proposal_waiting_for_the_press_meets_nothing(ob):
     _first_action(ob, state="proposed", approval_id="ap-1")
     out = ob.status()
-    assert out["first_action"]["state"] == "proposed"
+    assert (out.get("first_action") or {}).get("state") == "proposed"
     m = {c["id"]: c["met"] for c in out["checks"]}
     assert not m["action"] and not m["receipt"] and not m["where_ran"]
 

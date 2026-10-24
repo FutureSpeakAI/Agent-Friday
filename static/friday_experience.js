@@ -485,7 +485,7 @@
     const decide = decision => {
       setBusy(true); setSaid('');
       api('/api/approvals/' + encodeURIComponent(fa.approval_id) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, decided_by: 'owner:ui' }) })
-        .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.error || ''); load(); })
+        .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.message || (x.error && x.error.indexOf('_') < 0 ? x.error : '') || (x.error ? 'Approve it with a press in Friday\'s window on this PC.' : '')); load(); })
         .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
         .finally(() => { if (live.current) setBusy(false); });
     };
@@ -506,7 +506,7 @@
         h('p', { className: 'fx-meta' }, 'Your first action ran on this PC and sent nothing to anyone. Receipt #' + fa.receipt_seq + '.'), ' ',
         fa.receipt_url && h('button', { type: 'button', className: 'fx-action-secondary', onClick: () => api(fa.receipt_url, { cache: 'no-store' }).then(r => r.json()).then(d => {
           const e = ((d && d.entries) || [])[0];
-          setReceiptText(e ? JSON.stringify(e, null, 2) : 'The receipt could not be read.');
+          setReceiptText(e && e.seq === fa.receipt_seq ? JSON.stringify(e, null, 2) : 'The receipt could not be read here; it is in the action ledger as #' + fa.receipt_seq + '.');
         }).catch(() => setReceiptText('The receipt could not be read.')) }, 'Open the receipt'),
         receiptText && h('pre', { className: 'fx-meta' }, receiptText));
       if (fa.state === 'skipped') return h('p', { className: 'fx-meta' }, 'You skipped the first action; that is recorded.');
