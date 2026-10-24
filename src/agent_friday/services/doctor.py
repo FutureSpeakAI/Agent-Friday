@@ -359,6 +359,20 @@ def _c_recall():
     return "healthy", "ok"
 
 
+def _c_search_index():
+    # services/conversation_fts.health (NS-32.6-1): a damaged index is rebuilt from the
+    # transcripts, by itself when found and by the owner's press here.
+    from agent_friday.services import conversation_fts
+    state = conversation_fts.health()["state"]
+    if state == "ok":
+        return "healthy", "ok"
+    if state == "missing":
+        return "healthy", "not_built_yet"
+    if state == "repairing":
+        return "repairing", "conversation_search_index_rebuilding"
+    return "degraded", "conversation_search_index_" + state
+
+
 def _c_boot():
     from agent_friday.services import boot_guard
     n = int(boot_guard._read_attempt().get("consecutive_failures") or 0)
@@ -384,6 +398,7 @@ CHECKS = (
     ("backup", "backup", _c_backup),
     ("disk", "GPU and resource state", _c_disk),
     ("recall", "memory and search indexes", _c_recall),
+    ("search_index", "memory and search indexes", _c_search_index),
     ("model_files", "model files and checksums", _c_models),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
