@@ -38,6 +38,8 @@ if step.startswith("replace:"):
         if step[8:] in Path(dst).name:
             os._exit(9)
     fb._replace = rep
+elif step == "before-journal":
+    fb._plan_governance_key = lambda *a, **k: os._exit(9)
 elif step.startswith("unlink:"):
     real_unlink = fb._unlink_retry
     def unl(p):
@@ -348,3 +350,63 @@ def test_a_journal_written_with_other_letter_case_is_still_used(machines):
     out = fb.recover_interrupted_restore(b)
     assert out and out["rolled"] == "back", out
     assert (b / "core_memory" / "ME.md").exists()
+
+def test_a_restore_stopped_while_staging_leaves_no_decrypted_copy_after_the_next_start(machines):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    assert hasattr(fb, "_sweep_staging"), "a staging copy left before the first journal is never removed"
+    r = _run(CHILD, ["before-journal", b, bundle, PASS], b, scratch)
+    assert r.returncode == 9, (r.returncode, r.stderr[-2000:])
+    left = _siblings(b, ".friday-restore-")
+    assert len(left) == 1 and (b.parent / left[0] / "core_memory" / "ME.md").exists()
+    assert not _siblings(b, ".restore-journal")                   # the stop came before any journal
+    out = fb.recover_interrupted_restore(b)
+    assert out and out["rolled"] == "swept" and out["swept"] == left, out
+    assert not _siblings(b, ".friday-restore-")
+    assert (b / "core_memory" / "ME.md").read_text(encoding="utf-8") == "- the Friday that was here\n"
+    assert fb.recover_interrupted_restore(b) is None
+
+
+def test_a_staging_copy_is_left_alone_while_a_restore_runs(machines):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    assert hasattr(fb, "_sweep_staging"), "a staging copy left before the first journal is never removed"
+    st = b.parent / (b.name + ".friday-restore-abcd1234")
+    (st / "wiki").mkdir(parents=True)
+    (st / "wiki" / "page.md").write_text("decrypted", encoding="utf-8")
+    with fb._RestoreLock(b) as lk:
+        assert lk.held
+        out = fb.recover_interrupted_restore(b)
+        assert out["stop"] is True and st.exists()
+    out = fb.recover_interrupted_restore(b)
+    assert out["rolled"] == "swept" and not st.exists()
+
+
+def test_a_link_with_a_staging_name_is_never_followed(machines, tmp_path):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    assert hasattr(fb, "_sweep_staging"), "a staging copy left before the first journal is never removed"
+    victim = tmp_path / "Documents"
+    victim.mkdir()
+    (victim / "letter.txt").write_text("keep me", encoding="utf-8")
+    link = b.parent / (b.name + ".friday-restore-feed0000")
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(victim), str(link))
+        else:
+            os.symlink(victim, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this machine cannot make a link")
+    fb.recover_interrupted_restore(b)
+    assert (victim / "letter.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_a_new_restore_clears_an_old_staging_copy_first(machines):
+    a, b, bundle, scratch = machines
+    fb = _fb()
+    assert hasattr(fb, "_sweep_staging"), "a staging copy left before the first journal is never removed"
+    old = b.parent / (b.name + ".friday-restore-0ld0ld00")
+    (old / "wiki").mkdir(parents=True)
+    fb.restore(bundle, PASS, home=b, replace=True)
+    assert not old.exists() and not _siblings(b, ".friday-restore-")

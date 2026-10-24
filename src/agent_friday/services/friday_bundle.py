@@ -1057,6 +1057,8 @@ def restore(path: Path, passphrase: str, *, home: Optional[Path] = None,
         r0 = _recover_locked(home)                                      # one cut off earlier
         if r0 and r0.get("rolled") == "none" and r0.get("why") != "already finished":
             raise BundleError("Nothing was restored: %s" % r0.get("why"))
+        if r0 is None:
+            _swept_result(home, _sweep_staging(home, None))       # before a new staging copy exists
         return _restore_locked(path, passphrase, home=home, only=only, replace=replace,
                                dry_run=dry_run, allow_newer=allow_newer)
 
@@ -1453,7 +1455,7 @@ def recover_interrupted_restore(home: Optional[Path] = None) -> Optional[dict]:
     home = Path(os.path.abspath(str(home or friday_home())))
     lock = home.parent / (home.name + LOCK_SUFFIX)
     journal = _journal_path(home).exists()
-    if not journal and not lock.exists():
+    if not journal and not lock.exists() and not _staging_copies(home):
         return None
     with _RestoreLock(home) as lk:
         if not lk.held:
@@ -1468,7 +1470,7 @@ def recover_interrupted_restore(home: Optional[Path] = None) -> Optional[dict]:
             return {"rolled": "none", "stop": True,
                     "why": "a restore is running on this data folder; start Friday when it ends"}
         if not _journal_path(home).exists():       # looked at again under the lock
-            return None
+            return _swept_result(home, _sweep_staging(home, None))
         try:
             return _recover_locked(home)
         except Exception as e:  # noqa: BLE001
@@ -1491,7 +1493,77 @@ def _recover_locked(home: Path) -> Optional[dict]:
                 "why": "the restore journal beside the data folder (%s) could not be used; nothing "
                        "was changed. Look beside the folder for a .pre-restore- copy, or restore "
                        "the bundle again." % jp.name}
-    return _recover_from(home, jr)
+    out = _recover_from(home, jr)
+    swept = _sweep_staging(home, Path(jr["stage"]))
+    if swept:
+        out = dict(out, swept=swept)
+        _note_swept(home, swept)
+    return out
+
+
+def _staging_copies(home: Path) -> list:
+    """The staging folders a restore made beside `home` (<name>.friday-restore-*),
+    as they are on disk: folders only, never a link or a junction."""
+    out = []
+    prefix = os.path.normcase(home.name + ".friday-restore-")
+    try:
+        entries = list(os.scandir(home.parent))
+    except OSError:
+        return out
+    for e in entries:
+        if not os.path.normcase(e.name).startswith(prefix):
+            continue
+        p = Path(e.path)
+        try:
+            st = os.lstat(p)
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode) and _ours(p, home, ".friday-restore-"):
+            out.append(p)
+    return out
+
+
+def _sweep_staging(home: Path, keep: Optional[Path]) -> list:
+    """Remove every staging copy beside `home` that no journal names. Called
+    only with the restore lock held, so never under a restore that is running.
+    A restore stopped while it staged (before its first journal) leaves one,
+    holding the bundle's files decrypted; the bundle itself is untouched, and
+    the data folder was not changed, so nothing of the owner's is lost.
+    Returns the names removed."""
+    gone = []
+    for p in _staging_copies(home):
+        if keep is not None and _same_path(p, keep):
+            continue
+
+        def _retry(fn, path, _exc):
+            # a read-only file (Windows): made writable, then removed
+            try:
+                os.chmod(path, stat.S_IWRITE)
+                fn(path)
+            except OSError:
+                pass
+        shutil.rmtree(p, onerror=_retry)
+        if not p.exists():
+            gone.append(p.name)
+    return gone
+
+
+def _note_swept(home: Path, swept: list) -> None:
+    try:
+        if home.exists():
+            from agent_friday.services import action_ledger
+            with _as_home(home):
+                action_ledger.try_append("restore_staging_removed", {"folders": swept})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _swept_result(home: Path, swept: list) -> Optional[dict]:
+    if not swept:
+        return None
+    _note_swept(home, swept)
+    return {"rolled": "swept", "swept": swept,
+            "why": "removed %d unfinished copy(ies) an earlier restore was staging" % len(swept)}
 
 
 def verify_summary(o: "_Opened") -> dict:
