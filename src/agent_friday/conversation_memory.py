@@ -337,8 +337,12 @@ class ConversationMemory:
             if rebuild or _fts.rebuild_state() is not None:
                 if _fts.skip_on_rebuild(msg_id):
                     return None
-            elif msg_id and _fts.is_forgotten(msg_id):
-                return None
+            elif msg_id:
+                # One question, one place (services/tombstones): the facade
+                # answers from the same durable list, failing open.
+                from agent_friday.services import tombstones as _tomb
+                if _tomb.is_tombstoned("conversation_turn", msg_id):
+                    return None
         except Exception as e:
             if rebuild:
                 print(f"  [MEMORY] forgotten-turn check failed during a rebuild (turn skipped): {type(e).__name__}")

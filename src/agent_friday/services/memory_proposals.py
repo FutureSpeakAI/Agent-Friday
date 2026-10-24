@@ -324,6 +324,19 @@ def _already_proposed(conn, text: str) -> bool:
     return bool(row)
 
 
+def _refused_before(text: str) -> bool:
+    """The owner already said no to this statement: rejected it as a proposal,
+    deleted it as a fact, or deleted it from the memory card
+    (services/tombstones, NS-30.20-1). The rejected row itself is not what
+    holds it back: a meeting's rejected row keeps no text and a forget may
+    delete rows, while the tombstone (a keyed hash) stays. Never raises."""
+    try:
+        from agent_friday.services import tombstones
+        return tombstones.is_tombstoned(tombstones.STATEMENT_KINDS, text)
+    except Exception:                                       # noqa: BLE001
+        return False
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 @visible_job('Memory proposals', kind='memory_proposals', workspace='memory')
 def propose(day: Optional[str] = None, *, memory=None,
@@ -395,7 +408,7 @@ def propose(day: Optional[str] = None, *, memory=None,
         conn = _connect()
         try:
             for f in facts:
-                if _already_proposed(conn, f["text"]):
+                if _already_proposed(conn, f["text"]) or _refused_before(f["text"]):
                     continue
                 conn.execute(
                     "INSERT INTO proposed_facts (fact_id, ts, day, category, "
@@ -448,7 +461,8 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
             span = c.get("span") if isinstance(c.get("span"), dict) else None
             if len(text) < 4 or cat not in MEETING_CATEGORIES or not span:
                 continue
-            if _already_proposed(conn, text) or _already_from_meeting(conn, str(meeting_id), text):
+            if (_already_proposed(conn, text) or _already_from_meeting(conn, str(meeting_id), text)
+                    or _refused_before(text)):
                 continue
             executing = str(c.get("model") or model)
             prov = json.dumps({"meeting_id": str(meeting_id),
@@ -545,7 +559,7 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
                 from agent_friday.services import core_memory
                 _cm = core_memory.add("user", text, actor="owner", dedupe=True)
                 if not _cm.get("ok") and _cm.get("full"):
-                    core_memory.queue("user", "add", text=text, source=origin,
+                    core_memory.queue("user", "add", text=text, source=origin, owner=True,
                                       reason="You kept this, but the memory card was full.")
             except Exception:                               # noqa: BLE001
                 pass
@@ -575,13 +589,28 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
 
 
 def reject(fact_ids: List[str]) -> Dict[str, Any]:
-    """Discard proposals. They stay in the table as a record of what was said."""
+    """Discard proposals. They stay in the table as a record of what was said.
+
+    Each rejected statement is tombstoned (services/tombstones: a keyed hash,
+    never the text) so no later run proposes it again, even after the row is
+    blanked (a meeting's) or deleted (a forget)."""
     ids = [str(i) for i in (fact_ids or []) if str(i).strip()]
     if not ids:
         return {"ok": True, "rejected": 0}
     conn = _connect()
     try:
         marks = ",".join("?" * len(ids))
+        texts = [_open(t) for (t,) in conn.execute(
+            f"SELECT text FROM proposed_facts WHERE fact_id IN ({marks}) AND status='pending'",
+            ids).fetchall()]
+        unmarked = 0
+        try:
+            from agent_friday.services import tombstones
+            for t in texts:
+                if (t or "").strip() and not tombstones.add("proposal", t).get("ok"):
+                    unmarked += 1
+        except Exception:                                   # noqa: BLE001
+            unmarked = len([t for t in texts if (t or "").strip()])
         cur = conn.execute(
             f"UPDATE proposed_facts SET status='rejected', decided_ts=? "
             f"WHERE fact_id IN ({marks}) AND status='pending'",
@@ -589,7 +618,13 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
         conn.execute(f"UPDATE proposed_facts SET text='', evidence='' WHERE fact_id IN ({marks}) "
                      f"AND status='rejected' AND provenance IS NOT NULL AND provenance != ''", ids)   # a decided meeting suggestion keeps no text
         conn.commit()
-        return {"ok": True, "rejected": cur.rowcount}
+        out: Dict[str, Any] = {"ok": True, "rejected": cur.rowcount}
+        if unmarked:
+            out.update(tombstoned=False,
+                       warning=("%d rejected suggestion%s could not be recorded as refused; a later run "
+                                "may suggest %s again" % (unmarked, "" if unmarked == 1 else "s",
+                                                          "it" if unmarked == 1 else "them")))
+        return out
     finally:
         conn.close()
 
