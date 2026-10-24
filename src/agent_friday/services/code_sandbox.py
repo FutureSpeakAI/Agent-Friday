@@ -1079,24 +1079,95 @@ def run_shell(command: str, *, read_only: bool, timeout_s=SHELL_DEFAULT_TIMEOUT_
     processes = SHELL_READ_ONLY_PROCESSES if read_only else SHELL_APPROVED_PROCESSES
     workdir = Path(tempfile.mkdtemp(prefix="friday-shell-"))
     t0 = time.monotonic()
+    session = None
     try:
         argv = _shell_argv(exe, command)
         env = _shell_env(workdir, read_only=read_only)
+        # Network through Friday's loopback allow-list proxy (services/egress_proxy):
+        # a read-only command gets none at all, an approved one only the allowed
+        # hosts, and every connection is recorded. Not a boundary: a tool that
+        # ignores proxy variables goes around it (stated in the result).
+        try:
+            from agent_friday.services import egress_proxy as _ep
+            if read_only:
+                session = _ep.open_session("read-only command", mode="deny")
+            else:
+                session = _ep.open_session("approved command", mode="enforce",
+                                           allow_hosts=_ep.command_hosts())
+            _ep.apply_env(env, session["env"])
+        except Exception:
+            session = None              # the dead proxy (read-only) / no proxy stays
         if sys.platform == "win32":
             res = _run_windows_host("", workdir, timeout_s, memory_mb, int(output_cap), argv=argv, exe=exe,
                                     env=env, low=read_only, max_processes=processes, prepare=False)
         else:
             res = _run_posix_shell(argv, workdir, env, timeout_s, memory_mb, int(output_cap), processes)
             res["files"] = _produced(workdir)
+        if session:
+            # pip, git and npm can echo the proxy URL in an error; its credential
+            # never reaches the result.
+            for _k in ("stdout", "stderr"):
+                if isinstance(res.get(_k), str):
+                    res[_k] = res[_k].replace(session["token"], "[proxy credential]")
         res["ok"] = True
         res["tier"] = "read_only" if read_only else "approved"
+        res["network"] = ("none (proxy: deny)" if read_only else
+                          "allow-listed hosts through Friday's proxy" if session else
+                          "not restricted") + (
+            "; a program that ignores proxy settings is not stopped" if session else "")
         res["seconds"] = round(time.monotonic() - t0, 2)
         res["workdir_name"] = workdir.name
         return res
     except SandboxError as e:
         return {"ok": False, "error": f"the sandbox could not be set up, so nothing ran: {e}"}
     finally:
+        if session:
+            try:
+                from agent_friday.services import egress_proxy as _ep
+                _ep.close_session(session["token"])
+            except Exception:
+                pass
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _isolated_eligible() -> bool:
+    """The code sandbox runs in Windows' fully isolated mode (services/appcontainer: no
+    network at all, enforced by Windows) when its Python and packages live in Friday's
+    own install, the only folder that is ever re-permissioned for it. Anywhere else (a
+    source checkout's Python) it keeps the Low-integrity box. FRIDAY_ISOLATED_SANDBOX=0
+    turns it off."""
+    if os.environ.get("FRIDAY_ISOLATED_SANDBOX", "1").strip() == "0":
+        return False
+    try:
+        from agent_friday.services import appcontainer as _ac
+        if not _ac.available():
+            return False
+        exe = Path(_python_exe())
+        return _ac.friday_owned(exe) and all(_ac.friday_owned(p) for p in _package_paths())
+    except Exception:
+        return False
+
+
+def _run_isolated(code, workdir: Path, timeout_s, memory_mb, cap) -> dict:
+    from agent_friday.services import appcontainer as _ac
+    _prepare(code, workdir)
+    exe = Path(_python_exe())
+    try:
+        _ac.ensure_readable(exe.parent)        # once: read-only, Friday's own Python only
+        res = _ac.run([str(exe)] + _argv("_friday_boot.py")[1:], cwd=workdir, env=_clean_env(workdir),
+                      write=[workdir], timeout=timeout_s, cap=cap, memory_mb=memory_mb,
+                      max_processes=1)
+    except _ac.IsolationError as e:
+        raise SandboxError(str(e))
+    return {"exit_code": res["exit_code"], "stdout": res["stdout"], "stderr": res["stderr"],
+            "timed_out": res["timed_out"], "output_capped": res["output_capped"],
+            "files": _produced(workdir),
+            "boundary": {"backend": "appcontainer", "os_boundary": True,
+                         "network": "none (Windows refuses every connection, this PC included)",
+                         "reads": ("this run's folder, Friday's own Python, and what Windows lets "
+                                   "every isolated app read (its system folders); none of your files"),
+                         "job": {"one_process": True, "memory_mb": memory_mb,
+                                 "cpu_seconds": timeout_s, "ui_restricted": True}}}
 
 
 def run(code: str, *, timeout_s=DEFAULT_TIMEOUT_S, memory_mb=DEFAULT_MEMORY_MB,
@@ -1119,6 +1190,8 @@ def run(code: str, *, timeout_s=DEFAULT_TIMEOUT_S, memory_mb=DEFAULT_MEMORY_MB,
             res = _run_windows_sandbox(code, workdir, timeout_s, memory_mb, cap)
         elif backend != "host":
             return {"ok": False, "error": f"unknown sandbox backend {backend!r}"}
+        elif sys.platform == "win32" and _isolated_eligible():
+            res = _run_isolated(code, workdir, timeout_s, memory_mb, cap)
         elif sys.platform == "win32":
             res = _run_windows_host(code, workdir, timeout_s, memory_mb, cap)
         else:
