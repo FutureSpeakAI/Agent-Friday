@@ -294,6 +294,9 @@ $mustExist = @(
     'src\agent_friday\setup_wizard.py',
     'src\agent_friday\__init__.py',
     'friday_tray.py',
+    # The Doctor page, and the known issues it shows (services/known_issues.py).
+    'static\doctor.html',
+    'KNOWN_ISSUES.md',
     # The Reader draws a PDF with the vendored pdf.js; these are the files it imports.
     'static\vendor\pdfjs-6.4.299\VERSION.json',
     'static\vendor\pdfjs-6.4.299\legacy\pdf.min.mjs',

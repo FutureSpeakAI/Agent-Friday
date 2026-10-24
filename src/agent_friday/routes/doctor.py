@@ -9,6 +9,7 @@
                                       attach by hand (A3: never sent by Friday)
   POST /api/doctor/support            make the support bundle (a zip in
                                       Documents, Friday Support; a press here)
+  GET  /api/doctor/known-issues       this release's known issues (KNOWN_ISSUES.md)
   GET  /api/doctor/stores             every store Friday keeps: version, size,
                                       location (read-only, this PC only)
   GET  /api/safe-mode                 is this run in safe mode, and the next?
@@ -100,6 +101,17 @@ def doctor_report_file(rid, kind):
         return jsonify({"status": "error", "error": "No such report."}), 404
     resp = send_file(str(p), mimetype="application/json" if kind == "json" else "text/plain",
                      as_attachment=True, download_name=p.name)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@doctor_bp.route("/api/doctor/known-issues", methods=["GET"])
+@login_required
+def doctor_known_issues():
+    """The known issues of this release (KNOWN_ISSUES.md, §36.0-7). Public
+    text; read-only."""
+    from agent_friday.services import known_issues
+    resp = jsonify({"status": "ok", **known_issues.load()})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

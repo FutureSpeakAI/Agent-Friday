@@ -265,6 +265,7 @@ def _render(rep: dict, partly_off_record: bool) -> str:
     # the store inventory (§37.3-1) stays on this PC: the weekly email carries
     # what the owner agreed to (A23), and store sizes were not part of it
     r.pop("stores", None)
+    r.pop("known_issues", None)
     r["content"] = "none: versions, checks, error signatures, drift and performance only"
     if partly_off_record:
         r["errors"] = {}
