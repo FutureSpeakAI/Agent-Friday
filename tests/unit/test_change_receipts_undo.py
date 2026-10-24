@@ -325,7 +325,7 @@ def _undo_files():
 
 
 def test_the_receipt_keeps_no_description_or_notes_and_the_kept_data_is_sealed(world):
-    before = len(_undo_files())
+    before = set(_undo_files())
     rid_e = _rid(agent._tool_delete_calendar_event({"event_id": "e1", "notify_guests": False}))
     rid_t = _rid(agent._tool_update_task({"account_id": "acct_t1", "tasklist_id": "tl1", "task_id": "k1",
                                           "notes": "any colour"}))
@@ -334,8 +334,8 @@ def test_the_receipt_keeps_no_description_or_notes_and_the_kept_data_is_sealed(w
         assert secret not in json.dumps(rec), "the item's own words are not in the ledger entry"
         row = rec["undo"][rec["domain"]][0]
         assert row.get("sealed") and "fields" not in row and row.get("field_names")
-    files = _undo_files()
-    assert len(files) == before + 2
+    files = [f for f in _undo_files() if f not in before]
+    assert len(files) == 2
     for f in files:
         raw = f.read_bytes()
         assert raw.startswith(b"SEALED:") and b"Bring the form" not in raw and b"the blue ones" not in raw
