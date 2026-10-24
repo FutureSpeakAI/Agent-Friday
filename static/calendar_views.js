@@ -811,8 +811,8 @@
 .calv-rsvp-btn:focus-visible{box-shadow:var(--fr-focus);outline:none}
 .calv-delete{background:none;border:1px solid transparent;border-radius:6px;color:var(--fr-error);font-size:10px;padding:1px 6px;cursor:pointer;min-height:20px}
 .calv-delete:hover,.calv-delete:focus-visible{border-color:var(--fr-error);outline:none}
-.calv-move{background:none;border:1px solid rgba(127,182,201,0.35);border-radius:6px;color:var(--fr-accent,#00d4ff);font-size:10px;padding:1px 6px;cursor:pointer;min-height:24px;min-width:24px}
-.calv-move:hover,.calv-move:focus-visible{border-color:var(--fr-accent,#00d4ff);outline:none}
+.calv-move{background:none;border:1px solid var(--fr-glass-edge);border-radius:6px;color:var(--fr-cyan);font-size:10px;padding:1px 6px;cursor:pointer;min-height:24px;min-width:24px}
+.calv-move:hover,.calv-move:focus-visible{border-color:var(--fr-cyan);outline:none}
 .cal-event:has(.calv-move-btns):hover,.cal-event:has(.calv-move-btns):focus-within{height:auto!important;overflow:visible!important;z-index:7}
 .calv-danger{color:var(--fr-error);border-color:var(--fr-error)}
 @container (max-width:719px){.calv-cell{min-height:64px}.calv-chip-time{display:none}}
