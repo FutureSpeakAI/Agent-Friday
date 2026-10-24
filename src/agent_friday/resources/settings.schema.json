@@ -1240,6 +1240,9 @@
    "type": "boolean"
   },
   "reflex_open_enabled": {},
+  "render_3d": {
+   "type": "boolean"
+  },
   "repo_sync": {
    "properties": {
     "repos": {
