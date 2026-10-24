@@ -1037,11 +1037,151 @@ def _grants_file() -> Path:
     return _gov_dir() / "grants.json"
 
 
-def _read_grants() -> list:
+def _read_raw_grants() -> list:
     try:
-        return json.loads(_grants_file().read_text(encoding="utf-8"))
+        data = json.loads(_grants_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+# A grant is signed with the governance key, and its uses and its revocation are
+# entries in the action ledger (services/action_ledger: append-only, chained,
+# anchored outside the data folder). grants.json is only a list for display: a
+# grant written into it by hand, or an older copy put back (to get spent uses or a
+# revoked grant back), is not honoured. NS-34.5-5 / NS-34.5-6.
+_GRANT_SIGNED = ("grant_id", "tools", "scope", "expires_at", "max_uses", "created_by",
+                 "note", "created_at")
+_GRANTS_MARK = "grants.signed-v1"
+
+
+def _grant_sig(g: dict) -> str:
+    body = json.dumps({k: g.get(k) for k in _GRANT_SIGNED}, sort_keys=True, default=str)
+    return _hmac.new(_governance_key(), b"agent-friday/grant/v1\0" + body.encode("utf-8"),
+                     hashlib.sha256).hexdigest()
+
+
+def _grant_signed(g: dict) -> bool:
+    try:
+        return isinstance(g, dict) and bool(g.get("sig")) and _hmac.compare_digest(
+            str(g.get("sig")), _grant_sig(g))
+    except Exception:
+        return False
+
+
+def _write_grants(gs: list) -> None:
+    """grants.json, replaced whole (a crash never leaves half a list)."""
+    f = _grants_file()
+    tmp = f.with_name(f.name + ".tmp")
+    tmp.write_text(json.dumps(gs, indent=1), encoding="utf-8")
+    import os as _os
+    _os.replace(tmp, f)
+
+
+#: A grant made before signing keeps working at most this much longer.
+_MIGRATED_MAX_SECONDS = 7 * 24 * 3600
+#: This process has seen the ledger's record of the one-time signing.
+_MIGRATION_SEEN = False
+
+
+def _migrate_grants_locked(gs: list) -> list:
+    """Grants written before signing (no `sig`) are signed ONCE, the first time this
+    version reads them. That one time is a durable entry in the action ledger, not
+    a file: deleting the marker file does not sign a hand-written grant later. A
+    signed-at-migration grant keeps its uses and expires within a week at most. When
+    the ledger cannot be read or written, nothing is signed (fail closed)."""
+    global _MIGRATION_SEEN
+    if _MIGRATION_SEEN:
+        return gs
+    from agent_friday.services import action_ledger
+    try:
+        done = action_ledger.entries(["grants_migrated"], newest_first=False, strict=True,
+                                     archive=True)
+    except Exception:
+        return gs
+    if done:
+        _MIGRATION_SEEN = True
+        return gs
+    # The first read on this version records the one-time signing even when there is
+    # nothing to sign (a fresh install): from then on nothing unsigned is ever signed.
+    now = time.time()
+    signed = []
+    for g in gs:
+        if isinstance(g, dict) and not g.get("sig") and isinstance(g.get("created_at"), (int, float)) \
+                and g["created_at"] <= now:
+            g.setdefault("max_uses", int(g.get("uses_left") or 0))
+            g["expires_at"] = min(float(g.get("expires_at") or 0), now + _MIGRATED_MAX_SECONDS)
+            try:
+                g["sig"] = _grant_sig(g)
+            except Exception:
+                return gs                # no key: nothing signed
+            signed.append(str(g.get("grant_id")))
+    try:
+        action_ledger.append("grants_migrated", {"signed": signed[:500]}, durable=True)
+    except Exception:
+        for g in gs:
+            if str(g.get("grant_id")) in signed:
+                g.pop("sig", None)
+        return gs
+    _MIGRATION_SEEN = True
+    if signed:
+        _write_grants(gs)
+    try:
+        (_gov_dir() / _GRANTS_MARK).write_text(
+            "grants are signed; uses and revocations are in the action ledger\n", encoding="utf-8")
+    except OSError:
+        pass
+    return gs
+
+
+def _grant_events() -> dict:
+    """{grant_id: [uses recorded, revoked?]} from the action ledger, in one read.
+    Raises when the ledger cannot be read, has a break, or a matching line's signature
+    does not hold (a strict read, archive included): no grant is then used."""
+    from agent_friday.services import action_ledger
+    out: dict = {}
+    for e in action_ledger.entries(["grant_use", "grant_revoke", "grant_revoke_all"],
+                                   newest_first=False, strict=True, archive=True):
+        if e.get("kind") == "grant_revoke_all":
+            # Every grant made before this moment is revoked, wherever it is listed.
+            at = float((e.get("rec") or {}).get("at") or e.get("t") or 0)
+            out["*revoked_all_at"] = max(float(out.get("*revoked_all_at") or 0), at)
+            continue
+        gid = str((e.get("rec") or {}).get("grant") or "")
+        if not gid:
+            continue
+        slot = out.setdefault(gid, [0, False])
+        if e.get("kind") == "grant_use":
+            slot[0] += 1
+        else:
+            slot[1] = True
+    return out
+
+
+def _live_view(g: dict, events: Optional[dict] = None) -> Optional[dict]:
+    """The grant as it stands (uses left counted from the ledger), or None when it
+    is unsigned, revoked, expired or used up."""
+    if not _grant_signed(g) or g.get("expires_at", 0) <= time.time():
+        return None
+    try:
+        events = events if events is not None else _grant_events()
+        ev = events.get(str(g.get("grant_id")), [0, False])
+        uses, revoked = int(ev[0]), bool(ev[1])
+        if float(g.get("created_at") or 0) <= float(events.get("*revoked_all_at") or 0):
+            revoked = True
+    except Exception:
+        return None
+    left = int(g.get("max_uses") or 0) - uses
+    if revoked or left <= 0:
+        return None
+    return dict(g, uses_left=left)
+
+
+def _read_grants() -> list:
+    """Every signed grant in the file (expired or not); see _live_view for use."""
+    with _LOCK:
+        gs = _migrate_grants_locked(_read_raw_grants())
+    return [g for g in gs if _grant_signed(g)]
 
 
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
@@ -1057,25 +1197,71 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
         raise ValueError("a grant needs tools, a scope, a positive expiry and uses")
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
          "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
-         "uses_left": int(max_uses), "created_by": created_by, "note": note[:200],
-         "created_at": time.time()}
+         "max_uses": int(max_uses), "uses_left": int(max_uses), "created_by": created_by,
+         "note": note[:200], "created_at": time.time()}
+    g["sig"] = _grant_sig(g)
     with _LOCK:
         gs = [x for x in _read_grants() if x.get("expires_at", 0) > time.time()]
         gs.append(g)
-        _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
-    return g
+        _write_grants(gs)
+    return dict(g)
+
+
+def revoke_all_grants() -> list:
+    """Revoke every grant: one durable ledger entry that ends every grant made until
+    now (so one taken off the list beforehand and put back afterwards is dead too),
+    then each grant in the list. Returns the ids taken off the list."""
+    from agent_friday.services import action_ledger
+    with _LOCK:
+        action_ledger.append("grant_revoke_all", {"at": time.time()}, durable=True)
+        ids = all_grant_ids()
+        # Each listed grant by id as well: a grant whose created_at is later than the
+        # moment above (a clock that ran fast when it was made) is still revoked.
+        for gid in ids:
+            action_ledger.append("grant_revoke", {"grant": gid}, durable=True)
+        _write_grants([])
+    return ids
+
+
+def all_grant_ids() -> list:
+    """Every grant id in the file, signed or not, live or not: what a revoke-all must
+    take back (list_grants shows only the live ones)."""
+    return [str(g.get("grant_id")) for g in _read_raw_grants()
+            if isinstance(g, dict) and g.get("grant_id")]
 
 
 def list_grants() -> list:
-    return [g for g in _read_grants() if g.get("expires_at", 0) > time.time()]
+    """Live grants: signed, in time, not revoked, uses left (counted from the ledger)."""
+    out = []
+    gs = _read_grants()
+    if not gs:
+        return out
+    try:
+        events = _grant_events()
+    except Exception:
+        return out
+    for g in gs:
+        v = _live_view(g, events)
+        if v is not None:
+            out.append(v)
+    return out
 
 
 def revoke_grant(grant_id: str) -> bool:
+    """Revoke a grant: a durable entry in the action ledger first (so an older copy
+    of grants.json cannot bring it back), then off the list."""
+    if not re.fullmatch(r"grant_[0-9a-zA-Z_-]{1,64}", str(grant_id or "")):
+        return False
     with _LOCK:
-        gs = _read_grants()
-        keep = [g for g in gs if g.get("grant_id") != grant_id]
-        _grants_file().write_text(json.dumps(keep, indent=1), encoding="utf-8")
-    return len(keep) != len(gs)
+        gs = _read_raw_grants()
+        found = any(isinstance(g, dict) and g.get("grant_id") == grant_id for g in gs)
+        # Recorded even when the list no longer shows it: a copy of the list put back
+        # later cannot bring it back.
+        from agent_friday.services import action_ledger
+        action_ledger.append("grant_revoke", {"grant": str(grant_id)}, durable=True)
+        keep = [g for g in gs if not (isinstance(g, dict) and g.get("grant_id") == grant_id)]
+        _write_grants(keep)
+    return found
 
 
 def _scopes(ctx: dict) -> set:
@@ -1084,8 +1270,10 @@ def _scopes(ctx: dict) -> set:
 
 
 def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
-    """Spend one use of a scoped grant for an executor that is not a tool
-    call (a Claude Code launch, a codebase task). None when nothing is live."""
+    """Spend one use of a scoped grant for an executor that is not a tool call (a
+    Claude Code launch, a codebase task: scope "codebase:<id>"). None when no grant
+    covers the tool, has uses left, or is still in time. (One definition: an older
+    second copy of this function was removed.)"""
     if not tool_name or not scope:
         return None
     return _use_grant(tool_name, {"grant_scope": str(scope)})
@@ -1095,25 +1283,50 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
     scopes = _scopes(ctx)
     if not scopes:
         return None
+    # The same hold authorize() applies, for every caller (consume_grant, local
+    # context, authorize): while the action ledger has a break, authority is revoked
+    # or everything is stopped, no grant is spent.
+    try:
+        if outward_hold():
+            return None
+    except Exception:
+        return None
     with _LOCK:
-        gs = _read_grants()
-        now = time.time()
+        gs = [g for g in _read_grants()
+              if g.get("scope") in scopes and tool_name in (g.get("tools") or [])]
+        if not gs:
+            return None
+        try:
+            events = _grant_events()
+        except Exception:
+            return None
         for g in gs:
-            if (g.get("scope") in scopes and tool_name in (g.get("tools") or [])
-                    and g.get("expires_at", 0) > now and int(g.get("uses_left") or 0) > 0):
-                g["uses_left"] = int(g["uses_left"]) - 1
-                _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
-                return dict(g)
+            live = _live_view(g, events)
+            if live is None:
+                continue
+            # The use is a durable ledger entry BEFORE anything runs: no entry, no use.
+            try:
+                from agent_friday.services import action_ledger
+                action_ledger.append("grant_use", {"grant": str(g.get("grant_id")),
+                                                   "tool": str(tool_name)[:80],
+                                                   "scope": str(g.get("scope"))[:120]},
+                                     durable=True)
+            except Exception:
+                return None
+            live["uses_left"] = int(live["uses_left"]) - 1
+            # The file's count is for display only.
+            try:
+                raw = _read_raw_grants()
+                for x in raw:
+                    if isinstance(x, dict) and x.get("grant_id") == g.get("grant_id"):
+                        x["uses_left"] = live["uses_left"]
+                _write_grants(raw)
+            except OSError:
+                pass                      # display only: the ledger holds the count
+            return live
     return None
 
 
-def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
-    """One use of a grant for `scope`, spent by a self-gated tool that checks
-    its own grant (a codebase task: scope "codebase:<id>"). None when no grant
-    covers the tool, has uses left, or is still in time."""
-    if not tool_name or not scope:
-        return None
-    return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
 # ── 4. Receipts ─────────────────────────────────────────────────────────────
