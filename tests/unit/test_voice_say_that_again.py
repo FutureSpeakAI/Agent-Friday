@@ -13,7 +13,7 @@ from tests.unit.phone_fakes import phone_home, quiet  # noqa: F401
 
 
 def _vr():
-    ""The module under test, imported in each test: on code without it every test fails on its own.""
+    # The module under test, imported in each test: on code without it every test fails on its own.
     from agent_friday.services import voice_repeat
     return voice_repeat
 
