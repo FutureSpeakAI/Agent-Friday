@@ -273,8 +273,10 @@
     api('/api/doctor/known-issues').then(({ ok, d }) => {
       const out = $('known-out'); out.textContent = '';
       if (!ok || !d.available) { text($('known-sum'), (d && d.why) || 'The list of known issues could not be read.'); return; }
-      text($('known-sum'), d.count + ' known issues' + (d.release ? ' (' + d.release + ')' : '') + '.' +
-        ($('safe').className === 'safe' ? ' Friday is in safe mode: check these before changing anything.' : ''));
+      text($('known-sum'), d.count + ' known issues' + (d.release ? ' (' + d.release + ')' : '') + '.');
+      api('/api/safe-mode').then(({ d: sm }) => {
+        if (sm && sm.active) text($('known-sum'), $('known-sum').textContent + ' Friday is in safe mode: check these before changing anything.');
+      });
       (d.sections || []).forEach(s => {
         const det = document.createElement('details');
         const sum = document.createElement('summary'); sum.textContent = s.title + ' (' + s.items.length + ')';
@@ -287,6 +289,7 @@
           ul.appendChild(li);
         });
         det.appendChild(ul);
+        (s.notes || []).forEach(n => { const p = document.createElement('p'); p.className = 'muted'; p.textContent = n; det.appendChild(p); });
         out.appendChild(det);
       });
     });

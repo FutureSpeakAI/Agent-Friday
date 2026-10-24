@@ -54,8 +54,9 @@ def test_sections_items_and_paragraphs_are_read_as_plain_text():
     assert moving[0] == {"title": "Moving keeps your data.",
                          "text": "The installer copies the folder first. See the guide."}
     assert moving[1] == {"title": "", "text": "A bullet with no bold title."}
-    assert d["sections"][1]["items"] == [{"title": "", "text": "No telemetry. The connections are listed in "
-                                                                 "background network."}]
+    # a paragraph is a note of its section, shown but not counted as an issue
+    assert d["sections"][1]["items"] == []
+    assert d["sections"][1]["notes"] == ["No telemetry. The connections are listed in background network."]
 
 
 def test_the_shipped_list_is_read_whole():
@@ -64,6 +65,10 @@ def test_the_shipped_list_is_read_whole():
     text = (ROOT / "KNOWN_ISSUES.md").read_text(encoding="utf-8-sig")
     headings = [h for h in re.findall(r"^##\s+(.+?)\s*$", text, re.M)]
     assert [s["title"] for s in k["sections"]] == [_ki()._plain(h) for h in headings]
+    body = text[text.index("\n## "):]
+    assert k["count"] == len(re.findall(r"^- ", body, re.M)), "a bullet of the list was not read"
+    assert "`" not in json.dumps(k) and "](" not in json.dumps(k)
+    assert "<withheld>" not in json.dumps(_ki().summary())
 
 
 def test_a_missing_list_says_so(monkeypatch, tmp_path):
@@ -78,6 +83,11 @@ def home(tmp_path, monkeypatch):
     h = tmp_path / ".friday"
     h.mkdir()
     monkeypatch.setenv("FRIDAY_HOME", str(h))
+    from agent_friday import core
+    # core binds its folder and settings file at import: pointed here too, so
+    # a write through core would land where the test looks
+    monkeypatch.setattr(core, "FRIDAY_DIR", h)
+    monkeypatch.setattr(core, "SETTINGS_FILE", h / "settings.json")
     files = {
         "settings.json": json.dumps({"agent_name": "Friday", "theme": "dark"}),
         "SOUL.md": "# Who Friday is\n",
@@ -90,6 +100,12 @@ def home(tmp_path, monkeypatch):
         "privacy/file_grants.jsonl": '{"grant": 1}\n',
         "governance/desktop_app_grants.json": json.dumps({"version": 1, "grants": []}),
         "instructions/manifest.json": json.dumps({"version": 1}),
+        "vault/.vault_config.json": json.dumps({"salt_hex": "00" * 16}),
+        "security/keystore.json": json.dumps({"wrap": "none", "v": 1}),
+        "schedules.json": json.dumps({"jobs": []}),
+        "mcp_servers.json": json.dumps({"servers": {}}),
+        "conversations/c1/messages.jsonl": '{"role": "user", "text": "hi"}\n',
+        "wiki/page.md": "# A page\n",
     }
     for rel, text in files.items():
         p = h / rel
@@ -99,7 +115,8 @@ def home(tmp_path, monkeypatch):
 
 
 PERSONAL = ("settings.json", "SOUL.md", "personality.json", "goals", "governance", "core_memory",
-            "memory", "approvals.json", "privacy", "instructions")
+            "memory", "approvals.json", "privacy", "instructions", "vault", "security", "schedules.json",
+            "mcp_servers.json", "conversations", "wiki")
 
 
 def _snapshot(h: Path) -> dict:
@@ -151,9 +168,14 @@ def test_no_doctor_path_writes_the_owners_data(home, tmp_path, monkeypatch):
 
 def test_an_unreadable_settings_file_is_left_exactly_as_it_is(home):
     from agent_friday.services import doctor
+    from agent_friday import core
     broken = b'{"agent_name": "Friday", "theme": '            # cut off mid-write
     (home / "settings.json").write_bytes(broken)
+    served = core._load_settings_raw()                             # the degraded read Friday makes
+    assert core._is_degraded_settings(served)
     rep = doctor.build()
     doctor.save(rep)
     assert (home / "settings.json").read_bytes() == broken
-    assert {c["id"]: c for c in rep["checks"]}["settings"]["state"] == "misconfigured"
+    checks = {c["id"]: c for c in rep["checks"]}
+    assert checks["settings"]["state"] == "misconfigured"
+    assert checks["settings_read"]["state"] == "degraded"

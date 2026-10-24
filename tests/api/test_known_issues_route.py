@@ -24,6 +24,9 @@ def test_the_doctor_routes_write_none_of_the_owners_data(client, tmp_path, monke
     home = tmp_path / ".friday"
     (home / "goals").mkdir(parents=True)
     monkeypatch.setenv("FRIDAY_HOME", str(home))
+    from agent_friday import core
+    monkeypatch.setattr(core, "FRIDAY_DIR", home)
+    monkeypatch.setattr(core, "SETTINGS_FILE", home / "settings.json")
     files = {"settings.json": json.dumps({"agent_name": "Friday"}), "SOUL.md": "# Friday\n",
              "goals/goal_1.json": json.dumps({"id": "g1"}), "approvals.json": json.dumps({"cards": []})}
     for rel, text in files.items():

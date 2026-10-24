@@ -171,7 +171,9 @@ def _c_settings():
 def _c_settings_read():
     """Whether this process is serving the last good settings because
     settings.json could not be read (§28.4-2: never a silent reset). The
-    file is not touched, and saves are refused until it reads again."""
+    file is not touched, and saves are refused until it reads again. It
+    reflects the last read: after the file is mended it turns healthy at the
+    next read."""
     from agent_friday import core
     if core._settings_read_degraded():
         return "degraded", "settings_unreadable_last_good_served"
@@ -595,9 +597,11 @@ def render_text(report: dict) -> str:
     lines += ["", "Performance: " + json.dumps(p, sort_keys=True)]
     ki = report.get("known_issues") or {}
     if ki.get("available"):
-        lines += ["", "Known issues in this release: %s (%s; listed on the Doctor page)" % (
-            ki.get("count"), ", ".join("%s %s" % (s.get("count"), s.get("section"))
+        lines += ["", "Known issues in this release: %s, listed on the Doctor page (%s)" % (
+            ki.get("count"), "; ".join("%s: %s" % (s.get("section"), s.get("count"))
                                        for s in ki.get("by_section") or []))]
+    elif "known_issues" in report:
+        lines += ["", "Known issues: the list is not in this install."]
     inv = report.get("stores")
     if isinstance(inv, dict) and isinstance(inv.get("stores"), list):
         from agent_friday.services import store_inventory
