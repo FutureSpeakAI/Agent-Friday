@@ -2108,6 +2108,16 @@ def api_mcp_status():
                     info["security_note"] = reason
         except Exception:
             pass
+        try:
+            # BD-07, A30: tools withheld for want of a manifest, each with the reason.
+            from agent_friday.governance import tool_manifests as _tm
+            for name, missing in _tm.unavailable().items():
+                if missing and isinstance(servers.get(name), dict):
+                    servers[name]["unavailable_tools"] = missing
+                    servers[name]["manifest_note"] = (
+                        "%d tool(s) not offered: %s" % (len(missing), sorted(set(missing.values()))[0]))
+        except Exception:
+            pass
         return jsonify({
             "status": "ok",
             "available": True,

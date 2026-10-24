@@ -265,6 +265,14 @@ def _c_mcp():
     servers = d.get("servers", d) if isinstance(d, dict) else {}
     if safe_mode.active():
         return "blocked_by_policy", "off_in_safe_mode:%d" % len(servers or {})
+    try:
+        # BD-07, A30: connector tools not offered for want of a manifest (reviewed on a card).
+        from agent_friday.governance import tool_manifests
+        withheld = sum(len(v) for v in tool_manifests.unavailable().values())
+    except Exception:
+        withheld = 0
+    if withheld:
+        return "healthy", "configured:%d;tools_without_manifest:%d" % (len(servers or {}), withheld)
     return "healthy", "configured:%d" % len(servers or {})
 
 
