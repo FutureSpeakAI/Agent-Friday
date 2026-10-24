@@ -59894,6 +59894,8 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(MemoryCardPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
     title: "Search your conversations"
   }, /*#__PURE__*/React.createElement(ConversationSearchPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Search what " + fridayName() + " remembers"
+  }, /*#__PURE__*/React.createElement(MemorySearchPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "What needs your sign-off"
   }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
     s: s,
@@ -61190,6 +61192,96 @@ function ConversationSearchPanel() {
           : btn('Delete…', () => setAsk(h.message_id), 'del')))));
 }
 // End conversation search panel
+
+function MemorySearchPanel() {
+  // The owner's search over everything Friday keeps (services/memory_search): past
+  // conversations, the memory card, suggestions waiting for review, facts, suggested
+  // facts and Library titles. Each result says where it came from and whether it still
+  // counts; "Why do you know this?" shows the original words, what corrected them and
+  // which replies recalled them lately. Corrected things stay hidden unless asked for.
+  const E = React.createElement;
+  const KINDS = [['conversation', 'Conversations'], ['card', 'Memory card'], ['suggestion', 'Waiting for review'],
+    ['fact', 'Facts'], ['proposal', 'Suggested facts'], ['document', 'Library']];
+  const NAMES = {conversation:'Conversation', card:'Memory card', card_change:'Memory card', suggestion:'Waiting for review',
+    fact:'Fact', proposal:'Suggested fact', document:'Library'};
+  const [q, setQ] = useState('');
+  const [kinds, setKinds] = useState(KINDS.map(k => k[0]));
+  const [corrected, setCorrected] = useState(false);
+  const [rep, setRep] = useState(null);
+  const [why, setWhy] = useState({});
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const run = over => {
+    const o = Object.assign({q: q, kinds: kinds, corrected: corrected}, over || {});
+    const text = String(o.q || '').trim().slice(0, 200);
+    if (!text) { setRep(null); return; }
+    if (!o.kinds.length) { setMsg('Pick at least one kind of memory.'); return; }
+    setBusy('search'); setMsg(''); setWhy({});
+    apiFetch('/api/memory/search?q=' + encodeURIComponent(text) + '&kinds=' + encodeURIComponent(o.kinds.join(','))
+      + (o.corrected ? '&superseded=1' : '') + '&limit=30')
+      .then(r => r.json())
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Memory search is not available right now.'); setRep(d); })
+      .catch(e => setMsg(e.message || 'Memory search is not available right now.'))
+      .finally(() => setBusy(''));
+  };
+  const explain = h => {
+    const key = h.kind + ':' + h.id;
+    if (why[key]) { const next = Object.assign({}, why); delete next[key]; setWhy(next); return; }
+    setBusy('w' + key);
+    apiFetch('/api/memory/why?kind=' + encodeURIComponent(h.kind) + '&id=' + encodeURIComponent(h.id))
+      .then(r => r.json())
+      .then(d => setWhy(Object.assign({}, why, {[key]: d})))
+      .catch(e => setWhy(Object.assign({}, why, {[key]: {ok: false, error: e.message || 'Could not look that up.'}})))
+      .finally(() => setBusy(''));
+  };
+  const flip = k => {
+    const next = kinds.indexOf(k) >= 0 ? kinds.filter(x => x !== k) : kinds.concat([k]);
+    setKinds(next);
+    if (rep) run({kinds: next});
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, label);
+  const status = h => h.status === 'superseded' ? 'Corrected' + (h.status_reason ? ': ' + h.status_reason : '')
+    : h.status === 'pending' ? 'Waiting for your review'
+    : h.status === 'inferred' ? 'Inferred by ' + fridayName() + ', not confirmed by you' : 'Current';
+  const whyView = w => !w.ok
+    ? E('div', {style: Object.assign({}, dim, {marginTop:4})}, w.error || 'Could not look that up.')
+    : E('div', {'data-memory-why': w.kind, style:{marginTop:6, padding:'4px 8px', borderLeft:'2px solid var(--st-accent)'}},
+        E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, w.summary),
+        w.kind === 'conversation' && w.text ? E('div', {style: dim}, 'The original words: “' + w.text + '”') : null,
+        w.source && w.source.evidence ? E('div', {style: dim}, 'It rests on these words: “' + w.source.evidence + '”') : null,
+        (w.history || []).length > 0 ? E('div', {style: Object.assign({}, dim, {marginTop:4, color:'rgba(255,255,255,0.6)'})}, 'History') : null,
+        (w.history || []).map((ev, i) => E('div', {key: 'h' + i, style: dim}, (ev.when ? ev.when + ' · ' : '') + ev.text)),
+        w.influence ? E('div', {style: Object.assign({}, dim, {marginTop:4, color:'rgba(255,255,255,0.6)'})}, 'How it is used') : null,
+        w.influence ? E('div', {style: dim}, w.influence.summary) : null,
+        w.influence ? (w.influence.recent || []).map((u, i) => E('div', {key: 'u' + i, style: dim},
+          u.when + (u.conversation_title ? ' · ' + u.conversation_title : ''))) : null);
+  return E('div', null,
+    E('div', {style: dim}, 'Search everything ' + fridayName() + ' keeps about you: past conversations, the memory card, suggestions waiting for your review, facts and Library titles. Each result says where it came from. Why do you know this? shows the original words, what corrected them, and which replies used them lately. Nothing here leaves this PC.'),
+    E('div', {style:{display:'flex', gap:6, marginTop:6}},
+      E('input', {className:'input', 'aria-label':'Search what ' + fridayName() + ' remembers', placeholder:'Search what ' + fridayName() + ' remembers', maxLength: 200,
+        style:{flex:1, fontSize:12}, value: q, onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter') run(); }}),
+      btn('Search', () => run(), 'go')),
+    E('div', {role:'group', 'aria-label':'Kinds of memory', style:{display:'flex', gap:10, flexWrap:'wrap', marginTop:6}},
+      KINDS.map(k => E('label', {key: k[0], style:{fontSize:11, color:'rgba(255,255,255,0.7)', display:'flex', gap:4, alignItems:'center'}},
+        E('input', {type:'checkbox', checked: kinds.indexOf(k[0]) >= 0, disabled: !!busy, onChange: () => flip(k[0])}), k[1]))),
+    E(StToggle, {label:'Show corrected', value: corrected, disabled: !!busy,
+      onChange: () => { const v = !corrected; setCorrected(v); if (rep) run({corrected: v}); },
+      desc:'Off, things that were corrected stay hidden. On, they show, with what corrected them.'}),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'var(--st-warn)', marginTop:6}}, msg),
+    rep && (rep.notes || []).map((n, i) => E('div', {key: 'n' + i, style: dim}, n)),
+    rep && rep.results.length === 0 && E('div', {style: Object.assign({}, dim, {marginTop:6})}, 'Nothing matches.'),
+    rep && rep.results.map(h => E('div', {key: h.kind + h.id, 'data-memory-result': h.kind, style: Object.assign({}, row, {marginTop:6})},
+      E('div', {style:{fontSize:12, color: h.status === 'superseded' ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.8)',
+        textDecoration: h.status === 'superseded' ? 'line-through' : 'none', wordBreak:'break-word'}}, h.text),
+      E('div', {style: dim}, (NAMES[h.kind] || h.kind) + ' · ' + ((h.source && h.source.label) || '') + (h.when ? ' · ' + h.when : '')),
+      E('div', {style: dim}, status(h)),
+      E('div', {style:{display:'flex', gap:6, marginTop:4}},
+        btn(why[h.kind + ':' + h.id] ? 'Hide' : 'Why do you know this?', () => explain(h), 'why')),
+      why[h.kind + ':' + h.id] ? whyView(why[h.kind + ':' + h.id]) : null)));
+}
+// End memory search panel
 
 
 

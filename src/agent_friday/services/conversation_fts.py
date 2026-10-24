@@ -281,15 +281,22 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
         finally:
             conn.close()
     removed_vec = 0
+    vec_ids: List[str] = []           # every stored turn removed, by id, for the influence record below
+
+    def _vec_delete(mem, **kw):
+        try:
+            return mem.delete(deleted=vec_ids, **kw)
+        except TypeError:             # a store without the `deleted` list: what it removed is not named
+            return mem.delete(**kw)
     try:
         from agent_friday.services.model_router import _get_conversation_memory
         mem = _get_conversation_memory()
-        removed_vec = mem.delete(ids=[mid])
+        removed_vec = _vec_delete(mem, ids=[mid])
         text = gone["text"] or ""
         # An older turn was stored under a random id: remove it by its exact
         # text, but only a text long enough not to match other people's "ok".
         if not removed_vec and len(" ".join(text.split())) >= 20:
-            removed_vec = mem.delete(exact_text=text)
+            removed_vec = _vec_delete(mem, exact_text=text)
     except Exception as e:
         _log.warning("conversation search: vector memory delete failed: %s", e)
     try:
@@ -303,6 +310,13 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
     try:
         from agent_friday.services import memory_review
         memory_review.forget_text(gone["text"] or "")
+    except Exception:
+        pass
+    try:
+        # The record of which replies recalled it keeps no id of a deleted message: its own id and the
+        # random id an older turn was stored under in the vector memory (removed above by its text).
+        from agent_friday.services import memory_influence
+        memory_influence.forget_refs([mid] + vec_ids)
     except Exception:
         pass
     return {"ok": True, "deleted": mid, "vector_rows": removed_vec}
@@ -329,8 +343,16 @@ def _day(value) -> Optional[float]:
         return None
 
 
-def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
-    """Matching turns, best first (BM25), with snippets and dates."""
+def search(query: str, since=None, until=None, limit: int = 8,
+           include_superseded: bool = False, titles=None) -> List[Dict[str, Any]]:
+    """Matching turns, best first (BM25), with snippets and dates.
+
+    `include_superseded` is for the owner's own memory search (services/
+    memory_search), which shows corrected turns flagged when asked; every
+    path that feeds a model leaves it off. `titles` (conversation id ->
+    title, or a callable returning that) lets a caller that already lists
+    the conversations for its request pass them in, instead of a second
+    listing here; it is read only when something matched."""
     terms = _terms(query)
     if not terms:
         return []
@@ -360,31 +382,61 @@ def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str,
                 marks = ",".join("?" * len(rows))
                 # A turn superseded in memory is not returned as evidence
                 # (§34.9-4); it stays in the transcript, flagged there.
-                for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to FROM msgs "
-                                      f"WHERE id IN ({marks}) "
-                                      f"AND mid NOT IN (SELECT mid FROM superseded)", list(rows)):
+                keep = "" if include_superseded else "AND mid NOT IN (SELECT mid FROM superseded)"
+                for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to, "
+                                      f"mid IN (SELECT mid FROM superseded) FROM msgs "
+                                      f"WHERE id IN ({marks}) {keep}", list(rows)):
                     meta[r[0]] = r
         finally:
             conn.close()
-    try:
-        from agent_friday.services import conversations as cv
-        titles = {c.get("id"): c.get("title") or "" for c in cv.list_all(include_archived=True)}
-    except Exception:
-        titles = {}
+    if not meta:
+        return []
+    if callable(titles):
+        try:
+            titles = titles()
+        except Exception:
+            titles = None
+    if not isinstance(titles, dict):
+        try:
+            from agent_friday.services import conversations as cv
+            titles = {c.get("id"): c.get("title") or "" for c in cv.list_all(include_archived=True)}
+        except Exception:
+            titles = {}
     hits = []
     for rid, (rank, text) in rows.items():
         m = meta.get(rid)
         if not m:
             continue
-        _id, mid, cid, ts, role, via, sent = m
+        _id, mid, cid, ts, role, via, sent, gone = m
         if (lo is not None and ts < lo) or (hi is not None and ts >= hi):
             continue
         hits.append({"message_id": mid, "conversation_id": cid, "title": titles.get(cid, ""),
                      "ts": ts, "date": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "",
                      "role": role, "via": via or "chat", "text": _snippet(text, terms),
-                     "sent_to": json.loads(sent or "[]"), "score": -float(rank)})
+                     "sent_to": json.loads(sent or "[]"), "score": -float(rank),
+                     "superseded": bool(gone)})
     hits.sort(key=lambda h: (-h["score"], -h["ts"]))
     return hits[:max(1, int(limit))]
+
+
+def locate(mid: str) -> Optional[Dict[str, Any]]:
+    """Where one indexed message lives: its conversation, time, speaker and
+    whether it is superseded. None when the index does not hold it."""
+    mid = str(mid or "").strip()
+    if not mid:
+        return None
+    ensure_built()
+    with _LOCK:
+        conn = _connect()
+        try:
+            r = conn.execute("SELECT cid, ts, role, via, mid IN (SELECT mid FROM superseded) "
+                             "FROM msgs WHERE mid=?", (mid,)).fetchone()
+        finally:
+            conn.close()
+    if not r:
+        return None
+    return {"conversation_id": r[0], "ts": float(r[1] or 0), "role": r[2] or "",
+            "via": r[3] or "chat", "superseded": bool(r[4])}
 
 
 def mark_superseded(mids, on: bool = True) -> int:
