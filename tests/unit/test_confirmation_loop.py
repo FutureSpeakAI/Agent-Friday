@@ -391,9 +391,12 @@ class TestThroughExecuteTool:
     """
 
     @pytest.fixture(autouse=True)
-    def _allow_tmp_writes(self, monkeypatch):
+    def _allow_tmp_writes(self, monkeypatch, tmp_path):
         monkeypatch.setattr(agent, "_sandbox_policy",
                             lambda name, inp: (True, ""))
+        # write_file's own path check (services/path_policy) is pointed at tmp_path
+        # for the same reason.
+        monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
 
     def test_owners_transcript_ends_with_the_file_on_disk(self, tmp_path):
         target = tmp_path / "bold-panel-prep.md"
