@@ -5,8 +5,9 @@ The service module -- propose()/pending()/approve()/reject()/state() --
 needs a caller in the running app, and its own docstring is explicit that
 this is meant to be manual-first: "propose() is something the user RUNS, and
 its output is shown to them before any of it becomes durable." These routes
-are that door. No UI consumes them yet -- where review lives in the app is a
-separate, real design decision left for later.
+are that door. The Meetings view (static/meetings_ws.js) reviews a meeting's
+suggestions through them: Keep, Edit and keep, Not now, and "Don't suggest
+things like this".
 
   POST /api/memory/proposals/propose    — read a day, stage candidate facts
   GET  /api/memory/proposals/pending    — facts awaiting review

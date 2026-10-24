@@ -385,8 +385,16 @@ def propose(day: Optional[str] = None, *, memory=None,
     proposed = len(facts)
     facts, dropped = _drop_special(facts, "proposals.day")
     # NS-15.5-1: a fact like one the owner said "Don't suggest things like
-    # this" about is not proposed again; counted, no text kept.
-    facts, suppressed = _drop_suppressed(facts, "proposals.day")
+    # this" about is not proposed again; counted, no text kept. A fact already
+    # in the table is skipped below as a duplicate, not counted as a drop.
+    if store and facts:
+        _dconn = _connect()
+        try:
+            facts, suppressed = _drop_suppressed(facts, "proposals.day", conn=_dconn)
+        finally:
+            _dconn.close()
+    else:
+        facts, suppressed = _drop_suppressed(facts, "proposals.day")
 
     # A barren run is NOT a success. The regex extractor's whole failure was
     # looking like one 215 turns at a time. (Facts dropped as special
@@ -466,15 +474,20 @@ def _drop_special(facts: List[Dict[str, Any]], where: str):
     return kept, dropped
 
 
-def _drop_suppressed(facts: List[Dict[str, Any]], where: str):
+def _drop_suppressed(facts: List[Dict[str, Any]], where: str, conn=None):
     """(facts no suppression rule matches, how many were dropped).
-    services/memory_suppress counts each drop by place; no text is kept."""
+    services/memory_suppress counts each drop by place; no text is kept.
+    With `conn`, a fact already in the table is kept here (the store skips it
+    as a duplicate) and is not counted as a drop."""
     try:
         from agent_friday.services import memory_suppress as _ms
     except Exception:
         return facts, 0
     kept, dropped = [], 0
     for f in facts:
+        if conn is not None and _already_proposed(conn, f.get("text") or ""):
+            kept.append(f)
+            continue
         if _ms.check(f.get("text") or "", where):
             dropped += 1
             continue
@@ -513,10 +526,10 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
             if _drop_special([{"text": text, "evidence": str(c.get("evidence") or "")}],
                              "proposals.meeting")[1]:
                 continue
-            if _drop_suppressed([{"text": text}], "proposals.meeting")[1]:
-                continue                     # the owner asked not to be offered this (NS-15.5-1)
             if _already_proposed(conn, text) or _already_from_meeting(conn, str(meeting_id), text):
                 continue
+            if _drop_suppressed([{"text": text}], "proposals.meeting")[1]:
+                continue                     # the owner asked not to be offered this (NS-15.5-1)
             executing = str(c.get("model") or model)
             prov = json.dumps({"meeting_id": str(meeting_id),
                                "span": {"segment": int(span.get("i")), "t": float(span.get("t") or 0)},
@@ -692,7 +705,7 @@ def suppress(fact_id: str) -> Dict[str, Any]:
         return {"ok": False, "reason": "say which suggestion"}
     conn = _connect()
     try:
-        row = conn.execute("SELECT text FROM proposed_facts WHERE fact_id=? AND status='pending'",
+        row = conn.execute("SELECT text, provenance FROM proposed_facts WHERE fact_id=? AND status='pending'",
                            (fid,)).fetchone()
     finally:
         conn.close()
@@ -704,7 +717,10 @@ def suppress(fact_id: str) -> Dict[str, Any]:
         return {"ok": False, "reason": "This suggestion cannot be opened on this PC right now, so no rule "
                                        "was made. Use Not now to discard it."}
     from agent_friday.services import memory_suppress as _ms
-    rule = _ms.add_rule(text, origin="proposals")
+    # A meeting's suggestion (sealed at rest) is about other people: its rule
+    # keeps keyed hashes of its words, never the words (shown as "From a meeting").
+    from_meeting = sealed or bool(_meeting_id_of(row[1]))
+    rule = _ms.add_rule(text, origin="meeting" if from_meeting else "proposals", hashed=from_meeting)
     if not rule.get("ok"):
         return {"ok": False, "reason": rule.get("error") or "The rule could not be saved."}
     out = {**reject([fid]), "suppressed": True, "rule": rule.get("rule")}

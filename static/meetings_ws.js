@@ -185,6 +185,7 @@
     const decide = (id, keep) => post('/api/memory/proposals/' + (keep ? 'approve' : 'reject'), { fact_ids: [id] }).then(d => { if (d && d.message) setMsg(d.message); else if (d && d.reason) setMsg(d.reason); loadProps(); }).catch(() => {});
     // Edit and keep: the owner's own wording is kept instead of the suggestion's.
     const [pedit, setPedit] = useState(null);
+    useEffect(() => { setPedit(null); }, [m.id]);   // another meeting: no half-made edit carries over
     const keepMine = (id, text) => post('/api/memory/proposals/approve', { fact_ids: [id], text: text }).then(d => { if (d && d.message) setMsg(d.message); else if (d && d.reason) setMsg(d.reason); else setPedit(null); loadProps(); }).catch(() => {});
     // Don't suggest things like this: discards it and holds back similar suggestions (listed under Settings > Memory card > Suppressed).
     const suppress = id => post('/api/memory/proposals/suppress', { fact_id: id }).then(d => { setMsg((d && (d.message || d.reason)) || 'Discarded. Suggestions like it are held back now.'); loadProps(); }).catch(() => {});

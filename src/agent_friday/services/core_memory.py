@@ -608,14 +608,6 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
             return _err("NOT QUEUED: " + why)
         if op == "add" and _near_duplicate(text, entries(target)):
             return {"ok": True, "unchanged": True}
-    if not _confirmed_source(source):
-        # "Don't suggest things like this" (NS-15.5-1): a suggestion similar to
-        # one the owner suppressed is not queued; the drop is counted, no text.
-        # A row the owner entered or approved (a confirmed source) is theirs.
-        rule = _suppressed(text if op != "remove" else old, op, source)
-        if rule:
-            return {"ok": True, "unchanged": True, "suppressed": True, "rule": rule,
-                    "note": "the owner asked not to be offered suggestions like this one"}
     with _LOCK:
         rows = _read_jsonl(_pending_path())
         for r in rows:
@@ -628,6 +620,18 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
             if dup:
                 hit = next(r for r in rows if r.get("op") == "add" and r.get("text") == dup)
                 return {"ok": True, "unchanged": True, "id": hit.get("id")}
+        if op != "replace" and not owner_stated and not _confirmed_source(source):
+            # "Don't suggest things like this" (NS-15.5-1): a suggestion similar to
+            # one the owner suppressed is not queued; the drop is counted (after
+            # the duplicate checks above, so a repeat of a waiting row is not a
+            # drop), no text. A row the owner entered or approved (a confirmed
+            # source) or that rests on their own words (owner_stated) is theirs;
+            # a suggested correction of a line on the card (a replace) is not
+            # held back by a rule about a new line.
+            rule = _suppressed(text if op != "remove" else old, op, source)
+            if rule:
+                return {"ok": True, "unchanged": True, "suppressed": True, "rule": rule,
+                        "note": "the owner asked not to be offered suggestions like this one"}
         row = {"id": "pend-" + uuid.uuid4().hex[:10], "ts": time.time(), "target": target,
                "op": op, "text": text, "old": old, "source": str(source)[:80],
                "reason": str(reason or "")[:300]}

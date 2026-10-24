@@ -226,6 +226,10 @@ def _tool_update_core_memory(inp=None) -> str:
         r = core_memory.queue(target, action, text=inp.get("text") or "",
                               old=inp.get("old") or "", source=actor,
                               reason=str(inp.get("reason") or ""))
+        if r.get("suppressed"):
+            # NS-15.5-1: the owner said "Don't suggest things like this"; nothing was queued.
+            return ("NOT QUEUED: the user asked not to be offered suggestions like this one, so it "
+                    "was not queued.")
         return ("QUEUED for the user's review (the background review never rewrites or removes "
                 "on its own)." if r.get("ok") else "NOT QUEUED: " + str(r.get("error")))
     if actor == "friday" and not _owner_decided():

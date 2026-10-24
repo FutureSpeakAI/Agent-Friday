@@ -342,3 +342,139 @@ def test_suppressed_drops_are_counted_without_the_text(tmp_path):
     stored = (tmp_path / "core_memory" / "suppressed.json").read_text(encoding="utf-8")
     for sentence in (PREF, PREF_SIMILAR, "Wants dark mode and terse answers."):
         assert sentence not in stored and sentence.lower() not in stored
+
+
+# ── review fixes ────────────────────────────────────────────────────────────────
+
+MEETING_LINE = "Priyanka leads the Kestrel platform rollout."
+SPAN = {"i": 0, "t": 1.0}
+
+
+def _meeting(text, mid="meet-1"):
+    return mp.propose_from_meeting([{"category": "relationship", "text": text, "span": SPAN}],
+                                   mid, "2026-08-23", "gemma4:12b")
+
+
+def test_a_meeting_rule_keeps_no_words_from_the_meeting_and_still_matches(tmp_path):
+    assert _meeting(MEETING_LINE) == 1
+    r = mp.suppress(mp.pending()[0]["fact_id"])
+    assert r["ok"] and r["rule"]["from_meeting"] and r["rule"]["words"] == [], r
+    raw = (tmp_path / "core_memory" / "suppressed.json").read_bytes().lower()
+    for w in (b"priyanka", b"kestrel", b"platform", b"rollout", b"lead"):
+        assert w not in raw, w
+    assert (tmp_path / "core_memory" / "suppressed.key").is_file()
+    listed = cm.suppression_rules()["rules"]
+    assert listed[0]["from_meeting"] and listed[0]["label"] == "From a meeting" and listed[0]["words"] == []
+    # Matching is the same set arithmetic on the hashed words.
+    assert _meeting("Priyanka leads the Kestrel platform rollout now.", "meet-2") == 0
+    assert _ms().counts() == {"proposals.meeting": 1}
+    # A polarity change is a new fact, hashed rule or not.
+    assert _meeting("Priyanka no longer leads the Kestrel platform rollout.", "meet-3") == 1
+
+
+def test_a_day_review_rule_still_shows_its_words():
+    _propose([{"category": "preference", "text": "The user prefers terse answers in dark mode.",
+               "evidence": "short please"}])
+    r = mp.suppress(mp.pending()[0]["fact_id"])
+    assert r["ok"] and not r["rule"]["from_meeting"] and "terse" in r["rule"]["words"], r
+
+
+def test_forget_person_drops_the_suppression_rules_that_name_them():
+    ms = _ms()
+    assert _meeting(MEETING_LINE) == 1
+    assert mp.suppress(mp.pending()[0]["fact_id"])["rule"]["from_meeting"]
+    assert ms.add_rule("Meets Priyanka for coffee on Thursdays.")["rule"]
+    keep = ms.add_rule(PREF)["rule"]
+    from agent_friday.services import forget_registry as fr
+    fr._DEFAULTS_LOADED = False
+    fr._STORES.clear()
+    fr._ensure_defaults()
+    assert "memory_suppressions" in fr.registered()
+    find, purge = fr._STORES["memory_suppressions"]
+    assert find({"priyanka shah"}, set()) == 2
+    assert purge({"priyanka shah"}, set()) == 2
+    assert [r["id"] for r in ms.rules()] == [keep["id"]]
+    assert find({"priyanka shah"}, set()) == 0
+
+
+def test_a_polarity_change_name_or_number_is_never_suppressed():
+    ms = _ms()
+    pairs = [("Owner likes dark roast coffee", "Owner dislikes dark roast coffee"),
+             ("Owner dislikes dark roast coffee", "Owner likes dark roast coffee"),
+             ("Owner drinks dark roast coffee.", "Owner doesn't drink dark roast coffee."),
+             ("Owner drinks dark roast coffee.", "Owner no longer drinks dark roast coffee."),
+             ("Owner works at Acme on the billing platform.", "Owner works at Globex on the billing platform."),
+             ("The billing migration ships in June.", "The billing migration ships in March."),
+             ("Standup moves to 9am on weekdays.", "Standup moves to 10am on weekdays.")]
+    for rule, cand in pairs:
+        assert not ms.similar_text(cand, rule), (rule, cand)
+    # End to end on the card.
+    q = cm.queue("user", "add", text="Owner likes dark roast coffee", source="dream:2026-10-01")
+    assert cm.suppress(q["id"])["rule"]
+    r = cm.queue("user", "add", text="Owner dislikes dark roast coffee", source="dream:2026-10-02")
+    assert r["ok"] and r.get("id") and not r.get("suppressed"), r
+    assert ms.add_rule("Owner works at Acme on the billing platform.")["rule"]
+    assert ms.matching("Owner works at Globex on the billing platform.") is None
+
+
+def test_a_near_identical_restatement_is_still_suppressed():
+    ms = _ms()
+    assert ms.similar_text("The owner likes dark roast coffee every morning.",
+                           "Owner likes dark roast coffee in the morning.")
+    q = cm.queue("user", "add", text="Owner likes dark roast coffee in the morning.", source="dream:2026-10-01")
+    assert cm.suppress(q["id"])["rule"]
+    r = cm.queue("user", "add", text="The owner likes dark roast coffee every morning.", source="dream:2026-10-02")
+    assert r.get("suppressed"), r
+
+
+def test_owner_friday_and_possessive_words_carry_no_weight():
+    w = _ms().words("The owner's standing desk at Friday's office has a lamp; Friday doesn't mind.")
+    for gone in ("owner", "friday", "s", "t", "has"):
+        assert gone not in w, (gone, w)
+    assert {"standing", "desk", "office", "lamp"} <= set(w)
+
+
+def test_a_suggested_correction_is_never_suppressed():
+    assert cm.add("user", "Works from the Leeds office on weekdays.", actor="owner")["ok"]
+    q = cm.queue("user", "replace", old="Leeds", text="Works from the York office on weekdays.", source="review")
+    assert cm.suppress(q["id"])["rule"]
+    r = cm.queue("user", "replace", old="Leeds", text="Works from the York office, weekdays.", source="review")
+    assert r["ok"] and r.get("id") and not r.get("suppressed"), r
+    assert _ms().counts() == {}
+
+
+def test_a_line_resting_on_the_owners_own_words_is_never_suppressed():
+    _dream(PREF)
+    assert cm.suppress(cm.pending()[0]["id"])["rule"]
+    r = cm.queue("user", "add", text=PREF_SIMILAR, source="review", owner_stated=True)
+    assert r["ok"] and r.get("id") and not r.get("suppressed"), r
+    assert _texts() == [PREF_SIMILAR] and _ms().counts() == {}
+
+
+def test_the_background_review_does_not_report_a_suppressed_change_as_queued():
+    assert cm.add("user", "Plays piano every Sunday morning.", actor="owner")["ok"]
+    q = cm.queue("user", "remove", old="piano", source="review")
+    rule = cm.suppress(q["id"])["rule"]
+    assert rule and rule["kind"] == "remove"
+    tok = cm.ACTOR.set("review")
+    try:
+        out = cmt._tool_update_core_memory({"action": "remove", "target": "user", "old": "piano"})
+    finally:
+        cm.ACTOR.reset(tok)
+    assert out.startswith("NOT QUEUED") and "asked not to be offered" in out, out
+    assert cm.pending() == []
+
+
+def test_a_repeat_of_a_waiting_suggestion_is_not_counted_as_a_drop():
+    q = cm.queue("user", "add", text=PREF, source="dream:2026-10-01")
+    assert _ms().add_rule(PREF)["rule"]
+    again = cm.queue("user", "add", text=PREF, source="dream:2026-10-01")
+    assert again.get("id") == q["id"] and not again.get("suppressed"), again
+    assert _ms().counts() == {}
+
+
+def test_a_rule_keeps_at_most_64_words():
+    ms = _ms()
+    text = " ".join("zq" + chr(97 + i // 26) + chr(97 + i % 26) + "x" for i in range(80))
+    rule = ms.add_rule(text)["rule"]
+    assert rule and len(rule["words"]) == ms.MAX_WORDS == 64
