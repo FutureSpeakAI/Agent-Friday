@@ -116,10 +116,10 @@ def test_no_grant_is_spent_while_outward_actions_are_held(grants_file, monkeypat
 
 
 def test_grants_from_before_signing_are_signed_once_then_unsigned_ones_are_refused(tmp_path, monkeypatch):
-    # A data folder of its own: the one-time signing is recorded in ITS action ledger.
+    # Each test has its own action ledger (conftest); this process has not yet seen
+    # the one-time signing.
     from agent_friday.services import action_ledger
-    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "home"))
-    action_ledger.reset_caches()
+    monkeypatch.setattr(gate, "_MIGRATION_SEEN", False, raising=False)
     gov = tmp_path / "gov"
     gov.mkdir()
     f = gov / "grants.json"
@@ -139,8 +139,36 @@ def test_grants_from_before_signing_are_signed_once_then_unsigned_ones_are_refus
     for m in gov.glob("grants.signed*"):
         m.unlink()
     assert gate.consume_grant("send_email", "job_late") is None, "an unsigned grant added later was honoured"
-    monkeypatch.undo()
-    action_ledger.reset_caches()
+    assert action_ledger.entries(["grants_migrated"]), "the one-time signing was not recorded"
+
+
+def test_on_a_fresh_install_a_grant_written_by_hand_is_never_signed(tmp_path, monkeypatch):
+    gov = tmp_path / "gov"
+    gov.mkdir()
+    f = gov / "grants.json"
+    monkeypatch.setattr(gate, "_gov_dir", lambda: gov)
+    monkeypatch.setattr(gate, "_grants_file", lambda: f)
+    monkeypatch.setattr(gate, "_MIGRATION_SEEN", False, raising=False)
+    assert gate.list_grants() == []                      # the first read on this version
+    f.write_text(json.dumps([{"grant_id": "grant_planted1", "tools": ["send_email"],
+                              "scope": "job_planted", "expires_at": time.time() + 3600,
+                              "uses_left": 9, "max_uses": 9, "created_by": "owner", "note": "",
+                              "created_at": time.time() - 60}]), encoding="utf-8")
+    monkeypatch.setattr(gate, "_MIGRATION_SEEN", False, raising=False)   # even after a restart
+    assert gate.consume_grant("send_email", "job_planted") is None, "a planted grant was signed"
+
+
+def test_revoke_all_ends_a_grant_taken_off_the_list_and_put_back_later(grants_file):
+    g = _grant(uses=3)
+    saved = grants_file.read_bytes()
+    grants_file.write_text("[]", encoding="utf-8")       # hidden before the owner revokes all
+    revoke_all = getattr(gate, "revoke_all_grants", None)
+    assert revoke_all is not None, "no ledger-recorded revoke-all on this tree"
+    revoke_all()
+    grants_file.write_bytes(saved)                       # and put back afterwards
+    assert _use(g) is None
+    fresh = _grant(uses=1)                               # a grant made after still works
+    assert _use(fresh)
 
 
 # ── approval cards: decided once, carried out once ───────────────────────────
