@@ -220,7 +220,15 @@ def get_policy() -> Dict[str, Any]:
 
 
 def update_policy(policy_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Upsert each key into the policy table."""
+    """Upsert each key into the policy table.
+
+    Auto-accept at the listing price is never stored on (BD-00): a stale "on"
+    must not come back through a reader that skips get_policy()."""
+    if not isinstance(policy_dict, dict):
+        return get_policy()
+    policy_dict = dict(policy_dict)
+    if isinstance(policy_dict.get("selling"), dict):
+        policy_dict["selling"] = dict(policy_dict["selling"], auto_accept_at_listing_price=False)
     try:
         with _LOCK:
             with _conn() as con:
