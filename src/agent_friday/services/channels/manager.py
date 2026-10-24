@@ -360,8 +360,12 @@ def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
     # checkpoint holds every send), so there is nothing to answer.
     try:
         from agent_friday.services import global_stop
-        if global_stop.is_stop_everything(text):
+        if global_stop.is_remote_stop(text):
             global_stop.stop(by="owner", source=channel, reason="sent from your %s chat" % channel)
+            ack = global_stop.claim_ack(channel, str(chat_id))
+            a = _ADAPTERS.get(channel)
+            if ack and a is not None:
+                a.send_stop_ack(str(chat_id), ack)          # A28: the one fixed reply
             return None
         if global_stop.active():
             return None

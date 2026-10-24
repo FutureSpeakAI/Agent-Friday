@@ -815,12 +815,12 @@ def _handle_sms_in(ev: dict) -> str:
                 priority="medium", dedupe_key="sms:%s" % sid)
         return "notified"
     from agent_friday.services import global_stop
-    if global_stop.is_stop_everything(body) or global_stop.active():
+    if global_stop.is_remote_stop(body) or global_stop.active():
         # BD-13. The ingress usually stopped everything already (its webhook does not wait
         # for this loop); if it could not, stop here. Nothing is texted back: while stopped
         # nothing leaves the machine, an acknowledgement included. The receipt and the
         # screen are the record.
-        if global_stop.is_stop_everything(body):
+        if global_stop.is_remote_stop(body):
             resumed_at = float(global_stop.state().get("resumed_at") or 0)
             if not global_stop.active():
                 if float(ev.get("received_at") or time.time()) <= resumed_at:
@@ -831,6 +831,12 @@ def _handle_sms_in(ev: dict) -> str:
                             dedupe_key="sms:%s" % sid)
                     return "stale_stop"
                 global_stop.stop(by="owner", source="sms", reason="texted from your verified cell")
+            ack = global_stop.claim_ack("sms", owner)     # None if the ingress already answered
+            if ack:
+                try:
+                    _send_sms_now(owner, ack, detail="stop acknowledgement (A28)")
+                except Exception as e:  # noqa: BLE001
+                    _log.warning("stop acknowledgement not sent: %s", e)
             _notify("Stopped from your cell", "Everything is stopped. Press Resume on Friday's own "
                     "screen when you want her back.", priority="high", dedupe_key="sms:%s" % sid)
             return "stopped"

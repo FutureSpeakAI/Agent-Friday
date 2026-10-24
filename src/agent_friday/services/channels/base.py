@@ -270,7 +270,7 @@ class ChannelAdapter:
     def is_stop(text: str) -> bool:
         try:
             from agent_friday.services import global_stop
-            return global_stop.is_stop_everything(text)
+            return global_stop.is_remote_stop(text)
         except Exception:
             return False
 
@@ -286,6 +286,24 @@ class ChannelAdapter:
             self._deliver(str(chat_id), text)        # at once, on the reading thread
             return
         self.submit_turn(self._deliver, str(chat_id), text)
+
+    def send_stop_ack(self, chat_id: str, text: str) -> bool:
+        """A28: the one fixed reply after a stop from this chat, on the raw transport (every
+        other send is held while stopped). Only global_stop.claim_ack's text is accepted."""
+        from agent_friday.services import global_stop
+        if text != global_stop.STOP_ACK:
+            return False
+        try:
+            res = self._send_raw(chat_id, text)
+        except Exception as e:  # noqa: BLE001
+            self._last_error = str(e)
+            return False
+        ok = bool(isinstance(res, dict) and res.get("ok"))
+        try:
+            record_channel_send(self.name, chat_id, text, ok, bool(isinstance(res, dict) and res.get("unsure")))
+        except Exception:
+            pass
+        return ok
 
     def _deliver(self, chat_id: str, text: str) -> None:
         try:

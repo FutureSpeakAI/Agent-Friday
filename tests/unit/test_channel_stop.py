@@ -105,8 +105,79 @@ def test_the_service_stops_too_and_never_asks_the_model(phone_home, fake_twilio,
     _event("sms_in", "SM10", From=OWNER, Body="halt all work now", MessageSid="SM10")
     service.process_pending()
     assert gs.active()
-    assert fake_twilio.sent_bodies() == []
+    # A28: the ingress did not answer this one (it never saw it), so the service sends the one
+    # fixed reply, to the verified cell, and nothing else.
+    assert fake_twilio.sent_bodies() == ["Stopped."]
+    assert fake_twilio.calls[-1]["data"]["To"] == OWNER
     assert any("Stopped from your cell" in n.get("title", "") for n in quiet)
+    _event("sms_in", "SM13", From=OWNER, Body="stop everything", MessageSid="SM13")
+    service.process_pending()
+    assert fake_twilio.sent_bodies() == ["Stopped."], "a second stop got a second reply"
+
+
+# ── A28: the one fixed reply; A29: "Friday stop", never a bare STOP ─────────
+
+def test_the_phone_stop_is_answered_once_with_stopped_and_a_receipt(client, gs, monkeypatch):
+    verify_owner(monkeypatch)
+    r = _text(client, OWNER, "Stop everything", sid="SM" + "1" * 32)
+    assert b"<Message>Stopped.</Message>" in r.data
+    from tests import ledger_support
+    acks = [d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"]
+    assert len(acks) == 1 and acks[0]["surface"] == "sms" and acks[0]["class"] == "OUTWARD"
+    r2 = _text(client, OWNER, "Friday stop", sid="SM" + "2" * 32)
+    assert b"<Message>" not in r2.data, "a second stop in the same stop got a second reply"
+
+
+@pytest.mark.parametrize("body,stops", [
+    ("Friday stop", True), ("friday, stop.", True), ("Hey Friday stop now", True),
+    ("STOP", False), ("stop", False), ("Stop!", False), ("please stop", False),
+])
+def test_friday_stop_counts_and_a_bare_stop_never_does(client, gs, monkeypatch, body, stops):
+    verify_owner(monkeypatch)
+    r = _text(client, OWNER, body, sid="SM" + "3" * 32)
+    assert gs.active() is stops, body
+    assert (b"<Message>Stopped.</Message>" in r.data) is stops
+
+
+def test_a_stranger_gets_no_reply(client, gs, monkeypatch):
+    verify_owner(monkeypatch)
+    r = _text(client, STRANGER, "Friday stop", sid="SM" + "4" * 32)
+    assert not gs.active() and b"<Message>" not in r.data
+
+
+class _Raw:
+    def __init__(self):
+        self.sent = []
+
+    def send_stop_ack(self, chat_id, text):
+        from agent_friday.services.channels.base import ChannelAdapter
+        return ChannelAdapter.send_stop_ack(self, chat_id, text)
+
+    name = "telegram"
+    _last_error = None
+
+    def _send_raw(self, chat_id, text):
+        self.sent.append((chat_id, text))
+        return {"ok": True}
+
+
+def test_a_chat_stop_is_answered_once_on_that_chat_only(chans, gs, monkeypatch):
+    raw = _Raw()
+    monkeypatch.setitem(chans._ADAPTERS, "telegram", raw)
+    monkeypatch.setattr(chans, "_run_agent", lambda t: pytest.fail("reached the model"))
+    chans.handle_incoming("telegram", "42", "Friday stop")
+    assert gs.active() and raw.sent == [("42", "Stopped.")]
+    chans.handle_incoming("telegram", "42", "stop everything")
+    assert raw.sent == [("42", "Stopped.")]
+    chans.handle_incoming("telegram", "999", "Friday stop")      # not on the allowlist
+    assert raw.sent == [("42", "Stopped.")]
+
+
+def test_only_the_fixed_text_can_use_the_stop_reply_door(gs):
+    raw = _Raw()
+    assert raw.send_stop_ack("42", "Stopped. Also, here is your inbox") is False
+    assert raw.sent == []
+    assert gs.claim_ack("sms", "+15125550111") is None          # not stopped: nothing to answer
 
 
 def test_while_stopped_an_owner_text_reaches_no_model(phone_home, fake_twilio, gs, monkeypatch, quiet):
