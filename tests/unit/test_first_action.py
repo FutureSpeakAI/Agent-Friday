@@ -167,7 +167,7 @@ def test_the_owners_decline_on_the_card_is_a_skip_but_friday_declining_is_not(fa
     fa.propose("setup")
     card = fa.rec["cards"][-1]
     fa._on_decision(dict(card, status="denied", decided_by="friday", decided_source="friday"))
-    assert fa.state()["state"] == "proposed"
+    assert fa.state()["state"] == "declined" and fa.skipped() is False   # Friday cannot skip for the owner
     fa._on_decision(dict(card, status="denied", decided_by="owner", decided_source="text_message"))
     assert fa.state()["state"] == "declined" and fa.skipped() is False   # not the owner's skip here
     again = fa.propose("owner:home")                                     # a new proposal can be made
