@@ -1215,6 +1215,10 @@ def revoke_all_grants() -> list:
     with _LOCK:
         action_ledger.append("grant_revoke_all", {"at": time.time()}, durable=True)
         ids = all_grant_ids()
+        # Each listed grant by id as well: a grant whose created_at is later than the
+        # moment above (a clock that ran fast when it was made) is still revoked.
+        for gid in ids:
+            action_ledger.append("grant_revoke", {"grant": gid}, durable=True)
         _write_grants([])
     return ids
 
