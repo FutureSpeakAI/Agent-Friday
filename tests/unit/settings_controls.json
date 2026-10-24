@@ -2665,6 +2665,20 @@
  {
   "section": "Appearance",
   "panel": "Appearance & 3D",
+  "label": "3D rendering: On / Off",
+  "kind": "radio-buttons",
+  "keys": [
+   "render_3d"
+  ],
+  "route": "POST /api/settings (and localStorage friday.render3d, read before anything draws)",
+  "reader_file": "index.html",
+  "reader_needle": "fridaySyncRender3d(agentSettings.render_3d)",
+  "status": "ok",
+  "note": "Off: no WebGL context anywhere (the scene is never started; getContext answers null for WebGL); the knowledge view is Pages only. Takes effect when Friday next opens (Reload now button)."
+ },
+ {
+  "section": "Appearance",
+  "panel": "Appearance & 3D",
   "label": "Knowledge graph > Constellation grouping",
   "kind": "select",
   "keys": [

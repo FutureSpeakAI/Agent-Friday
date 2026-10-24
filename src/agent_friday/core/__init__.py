@@ -2724,6 +2724,7 @@ DEFAULT_SETTINGS = {
     "library_cloud_char_cap": 6000,
     "library_kg_learn": "",
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
+    "render_3d": True,                    # False: no 3D anywhere, no WebGL context (Settings > Appearance; NS-21.22-3)
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.
     # The owner's own dock arrangement: {"order": [ws_id, ...], "hidden": [ws_id, ...]}.

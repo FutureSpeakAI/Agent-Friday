@@ -6531,7 +6531,10 @@
         // A workspace in its own tab (/w/<id>), or an undocked chat
         // (?chrome=chat), has no room around it: the scene, its GPU context
         // and its render loop are never started. The orb mode is the scene.
-        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat') window.onload = init;
+        // With 3D rendering switched off (Settings > Appearance) the scene is never
+        // started either: no GPU context, no render loop.
+        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat'
+            && !(window.fridayRender3dOff && window.fridayRender3dOff())) window.onload = init;
     </script>
 
 <script>
