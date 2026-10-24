@@ -55,6 +55,9 @@ def home(tmp_path, monkeypatch):
     # bound from FRIDAY_DIR when provenance is first imported, which may be here:
     # Media's credentials mint the owner's id there, never among the originals
     monkeypatch.setattr(provenance, "_USER_ID_FILE", fd / "provenance" / "user_id", raising=False)
+    # an existing install's record, as Friday keeps it: otherwise the first
+    # settings read in this home (perhaps during a re-index) decides and writes it
+    core.update_install_choices_state(install=core.EXISTING_INSTALL)
     monkeypatch.setattr(approvals, "APPROVALS_FILE", fd / "approvals.json", raising=False)
 
     # a creation with its sidecar
