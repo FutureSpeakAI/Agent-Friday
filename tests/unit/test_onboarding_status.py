@@ -103,6 +103,55 @@ def test_friday_writing_her_own_memory_is_not_a_confirmation(ob):
     assert _met(ob)["memory"] is True
 
 
+def _first_action(ob, **state):
+    import json as _json
+    d = ob.home / "first_synthesis"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "first_action.json").write_text(_json.dumps(state), encoding="utf-8")
+
+
+def test_a_recorded_skip_of_the_first_action_lets_onboarding_be_done(ob):
+    ob.state.update(reviewed=True, goals=[{"id": "g"}], journal=[{"actor": "owner", "op": "replace"}])
+    assert ob.status()["done"] is False
+    _first_action(ob, state="skipped", skipped_at=5.0)
+    out = ob.status()
+    assert out["done"] is True
+    marks = {c["id"]: c for c in out["checks"]}
+    for k in ("action", "receipt", "where_ran"):
+        assert marks[k]["met"] and marks[k]["skipped"], k
+    assert out["first_action"]["state"] == "skipped"
+
+
+def test_a_proposal_waiting_for_the_press_meets_nothing(ob):
+    _first_action(ob, state="proposed", approval_id="ap-1")
+    out = ob.status()
+    assert out["first_action"]["state"] == "proposed"
+    m = {c["id"]: c["met"] for c in out["checks"]}
+    assert not m["action"] and not m["receipt"] and not m["where_ran"]
+
+
+def test_the_first_actions_own_receipt_meets_action_and_receipt(ob):
+    _first_action(ob, state="done", receipt_seq=12)
+    out = ob.status()
+    m = {c["id"]: c for c in out["checks"]}
+    assert m["action"]["met"] and m["receipt"]["met"] and not m["action"]["skipped"]
+    assert out["receipt"]["seq"] == 12 and out["receipt"]["tool"] == "first_action_reminder"
+    assert m["where_ran"]["met"] is False                    # the owner has not said it yet
+    assert ob.answer("saw_where_it_ran", seq=12)["ok"] is True
+    assert _met(ob)["where_ran"] is True
+
+
+def test_skipping_the_first_action_is_an_owner_answer(ob, monkeypatch):
+    try:
+        from agent_friday.services import first_action
+    except ImportError:
+        pytest.fail("there is no first governed action to skip: services/first_action does not exist")
+    calls = []
+    monkeypatch.setattr(first_action, "skip", lambda by="owner:ui": calls.append(by) or {"ok": True, "state": "skipped"})
+    assert ob.answer("skip_first_action")["ok"] is True
+    assert calls == ["owner:ui"]
+
+
 def test_an_explicit_skip_counts_for_the_goal(ob):
     assert _met(ob)["goal"] is False
     _answers(ob, goal_skipped_ts=1.0)
