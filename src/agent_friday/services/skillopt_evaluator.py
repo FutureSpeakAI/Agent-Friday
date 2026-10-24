@@ -45,6 +45,10 @@ def night_gate() -> str:
     from agent_friday.services import trials
     if not trials.on_ac_power():
         return "on battery"
+    from agent_friday.services import thermal
+    hot, why = thermal.too_hot()
+    if hot:
+        return why
     if trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
         return "tonight's testing time is used up"
     from agent_friday.services.trial_job import _gate_blocks

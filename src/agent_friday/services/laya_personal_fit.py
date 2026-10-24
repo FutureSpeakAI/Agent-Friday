@@ -440,6 +440,10 @@ def blocked_reason(profile: Optional[str] = None) -> str:
         return "the vault is locked (training waits for a time you are signed in)"
     if not on_ac_power():
         return "the PC is on battery"
+    from agent_friday.services import thermal
+    hot, why = thermal.too_hot()
+    if hot:
+        return why
     if not owner_present():
         return "you are not signed in and here (the Windows session is locked, or you have not been at the PC in the last 30 minutes)"
     try:

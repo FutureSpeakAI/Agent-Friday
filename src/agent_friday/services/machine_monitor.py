@@ -104,7 +104,7 @@ def _opt_int(s):
 # are the four fields §4.3 adds. One query string, one process spawn, both
 # consumers read the same cached rows.
 _GPU_QUERY = ("index,name,memory.total,memory.used,memory.free,"
-             "utilization.gpu,power.draw,power.limit,clocks.sm")
+             "utilization.gpu,power.draw,power.limit,clocks.sm,temperature.gpu")
 _GPU_CACHE_TTL_S = 2.0          # matches gpu_headroom's old per-call cache
 _gpu_cache: dict = {"ts": 0.0, "rows": None}
 _gpu_cache_lock = threading.Lock()
@@ -148,6 +148,8 @@ def gpu_rows(*, fresh: bool = False) -> list[dict] | None:
             "power_w": _opt_float(parts[6]) if len(parts) > 6 else None,
             "power_limit_w": _opt_float(parts[7]) if len(parts) > 7 else None,
             "sm_mhz": _opt_int(parts[8]) if len(parts) > 8 else None,
+            # services/thermal: heavy background work waits while a GPU is too hot.
+            "temp_c": _opt_int(parts[9]) if len(parts) > 9 else None,
         })
     result = rows or None
     with _gpu_cache_lock:
