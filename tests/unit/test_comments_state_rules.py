@@ -53,6 +53,7 @@ FILES = [
     "tests/unit/test_support_bundle.py",
     "tests/api/test_support_bundle_route.py",
     "tests/unit/test_restore_crash_safe.py",
+    "tests/unit/test_bundle_performance.py",
     "tests/api/test_authority_routes.py",
     "tests/api/test_bundle_routes.py",
     "tests/api/test_bundle_schedule_routes.py",
