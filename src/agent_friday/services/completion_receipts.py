@@ -62,6 +62,8 @@ FAILURE_SENTINELS = (
     "[CONTENT SAFETY]",
     "[BANNED-SOURCE]",
     "[DEMO]",
+    # A change at a connected service that did not happen (services/connector_outcome.NOT_DONE).
+    "[NOT DONE]",
 )
 
 
@@ -508,7 +510,7 @@ PENDING_SENTINELS = ("[CONFIRMATION REQUIRED]", "[CONFIRMATION ESCALATED]",
                      "[CONFIRMATION UNRESOLVED]", "[APPROVAL CARD RAISED]",
                      "[CREW STEER PENDING]")
 _ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED",
-                    "INVALID ARGUMENTS")
+                    "INVALID ARGUMENTS", "[NOT DONE]")
 
 
 def receipt_status(entry) -> str:
