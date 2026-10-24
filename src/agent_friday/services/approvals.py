@@ -643,7 +643,7 @@ def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
                   used_at=time.time(), used_detail=detail or {})
 
 
-def claim_for_execution(approval_id: str) -> bool:
+def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
     """Claim an approved card for a single execution. True for exactly one caller.
 
     An approved card has to be RUN by something (services/approval_executor),
@@ -668,6 +668,10 @@ def claim_for_execution(approval_id: str) -> bool:
             if r.get("consumed") or r.get("executing_at"):
                 return False
             r["executing_at"] = time.time()
+            if by:
+                # Who claimed it: services/card_recovery judges only claimers
+                # that always record their end (§34.16-1).
+                r["executing_by"] = str(by)[:40]
             _write_store(recs)
             return True
     return False
@@ -710,7 +714,9 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     — was_first is True only the FIRST time this is observed."""
     if approval.get("status") != "approved" or approval.get("consumed"):
         return approval, False
-    updated = _patch(approval["approval_id"], consumed=True)
+    # When it was burned: a crash after this and before mark_used is judged
+    # from this moment (services/card_recovery), never from the decision.
+    updated = _patch(approval["approval_id"], consumed=True, consumed_at=time.time())
     return (updated or approval), True
 
 
@@ -825,6 +831,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
             # Stop everything (services/global_stop): nothing is approved while stopped,
             # because an approval runs its action. Declining stays open; the card waits.
             return dict(rec), False
+        if decision == "approve" and (decided_by == TASKS_TICK_LABEL or source == "google_tasks_tick"):
+            return dict(rec), False
         screen_only = SCREEN_ONLY_KINDS.get(rec.get("kind"))
         if decision == "approve" and screen_only is not None and decided_by not in screen_only:
             return dict(rec), False
@@ -860,6 +868,11 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
 
 #: The label a verified press on this PC's own screen carries (services/screen_click.SCREEN).
 SCREEN_LABEL = "owner:ui"
+
+#: The label a decision seen in Google Tasks carries (services/tasks_inbox.TICK_LABEL). It may
+#: decline; it never approves any card, of any kind (owner decision D1/D11, 2026-10-23: in
+#: Part 1 a tick approves nothing, and later a tick only *releases* work approved on screen).
+TASKS_TICK_LABEL = "remote:tasks_tick"
 
 #: Labels a text-message or chat channel writes, mapped to the receipt's source.
 _TYPED_SURFACES = frozenset({"chat", "typed", "app", "palette", "reflex"})
@@ -937,6 +950,10 @@ def decision_source(decided_by: str, approval_id=None) -> tuple:
     `check` is the press test's parts when the decision came over HTTP, else None."""
     label = str(decided_by or "")
     low = label.lower()
+    if label == TASKS_TICK_LABEL:
+        # A tick, delete or edit seen in the owner's Google Tasks (services/tasks_inbox). It shows
+        # only that something could write to that account; it is never a press, voice or reply.
+        return "google_tasks_tick", None
     if label.startswith("grant:"):
         return "standing_grant", None
     if label.startswith("system:"):
