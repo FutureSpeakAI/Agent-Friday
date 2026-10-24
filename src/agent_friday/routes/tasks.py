@@ -77,6 +77,7 @@ def list_tasks():
     except Exception:
         pass
     _annotate_queue(tasks)
+    _annotate_state(tasks)
     # Tray lifecycle (services/tray_lifecycle): a finished card is a receipt
     # and ages out; a failure keeps longer; an INTERRUPTED task still holding
     # a resume checkpoint never expires on a clock, because that card is a
@@ -190,6 +191,26 @@ def _queue_view():
     return out
 
 
+def _annotate_state(rows):
+    """Each task row's North Star state (services/task_states, NS-17.7-1), beside its status."""
+    try:
+        from agent_friday.services import task_journal as _tj
+        from agent_friday.services import task_states as _ts
+    except Exception:
+        return rows
+    for t in rows:
+        if t.get('process'):
+            continue
+        tid = t.get('task_id')
+        try:
+            # A finished task needs no stop check (that reads its record from disk).
+            stop = bool(tid and not _tj.is_terminal(t.get('status')) and _tj.stop_requested(tid))
+            t['state'] = _ts.derive(t, stop_requested=stop)
+        except Exception:
+            pass
+    return rows
+
+
 def _annotate_queue(rows):
     """Add queue fields to task rows; a workspace job (it runs on its
     launcher's thread, so its record says `running` while it waits for the
@@ -256,6 +277,7 @@ def get_task(task_id):
     if task:
         row = _task_status_word(dict(task))
         _annotate_queue([row])
+        _annotate_state([row])
         return jsonify(_serve_sealed(row, task_id, "detail", events=1))
 
     # Fall back to PROCESSES when the id isn't a TASK (e.g. scheduler orbs,

@@ -33,6 +33,9 @@ from agent_friday.services.calendar_engine import (
 )
 
 FULL_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
+CALENDAR_READ_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+_WRITE_SCOPES = (CALENDAR_WRITE_SCOPE, FULL_CALENDAR_SCOPE)
+_READ_SCOPES = _WRITE_SCOPES + (CALENDAR_READ_SCOPE,)
 
 _log = logging.getLogger("friday.calendar_write")
 
@@ -43,9 +46,10 @@ _log = logging.getLogger("friday.calendar_write")
 #: from an exception: the exception's type goes to the local log.
 ERROR_MESSAGES = {
     "bad_calendar": "that is not a calendar id; nothing was changed",
-    "needs_reconnect": ("Google Calendar cannot be written to right now; reconnect "
-                        "Google in Settings > Connections. Nothing was changed."),
-    "needs_account": "that Google account cannot write to this calendar right now; nothing was changed",
+    "needs_reconnect": ("Friday cannot change this calendar yet: press \"Allow calendar changes\" "
+                        "(or reconnect Google) in Settings > Connections > Google. Nothing was changed."),
+    "needs_account": ("that Google account may not change this calendar yet: press \"Allow calendar "
+                      "changes\" for it in Settings > Connections > Google. Nothing was changed."),
     "no_service": "Google Calendar could not be reached; nothing was changed",
     "missing_fields": "a title and a start time are required",
     "title_refused": "could not create the event: the privacy gate kept the title on this device",
@@ -58,6 +62,7 @@ ERROR_MESSAGES = {
     "reply_failed": "could not send the reply; Google did not accept it",
     "search_failed": "Calendar search failed",
     "update_failed": "could not update the event; Google did not accept it",
+    "not_confirmed": "Google did not confirm the change; check your calendar before trying again",
 }
 GENERIC_ERROR = "the calendar change could not be made; nothing was changed"
 
@@ -120,10 +125,10 @@ def write_ready() -> tuple:
             return True, None
     if accts:
         return False, (
-            "the connected Google account(s) hold Calendar READ-ONLY access. "
-            "Reconnect from Settings -> Connections -> Reconnect Google to add "
-            "event editing; it is the same account, re-consented with calendar "
-            "writes included.")
+            "the connected Google account(s) may read the calendar but have not been "
+            "allowed to change it. The owner allows it per account with \"Allow calendar "
+            "changes\" in Settings -> Connections -> Google (Google then asks to confirm). "
+            "Nothing was changed.")
 
     # Legacy single-token fallback, for an install that never migrated.
     if not GOOGLE_TOKEN_PATH.exists():
@@ -143,6 +148,59 @@ def write_ready() -> tuple:
         "tool is called. Reconnect the same Google account to add event "
         "editing: Settings -> Connections -> Reconnect Google, or open "
         "/api/google/auth.")
+
+
+def read_ready() -> tuple:
+    """(ready, reason): can any connected account READ events? Write access implies it."""
+    ok, why = write_ready()
+    if ok:
+        return True, None
+    if readable_accounts():
+        return True, None
+    return False, why
+
+
+def readable_accounts() -> list:
+    """Connected accounts whose token can read events (read-only or read/write), with
+    Calendar switched on. Public, token-free records."""
+    try:
+        from agent_friday.services import google_accounts as ga
+        accts = ga.list_accounts() or []
+    except Exception:
+        return []
+    out = []
+    for a in accts:
+        if not isinstance(a, dict) or a.get("status") != "connected":
+            continue
+        if (a.get("services") or {}).get("calendar", True) is False:
+            continue
+        if set(a.get("scopes") or []) & set(_READ_SCOPES):
+            out.append(a)
+    return out
+
+
+def resolve_read_account(account_id=None) -> tuple:
+    """(account_id | None, error | None) for a calendar READ. An account that can write is
+    chosen as before; otherwise the same rules over the accounts that can read (read first:
+    a connection that may only read still shows and names its events)."""
+    aid, err = resolve_write_account(account_id)
+    if aid:
+        return aid, None
+    accts = readable_accounts()
+    if not accts:
+        return None, err             # as before: the write rules' answer (or the legacy token)
+    want = str(account_id or "").strip().lower()
+    if want:
+        for a in accts:
+            keys = {str(a.get(k) or "").strip().lower() for k in ("id", "email", "label")}
+            if want in keys:
+                return a.get("id"), None
+        return None, ("no connected account named %r can read a calendar. Accounts that can: %s"
+                      % (str(account_id), describe_accounts(accts) or "none"))
+    if len(accts) > 1:
+        return None, ("more than one Google account can read a calendar: %s. Say which "
+                      "(pass account_id)." % describe_accounts(accts))
+    return accts[0].get("id"), None
 
 
 def writable_accounts() -> list:
@@ -196,6 +254,13 @@ def resolve_write_account(account_id=None) -> tuple:
                     for k in ("id", "email", "label")}
             if want in keys:
                 return a.get("id"), None
+        if any(want in {str(a.get(k) or "").strip().lower() for k in ("id", "email", "label")}
+               for a in readable_accounts()):
+            return None, ("the account %r may read its calendar but has not been allowed to change "
+                          "it: press \"Allow calendar changes\" for that account in Settings > "
+                          "Connections > Google (Google then asks to confirm). Nothing was changed. "
+                          "Accounts that can change a calendar now: %s"
+                          % (str(account_id), describe_accounts(accts) or "none"))
         return None, ("no connected account named %r can write to a calendar. "
                       "Nothing was changed. Accounts that can: %s"
                       % (str(account_id), describe_accounts(accts) or "none"))
@@ -394,7 +459,7 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
     if note:
         additions.append(note)
 
-    changed, skipped = [], []
+    changed, skipped, failed_kinds = [], [], []
     for t in targets:
         patch, before = {}, {}
         if location:
@@ -426,11 +491,20 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
             _drop_calendar_cache()
         except Exception as e:
             _logged("adding to a calendar event", e)
+            from agent_friday.services import connector_outcome as _co
+            _kind = _co.classify(e)
+            failed_kinds.append(_kind)
             skipped.append({"id": t["id"], "title": t.get("title"),
-                            "why": "Google did not accept the change"})
+                            "why": _co.sentence(_kind, "Google Calendar")})
             continue
         changed.append({"id": t["id"], "title": t.get("title"),
                         "kind": t["kind"], "set": patch, "before": before})
+    if failed_kinds and not changed and not dry_run:
+        # every change Google was asked for failed: the call did nothing (BD-06)
+        from agent_friday.services import connector_outcome as _co
+        return {"ok": False, "error": _co.not_done(failed_kinds[0], "Google Calendar", account_id=aid),
+                "dry_run": False, "matched": len(targets), "account_id": aid,
+                "changed": [], "skipped": skipped}
     return {"ok": True, "dry_run": bool(dry_run), "matched": len(targets),
             "account_id": aid, "changed": changed, "skipped": skipped}
 
@@ -502,27 +576,34 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
         body["description"] = description
     if attendees:
         body["attendees"] = [{"email": a} for a in attendees if a]
+    from agent_friday.services import connector_outcome as _co
     try:
         ev = svc.events().insert(calendarId=_cal(calendar_id), body=body).execute()
     except Exception as e:
-        _logged("creating a calendar event", e)
-        return _fail("create_failed")
+        return _fail("create_failed", _co.failed(e, "Google Calendar", account_id=aid))
     _drop_calendar_cache()
+    if not _co.confirmed(ev):
+        # an empty reply names no event: not reported as created (BD-06, NS-34.11-3)
+        return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
             "start": start, "end": end}
 
 
-def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary") -> dict:
+def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary",
+              for_write: bool = False) -> dict:
     """One event as the planner needs it: its title, when it starts and ends, its time zone, whether it is an
     all-day entry, how many guests it has, and whether this calendar's copy may change its time
-    (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only."""
+    (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only;
+    with `for_write` it also requires an account that may change the calendar (a move's plan)."""
     if not _cal(calendar_id):
         return {"error": "that is not a calendar id; nothing was changed"}
-    ready, why = write_ready()
+    # `for_write`: the read that plans a change (a move) needs an account that may make it,
+    # so a plan is never offered for a change that would then be refused.
+    ready, why = write_ready() if for_write else read_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
-    aid, acct_err = resolve_write_account(account_id)
+    aid, acct_err = resolve_write_account(account_id) if for_write else resolve_read_account(account_id)
     if acct_err:
         return {"error": acct_err, "needs_account": True}
     svc, err = _service(aid)
@@ -557,17 +638,20 @@ def _event_record(ev: dict, calendar_id: str) -> dict:
             "html_link": ev.get("htmlLink") or ""}
 
 
-def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None) -> dict:
+def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None,
+               for_write: bool = False) -> dict:
     """{ok, id, account_id, before:{...}} for one event, or {error}. Reads only: the delete card names the event
     from this, so the owner approves "the dentist on Tuesday at 10", never an opaque id."""
     eid = str(event_id or "").strip()
     if not eid:
         return {"error": "an event id is required"}
     cal = str(calendar_id or "").strip() or "primary"
-    ready, why = write_ready()
+    # A read needs only read access (read first); `for_write` (the delete itself) needs an
+    # account that may change the calendar.
+    ready, why = write_ready() if for_write else read_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
-    aid, acct_err = resolve_write_account(account_id)
+    aid, acct_err = resolve_write_account(account_id) if for_write else resolve_read_account(account_id)
     if acct_err:
         return {"error": acct_err, "needs_account": True}
     svc, err = _service(aid)
@@ -576,9 +660,14 @@ def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None) 
     try:
         ev = svc.events().get(calendarId=cal, eventId=eid).execute()
     except Exception as e:
-        from agent_friday.user_errors import exception_text
+        from agent_friday.services import connector_outcome as _co
         status = getattr(getattr(e, "resp", None), "status", None)
-        return {"error": exception_text(e, "could not read event %s: %%s" % eid.replace("%", "%%")),
+        if _co.classify(e) in ("revoked", "scope", "unreachable"):
+            # revoked access is named (and the account marked), as for every Google change
+            return {"error": "could not read event %s. %s" % (eid, _co.failed(e, "Google Calendar", account_id=aid)),
+                    "not_found": False}
+        _logged("reading a calendar event", e)
+        return {"error": "could not read event %s from Google" % eid,
                 "not_found": str(status) in ("404", "410")}
     if (ev or {}).get("status") == "cancelled":
         return {"error": "that event is already deleted", "gone": True}
@@ -605,9 +694,9 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
     name); otherwise sendUpdates=none. None means the owner's default (`notify_guests_default`). Whether
     the delete may run at all is decided before this is called: the delete_calendar_event tool is outward
     and asks first, and the Calendar route is the owner's own click."""
-    got = read_event(event_id, calendar_id=calendar_id, account_id=account_id)
+    got = read_event(event_id, calendar_id=calendar_id, account_id=account_id, for_write=True)
     if not got.get("ok"):
-        return got
+        return got          # an already-deleted event says so (test_calendar_event_delete)
     tell = notify_guests_default() if notify_guests is None else bool(notify_guests)
     cal = got["before"]["calendar_id"]
     svc, err = _service(got["account_id"])
@@ -617,8 +706,15 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
         svc.events().delete(calendarId=cal, eventId=got["id"],
                             sendUpdates="all" if tell else "none").execute()
     except Exception as e:
-        from agent_friday.user_errors import exception_text
-        return {"error": exception_text(e, "could not delete the event: %s")}
+        from agent_friday.services import connector_outcome as _co
+        if _co._status(e) in (404, 410):
+            _drop_calendar_cache()
+            return {"ok": True, "id": got["id"], "already_gone": True, "title": got["before"]["title"],
+                    "account_id": got["account_id"], "calendar_id": cal,
+                    "guests_told": "It was already deleted; nothing else was changed.",
+                    "before": got["before"]}
+        return {"error": "could not delete the event. " + _co.failed(
+            e, "Google Calendar", account_id=got["account_id"])}
     _drop_calendar_cache()
     guests = int(got["before"].get("guests") or 0)
     return {"ok": True, "id": got["id"], "title": got["before"]["title"], "account_id": got["account_id"],
@@ -657,6 +753,9 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                                   eventId=event_id).execute()
     except Exception as e:
         _logged("reading a calendar event", e)
+        from agent_friday.services import connector_outcome as _co
+        if _co.classify(e) in ("revoked", "scope", "unreachable"):
+            return _fail("read_failed", _co.failed(e, "Google Calendar", account_id=aid))
         return _fail("read_failed", "could not read event %s" % event_id)
     patch, would_clear = {}, []
     for key, val in (("summary", title), ("location", location),
@@ -688,13 +787,15 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                                                    if (before.get("end") or {}).get("timeZone") else {}))
     if not patch:
         return {"ok": True, "unchanged": True, "id": event_id}
+    from agent_friday.services import connector_outcome as _co
     try:
         ev = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
                                 body=patch).execute()
     except Exception as e:
-        _logged("updating a calendar event", e)
-        return _fail("update_failed")
+        return _fail("update_failed", _co.failed(e, "Google Calendar", account_id=aid))
     _drop_calendar_cache()
+    if not _co.confirmed(ev):
+        return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "set": patch,
             "before": {"summary": before.get("summary"),

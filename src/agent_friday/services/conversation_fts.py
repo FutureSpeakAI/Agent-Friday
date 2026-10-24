@@ -95,6 +95,8 @@ def _connect() -> sqlite3.Connection:
 
 def _prepare(conn: sqlite3.Connection) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
+    # A deleted message's text is overwritten in the file, not just unlinked (see _scrub).
+    conn.execute("PRAGMA secure_delete=ON")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
@@ -102,6 +104,7 @@ def _prepare(conn: sqlite3.Connection) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY, mid TEXT UNIQUE, cid TEXT, ts REAL,
             role TEXT, via TEXT, sent_to TEXT);
         CREATE INDEX IF NOT EXISTS msgs_cid ON msgs(cid);
+        CREATE TABLE IF NOT EXISTS superseded(mid TEXT PRIMARY KEY);
         CREATE VIRTUAL TABLE IF NOT EXISTS msgs_fts USING fts5(text, tokenize='porter unicode61');
         """)
     try:
@@ -160,6 +163,20 @@ def _delete_mid(conn, mid: str) -> int:
     return 1
 
 
+def _scrub(conn) -> None:
+    """After a deletion the owner asked for: merge the full-text indexes so the deleted words
+    leave the index segments, and fold the WAL back so no copy waits there. With secure_delete
+    the freed pages are zeroed. Caller holds _LOCK and has committed. Best-effort."""
+    try:
+        conn.execute("INSERT INTO msgs_fts(msgs_fts) VALUES('optimize')")
+        if _has_trigram(conn):
+            conn.execute("INSERT INTO msgs_tri(msgs_tri) VALUES('optimize')")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as e:
+        _log.warning("conversation search: the deleted text could not be scrubbed from the index: %s", e)
+
+
 def _delete_cid(conn, cid: str) -> None:
     ids = [r[0] for r in conn.execute("SELECT id FROM msgs WHERE cid=?", (cid,))]
     for i in ids:
@@ -212,6 +229,7 @@ def forget_conversation(cid: str) -> None:
         try:
             _delete_cid(conn, cid)
             conn.commit()
+            _scrub(conn)
         finally:
             conn.close()
 
@@ -370,9 +388,11 @@ def health() -> Dict[str, Any]:
     if _REPAIRING.is_set():
         return {"state": "repairing"}
     try:
-        # Read-only and outside _LOCK: the check never holds up a chat turn's index write, and it
-        # creates no WAL/SHM files of its own.
-        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        # Read-only, immutable and outside _LOCK: the check never holds up a chat turn's index
+        # write, and it creates no WAL/SHM files (a plain read-only open of a WAL database does,
+        # and the Doctor's report must change nothing in the data folder). It reads the main file,
+        # which is where damage lives.
+        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro&immutable=1", uri=True, timeout=5)
         try:
             row = conn.execute("PRAGMA quick_check").fetchone()
         finally:
@@ -408,6 +428,7 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
             try:
                 _delete_mid(conn, mid)
                 conn.commit()
+                _scrub(conn)
             finally:
                 conn.close()
     except sqlite3.DatabaseError as e:
@@ -504,8 +525,11 @@ def _search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str
             meta = {}
             if rows:
                 marks = ",".join("?" * len(rows))
+                # A turn superseded in memory is not returned as evidence
+                # (§34.9-4); it stays in the transcript, flagged there.
                 for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to FROM msgs "
-                                      f"WHERE id IN ({marks})", list(rows)):
+                                      f"WHERE id IN ({marks}) "
+                                      f"AND mid NOT IN (SELECT mid FROM superseded)", list(rows)):
                     meta[r[0]] = r
         finally:
             conn.close()
@@ -528,6 +552,35 @@ def _search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str
                      "sent_to": json.loads(sent or "[]"), "score": -float(rank)})
     hits.sort(key=lambda h: (-h["score"], -h["ts"]))
     return hits[:max(1, int(limit))]
+
+
+def superseded_ids() -> set:
+    """Every message id recorded as superseded (survives rebuilds)."""
+    with _LOCK:
+        conn = _connect()
+        try:
+            return {r[0] for r in conn.execute("SELECT mid FROM superseded")}
+        finally:
+            conn.close()
+
+
+def mark_superseded(mids, on: bool = True) -> int:
+    """Record (or clear) that these message ids are superseded, so search
+    leaves them out. Survives a rebuild of the index. Returns how many."""
+    mids = [str(m) for m in (mids or []) if str(m).strip()]
+    if not mids:
+        return 0
+    with _LOCK:
+        conn = _connect()
+        try:
+            if on:
+                conn.executemany("INSERT OR IGNORE INTO superseded(mid) VALUES(?)", [(m,) for m in mids])
+            else:
+                conn.executemany("DELETE FROM superseded WHERE mid = ?", [(m,) for m in mids])
+            conn.commit()
+        finally:
+            conn.close()
+    return len(mids)
 
 
 def _snippet(text: str, terms: Iterable[str]) -> str:

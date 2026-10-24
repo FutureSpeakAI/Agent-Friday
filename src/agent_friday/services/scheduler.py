@@ -2790,6 +2790,19 @@ def _register_default_builtin_tasks():
     except Exception as e:
         print(f"  [scheduler] calendar_reminders unavailable: {e}")
 
+    # the phone list (services/tasks_inbox): when the owner turned it on, mirror the
+    # cards waiting for them to their Google Tasks list and read back ticks and
+    # deletes (a tick brings a card to the desk; it approves nothing). Does nothing
+    # while the list is off; polls once a minute with cards open, every 15 otherwise.
+    try:
+        from agent_friday.services.tasks_inbox import tick as _inbox_tick
+        register_builtin_task("tasks_inbox", _inbox_tick,
+                              label="Your waiting list in Google Tasks",
+                              default_trigger="interval",
+                              default_spec={"every_minutes": 1}, notify="silent")
+    except Exception as e:
+        print(f"  [scheduler] tasks_inbox unavailable: {e}")
+
     # laya-personal refit (swot spec d.2/d.4): rebuilds Laya's personal phrasings
     # and calibration from the owner's own corrections. An idle-daily job in the
     # Local AI queue (a visible job, kind laya_personal_refit); it runs only with
