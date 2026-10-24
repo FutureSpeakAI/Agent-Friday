@@ -9,6 +9,8 @@
                                       attach by hand (A3: never sent by Friday)
   POST /api/doctor/support            make the support bundle (a zip in
                                       Documents, Friday Support; a press here)
+  GET  /api/doctor/local-model        the local model's state and the repairs offered
+  POST /api/doctor/local-model/repair a repair: restart, verify or runtime (a press here)
   GET  /api/doctor/known-issues       this release's known issues (KNOWN_ISSUES.md)
   GET  /api/doctor/stores             every store Friday keeps: version, size,
                                       location (read-only, this PC only)
@@ -103,6 +105,39 @@ def doctor_report_file(rid, kind):
                      as_attachment=True, download_name=p.name)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@doctor_bp.route("/api/doctor/local-model", methods=["GET"])
+@login_required
+def doctor_local_model():
+    """The local model's state and the repairs offered (services/local_repair).
+    This PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    from agent_friday.services import local_repair
+    resp = jsonify({"status": "ok", **local_repair.state()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@doctor_bp.route("/api/doctor/local-model/repair", methods=["POST"])
+@login_required
+def doctor_local_model_repair():
+    """Start one repair: {"repair": "restart"|"verify"|"runtime"}. A press on
+    Friday's own page, on this PC; one at a time."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Repair on Friday's own page, on this PC."}), 403
+    from agent_friday.services import local_repair
+    what = (request.get_json(silent=True) or {}).get("repair")
+    try:
+        job = local_repair.start(str(what or ""), by="owner:ui")
+        return jsonify({"status": "ok", "job": job}), 202
+    except local_repair.RepairError as e:
+        busy = "running already" in str(e)
+        return jsonify({"status": "error", "code": "busy" if busy else "not_offered",
+                        "error": str(e)}), 409 if busy else 400
 
 
 @doctor_bp.route("/api/doctor/known-issues", methods=["GET"])

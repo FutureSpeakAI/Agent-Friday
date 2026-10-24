@@ -351,6 +351,21 @@ def _c_models():
     return "healthy", "local_model_files:%d" % n
 
 
+def _c_local_brain():
+    """Whether the local model is serving (§32.2-4). When it is installed and
+    not serving, the Doctor page offers its repairs (services/local_repair)."""
+    from agent_friday.services import capability_state as cs
+    s = cs.local_brain_state()
+    if s.state == cs.WORKING:
+        return "healthy", "serving"
+    if s.state == cs.PRESENT_FAILING:
+        from agent_friday.services import safe_mode
+        if safe_mode.active():
+            return "blocked_by_policy", "not_started_in_safe_mode"
+        return "broken", "installed_not_serving_repair_offered"
+    return "unavailable_by_configuration", "no_local_model"
+
+
 def _c_crashes():
     from agent_friday.services import crash_forensics
     n = crash_forensics.crash_count()
@@ -383,6 +398,7 @@ CHECKS = (
     ("backup", "backup", _c_backup),
     ("disk", "GPU and resource state", _c_disk),
     ("model_files", "model files and checksums", _c_models),
+    ("local_brain", "model files and checksums", _c_local_brain),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
 )
