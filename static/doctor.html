@@ -135,6 +135,13 @@
   <p id="support-note" role="status"></p>
 </section>
 
+<section id="localmodel" aria-labelledby="lm-h">
+  <h2 id="lm-h">Local model</h2>
+  <p id="lm-state" role="status">Checking...</p>
+  <div id="lm-offers"></div>
+  <p id="lm-note" role="status"></p>
+</section>
+
 <section id="known" aria-labelledby="known-h">
   <h2 id="known-h">Known issues in this release</h2>
   <p class="muted">What is broken, unverified or limited on purpose in this version, from the list that ships with it. If something you hit is here, it is known; the list says what to do meanwhile.</p>
@@ -268,6 +275,39 @@
     const u = ['B', 'KB', 'MB', 'GB']; let i = 0; n = Number(n);
     while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
     return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+  }
+  const LM_WORDS = { working: 'serving', present_failing: 'installed, but not serving', absent: 'not installed' };
+  function localModel() {
+    api('/api/doctor/local-model').then(({ ok, d }) => {
+      const box = $('lm-offers'); box.textContent = '';
+      if (!ok) { text($('lm-state'), d.error || 'Could not be read.'); return; }
+      text($('lm-state'), 'The local model is ' + (LM_WORDS[d.brain.state] || d.brain.state) + '.' +
+        (d.brain.detail ? ' (' + d.brain.detail + ')' : '') + (d.safe_mode ? ' Friday is in safe mode.' : ''));
+      (d.offers || []).forEach(o => {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = o.label + (o.recommended ? ' (suggested)' : '');
+        b.disabled = !o.available || (d.job && d.job.state === 'running');
+        b.addEventListener('click', () => repair(o.id));
+        box.appendChild(b);
+        if (o.why || o.problem) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = o.why || o.problem; box.appendChild(p); }
+      });
+      const j = d.job || {};
+      if (j.state === 'running') { text($('lm-note'), 'Working on it: ' + j.what + '...'); setTimeout(localModel, 3000); }
+      else if (j.state === 'done') {
+        const r = j.result || {};
+        let msg = j.what + ': ' + (r.ok ? 'done.' : 'not fixed.');
+        if (r.note) msg += ' ' + r.note + '.';
+        if (r.models) msg += ' ' + r.models.filter(m => !m.ok).map(m => m.model + ' (' + m.problem + ')').join(', ');
+        if (r.next) msg += ' ' + r.next;
+        text($('lm-note'), msg);
+      } else if (j.state === 'failed') { text($('lm-note'), j.what + ' could not run (' + j.error + ').'); }
+    });
+  }
+  function repair(what) {
+    text($('lm-note'), 'Starting...');
+    api('/api/doctor/local-model/repair', { method: 'POST', body: JSON.stringify({ repair: what }) }).then(({ ok, d }) => {
+      if (!ok) { text($('lm-note'), d.error || 'Not started.'); return; }
+      localModel();
+    });
   }
   function knownIssues() {
     api('/api/doctor/known-issues').then(({ ok, d }) => {
@@ -484,7 +524,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); history(); stores(); knownIssues();
+  safeState(); history(); stores(); knownIssues(); localModel();
 })();
 </script>
 </body>
