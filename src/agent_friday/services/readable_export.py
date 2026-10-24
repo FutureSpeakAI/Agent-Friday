@@ -41,6 +41,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from agent_friday.user_errors import UserFacingRuntimeError
+
 CATEGORIES = ("wiki", "memories", "conversations", "goals", "receipts", "contacts", "settings")
 
 #: A key name that may hold a credential (anywhere in the name, any case).
@@ -56,7 +58,7 @@ _SECRET_VALUE = re.compile(r"(?i)(hooks\.slack\.com/|discord(?:app)?\.com/api/we
 BLANKED = "(blanked)"
 
 
-class ExportError(RuntimeError):
+class ExportError(UserFacingRuntimeError):
     """Said plainly to the owner."""
 
 

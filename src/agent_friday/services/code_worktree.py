@@ -470,6 +470,30 @@ def _one_git(sub: str, args: List[str]) -> Optional[str]:
     return None
 
 
+_HEREDOC = re.compile(r"<<-?[ \t]*(['\"]?)(\w+)\1")
+
+
+def _without_heredoc_bodies(command: str) -> str:
+    """`command` with each heredoc's body (the lines up to its closing word)
+    replaced by '<<heredoc', read line by line."""
+    out, lines, i = [], command.split("\n"), 0
+    while i < len(lines):
+        line = lines[i]
+        m = _HEREDOC.search(line)
+        if not m:
+            out.append(line)
+            i += 1
+            continue
+        end = next((j for j in range(i + 1, len(lines)) if lines[j].strip() == m.group(2)), None)
+        if end is None:
+            out.append(line)
+            i += 1
+            continue
+        out.append(line[:m.start()] + "<<heredoc" + line[m.end():])
+        i = end + 1
+    return "\n".join(out)
+
+
 def _git_refusal(command: str, aliases: Optional[Dict[str, str]] = None, depth: int = 0) -> Optional[str]:
     if depth > 3:
         return "this command nests too deeply for Friday to read, so it is not run"
@@ -479,10 +503,11 @@ def _git_refusal(command: str, aliases: Optional[Dict[str, str]] = None, depth: 
     if any(h in low.replace("\\", "/") for h in _SHARED_HINTS):
         return ("this touches the repository's shared folder (hooks, config) or points git "
                 "elsewhere; it is not run")
-    if re.search(r"(powershell|pwsh)\S*\s.*(-encodedcommand|-enc\s|-ec\s|-e\s+[a-z0-9+/=]{16,})", low):
+    shell = re.search(r"(?:powershell|pwsh)\S*\s", low)
+    if shell and re.search(r"-encodedcommand|-enc\s|-ec\s|-e\s+[a-z0-9+/=]{16,}", low[shell.end():]):
         return "an encoded command cannot be read, so it is not run"
     # A heredoc's body is text, not commands (a commit message may mention 'git push').
-    body_free = re.sub(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", "<<heredoc", command, flags=re.S)
+    body_free = _without_heredoc_bodies(command)
     for seg in _SEGMENT.split(body_free):
         try:
             tokens = shlex.split(seg, posix=True)

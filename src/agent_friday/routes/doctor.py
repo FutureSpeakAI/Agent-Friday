@@ -325,7 +325,7 @@ def export_readable():
         r = readable_export.export(dest, only=only, by="owner:ui")
         return jsonify({"status": "ok", **r})
     except readable_export.ExportError as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
+        return api_error(e, "The export could not be made.", 400, key="error")
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The export could not be made.")
 

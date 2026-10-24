@@ -21875,6 +21875,9 @@ function MemoryCardPanel({s, save}) {
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState(null);
   const [draft, setDraft] = useState({user: '', friday: ''});
+  // Messages a correction stopped using as evidence (north star 34.9-4), so
+  // the owner sees it happened and can put them back.
+  const [retired, setRetired] = useState(null);
   const load = useCallback(() => {
     apiFetch('/api/core-memory')
       .then(r => r.json())
@@ -21883,10 +21886,10 @@ function MemoryCardPanel({s, save}) {
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key, after) => {
-    setBusy(key || path); setMsg('');
+    setBusy(key || path); setMsg(''); setRetired(null);
     apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
-      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(); load(); })
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(d); load(); })
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
@@ -21897,6 +21900,10 @@ function MemoryCardPanel({s, save}) {
   const btn = (label, onClick, key, extra) => E('button', Object.assign({className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, extra || {}), label);
   const from = src => (String(src || '').indexOf('dream') === 0 ? 'nightly dreaming'
     : src === 'review' ? 'the background review' : src === 'friday' ? fridayName() : 'an older note');
+  const noteRetired = d => {
+    const n = (d && d.superseded_turns) || 0;
+    setRetired(n > 0 ? {n: n, ids: d.superseded_ids || []} : null);
+  };
   const file = t => {
     // The owner's own words for the two files (the server's titles are written for the prompt).
     const f = Object.assign({}, rep.card[t], {title: t === 'user' ? 'About you' : 'Working with you (' + fridayName() + '’s own lessons)'});
@@ -21911,12 +21918,15 @@ function MemoryCardPanel({s, save}) {
         ? E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'})},
             E('input', {className:'input', 'aria-label':'Edit this line', style:{flex:'1 1 240px', fontSize:12}, value: edit.text,
               onChange: e => setEdit({t: t, i: i, text: e.target.value})}),
-            btn('Save', () => post('edit', {target: t, index: i, text: edit.text}, 'e' + t + i, () => setEdit(null)), 'save'),
+            btn('Save', () => post('edit', {target: t, index: i, text: edit.text}, 'e' + t + i, d => { setEdit(null); noteRetired(d); }), 'save'),
             btn('Cancel', () => setEdit(null), 'cancel'))
         : E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
             E('div', {style:{flex:1, fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, line),
             btn('Edit', () => setEdit({t: t, i: i, text: line}), 'edit'),
-            btn('Delete', () => post('delete', {target: t, index: i}, 'd' + t + i), 'delete'))),
+            btn('Delete', () => post('delete', {target: t, index: i}, 'd' + t + i), 'delete',
+              {title: 'Remove the line. What you said before still counts.'}),
+            btn('Wrong: delete', () => post('delete', {target: t, index: i, wrong: true}, 'w' + t + i, noteRetired), 'wrong',
+              {title: 'Remove the line because it was never true: your earlier messages that said it stop being used as evidence.'}))),
       E('div', {style:{display:'flex', gap:6, marginTop:4}},
         E('input', {className:'input', 'aria-label':'Add a line to ' + f.title, placeholder:'Add a line', style:{flex:1, fontSize:12}, value: draft[t],
           onChange: e => setDraft(Object.assign({}, draft, {[t]: e.target.value}))}),
@@ -21934,6 +21944,16 @@ function MemoryCardPanel({s, save}) {
         desc:'On. Every ' + (s.memory_review_every_turns || 10) + ' turns, after ' + fridayName() + ' has answered, a model on this PC reads the latest exchanges and may add a line that rests on your own words. Anything it would change or remove, and anything it got from what she read, waits below for your Keep. It never uses a cloud model. Off, nothing is reviewed.'})),
     E('div', {style: dim}, 'Two short notes ' + fridayName() + ' reads at the start of every conversation: what she knows about you, and what she has learned about working with you. Each has a size limit, so she merges or drops lines to make room. She saves on her own when you tell her something; anything she picked up from a page, a mail or a file waits for your OK first. Your changes here apply straight away; hers from the next conversation. The files are on this PC only.'),
     msg && E('div', {role:'status', style:{fontSize:11, color:'#f59e0b', marginTop:6}}, msg),
+    retired && E('div', {role:'status', 'data-core-memory-retired': retired.n, style: Object.assign({}, row, {marginTop:6})},
+      E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)'}},
+        retired.n === 1 ? 'One earlier message of yours that said this is no longer used as evidence.'
+          : retired.n + ' earlier messages of yours that said this are no longer used as evidence.'),
+      E('div', {style: dim}, 'They stay in your conversations; ' + fridayName() + ' just stops recalling them as true.'),
+      E('div', {style:{display:'flex', gap:6, marginTop:4}},
+        btn('Use them again', () => { const want = retired.ids.length;
+          post('restore-messages', {ids: retired.ids}, 'restore', d => {
+            if ((d.restored || 0) < want) setMsg('Some of those messages could not be put back just now. Try again in a moment.'); }); }, 'restore'),
+        btn('OK', () => setRetired(null), 'ok-retired'))),
     !rep && !msg && E('div', {style: dim}, 'Loading…'),
     rep && E('div', null,
       file('user'), file('friday'),
@@ -22543,6 +22563,211 @@ function DockSettingsPanel(){
     </div>);
 }
 
+// ── Connections > Google: your waiting list in Google Tasks (services/tasks_inbox, Part 1) ──
+// A tick in that list approves nothing: it brings the card to the top of this PC. Deleting an
+// item (or ticking "No, not now") declines the kinds of card where no only means don't do it.
+// Turning it on, and sending more text to Google, are a press here (routes/tasks_inbox.py);
+// nothing is pre-selected, and Recommended is a label, never a choice made for the owner.
+function TasksInboxPanel() {
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [acct, setAcct] = useState('');
+  const [level, setLevel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/tasks-inbox').then(r => r.json()).then(setD).catch(() => setMsg('Could not read the phone list settings.'));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const run = (url, body, done) => {
+    setBusy(true);
+    setMsg('');
+    apiFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body || {})
+    }).then(r => r.json()).then(x => {
+      setMsg(x.ok ? done : x.message || 'Nothing changed.');
+      load();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const title = 'Your waiting list in Google Tasks';
+  const desc = 'See what ' + fridayName() + ' is waiting on from your phone. A tick there approves nothing.';
+  if (!d) return E(StSection, {
+    title,
+    desc
+  }, E('div', {
+    className: 'sc-sub'
+  }, msg || 'Reading…'));
+  const levelButtons = (current, onPick) => E('div', {
+    role: 'group',
+    'aria-label': 'How much text goes to Google',
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginTop: 4
+    }
+  }, (d.levels || []).map(l => E('button', {
+    key: l.id,
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'tasks-inbox-level-' + l.id,
+    'aria-pressed': current === l.id,
+    style: {
+      fontSize: 11,
+      outline: current === l.id ? '1px solid #00d4ff' : 'none'
+    },
+    title: l.words,
+    disabled: busy,
+    onClick: () => onPick(l.id)
+  }, l.label + (l.id === d.recommended_level ? ' (Recommended)' : ''))));
+  const tickWords = E('ul', {
+    className: 'lk-sub',
+    'aria-label': 'What a tick in Google Tasks does'
+  }, (d.what_a_tick_does || []).map((w, i) => E('li', {
+    key: i
+  }, w)));
+  const limit = E('p', {
+    className: 'lk-words',
+    role: 'note'
+  }, E('strong', null, 'The honest limit. '), d.honest_limit);
+  const where = E('div', {
+    className: 'lk-words'
+  }, d.where_it_goes);
+  const status = E('div', {
+    role: 'status',
+    'aria-live': 'polite',
+    className: 'sc-msgline'
+  }, msg);
+  if (!d.enabled) {
+    const accounts = d.accounts || [];
+    return E(StSection, {
+      title,
+      desc
+    }, d.problem ? E('div', {
+      role: 'alert',
+      className: 'lk-words'
+    }, d.problem) : null, tickWords, where, accounts.length === 0 ? E('div', {
+      className: 'lk-words',
+      'data-testid': 'tasks-inbox-no-account'
+    }, 'No connected Google account allows task changes yet. Connect one above with task changes allowed, then come back here.') : E('div', null, E('div', {
+      className: 'lk-title'
+    }, 'Which account holds the list'), E('div', {
+      role: 'group',
+      'aria-label': 'Which Google account',
+      style: {
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap',
+        marginTop: 4
+      }
+    }, accounts.map(a => E('button', {
+      key: a.id,
+      type: 'button',
+      className: 'btn',
+      'aria-pressed': acct === a.id,
+      'data-testid': 'tasks-inbox-account',
+      style: {
+        fontSize: 11,
+        outline: acct === a.id ? '1px solid #00d4ff' : 'none'
+      },
+      onClick: () => setAcct(a.id)
+    }, a.email || a.label))), E('div', {
+      className: 'lk-title',
+      style: {
+        marginTop: 8
+      }
+    }, 'How much text goes to Google'), levelButtons(level, setLevel), level ? E('div', {
+      className: 'lk-words'
+    }, ((d.levels || []).find(l => l.id === level) || {}).words) : null, E('button', {
+      type: 'button',
+      className: 'settings-btn',
+      'data-testid': 'tasks-inbox-enable',
+      style: {
+        fontSize: 12,
+        marginTop: 8
+      },
+      disabled: busy || !acct || !level,
+      onClick: () => run('/api/tasks-inbox/enable', {
+        account_id: acct,
+        text_level: level
+      }, 'The list is on. It appears in Google Tasks as “' + d.list_title + '”.')
+    }, 'Turn on the waiting list')), limit, status);
+  }
+  return E(StSection, {
+    title,
+    desc
+  }, d.problem ? E('div', {
+    role: 'alert',
+    className: 'lk-words'
+  }, d.problem) : null, E('div', {
+    className: 'lk-words',
+    'data-testid': 'tasks-inbox-on'
+  }, 'On, in ' + (d.account && d.account.email || 'your Google account') + ' as “' + d.list_title + '”. ' + d.open_items + ' card' + (d.open_items === 1 ? '' : 's') + ' on the list now.' + (d.effective_level !== d.text_level ? ' Only on this PC is on, so only “Something needs you” is posted.' : '')), E('div', {
+    className: 'lk-title',
+    style: {
+      marginTop: 6
+    }
+  }, 'How much text goes to Google'), levelButtons(d.text_level, l => run('/api/tasks-inbox/level', {
+    text_level: l
+  }, 'Changed. New items use it; items already posted keep their words.')), tickWords, where, (d.recent || []).length > 0 ? E('ul', {
+    className: 'lk-sub',
+    'aria-label': 'Recently on the list'
+  }, d.recent.slice().reverse().map((e, i) => E('li', {
+    key: i
+  }, ({
+    ticked: 'A tick was seen',
+    declined: 'A card was declined from Google Tasks',
+    held: 'Several items changed at once, so nothing was declined',
+    void: 'An item was changed outside ' + fridayName() + ', so a fresh one replaced it',
+    foreign: 'An item ' + fridayName() + ' didn’t write is in the list (it is never acted on)',
+    deleted: 'An item was deleted in Google Tasks'
+  }[e.event] || e.event) + (e.at ? ' at ' + new Date(e.at * 1000).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit'
+  }) : '')))) : null, E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginTop: 8
+    }
+  }, E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/sync', {}, 'Checked.')
+  }, 'Check now'), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'tasks-inbox-off',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/disable', {
+      remove_list: false
+    }, 'Off. The list stays in Google Tasks; nothing more is posted or read.')
+  }, 'Turn off'), E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => run('/api/tasks-inbox/disable', {
+      remove_list: true
+    }, 'Off, and ' + fridayName() + '’s list was removed from Google Tasks.')
+  }, 'Turn off and remove the list')), limit, status);
+}
 function GoogleAccountsPanel(){
   const[accounts,setAccounts]=useState([]);
   const[msg,setMsg]=useState('');
@@ -23030,13 +23255,13 @@ function SettingsTabConnectors({
     }).catch(() => {});
     apiFetch('/api/connectors').then(r => r.json()).then(d => setConnectors(Array.isArray(d) ? d : d.connectors || [])).catch(() => {});
   }, [part]);
-  if (part === 'accounts') return /*#__PURE__*/React.createElement(StSection, {
+  if (part === 'accounts') return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "Google accounts",
     desc: "Connect one or more Google accounts for mail, calendar and files. Their tokens are encrypted on this machine and never sent to a cloud model."
   }, /*#__PURE__*/React.createElement(GoogleAccountsPanel, null), /*#__PURE__*/React.createElement(MailDefaultAccountRow, {
     s: s,
     save: save
-  }));
+  })), /*#__PURE__*/React.createElement(TasksInboxPanel, null));
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StSection, {
     title: "MCP servers"
   }, /*#__PURE__*/React.createElement("div", {

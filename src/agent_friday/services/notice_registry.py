@@ -362,6 +362,13 @@ _ALL = [
     # ── calendar: a reminder Google has for an event, raised in Friday's tray ──
     _e("CR1", "services/calendar_reminders.py:tick", "calendar_reminder", UPDATES,
        "calendar-reminder:{event_id}:{minutes}", source="calendar"),
+    # ── the phone list in Google Tasks (services/tasks_inbox) ────────────────
+    # A tick there brings a card to the desk (it approves nothing); a delete or a
+    # change made there is reported, because Friday can't tell who made it.
+    _e("TI1", "services/tasks_inbox.py:_bring_to_desk", "tasks_inbox_tick", NEEDS_YOU,
+       "tasks-inbox-tick:{approval_id}", source="tasks_inbox"),
+    _e("TI2", "services/tasks_inbox.py:_decline+_apply_changes", "tasks_inbox_change", ACTIVITY,
+       "tasks-inbox-change:{approval_id}", source="tasks_inbox"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),
