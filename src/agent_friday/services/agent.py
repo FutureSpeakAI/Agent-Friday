@@ -16231,7 +16231,7 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
             if _tm is None:
                 withheld[raw] = "its manifest could not be checked"
                 continue
-            ok, why = _tm.check(server_name, t)
+            ok, why = _tm.check(server_name, t, _spec)
             if why:
                 try:
                     to_review.append(_tm.describe(server_name, t, full_name=full, spec=_spec,
@@ -16267,8 +16267,8 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
         if to_review:
             try:
                 from agent_friday.services import tool_manifest_cards as _tmc
-                _tmc.ask(server_name, to_review, grandfathered=_tm.grandfathered(server_name),
-                         again=_tm.CHANGED in withheld.values())
+                _tmc.ask(server_name, to_review,
+                         grandfathered=_tm.grandfathered(server_name, _spec))
             except Exception as _card_err:
                 _log.warning("tool manifest card not raised for %s: %s", server_name,
                              type(_card_err).__name__)

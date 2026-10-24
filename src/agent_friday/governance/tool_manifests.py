@@ -149,6 +149,7 @@ def describe(server: str, tool: Dict[str, Any], *, full_name: str = "", spec: Op
     """The typed manifest (23.4-1) for one connector tool, unsigned: what the card shows."""
     spec = spec or {}
     return {"kind": "connector", "server": str(server)[:120], "tool": str(tool.get("name") or "")[:200],
+            "description": " ".join(str(tool.get("description") or "").split())[:400],
             "version": str(version or "")[:60],
             "provider": ("%s (%s)" % (server, (_domains(spec) or ["this PC"])[0]))[:200],
             "schema_sha": schema_sha(tool), "ring": int(ring),
@@ -180,6 +181,15 @@ def builtin(name: str) -> Optional[Dict[str, Any]]:
 
 
 # ── the signed list ─────────────────────────────────────────────────────────
+
+def config_fingerprint(spec: Any) -> str:
+    """What a connector runs or reaches (command, arguments, address; never its secrets): a
+    connector from before A30 stays trusted only while this is unchanged."""
+    spec = spec if isinstance(spec, dict) else {}
+    body = {"command": spec.get("command") or "", "args": spec.get("args") or [],
+            "url": spec.get("url") or "", "cwd": spec.get("cwd") or ""}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
 
 def _row_key(server: str, tool: str) -> str:
     return "%s\x1f%s" % (server, tool)
@@ -222,10 +232,15 @@ def _grandfathered_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return row if _verified(row) and row.get("tool") == GRANDFATHERED else None
 
 
-def grandfathered(server: str) -> bool:
-    """A connector configured before A30 on an existing install, not yet answered."""
+def grandfathered(server: str, spec: Any = None) -> bool:
+    """A connector configured before A30 on an existing install, not yet answered, and still
+    running or reaching what it did then (``spec``: its current config; None skips that check,
+    for display only)."""
     row = _grandfathered_row(_read_raw() or {})
-    return bool(row) and server in (row.get("servers") or [])
+    servers = (row or {}).get("servers") or {}
+    if not isinstance(servers, dict) or server not in servers:
+        return False
+    return spec is None or servers[server] == config_fingerprint(spec)
 
 
 def carry_over_at_boot(config: Any = None) -> int:
@@ -236,16 +251,25 @@ def carry_over_at_boot(config: Any = None) -> int:
         raw = _read_raw()
         if raw is None or GRANDFATHERED in raw or _history_path().exists():
             return 0
-        servers: List[str] = []
+        from agent_friday import core
         try:
-            from agent_friday import core
+            if core.install_choices_state().get("tool_manifests_carried_over"):
+                return 0                           # it ran once already: never again
+            # The marker goes first: a carry-over that fails part-way is not retried at a later
+            # boot with whatever is configured then (it fails closed: those connectors ask).
+            core.update_install_choices_state(tool_manifests_carried_over=time.time())
+        except Exception:
+            return 0
+        servers: Dict[str, str] = {}
+        try:
             existing = core.install_origin() == core.EXISTING_INSTALL
         except Exception:
             existing = True                        # as core: an unreadable record is EXISTING
         if existing:
             cfg = config if isinstance(config, dict) else {}
             conf = cfg.get("servers", cfg) if isinstance(cfg, dict) else {}
-            servers = sorted(str(n) for n, s in (conf or {}).items() if isinstance(s, dict))
+            servers = {str(n): config_fingerprint(s) for n, s in sorted((conf or {}).items())
+                       if isinstance(s, dict) and s.get("enabled") is not False}
         row = {"tool": GRANDFATHERED, "server": "", "servers": servers, "made_by": "carried_over",
                "made_at": time.time(), "existing_install": bool(existing)}
         row["sig"] = _sign(row)
@@ -260,9 +284,9 @@ def release_grandfather(server: str, *, why: str) -> None:
     with _LOCK:
         raw = _read_raw()
         row = _grandfathered_row(raw or {})
-        if raw is None or not row or server not in (row.get("servers") or []):
+        if raw is None or not row or server not in (row.get("servers") or {}):
             return
-        row = dict(row, servers=[s for s in row["servers"] if s != server])
+        row = dict(row, servers={k: v for k, v in row["servers"].items() if k != server})
         row.pop("sig", None)
         row["sig"] = _sign(row)
         raw[GRANDFATHERED] = row
@@ -278,9 +302,10 @@ CHANGED = ("its description or inputs changed since you reviewed it: review it a
            "card in Needs you")
 
 
-def check(server: str, tool: Dict[str, Any]) -> Tuple[bool, str]:
-    """(may be offered, reason). Never raises: a check that cannot run withholds the tool,
-    unless the connector is from before A30 (A25: existing connectors keep working)."""
+def check(server: str, tool: Dict[str, Any], spec: Any = None) -> Tuple[bool, str]:
+    """(may be offered, reason). Never raises: a check that cannot run withholds the tool
+    (for a connector from before A30 too: a list that cannot be read or verified trusts
+    nothing). ``spec`` is the connector's current config."""
     name = str(tool.get("name") or "")
     try:
         row = manifest(server, name)
@@ -288,7 +313,7 @@ def check(server: str, tool: Dict[str, Any]) -> Tuple[bool, str]:
             if row.get("schema_sha") == schema_sha(tool):
                 return True, ""
             return False, CHANGED
-        if grandfathered(server):
+        if grandfathered(server, spec if spec is not None else {}):
             return True, "from before A30: works until you answer its card"
         return False, NO_MANIFEST
     except Exception as e:  # noqa: BLE001
@@ -308,6 +333,18 @@ def unavailable(server: Optional[str] = None) -> Dict[str, Dict[str, str]]:
         if server is not None:
             return {server: dict(_UNAVAILABLE.get(server, {}))}
         return {k: dict(v) for k, v in _UNAVAILABLE.items()}
+
+
+def seal(payload: Dict[str, Any]) -> str:
+    """A signature over a card's payload, so what the owner approves is what gets signed."""
+    return _sign({"card": {k: v for k, v in payload.items() if k != "seal"}})
+
+
+def sealed(payload: Dict[str, Any]) -> bool:
+    try:
+        return _hmac.compare_digest(str(payload.get("seal") or ""), seal(payload))
+    except Exception:
+        return False
 
 
 def _reset_for_tests() -> None:

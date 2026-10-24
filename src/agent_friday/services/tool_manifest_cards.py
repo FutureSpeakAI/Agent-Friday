@@ -44,12 +44,25 @@ def _latest(server: str):
     return cards[0] if cards else None          # newest first
 
 
+#: The most tools one card asks about; the rest get the next card once these are answered.
+MAX_PER_CARD = 40
+
+
+def _plain(text: Any, n: int) -> str:
+    """One line of the server's own words, shown as data: no line breaks or control marks."""
+    t = "".join(ch if ch.isprintable() else " " for ch in str(text or ""))
+    return " ".join(t.split())[:n]
+
+
 def _line(m: Dict[str, Any]) -> str:
-    bits = ["%s: %s" % (m.get("tool"), str(m.get("action_class") or "").lower() or "outward")]
+    bits = ["\"%s\" (Friday's guess: %s)" % (_plain(m.get("tool"), 80),
+                                            str(m.get("action_class") or "outward").lower())]
+    if m.get("description"):
+        bits.append("it says: \"%s\"" % _plain(m["description"], 300))
     if m.get("domains"):
         bits.append("reaches " + ", ".join(m["domains"]))
     if m.get("sensitive_args"):
-        bits.append("takes " + ", ".join(m["sensitive_args"]))
+        bits.append("takes " + ", ".join(_plain(a, 40) for a in m["sensitive_args"]))
     return "; ".join(bits)
 
 
@@ -60,8 +73,14 @@ def ask(server: str, manifests: List[Dict[str, Any]], *, grandfathered: bool,
     if not server or not manifests:
         return {"state": "none", "approval_id": ""}
     ensure_hook()
+    manifests = manifests[:MAX_PER_CARD]          # approve only what the card shows
+    shas = sorted(str(m.get("schema_sha")) for m in manifests)
     with _LOCK:
         last = _latest(server)
+        if last and status_changed(last, shas):
+            # Something the owner has not seen (a new or changed tool): ask about it, but only
+            # once per change, not at every restart.
+            again = True
         status = (last or {}).get("status")
         if last and status == "pending":
             return {"state": "pending", "approval_id": last["approval_id"]}
@@ -76,10 +95,9 @@ def ask(server: str, manifests: List[Dict[str, Any]], *, grandfathered: bool,
             # Answered: tools that changed since are shown as unavailable; restarting the
             # connector from Settings asks again.
             return {"state": "approved", "approval_id": last["approval_id"]}
-        name = str(server)[:80]
-        shown = manifests[:40]
-        lines = "\n".join("- " + _line(m) for m in shown)
-        more = "" if len(manifests) <= 40 else "\n(and %d more)" % (len(manifests) - 40)
+        name = _plain(server, 80)
+        lines = "\n".join("- " + _line(m) for m in manifests)
+        more = ""
         if grandfathered:
             title = "Review the add-on \"%s\": add a manifest, or turn it off?" % name
             what = ("The add-on \"%s\" was set up before Friday asked for tool manifests. It "
@@ -97,11 +115,24 @@ def ask(server: str, manifests: List[Dict[str, Any]], *, grandfathered: bool,
                          "description changes later, Friday stops offering it until you "
                          "review it again."),
             action_description=("Add manifests for the tools of add-on %s" % name),
-            payload={"server": str(server)[:200], "grandfathered": bool(grandfathered),
-                     "manifests": manifests[:200]},
+            payload=_sealed_payload({"server": str(server)[:200], "grandfathered": bool(grandfathered),
+                                     "manifests": manifests, "shas": shas}),
             requested_by="friday:mcp", action_class="outward", force_gate=True)
         return {"state": "pending" if card.get("status") == "pending" else str(card.get("status")),
                 "approval_id": card.get("approval_id", "")}
+
+
+def status_changed(last: dict, shas: List[str]) -> bool:
+    """The tools now are not the ones the last card asked about (and it was answered)."""
+    if (last or {}).get("status") == "pending":
+        return False
+    return sorted((last.get("payload") or {}).get("shas") or []) != shas
+
+
+def _sealed_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    from agent_friday.governance import tool_manifests
+    payload["seal"] = tool_manifests.seal(payload)
+    return payload
 
 
 def _restart(server: str) -> None:
@@ -130,8 +161,13 @@ def _turn_off(server: str) -> None:
     mgr = getattr(agent, "_MCP_MANAGER", None)
     try:
         agent._mcp_unregister_server_tools(server)
-        if mgr is not None and hasattr(mgr, "stop"):
-            mgr.stop(server)
+        sp = (getattr(mgr, "servers", {}) or {}).get(server) if mgr is not None else None
+        if sp is not None:
+            sp.stop()                                  # the program or session ends now
+            try:
+                sp.status = "disabled"
+            except Exception:
+                pass
     except Exception as e:
         _log.info("add-on stop after review failed: %s", type(e).__name__)
 
@@ -157,6 +193,10 @@ def apply(record: dict) -> dict:
     from agent_friday.governance import action_gate, tool_manifests
     payload = record.get("payload") or {}
     server = str(payload.get("server") or "")
+    if not tool_manifests.sealed(payload):
+        # The card's contents changed after it was raised: nothing is signed or turned off.
+        ap.mark_used(record["approval_id"], "tool_manifests", {"ok": False, "error": "card altered"})
+        return {"ok": False, "error": "the card was altered after it was raised"}
     try:
         action_gate._receipt({"tool": "tool_manifest", "class": action_gate.INTERNAL,
                               "decision": "add_manifest" if approved else

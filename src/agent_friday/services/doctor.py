@@ -272,7 +272,7 @@ def _c_mcp():
     except Exception:
         withheld = 0
     if withheld:
-        return "healthy", "configured:%d;tools_without_manifest:%d" % (len(servers or {}), withheld)
+        return "degraded", "configured:%d;tools_without_manifest:%d" % (len(servers or {}), withheld)
     return "healthy", "configured:%d" % len(servers or {})
 
 
