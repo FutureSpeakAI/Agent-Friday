@@ -124,7 +124,7 @@ def test_the_phone_stop_is_answered_once_with_stopped_and_a_receipt(client, gs, 
     r = _text(client, OWNER, "Stop everything", sid="SM" + "1" * 32)
     assert b"<Message>Stopped.</Message>" in r.data
     acks = [d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"][before:]
-    assert len(acks) == 1 and acks[0]["surface"] == "sms" and acks[0]["class"] == "OUTWARD"
+    assert len(acks) == 1 and acks[0]["surface"] == "sms" and acks[0]["class"] == "outward"
     r2 = _text(client, OWNER, "Friday stop", sid="SM" + "2" * 32)
     assert b"<Message>" not in r2.data, "a second stop in the same stop got a second reply"
 

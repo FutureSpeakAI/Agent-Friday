@@ -225,7 +225,7 @@ def claim_ack(surface: str, target: str) -> Optional[str]:
         _ACKED.add(key)
     try:
         from agent_friday.governance import action_gate
-        action_gate._receipt({"tool": "stop_ack", "class": "OUTWARD", "decision": "allow",
+        action_gate._receipt({"tool": "stop_ack", "class": action_gate.OUTWARD, "decision": "allow",
                               "surface": surface, "chosen_by": "owner",
                               "target": ("…" + target[-4:]) if len(target) > 4 else "…",
                               "reason": "A28: the one fixed reply %r to the verified sender of a "
