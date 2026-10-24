@@ -687,7 +687,12 @@ def _origin_in(n: str, s: str, entries: list, free_text: bool) -> Origin:
 def recent_instructions(key: str, window: float = TTL_SECONDS) -> List[tuple]:
     """(label, signals) of outside content read recently in this conversation that contains
     instruction-shaped text (services/injection_signals), newest first. Carried text counts
-    whatever its age, as in `recent_content(for_grants=True)`."""
+    whatever its age, as in `recent_content(for_grants=True)`.
+
+    Imported AI history is carried text: in a conversation that replays another assistant's
+    turns, pre-approved sends stay off and acting calls after an instruction-shaped turn get a
+    card for as long as that history is replayed. This is deliberate (BD-24): the other
+    assistant's words are outside content however old they are."""
     cut = time.time() - window
     led = _ledger(key)
     with _LOCK:
@@ -1195,7 +1200,35 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
     return d
 
 
-_LINKS_AND_ADDRESSES = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+|https?://[^\s\"'<>]+|\+?\d[\d \-]{7,}\d")
+_PHONE_LIKE = re.compile(r"\+?\(?\d[\d ().\-]{7,}\d")
+#: The exemption for the owner's own words is stricter than provenance's "mostly theirs" (30%):
+#: an acting value must be nearly all the owner's (80% of its five-word runs), so repeating their
+#: request and appending a new instruction does not ride on it.
+OWNER_WORDS_THRESHOLD = 0.8
+
+
+def _links_and_addresses(text: str) -> list:
+    """Every e-mail address, link (with or without a scheme) and phone-like number in `text`."""
+    out = _EMAIL.findall(text) + _URL.findall(text)
+    out += [p for p in _PHONE_LIKE.findall(text) if sum(c.isdigit() for c in p) >= 9]
+    return out
+
+
+def _owners_words(key: str, text: str, free_text: bool) -> bool:
+    """Is this acting value the owner's own typing (not just mostly)?"""
+    if not free_text:
+        return origin_of(key, text).kind == "user"
+    led = _ledger(key)
+    with _LOCK:
+        users = [e for e in list(led.carried.values()) + list(led.entries) if e.kind == "user"]
+    n = normalize(text)
+    if len(n) >= MIN_ATOM and any(n in e.norm for e in users):
+        return True
+    sh = _shingles(text)
+    if not sh:
+        return origin_of(key, text).kind == "user"
+    user_sh = set().union(*[_shingles(e.raw) for e in users]) if users else set()
+    return len(sh & user_sh) / len(sh) >= OWNER_WORDS_THRESHOLD
 
 
 def _instruction_read_rule(key: str, tool_name: str, tool_input: Optional[dict], d: "Decision") -> None:
@@ -1212,11 +1245,11 @@ def _instruction_read_rule(key: str, tool_name: str, tool_input: Optional[dict],
         return
     for arg, role, value in acting:
         text = value if isinstance(value, str) else json.dumps(value, default=str)
-        if origin_of(key, text, free_text=role in FREE_TEXT_ROLES or role == "message_body").kind != "user":
+        if not _owners_words(key, text, role in FREE_TEXT_ROLES or role == "message_body"):
             break
-        # Words that mostly repeat the owner's request still carry no address or link of their own:
+        # Words that repeat the owner's request still carry no address or link of their own:
         # each one inside must also be the owner's.
-        if any(origin_of(key, a).kind != "user" for a in _LINKS_AND_ADDRESSES.findall(text)):
+        if any(origin_of(key, a).kind != "user" for a in _links_and_addresses(text)):
             break
     else:
         return                       # every acting value is what the owner typed

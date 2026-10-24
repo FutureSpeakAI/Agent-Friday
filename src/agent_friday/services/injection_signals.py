@@ -30,14 +30,17 @@ MAX_SCAN = 200_000
 
 _ACTORS = r"(?:assistant|ai|a\.i\.|friday|agent|model|chatbot|bot|llm|copilot|claude|chatgpt|gpt)"
 #: Who an instruction to Friday is addressed to (narrower: "the model must be retrained" is not one).
-_ADDRESSEE = (r"(?:(?:the |any |all |every |main )*(?:ai|a\.i\.|llm|language model|chatbot|copilot|claude|chatgpt|"
+_ADDRESSEE = (r"(?:(?:the |any |all |every |main ){0,3}(?:ai|a\.i\.|llm|language model|chatbot|copilot|claude|chatgpt|"
               r"friday|(?:ai |main |the )?assistants?|ai (?:agents?|models?)))")
+#: One assistant (a "must" sentence about AI agents in general is news, not an instruction).
+_ADDRESSEE_ONE = (r"(?:(?:the |any |main ){0,2}(?:ai|a\.i\.|llm|language model|chatbot|copilot|claude|chatgpt|"
+                  r"friday|(?:ai |main |the )?assistant|ai (?:agent|model)))")
 #: Where an imperative starts: a new sentence or line, or a softener ("please forward ...").
 #: Text is whitespace-normalised before matching (see _squash), so " ?" here is enough and
 #: nothing in these patterns can backtrack over long blank runs.
 _IMPERATIVE = r"(?:^|[.!?:;>\]\n] ?|\b(?:please|kindly|also|now|quietly|immediately|then|just|you|and) )"
 _SENSITIVE = (r"(?:all|every|each|the last \d+|passwords?|passport|credentials?|api keys?|private keys?|card numbers?|"
-              r"bank details|account details|contacts|inbox|files|contracts?|invoices?|documents|(?:the )?vault|contents)")
+              r"bank details|account details|contacts|inbox|(?:the )?vault|contents)")
 
 _PATTERNS = [
     ("role", re.compile(r"\b(?:SYSTEM|ASSISTANT|DEVELOPER|AI MODEL|TOOL SERVER|ADMIN)\b(?: (?:NOTICE|MESSAGE|NOTE|"
@@ -46,9 +49,12 @@ _PATTERNS = [
                         r"dan)\b|from now on,? you (?:are|will|must|should)|act as (?:a|an|my|if)\b|pretend (?:to be|"
                         r"you are)|you must now|(?:switch to|enter|enable|activate) (?:developer|admin|god|dan) mode)",
                         re.I)),
-    ("role", re.compile(r"^ ?(?:system|developer) ?(?:[:>\]]|\(|message\b)", re.I | re.M)),
-    ("override", re.compile(r"\b(?:priority|urgent|system|admin|new|updated|revised|real|actual) (?:instructions?|"
-                            r"overrides?|directives?|orders?) ?(?:[:\-]|for\b|to\b)", re.I)),
+    # "System: Windows 11" is a spec line; a role line goes on to address or instruct.
+    ("role", re.compile(r"^ ?(?:system|developer) ?(?:[:>\]]|\(|message\b)(?=[^\n]{0,120}?\b(?:you|your|ignore|"
+                        r"must|always|never|do not|don'?t|assistant|friday|instructions?)\b)", re.I | re.M)),
+    ("override", re.compile(r"\b(?:(?:priority|urgent|system|admin|real|actual) (?:instructions?|overrides?|"
+                            r"directives?|orders?) ?(?:[:\-]|for\b|to\b)|(?:new|updated|revised) (?:instructions?|"
+                            r"overrides?|directives?|orders?) ?[:\-])", re.I)),
     ("override", re.compile(r"\b(?:system|security|admin) notice (?:to|for) " + _ADDRESSEE + r"\b", re.I)),
     ("override", re.compile(
         r"\b(?:ignore|disregard|forget|override|bypass|drop)\b[^.\n]{0,40}?\b(?:previous|prior|above|earlier|"
@@ -69,12 +75,14 @@ _PATTERNS = [
                              r"approve|accept|book|buy|reply)\b", re.I)),
     ("directive", re.compile(_ADDRESSEE + r" (?:reading|working|processing|parsing|summari[sz]ing|that (?:read|see)s?|"
                              r"who (?:read|see)s?)\b", re.I)),
-    ("directive", re.compile(r"\b" + _ADDRESSEE + r"\b[^.\n]{0,40}?\b(?:must|should|shall|needs? to|is (?:required|"
-                             r"instructed|asked) to|has to|will now) (?!be\b)\w", re.I)),
-    ("action_request", re.compile(_IMPERATIVE + r"(?:call|run|use|invoke|execute) `?[a-z]+_[a-z_]+\b", re.I | re.M)),
+    ("directive", re.compile(r"\b" + _ADDRESSEE_ONE + r"\b[^.\n]{0,40}?\b(?:must|should|shall|needs? to|is "
+                             r"(?:required|instructed|asked) to|has to|will now) (?!be\b|comply\b|adhere\b|obey the law)\w",
+                             re.I)),
+    ("action_request", re.compile(_IMPERATIVE + r"(?:call|invoke|execute) (?:the )?`?[a-z]+_[a-z_]+\b", re.I | re.M)),
     ("action_request", re.compile(
-        _IMPERATIVE + r"(?:forward|send|e-?mail|transfer|wire|pay|upload|share|copy|export|post|leak|exfiltrate)\b"
-        r"[^.\n]{0,30}?\b" + _SENSITIVE + r"\b[^.\n]{0,60}?\b(?:to|into|at|onto)\b[^.\n]{0,50}?(?:[\w.+-]+@[\w-]+\.[\w.]+|"
+        _IMPERATIVE + r"(?:forward(?:ed)?|send|sent|e-?mail(?:ed)?|transfer(?:red)?|wired?|pay|paid|upload(?:ed)?|"
+        r"shared?|cop(?:y|ied)|export(?:ed)?|post(?:ed)?|leak(?:ed)?|exfiltrated?)\b"
+        r"[^.\n]{0,30}?\b" + _SENSITIVE + r"\b[^.\n]{0,60}?\b(?:to|into|at|onto|with)\b[^.\n]{0,50}?(?:[\w.+-]+@[\w-]+\.[\w.]+|"
         r"https?://|\b(?:iban|account|wallet|webhook|server|endpoint)\b)", re.I | re.M)),
     ("action_request", re.compile(_IMPERATIVE + r"(?:press|click|tap|accept|approve|allow)\b[^.\n]{0,30}?\b(?:every|all|"
                                   r"each|any)\b[^.\n]{0,30}?\b(?:dialogs?|prompts?|requests?|permissions?|invitations?|"
@@ -82,8 +90,9 @@ _PATTERNS = [
     ("action_request", re.compile(r"\bwrite\b[^.\n]{0,40}?\b(?:startup|autorun|authorized_keys|\.bashrc|\.ssh|registry)\b"
                                   r"|\bauthorized_keys\b|\bdownloads? and runs?\b|\| ?(?:sh|bash|powershell)\b", re.I)),
     ("action_hint", re.compile(
-        _IMPERATIVE + r"(?:forward|send|e-?mail|transfer|wire|pay|upload|share|copy|export|post|leak|exfiltrate)\b"
-        r"[^.\n]{0,80}?\b(?:to|into|at|onto)\b[^.\n]{0,50}?(?:[\w.+-]+@[\w-]+\.[\w.]+|https?://|\b(?:iban|account|"
+        _IMPERATIVE + r"(?:forward(?:ed)?|send|sent|e-?mail(?:ed)?|transfer(?:red)?|wired?|pay|paid|upload(?:ed)?|"
+        r"shared?|cop(?:y|ied)|export(?:ed)?|post(?:ed)?|leak(?:ed)?|exfiltrated?)\b"
+        r"[^.\n]{0,80}?\b(?:to|into|at|onto|with)\b[^.\n]{0,50}?(?:[\w.+-]+@[\w-]+\.[\w.]+|https?://|\b(?:iban|account|"
         r"wallet|webhook|server|endpoint)\b)", re.I | re.M)),
     ("action_hint", re.compile(r"\b(?:delete|erase|wipe|remove)\b[^.\n]{0,30}?\b(?:all|every|the user'?s|the owner'?s)\b"
                                r"[^.\n]{0,30}?\b(?:files?|emails?|messages?|data|memor(?:y|ies)|contacts?)\b", re.I)),
@@ -102,7 +111,9 @@ _WEAK = {"action_hint"}
 
 def _squash(text: str) -> str:
     """Runs of blanks become one space and runs of line breaks one line break, so no pattern can
-    be made to backtrack over a long blank run (a hostile page full of newlines)."""
+    be made to backtrack over a long blank run (a hostile page full of newlines). An old-style
+    lone carriage return is a line break too."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     t = re.sub(r"[ \t\f\v ]+", " ", text)
     return re.sub(r" ?\n[\s]*", "\n", t)
 
