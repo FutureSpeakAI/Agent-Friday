@@ -95,6 +95,8 @@ def _connect() -> sqlite3.Connection:
 
 def _prepare(conn: sqlite3.Connection) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
+    # A deleted message's text is overwritten in the file, not just unlinked (see _scrub).
+    conn.execute("PRAGMA secure_delete=ON")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
@@ -160,6 +162,20 @@ def _delete_mid(conn, mid: str) -> int:
     return 1
 
 
+def _scrub(conn) -> None:
+    """After a deletion the owner asked for: merge the full-text indexes so the deleted words
+    leave the index segments, and fold the WAL back so no copy waits there. With secure_delete
+    the freed pages are zeroed. Caller holds _LOCK and has committed. Best-effort."""
+    try:
+        conn.execute("INSERT INTO msgs_fts(msgs_fts) VALUES('optimize')")
+        if _has_trigram(conn):
+            conn.execute("INSERT INTO msgs_tri(msgs_tri) VALUES('optimize')")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as e:
+        _log.warning("conversation search: the deleted text could not be scrubbed from the index: %s", e)
+
+
 def _delete_cid(conn, cid: str) -> None:
     ids = [r[0] for r in conn.execute("SELECT id FROM msgs WHERE cid=?", (cid,))]
     for i in ids:
@@ -212,6 +228,7 @@ def forget_conversation(cid: str) -> None:
         try:
             _delete_cid(conn, cid)
             conn.commit()
+            _scrub(conn)
         finally:
             conn.close()
 
@@ -370,9 +387,11 @@ def health() -> Dict[str, Any]:
     if _REPAIRING.is_set():
         return {"state": "repairing"}
     try:
-        # Read-only and outside _LOCK: the check never holds up a chat turn's index write, and it
-        # creates no WAL/SHM files of its own.
-        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        # Read-only, immutable and outside _LOCK: the check never holds up a chat turn's index
+        # write, and it creates no WAL/SHM files (a plain read-only open of a WAL database does,
+        # and the Doctor's report must change nothing in the data folder). It reads the main file,
+        # which is where damage lives.
+        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro&immutable=1", uri=True, timeout=5)
         try:
             row = conn.execute("PRAGMA quick_check").fetchone()
         finally:
@@ -408,6 +427,7 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
             try:
                 _delete_mid(conn, mid)
                 conn.commit()
+                _scrub(conn)
             finally:
                 conn.close()
     except sqlite3.DatabaseError as e:
