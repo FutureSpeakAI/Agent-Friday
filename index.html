@@ -13138,6 +13138,13 @@ function SnapMenu({
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r3", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('chat_left', f, 'Chat on the left, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('left', f), traySide === 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat'), zone('rest', 1 - f, 'The workspace in the rest', () => onTray('left', f), false)))));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "t4", className: "snap-menu-title" }, "Chat on the right"));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r4", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('rest', 1 - f, 'The workspace in the rest', () => onTray('right', f), false), zone('chat_right', f, 'Chat on the right, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('right', f), traySide !== 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat')))));
+    // The tray's height without dragging its top edge (WCAG 2.5.7; north star 33.1-14).
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t5", className: "snap-menu-title" }, "Height"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r5", className: "snap-menu-row" }, [['full', 'Full height'], ['half', 'Half height']].map(([v, label]) => /*#__PURE__*/React.createElement("button", { key: v, type: "button", role: "menuitem", className: "btn", "data-chat-height": v, onClick: e => {
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent('friday:chat-height', { detail: v }));
+        onClose(false);
+      } }, label))));
     if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
         e.stopPropagation();
         onHide();
@@ -16233,7 +16240,7 @@ function ChatSurface(props) {
       fontSize: 12,
       marginTop: 30
     }
-  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
+  }, ("Talk to " + fridayName() + ". Type, speak, or attach a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
   /* B2: system lines — seat changes and other transparency notices.
      Amber, centered, unmistakably NOT Friday speaking. Never sent to
      the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
@@ -27169,10 +27176,34 @@ function TimelinePanel({
         borderRadius: 3,
         padding: '0 4px'
       }
-    }, i + 1), /*#__PURE__*/React.createElement("div", {
+    }, i + 1), i > 0 && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Move clip ' + (i + 1) + ' earlier',
+      title: "Move earlier",
+      onClick: () => reorder(i, i - 1),
+      style: {
+        position: 'absolute', bottom: 2, left: 3, minWidth: 24, minHeight: 24, padding: 0, fontSize: 11,
+        color: '#7fb6c9', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: 3, cursor: 'pointer'
+      }
+    }, "\u25C0"), i < clips.length - 1 && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Move clip ' + (i + 1) + ' later',
+      title: "Move later",
+      onClick: () => reorder(i, i + 1),
+      style: {
+        position: 'absolute', bottom: 2, right: 3, minWidth: 24, minHeight: 24, padding: 0, fontSize: 11,
+        color: '#7fb6c9', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: 3, cursor: 'pointer'
+      }
+    }, "\u25B6"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Remove clip ' + (i + 1),
       onClick: () => removeClip(n),
       title: "remove",
       style: {
+        border: 'none',
+        padding: 0,
+        minWidth: 24,
+        minHeight: 24,
         position: 'absolute',
         top: 2,
         right: 3,
@@ -40050,6 +40081,8 @@ function CalendarWS() {
     }, window.CalendarViews.reminderText(e)), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.RsvpButtons, {
       ev: e
     }), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.DeleteButton, {
+      ev: e
+    }), window.CalendarViews && window.CalendarViews.MoveButtons && /*#__PURE__*/React.createElement(window.CalendarViews.MoveButtons, {
       ev: e
     }), e.prep_available && /*#__PURE__*/React.createElement("span", {
       className: "cal-prep-badge"
@@ -68766,6 +68799,18 @@ function App() {
       if (chatH) localStorage.setItem('friday_chat_h', String(Math.round(chatH)));
     } catch (_) {}
   }, [chatH]);
+  // "Where the chat goes" > Height: the tray's height without dragging its edge (WCAG 2.5.7).
+  useEffect(() => {
+    const on = e => {
+      const v = e && e.detail;
+      if (v === 'full') {
+        try { localStorage.removeItem('friday_chat_h'); } catch (_) {}
+        setChatH(0);
+      } else if (v === 'half') setChatH(clampChatH(Math.round(vh() * 0.5)));
+    };
+    window.addEventListener('friday:chat-height', on);
+    return () => window.removeEventListener('friday:chat-height', on);
+  }, []);
   // Keep within viewport when the window is resized.
   useEffect(() => {
     const on = () => {
