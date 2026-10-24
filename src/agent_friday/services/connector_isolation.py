@@ -272,9 +272,15 @@ def per_user_node_dir() -> Optional[Path]:
     return (Path(la) / "Programs" / "nodejs") if la else None
 
 
+def _stem(path) -> str:
+    """A program's name without folder or extension, for Windows and POSIX spellings."""
+    import re as _re
+    name = _re.split(r"[\\/]", str(path or ""))[-1]
+    return name.rsplit(".", 1)[0] if "." in name else name
+
+
 def is_node_program(path) -> bool:
-    stem = Path(str(path or "")).stem.lower()
-    return stem in _NODE_NAMES
+    return _stem(path).lower() in _NODE_NAMES
 
 
 def per_user_node_program(path) -> Optional[Path]:
@@ -282,7 +288,7 @@ def per_user_node_program(path) -> Optional[Path]:
     d = per_user_node_dir()
     if d is None or not is_node_program(path):
         return None
-    stem = Path(str(path)).stem
+    stem = _stem(path)
     # Windows runs .exe / .cmd; the zip's extensionless files are shell scripts.
     names = (stem + ".exe", stem + ".cmd") if os.name == "nt" else (stem,)
     for cand in (d / n for n in names):

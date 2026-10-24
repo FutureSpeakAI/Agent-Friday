@@ -142,7 +142,7 @@ def test_an_unanswered_card_that_expires_is_offered_again(state, monkeypatch):
     ci._on_decision(dict(first, status="expired"))
     assert ci.offer_existing(cfg["servers"]) == ["legacy"]
     cards = [r for r in ap.list_approvals() if r.get("kind") == ci.KIND]
-    assert len(cards) == 2 and cards[-1]["approval_id"] != first["approval_id"]
+    assert len(cards) == 2 and {c["approval_id"] for c in cards} - {first["approval_id"]}
 
 
 def test_a_card_that_vanished_unanswered_is_offered_again_and_an_old_answer_is_ignored(state, monkeypatch):
@@ -322,7 +322,7 @@ def test_running_it_unisolated_needs_a_press_on_this_pc_and_is_recorded(state, m
         ap.decide(card["approval_id"], "approve", decided_by=by)
     assert cfg["servers"]["slack"]["isolation"] == "off"
     from agent_friday.governance import action_gate as gate
-    rows = [json.loads(x) for x in gate.receipts_path().read_text(encoding="utf-8").splitlines() if x.strip()]
+    rows = gate.receipts()          # the action ledger (services/action_ledger)
     mine = [r for r in rows if r.get("tool") == "connector_run_unisolated" and r.get("target") == "slack"]
     assert mine and mine[-1]["decided_source"] == "desktop_press" and gate.verify_receipt(mine[-1])
 
