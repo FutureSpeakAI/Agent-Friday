@@ -71,10 +71,15 @@ def test_every_scope_on_the_card_is_in_plain_words():
 
 
 def test_the_card_does_not_understate_the_calendar_scope():
+    """Calendar changes are asked for on their own press (read-first, #279), so
+    the card may not list the scope; wherever it is described (the card, the
+    consent preview, the setup copy) it reads as Google's own screen does."""
     from agent_friday.services import google_accounts as ga
-    perm = next(p for p in _google_card()["permissions"] if p.get("scope") == ga.CALENDAR_RW)
-    text = perm["text"].lower()
-    assert "share" in text and "delete" in text, perm["text"]
+    from agent_friday.services import setup_chat_copy as copy
+    texts = [p["text"] for p in _google_card()["permissions"] if p.get("scope") == ga.CALENDAR_RW]
+    texts += [ga._SCOPE_PLAIN[ga.CALENDAR_RW], copy.GOOGLE_SCOPE_WORDS[ga.CALENDAR_RW]]
+    for text in texts:
+        assert "share" in text.lower() and "delete" in text.lower(), text
 
 
 def test_the_page_sends_every_tick_the_card_offers():

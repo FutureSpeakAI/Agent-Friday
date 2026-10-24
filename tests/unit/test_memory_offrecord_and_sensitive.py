@@ -580,12 +580,12 @@ def test_task_and_process_records_made_off_record_are_marked_for_forensic_snapsh
 def test_an_off_record_activity_row_never_feeds_the_avatars_growth(tmp_path, monkeypatch):
     from agent_friday.services import activity_ledger as al
     from agent_friday.services import avatar_growth as gr
-    monkeypatch.setattr(al, "LEDGER_FILE", tmp_path / "activity_ledger.jsonl")
+    from tests import ledger_support          # activity rows live in the action ledger
     _off_record(True, stops_storage=False)
     assert al.record("tool_call", tool="search_wiki", ok=True)
     _off_record(False)
     assert al.record("tool_call", tool="search_wiki", ok=True)
-    rows = [json.loads(x) for x in (tmp_path / "activity_ledger.jsonl").read_text().splitlines()]
+    rows = ledger_support.rows("activity")[-2:]
     assert rows[0].get("no_learning") is True and "no_learning" not in rows[1]
 
     monkeypatch.setattr(gr.g, "AVATAR_DIR", tmp_path / "avatar")
