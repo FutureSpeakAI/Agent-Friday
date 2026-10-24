@@ -266,16 +266,6 @@ window.addEventListener('DOMContentLoaded',function(){
         body.fr-big .notif-dropdown button, body.fr-big .notif-dropdown .btn { min-height: 56px; min-width: 72px; }
         body.fr-big .notif-dropdown .task-card { padding: 18px; }
         body.fr-big .top-bar .ibtn, body.fr-big .top-bar button { min-height: 44px; min-width: 44px; }
-        /* Target size (WCAG 2.2 AA 2.5.8; north star 33.1-13): every control a person presses is at least
-           24 by 24 CSS pixels, and in Big mode at least 44 by 44 (2.5.5). Links inside running text are exempt,
-           as WCAG allows. A box/radio is measured with its label, which is part of the target. */
-        button, [role="button"], [role="tab"], [role="switch"], [role="radio"], [role="checkbox"],
-        [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], select, summary,
-        input[type="button"], input[type="submit"], input[type="reset"] { min-width: 24px; min-height: 24px; }
-        body.fr-big :is(button, [role="button"], [role="tab"], [role="switch"], [role="radio"], [role="checkbox"],
-        [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], select, summary,
-        input[type="button"], input[type="submit"], input[type="reset"]) { min-width: 44px; min-height: 44px; }
-        body.fr-big :is(input[type="checkbox"], input[type="radio"]) { width: 28px; height: 28px; }
         body.fr-big .fr-folded { display: none !important; }
         body.fr-big .fr-more { min-height: 72px; min-width: 96px; font-size: 1.1em; padding: 0 22px; border: 1px dashed rgba(0, 212, 255, 0.45); }
         
