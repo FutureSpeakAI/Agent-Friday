@@ -193,6 +193,16 @@ class KnowledgeGraphStore:
         if name not in ARTIFACT_NAMES:
             raise ValueError(f"unknown artifact: {name!r}")
         self.base.mkdir(parents=True, exist_ok=True)
+        if name == "entities":
+            # The last line of the kg_entity tombstone (services/tombstones,
+            # NS-30.20-1): whichever pass built these records (Tier A, Tier B,
+            # a live fact), an entity the owner deleted is not written back.
+            # The passes drop them earlier too, so their edges go with them.
+            try:
+                from agent_friday.services import tombstones as _tomb
+                records, _gone = _tomb.filter_entities(records)
+            except Exception:
+                pass
 
         public, sensitive = [], []
         for rec in records:

@@ -357,6 +357,45 @@ def _err(msg: str) -> Dict[str, Any]:
     return {"ok": False, "error": msg}
 
 
+# ── tombstones (services/tombstones, NS-30.20-1) ─────────────────────────────
+# A line the owner deleted (or edited away, or undid after Friday wrote it) is
+# tombstoned as a keyed hash, never as text. Friday, the review pass and
+# nightly dreaming do not add it or suggest it again; the owner adding it
+# themselves lifts the tombstone. A line about the user is also held back when
+# the owner deleted it as a fact or rejected it as a proposal (the same
+# statement, refused in another place).
+def _tomb_kinds(target: str):
+    return ("card_line", "user_fact", "proposal") if target == "user" else ("card_line",)
+
+
+def _tombstoned(target: str, text: str) -> bool:
+    try:
+        from agent_friday.services import tombstones
+        return tombstones.is_tombstoned(_tomb_kinds(target), text)
+    except Exception:
+        return False
+
+
+def _tombstone(text: str) -> None:
+    try:
+        from agent_friday.services import tombstones
+        tombstones.add("card_line", text)
+    except Exception:
+        pass
+
+
+def _affirmed(text: str) -> None:
+    try:
+        from agent_friday.services import tombstones
+        tombstones.owner_affirmed(text)
+    except Exception:
+        pass
+
+
+_TOMBSTONED = ("the owner deleted this line from the memory card; Friday does not add or suggest "
+               "it again (only the owner can put it back)")
+
+
 def add(target: str, text: str, *, actor: str = "friday",
         dedupe: Optional[bool] = None) -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
@@ -367,6 +406,10 @@ def add(target: str, text: str, *, actor: str = "friday",
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    if actor != "owner" and _tombstoned(target, text):
+        return {**_err("NOT SAVED: " + _TOMBSTONED), "tombstoned": True}
+    if actor == "owner":
+        _affirmed(text)
     with _LOCK:
         items = entries(target)
         if any(e.lower() == text.lower() for e in items):
@@ -395,6 +438,8 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    if actor != "owner" and _tombstoned(target, text):
+        return {**_err("NOT SAVED: " + _TOMBSTONED), "tombstoned": True}
     with _LOCK:
         items = entries(target)
         i, miss = _match(items, old)
@@ -410,6 +455,12 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[
                         "after": None if actor == "owner" else text})
         if actor == "owner":
             _purge_text(before)
+    if actor == "owner":
+        # The line the owner edited away is not written back by Friday; the
+        # wording they chose is theirs (an edit that only changes case or
+        # punctuation lifts the tombstone it just made).
+        _tombstone(before)
+        _affirmed(text)
     _changed(actor, "core memory line edited by the owner")
     return {"ok": True, "change_id": cid, "usage": usage(target)}
 
@@ -428,6 +479,8 @@ def remove(target: str, old: str, *, actor: str = "friday") -> Dict[str, Any]:
                         "before": None if actor == "owner" else before, "after": None})
         if actor == "owner":
             _purge_text(before)
+    if actor == "owner":
+        _tombstone(before)
     _changed(actor, "core memory line deleted by the owner")
     return {"ok": True, "change_id": cid, "usage": usage(target)}
 
@@ -512,15 +565,21 @@ def resolve_line(target: str, old: str):
 
 
 def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
-          reason: str = "") -> Dict[str, Any]:
+          reason: str = "", owner: bool = False) -> Dict[str, Any]:
     """File a change for the owner to approve. Duplicates are not queued twice.
 
     A replace or remove stores the WHOLE line it changes, resolved now, so the
     card shows the owner exactly which line it is and Keep changes that line
-    and no other (`decide` matches it exactly)."""
+    and no other (`decide` matches it exactly).
+
+    A line the owner deleted (services/tombstones) is not suggested again by
+    any background writer; `owner` is True only for a change the owner already
+    made themselves (a kept proposal that did not fit on a full card)."""
     if target not in TARGETS or op not in ("add", "replace", "remove"):
         return _err("bad target or op")
     text, old = _clean(text), _clean(old)
+    if op in ("add", "replace") and not owner and _tombstoned(target, text):
+        return {**_err("NOT QUEUED: " + _TOMBSTONED), "tombstoned": True}
     if op in ("replace", "remove"):
         line, miss = resolve_line(target, old)
         if miss:

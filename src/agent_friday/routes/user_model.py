@@ -5,6 +5,8 @@ FutureSpeak.AI · Asimov's Mind
   GET   /api/user-model            full profile (traits, facts, workflow)
   POST  /api/user-model/forget     reset all, or a single {category}
   POST  /api/user-model/fact       add a durable fact  {category, text, confidence?}
+  POST  /api/user-model/fact/delete  the owner deletes one fact {fact_id}; it is
+                                   tombstoned so no derived pass stores it again
 """
 from flask import Blueprint, jsonify, request
 from agent_friday.core import login_required
@@ -46,3 +48,14 @@ def add_fact():
     return jsonify(public_result(_owner_changed(user_model.note_fact(
         data.get("category", "preference"), data["text"],
         confidence=float(data.get("confidence", 0.7)), source="manual")), "Couldn't save that fact"))
+
+
+@user_model_bp.route("/api/user-model/fact/delete", methods=["POST"])
+@login_required
+def delete_fact():
+    data = request.get_json(silent=True) or {}
+    fact_id = str(data.get("fact_id") or "").strip()
+    if not fact_id:
+        return jsonify({"ok": False, "error": "fact_id required"}), 400
+    return jsonify(public_result(_owner_changed(user_model.forget_fact(fact_id)),
+                                 "Couldn't delete that fact"))

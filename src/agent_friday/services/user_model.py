@@ -257,13 +257,38 @@ def observe_event(kind: str, value: str) -> Dict[str, Any]:
         return {"ok": False, "error": exception_text(e)}
 
 
+#: Sources that are the owner's own word: typed in Settings ("manual"), the
+#: setup chat's "About you" ("setup"), or a proposal the owner approved
+#: ("proposed:<day>", "meeting:<id>"). Every other source is derived.
+OWNER_SOURCES = ("manual", "setup", "proposed:", "meeting:")
+
+
+def is_owner_source(source: Optional[str]) -> bool:
+    s = str(source or "")
+    return any(s == o or (o.endswith(":") and s.startswith(o)) for o in OWNER_SOURCES)
+
+
 def note_fact(category: str, text: str, *, confidence: float = 0.6,
               source: str = "dream") -> Dict[str, Any]:
-    """Store a durable fact (preference/expertise/workflow/bio). Dedups by text."""
+    """Store a durable fact (preference/expertise/workflow/bio). Dedups by text.
+
+    A fact the owner deleted, or a statement they rejected as a proposal or
+    deleted from the card (services/tombstones, NS-30.20-1), is not stored
+    again from a derived source (a dream, a review); the owner saying it
+    themselves stores it and lifts the tombstone."""
     if not text or not isinstance(text, str) or not text.strip():
         return {"ok": False, "error": "empty fact"}
     category = _slug(category) or "general"
     source = str(source or "")[:80]
+    try:
+        from agent_friday.services import tombstones as _tomb
+        if is_owner_source(source):
+            _tomb.owner_affirmed(text)
+        elif _tomb.is_tombstoned(_tomb.STATEMENT_KINDS, text):
+            return {"ok": False, "tombstoned": True,
+                    "error": "the owner deleted this; it is not stored again from a derived source"}
+    except Exception:
+        pass
     try:
         confidence = max(0.0, min(1.0, float(confidence)))
     except (TypeError, ValueError):
@@ -436,22 +461,35 @@ def facts_from_source(category: str, source: str, limit: int = 100) -> List[Dict
         return []
 
 
-def forget_fact(fact_id: str, *, source: Optional[str] = None) -> Dict[str, Any]:
-    """Delete one fact by id; with `source`, only a fact from that source."""
+def forget_fact(fact_id: str, *, source: Optional[str] = None,
+                tombstone: bool = True) -> Dict[str, Any]:
+    """The owner deletes one fact by id; with `source`, only a fact from that
+    source. The fact is tombstoned (a keyed hash of its text, never the text:
+    services/tombstones) so no derived pass stores it again; `tombstone=False`
+    for a caller that is not the owner's delete."""
     with _LOCK:
         try:
             conn = _connect()
             if source is None:
+                row = conn.execute("SELECT text FROM facts WHERE fact_id=?", (str(fact_id),)).fetchone()
                 cur = conn.execute("DELETE FROM facts WHERE fact_id=?", (str(fact_id),))
             else:
+                row = conn.execute("SELECT text FROM facts WHERE fact_id=? AND source=?",
+                                   (str(fact_id), str(source))).fetchone()
                 cur = conn.execute("DELETE FROM facts WHERE fact_id=? AND source=?",
                                    (str(fact_id), str(source)))
             conn.commit()
             n = cur.rowcount
             conn.close()
-            return {"ok": n > 0, "deleted": n}
         except Exception as e:
             return {"ok": False, "error": exception_text(e)}
+    if n > 0 and tombstone and row and row[0]:
+        try:
+            from agent_friday.services import tombstones as _tomb
+            _tomb.add("user_fact", str(row[0]))
+        except Exception:
+            pass
+    return {"ok": n > 0, "deleted": n}
 
 
 def forget(category: Optional[str] = None) -> Dict[str, Any]:
@@ -548,11 +586,12 @@ def _recent_facts(n: int) -> List[Dict[str, Any]]:
     try:
         conn = _connect()
         rows = conn.execute(
-            "SELECT category, text, confidence, source, ts FROM facts "
+            "SELECT category, text, confidence, source, ts, fact_id FROM facts "
             "ORDER BY confidence DESC, ts DESC LIMIT ?", (int(n),)).fetchall()
         conn.close()
-        return [{"category": c, "text": t, "confidence": cf, "source": s, "ts": ts}
-                for c, t, cf, s, ts in rows]
+        # fact_id: what the owner's delete (POST /api/user-model/fact/delete) names.
+        return [{"category": c, "text": t, "confidence": cf, "source": s, "ts": ts, "fact_id": fid}
+                for c, t, cf, s, ts, fid in rows]
     except Exception:
         return []
 

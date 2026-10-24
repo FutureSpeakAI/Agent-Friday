@@ -9,6 +9,8 @@ Agent Friday — Knowledge Graph API (docs/design/implemented/knowledge-system-s
   POST  /api/knowledge-graph/reindex          {tier?, mode?} → rebuild index
   GET   /api/knowledge-graph/search?q=        fast entity/title search
   GET   /api/knowledge-graph/events           SSE: node ignited / reindexed
+  POST  /api/knowledge-graph/entity/delete    {id} the owner deletes an entity (tombstoned)
+  POST  /api/knowledge-graph/entity/restore   {title} lift that tombstone
 
 Live events use SSE (the established one-way push pattern in this app, e.g.
 /api/logs/stream) rather than a WebSocket — the event flow is strictly
@@ -179,6 +181,31 @@ def kg_node(node_id):
                if str(r.get("community")) == str(node.get("community"))]
     return jsonify({"status": "ok", "node": node, "relationships": rels,
                     "neighbors": neighbours, "reports": reports})
+
+
+@knowledge_graph_bp.route("/api/knowledge-graph/entity/delete", methods=["POST"])
+@login_required
+def kg_entity_delete():
+    """The owner deletes one entity {id}; it is tombstoned so no rebuild makes
+    it again (services/tombstones, NS-30.20-1)."""
+    from agent_friday.services.knowledge_graph.integration import owner_delete_entity
+    node_id = str((request.get_json(silent=True) or {}).get("id") or "").strip()
+    if not node_id:
+        return jsonify({"ok": False, "error": "id required"}), 400
+    out = owner_delete_entity(node_id)
+    return jsonify(out), (200 if out.get("ok") or out.get("tombstoned") else 404
+                          if out.get("error") == "no such entity" else 500)
+
+
+@knowledge_graph_bp.route("/api/knowledge-graph/entity/restore", methods=["POST"])
+@login_required
+def kg_entity_restore():
+    """The owner's undo {title}: the next rebuild may derive it again."""
+    from agent_friday.services.knowledge_graph.integration import owner_restore_entity
+    title = str((request.get_json(silent=True) or {}).get("title") or "").strip()
+    if not title:
+        return jsonify({"ok": False, "error": "title required"}), 400
+    return jsonify(owner_restore_entity(title))
 
 
 @knowledge_graph_bp.route("/api/knowledge-graph/neighbors/<path:node_id>",

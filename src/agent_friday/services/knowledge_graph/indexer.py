@@ -974,6 +974,20 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         # re-deriving a deleted person is the failure that matters.
         say(f"forget-list check failed, people may be re-derived: {_fe}")
 
+    # ── entities the owner deleted (services/tombstones, NS-30.20-1) ──
+    # Same place and reason as the forgotten people above: a delta or full
+    # rebuild re-reads the same sources and would write the entity back. Its
+    # edges go in the dangling sweep below. Never fails the run.
+    try:
+        from agent_friday.services import tombstones as _tomb
+        _kept, _dropped = _tomb.filter_entities(entities.values())
+        if _dropped:
+            _ids = {e["id"] for e in _kept}
+            entities = {eid: e for eid, e in entities.items() if eid in _ids}
+            say(f"excluded {_dropped} deleted entit{'y' if _dropped == 1 else 'ies'}")
+    except Exception as _te:
+        say(f"deleted-entity check failed: {type(_te).__name__}")
+
     # drop dangling relationships
     relationships = {rid: r for rid, r in relationships.items()
                      if r["source"] in entities and r["target"] in entities}

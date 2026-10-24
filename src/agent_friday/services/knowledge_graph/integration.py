@@ -103,6 +103,14 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
     text = (text or "").strip()
     if len(text) < 12 or not kg_settings().get("enabled", True):
         return None
+    # An entity the owner deleted from the graph is not ignited again
+    # (services/tombstones, NS-30.20-1; the store refuses it as well).
+    try:
+        from agent_friday.services import tombstones as _tomb
+        if _tomb.is_tombstoned("kg_entity", " ".join(text.split()[:8])):
+            return None
+    except Exception:
+        pass
     research_sources = []
     if source_kind == "research":
         for s in sources or []:
@@ -185,6 +193,79 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
     except Exception:
         pass
     return eid
+
+
+# ── the owner deletes an entity (services/tombstones, NS-30.20-1) ──
+
+def owner_delete_entity(node_id: str, store=None) -> dict:
+    """The owner deletes one graph entity, and it stays deleted.
+
+    The graph is derived: removing the record alone is undone by the next
+    Tier A/Tier B pass, which re-reads the same pages and turns. So, as
+    forget-person does, the tombstone is written FIRST (a keyed hash of the
+    entity's normalised title, never the title: services/tombstones), then the
+    entity, every entity with the same normalised title, and their edges and
+    community memberships go. Every rebuild path (wiki_graph, indexer, a live
+    fact, the store itself) skips a tombstoned title. The pages and turns it
+    came from are the owner's own and are untouched. Never raises.
+    """
+    try:
+        from .store import KnowledgeGraphStore
+        from agent_friday.services import tombstones
+        store = store or KnowledgeGraphStore()
+        entities = store.load("entities")
+        node = next((e for e in entities if e.get("id") == str(node_id)), None)
+        if node is None:
+            return {"ok": False, "error": "no such entity"}
+        title = str(node.get("title") or "")
+        t = tombstones.add("kg_entity", title)
+        if not t.get("ok"):
+            return {"ok": False, "error": "not deleted: %s" % t.get("error")}
+        kept, _n = tombstones.filter_entities(entities)
+        kept = [e for e in kept if e.get("id") != str(node_id)]
+        keep_ids = {e.get("id") for e in kept}
+        gone = {e.get("id") for e in entities} - keep_ids
+        r1 = store.save("entities", kept)
+        rels = store.load("relationships")
+        rels_kept = [r for r in rels if r.get("source") not in gone and r.get("target") not in gone]
+        r2 = store.save("relationships", rels_kept) if len(rels_kept) != len(rels) else {}
+        comms = store.load("communities")
+        changed = False
+        for c in comms:
+            ids = c.get("entity_ids")
+            if isinstance(ids, list) and any(i in gone for i in ids):
+                c["entity_ids"] = [i for i in ids if i not in gone]
+                c["size"] = len(c["entity_ids"])
+                changed = True
+        if changed:
+            store.save("communities", [c for c in comms if c.get("size", 1)])
+        refused = [r.get("refused") for r in (r1, r2) if isinstance(r, dict) and r.get("refused")]
+        try:
+            from agent_friday.routes.knowledge_graph import emit_kg_event
+            emit_kg_event("node_removed", {"ids": sorted(gone), "ts": time.time()})
+        except Exception:
+            pass
+        out = {"ok": not refused, "entities": len(gone), "relationships": len(rels) - len(rels_kept),
+               "tombstoned": True}
+        if refused:
+            out["error"] = ("the deletion is recorded and every rebuild skips it, but the graph file "
+                            "could not be written now (%s)" % refused[0])
+        return out
+    except Exception as e:
+        return {"ok": False, "error": "not deleted (%s)" % type(e).__name__}
+
+
+def owner_restore_entity(title: str) -> dict:
+    """The owner's undo: lift the tombstone; the next rebuild derives the
+    entity again from its sources (nothing deleted is restored here)."""
+    from agent_friday.services import tombstones
+    r = tombstones.remove("kg_entity", title)
+    if r.get("ok") and r.get("removed"):
+        try:
+            mark_wiki_dirty("entity restored")
+        except Exception:
+            pass
+    return r
 
 
 # ── nightly reindex job ───────────────────────────────────────
