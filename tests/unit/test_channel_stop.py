@@ -192,3 +192,32 @@ def test_a_stuck_turn_does_not_keep_a_telegram_stop_waiting(chans, gs, monkeypat
     finally:
         release.set()
         t.join(5)
+        bridge.stop()                    # the worker ends after the stuck turn; nothing runs late
+        time.sleep(0.05)
+
+
+def test_a_stop_text_that_arrived_before_resume_is_not_applied_again(phone_home, fake_twilio, gs,
+                                                                      monkeypatch, quiet):
+    """The ingress stopped at once; the owner pressed Resume; only then did the (stuck) service
+    loop reach the spooled text. It must not stop everything a second time."""
+    verify_owner(monkeypatch)
+    spool.put_event("sms_in", "SM12", {"From": OWNER, "Body": "stop everything", "MessageSid": "SM12"},
+                    now=time.time() - 30)
+    gs.stop(by="owner", source="sms")
+    gs.resume(by="owner", source="button")
+    service.process_pending()
+    assert not gs.active()
+
+
+def test_a_flood_behind_a_stuck_turn_is_bounded_and_a_stopped_bridge_runs_nothing(chans, monkeypatch):
+    from agent_friday.services.channels.telegram_bridge import TelegramBridge
+    release = threading.Event()
+    bridge = TelegramBridge()
+    try:
+        first = bridge.submit_turn(release.wait, 10)
+        futs = [bridge.submit_turn(lambda: None) for _ in range(bridge.MAX_QUEUED_TURNS + 5)]
+        assert first is not None and futs.count(None) >= 5
+        bridge.stop()
+        assert bridge.submit_turn(lambda: None) is None
+    finally:
+        release.set()
