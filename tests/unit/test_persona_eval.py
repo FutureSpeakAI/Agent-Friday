@@ -30,6 +30,8 @@ class TestGoldenCorpus:
         for expected in (
             "directness", "epistemic_calibration", "pushback",
             "refusal_law1", "non_sycophancy", "voice_tone",
+            # NS-34.13-2 (BD-19, the gate's persona goldens): identity, warmth, humour boundaries.
+            "identity_consistency", "warmth", "humor_boundaries",
         ):
             assert expected in cats, f"missing golden category: {expected}"
 
