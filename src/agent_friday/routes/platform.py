@@ -304,6 +304,16 @@ def api_provider_test(name):
             result["detail"] = exception_text(e)
         return jsonify(public_result(result, "Couldn't test the provider"))
 
+    # North-star A16a: before a route is picked a key check sends nothing to
+    # the cloud. Local providers are still tested.
+    from agent_friday.services.cloud_intent import route_unpicked
+    from agent_friday.services.seat_policy import is_local_descriptor
+    if route_unpicked() and not is_local_descriptor(prov):
+        result.update(status="not_checked",
+                      detail="Not checked yet: nothing goes to the cloud until you "
+                             "choose where Friday thinks (Settings > Models).")
+        return jsonify(public_result(result, "Couldn't test the provider"))
+
     if ptype in ("local-voice", "nemo-local", "higgsfield", "kie"):
         # These three provider types are not chat/completions APIs and have
         # no /models endpoint, so the generic probe below (a GET to

@@ -741,6 +741,22 @@ class ModelRouter:
         the voice pipeline speaks it. `offer_cloud_switch` stays the local_only
         "switch the mode" button the chat already knows.
         """
+        try:
+            from agent_friday.services.cloud_intent import route_unpicked
+            unpicked = bool(route_unpicked())
+        except Exception:
+            unpicked = False
+        if unpicked:
+            # North-star A16a: no route chosen yet, so no "send it to Claude"
+            # and no mode switch; the person is asked to choose instead.
+            warning = ("No local model is answering right now (%s), and nothing "
+                       "was sent to the cloud: you haven't chosen where I think yet. "
+                       "Choose where I think: on this computer, in the cloud, or both "
+                       "(Settings > Models)." % why)
+        else:
+            warning = ("No local model is answering right now (%s), so nothing "
+                       "was sent to a cloud model. You can try again once one is "
+                       "loaded, or send this one turn to Claude." % why)
         return {
             "provider": "local",
             "model": None,
@@ -748,11 +764,9 @@ class ModelRouter:
             "local_unavailable": True,
             # `fallback_to_cloud` means "offer", never "send": off makes no
             # mode-switch offer (the chat offer card still lists the choices).
-            "offer_cloud_switch": bool(self.fallback_to_cloud),
+            "offer_cloud_switch": bool(self.fallback_to_cloud) and not unpicked,
             "task_type": task_type,
-            "warning": ("No local model is answering right now (%s), so nothing "
-                        "was sent to a cloud model. You can try again once one is "
-                        "loaded, or send this one turn to Claude." % why),
+            "warning": warning,
             "reason": "%s mode: %s" % (self.mode, why),
         }
 

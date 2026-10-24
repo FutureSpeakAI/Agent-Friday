@@ -328,6 +328,16 @@ def _check(name, deep=False) -> dict:
         return {"provider": name, "status": "missing", "detail": detail,
                 "config": "missing", "proved_inference": False}
 
+    if deep and _cloud_intent.route_unpicked():
+        # North-star A16a: before a route is picked a deep check sends nothing
+        # to the cloud (not even the explicit Test press). Local ones still run.
+        from agent_friday.services.seat_policy import is_local_descriptor
+        if not is_local_descriptor(prov):
+            return {"provider": name, "status": "not_checked",
+                    "detail": "not checked yet: nothing goes to the cloud until you "
+                              "choose where Friday thinks (Settings > Models)",
+                    "config": "ok", "proved_inference": False}
+
     if deep:
         # Decision D1: a key is CONFIGURATION, not health. Prove inference.
         # `deep` is a request from the Providers panel (or a Test button), so

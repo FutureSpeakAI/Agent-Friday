@@ -83,6 +83,10 @@ def google_auth_start():
     Google accepts any loopback (localhost) redirect for installed apps, so the
     redirect URI is derived from the actual host the user is hitting.
     """
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("connector", "google sign-in")       # A16a
+    if _held:
+        return jsonify({"status": "error", "message": _held, "route_not_chosen": True}), 409
     cfg, source = _google_client_config()
     if not cfg:
         return jsonify({

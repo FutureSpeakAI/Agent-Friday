@@ -799,6 +799,10 @@ def _record_fetch(url: str, result) -> None:
 def fetch_json(url: str, timeout: int = 20):
     """GET a public job-board API. SSRF-checked, no redirects, size-capped."""
     import requests
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_fetch", "career scan")          # A16a
+    if _held:
+        raise CareerError(_held)
     from agent_friday.services.web_safety import UnsafeURLError, pinned
     try:
         with pinned(url):

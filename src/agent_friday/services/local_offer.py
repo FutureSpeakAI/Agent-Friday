@@ -58,7 +58,16 @@ def short_reason(cause) -> str:
 
 def build(cause=None, *, model: str = "", mode: str = "", kind: str = "local_failed",
           reason: str = "") -> dict:
-    """The offer card, as the chat response and the voice line both carry it."""
+    """The offer card, as the chat response and the voice line both carry it.
+
+    While no route is picked (north-star A16a) every offer is the same one: no
+    cloud choice at all, only "choose where Friday thinks"."""
+    try:
+        from agent_friday.services import cloud_intent as _ci
+        if _ci.route_unpicked():
+            return route_pick_offer(model=model)
+    except Exception:
+        pass
     why = reason or short_reason(cause)
     local_only = str(mode or "").lower() == "local_only"
     who = str(model or "").strip() or "the local model"
@@ -94,6 +103,27 @@ def build(cause=None, *, model: str = "", mode: str = "", kind: str = "local_fai
             {"id": "retry_local", "label": "Keep it local", "recommended": True},
         ]
     return offer
+
+
+#: The one choice an offer carries before a route is picked (A16a): it opens
+#: Settings > Models, where local, cloud and both are offered with nothing pressed.
+CHOOSE_ROUTE = {"id": "choose_route", "label": "Choose where Friday thinks", "recommended": False,
+                "workspace": "settings", "tab": "intelligence"}
+
+
+def route_pick_offer(*, model: str = "") -> dict:
+    """The prompt shown instead of any cloud offer while no route is picked."""
+    from agent_friday.services.cloud_intent import ROUTE_NOT_CHOSEN_TEXT
+    return {
+        "offer": True, "id": uuid.uuid4().hex[:12], "kind": "route_pick",
+        "reason": "no route chosen", "model": str(model or ""), "mode": "local_only",
+        "text": ROUTE_NOT_CHOSEN_TEXT,
+        "spoken": ("You haven't chosen where I think yet, so I only work on this computer. "
+                   "Open Settings, Models, to choose."),
+        "choices": [dict(CHOOSE_ROUTE)],
+        "confirm_local_only": False,
+        "served": {"model": str(model or ""), "local": True, "answered": False},
+    }
 
 
 # ── the voice side ───────────────────────────────────────────────────────────
@@ -132,6 +162,12 @@ def remember(conversation_id, offer: dict, message: str) -> None:
     """Hold the offer for the call that was just told about it."""
     cid = str(conversation_id or "").strip()
     if not cid:
+        return
+    # North-star A16a: "choose where Friday thinks" is not a yes/no question.
+    # A spoken yes must never answer it (that would send the message to the
+    # cloud before a route is chosen), so it is not held for one.
+    if (offer or {}).get("kind") == "route_pick":
+        forget(cid)
         return
     with _LOCK:
         for k in [k for k, v in _PENDING.items()

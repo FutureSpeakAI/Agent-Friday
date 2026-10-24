@@ -277,6 +277,11 @@ def _cloud_available() -> bool:
     honoured.
     """
     try:
+        # North-star A16a: before a route is picked the cloud cannot be used,
+        # so "use the cloud instead" is not offered even with a key entered.
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return False
         from agent_friday import core
         from agent_friday.services.one_key import openrouter_ready
         return bool(getattr(core, "ANTHROPIC_API_KEY", None) or

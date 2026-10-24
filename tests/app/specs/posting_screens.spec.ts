@@ -332,6 +332,11 @@ test.describe('Settings, Connections: the publishing accounts (one app load)', (
     await setUp(page);
     await page.goto(`${BASE}/w/settings`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => typeof (window as any).fridayRunActions === 'function', null, { timeout: 120_000 });
+    // North-star A16a: on a new install no add-on connector or posting platform is used until the owner chooses
+    // where Friday thinks. The scratch home is new, so the owner chooses first, from the page, as a person would.
+    const pick = await api(page, 'POST', '/api/settings', {
+      owner_action: 'routing_mode', routing_surface: 'settings_models', settings: { model_routing: { mode: 'cloud_only' } } });
+    expect(pick.status, 'choosing where Friday thinks failed: ' + JSON.stringify(pick.data)).toBe(200);
     await showSettingsTab(page, 'connections', channels().locator('.card').first());
   });
 

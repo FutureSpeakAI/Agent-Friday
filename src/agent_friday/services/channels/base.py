@@ -128,6 +128,10 @@ class ChannelAdapter:
             return {"ok": False, "error": "missing_dependency"}
         if not self.has_token():
             return {"ok": False, "error": "no_token"}
+        from agent_friday.services.cloud_intent import outbound_held
+        _held = outbound_held("connector", "channel " + str(self.name))   # A16a
+        if _held:
+            return {"ok": False, "error": "route_not_chosen", "detail": _held}
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name=f"channel-{self.name}",
                                         daemon=True)
@@ -171,6 +175,10 @@ class ChannelAdapter:
     # entirely. Gating HERE, once, means the reply path is no longer the
     # only guarded door, and no future adapter can add a new one.
     def send(self, chat_id: str, text: str) -> Dict[str, Any]:
+        from agent_friday.services.cloud_intent import outbound_held
+        _held = outbound_held("connector", "channel send " + str(self.name))   # A16a
+        if _held:
+            return {"ok": False, "error": "route_not_chosen", "detail": _held}
         gated = _gate_channel_text(text, self.name)
         if not self._checkpoint(chat_id):
             return {"ok": False, "error": "held by the action checkpoint"}

@@ -510,7 +510,12 @@ def grind(c: Commission) -> None:
     # §7.2 — distinguish "nothing published" from "my tools are broken".
     if not search_ok_any:
         canary = web_search.canary(force=True)
-        if not canary.get("ok"):
+        if canary.get("route_not_chosen"):
+            # A16a: held, not broken. Say so plainly.
+            c.failure = (f"{canary.get('detail')} I am NOT reporting that "
+                         "nothing is published, because I did not look.")
+            c.log("search held: no route chosen yet (A16a)")
+        elif not canary.get("ok"):
             c.failure = ("My search tool is broken — "
                          f"{canary.get('detail')}. I am NOT reporting that "
                          "nothing is published, because I could not look.")

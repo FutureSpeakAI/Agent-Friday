@@ -2385,6 +2385,14 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
      the owner's own message. Nothing is sent until one is clicked, nothing is
      preselected, and the card is single-use. */
   const chooseLocalFallback=(msg,id)=>{
+    /* North-star A16a: before a route is picked the only choice opens
+       Settings > Models, where local, cloud and both are offered. */
+    if(id==='choose_route'){
+      window.__fridaySettingsTab='intelligence';
+      try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'intelligence'}}));}catch(_){}
+      if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'settings'});
+      return;
+    }
     const src=msg.source_text||'';
     if(!src)return;
     setChatMsgs(p=>p.map(x=>x===msg?{...x,local_fallback:null}:x));

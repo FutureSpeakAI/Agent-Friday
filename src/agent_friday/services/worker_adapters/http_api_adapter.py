@@ -53,6 +53,15 @@ class HttpApiAdapter(BaseAdapter):
         payload_tpl = ctx.get("payload_template") or {}
         payload = {**payload_tpl, "prompt": task.prompt}
 
+        # North-star A16a: no add-on worker endpoint is reached before a route
+        # is chosen (an on-device endpoint included: it is still an add-on).
+        from agent_friday.services.cloud_intent import outbound_held
+        _held = outbound_held("connector", "http_api worker")
+        if _held:
+            with _JOBS_LOCK:
+                _JOBS[aid].update({"status": WorkerStatus.FAILED, "error": _held})
+            return
+
         # Egress gate. The endpoint is whatever the caller put in
         # task.context, reachable from POST /api/orchestrator/delegate and
         # /spawn, so this adapter can POST the delegate prompt to any host on

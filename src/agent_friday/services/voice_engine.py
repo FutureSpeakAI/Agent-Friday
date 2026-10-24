@@ -2789,6 +2789,15 @@ def validate_gemini_key(key, timeout=5.0, force=False):
     key = (key or "").strip()
     if not key:
         return False, "no key"
+    # North-star A16a: before a route is picked nothing goes to the cloud, a
+    # key check included. Not a verdict on the key (ok=True, like offline).
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return True, ("not checked yet: nothing goes to the cloud until you "
+                          "choose where Friday thinks (Settings > Models)")
+    except Exception:
+        pass
     if os.environ.get("FRIDAY_TESTING"):
         return True, "testing mode — not validated"
     cache_id = _hmac.new(_KEY_CHECK_SALT, key.encode(),
