@@ -587,7 +587,7 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
         return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
-            "start": start, "end": end}
+            "start": start, "end": end, "guests": len(body.get("attendees") or [])}
 
 
 def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary",
@@ -671,7 +671,19 @@ def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None,
                 "not_found": str(status) in ("404", "410")}
     if (ev or {}).get("status") == "cancelled":
         return {"error": "that event is already deleted", "gone": True}
-    return {"ok": True, "id": ev.get("id") or eid, "account_id": aid, "before": _event_record(ev, cal)}
+    return {"ok": True, "id": ev.get("id") or eid, "account_id": aid, "before": _event_record(ev, cal),
+            "undo_before": _undo_fields(ev)}
+
+
+def _undo_fields(ev: dict) -> dict:
+    """An event's own fields, whole, for Undo to set back or make again (services/change_receipts).
+    Kept in the receipt, never in what the model is shown (the tools drop it)."""
+    st, en = (ev or {}).get("start") or {}, (ev or {}).get("end") or {}
+    return {"summary": (ev or {}).get("summary") or "", "location": (ev or {}).get("location") or "",
+            "description": (ev or {}).get("description") or "",
+            "start": st.get("dateTime") or st.get("date") or "",
+            "end": en.get("dateTime") or en.get("date") or "",
+            "recurring": bool((ev or {}).get("recurrence") or (ev or {}).get("recurringEventId"))}
 
 
 def notify_guests_default() -> bool:
@@ -721,7 +733,7 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
             "calendar_id": cal, "guests_notified": bool(tell and guests), "notify_guests": tell,
             "guests_told": (("Its %d guest(s) were sent a cancellation." % guests) if tell and guests else
                             ("Its %d guest(s) were not told." % guests) if guests else "It had no guests."),
-            "before": got["before"]}
+            "before": got["before"], "undo_before": got.get("undo_before") or {}}
 
 
 def update_event(event_id: str, *, title=None, start=None, end=None,
@@ -798,6 +810,7 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
         return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "set": patch,
+            "undo_before": _undo_fields(before),
             "before": {"summary": before.get("summary"),
                        "location": before.get("location") or "",
                        "description": (before.get("description") or "")[:300]}}
