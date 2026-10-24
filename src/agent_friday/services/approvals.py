@@ -170,6 +170,9 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "web_task_plan": frozenset({"owner:ui"}),
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
+    # The first governed action of onboarding (services/first_action, amendment A27): the owner's
+    # own press on this PC, never a spoken or typed yes.
+    "first_action": frozenset({"owner:ui"}),
     # Library changes Friday proposes (services/library/cards.py): the click is
     # the consent, as it is for a file grant.
     "library_add_request": frozenset({"owner:ui"}),
