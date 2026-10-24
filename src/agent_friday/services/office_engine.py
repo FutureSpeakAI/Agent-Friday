@@ -131,6 +131,31 @@ def available() -> bool:
 
 
 _verified: Optional[bool] = None
+#: binary_state()'s last answer, by (size, mtime): the Doctor asks often.
+_STATE_SEEN: dict = {}
+
+
+def binary_state() -> str:
+    """"ok", "missing", "unpinned" or "mismatch", for the Doctor. Unlike
+    verify_binary it keeps no answer that changes whether a tool may run."""
+    try:
+        st = BINARY.stat()
+    except OSError:
+        return "missing"
+    pinned = str(install_record().get("sha256") or "").strip().lower()
+    if not pinned:
+        return "unpinned"
+    key = (st.st_size, st.st_mtime_ns, pinned)
+    if key in _STATE_SEEN:
+        return _STATE_SEEN[key]
+    h = hashlib.sha256()
+    with open(BINARY, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    out = "ok" if h.hexdigest() == pinned else "mismatch"
+    _STATE_SEEN.clear()
+    _STATE_SEEN[key] = out
+    return out
 
 
 def verify_binary(force: bool = False) -> Tuple[bool, str]:

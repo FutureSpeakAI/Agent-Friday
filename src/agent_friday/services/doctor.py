@@ -369,19 +369,29 @@ def _c_local_brain():
 
 
 def _c_gpu():
-    """The graphics card the local models use: read, never changed (§28.2-1)."""
-    from agent_friday.services import gpu_probe
-    g = gpu_probe.probe()
-    if not g.get("devices"):
-        if str(g.get("source") or "").upper().startswith("CUDA_VISIBLE_DEVICES"):
-            return "unavailable_by_configuration", "gpus_hidden_by_setting"
+    """The graphics card the local models use: read, never changed (§28.2-1).
+    CUDA is not initialised here: the count comes from CTranslate2 only when
+    the voice has already loaded it, else from one bounded nvidia-smi query;
+    safe mode asks nothing. Free memory is not asked (it changes by the
+    second)."""
+    from agent_friday.services import gpu_probe, local_voice, safe_mode
+    if gpu_probe._cuda_hidden():
+        return "unavailable_by_configuration", "gpus_hidden_by_setting"
+    if safe_mode.active():
+        return "unverified", "not_probed_in_safe_mode"
+    if "ctranslate2" in sys.modules:
+        n = int(gpu_probe.device_count().get("devices") or 0)
+    else:
+        cards = gpu_probe._run_smi()
+        if cards is None:
+            return "unverified", "nvidia_smi_did_not_answer"
+        n = len(cards)
+    if not n:
         return "unavailable_by_hardware", "no_cuda_gpu"
-    cb = gpu_probe.cublas_status()
-    if not cb.get("ok"):
-        return "misconfigured", "cublas_missing"
-    if g.get("free_mib") is None:
-        return "unverified", "cuda_gpus:%d free_memory_unread" % int(g["devices"])
-    return "healthy", "cuda_gpus:%d" % int(g["devices"])
+    # cuBLAS matters only to the local transcriber (CTranslate2)
+    if local_voice.deps_installed() and not gpu_probe.cublas_status().get("ok"):
+        return "misconfigured", "cublas_missing_for_local_voice"
+    return "healthy", "cuda_gpus:%d" % n
 
 
 def _c_local_voice():
@@ -398,14 +408,11 @@ def _c_document_engine():
     """The document engine (OfficeCLI): present, and matching its pinned
     checksum."""
     from agent_friday.services import office_engine
-    if not office_engine.available():
-        return "unavailable_by_configuration", "not_installed"
-    ok, why = office_engine.verify_binary()
-    if ok:
-        return "healthy", "checksum_matches"
-    if "no pinned sha256" in why:
-        return "misconfigured", "no_pinned_checksum"
-    return "broken", "checksum_mismatch"
+    st = office_engine.binary_state()
+    return {"ok": ("healthy", "checksum_matches"),
+            "missing": ("unavailable_by_configuration", "not_installed"),
+            "unpinned": ("misconfigured", "no_pinned_checksum"),
+            "mismatch": ("broken", "checksum_mismatch")}.get(st, ("unverified", "unreadable"))
 
 
 def _c_browser_lane():
@@ -416,7 +423,10 @@ def _c_browser_lane():
         return "unavailable_by_configuration", "playwright_not_installed"
     from agent_friday.services import browser_session
     s = browser_session.current()
-    return "healthy", ("running" if s is not None and getattr(s, "running", False) else "ready_closed")
+    if s is not None and getattr(s, "running", False):
+        return "healthy", "running"
+    # the browser it downloads is found only when one starts: not here
+    return "unverified", "library_installed_browser_not_started_here"
 
 
 def _c_channels():
@@ -430,15 +440,20 @@ def _c_channels():
     on = {n: c for n, c in (st.get("channels") or {}).items() if c.get("enabled")}
     if not on:
         return "unavailable_by_configuration", "no_channel_switched_on"
-    bad = [n for n, c in on.items() if (c.get("health") or {}).get("source_state") not in
-           ("running", "not-running")]
-    if bad:
-        return "misconfigured", "token_problem:" + ",".join(sorted(bad))
-    idle = [n for n, c in on.items() if (c.get("health") or {}).get("source_state") == "not-running"]
+    # counts, not names: the report should not say which apps the owner uses
+    states = [(c.get("health") or {}).get("source_state") for c in on.values()]
+    if "present_but_unreadable" in states:
+        return "broken", "token_unreadable:%d" % states.count("present_but_unreadable")
+    if "missing" in states:
+        return "misconfigured", "token_missing:%d" % states.count("missing")
+    odd = [s for s in states if s not in ("running", "not-running")]
+    if odd:
+        return "unverified", "token_not_checked:%d" % len(odd)
+    idle = states.count("not-running")
     if idle and not safe_mode.allows("channels"):
-        return "blocked_by_policy", "not_started_in_safe_mode:%d" % len(idle)
+        return "blocked_by_policy", "not_started_in_safe_mode:%d" % idle
     if idle:
-        return "degraded", "switched_on_not_running:" + ",".join(sorted(idle))
+        return "degraded", "switched_on_not_running:%d" % idle
     return "healthy", "running:%d" % len(on)
 
 
@@ -456,6 +471,8 @@ def _c_phone():
     from agent_friday.services import safe_mode
     if not safe_mode.allows("phone"):
         return "blocked_by_policy", "not_started_in_safe_mode"
+    if states.get("api_key_secret") != "stored":
+        return "degraded", "outbound_key_missing"
     return "healthy", "configured"
 
 
