@@ -267,6 +267,13 @@ def test_the_workflow_has_the_jobs_the_owner_asked_for():
     assert "choco install innosetup" in WORKFLOW
 
 
+def _release_needs() -> set:
+    rel = WORKFLOW[WORKFLOW.index("  release:"):]
+    m = re.search(r"needs:\s*\[([^\]]*)\]", rel)
+    assert m, "the release job names what it waits for"
+    return {s.strip() for s in m.group(1).split(",") if s.strip()}
+
+
 def test_the_upgrade_job_proves_every_previous_release():
     """Upgrades are proved from v5.14.3 (a zip), Beta 1.0, 1.0.1, 1.1 and 1.2 (setup programs);
     a manual run may name a single base. The release waits for every leg."""
@@ -277,7 +284,7 @@ def test_the_upgrade_job_proves_every_previous_release():
     assert "-BaseExe" in upgrade and "-BaseZip" in upgrade
     assert "AgentFriday-Setup-*.exe" in upgrade and "AgentFriday-Setup-*.zip" in upgrade
     assert "name: upgrade-evidence-${{ matrix.base }}" in upgrade, "one evidence artifact per leg"
-    assert "needs: [tests-green, acceptance, fresh-install, upgrade, bundle-uninstall-restore]" in WORKFLOW[WORKFLOW.index("  release:"):]
+    assert {"tests-green", "acceptance", "fresh-install", "upgrade", "bundle-uninstall-restore"} <= _release_needs(), "the release waits for every leg"
     harness = (REPO / "packaging" / "windows" / "tests" / "rehearsal" / "upgrade-vault-test.ps1").read_text(encoding="utf-8")
     assert "[string] $BaseExe" in harness and "give -BaseZip or -BaseExe, not both" in harness
     for switch in ("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/ModelsCloud=1", "/SkipMemory=1", "/SkipJudgment=1"):
@@ -292,7 +299,7 @@ def test_the_release_job_publishes_the_latest_release_not_a_draft():
     assert "--latest" in rel and "--prerelease" not in rel and "--draft" not in rel
     assert "PLACEHOLDER" in rel and "a placeholder is left in the notes" in rel, \
         "the notes get the installer's real SHA-256, and a leftover placeholder stops the release"
-    assert 'needs: [tests-green, acceptance, fresh-install, upgrade, bundle-uninstall-restore]' in rel
+    assert {"tests-green", "acceptance", "fresh-install", "upgrade", "bundle-uninstall-restore"} <= _release_needs()
     assert "--title \"Agent Friday Beta 1.2 (update 2)\"" in rel and "--notes-file" in rel
     assert ".exe.sha256" in rel and "AgentFriday-Setup-*.exe" in rel
     assert "Build sequence" in rel, "the notes carry the line the updater orders releases by"
@@ -303,7 +310,9 @@ def test_permissions_are_minimal_and_actions_stay_pinned():
     top = WORKFLOW[:WORKFLOW.index("jobs:")]
     assert "permissions:\n  contents: read" in top
     for use in re.findall(r"uses: ([^\s]+)", WORKFLOW):
-        assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", use), "pin by commit sha: %s" % use
+        assert (re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", use)
+                or re.fullmatch(r"\./\.github/workflows/[\w.-]+\.ya?ml", use)), \
+            "pin by commit sha (or call a workflow in this repo): %s" % use
 
 
 def test_the_release_notes_carry_the_build_sequence_the_updater_reads():
