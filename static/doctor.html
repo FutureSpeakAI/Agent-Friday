@@ -135,6 +135,13 @@
   <p id="support-note" role="status"></p>
 </section>
 
+<section id="known" aria-labelledby="known-h">
+  <h2 id="known-h">Known issues in this release</h2>
+  <p class="muted">What is broken, unverified or limited on purpose in this version, from the list that ships with it. If something you hit is here, it is known; the list says what to do meanwhile.</p>
+  <p id="known-sum" role="status">Checking...</p>
+  <div id="known-out"></div>
+</section>
+
 <section id="stores" aria-labelledby="stores-h">
   <h2 id="stores-h">What Friday keeps</h2>
   <p class="muted">Every store in Friday's data folder: its version, its size and where it lives in the folder. The same list goes into every report, every bundle and every export.</p>
@@ -261,6 +268,28 @@
     const u = ['B', 'KB', 'MB', 'GB']; let i = 0; n = Number(n);
     while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
     return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+  }
+  function knownIssues() {
+    api('/api/doctor/known-issues').then(({ ok, d }) => {
+      const out = $('known-out'); out.textContent = '';
+      if (!ok || !d.available) { text($('known-sum'), (d && d.why) || 'The list of known issues could not be read.'); return; }
+      text($('known-sum'), d.count + ' known issues' + (d.release ? ' (' + d.release + ')' : '') + '.' +
+        ($('safe').className === 'safe' ? ' Friday is in safe mode: check these before changing anything.' : ''));
+      (d.sections || []).forEach(s => {
+        const det = document.createElement('details');
+        const sum = document.createElement('summary'); sum.textContent = s.title + ' (' + s.items.length + ')';
+        det.appendChild(sum);
+        const ul = document.createElement('ul');
+        s.items.forEach(it => {
+          const li = document.createElement('li');
+          if (it.title) { const b = document.createElement('strong'); b.textContent = it.title; li.appendChild(b); li.appendChild(document.createTextNode(' ')); }
+          li.appendChild(document.createTextNode(it.text || ''));
+          ul.appendChild(li);
+        });
+        det.appendChild(ul);
+        out.appendChild(det);
+      });
+    });
   }
   function stores() {
     api('/api/doctor/stores').then(({ ok, d }) => {
@@ -452,7 +481,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); history(); stores();
+  safeState(); history(); stores(); knownIssues();
 })();
 </script>
 </body>

@@ -168,6 +168,16 @@ def _c_settings():
     return ("degraded", "unknown_keys") if unknown else ("healthy", "ok")
 
 
+def _c_settings_read():
+    """Whether this process is serving the last good settings because
+    settings.json could not be read (§28.4-2: never a silent reset). The
+    file is not touched, and saves are refused until it reads again."""
+    from agent_friday import core
+    if core._settings_read_degraded():
+        return "degraded", "settings_unreadable_last_good_served"
+    return "healthy", "ok"
+
+
 def _defaults() -> dict:
     from agent_friday import core
     return dict(getattr(core, "DEFAULT_SETTINGS", {}) or {})
@@ -354,6 +364,7 @@ def _c_boot():
 CHECKS = (
     ("app_files", "application files", _c_versions),
     ("settings", "settings schema", _c_settings),
+    ("settings_read", "settings schema", _c_settings_read),
     ("vault", "vault accessibility", _c_vault),
     ("governance_key", "key and credential availability", _c_governance_key),
     ("receipt_chain", "receipt chains", _c_ledger),
@@ -508,6 +519,15 @@ def _versions() -> dict:
     return out
 
 
+def _known_issues() -> dict:
+    """How many known issues this release lists, by section (§36.0-7)."""
+    try:
+        from agent_friday.services import known_issues
+        return known_issues.summary()
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "error": type(e).__name__}
+
+
 def _stores() -> dict:
     """Every store with its version, size and place in the data folder
     (services/store_inventory.py, §37.3-1). Store names and locations are
@@ -541,6 +561,7 @@ def build() -> dict:
     report["summary"] = {s: sum(1 for c in report["checks"] if c["state"] == s)
                          for s in STATES if any(c["state"] == s for c in report["checks"])}
     report["build_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    report["known_issues"] = _known_issues()
     report = _clean(report, _private_markers())
     # rebuilt from Friday's own constants and numbers (store_inventory.public),
     # so the general filter above, which could blank a store whose name holds
@@ -572,6 +593,11 @@ def render_text(report: dict) -> str:
         d.get("settings_unknown_key_count"))]
     p = report.get("performance") or {}
     lines += ["", "Performance: " + json.dumps(p, sort_keys=True)]
+    ki = report.get("known_issues") or {}
+    if ki.get("available"):
+        lines += ["", "Known issues in this release: %s (%s; listed on the Doctor page)" % (
+            ki.get("count"), ", ".join("%s %s" % (s.get("count"), s.get("section"))
+                                       for s in ki.get("by_section") or []))]
     inv = report.get("stores")
     if isinstance(inv, dict) and isinstance(inv.get("stores"), list):
         from agent_friday.services import store_inventory
