@@ -230,7 +230,10 @@ def test_no_new_google_scope_is_requested():
     """The views need nothing the Settings connection does not already ask for."""
     assert ce.GOOGLE_SCOPES == ["https://www.googleapis.com/auth/gmail.readonly",
                                 "https://www.googleapis.com/auth/calendar.events"]
-    assert FULL in ga.GOOGLE_MULTI_SCOPES
+    # Read first (BD-06): the Settings connection reads the calendar (calendar.readonly also
+    # reads the calendar list); changing it is its own button.
+    assert "https://www.googleapis.com/auth/calendar.readonly" in ga.GOOGLE_MULTI_SCOPES
+    assert FULL not in ga.GOOGLE_MULTI_SCOPES
     assert not any("calendarlist" in s or "freebusy" in s for s in ga.GOOGLE_MULTI_SCOPES)
 
 

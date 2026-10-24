@@ -33,6 +33,9 @@ from agent_friday.services.calendar_engine import (
 )
 
 FULL_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
+CALENDAR_READ_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+_WRITE_SCOPES = (CALENDAR_WRITE_SCOPE, FULL_CALENDAR_SCOPE)
+_READ_SCOPES = _WRITE_SCOPES + (CALENDAR_READ_SCOPE,)
 
 _log = logging.getLogger("friday.calendar_write")
 
@@ -43,9 +46,10 @@ _log = logging.getLogger("friday.calendar_write")
 #: from an exception: the exception's type goes to the local log.
 ERROR_MESSAGES = {
     "bad_calendar": "that is not a calendar id; nothing was changed",
-    "needs_reconnect": ("Google Calendar cannot be written to right now; reconnect "
-                        "Google in Settings > Connections. Nothing was changed."),
-    "needs_account": "that Google account cannot write to this calendar right now; nothing was changed",
+    "needs_reconnect": ("Friday cannot change this calendar yet: press \"Allow calendar changes\" "
+                        "(or reconnect Google) in Settings > Connections > Google. Nothing was changed."),
+    "needs_account": ("that Google account may not change this calendar yet: press \"Allow calendar "
+                      "changes\" for it in Settings > Connections > Google. Nothing was changed."),
     "no_service": "Google Calendar could not be reached; nothing was changed",
     "missing_fields": "a title and a start time are required",
     "title_refused": "could not create the event: the privacy gate kept the title on this device",
@@ -120,10 +124,10 @@ def write_ready() -> tuple:
             return True, None
     if accts:
         return False, (
-            "the connected Google account(s) hold Calendar READ-ONLY access. "
-            "Reconnect from Settings -> Connections -> Reconnect Google to add "
-            "event editing; it is the same account, re-consented with calendar "
-            "writes included.")
+            "the connected Google account(s) may read the calendar but have not been "
+            "allowed to change it. The owner allows it per account with \"Allow calendar "
+            "changes\" in Settings -> Connections -> Google (Google then asks to confirm). "
+            "Nothing was changed.")
 
     # Legacy single-token fallback, for an install that never migrated.
     if not GOOGLE_TOKEN_PATH.exists():
@@ -143,6 +147,59 @@ def write_ready() -> tuple:
         "tool is called. Reconnect the same Google account to add event "
         "editing: Settings -> Connections -> Reconnect Google, or open "
         "/api/google/auth.")
+
+
+def read_ready() -> tuple:
+    """(ready, reason): can any connected account READ events? Write access implies it."""
+    ok, why = write_ready()
+    if ok:
+        return True, None
+    if readable_accounts():
+        return True, None
+    return False, why
+
+
+def readable_accounts() -> list:
+    """Connected accounts whose token can read events (read-only or read/write), with
+    Calendar switched on. Public, token-free records."""
+    try:
+        from agent_friday.services import google_accounts as ga
+        accts = ga.list_accounts() or []
+    except Exception:
+        return []
+    out = []
+    for a in accts:
+        if not isinstance(a, dict) or a.get("status") != "connected":
+            continue
+        if (a.get("services") or {}).get("calendar", True) is False:
+            continue
+        if set(a.get("scopes") or []) & set(_READ_SCOPES):
+            out.append(a)
+    return out
+
+
+def resolve_read_account(account_id=None) -> tuple:
+    """(account_id | None, error | None) for a calendar READ. An account that can write is
+    chosen as before; otherwise the same rules over the accounts that can read (read first:
+    a connection that may only read still shows and names its events)."""
+    aid, err = resolve_write_account(account_id)
+    if aid:
+        return aid, None
+    accts = readable_accounts()
+    if not accts:
+        return None, err             # as before: the write rules' answer (or the legacy token)
+    want = str(account_id or "").strip().lower()
+    if want:
+        for a in accts:
+            keys = {str(a.get(k) or "").strip().lower() for k in ("id", "email", "label")}
+            if want in keys:
+                return a.get("id"), None
+        return None, ("no connected account named %r can read a calendar. Accounts that can: %s"
+                      % (str(account_id), describe_accounts(accts) or "none"))
+    if len(accts) > 1:
+        return None, ("more than one Google account can read a calendar: %s. Say which "
+                      "(pass account_id)." % describe_accounts(accts))
+    return accts[0].get("id"), None
 
 
 def writable_accounts() -> list:
@@ -196,6 +253,13 @@ def resolve_write_account(account_id=None) -> tuple:
                     for k in ("id", "email", "label")}
             if want in keys:
                 return a.get("id"), None
+        if any(want in {str(a.get(k) or "").strip().lower() for k in ("id", "email", "label")}
+               for a in readable_accounts()):
+            return None, ("the account %r may read its calendar but has not been allowed to change "
+                          "it: press \"Allow calendar changes\" for that account in Settings > "
+                          "Connections > Google (Google then asks to confirm). Nothing was changed. "
+                          "Accounts that can change a calendar now: %s"
+                          % (str(account_id), describe_accounts(accts) or "none"))
         return None, ("no connected account named %r can write to a calendar. "
                       "Nothing was changed. Accounts that can: %s"
                       % (str(account_id), describe_accounts(accts) or "none"))
@@ -513,16 +577,20 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
             "start": start, "end": end}
 
 
-def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary") -> dict:
+def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary",
+              for_write: bool = False) -> dict:
     """One event as the planner needs it: its title, when it starts and ends, its time zone, whether it is an
     all-day entry, how many guests it has, and whether this calendar's copy may change its time
-    (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only."""
+    (`organizer_self`: the calendar it is read from organises it; `guests_can_modify`). Reads only;
+    with `for_write` it also requires an account that may change the calendar (a move's plan)."""
     if not _cal(calendar_id):
         return {"error": "that is not a calendar id; nothing was changed"}
-    ready, why = write_ready()
+    # `for_write`: the read that plans a change (a move) needs an account that may make it,
+    # so a plan is never offered for a change that would then be refused.
+    ready, why = write_ready() if for_write else read_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
-    aid, acct_err = resolve_write_account(account_id)
+    aid, acct_err = resolve_write_account(account_id) if for_write else resolve_read_account(account_id)
     if acct_err:
         return {"error": acct_err, "needs_account": True}
     svc, err = _service(aid)
@@ -557,17 +625,20 @@ def _event_record(ev: dict, calendar_id: str) -> dict:
             "html_link": ev.get("htmlLink") or ""}
 
 
-def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None) -> dict:
+def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None,
+               for_write: bool = False) -> dict:
     """{ok, id, account_id, before:{...}} for one event, or {error}. Reads only: the delete card names the event
     from this, so the owner approves "the dentist on Tuesday at 10", never an opaque id."""
     eid = str(event_id or "").strip()
     if not eid:
         return {"error": "an event id is required"}
     cal = str(calendar_id or "").strip() or "primary"
-    ready, why = write_ready()
+    # A read needs only read access (read first); `for_write` (the delete itself) needs an
+    # account that may change the calendar.
+    ready, why = write_ready() if for_write else read_ready()
     if not ready:
         return {"error": why, "needs_reconnect": True}
-    aid, acct_err = resolve_write_account(account_id)
+    aid, acct_err = resolve_write_account(account_id) if for_write else resolve_read_account(account_id)
     if acct_err:
         return {"error": acct_err, "needs_account": True}
     svc, err = _service(aid)
@@ -605,7 +676,7 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
     name); otherwise sendUpdates=none. None means the owner's default (`notify_guests_default`). Whether
     the delete may run at all is decided before this is called: the delete_calendar_event tool is outward
     and asks first, and the Calendar route is the owner's own click."""
-    got = read_event(event_id, calendar_id=calendar_id, account_id=account_id)
+    got = read_event(event_id, calendar_id=calendar_id, account_id=account_id, for_write=True)
     if not got.get("ok"):
         return got
     tell = notify_guests_default() if notify_guests is None else bool(notify_guests)

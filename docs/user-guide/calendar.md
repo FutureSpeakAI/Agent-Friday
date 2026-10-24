@@ -9,9 +9,11 @@ waits for your approval.
 Calendar uses the same Google account connection as mail: **Settings >
 Connections > Google accounts**. You can connect more than one account, and
 Friday reads every account that has calendar turned on. A standard connection
-includes calendar read and write permission and Google Tasks. An account
-connected with read-only calendar permission is reported when Friday tries to
-make a change, and **Reconnect** fixes it.
+asks Google only to **read** your calendar and Google Tasks. To let Friday change
+them, press **Allow calendar changes** or **Allow task changes** on that account
+(Google shows the permission on its own screen). Until then, a change Friday
+tries is refused with those words and nothing is changed. Accounts connected
+before this kept the permissions they already had.
 
 ## Day, Week and Month
 
@@ -112,7 +114,7 @@ Workflows workspace, under Friday's built-in routines
 |---|---|
 | Read today's and tomorrow's events, or find events by text or date | No |
 | Find times that are free on every connected calendar | No |
-| Read, create, update and complete Google Tasks | No |
+| Read Google Tasks; create, update and complete them (after **Allow task changes**) | No |
 | **Create an event** | Yes |
 | **Change an event** (title, time, place, description) | Yes |
 | **Add the same note to several events** | Yes |

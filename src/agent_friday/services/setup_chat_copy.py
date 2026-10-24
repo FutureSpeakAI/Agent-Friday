@@ -764,11 +764,15 @@ FINISH_BUTTON = "Open my desktop"
 #: Google scopes in plain words. The checklist shows each one before connect.
 GOOGLE_SCOPE_WORDS = {
     "https://www.googleapis.com/auth/gmail.readonly": "Read your email",
-    "https://www.googleapis.com/auth/calendar": "See and edit your calendar events",
+    "https://www.googleapis.com/auth/calendar.readonly": "See your calendar",
+    "https://www.googleapis.com/auth/tasks.readonly": "See your Google Tasks",
+    "https://www.googleapis.com/auth/calendar":
+        "Add, change and delete calendar events (only after you press Allow calendar changes)",
     "https://www.googleapis.com/auth/drive.readonly": "Read your Drive files",
     "https://www.googleapis.com/auth/documents.readonly": "Read your Google Docs",
     "https://www.googleapis.com/auth/spreadsheets.readonly": "Read your Google Sheets",
-    "https://www.googleapis.com/auth/tasks": "See and edit your Google Tasks",
+    "https://www.googleapis.com/auth/tasks":
+        "Add, change and complete your Google Tasks (only after you press Allow task changes)",
     "https://www.googleapis.com/auth/contacts.readonly": "Read your contacts",
     "https://www.googleapis.com/auth/userinfo.email": "See your email address",
     "https://www.googleapis.com/auth/gmail.send":
