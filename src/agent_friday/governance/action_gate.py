@@ -221,6 +221,9 @@ LIBRARY_SCREEN_ACTIONS = frozenset({"library_add", "library_remove", "library_fo
 #: Answers to imported items in staging (services/import_staging): internal only as the owner's
 #: verified click on Friday's page.
 IMPORT_SCREEN_ACTIONS = frozenset({"import_review"})
+#: The owner's marks on "What I see so far" (services/first_synthesis); "remember this" writes the
+#: memory card, so only the owner's verified click on Friday's page counts.
+SYNTHESIS_SCREEN_ACTIONS = frozenset({"synthesis_mark"})
 
 INTERNAL_TOOLS = frozenset({
     # Reads the machine and the model catalogue; downloads nothing and
@@ -883,6 +886,10 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         if (ctx or {}).get("screen_click") is True:
             return INTERNAL, "the owner's own answer to an imported item, made on Friday's page"
         return OUTWARD, "an answer to an imported item that did not come from Friday's page"
+    if tool_name in SYNTHESIS_SCREEN_ACTIONS:
+        if (ctx or {}).get("screen_click") is True:
+            return INTERNAL, "the owner's own mark on what Friday sees so far, made on Friday's page"
+        return OUTWARD, "a mark on what Friday sees so far that did not come from Friday's page"
     if tool_name in OUTWARD_TOOLS:
         return OUTWARD, "it acts outside this conversation"
     if tool_name in INTERNAL_TOOLS:

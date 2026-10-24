@@ -428,6 +428,64 @@
       board && h('p', { className: 'fx-board-check' }, (failure ? 'Last confirmed board · ' : 'Board checked · ') + homeStamp(board.generated_at, clock), ' · Updates from local activity while Home is open.'));
   }
 
+  /* "What I see so far" (services/first_synthesis): at most five items, each with its seven
+   * fields, and the owner's seven marks. A mark is the owner's own press on this PC. */
+  const SEE_SO_FAR_FIELDS = [['why', 'Why it may matter'], ['source', 'Source'], ['freshness', 'Freshness'], ['confidence', 'Confidence'], ['related', 'Related'], ['next_step', 'Next step']];
+  function SeeSoFar({ api, onNavigate }) {
+    const [data, setData] = useState(null), [busy, setBusy] = useState(''), [said, setSaid] = useState('');
+    const live = useRef(true);
+    const load = () => api('/api/first-synthesis', { cache: 'no-store' }).then(r => r.json()).then(d => { if (live.current) setData(d && d.ok ? d : null); }).catch(() => { if (live.current) setData(null); });
+    useEffect(() => { live.current = true; load(); return () => { live.current = false; }; }, []);
+    const items = (data && data.items) || [];
+    if (!items.length) return said ? h('p', { className: 'fx-meta', role: 'status' }, said) : null;
+    const labels = data.mark_labels || {};
+    const mark = (item, value) => {
+      setBusy(item.id); setSaid('');
+      api('/api/first-synthesis/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, mark: value, observation: item.observation }) })
+        .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.ok ? x.said : (x.error || 'Nothing changed.')); load(); })
+        .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
+        .finally(() => { if (live.current) setBusy(''); });
+    };
+    const related = r => !r ? 'None' : (r.kind === 'follow_up' ? 'A follow-up you set' : r.kind === 'commitment' ? 'A commitment with a date' : 'Linked');
+    return h('section', { className: 'fx-see-so-far', 'aria-label': 'What I see so far', 'data-testid': 'see-so-far' },
+      h('h2', null, 'What I see so far'),
+      h('p', { className: 'fx-meta' }, 'A first look at what you have connected. Mark each one so I learn what matters to you.'),
+      h('ol', { className: 'fx-see-so-far-list' }, items.map(item => h('li', { key: item.id, className: 'fx-see-so-far-item' },
+        h('p', { className: 'fx-see-so-far-observation' }, item.observation),
+        h('dl', { className: 'fx-see-so-far-fields' }, SEE_SO_FAR_FIELDS.map(([k, label]) => h(React.Fragment, { key: k }, h('dt', null, label), h('dd', null, k === 'related' ? related(item.related) : String(item[k] || ''))))),
+        !item.marked && item.remember_text && h('p', { className: 'fx-meta' }, 'Remember this saves: “' + item.remember_text + '”'),
+        item.marked ? h('p', { className: 'fx-meta' }, 'Marked: ' + (labels[item.marked] || item.marked)) :
+          h('div', { className: 'fx-see-so-far-marks', role: 'group', 'aria-label': 'Mark this' }, (item.marks || data.marks || []).map(m => h('button', { key: m, type: 'button', className: 'fx-action-secondary', disabled: !!busy, onClick: () => mark(item, m) }, labels[m] || m))),
+        item.open && onNavigate && h('button', { type: 'button', className: 'fx-action-secondary', onClick: () => onNavigate(item.open) }, 'Open')))),
+      said && h('p', { className: 'fx-meta', role: 'status' }, said));
+  }
+
+  /* Section 9.6 (services/onboarding_status): the six checks, shown once the owner has started
+   * with "What I see so far" and until all six are met. Both answers are the owner's own press. */
+  function OnboardingChecks({ api }) {
+    const [data, setData] = useState(null), [busy, setBusy] = useState(false), [said, setSaid] = useState('');
+    const live = useRef(true);
+    const load = () => api('/api/onboarding/status', { cache: 'no-store' }).then(r => r.json()).then(d => { if (live.current) setData(d && d.ok ? d : null); }).catch(() => { if (live.current) setData(null); });
+    useEffect(() => { live.current = true; load(); return () => { live.current = false; }; }, []);
+    const checks = (data && data.checks) || [];
+    const met = id => !!(checks.find(c => c.id === id) || {}).met;
+    if (!data || data.done || !met('reviewed')) return null;
+    const answer = body => {
+      setBusy(true); setSaid('');
+      api('/api/onboarding/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.ok ? 'Noted.' : (x.error || 'Nothing changed.')); load(); })
+        .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
+        .finally(() => { if (live.current) setBusy(false); });
+    };
+    return h('section', { className: 'fx-onboarding-checks', 'aria-label': 'Getting started', 'data-testid': 'onboarding-checks' },
+      h('h2', null, 'Getting started'),
+      h('ul', null, checks.map(c => h('li', { key: c.id }, (c.met ? '✓ ' : '○ ') + c.label))),
+      data.receipt && !met('where_ran') && h('p', null, 'The action ran as ' + (data.receipt.tool || 'an approved action') + '; its receipt is in Activity.', ' ',
+        h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: () => answer({ answer: 'saw_where_it_ran', seq: data.receipt.seq }) }, 'I saw where it ran')),
+      !met('goal') && h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: () => answer({ answer: 'skip_goal' }) }, 'Skip setting a goal for now'),
+      said && h('p', { className: 'fx-meta', role: 'status' }, said));
+  }
+
   function FridayExperience(props) {
     const p = props;
     useEffect(() => {
@@ -725,6 +783,8 @@
           h('h1', null, greeting), h('p', { className: 'fx-meta' }, 'Your space. Your work. Your ' + agentName + '.')),
           h('div', { className: 'fx-day-links' }, action('Calendar', () => openWorkspace('calendar'), { className: 'fx-action-secondary' }), action('Avatars & depth', () => window.FridayHolographicWorkspace?.open(), { className: 'fx-action-secondary' }),
             approvals.length > 0 && action(approvals.length + ' decision' + (approvals.length === 1 ? '' : 's') + ' to review', () => { go('activity'); setActivityTab('needs'); }, { className: 'fx-attention-action' }))),
+        h(SeeSoFar, { api, onNavigate: openWorkspace }),
+        h(OnboardingChecks, { api }),
         h(HomeCards, { api, active: visible && p.enabled !== false, onNavigate: openWorkspace, onView: go, workspaces, clock: homeClock, draftCache: homeCardEditor, privacyContext: homeCardPrivacy, mutationContext: homeCardMutation }),
         !p.chatOpen && h('form',{className:'fx-day-composer',onSubmit:prepare},
           h('textarea',{value:homePrompt,onChange:e=>setHomePrompt(e.target.value),placeholder:'Ask, make, or pick up where you left off…','aria-label':'Ask '+agentName,rows:3,disabled:preparing}),
