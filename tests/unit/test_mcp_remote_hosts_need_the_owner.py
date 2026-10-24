@@ -252,6 +252,9 @@ class _Redirector(BaseHTTPRequestHandler):
     target = ""
 
     def do_POST(self):                              # noqa: N802
+        # read the body first: on Windows a socket closed with unread data is
+        # reset, and the client sees an aborted connection instead of the 302
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
         self.send_response(302)          # the old code followed it as a GET, sign-in header and all
         self.send_header("Location", self.target)
         self.send_header("Content-Length", "0")

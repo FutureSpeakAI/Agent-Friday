@@ -28,7 +28,8 @@ futurespeak once a week". The person decides every single time:
   either it shows the text to save and attach by hand. It never asks for a
   wider mail permission for this.
 * **To one FutureSpeak address** (FUTURESPEAK_DOCTOR_ADDRESS), with a short
-  plain promise of what FutureSpeak does with it (PROMISE).
+  plain promise of what FutureSpeak does with it (PROMISE), then how long it
+  is kept, deletion on request and what the sender's address is for (TERMS).
 * **Local-only mode and off the record.** In local-only mode the weekly card is
   not raised unless the owner said yes there too (a separate yes, asked in
   that mode). Off the record, no card is raised and nothing is prepared; and
@@ -56,16 +57,19 @@ from pathlib import Path
 from typing import Optional
 from agent_friday.user_errors import UserFacingValueError
 
-#: The one FutureSpeak address the weekly report goes to.
-FUTURESPEAK_DOCTOR_ADDRESS = "doctor@futurespeak.ai"
+#: The one FutureSpeak address the weekly report goes to (owner ruling,
+#: amendment A23).
+FUTURESPEAK_DOCTOR_ADDRESS = "bugs@futurespeak.ai"
 
-#: What FutureSpeak does with a report, in plain words (shown on every card).
-PROMISE = ("FutureSpeak reads these reports only to find and fix problems in Agent Friday. "
-           "A report holds version numbers, which checks passed, counts of error types, "
-           "which settings differ from the defaults and speed figures; never your "
-           "conversations, files, contacts or vault. Your email address is used only to "
-           "reply to you. We keep a report no longer than a year, never sell or share it, "
-           "and delete it when you ask (reply to the email).")
+#: What FutureSpeak does with a report, in the owner's words (amendment A23),
+#: shown on every card and closing every email.
+PROMISE = "FutureSpeak only uses these reports to fix bugs and never shares them."
+
+#: What follows the promise in every email, and under it on the card (owner
+#: ruling, amendment A23): how long a report is kept, deletion on request, and
+#: what the sender's address is used for.
+TERMS = ("A report is kept for at most a year. Reply to this email to have yours deleted. "
+         "Your email address is used only to reply to you.")
 
 #: The report's "Sharing" line when the owner chose to email it.
 SHARING = "you chose to email this report to FutureSpeak from your own account"
@@ -209,6 +213,7 @@ def status() -> dict:
     return {"answer": st["answer"], "ledger_unreadable": st.get("ledger_unreadable", False),
             "local_only": _local_only(), "local_only_ok": st["local_only_ok"],
             "off_record": _off_record(), "address": FUTURESPEAK_DOCTOR_ADDRESS, "promise": PROMISE,
+            "terms": TERMS,
             "week": week_key(), "decided_this_week": st["decided_week"] == week_key(),
             "item": next_item(st)}
 
@@ -301,7 +306,7 @@ def prepare() -> dict:
         _PREPARED.update(report_id=rid, sha256=sha, week=week_key(), text=text)
     return {"report_id": rid, "text": text, "sha256": sha, "to": FUTURESPEAK_DOCTOR_ADDRESS,
             "subject": "%s (reference %s)" % (SUBJECT, _ref(rid)),
-            "promise": PROMISE}
+            "promise": PROMISE, "terms": TERMS}
 
 
 def _prepared_text(st: dict, sha256: str) -> tuple[str, dict]:
@@ -330,7 +335,7 @@ def send(sha256: str, *, account_id: Optional[str] = None) -> dict:
         raise WeeklyError("Friday is in local-only mode; say yes to the weekly ask in this mode first.")
     text, p = _prepared_text(st, sha256)
     subject = "%s (reference %s)" % (SUBJECT, _ref(p.get("report_id")))
-    body = text + "\n\n" + PROMISE + "\n"
+    body = text + "\n\n" + PROMISE + "\n" + TERMS + "\n"
     from agent_friday.services import gmail_send
     out: dict = {"to": FUTURESPEAK_DOCTOR_ADDRESS}
     try:
