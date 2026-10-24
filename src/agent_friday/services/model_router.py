@@ -2573,11 +2573,13 @@ def _current_session_id():
 
 
 def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
-                     owner=True):
+                     owner=True, turn_key=None):
     """The end of a chat or voice turn: index it, then let the turn's one
-    embedding of the message go (services/turn_vector)."""
+    embedding of the message go (services/turn_vector). `turn_key` is the
+    turn's id, as given to _build_memory_context_block for the same turn."""
     try:
-        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner)
+        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner,
+                              turn_key=turn_key)
     finally:
         try:
             from agent_friday.services import turn_vector as _tv
@@ -2587,7 +2589,7 @@ def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id
 
 
 def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
-                          owner=True):
+                          owner=True, turn_key=None):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
@@ -2602,6 +2604,14 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
         from agent_friday.services import off_record
         if off_record.skip("conversation_index"):
             return
+    except Exception:
+        pass
+    # How many of the items recalled for this turn the reply cited (counts
+    # only, services/memory_metrics); read before anything is elided below.
+    # Matched by the turn's id, so two turns in one session never cross-score.
+    try:
+        from agent_friday.services import memory_metrics as _mm
+        _mm.note_reply(session_id, reply, turn_key=turn_key)
     except Exception:
         pass
     if library:
@@ -2923,8 +2933,11 @@ def _load_recent_session_summary_on_startup():
 
 
 def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
-                                max_chars=1900):
+                                max_chars=1900, turn_key=None):
     """Retrieve relevant PAST conversations and format them as a prompt block.
+
+    `turn_key`: the turn's id; the end-of-turn index passes the same one so the
+    reply's citations are scored against this turn's recall (services/memory_metrics).
 
     Returns '' when memory is unavailable, empty, or nothing clears the
     relevance floor. The block is provider-independent text — the caller appends
@@ -2979,6 +2992,8 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         kept.sort(key=lambda h: str(h.get("timestamp") or h.get("date") or ""), reverse=True)
         used = 0
         recalled = []
+        shown_ids = []
+        shown_texts = []
         for h in kept:
             date = h.get("date") or (h.get("timestamp") or "")[:10]
             role = "You" if h.get("role") == "friday" else "User"
@@ -2993,7 +3008,18 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 break
             lines.append(entry)
             recalled.append(" ".join((h.get("text") or "").split()))
+            shown_ids.append(h.get("id"))
+            shown_texts.append(snippet)
             used += len(entry)
+        # Counts only (services/memory_metrics): how many came back, how many
+        # were shown; the shown refs (and, in this process only, the snippets a
+        # quote-style citation is matched against) wait for the reply.
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_recall(session_id, len(hits), shown_ids, turn_key=turn_key,
+                            shown_texts=shown_texts)
+        except Exception:
+            pass
         # Labelled as recalled (services/memory_fence), and remembered for this
         # session so the end-of-turn index does not store a reply's repeat of it
         # as a new exchange.

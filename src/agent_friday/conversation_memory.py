@@ -598,6 +598,13 @@ class ConversationMemory:
             except Exception as _e:
                 print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
+            # Counts and one-way hashes only (services/memory_metrics), of
+            # the ids this store actually held.
+            try:
+                from agent_friday.services import memory_metrics as _mm
+                _mm.note_supersession(found, bool(flag), superseded_by)
+            except Exception:
+                pass
         except Exception as e:
             print(f"  [MEMORY] supersede failed (non-fatal): {e}")
             out["missing"] = ids
@@ -665,6 +672,11 @@ class ConversationMemory:
                         removed += len(same)
         except Exception as e:
             print(f"  [MEMORY] delete failed (non-fatal): {e}")
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_count("forget", removed, store="conversation")
+        except Exception:
+            pass
         return removed
 
     def get_session(self, session_id, limit=500):

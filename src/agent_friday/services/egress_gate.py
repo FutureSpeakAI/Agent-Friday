@@ -987,6 +987,46 @@ def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> st
         return whole                      # unserialisable → keep the safe answer
 
 
+_RECALL_MARK = "<recalled-memory"      # services/memory_fence.TAG, as it opens a block
+_RECALL_END = "</recalled-memory"
+
+
+def _note_memory_withheld(texts, where: str) -> None:
+    """Count recalled-memory blocks this gate kept from a cloud call
+    (services/memory_metrics: counts only). Cheap, never raises."""
+    try:
+        n = sum(1 for t in texts if isinstance(t, str) and _RECALL_MARK in t)
+        if n:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_count("leakage_blocked", n, where=where)
+    except Exception:
+        pass
+
+
+def _note_memory_paras_withheld(paras, withheld_idx) -> None:
+    """The span pass: a recalled-memory block split over several paragraphs
+    counts once if any of its paragraphs was withheld. Never raises."""
+    try:
+        if not any(isinstance(p, str) and _RECALL_MARK in p for p in paras):
+            return
+        held = set(withheld_idx)
+        blocks, inside, block_hit = 0, False, False
+        for i, p in enumerate(paras):
+            p = p if isinstance(p, str) else ""
+            if _RECALL_MARK in p:
+                inside, block_hit = True, False
+            if inside and i in held:
+                block_hit = True
+            if inside and (_RECALL_END in p or i == len(paras) - 1):
+                blocks += 1 if block_hit else 0
+                inside = False
+        if blocks:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_count("leakage_blocked", blocks, where="span")
+    except Exception:
+        pass
+
+
 def _gate_text_span(text: str, provider: str, field: str,
                     log_path: Path | None = None) -> str:
     """Gate a single text string for a cloud provider.
@@ -1020,6 +1060,7 @@ def _gate_text_span(text: str, provider: str, field: str,
         _log(provider, field, Tier.SENSITIVE, "block",
              f"never-send material present ({len(_never)} token(s)) — payload blocked",
              log_path)
+        _note_memory_withheld([text], "never_send")
         raise NeverSendBlocked(
             f"This payload contains material on your never-send list "
             f"({len(_never)} match(es) in {field}), so I did not send it to "
@@ -1126,6 +1167,8 @@ def _gate_text_span(text: str, provider: str, field: str,
             for idx, _p, _t in appeals:
                 if gated[idx] == _placeholders.get(idx):
                     _note_held(_p, field, provider)
+            _note_memory_paras_withheld(paras, [idx for idx, _p, _t in appeals
+                                                if gated[idx] == _placeholders.get(idx)])
             # Either the split localized the signal (partial withholding), or
             # the whole-field signal came entirely from trusted self-authored
             # paragraphs. withheld == 0 with NO trusted paragraphs means the
@@ -1151,6 +1194,7 @@ def _gate_text_span(text: str, provider: str, field: str,
     # No silent holds: the whole field goes on the owner's card (cloud_release), exactly as the
     # cloud would have received it.
     _note_held(text, field, provider)
+    _note_memory_withheld([text], "field")
     if tier == Tier.SENSITIVE:
         _log(provider, field, tier, "drop", f"tier={Tier.NAMES[tier]}", log_path)
         return ""  # cloud gets nothing for SENSITIVE
@@ -1437,6 +1481,7 @@ def _gate_tool_prose(text: str, provider: str, field: str,
         _log(provider, field, Tier.SENSITIVE, "block",
              f"never-send material present ({len(_never)} token(s)) — payload blocked",
              log_path)
+        _note_memory_withheld([text], "never_send")
         raise NeverSendBlocked(
             f"This payload contains material on your never-send list "
             f"({len(_never)} match(es) in {field}), so I did not send it to "
