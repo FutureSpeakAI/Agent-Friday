@@ -299,13 +299,23 @@ def local_history(conversation_id, *, max_chars=6000):
     if not conversations.load(conversation_id):
         return []
     selected, used = [], 0
-    for msg in reversed(conversations.messages(conversation_id, limit=16)):
+    msgs = conversations.messages(conversation_id, limit=16)
+    # A turn forget-person took out reaches the model only as the placeholder
+    # the chat uses (conversation_fts.FORGOTTEN_NOTE); fails open.
+    try:
+        from agent_friday.services import conversation_fts as _fts
+        gone, note = _fts.forgotten_ids([m.get("id") for m in msgs if m.get("id")]), _fts.FORGOTTEN_NOTE
+    except Exception:
+        gone, note = set(), ""
+    for msg in reversed(msgs):
         role = msg.get("role")
         if role not in ("user", "friday", "assistant"):
             continue
         text = str(msg.get("text") or msg.get("content") or "").strip()
         if not text:
             continue
+        if gone and str(msg.get("id")) in gone:
+            text = note
         if used + len(text) > max_chars:
             # Keep the recent context contiguous. A huge recent exchange must
             # not be replaced by unrelated older exchanges that happen to fit.

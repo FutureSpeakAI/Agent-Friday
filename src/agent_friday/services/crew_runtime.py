@@ -179,14 +179,27 @@ def _history(cid, profile, project_id, *, with_sources=False):
     from agent_friday.services import conversations, crew_profiles
     history = []
     sources = {}
-    for msg in conversations.messages(cid, limit=40):
+    msgs = conversations.messages(cid, limit=40)
+    # A turn forget-person took out reaches a Crew member only as the
+    # placeholder the chat uses (conversation_fts.FORGOTTEN_NOTE); fails open.
+    try:
+        from agent_friday.services import conversation_fts as _fts
+        gone, note = _fts.forgotten_ids([m.get("id") for m in msgs if m.get("id")]), _fts.FORGOTTEN_NOTE
+    except Exception:
+        gone, note = set(), ""
+
+    def _said(msg):
+        if gone and str(msg.get("id")) in gone:
+            return note
+        return str(msg.get("text") or "")[:2000]
+    for msg in msgs:
         meta = msg.get("meta") or {}
         if meta.get("off_record") or meta.get("project_id") != project_id:
             continue
         if meta.get("kind") == "crew_request":
             # Direct requests are shared with the invited room at submission.
             if (meta.get("shared_with") or {}).get(profile["id"]) == profile["revision"]:
-                history.append("User: " + str(msg.get("text") or "")[:2000])
+                history.append("User: " + _said(msg))
         elif meta.get("kind") in ("crew_result", "crew_speech"):
             if (meta.get("shared_with") or {}).get(profile["id"]) != profile["revision"]:
                 continue
@@ -205,8 +218,7 @@ def _history(cid, profile, project_id, *, with_sources=False):
                         raise ValueError("Shared source changed")
             except (UserFacingError, ValueError, KeyError, OSError):
                 continue
-            history.append(str(meta.get("speaker_name") or "Agent") + ": "
-                           + str(msg.get("text") or "")[:2000])
+            history.append(str(meta.get("speaker_name") or "Agent") + ": " + _said(msg))
             if source and source["id"] != profile["id"]:
                 sources[source["id"]] = source["revision"]
             sources.update(ancestry)
