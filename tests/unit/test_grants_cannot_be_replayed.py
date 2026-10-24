@@ -26,6 +26,7 @@ from agent_friday.governance import action_gate as gate
 def grants_file(tmp_path, monkeypatch):
     f = tmp_path / "grants.json"
     monkeypatch.setattr(gate, "_grants_file", lambda: f)
+    monkeypatch.setattr(gate, "_gov_dir", lambda: tmp_path)
     return f
 
 
@@ -95,10 +96,30 @@ def test_a_use_that_cannot_be_recorded_does_not_happen(grants_file, monkeypatch)
     assert _use(g) is None, "a use ran with no record of it"
     monkeypatch.undo()
     monkeypatch.setattr(gate, "_grants_file", lambda: grants_file)
+    monkeypatch.setattr(gate, "_gov_dir", lambda: grants_file.parent)
     assert _use(g), "the unrecorded attempt spent the grant"
 
 
+def test_a_revocation_is_recorded_even_when_the_list_had_lost_the_grant(grants_file):
+    g = _grant(uses=3)
+    before = grants_file.read_bytes()
+    grants_file.write_text("[]", encoding="utf-8")         # the list lost it
+    gate.revoke_grant(g["grant_id"])
+    grants_file.write_bytes(before)                          # and it is put back
+    assert _use(g) is None
+
+
+def test_no_grant_is_spent_while_outward_actions_are_held(grants_file, monkeypatch):
+    g = _grant(uses=3)
+    monkeypatch.setattr(gate, "outward_hold", lambda: "the action ledger was changed on disk")
+    assert gate.consume_grant("send_email", g["scope"]) is None
+
+
 def test_grants_from_before_signing_are_signed_once_then_unsigned_ones_are_refused(tmp_path, monkeypatch):
+    # A data folder of its own: the one-time signing is recorded in ITS action ledger.
+    from agent_friday.services import action_ledger
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "home"))
+    action_ledger.reset_caches()
     gov = tmp_path / "gov"
     gov.mkdir()
     f = gov / "grants.json"
@@ -114,7 +135,12 @@ def test_grants_from_before_signing_are_signed_once_then_unsigned_ones_are_refus
     rows.append(dict(old, grant_id="grant_legacy02", scope="job_late"))
     rows[-1].pop("sig", None)
     f.write_text(json.dumps(rows), encoding="utf-8")
+    # Deleting the marker file does not get it signed: the one-time signing is in the ledger.
+    for m in gov.glob("grants.signed*"):
+        m.unlink()
     assert gate.consume_grant("send_email", "job_late") is None, "an unsigned grant added later was honoured"
+    monkeypatch.undo()
+    action_ledger.reset_caches()
 
 
 # ── approval cards: decided once, carried out once ───────────────────────────
