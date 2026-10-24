@@ -603,13 +603,14 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
         texts = [_open(t) for (t,) in conn.execute(
             f"SELECT text FROM proposed_facts WHERE fact_id IN ({marks}) AND status='pending'",
             ids).fetchall()]
+        unmarked = 0
         try:
             from agent_friday.services import tombstones
             for t in texts:
-                if (t or "").strip():
-                    tombstones.add("proposal", t)
+                if (t or "").strip() and not tombstones.add("proposal", t).get("ok"):
+                    unmarked += 1
         except Exception:                                   # noqa: BLE001
-            pass
+            unmarked = len([t for t in texts if (t or "").strip()])
         cur = conn.execute(
             f"UPDATE proposed_facts SET status='rejected', decided_ts=? "
             f"WHERE fact_id IN ({marks}) AND status='pending'",
@@ -617,7 +618,13 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
         conn.execute(f"UPDATE proposed_facts SET text='', evidence='' WHERE fact_id IN ({marks}) "
                      f"AND status='rejected' AND provenance IS NOT NULL AND provenance != ''", ids)   # a decided meeting suggestion keeps no text
         conn.commit()
-        return {"ok": True, "rejected": cur.rowcount}
+        out: Dict[str, Any] = {"ok": True, "rejected": cur.rowcount}
+        if unmarked:
+            out.update(tombstoned=False,
+                       warning=("%d rejected suggestion%s could not be recorded as refused; a later run "
+                                "may suggest %s again" % (unmarked, "" if unmarked == 1 else "s",
+                                                          "it" if unmarked == 1 else "them")))
+        return out
     finally:
         conn.close()
 

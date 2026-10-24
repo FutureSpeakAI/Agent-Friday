@@ -388,7 +388,8 @@ def test_the_list_holds_no_text_and_normalisation_still_matches(home):
              "proposal": "The user is seeing Dr. Ellery on Tuesdays.",
              "kg_entity": "Ellery Clinic"}
     for kind, text in texts.items():
-        assert tombstones.add(kind, text)["ok"]
+        ident = {"type": "organization", "title": text} if kind == "kg_entity" else text
+        assert tombstones.add(kind, ident)["ok"]
     raw = (home / "tombstones.json").read_bytes()
     for text in texts.values():
         for form in (text, text.lower(), _norm(text)):
@@ -404,7 +405,8 @@ def test_the_list_holds_no_text_and_normalisation_still_matches(home):
     assert tombstones.is_tombstoned("card_line", "Allergic\u200b to penicillin since 2009")
     # ... a different statement, or the same text as another kind, is not it.
     assert not tombstones.is_tombstoned("card_line", "Allergic to penicillin since 2010.")
-    assert not tombstones.is_tombstoned("kg_entity", texts["card_line"])
+    assert not tombstones.is_tombstoned("kg_entity", {"type": "organization", "title": texts["card_line"]})
+    assert tombstones.is_tombstoned("kg_entity", {"type": "organization", "title": "ELLERY-CLINIC"})
     assert tombstones.is_tombstoned(tombstones.STATEMENT_KINDS, texts["user_fact"])
 
     listed = json.dumps(tombstones.list())
@@ -423,4 +425,195 @@ def test_an_unreadable_list_never_breaks_a_caller_and_is_not_overwritten(home):
     r = tombstones.add("card_line", "Grows tomatoes.")
     assert not r["ok"]
     assert (home / "tombstones.json").read_text(encoding="utf-8") == "{not json"
-    assert cm.owner_delete("user", 0)["ok"]                                    # the delete still runs
+    gone = cm.owner_delete("user", 0)                                          # the delete still runs ...
+    assert gone["ok"] and gone["tombstoned"] is False and gone["warning"]     # ... and says it is not held back
+
+
+# ── review fixes: what a graph tombstone names ───────────────────────────────
+def _kg_store(home, ents, reports=()):
+    from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
+    store = KnowledgeGraphStore(base_dir=home / "kg")
+    store.save("entities", [dict(e, provenance={"sensitivity": 1}) for e in ents])
+    if reports:
+        store.save("community_reports", [dict(r) for r in reports])
+    return store
+
+
+def test_c_and_c_plus_plus_are_different_entities(home):
+    from agent_friday.services.knowledge_graph import integration
+    langs = [("e-c", "C"), ("e-cpp", "C++"), ("e-cs", "C#"), ("e-net", ".NET")]
+    ents = [{"id": i, "title": t, "type": "tool"} for i, t in langs]
+    store = _kg_store(home, ents)
+    r = integration.owner_delete_entity("e-c", store=store)
+    assert r["ok"] and r["entities"] == 1
+    assert r["deleted"] == [{"id": "e-c", "title": "C", "type": "tool"}]
+    assert {e["title"] for e in store.load("entities")} == {"C++", "C#", ".NET"}
+    # A rebuild that writes every one of them again: only C is left out, and
+    # the save says so as a count by kind (no title, no id).
+    saved = store.save("entities", [dict(e, provenance={"sensitivity": 1}) for e in ents])
+    assert saved["tombstoned"] == {"tool": 1}
+    assert {e["title"] for e in store.load("entities")} == {"C++", "C#", ".NET"}
+
+
+def test_deleting_the_person_mercury_keeps_the_page_mercury(home):
+    from agent_friday.services.knowledge_graph import integration
+    store = _kg_store(home, [{"id": "p-1", "title": "Mercury", "type": "person"},
+                             {"id": "p-2", "title": "MERCURY", "type": "person"},    # the same thing twice
+                             {"id": "pg-1", "title": "Mercury", "type": "page"},
+                             {"id": "o-1", "title": "Venus", "type": "person"}])
+    r = integration.owner_delete_entity("p-1", store=store)
+    assert r["ok"] and sorted(d["id"] for d in r["deleted"]) == ["p-1", "p-2"]
+    left = {(e["type"], e["title"]) for e in store.load("entities")}
+    assert left == {("page", "Mercury"), ("person", "Venus")}
+    from agent_friday.services import tombstones
+    assert tombstones.is_tombstoned("kg_entity", {"type": "person", "title": "mercury"})
+    assert not tombstones.is_tombstoned("kg_entity", {"type": "page", "title": "Mercury"})
+    # The owner's undo, by what the delete returned.
+    assert integration.owner_restore_entity("Mercury", type="person")["removed"] == 1
+
+
+def test_two_facts_that_open_with_the_same_eight_words_are_two_facts(home, monkeypatch):
+    from agent_friday.services.knowledge_graph import integration
+    from agent_friday.services.knowledge_graph import store as kg_store
+    monkeypatch.setattr(kg_store, "KG_DIR", home / "kg")
+    monkeypatch.setattr(integration, "kg_settings", lambda: {"enabled": True})
+    one = "The user keeps the spare house key under the blue flowerpot by the door."
+    two = "The user keeps the spare house key under the mat at the back."
+    assert one.split()[:8] == two.split()[:8]
+    f1 = integration.ingest_fact(one, source_kind="conversation", source_key="proposed:x", sensitivity=1)
+    f2 = integration.ingest_fact(two, source_kind="conversation", source_key="proposed:x", sensitivity=1)
+    assert f1 and f2 and f1 != f2
+    store = kg_store.KnowledgeGraphStore()
+
+    r = integration.owner_delete_entity(f1, store=store)
+    assert r["ok"] and [d["id"] for d in r["deleted"]] == [f1]
+    ids = {e["id"] for e in store.load("entities")}
+    assert f1 not in ids and f2 in ids, "the other owner-approved fact was dropped"
+    # A live fact cannot ignite the deleted one again; the other still saves.
+    assert integration.ingest_fact(one, source_kind="conversation", source_key="dream:x", sensitivity=1) is None
+    assert integration.ingest_fact(two, source_kind="conversation", source_key="dream:x", sensitivity=1) == f2
+    saved = store.save("entities", store.load("entities"))
+    assert "tombstoned" not in saved and f2 in {e["id"] for e in store.load("entities")}
+    assert integration.owner_restore_entity(node_id=f1)["removed"] == 1
+
+
+def test_deleting_an_entity_scrubs_its_title_from_the_community_reports(home):
+    from agent_friday.services.knowledge_graph import integration
+    reports = [{"community": "c1", "title": "Atlas work",
+                "summary": "Project Atlas is led by Bob Hale; the project atlas team ships weekly.",
+                "findings": [{"explanation": "Bob Hale reviews Project Atlas releases."}]},
+               {"community": "c2", "title": "Garden", "summary": "Tomatoes and bees."}]
+    store = _kg_store(home, [{"id": "a", "title": "Project Atlas", "type": "project"},
+                             {"id": "b", "title": "Bob Hale", "type": "person"}], reports)
+    r = integration.owner_delete_entity("a", store=store)
+    assert r["ok"] and r["reports_scrubbed"] == 1
+    said = json.dumps(store.load("community_reports"))
+    assert "project atlas" not in said.lower()
+    assert "Bob Hale" in said and "Tomatoes and bees." in said, "the rest of the cluster was lost"
+
+
+# ── review fixes: a missing key ──────────────────────────────────────────────
+def test_a_missing_key_beside_existing_tombstones_is_not_silently_replaced(home):
+    from agent_friday.services import tombstones
+    assert tombstones.add("card_line", "Keeps bees.")["ok"]
+    (home / "tombstones.key").unlink()
+    tombstones._reset_for_tests()
+    r = tombstones.add("card_line", "Grows tomatoes.")
+    assert not r["ok"] and r.get("key_missing")
+    assert not (home / "tombstones.key").exists(), "a new key was made beside entries it cannot match"
+    assert len(json.loads((home / "tombstones.json").read_text(encoding="utf-8"))["entries"]) == 1
+    listed = tombstones.list()
+    assert listed["key"] == "missing" and "missing" in listed["problem"]
+    assert "bees" not in json.dumps(listed).lower()
+
+
+def test_a_key_is_made_for_an_empty_list(home):
+    from agent_friday.services import tombstones
+    assert not (home / "tombstones.key").exists()
+    assert tombstones.add("card_line", "Keeps bees.")["ok"]
+    assert (home / "tombstones.key").exists()
+    assert tombstones.list()["key"] == "ok"
+
+
+# ── review fixes: the owner restating a deleted statement ────────────────────
+def test_the_owner_restating_a_deleted_household_line_reaches_the_review_queue_flagged(home, monkeypatch):
+    from agent_friday.services import core_memory as cm
+    from agent_friday.services import core_memory_tools as cmt
+    from agent_friday.services import taint
+    monkeypatch.setattr(cmt, "_active_profile", lambda: "owner")
+    monkeypatch.setattr(cmt, "_minor_profile", lambda p: False)
+    monkeypatch.setattr(taint, "ledger_key", lambda ctx: "conv-t")
+    monkeypatch.setattr(taint, "read_source_of", lambda key, sent: "")
+    said = "I am 52, my husband is 50, our son is 9. Please make a note of that."
+    ctx = {"owner_surface": True, "conversation_id": "conv-t"}
+    assert cmt.capture_household(said, ctx)["status"] == "saved"
+    assert cm.owner_delete("user", 0)["ok"]
+
+    # Words that are not the owner's own statement stay out, silently as before.
+    assert cmt.capture_household(said, {"conversation_id": "conv-t"})["status"] == "none"
+    assert cm.pending() == []
+    # The owner says it again in their own words: not saved by Friday, but
+    # waiting for their OK, flagged.
+    out = cmt.capture_household(said, ctx)
+    assert out["status"] == "queued"
+    assert cm.entries("user") == []
+    [row] = cm.pending()
+    assert row.get("deleted_before") is True and row["reason"].startswith("You deleted this before.")
+
+
+def test_a_rejected_proposal_blocks_a_proposal_but_not_the_owner_saying_it(home):
+    from agent_friday.services import core_memory as cm
+    from agent_friday.services import memory_proposals as mp
+    assert _propose(DAY, "The user is training for a marathon.")["stored"] == 1
+    assert mp.reject([mp.pending()[0]["fact_id"]])["rejected"] == 1
+    assert _propose(DAY2, "The user is training for a marathon!")["stored"] == 0
+    assert cm.queue("user", "add", text="The user is training for a marathon.",
+                    source="dream:%s" % DAY2).get("tombstoned")
+    r = cm.queue("user", "add", text="The user is training for a marathon.", source="friday",
+                 reason="The user said so.", restated=True)
+    assert r["ok"] and r.get("deleted_before")
+    assert [_norm(p["text"]) for p in cm.pending() if p.get("deleted_before")] == \
+        ["the user is training for a marathon"]
+
+
+# ── review fixes: discarding a queued suggestion ─────────────────────────────
+def test_a_discarded_card_suggestion_is_not_suggested_again(home):
+    from agent_friday.services import core_memory as cm
+    from agent_friday.services import memory_dreaming as md
+    assert md.dream(DAY, memory=_Turns(["I always run on Sundays."]))["ok"]
+    [row] = [r for r in cm.pending() if _norm(r.get("text")) == "i always run on sundays"]
+    d = cm.decide(row["id"], False)
+    assert d["ok"] and d["decided"] == "discarded" and "tombstoned" not in d
+    assert all(r["id"] != row["id"] for r in cm.pending())
+    assert md.dream(DAY2, memory=_Turns(["I always run on Sundays!"], day=DAY2))["ok"]
+    assert all(_norm(r.get("text")) != "i always run on sundays" for r in cm.pending()), \
+        "the nightly pass suggested the line the owner discarded again"
+    # The owner may still put it on the card themselves.
+    assert cm.add("user", "I always run on Sundays.", actor="owner")["ok"]
+
+
+# ── review fixes: a tombstone that cannot be written is said so ──────────────
+def test_every_owner_delete_says_when_its_tombstone_could_not_be_written(home):
+    from agent_friday.services import core_memory as cm
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    from agent_friday.services import user_model as um
+    from agent_friday.services.knowledge_graph import integration
+    assert cm.add("user", "Keeps bees.", actor="owner")["ok"]
+    assert cm.add("user", "Likes jazz.", actor="owner")["ok"]
+    fid = um.note_fact("preference", "Takes the 7:40 train to work.", source="manual")["fact_id"]
+    assert _propose(DAY, "The user commits one build at a time.")["stored"] == 1
+    pid = mp.pending()[0]["fact_id"]
+    store = _kg_store(home, [{"id": "a", "title": "Project Atlas", "type": "project"}])
+
+    (home / "tombstones.json").write_text("{not json", encoding="utf-8")       # no tombstone can be written
+    tombstones._reset_for_tests()
+
+    for r in (cm.remove("user", "Keeps bees", actor="owner"),
+              cm.replace("user", "Likes jazz", "Likes blues.", actor="owner"),
+              um.forget_fact(fid),
+              mp.reject([pid])):
+        assert r["ok"] and r["tombstoned"] is False and r["warning"], r
+    kg = integration.owner_delete_entity("a", store=store)
+    assert not kg["ok"] and kg["tombstoned"] is False and kg["warning"]
+    assert [e["id"] for e in store.load("entities")] == ["a"], "deleted with nothing to stop the rebuild"

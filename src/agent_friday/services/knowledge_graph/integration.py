@@ -103,11 +103,14 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
     text = (text or "").strip()
     if len(text) < 12 or not kg_settings().get("enabled", True):
         return None
-    # An entity the owner deleted from the graph is not ignited again
-    # (services/tombstones, NS-30.20-1; the store refuses it as well).
+    # A fact node the owner deleted from the graph is not ignited again
+    # (services/tombstones, NS-30.20-1; the store refuses it as well). It is
+    # named by its fact id, a hash of the WHOLE text: another fact that only
+    # opens with the same words is a different fact and is not held back.
+    eid = "fact_" + hashlib.sha1(text.lower().encode()).hexdigest()[:12]
     try:
         from agent_friday.services import tombstones as _tomb
-        if _tomb.is_tombstoned("kg_entity", " ".join(text.split()[:8])):
+        if _tomb.is_tombstoned("kg_entity", {"id": eid}):
             return None
     except Exception:
         pass
@@ -129,7 +132,6 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
 
     from .store import KnowledgeGraphStore
     store = KnowledgeGraphStore()
-    eid = "fact_" + hashlib.sha1(text.lower().encode()).hexdigest()[:12]
     entities = store.load("entities")
     if any(e["id"] == eid for e in entities):
         return eid
@@ -202,12 +204,21 @@ def owner_delete_entity(node_id: str, store=None) -> dict:
 
     The graph is derived: removing the record alone is undone by the next
     Tier A/Tier B pass, which re-reads the same pages and turns. So, as
-    forget-person does, the tombstone is written FIRST (a keyed hash of the
-    entity's normalised title, never the title: services/tombstones), then the
-    entity, every entity with the same normalised title, and their edges and
-    community memberships go. Every rebuild path (wiki_graph, indexer, a live
-    fact, the store itself) skips a tombstoned title. The pages and turns it
+    forget-person does, the tombstone is written FIRST (a keyed hash of what
+    the entity IS, never its title: its type and title, or a fact node's own
+    fact id; services/tombstones.entity_ident), then that entity, any
+    duplicate of exactly the same thing (same type and title), and their edges
+    and community memberships go, and the community reports lose its title
+    (whole words, forget-person's prose scrub). Nothing else is touched: a
+    page "Mercury" stays when the person "Mercury" goes, and so does every
+    other fact that opens with the same words. Every rebuild path (wiki_graph,
+    indexer, a live fact, the store itself) skips it. The pages and turns it
     came from are the owner's own and are untouched. Never raises.
+
+    Returns {"ok", "deleted": [{"id", "title", "type"}], "entities",
+    "relationships", "reports_scrubbed", "tombstoned"}; when the tombstone
+    cannot be written nothing is deleted (it would only come back) and the
+    result says so ("tombstoned": False, "warning").
     """
     try:
         from .store import KnowledgeGraphStore
@@ -217,14 +228,17 @@ def owner_delete_entity(node_id: str, store=None) -> dict:
         node = next((e for e in entities if e.get("id") == str(node_id)), None)
         if node is None:
             return {"ok": False, "error": "no such entity"}
-        title = str(node.get("title") or "")
-        t = tombstones.add("kg_entity", title)
+        ident = tombstones.entity_ident(node)
+        t = tombstones.add("kg_entity", node)
         if not t.get("ok"):
-            return {"ok": False, "error": "not deleted: %s" % t.get("error")}
-        kept, _n = tombstones.filter_entities(entities)
-        kept = [e for e in kept if e.get("id") != str(node_id)]
-        keep_ids = {e.get("id") for e in kept}
-        gone = {e.get("id") for e in entities} - keep_ids
+            return {"ok": False, "tombstoned": False,
+                    "warning": ("the deletion could not be recorded, so the next rebuild would make this "
+                                "entity again; nothing was deleted"),
+                    "error": "not deleted: %s" % t.get("error")}
+        doomed = [e for e in entities if e.get("id") == str(node_id)
+                  or (ident and tombstones.entity_ident(e) == ident)]
+        gone = {e.get("id") for e in doomed}
+        kept = [e for e in entities if e.get("id") not in gone]
         r1 = store.save("entities", kept)
         rels = store.load("relationships")
         rels_kept = [r for r in rels if r.get("source") not in gone and r.get("target") not in gone]
@@ -239,14 +253,33 @@ def owner_delete_entity(node_id: str, store=None) -> dict:
                 changed = True
         if changed:
             store.save("communities", [c for c in comms if c.get("size", 1)])
-        refused = [r.get("refused") for r in (r1, r2) if isinstance(r, dict) and r.get("refused")]
+        # Community reports are LLM prose: the title is in the sentence, so
+        # it is scrubbed (whole words, forget-person's rule) and the cluster
+        # is kept. A fact node's title is a sentence prefix, not a name: skipped.
+        r3, scrubbed_n = {}, 0
+        titles = sorted({str(e.get("title") or "").strip() for e in doomed
+                         if not str(e.get("id") or "").startswith("fact_")} - {""})
+        if titles:
+            try:
+                from agent_friday.services.forget_person import _scrub_name_from_text
+                reports = store.load("community_reports")
+                if reports:
+                    scrubbed = _scrub_name_from_text(reports, titles)
+                    if scrubbed != reports:
+                        scrubbed_n = sum(1 for a, b in zip(reports, scrubbed) if a != b)
+                        r3 = store.save("community_reports", scrubbed)
+            except Exception as e:
+                r3 = {"refused": "the community reports could not be scrubbed (%s)" % type(e).__name__}
+        refused = [r.get("refused") for r in (r1, r2, r3) if isinstance(r, dict) and r.get("refused")]
         try:
             from agent_friday.routes.knowledge_graph import emit_kg_event
             emit_kg_event("node_removed", {"ids": sorted(gone), "ts": time.time()})
         except Exception:
             pass
         out = {"ok": not refused, "entities": len(gone), "relationships": len(rels) - len(rels_kept),
-               "tombstoned": True}
+               "reports_scrubbed": scrubbed_n, "tombstoned": True,
+               "deleted": [{"id": e.get("id"), "title": e.get("title"), "type": e.get("type")}
+                           for e in doomed]}
         if refused:
             out["error"] = ("the deletion is recorded and every rebuild skips it, but the graph file "
                             "could not be written now (%s)" % refused[0])
@@ -255,12 +288,30 @@ def owner_delete_entity(node_id: str, store=None) -> dict:
         return {"ok": False, "error": "not deleted (%s)" % type(e).__name__}
 
 
-def owner_restore_entity(title: str) -> dict:
+def owner_restore_entity(title: str = "", type: Optional[str] = None,
+                         node_id: Optional[str] = None) -> dict:
     """The owner's undo: lift the tombstone; the next rebuild derives the
-    entity again from its sources (nothing deleted is restored here)."""
+    entity again from its sources (nothing deleted is restored here).
+
+    An entity is named as its delete named it: a fact node by its id, any
+    other by type and title (the delete's "deleted" list carries both). With
+    a title alone, the usual entity types are tried."""
     from agent_friday.services import tombstones
-    r = tombstones.remove("kg_entity", title)
-    if r.get("ok") and r.get("removed"):
+    nid = str(node_id or "").strip()
+    if nid.startswith("fact_"):
+        candidates = [{"id": nid}]
+    elif type:
+        candidates = [{"type": type, "title": title}]
+    else:
+        candidates = [{"type": t, "title": title} for t in tombstones.RESTORE_TYPES]
+    removed, r = 0, {"ok": True, "kind": "kg_entity", "removed": 0}
+    for c in candidates:
+        r = tombstones.remove("kg_entity", c)
+        if not r.get("ok"):
+            return r
+        removed += int(r.get("removed") or 0)
+    r = {**r, "removed": removed}
+    if removed:
         try:
             mark_wiki_dirty("entity restored")
         except Exception:

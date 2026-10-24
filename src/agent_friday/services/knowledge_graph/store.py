@@ -188,7 +188,9 @@ class KnowledgeGraphStore:
 
         Returns {"public": n, "sensitive": n, "dropped": n}, plus
         ``"refused": reason`` (and nothing written) when the existing sealed
-        file must not be replaced; see ``_guard_sealed``.
+        file must not be replaced; see ``_guard_sealed``. For entities,
+        ``"tombstoned": {kind: n}`` counts records left out because the owner
+        deleted them (services/tombstones).
         """
         if name not in ARTIFACT_NAMES:
             raise ValueError(f"unknown artifact: {name!r}")
@@ -198,11 +200,23 @@ class KnowledgeGraphStore:
             # NS-30.20-1): whichever pass built these records (Tier A, Tier B,
             # a live fact), an entity the owner deleted is not written back.
             # The passes drop them earlier too, so their edges go with them.
+            # Matched on what the entity IS (type and title; a fact node by its
+            # own fact id), so an owner-approved fact is dropped only when that
+            # exact fact was deleted. What is dropped is logged and reported
+            # as counts by kind, never content.
             try:
                 from agent_friday.services import tombstones as _tomb
-                records, _gone = _tomb.filter_entities(records)
+                records, tomb_dropped = _tomb.filter_entities_detail(records)
             except Exception:
-                pass
+                tomb_dropped = {}
+            if tomb_dropped:
+                import logging
+                logging.getLogger("friday.knowledge_graph").info(
+                    "knowledge graph: %d deleted entit%s left out of the save (%s)",
+                    sum(tomb_dropped.values()), "y" if sum(tomb_dropped.values()) == 1 else "ies",
+                    ", ".join("%s=%d" % kv for kv in sorted(tomb_dropped.items())))
+        else:
+            tomb_dropped = {}
 
         public, sensitive = [], []
         for rec in records:
@@ -230,7 +244,8 @@ class KnowledgeGraphStore:
             logging.getLogger("friday.knowledge_graph").error(
                 "knowledge graph: save of %s refused (%s); nothing was written",
                 name, verdict)
-            return {"public": 0, "sensitive": 0, "dropped": 0, "refused": verdict}
+            return {"public": 0, "sensitive": 0, "dropped": 0, "refused": verdict,
+                    **({"tombstoned": tomb_dropped} if tomb_dropped else {})}
 
         self._atomic_write(self._plain_path(name),
                            json.dumps(public, ensure_ascii=False, indent=1).encode("utf-8"))
@@ -251,8 +266,13 @@ class KnowledgeGraphStore:
         elif spath.exists():
             spath.unlink()
 
-        return {"public": len(public), "sensitive": len(sensitive) - dropped,
-                "dropped": dropped}
+        out = {"public": len(public), "sensitive": len(sensitive) - dropped,
+               "dropped": dropped}
+        if tomb_dropped:
+            # Entities left out because the owner deleted them: counts by
+            # kind (entity type, or "fact"), never a title or an id.
+            out["tombstoned"] = dict(tomb_dropped)
+        return out
 
     def load(self, name: str) -> list[dict]:
         """Load one artifact, transparently merging the encrypted sibling."""

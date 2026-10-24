@@ -10,7 +10,7 @@ Agent Friday — Knowledge Graph API (docs/design/implemented/knowledge-system-s
   GET   /api/knowledge-graph/search?q=        fast entity/title search
   GET   /api/knowledge-graph/events           SSE: node ignited / reindexed
   POST  /api/knowledge-graph/entity/delete    {id} the owner deletes an entity (tombstoned)
-  POST  /api/knowledge-graph/entity/restore   {title} lift that tombstone
+  POST  /api/knowledge-graph/entity/restore   {title, type?} or {id} lift that tombstone
 
 Live events use SSE (the established one-way push pattern in this app, e.g.
 /api/logs/stream) rather than a WebSocket — the event flow is strictly
@@ -200,12 +200,16 @@ def kg_entity_delete():
 @knowledge_graph_bp.route("/api/knowledge-graph/entity/restore", methods=["POST"])
 @login_required
 def kg_entity_restore():
-    """The owner's undo {title}: the next rebuild may derive it again."""
+    """The owner's undo {title, type?} (or {id} for a fact node), as the
+    delete's "deleted" list named it: the next rebuild may derive it again."""
     from agent_friday.services.knowledge_graph.integration import owner_restore_entity
-    title = str((request.get_json(silent=True) or {}).get("title") or "").strip()
-    if not title:
+    data = request.get_json(silent=True) or {}
+    title = str(data.get("title") or "").strip()
+    node_id = str(data.get("id") or "").strip()
+    etype = str(data.get("type") or "").strip() or None
+    if not title and not node_id.startswith("fact_"):
         return jsonify({"ok": False, "error": "title required"}), 400
-    return jsonify(owner_restore_entity(title))
+    return jsonify(owner_restore_entity(title, type=etype, node_id=node_id or None))
 
 
 @knowledge_graph_bp.route("/api/knowledge-graph/neighbors/<path:node_id>",

@@ -483,13 +483,18 @@ def forget_fact(fact_id: str, *, source: Optional[str] = None,
             conn.close()
         except Exception as e:
             return {"ok": False, "error": exception_text(e)}
+    out: Dict[str, Any] = {"ok": n > 0, "deleted": n}
     if n > 0 and tombstone and row and row[0]:
         try:
             from agent_friday.services import tombstones as _tomb
-            _tomb.add("user_fact", str(row[0]))
+            marked = bool(_tomb.add("user_fact", str(row[0])).get("ok"))
         except Exception:
-            pass
-    return {"ok": n > 0, "deleted": n}
+            marked = False
+        if not marked:
+            out.update(tombstoned=False,
+                       warning=("the fact is deleted, but the record that stops Friday storing it "
+                                "again could not be saved; a later pass may learn it again"))
+    return out
 
 
 def forget(category: Optional[str] = None) -> Dict[str, Any]:

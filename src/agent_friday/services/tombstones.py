@@ -34,6 +34,13 @@ and four new kinds live in ``tombstones.json`` beside them:
   user_fact          an approved/stored fact the owner deleted (user_model)
   proposal           a proposed fact the owner rejected (memory_proposals)
 
+A graph entity is named by WHAT it is, not by its title alone
+(``entity_ident``): its type and its title ("person Mercury" and "page
+Mercury" are two things), and a learned fact node (``fact_<hash>``) by its
+fact id, which is a hash of the fact's whole text (never an 8-word prefix:
+two facts that open the same way are two facts). A short title keeps ``+``,
+``#`` and ``.`` (``normalise_title``), so C, C++, C# and .NET stay distinct.
+
 MINIMAL PII
 -----------
 The new kinds never store the text. Each entry is ``{kind, h, day}``: ``h`` is
@@ -41,7 +48,9 @@ HMAC-SHA256 over the kind and the NORMALISED text (NFKC, invisible format
 characters dropped, case-folded, punctuation turned to spaces, whitespace
 collapsed, a leading bullet dropped), under a 32-byte random key made once per
 install (``tombstones.key``, beside the list, owner-only permissions where the
-OS honours them). ``day`` is a date, not a timestamp. So the list says how many
+OS honours them: on Windows the 0o600 mode has no effect, and the key is
+protected by the permissions of the user-profile folder Friday's home lives
+in). ``day`` is a date, not a timestamp. So the list says how many
 things of which kind were deleted on which day, and can answer "is THIS text
 tombstoned?", but cannot be read back into the text, and a short phrase cannot
 be confirmed by hashing guesses without the key.
@@ -50,7 +59,10 @@ The key is this module's own, not the governance key: that one may live in the
 OS keychain (a test run or a practice task must never touch it) and rotating
 it on a governance reset would silently unhook every tombstone. A key that
 exists but cannot be read is never replaced (that would orphan every entry);
-writes then fail with a reason and checks fail open (see below).
+writes then fail with a reason and checks fail open (see below). Nor is a
+MISSING key made again while hashed entries exist (they would all be
+orphaned, silently): a key is only ever created for an empty list, ``add``
+refuses with a reason and ``list()`` reports the problem.
 
 FAIL OPEN, NEVER RAISE
 ----------------------
@@ -196,6 +208,59 @@ def normalise(ident: Any) -> str:
     return " ".join(s.split())
 
 
+#: A title this long or shorter keeps + # . (C++, C#, .NET); a longer one is
+#: normalised like any statement.
+SHORT_TITLE = 32
+
+#: Entity types tried when the owner restores by title alone (the route
+#: should send the type the delete returned).
+RESTORE_TYPES = ("page", "soul", "document", "person", "organization", "project",
+                 "tool", "concept", "event", "place")
+
+
+def normalise_title(title: Any) -> str:
+    """The comparable form of a graph entity's title. Like `normalise`, but a
+    short title keeps ``+``, ``#`` and ``.`` (trailing dots dropped), so "C",
+    "C++", "C#" and ".NET" stay four things while "Project-Atlas" and
+    "PROJECT ATLAS" stay one."""
+    s = unicodedata.normalize("NFKC", str(title or ""))
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Cf").casefold().strip()
+    if len(s) > SHORT_TITLE:
+        return normalise(s)
+    s = re.sub(r"[^\w+#.]+|_+", " ", s)
+    return " ".join((t.rstrip(".") or t) for t in s.split())
+
+
+def entity_ident(entity: Any) -> str:
+    """What a graph entity IS, as the text its kg_entity tombstone hashes.
+    A learned fact node ("fact_<hash of its whole text>") is its fact id;
+    any other entity is its type and its title. "" when it names nothing."""
+    e = entity if isinstance(entity, dict) else {}
+    eid = str(e.get("id") or "").strip()
+    if eid.startswith("fact_"):
+        return "fact\x1f" + eid.casefold()
+    title = normalise_title(e.get("title"))
+    if not title:
+        return ""
+    return (normalise(e.get("type")) or "entity") + "\x1f" + title
+
+
+def entity_kind(entity: Any) -> str:
+    """The bucket a dropped entity is counted under (never its content)."""
+    e = entity if isinstance(entity, dict) else {}
+    if str(e.get("id") or "").startswith("fact_"):
+        return "fact"
+    return normalise(e.get("type")) or "entity"
+
+
+def _ident(kind: str, ident: Any) -> str:
+    """The text `kind`'s hash is taken over. A kg_entity is named by a record
+    ({id, type, title}: `entity_ident`); a bare string names no entity."""
+    if kind == "kg_entity":
+        return entity_ident(ident) if isinstance(ident, dict) else ""
+    return normalise(ident)
+
+
 def _digest(key: bytes, kind: str, norm: str) -> str:
     return hmac.new(key, ("%s\0%s" % (kind, norm)).encode("utf-8"), hashlib.sha256).hexdigest()[:32]
 
@@ -287,12 +352,21 @@ def add(kind: str, ident: Any) -> Dict[str, Any]:
             from agent_friday.services import conversation_fts as _fts
             _fts._add_durable([mid])
             return {"ok": True, "kind": kind, "added": True}
-        norm = normalise(ident)
+        norm = _ident(kind, ident)
         if not norm:
-            return {"ok": False, "error": "nothing to tombstone"}
+            return {"ok": False, "error": ("an entity is named by its record {id, type, title}"
+                                           if kind == "kg_entity" else "nothing to tombstone")}
         with _LOCK:
             entries = _read(strict=True)
-            key = _key(create=True)
+            # A key is only ever made for an empty list: a new key beside
+            # existing entries would orphan every one of them, silently.
+            key = _key(create=not entries)
+            if key is None and entries and not _key_path().exists():
+                _log.warning("tombstones: the key is missing while %d tombstones exist; no new key is "
+                             "made (it would orphan them) and nothing was recorded", len(entries))
+                return {"ok": False, "key_missing": True,
+                        "error": ("the tombstone key is missing while %d tombstones exist; a new key "
+                                  "would orphan them, so nothing was recorded" % len(entries))}
             if key is None:
                 return {"ok": False, "error": "the tombstone key is not available; nothing was recorded"}
             h = _digest(key, kind, norm)
@@ -319,7 +393,7 @@ def tombstoned_as(kind: KindArg, ident: Any) -> Optional[str]:
                 if not _hashes(k):
                     continue
                 key = _key(create=False)
-                norm = normalise(ident)
+                norm = _ident(k, ident)
                 if key is not None and norm and _digest(key, k, norm) in _hashes(k):
                     return k
             elif k == "person":
@@ -359,7 +433,7 @@ def remove(kind: str, ident: Any, *, principal: Optional[str] = None) -> Dict[st
             for p in ([principal] if principal else _lf._principals()):
                 n += int(_lf.unforget(p, str(ident or "")) or 0)
             return {"ok": True, "kind": kind, "removed": n}
-        norm = normalise(ident)
+        norm = _ident(kind, ident)
         if not norm:
             return {"ok": True, "kind": kind, "removed": 0}
         with _LOCK:
@@ -397,24 +471,39 @@ def owner_affirmed(text: Any, kinds: KindArg = STATEMENT_KINDS) -> int:
     return n
 
 
-def filter_entities(entities, title_key: str = "title"):
-    """Drop graph entities whose normalised title is tombstoned as kg_entity.
-    Returns (kept, dropped). Never raises: on any failure the input comes back
-    whole (and a warning is logged)."""
+def filter_entities_detail(entities):
+    """Drop graph entities tombstoned as kg_entity (by `entity_ident`: type
+    and title, or a fact node's own fact id, so an owner-approved fact goes
+    only when that exact fact was deleted). Returns (kept, {bucket: count})
+    where the bucket is the entity type or "fact", never its content. Never
+    raises: on any failure the input comes back whole (a warning is logged)."""
     items = [e for e in (entities or [])]
     try:
         gone = _hashes("kg_entity")
         if not gone:
-            return items, 0
+            return items, {}
         key = _key(create=False)
         if key is None:
-            return items, 0
-        kept = [e for e in items
-                if _digest(key, "kg_entity", normalise((e or {}).get(title_key, ""))) not in gone]
-        return kept, len(items) - len(kept)
+            _log.warning("tombstones: %d graph tombstones but no readable key (nothing filtered)", len(gone))
+            return items, {}
+        kept, counts = [], {}
+        for e in items:
+            ident = entity_ident(e)
+            if ident and _digest(key, "kg_entity", ident) in gone:
+                b = entity_kind(e)
+                counts[b] = counts.get(b, 0) + 1
+            else:
+                kept.append(e)
+        return kept, counts
     except Exception as e:
         _log.warning("tombstones: the graph check failed (nothing filtered): %s", type(e).__name__)
-        return items, 0
+        return items, {}
+
+
+def filter_entities(entities):
+    """`filter_entities_detail` as (kept, how many were dropped)."""
+    kept, counts = filter_entities_detail(entities)
+    return kept, sum(counts.values())
 
 
 def list_tombstones() -> Dict[str, Any]:
@@ -450,7 +539,20 @@ def list_tombstones() -> Dict[str, Any]:
     out["library_document"] = _library_counts()
     for k in out:
         out[k]["keeps"] = STORES.get(k, "")
-    return {"kinds": out, "total": sum(int(v.get("count") or 0) for v in out.values())}
+    res = {"kinds": out, "total": sum(int(v.get("count") or 0) for v in out.values())}
+    try:
+        hashed = sum(int(out[k]["count"]) for k in HASHED)
+        if hashed and _key(create=False) is None:
+            missing = not _key_path().exists()
+            res["key"] = "missing" if missing else "unreadable"
+            res["problem"] = ("the tombstone key is %s while %d tombstones exist: they cannot be matched "
+                              "(checks fail open) and no new tombstone is recorded until it is back"
+                              % ("missing" if missing else "unreadable", hashed))
+        else:
+            res["key"] = "ok" if hashed else "none needed"
+    except Exception:
+        pass
+    return res
 
 
 # ── the Library's own table ─────────────────────────────────────────────────
