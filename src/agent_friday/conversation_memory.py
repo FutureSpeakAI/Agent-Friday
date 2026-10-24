@@ -566,9 +566,10 @@ class ConversationMemory:
             return out
         try:
             with self._lock:
-                got = self._collection.get(ids=ids, include=["metadatas"])
+                got = self._collection.get(ids=ids, include=["metadatas", "documents"])
                 found = list(got.get("ids") or [])
                 metas = list(got.get("metadatas") or [])
+                docs = list(got.get("documents") or [])
                 new_metas = []
                 for meta in metas:
                     meta = dict(meta or {})
@@ -598,6 +599,17 @@ class ConversationMemory:
             except Exception as _e:
                 print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
+            # What was made from these turns before (the day's summary, graph
+            # nodes) is taken back too (services/memory_derived).
+            if found:
+                try:
+                    from agent_friday.services import memory_derived as _md
+                    _md.after_supersession(
+                        [str(d or "") for d in docs],
+                        [str((m or {}).get("date") or (m or {}).get("timestamp") or "")[:10] for m in metas],
+                        bool(flag))
+                except Exception as _e:
+                    print(f"  [MEMORY] derived stores not updated (non-fatal): {_e}")
         except Exception as e:
             print(f"  [MEMORY] supersede failed (non-fatal): {e}")
             out["missing"] = ids
