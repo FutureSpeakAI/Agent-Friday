@@ -9,3 +9,5 @@ own lines defanged.
 
 Every fixture carries the canary `CANARY-7Q2` inside its instruction, so a test
 can find where the hostile text landed.
+
+BD-24 added chat_export.json (an exported ChatGPT conversation whose assistant turn carries the instruction), image_description.txt (what a vision model says about a photographed notice) and disguised.json (one instruction paraphrased, base64, hex, rot13, look-alike letters, spaced out and split across lines). `tests/unit/test_injection_grants_no_authority.py` proves each medium grants no authority: after Friday reads it, an action waits for the owner's card.
