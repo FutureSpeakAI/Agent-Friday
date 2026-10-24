@@ -1,0 +1,8 @@
+# Only the owner (Stephen, GitHub account FutureSpeakAI) may sign licence and
+# security reviews (owner ruling 2026-10-21). These files hold the reviews and
+# the rules that decide what a review clears; a change to any of them needs his
+# approval once "Require review from Code Owners" is on for main.
+/packaging/supply-chain/            @FutureSpeakAI
+/scripts/supply_chain.py            @FutureSpeakAI
+/.github/workflows/supply-chain.yml @FutureSpeakAI
+/.github/CODEOWNERS                 @FutureSpeakAI
