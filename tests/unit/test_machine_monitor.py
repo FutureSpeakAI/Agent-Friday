@@ -86,7 +86,7 @@ def test_gpu_rows_parses_every_field(monkeypatch):
         "index": 0, "name": "NVIDIA GeForce RTX 4070",
         "total_mib": 12282, "used_mib": 11928, "free_mib": 354,
         "util_pct": 100, "power_w": 51.0, "power_limit_w": 200.0,
-        "sm_mhz": 2505,
+        "sm_mhz": 2505, "temp_c": None,
     }]
 
 
