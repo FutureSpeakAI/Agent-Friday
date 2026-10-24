@@ -1429,6 +1429,18 @@ function useSnapMenuOpener() {
     }
   };
 }
+// Moving a floating panel without dragging (WCAG 2.5.7; north star 33.1-14): each press puts the panel in
+// the next corner of the desktop, clockwise from the top left.
+function fridayNextCorner(p, w, h) {
+  const a = typeof fridayDesktopArea === 'function' ? fridayDesktopArea() : { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+  const m = 12, W = Math.min(w, Math.max(0, a.w - 2 * m)), H = Math.min(h, Math.max(0, a.h - 2 * m));
+  const corners = [{ x: a.x + m, y: a.y + m }, { x: a.x + a.w - W - m, y: a.y + m },
+    { x: a.x + a.w - W - m, y: a.y + a.h - H - m }, { x: a.x + m, y: a.y + a.h - H - m }];
+  const cur = p || {};
+  const at = corners.findIndex(c => Math.abs(c.x - (cur.x || 0)) < 24 && Math.abs(c.y - (cur.y || 0)) < 24);
+  return corners[(at + 1) % corners.length];
+}
+window.fridayNextCorner = fridayNextCorner;
 function SnapMenu({
   id, windowTitle, workspaceId, maxed, onToggle,
   anchor,
@@ -3227,6 +3239,21 @@ function WorkspaceChat({
       color: '#8891a8'
     }
   }, "Shape this workspace by talking to ", fridayName())), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "data-panel-move": "studio",
+    onClick: () => setPos(p => fridayNextCorner(p, 390, Math.min(620, window.innerHeight * 0.76))),
+    "aria-label": "Move this panel to the next corner",
+    title: "Move to the next corner",
+    style: {
+      background: 'none',
+      border: '1px solid rgba(255,255,255,0.14)',
+      borderRadius: 6,
+      color: '#9fb4c8',
+      minWidth: 24,
+      minHeight: 24,
+      cursor: 'pointer'
+    }
+  }, "\u21F2"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowVer(v => !v),
     "aria-label": "Version history",
     title: "Version history",
@@ -14713,6 +14740,8 @@ function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing
     <span className="cam-label">{label}</span>
     {refKey==='webcam'&&onChangeFacing&&<button aria-label="Flip camera" className="cam-close" style={{right:30,padding:'1px 6px'}} title="Flip camera"
       onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onChangeFacing()}}>⇄</button>}
+    <button type="button" aria-label="Move the camera view to the next corner" className="cam-close" data-panel-move="camera" style={{right:refKey==='webcam'&&onChangeFacing?56:30,padding:'1px 6px',minWidth:24,minHeight:24}} title="Move to the next corner"
+      onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setPos(p=>{if(!isBoth)return fridayNextCorner(p,160,120);const c=fridayNextCorner({x:p.x-130,y:p.y},250,90);return{x:c.x+130,y:c.y}})}}>⇲</button>
     <button aria-label="Stop camera" className="cam-close" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onClose()}} title="Stop camera">×</button>
     <span className="cam-active"><span className="pulse"/>LIVE</span>
     {err&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.7)',color:'#ff4d6a',fontSize:11,fontFamily:'JetBrains Mono'}}>{err}</div>}
@@ -15892,7 +15921,7 @@ function fridayProcessSteps(steps) {
       timestamp: step.timestamp || (Number.isFinite(step.ts) ? new Date(step.ts * 1000).toLocaleTimeString() : '')};
   });
 }
-function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose}) {
+function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose, onMove}) {
   const surfaceRef = useRef(null);
   useFridaySpatialSurface(surfaceRef, () => ({x:position.x,y:position.y,w:400,h:320}), 'overlay');
   const traceId = meta?.trace_id || orb.trace_id || null;
@@ -15923,7 +15952,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
       rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
-      rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
+      onMove&&rtEl('button',{type:'button',className:'thread-close','data-panel-move':'thread','aria-label':'Move this process panel to the next corner',title:'Move to the next corner',onMouseDown:e=>e.stopPropagation(),onClick:e=>{e.stopPropagation();onMove();}},'⇲'),rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
       (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
     rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
       readState==='loading'&&rtEl('div',{role:'status',className:'thread-log-line'},'Loading process activity…'),
@@ -30543,7 +30572,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     {shellChatPanel}
 
     {/* Process Orb Stream Window (Layer 3) — floating, draggable, glassmorphic */}
-    {threadOrb&&<ProcessOrbThread orb={threadOrb} meta={taskMeta} log={taskLog} steps={threadSteps} readState={threadReadState} position={threadPos} bodyRef={threadBodyRef} onDrag={startThreadDrag} onClose={closeThread}/>}
+    {threadOrb&&<ProcessOrbThread orb={threadOrb} meta={taskMeta} log={taskLog} steps={threadSteps} readState={threadReadState} position={threadPos} bodyRef={threadBodyRef} onDrag={startThreadDrag} onClose={closeThread} onMove={()=>setThreadPos(p=>fridayNextCorner(p,400,320))}/>}
 
     {/* ── B4: Activity Ledger panel — filterable stream of model invocations,
         subagent spawns, and tool calls (seat, model, duration, tokens). ── */}
