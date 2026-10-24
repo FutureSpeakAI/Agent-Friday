@@ -1080,6 +1080,8 @@ def _write_grants(gs: list) -> None:
 
 #: A grant made before signing keeps working at most this much longer.
 _MIGRATED_MAX_SECONDS = 7 * 24 * 3600
+#: This process has seen the ledger's record of the one-time signing.
+_MIGRATION_SEEN = False
 
 
 def _migrate_grants_locked(gs: list) -> list:
@@ -1088,7 +1090,8 @@ def _migrate_grants_locked(gs: list) -> list:
     a file: deleting the marker file does not sign a hand-written grant later. A
     signed-at-migration grant keeps its uses and expires within a week at most. When
     the ledger cannot be read or written, nothing is signed (fail closed)."""
-    if not any(isinstance(g, dict) and not g.get("sig") for g in gs):
+    global _MIGRATION_SEEN
+    if _MIGRATION_SEEN:
         return gs
     from agent_friday.services import action_ledger
     try:
@@ -1097,7 +1100,10 @@ def _migrate_grants_locked(gs: list) -> list:
     except Exception:
         return gs
     if done:
+        _MIGRATION_SEEN = True
         return gs
+    # The first read on this version records the one-time signing even when there is
+    # nothing to sign (a fresh install): from then on nothing unsigned is ever signed.
     now = time.time()
     signed = []
     for g in gs:
@@ -1117,7 +1123,9 @@ def _migrate_grants_locked(gs: list) -> list:
             if str(g.get("grant_id")) in signed:
                 g.pop("sig", None)
         return gs
-    _write_grants(gs)
+    _MIGRATION_SEEN = True
+    if signed:
+        _write_grants(gs)
     try:
         (_gov_dir() / _GRANTS_MARK).write_text(
             "grants are signed; uses and revocations are in the action ledger\n", encoding="utf-8")
@@ -1132,8 +1140,13 @@ def _grant_events() -> dict:
     does not hold (a strict read, archive included): no grant is then used."""
     from agent_friday.services import action_ledger
     out: dict = {}
-    for e in action_ledger.entries(["grant_use", "grant_revoke"], newest_first=False,
-                                   strict=True, archive=True):
+    for e in action_ledger.entries(["grant_use", "grant_revoke", "grant_revoke_all"],
+                                   newest_first=False, strict=True, archive=True):
+        if e.get("kind") == "grant_revoke_all":
+            # Every grant made before this moment is revoked, wherever it is listed.
+            at = float((e.get("rec") or {}).get("at") or e.get("t") or 0)
+            out["*revoked_all_at"] = max(float(out.get("*revoked_all_at") or 0), at)
+            continue
         gid = str((e.get("rec") or {}).get("grant") or "")
         if not gid:
             continue
@@ -1151,8 +1164,11 @@ def _live_view(g: dict, events: Optional[dict] = None) -> Optional[dict]:
     if not _grant_signed(g) or g.get("expires_at", 0) <= time.time():
         return None
     try:
-        ev = (events if events is not None else _grant_events()).get(str(g.get("grant_id")), [0, False])
+        events = events if events is not None else _grant_events()
+        ev = events.get(str(g.get("grant_id")), [0, False])
         uses, revoked = int(ev[0]), bool(ev[1])
+        if float(g.get("created_at") or 0) <= float(events.get("*revoked_all_at") or 0):
+            revoked = True
     except Exception:
         return None
     left = int(g.get("max_uses") or 0) - uses
@@ -1189,6 +1205,18 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
         gs.append(g)
         _write_grants(gs)
     return dict(g)
+
+
+def revoke_all_grants() -> list:
+    """Revoke every grant: one durable ledger entry that ends every grant made until
+    now (so one taken off the list beforehand and put back afterwards is dead too),
+    then each grant in the list. Returns the ids taken off the list."""
+    from agent_friday.services import action_ledger
+    with _LOCK:
+        action_ledger.append("grant_revoke_all", {"at": time.time()}, durable=True)
+        ids = all_grant_ids()
+        _write_grants([])
+    return ids
 
 
 def all_grant_ids() -> list:
@@ -1244,19 +1272,20 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
     second copy of this function was removed.)"""
     if not tool_name or not scope:
         return None
-    # The same hold authorize() applies: while the action ledger has a break (or
-    # authority is revoked, or everything is stopped) no grant is spent.
-    try:
-        if outward_hold():
-            return None
-    except Exception:
-        return None
     return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
 def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
     scopes = _scopes(ctx)
     if not scopes:
+        return None
+    # The same hold authorize() applies, for every caller (consume_grant, local
+    # context, authorize): while the action ledger has a break, authority is revoked
+    # or everything is stopped, no grant is spent.
+    try:
+        if outward_hold():
+            return None
+    except Exception:
         return None
     with _LOCK:
         gs = [g for g in _read_grants()
