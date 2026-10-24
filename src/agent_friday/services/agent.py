@@ -5450,12 +5450,30 @@ def _task_set(task_id, **fields):
             return
         prev_status = t.get('status')
         prev_started = t.get('started')
+        prev_snap = dict(t)
         snap = dict(t)
         snap.update(fields)
         new_status = snap.get('status')
         name = snap.get('name')
         created = snap.get('created')
         ended = snap.get('ended')
+    # The North Star state (services/task_states, NS-17.7-1) is kept on the record and each
+    # change is journaled, beside the status transitions below.
+    try:
+        from agent_friday.services import task_states as _ts
+        _tjs = _journal()
+        _stop = _tjs.stop_requested(task_id)
+        prev_state = prev_snap.get('state')
+        if _stop:
+            # request_stop records cancel_requested on disk only; read it so it is not journaled twice.
+            prev_state = (_tjs.read_state(task_id) or {}).get('state') or prev_state
+        prev_state = prev_state or _ts.derive(prev_snap, stop_requested=_stop)
+        new_state = _ts.derive(snap, stop_requested=_stop)
+    except Exception:
+        prev_state = new_state = None
+    if new_state:
+        snap['state'] = new_state
+        fields = dict(fields, state=new_state)
     if 'verified' in fields:
         # §17.11: the task's ledger records whether its result was checked.
         try:
@@ -5493,6 +5511,8 @@ def _task_set(task_id, **fields):
                    and not prev_started)
     try:
         tj = _journal()
+        if new_state and new_state != prev_state:
+            tj.append(task_id, "state", state=new_state, was=prev_state)
         if new_status != prev_status or first_start:
             if new_status == 'running':
                 tj.append(task_id, "started", model=snap.get('model'),
@@ -5516,6 +5536,24 @@ def _task_set(task_id, **fields):
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+
+
+def _task_state_sync(task_id):
+    """Record the task's state after something changed its record in place (the seat queue)."""
+    try:
+        _task_set(task_id)
+    except Exception:
+        pass
+
+
+def _planning_over(session_ctx):
+    """The task's first reasoning step has begun: it is no longer planning (NS-17.7-1)."""
+    try:
+        tid = _journal().resolve_task_id(session_ctx)
+        if tid and (TASKS.get(tid) or {}).get('phase') == 'planning':
+            _task_set(tid, phase='working')
+    except Exception:
+        pass
 
 
 def _off_record_active():
@@ -5600,7 +5638,7 @@ def _restore_tasks_from_journal(announce=True, limit=200):
         except Exception:
             summary['resumable'] = []
         if announce:
-            tj.announce_interrupted(summary.get('interrupted') or [])
+            tj.announce_interrupted(summary.get('interrupted') or [], summary.get('previous_exit'))
             try:
                 from agent_friday.services import task_resume as _tr2
                 # AFTER A RESTART, KEEP GOING. reconcile.run_at_boot only sees
@@ -6225,7 +6263,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         return
     _tj.push_task(task_id)
     _heartbeat = _tj.Heartbeat(task_id).start()
-    _task_set(task_id, status='running', started=_time.time())
+    # Planning until its first reasoning step (NS-17.7-1); the loop ends it (_planning_over).
+    _task_set(task_id, status='running', started=_time.time(), phase='planning')
     _task_log(task_id, f'Spawning agent: {name}'
                        + (f' (timeout: {int(timeout)}s)' if timeout else ''))
     if description:
@@ -6893,6 +6932,9 @@ def _admit_task_thread(task_id, record, th):
     except Exception as _sup_err:
         _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
         admission = 'running'
+    if admission == 'queued-for-seat':
+        # The queue changed the record in place: record that it waits for the seat (NS-17.7-1).
+        _task_state_sync(task_id)
     if admission != 'queued-for-seat':
         # Admitted at once: the supervisor's thread factory normally started
         # it already; start it here only if nothing did.
@@ -17096,6 +17138,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             _tj_loop.checkpoint(iter_count, "model_call",
                                 f"Reasoning (step {iter_count}) on {model or ANTHROPIC_MODEL_DEFAULT}",
                                 session_ctx=session_ctx)
+            _planning_over(session_ctx)
             if _steer_inject:
                 _tj_loop.steer(_steer_inject, source="operator-file", session_ctx=session_ctx)
                 _append_steer(convo, _steer_inject)
@@ -17848,6 +17891,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         # Anthropic loop; the coverage test counts these against rounds.
         _tj_loop.checkpoint(_round, "model_call", f"Reasoning (step {_round}) on {model}",
                             session_ctx=session_ctx)
+        _planning_over(session_ctx)
         # Every round reports, not only the ones that call tools — a local
         # model that reasons for three rounds before picking a tool was
         # previously indistinguishable from one that had not started.
