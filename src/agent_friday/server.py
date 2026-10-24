@@ -15,6 +15,27 @@ import sys
 import threading
 import logging
 
+# A Friday Bundle restore cut off by a crash or a power cut is finished (its
+# folders were swapped) or rolled back (they were not) before anything else
+# here imports a module that writes to the data folder (services/friday_bundle).
+# A start that finds a restore running, or a journal it cannot use with the
+# folder missing, stops: starting would make a fresh, empty Friday where the
+# owner's folder belongs.
+if __name__ == '__main__':
+    try:
+        from agent_friday.services import friday_bundle as _fb_boot
+        _rr = _fb_boot.recover_interrupted_restore()
+    except Exception as _rr_err:
+        print(f"  Restore: the check for an interrupted restore failed ({_rr_err}); not starting.")
+        sys.exit(3)
+    if _rr:
+        print("  Restore: an interrupted restore was %s (%s)"
+              % ({"forward": "finished", "back": "rolled back"}.get(_rr.get("rolled"), "left as it was"),
+                 _rr.get("bundle_id") or _rr.get("why") or ""))
+        if _rr.get("stop"):
+            print("  Restore: Friday is not starting on this data folder yet.")
+            sys.exit(3)
+
 # Native thread pools are sized when their library first loads, so the caps
 # go in before anything heavy is imported (services/thread_caps.py).
 try:
