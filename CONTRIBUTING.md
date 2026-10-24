@@ -252,6 +252,11 @@ the invariant; the guard that checks it is named.
   have a reader under `src/`. Guard: `scripts/check_settings_readers.py`. The
   guard proves a reader exists, not that the reader enforces the setting; a
   behavioural test is still required.
+- **A new or changed setting updates the settings schema.** Adding a key to
+  `DEFAULT_SETTINGS`, changing its type, or moving a choice list that
+  `POST /api/settings` checks turns `tests/unit/test_settings_schema.py` red
+  until you run `python scripts/gen_settings_schema.py` and review the diff of
+  `src/agent_friday/resources/settings.schema.json`.
 - **Module-level statement order must be sound.** A dictionary mutated above
   its own definition passes `ruff` (the name exists, just later) and kills the
   server at import. Guard: `scripts/check_imports.py`.

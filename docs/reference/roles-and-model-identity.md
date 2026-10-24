@@ -166,8 +166,7 @@ appears as a `null` seat plus a refusal:
 
 ```json
 { "role": "orchestrator", "model": null, "rule_id": "R11",
-  "explanation": "no model assigned; this seat is chosen by the user, not
-                  inferred, and stays empty until one is named" }
+  "explanation": "no model assigned; this seat is chosen by the user, not inferred, and stays empty until one is named" }
 ```
 
 **Render an R11 refusal as an empty seat awaiting a choice — not as an error and not as a failure.**
