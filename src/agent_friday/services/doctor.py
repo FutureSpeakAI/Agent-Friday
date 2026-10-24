@@ -368,6 +368,114 @@ def _c_local_brain():
     return "unavailable_by_configuration", "no_local_model"
 
 
+def _c_gpu():
+    """The graphics card the local models use: read, never changed (§28.2-1).
+    CUDA is not initialised here: the count comes from CTranslate2 only when
+    the voice has already loaded it, else from one bounded nvidia-smi query;
+    safe mode asks nothing. Free memory is not asked (it changes by the
+    second)."""
+    from agent_friday.services import gpu_probe, local_voice, safe_mode
+    if gpu_probe._cuda_hidden():
+        return "unavailable_by_configuration", "gpus_hidden_by_setting"
+    if safe_mode.active():
+        return "unverified", "not_probed_in_safe_mode"
+    if "ctranslate2" in sys.modules:
+        n = int(gpu_probe.device_count().get("devices") or 0)
+    else:
+        cards = gpu_probe._run_smi()
+        if cards is None:
+            return "unverified", "nvidia_smi_did_not_answer"
+        n = len(cards)
+    if not n:
+        return "unavailable_by_hardware", "no_cuda_gpu"
+    # cuBLAS matters only to the local transcriber (CTranslate2)
+    if local_voice.deps_installed() and not gpu_probe.cublas_status().get("ok"):
+        return "misconfigured", "cublas_missing_for_local_voice"
+    return "healthy", "cuda_gpus:%d" % n
+
+
+def _c_local_voice():
+    """Speech in and out on this PC: whether its packages are there. The
+    voice models themselves are checked by the voice readiness card, not by
+    loading them here."""
+    from agent_friday.services import local_voice
+    if not local_voice.deps_installed():
+        return "unavailable_by_configuration", "local_voice_not_installed"
+    return "unverified", "packages_installed_models_not_loaded_here"
+
+
+def _c_document_engine():
+    """The document engine (OfficeCLI): present, and matching its pinned
+    checksum."""
+    from agent_friday.services import office_engine
+    st = office_engine.binary_state()
+    return {"ok": ("healthy", "checksum_matches"),
+            "missing": ("unavailable_by_configuration", "not_installed"),
+            "unpinned": ("misconfigured", "no_pinned_checksum"),
+            "mismatch": ("broken", "checksum_mismatch")}.get(st, ("unverified", "unreadable"))
+
+
+def _c_browser_lane():
+    """The browser Friday drives for tasks: its automation library is there.
+    Nothing is started; a closed browser is normal (it closes when idle)."""
+    import importlib.util
+    if importlib.util.find_spec("playwright") is None:
+        return "unavailable_by_configuration", "playwright_not_installed"
+    from agent_friday.services import browser_session
+    s = browser_session.current()
+    if s is not None and getattr(s, "running", False):
+        return "healthy", "running"
+    # the browser it downloads is found only when one starts: not here
+    return "unverified", "library_installed_browser_not_started_here"
+
+
+def _c_channels():
+    """Remote channels (Telegram, Discord): each switched on has a readable
+    token; one that should be listening and is held by a rule says so."""
+    from agent_friday.services import safe_mode
+    from agent_friday.services.channels import manager
+    st = manager.status()
+    if not st.get("enabled"):
+        return "unavailable_by_configuration", "channels_off"
+    on = {n: c for n, c in (st.get("channels") or {}).items() if c.get("enabled")}
+    if not on:
+        return "unavailable_by_configuration", "no_channel_switched_on"
+    # counts, not names: the report should not say which apps the owner uses
+    states = [(c.get("health") or {}).get("source_state") for c in on.values()]
+    if "present_but_unreadable" in states:
+        return "broken", "token_unreadable:%d" % states.count("present_but_unreadable")
+    if "missing" in states:
+        return "misconfigured", "token_missing:%d" % states.count("missing")
+    odd = [s for s in states if s not in ("running", "not-running")]
+    if odd:
+        return "unverified", "token_not_checked:%d" % len(odd)
+    idle = states.count("not-running")
+    if idle and not safe_mode.allows("channels"):
+        return "blocked_by_policy", "not_started_in_safe_mode:%d" % idle
+    if idle:
+        return "degraded", "switched_on_not_running:%d" % idle
+    return "healthy", "running:%d" % len(on)
+
+
+def _c_phone():
+    """The phone line: switched off, or on with its credentials readable."""
+    from agent_friday.phone import config as phone_config
+    st = phone_config.status()
+    if not st.get("enabled"):
+        return "unavailable_by_configuration", "phone_off"
+    states = {k: st.get(k) for k in ("auth_token", "api_key_secret")}
+    if "unreadable" in states.values():
+        return "broken", "credential_unreadable"
+    if states.get("auth_token") != "stored":
+        return "misconfigured", "auth_token_missing"
+    from agent_friday.services import safe_mode
+    if not safe_mode.allows("phone"):
+        return "blocked_by_policy", "not_started_in_safe_mode"
+    if states.get("api_key_secret") != "stored":
+        return "degraded", "outbound_key_missing"
+    return "healthy", "configured"
+
+
 def _c_crashes():
     from agent_friday.services import crash_forensics
     n = crash_forensics.crash_count()
@@ -401,6 +509,12 @@ CHECKS = (
     ("disk", "GPU and resource state", _c_disk),
     ("model_files", "model files and checksums", _c_models),
     ("local_brain", "GPU and resource state", _c_local_brain),
+    ("gpu", "GPU and resource state", _c_gpu),
+    ("local_voice", "voice", _c_local_voice),
+    ("document_engine", "document engine", _c_document_engine),
+    ("browser_lane", "browser lane", _c_browser_lane),
+    ("channels", "remote channels", _c_channels),
+    ("phone", "remote channels", _c_phone),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
 )
