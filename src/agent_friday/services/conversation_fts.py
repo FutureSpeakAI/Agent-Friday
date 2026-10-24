@@ -305,6 +305,12 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
         memory_review.forget_text(gone["text"] or "")
     except Exception:
         pass
+    try:
+        # The record of which replies recalled it keeps no id of a deleted message.
+        from agent_friday.services import memory_influence
+        memory_influence.forget_refs([mid])
+    except Exception:
+        pass
     return {"ok": True, "deleted": mid, "vector_rows": removed_vec}
 
 
@@ -329,8 +335,13 @@ def _day(value) -> Optional[float]:
         return None
 
 
-def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
-    """Matching turns, best first (BM25), with snippets and dates."""
+def search(query: str, since=None, until=None, limit: int = 8,
+           include_superseded: bool = False) -> List[Dict[str, Any]]:
+    """Matching turns, best first (BM25), with snippets and dates.
+
+    `include_superseded` is for the owner's own memory search (services/
+    memory_search), which shows corrected turns flagged when asked; every
+    path that feeds a model leaves it off."""
     terms = _terms(query)
     if not terms:
         return []
@@ -360,9 +371,10 @@ def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str,
                 marks = ",".join("?" * len(rows))
                 # A turn superseded in memory is not returned as evidence
                 # (§34.9-4); it stays in the transcript, flagged there.
-                for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to FROM msgs "
-                                      f"WHERE id IN ({marks}) "
-                                      f"AND mid NOT IN (SELECT mid FROM superseded)", list(rows)):
+                keep = "" if include_superseded else "AND mid NOT IN (SELECT mid FROM superseded)"
+                for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to, "
+                                      f"mid IN (SELECT mid FROM superseded) FROM msgs "
+                                      f"WHERE id IN ({marks}) {keep}", list(rows)):
                     meta[r[0]] = r
         finally:
             conn.close()
@@ -376,15 +388,36 @@ def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str,
         m = meta.get(rid)
         if not m:
             continue
-        _id, mid, cid, ts, role, via, sent = m
+        _id, mid, cid, ts, role, via, sent, gone = m
         if (lo is not None and ts < lo) or (hi is not None and ts >= hi):
             continue
         hits.append({"message_id": mid, "conversation_id": cid, "title": titles.get(cid, ""),
                      "ts": ts, "date": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "",
                      "role": role, "via": via or "chat", "text": _snippet(text, terms),
-                     "sent_to": json.loads(sent or "[]"), "score": -float(rank)})
+                     "sent_to": json.loads(sent or "[]"), "score": -float(rank),
+                     "superseded": bool(gone)})
     hits.sort(key=lambda h: (-h["score"], -h["ts"]))
     return hits[:max(1, int(limit))]
+
+
+def locate(mid: str) -> Optional[Dict[str, Any]]:
+    """Where one indexed message lives: its conversation, time, speaker and
+    whether it is superseded. None when the index does not hold it."""
+    mid = str(mid or "").strip()
+    if not mid:
+        return None
+    ensure_built()
+    with _LOCK:
+        conn = _connect()
+        try:
+            r = conn.execute("SELECT cid, ts, role, via, mid IN (SELECT mid FROM superseded) "
+                             "FROM msgs WHERE mid=?", (mid,)).fetchone()
+        finally:
+            conn.close()
+    if not r:
+        return None
+    return {"conversation_id": r[0], "ts": float(r[1] or 0), "role": r[2] or "",
+            "via": r[3] or "chat", "superseded": bool(r[4])}
 
 
 def mark_superseded(mids, on: bool = True) -> int:

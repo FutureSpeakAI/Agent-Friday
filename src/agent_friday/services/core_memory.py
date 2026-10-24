@@ -273,6 +273,55 @@ def _journal_path() -> Path:
     return _dir() / "changes.jsonl"
 
 
+def line_ref(text: Any) -> str:
+    """A short hash of one line (cleaned, lower case): how a change record names
+    the line it wrote without keeping a copy of the owner's own words."""
+    import hashlib
+    t = _clean(text).lower()
+    return hashlib.sha256(t.encode("utf-8")).hexdigest()[:16] if t else ""
+
+
+def _via(via: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Where an owner-approved line came from (a queued suggestion or a kept
+    proposal), bounded, for the change record."""
+    if not isinstance(via, dict):
+        return None
+    out = {}
+    for k in ("suggestion", "proposal"):
+        if via.get(k):
+            out[k] = str(via[k])[:40]
+    if via.get("source"):
+        out["source"] = str(via["source"])[:80]
+    if via.get("reason"):
+        out["reason"] = str(via["reason"])[:300]
+    try:
+        if via.get("queued_ts"):
+            out["queued_ts"] = float(via["queued_ts"])
+    except (TypeError, ValueError):
+        pass
+    return out or None
+
+
+def journal_for(text: str) -> List[Dict[str, Any]]:
+    """Every change record that wrote this exact line, oldest first: the owner's
+    own (matched by its hash) and Friday's (matched by the text she wrote)."""
+    ref, low = line_ref(text), _clean(text).lower()
+    if not ref:
+        return []
+    return [r for r in _read_jsonl(_journal_path())
+            if r.get("op") in ("add", "replace")
+            and (r.get("line_ref") == ref or _clean(r.get("after") or "").lower() == low)]
+
+
+def journal_row(change_id: str) -> Optional[Dict[str, Any]]:
+    return next((r for r in _read_jsonl(_journal_path()) if r.get("id") == change_id), None)
+
+
+def journal_rows() -> List[Dict[str, Any]]:
+    """Every change record, oldest first (owner rows carry no text)."""
+    return _read_jsonl(_journal_path())
+
+
 def _journal(row: Dict[str, Any]) -> str:
     cid = "chg-" + uuid.uuid4().hex[:10]
     row = {"id": cid, "ts": time.time(), **row}
@@ -319,6 +368,7 @@ def _purge_text(text: str) -> None:
     low = (text or "").lower()
     if not low:
         return
+    ref = line_ref(text)
 
     def _about_it(r) -> bool:
         old = _clean(r.get("old") or "").lower()
@@ -329,6 +379,8 @@ def _purge_text(text: str) -> None:
                 if low not in str(r.get("before") or "").lower()
                 and low not in str(r.get("after") or "").lower()
                 and low not in str(r.get("text") or "").lower()
+                and low not in json.dumps(r.get("via") or {}, ensure_ascii=False).lower()
+                and not (ref and r.get("line_ref") == ref)
                 and not _about_it(r)]
         if len(keep) != len(rows):
             try:
@@ -358,9 +410,11 @@ def _err(msg: str) -> Dict[str, Any]:
 
 
 def add(target: str, text: str, *, actor: str = "friday",
-        dedupe: Optional[bool] = None) -> Dict[str, Any]:
+        dedupe: Optional[bool] = None, via: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
-    typing it themselves (`dedupe` overrides, e.g. an approved suggestion)."""
+    typing it themselves (`dedupe` overrides, e.g. an approved suggestion).
+    `via` names the suggestion or proposal an owner-approved line came from,
+    so "why do you know this" can say (services/memory_search)."""
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -382,13 +436,17 @@ def add(target: str, text: str, *, actor: str = "friday",
         if used(new) > CAPS[target]:
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
         _write(target, new)
-        cid = _journal({"actor": actor, "op": "add", "target": target,
-                        "before": None, "after": None if actor == "owner" else text})
+        row = {"actor": actor, "op": "add", "target": target, "line_ref": line_ref(text),
+               "before": None, "after": None if actor == "owner" else text}
+        if _via(via):
+            row["via"] = _via(via)
+        cid = _journal(row)
     _changed(actor, "core memory line added by the owner")
     return {"ok": True, "change_id": cid, "usage": usage(target)}
 
 
-def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[str, Any]:
+def replace(target: str, old: str, text: str, *, actor: str = "friday",
+            via: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -405,9 +463,12 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[
         if used(new) > CAPS[target]:
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
         _write(target, new)
-        cid = _journal({"actor": actor, "op": "replace", "target": target,
-                        "before": None if actor == "owner" else before,
-                        "after": None if actor == "owner" else text})
+        row = {"actor": actor, "op": "replace", "target": target, "line_ref": line_ref(text),
+               "before": None if actor == "owner" else before,
+               "after": None if actor == "owner" else text}
+        if _via(via):
+            row["via"] = _via(via)
+        cid = _journal(row)
         if actor == "owner":
             _purge_text(before)
     _changed(actor, "core memory line edited by the owner")
@@ -574,10 +635,13 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
                 # pick a different line than the one the card showed.
                 return _err("NOT CHANGED: the line this suggestion changes is no longer on the "
                             "card as it was; discard it")
+            # The kept line's change record names the suggestion it came from.
+            via = {"suggestion": row.get("id"), "source": row.get("source"),
+                   "reason": row.get("reason"), "queued_ts": row.get("ts")}
             if op == "add":
-                res = add(t, row.get("text") or "", actor="owner", dedupe=True)
+                res = add(t, row.get("text") or "", actor="owner", dedupe=True, via=via)
             elif op == "replace":
-                res = replace(t, row.get("old") or "", row.get("text") or "", actor="owner")
+                res = replace(t, row.get("old") or "", row.get("text") or "", actor="owner", via=via)
             else:
                 res = remove(t, row.get("old") or "", actor="owner")
             if not res.get("ok") and not res.get("unchanged"):
