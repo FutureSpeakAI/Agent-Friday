@@ -1,0 +1,332 @@
+"""Stop everything from the phone and the chat bridges (BD-13; NS-20.8-3/-5/-6, NS-19.8-1/-2).
+
+Acceptance: "With a key held by the control lane and the model loop wedged, STOP from the
+hotkey, the phone and voice each release the key and halt within one second, with a
+receipt." #182 built the stop for the hotkey, voice and chat; these tests are the phone (a
+text from the owner's verified cell) and the chat bridges (Telegram, Discord). A turn that is
+stuck must not keep the stop waiting, a stranger's words stop nothing, and nothing is ever
+resumed from outside Friday's own page. No model, no socket, no Twilio.
+"""
+from __future__ import annotations
+
+import threading
+import time
+
+import pytest
+
+from agent_friday.phone import config, guard, ingress, service, signature, spool
+from tests.unit.phone_fakes import (FAKE_ACCOUNT, FAKE_TOKEN, OWNER, PUBLIC, STRANGER,  # noqa: F401
+                                    fake_twilio, phone_home, quiet, verify_owner)
+
+
+@pytest.fixture
+def gs(tmp_path, monkeypatch):
+    """The real stop, made safe for a test machine (as in test_global_stop)."""
+    from agent_friday.services import global_stop, agent, local_image
+    monkeypatch.setattr(global_stop, "_path", lambda: tmp_path / "global_stop.json")
+    monkeypatch.setattr(agent, "_HAS_PYAUTOGUI", False, raising=False)
+    monkeypatch.setattr(local_image, "interrupt_comfy", lambda timeout=10: False)
+    had_perm, had_kill = agent._CC_PERMISSION.is_set(), agent._CC_KILL.is_set()
+    global_stop._reset_for_tests()
+    yield global_stop
+    global_stop._reset_for_tests()
+    (agent._CC_PERMISSION.set if had_perm else agent._CC_PERMISSION.clear)()
+    (agent._CC_KILL.set if had_kill else agent._CC_KILL.clear)()
+
+
+def _stop_receipts():
+    from tests import ledger_support
+    return [d for d in ledger_support.decisions() if d.get("tool") == "global_stop"
+            and d.get("decision") in ("stop", "stop_again")]
+
+
+# ── the phone ────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def client(phone_home, monkeypatch):
+    monkeypatch.setattr(ingress, "_GUARD", guard.IngressGuard())
+    return ingress.create_app().test_client()
+
+
+def _text(client, frm, body, sid="SM" + "7" * 32):
+    p = {"AccountSid": FAKE_ACCOUNT, "MessageSid": sid, "From": frm, "To": "+15125550100",
+         "Body": body, "NumMedia": "0", "NumSegments": "1"}
+    url = PUBLIC + "/twilio/sms"
+    return client.post("/twilio/sms", data=p,
+                       headers={"X-Twilio-Signature": signature.compute(FAKE_TOKEN, url, p)})
+
+
+def test_a_stop_texted_from_the_owner_cell_halts_at_once_without_the_service_loop(
+        client, gs, monkeypatch):
+    """The service loop that reads texts is not run at all here (as if a turn had it stuck):
+    the signed webhook itself stops everything, within a second, with a receipt."""
+    verify_owner(monkeypatch)
+    t0 = time.time()
+    r = _text(client, OWNER, "Stop everything")
+    assert r.status_code == 200
+    assert gs.active(), "a stop texted from the owner's verified cell did not stop anything"
+    assert gs.state()["since"] - t0 < 1.0          # the stop took hold within a second
+    assert spool.pending_events() and spool.pending_events()[-1]["data"]["Body"] == "Stop everything"
+    rec = _stop_receipts()
+    assert rec and rec[-1]["surface"] == "sms" and rec[-1]["chosen_by"] == "owner"
+
+
+@pytest.mark.parametrize("frm,body", [
+    (STRANGER, "Stop everything"),          # a stranger's words stop nothing
+    (OWNER, "STOP"),                         # Twilio's own opt-out word, left to Twilio
+    (OWNER, "don't stop everything yet"),    # not the command
+])
+def test_these_texts_do_not_stop_anything(client, gs, monkeypatch, frm, body):
+    verify_owner(monkeypatch)
+    assert _text(client, frm, body).status_code == 200
+    assert not gs.active()
+
+
+def test_an_unverified_cell_cannot_stop(client, gs):
+    # The owner cell is set (phone_home) but never verified.
+    assert config.verified_owner_cell() == ""
+    _text(client, OWNER, "Stop everything")
+    assert not gs.active()
+
+
+def _event(kind, sid, **data):
+    spool.put_event(kind, sid, data)
+    return spool.pending_events()[-1]
+
+
+def test_the_service_stops_too_and_never_asks_the_model(phone_home, fake_twilio, gs,
+                                                        monkeypatch, quiet):
+    """The event the ingress spooled: if the ingress could not stop, the service does; the model
+    is never asked and nothing is texted back (nothing leaves while stopped)."""
+    verify_owner(monkeypatch)
+    monkeypatch.setattr(config, "load", lambda _orig=config.load: dict(_orig(), sms_conversation=True))
+    monkeypatch.setattr(service, "_run_phone_agent",
+                        lambda *a: pytest.fail("a stop text reached the model"))
+    _event("sms_in", "SM10", From=OWNER, Body="halt all work now", MessageSid="SM10")
+    service.process_pending()
+    assert gs.active()
+    # A28: the ingress did not answer this one (it never saw it), so the service sends the one
+    # fixed reply, to the verified cell, and nothing else.
+    assert fake_twilio.sent_bodies() == ["Stopped."]
+    assert fake_twilio.calls[-1]["data"]["To"] == OWNER
+    assert any("Stopped from your cell" in n.get("title", "") for n in quiet)
+    _event("sms_in", "SM13", From=OWNER, Body="stop everything", MessageSid="SM13")
+    service.process_pending()
+    assert fake_twilio.sent_bodies() == ["Stopped."], "a second stop got a second reply"
+
+
+# ── A28: the one fixed reply; A29: "Friday stop", never a bare STOP ─────────
+
+def test_the_phone_stop_is_answered_once_with_stopped_and_a_receipt(client, gs, monkeypatch):
+    verify_owner(monkeypatch)
+    from tests import ledger_support
+    before = len([d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"])
+    r = _text(client, OWNER, "Stop everything", sid="SM" + "1" * 32)
+    assert b"<Message>Stopped.</Message>" in r.data
+    acks = [d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"][before:]
+    assert len(acks) == 1 and acks[0]["surface"] == "sms" and acks[0]["class"] == "outward"
+    r2 = _text(client, OWNER, "Friday stop", sid="SM" + "2" * 32)
+    assert b"<Message>" not in r2.data, "a second stop in the same stop got a second reply"
+
+
+@pytest.mark.parametrize("body,stops", [
+    ("Friday stop", True), ("friday, stop.", True), ("Hey Friday stop now", True),
+    ("STOP", False), ("stop", False), ("Stop!", False), ("please stop", False),
+])
+def test_friday_stop_counts_and_a_bare_stop_never_does(client, gs, monkeypatch, body, stops):
+    verify_owner(monkeypatch)
+    r = _text(client, OWNER, body, sid="SM" + "3" * 32)
+    assert gs.active() is stops, body
+    assert (b"<Message>Stopped.</Message>" in r.data) is stops
+
+
+def test_a_stranger_gets_no_reply(client, gs, monkeypatch):
+    verify_owner(monkeypatch)
+    r = _text(client, STRANGER, "Friday stop", sid="SM" + "4" * 32)
+    assert not gs.active() and b"<Message>" not in r.data
+
+
+class _Raw:
+    def __init__(self):
+        self.sent = []
+
+    def send_stop_ack(self, chat_id, text):
+        from agent_friday.services.channels.base import ChannelAdapter
+        return ChannelAdapter.send_stop_ack(self, chat_id, text)
+
+    name = "telegram"
+    _last_error = None
+
+    def _send_raw(self, chat_id, text):
+        self.sent.append((chat_id, text))
+        return {"ok": True}
+
+
+def test_a_chat_stop_is_answered_once_on_that_chat_only(chans, gs, monkeypatch):
+    raw = _Raw()
+    monkeypatch.setitem(chans._ADAPTERS, "telegram", raw)
+    monkeypatch.setattr(chans, "_run_agent", lambda t: pytest.fail("reached the model"))
+    chans.handle_incoming("telegram", "42", "Friday stop")
+    assert gs.active() and raw.sent == [("42", "Stopped.")]
+    chans.handle_incoming("telegram", "42", "stop everything")
+    assert raw.sent == [("42", "Stopped.")]
+    chans.handle_incoming("telegram", "999", "Friday stop")      # not on the allowlist
+    assert raw.sent == [("42", "Stopped.")]
+
+
+def test_no_receipt_means_no_reply(client, chans, gs, monkeypatch):
+    from agent_friday.governance import action_gate
+    real = action_gate._receipt
+
+    def no_ack_receipt(entry):
+        if entry.get("tool") == "stop_ack":
+            raise RuntimeError("ledger unwritable")
+        return real(entry)
+    monkeypatch.setattr(action_gate, "_receipt", no_ack_receipt)
+    verify_owner(monkeypatch)
+    r = _text(client, OWNER, "Friday stop", sid="SM" + "5" * 32)
+    assert gs.active() and b"<Message>" not in r.data
+    raw = _Raw()
+    monkeypatch.setitem(chans._ADAPTERS, "telegram", raw)
+    monkeypatch.setattr(chans, "_run_agent", lambda t: "x")
+    gs.resume(by="owner", source="button")
+    chans.handle_incoming("telegram", "42", "stop everything")
+    assert gs.active() and raw.sent == []
+
+
+def test_after_resume_a_new_stop_gets_one_new_reply(chans, gs, monkeypatch):
+    from tests import ledger_support
+    before = len([d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"])
+    raw = _Raw()
+    monkeypatch.setitem(chans._ADAPTERS, "discord", raw)
+    monkeypatch.setattr(chans, "_run_agent", lambda t: "x")
+    chans.handle_incoming("discord", "42", "Friday stop")
+    chans.handle_incoming("discord", "42", "Friday stop")
+    assert raw.sent == [("42", "Stopped.")]
+    gs.resume(by="owner", source="button")
+    time.sleep(0.01)
+    chans.handle_incoming("discord", "42", "stop everything")
+    assert raw.sent == [("42", "Stopped."), ("42", "Stopped.")]
+    acks = [d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"][before:]
+    assert len(acks) == 2 and all(a["surface"] == "discord" for a in acks), acks
+
+
+def test_only_the_fixed_text_can_use_the_stop_reply_door(gs):
+    raw = _Raw()
+    assert raw.send_stop_ack("42", "Stopped. Also, here is your inbox") is False
+    assert raw.sent == []
+    assert gs.claim_ack("sms", "+15125550111") is None          # not stopped: nothing to answer
+
+
+def test_while_stopped_an_owner_text_reaches_no_model(phone_home, fake_twilio, gs, monkeypatch, quiet):
+    verify_owner(monkeypatch)
+    monkeypatch.setattr(config, "load", lambda _orig=config.load: dict(_orig(), sms_conversation=True))
+    monkeypatch.setattr(service, "_run_phone_agent",
+                        lambda *a: pytest.fail("a text reached the model while everything was stopped"))
+    gs.stop(by="owner", source="button")
+    _event("sms_in", "SM11", From=OWNER, Body="what's on today?", MessageSid="SM11")
+    service.process_pending()
+    assert fake_twilio.sent_bodies() == []
+
+
+# ── the chat bridges ─────────────────────────────────────────────────────────
+
+@pytest.fixture
+def chans(tmp_path, monkeypatch):
+    from agent_friday.services.channels import manager
+    monkeypatch.setattr(manager, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(manager, "CONFIG_PATH", tmp_path / "channels.json")
+    monkeypatch.setattr(manager, "_ADAPTERS", {})
+    cfg = manager.load_config()
+    cfg["enabled"] = True
+    for ch in ("telegram", "discord"):
+        cfg[ch]["enabled"] = True
+        cfg[ch]["allowlist"] = ["42"]
+    manager.save_config(cfg)
+    return manager
+
+
+@pytest.mark.parametrize("channel", ["telegram", "discord"])
+def test_a_stop_from_an_allowlisted_chat_stops_before_any_model(chans, gs, monkeypatch, channel):
+    monkeypatch.setattr(chans, "_run_agent", lambda t: pytest.fail("a stop reached the model"))
+    chans.handle_incoming(channel, "42", "Friday, stop everything")
+    assert gs.active()
+    rec = _stop_receipts()
+    assert rec and rec[-1]["surface"] == channel
+
+
+def test_a_stop_from_a_chat_not_on_the_allowlist_stops_nothing(chans, gs, monkeypatch):
+    monkeypatch.setattr(chans, "_run_agent", lambda t: "x")
+    chans.handle_incoming("telegram", "999", "stop everything")
+    assert not gs.active()
+
+
+def test_while_stopped_a_chat_message_reaches_no_model(chans, gs, monkeypatch):
+    monkeypatch.setattr(chans, "_run_agent", lambda t: pytest.fail("reached the model while stopped"))
+    gs.stop(by="owner", source="button")
+    assert chans.handle_incoming("telegram", "42", "what's on today?") is None
+
+
+def test_a_stuck_turn_does_not_keep_a_telegram_stop_waiting(chans, gs, monkeypatch):
+    """The model loop is wedged on the first message. The bridge reads messages on one thread;
+    the stop that follows must still be read and obeyed within a second."""
+    from agent_friday.services.channels.telegram_bridge import TelegramBridge
+    wedged, release = threading.Event(), threading.Event()
+
+    def stuck(_text):
+        wedged.set()
+        release.wait(10)
+        return "late"
+    monkeypatch.setattr(chans, "_run_agent", stuck)
+    bridge = TelegramBridge()
+    bridge.on_message(chans.handle_incoming)
+    monkeypatch.setattr(bridge, "send", lambda *a, **k: {"ok": True})
+
+    chans.handle_incoming("telegram", "999", "warm up")     # first-call imports, not timed
+    go = threading.Event()
+
+    def reader():                       # what _poll_once does with two updates in a row
+        bridge._dispatch("42", "summarise my inbox")
+        go.wait(10)
+        bridge._dispatch("42", "stop everything")
+    t = threading.Thread(target=reader, daemon=True)
+    try:
+        t.start()
+        assert wedged.wait(5), "the first turn never started"
+        t0 = time.monotonic()
+        go.set()                         # the stop arrives while the first turn is stuck
+        while time.monotonic() < t0 + 1.0 and not gs.active():
+            time.sleep(0.01)
+        assert gs.active(), "a stuck turn kept the stop from being read within a second"
+    finally:
+        release.set()
+        t.join(5)
+        bridge.stop()                    # the worker ends after the stuck turn; nothing runs late
+        time.sleep(0.05)
+
+
+def test_a_stop_text_that_arrived_before_resume_is_not_applied_again(phone_home, fake_twilio, gs,
+                                                                      monkeypatch, quiet):
+    """The ingress stopped at once; the owner pressed Resume; only then did the (stuck) service
+    loop reach the spooled text. It must not stop everything a second time."""
+    verify_owner(monkeypatch)
+    spool.put_event("sms_in", "SM12", {"From": OWNER, "Body": "stop everything", "MessageSid": "SM12"},
+                    now=time.time() - 30)
+    gs.stop(by="owner", source="sms")
+    gs.resume(by="owner", source="button")
+    service.process_pending()
+    assert not gs.active()
+
+
+def test_a_flood_behind_a_stuck_turn_is_bounded_and_a_stopped_bridge_runs_nothing(chans, monkeypatch):
+    from agent_friday.services.channels.telegram_bridge import TelegramBridge
+    release = threading.Event()
+    bridge = TelegramBridge()
+    try:
+        first = bridge.submit_turn(release.wait, 10)
+        futs = [bridge.submit_turn(lambda: None) for _ in range(bridge.MAX_QUEUED_TURNS + 5)]
+        assert first is not None and futs.count(None) >= 5
+        bridge.stop()
+        assert bridge.submit_turn(lambda: None) is None
+    finally:
+        release.set()

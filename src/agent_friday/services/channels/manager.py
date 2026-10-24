@@ -355,6 +355,22 @@ def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
         return None
     if not _allowed(channel, chat_id):
         return None
+    # BD-13: "stop everything" from an allowlisted chat stops everything before any model is
+    # asked, and answers that chat once with A28's fixed "Stopped."; while stopped, nothing
+    # reaches the model and no other reply can leave (the action checkpoint holds every send).
+    try:
+        from agent_friday.services import global_stop
+        if global_stop.is_remote_stop(text):
+            global_stop.stop(by="owner", source=channel, reason="sent from your %s chat" % channel)
+            ack = global_stop.claim_ack(channel, str(chat_id))
+            a = _ADAPTERS.get(channel)
+            if ack and a is not None:
+                a.send_stop_ack(str(chat_id), ack)          # A28: the one fixed reply
+            return None
+        if global_stop.active():
+            return None
+    except Exception:
+        return None                 # a stop check that cannot run holds the turn
     # DM pairing: channel messages deepen the relationship the same way the chat
     # UI does — feed the LOCAL user model so Friday personalizes across surfaces.
     # Best-effort; never blocks or fails the reply.

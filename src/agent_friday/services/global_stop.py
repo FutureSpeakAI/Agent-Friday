@@ -53,7 +53,10 @@ _NEXT = [0]
 _LOADED = [False]
 
 #: Where a stop may come from. Anything else is recorded as "other".
-SOURCES = ("button", "keyboard", "typed", "voice", "tool", "tray", "test", "other")
+#: "sms", "telegram", "discord": the words arrived from the owner's verified cell or an
+#: allowlisted chat (BD-13); resume never comes from these (it is a press on Friday's own page).
+SOURCES = ("button", "keyboard", "typed", "voice", "tool", "tray", "sms", "telegram", "discord",
+           "test", "other")
 
 REFUSAL = ("[NOT RUN] Everything is stopped: the owner pressed Stop. Nothing new runs until "
            "they press Resume on Friday's own screen.")
@@ -180,6 +183,57 @@ def is_stop_everything(text: Any) -> bool:
     if not isinstance(text, str) or len(text.strip()) > _MAX_STOP_WORDS_LEN:
         return False
     return bool(STOP_PHRASE.match(_fold(text)))
+
+
+#: A29: from the phone and the chat bridges, "Friday stop" also stops everything (the owner
+#: names her, so it is not an ordinary "stop"). Never a bare "STOP": that word is the phone
+#: network's opt-out and is left to it.
+_REMOTE_STOP = re.compile(r"^(?:(?:hey|ok|okay) )?friday[.!]? stop(?: (?:now|right now|please|everything))*[.!]*$",
+                          re.I)
+
+
+def is_remote_stop(text: Any) -> bool:
+    """A stop from the phone or a chat bridge: the stop-everything words, or "Friday stop"."""
+    if is_stop_everything(text):
+        return True
+    if not isinstance(text, str) or len(text.strip()) > _MAX_STOP_WORDS_LEN:
+        return False
+    return bool(_REMOTE_STOP.match(_fold(text)))
+
+
+#: A28: the one reply that may leave the machine while everything is stopped.
+STOP_ACK = "Stopped."
+_ACKED: set = set()
+
+
+def claim_ack(surface: str, target: str) -> Optional[str]:
+    """A28. After a stop from the phone or a chat bridge, exactly one fixed reply, STOP_ACK, to
+    the verified number or chat that sent it, per stop. Returns the text to send, or None (not
+    stopped, already acknowledged for this stop, or the receipt could not be written: then
+    nothing is sent). The receipt is written first; the caller sends the text itself, on its
+    raw transport, since every other send is held while stopped."""
+    surface = _norm_source(surface)
+    target = str(target or "")
+    if not target or surface not in ("sms", "telegram", "discord"):
+        return None
+    with _LOCK:
+        if not active():
+            return None
+        key = (_STATE.get("since"), surface, target)
+        if key in _ACKED:
+            return None
+        _ACKED.add(key)
+    try:
+        from agent_friday.governance import action_gate
+        action_gate._receipt({"tool": "stop_ack", "class": action_gate.OUTWARD, "decision": "allow",
+                              "surface": surface, "chosen_by": "owner",
+                              "target": ("…" + target[-4:]) if len(target) > 4 else "…",
+                              "reason": "A28: the one fixed reply %r to the verified sender of a "
+                                        "remote stop" % STOP_ACK})
+    except Exception as exc:  # noqa: BLE001 - no receipt, no reply
+        _log.error("stop acknowledgement not sent: its receipt could not be written: %s", exc)
+        return None
+    return STOP_ACK
 
 
 def on_stop(fn: Callable[[], Any]) -> Callable[[], None]:
@@ -475,6 +529,7 @@ def resume(*, by: str = "owner", source: str = "button") -> Dict[str, Any]:
 
 
 def _reset_for_tests() -> None:
+    _ACKED.clear()
     with _LOCK:
         _STATE.clear()
         _STATE.update({"stopped": False})
