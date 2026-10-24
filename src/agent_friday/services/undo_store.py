@@ -62,7 +62,7 @@ def _off_record() -> bool:
         from agent_friday.services import off_record
         return bool(off_record.active())
     except Exception:
-        return False
+        return True                       # can't tell: nothing on disk (memory only)
 
 
 def keep(fields: Dict[str, Any]) -> Optional[str]:
@@ -86,11 +86,18 @@ def keep(fields: Dict[str, Any]) -> Optional[str]:
         with _LOCK:
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_name(p.name + ".tmp")
-            with open(tmp, "wb") as fh:
-                fh.write(blob)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, p)
+            try:
+                with open(tmp, "wb") as fh:
+                    fh.write(blob)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmp, p)
+            finally:
+                if tmp.exists():
+                    try:
+                        tmp.unlink()      # a failed write leaves nothing behind
+                    except OSError:
+                        pass
         _prune_sometimes()
         return token
     except Exception as e:  # noqa: BLE001
@@ -100,6 +107,7 @@ def keep(fields: Dict[str, Any]) -> Optional[str]:
 
 def read(token: str) -> Optional[Dict[str, Any]]:
     """The fields kept under `token`, or None (gone, expired, or it cannot be opened)."""
+    _prune_sometimes()
     with _LOCK:
         mem = _MEMORY.get(token)
     if mem is not None:
@@ -136,7 +144,7 @@ def prune() -> int:
         return 0
     cutoff = time.time() - RETENTION_S
     with _LOCK:
-        for f in d.glob("u*.bin"):
+        for f in d.glob("u*.bin*"):        # a stale .tmp goes too
             try:
                 if f.stat().st_mtime < cutoff:
                     f.unlink()
@@ -159,10 +167,15 @@ def _mentions(fields: Dict[str, Any], names, emails) -> bool:
 
 
 def forget_find(names, emails) -> int:
+    prune()
     return sum(1 for _ in _matching(names, emails))
 
 
 def forget_purge(names, emails) -> int:
+    """Forget means forget: every entry that names the person goes, and so does every entry that
+    cannot be opened to check (the vault locked, a key gone): nothing that might name them is
+    left. Those changes can then no longer be undone."""
+    prune()
     n = 0
     for token in list(_matching(names, emails)):
         drop(token)
@@ -176,9 +189,21 @@ def _matching(names, emails):
     for t, f in mem:
         if _mentions(f, names, emails):
             yield t
+    try:
+        _sts()._vault_key()               # forget may open the vault (a read never derives it)
+    except Exception:
+        pass
     d = _dir()
     for p in (d.glob("u*.bin") if d.is_dir() else []):
         token = p.stem
         f = read(token)
-        if f is not None and _mentions(f, names, emails):
-            yield token
+        if f is None or _mentions(f, names, emails):
+            yield token                   # unreadable counts as possibly naming them
+
+
+def status() -> Dict[str, Any]:
+    """For the privacy map: how many entries are kept, their size, and what seals new ones."""
+    d = _dir()
+    files = list(d.glob("u*.bin")) if d.is_dir() else []
+    return {"kept": len(files), "bytes": sum(f.stat().st_size for f in files if f.is_file()),
+            "sealed_with": _sts().sealed_with()}

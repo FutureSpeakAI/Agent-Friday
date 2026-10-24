@@ -1935,6 +1935,7 @@ def undo_calendar(receipt: dict) -> dict:
     journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed,
                    undone_rows=sorted(done))
     said = "Put back %s%s." % (_plural(back, "event"), ("; %d could not be" % failed) if failed else "")
+    said += _cr.why_not(receipt, "calendar", done)
     return journal.record("undo_action", "undo", "calendar", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
                           status="complete" if not failed else ("partial" if back else "failed"),
                           conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})
@@ -1966,6 +1967,7 @@ def undo_tasks(receipt: dict) -> dict:
     journal.update(receipt["receipt_id"], undone=failed == 0, undone_at=time.time(), undo_failed=failed,
                    undone_rows=sorted(done))
     said = "Put back %s%s." % (_plural(back, "task"), ("; %d could not be" % failed) if failed else "")
+    said += _cr.why_not(receipt, "tasks", done)
     return journal.record("undo_action", "undo", "tasks", items=[{"receipt_id": receipt["receipt_id"]}], summary=said,
                           status="complete" if not failed else ("partial" if back else "failed"),
                           conversation_id=(receipt.get("run") or {}).get("conversation_id"), extra={"said": said})

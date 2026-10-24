@@ -317,5 +317,16 @@ def undo_lines(receipt: dict, domain: str) -> List[str]:
     return out
 
 
+def why_not(receipt: dict, domain: str, done) -> str:
+    """Why a row could not be put back, when the reason is Undo's own: what it was is no longer
+    kept, or cannot be opened (the vault is locked)."""
+    missing = [r for i, r in enumerate(undo_rows(receipt, domain))
+               if i not in done and r.get("sealed") and _fields(r) is None]
+    if not missing:
+        return ""
+    return (" What %d of them were is no longer kept or can't be opened right now (if your vault is "
+            "locked, unlock it and try again)." % len(missing))
+
+
 def undo_rows(receipt: dict, domain: str) -> List[dict]:
     return list(((receipt or {}).get("undo") or {}).get(domain) or [])
