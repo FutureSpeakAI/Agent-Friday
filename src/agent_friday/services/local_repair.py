@@ -42,15 +42,42 @@ def _safe_mode() -> bool:
         return True
 
 
-def _brain() -> dict:
+def _installed() -> bool:
+    """Whether a local brain model is really on this PC: the seat Friday
+    resolves is one the model store can serve. (The resolver falls back to a
+    default name when nothing is installed, so a name alone proves nothing.)"""
+    try:
+        from agent_friday.services import local_seats, model_store
+        return bool(local_seats.resolve("brain")) and \
+            local_seats.resolve("brain") in (model_store.available() or {})
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def brain() -> dict:
+    """The local brain: working, installed but not serving (down), or absent."""
     try:
         from agent_friday.services import capability_state as cs
         s = cs.local_brain_state()
-        return {"state": s.state, "detail": s.detail,
-                "down": s.state == cs.PRESENT_FAILING, "installed": s.state != cs.ABSENT}
     except Exception as e:  # noqa: BLE001
         return {"state": "unknown", "detail": "could not be read (%s)" % type(e).__name__,
                 "down": False, "installed": False}
+    if s.state == cs.WORKING:
+        return {"state": cs.WORKING, "detail": s.detail, "down": False, "installed": True}
+    if s.state == cs.PRESENT_FAILING and _installed():
+        return {"state": cs.PRESENT_FAILING, "detail": s.detail, "down": True, "installed": True}
+    return {"state": cs.ABSENT, "detail": "no local model is installed", "down": False, "installed": False}
+
+
+_brain = brain
+
+
+def _seats_running() -> bool:
+    arb = _arbiter()
+    try:
+        return bool(arb is not None and getattr(arb.llama, "procs", None))
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def _arbiter():
@@ -96,10 +123,16 @@ def state() -> dict:
                        "recommended": brain["down"]})
     problem = _runtime_problem()
     if problem:
+        running = _seats_running()
         offers.append({"id": "runtime", "label": "Reinstall the local model runtime",
-                       "available": not safe,
-                       "why": "Safe mode downloads nothing." if safe else None,
-                       "problem": problem, "recommended": not safe})
+                       "available": not safe and not running,
+                       "why": ("Safe mode downloads nothing." if safe else
+                               "A local model is running on this runtime: stop it first (quit Friday's "
+                               "local models from Settings > Models)." if running else None),
+                       # the check's own words name folders on this PC: a plain sentence here
+                       "problem": "The installed local model runtime cannot serve; it can be "
+                                  "reinstalled from its pinned release.",
+                       "recommended": not safe and not running})
     return {"brain": brain, "safe_mode": safe, "offers": offers, "job": dict(_JOB)}
 
 
@@ -116,9 +149,14 @@ def _run_restart() -> dict:
     if arb is None:
         return {"ok": False, "note": "the local model manager is not running"}
     r = arb.restore_unheld_seats("doctor_repair")
-    out = {"ok": bool(r.get("ok")), "note": r.get("note"),
-           "restored": list(r.get("restored") or []), "missing": list(r.get("missing") or [])}
-    out["brain_after"] = _brain()["state"]
+    after = brain()
+    restored = list(r.get("restored") or [])
+    # the restore says ok when nothing needed doing or something holds the
+    # seats down on purpose: done means a seat came back and is serving
+    out = {"ok": bool(r.get("ok")) and bool(restored) and after["state"] == "working",
+           "restored": restored, "missing": list(r.get("missing") or []), "brain_after": after["state"]}
+    if r.get("note"):
+        out["note"] = "not restarted: %s" % r["note"]
     return out
 
 
@@ -165,17 +203,18 @@ def start(what: str, *, by: str = "owner:ui", wait: bool = False) -> dict:
         raise RepairError(offer["why"] or "That repair is not available now.")
     if not _LOCK.acquire(blocking=False):
         raise RepairError("A repair is running already.")
-    _JOB.clear()
-    _JOB.update(state="running", what=what, started_at=time.time(), by=by)
+    global _JOB
+    _JOB = {"state": "running", "what": what, "started_at": time.time(), "by": by}
     _receipt("started", repair=what, by=by)
 
     def _go():
+        global _JOB
         try:
             result = _RUNNERS[what]()
-            _JOB.update(state="done", result=result, finished_at=time.time())
+            _JOB = dict(_JOB, state="done", result=result, finished_at=time.time())
             _receipt("finished", repair=what, ok=bool(result.get("ok")))
         except Exception as e:  # noqa: BLE001 - the job says what happened
-            _JOB.update(state="failed", error=type(e).__name__, finished_at=time.time())
+            _JOB = dict(_JOB, state="failed", error=type(e).__name__, finished_at=time.time())
             _receipt("failed", repair=what, error=type(e).__name__)
         finally:
             _LOCK.release()

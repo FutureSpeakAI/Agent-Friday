@@ -34,6 +34,10 @@ def test_a_repair_takes_the_press(client, monkeypatch):
     assert r.status_code == 400
     r = client.post("/api/doctor/local-model/repair", json={"repair": "verify"}, headers=_press())
     assert r.status_code == 202, r.get_json()
+    from agent_friday.services import local_repair
+    assert local_repair._LOCK.acquire(timeout=10)      # the repair finished while the fakes are in place
+    local_repair._LOCK.release()
+    assert local_repair._JOB["state"] == "done"
 
 
 def test_the_doctor_page_offers_the_repairs():

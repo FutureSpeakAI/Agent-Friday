@@ -35,13 +35,17 @@ def world(monkeypatch):
     model files, one changed on disk; a sound runtime; normal start."""
     from agent_friday.services import (action_ledger, capability_state as cs, model_download,
                                        model_store, residency_arbiter, safe_mode)
-    w = {"brain": cs.PRESENT_FAILING, "arb": FakeArbiter(), "safe": False, "runtime": None,
+    w = {"brain": cs.PRESENT_FAILING, "arb": FakeArbiter(), "safe": False, "runtime": None, "installed": True,
          "receipts": [], "reinstalled": 0}
     monkeypatch.setattr(cs, "local_brain_state", lambda: cs.CapabilityState(
         "local_brain", "Local model (brain seat)", w["brain"], (), "", "brain-model"))
     monkeypatch.setattr(residency_arbiter, "get_arbiter", lambda: w["arb"])
     monkeypatch.setattr(safe_mode, "active", lambda *a, **k: w["safe"])
     monkeypatch.setattr(model_store, "all_models", lambda: {"brain-model": {}, "voice-model": {}})
+    from agent_friday.services import local_seats
+    monkeypatch.setattr(local_seats, "resolve", lambda role: "brain-model")
+    monkeypatch.setattr(model_store, "available", lambda: {"brain-model": {}} if w["installed"] else {})
+    w["installed"] = True
     monkeypatch.setattr(model_store, "verify", lambda mid: {"ok": True, "checked": "sha256"}
                         if mid == "brain-model" else {"ok": False, "error": "checksum mismatch"})
     monkeypatch.setattr(model_download, "installed_runtime_problem", lambda *a, **k: w["runtime"])
@@ -53,8 +57,10 @@ def world(monkeypatch):
     monkeypatch.setattr(action_ledger, "try_append", lambda kind, rec, **k: w["receipts"].append((kind, rec)))
     if importlib.util.find_spec("agent_friday.services.local_repair") is not None:
         lr = importlib.import_module("agent_friday.services.local_repair")
-        lr._JOB.clear()
-        lr._JOB.update(state="idle")
+        assert lr._LOCK.acquire(timeout=10), "a repair from an earlier test is still running"
+        lr._LOCK.release()
+        lr._JOB = {"state": "idle"}
+        w["arb"].llama = type("L", (), {"procs": {}})()
     return w
 
 
@@ -67,7 +73,36 @@ def test_a_model_that_is_not_serving_gets_its_repairs_offered(world):
     assert "runtime" not in offers                     # a sound runtime is not offered for reinstalling
 
 
+def test_a_pc_with_no_local_model_is_not_told_it_is_broken(world):
+    from agent_friday.services import doctor
+    world["installed"] = False                     # the resolver's default name, nothing on disk
+    st = _lr().state()
+    assert st["brain"]["state"] == "absent" and "restart" not in {o["id"] for o in st["offers"]}
+    assert {c["id"]: c for c in doctor.build()["checks"]}["local_brain"]["state"] == \
+        "unavailable_by_configuration"
+
+
+def test_a_restart_that_restored_nothing_is_not_called_done(world):
+    world["arb"].result = {"ok": True, "note": "build hours own the brain"}
+    job = _lr().start("restart", wait=True)
+    assert job["result"]["ok"] is False and job["result"]["note"] == "not restarted: build hours own the brain"
+
+
+def test_the_runtime_is_not_replaced_under_a_running_model(world):
+    world["runtime"] = "broken"
+    world["arb"].llama = type("L", (), {"procs": {"brain-model": object()}})()
+    offers = {o["id"]: o for o in _lr().state()["offers"]}
+    assert not offers["runtime"]["available"] and "stop it first" in offers["runtime"]["why"]
+
+
 def test_restart_goes_through_the_arbiters_own_restore_with_a_receipt(world):
+    from agent_friday.services import capability_state as cs
+    orig = world["arb"].restore_unheld_seats
+
+    def restore(reason=None):
+        world["brain"] = cs.WORKING                # the seat came back
+        return orig(reason)
+    world["arb"].restore_unheld_seats = restore
     job = _lr().start("restart", wait=True)
     assert world["arb"].calls == ["doctor_repair"]
     assert job["state"] == "done" and job["result"]["ok"] and job["result"]["restored"] == ["brain-model"]
@@ -86,7 +121,7 @@ def test_the_check_names_a_changed_model_file_and_where_to_get_it_again(world):
 def test_a_broken_runtime_is_offered_and_reinstalled(world):
     world["runtime"] = "the local model runtime has no server program"
     offers = {o["id"]: o for o in _lr().state()["offers"]}
-    assert offers["runtime"]["available"] and "no server program" in offers["runtime"]["problem"]
+    assert offers["runtime"]["available"] and "cannot serve" in offers["runtime"]["problem"]
     job = _lr().start("runtime", wait=True)
     assert world["reinstalled"] == 1 and job["result"]["ok"] is True
 
