@@ -62,6 +62,7 @@ ERROR_MESSAGES = {
     "reply_failed": "could not send the reply; Google did not accept it",
     "search_failed": "Calendar search failed",
     "update_failed": "could not update the event; Google did not accept it",
+    "not_confirmed": "Google did not confirm the change; check your calendar before trying again",
 }
 GENERIC_ERROR = "the calendar change could not be made; nothing was changed"
 
@@ -458,7 +459,7 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
     if note:
         additions.append(note)
 
-    changed, skipped = [], []
+    changed, skipped, failed_kinds = [], [], []
     for t in targets:
         patch, before = {}, {}
         if location:
@@ -490,11 +491,20 @@ def annotate_events(query: str, *, location: str = "", phone: str = "",
             _drop_calendar_cache()
         except Exception as e:
             _logged("adding to a calendar event", e)
+            from agent_friday.services import connector_outcome as _co
+            _kind = _co.classify(e)
+            failed_kinds.append(_kind)
             skipped.append({"id": t["id"], "title": t.get("title"),
-                            "why": "Google did not accept the change"})
+                            "why": _co.sentence(_kind, "Google Calendar")})
             continue
         changed.append({"id": t["id"], "title": t.get("title"),
                         "kind": t["kind"], "set": patch, "before": before})
+    if failed_kinds and not changed and not dry_run:
+        # every change Google was asked for failed: the call did nothing (BD-06)
+        from agent_friday.services import connector_outcome as _co
+        return {"ok": False, "error": _co.not_done(failed_kinds[0], "Google Calendar", account_id=aid),
+                "dry_run": False, "matched": len(targets), "account_id": aid,
+                "changed": [], "skipped": skipped}
     return {"ok": True, "dry_run": bool(dry_run), "matched": len(targets),
             "account_id": aid, "changed": changed, "skipped": skipped}
 
@@ -566,12 +576,15 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
         body["description"] = description
     if attendees:
         body["attendees"] = [{"email": a} for a in attendees if a]
+    from agent_friday.services import connector_outcome as _co
     try:
         ev = svc.events().insert(calendarId=_cal(calendar_id), body=body).execute()
     except Exception as e:
-        _logged("creating a calendar event", e)
-        return _fail("create_failed")
+        return _fail("create_failed", _co.failed(e, "Google Calendar", account_id=aid))
     _drop_calendar_cache()
+    if not _co.confirmed(ev):
+        # an empty reply names no event: not reported as created (BD-06, NS-34.11-3)
+        return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
             "start": start, "end": end}
@@ -647,9 +660,14 @@ def read_event(event_id: str, *, calendar_id: str = "primary", account_id=None,
     try:
         ev = svc.events().get(calendarId=cal, eventId=eid).execute()
     except Exception as e:
-        from agent_friday.user_errors import exception_text
+        from agent_friday.services import connector_outcome as _co
         status = getattr(getattr(e, "resp", None), "status", None)
-        return {"error": exception_text(e, "could not read event %s: %%s" % eid.replace("%", "%%")),
+        if _co.classify(e) in ("revoked", "scope", "unreachable"):
+            # revoked access is named (and the account marked), as for every Google change
+            return {"error": "could not read event %s. %s" % (eid, _co.failed(e, "Google Calendar", account_id=aid)),
+                    "not_found": False}
+        _logged("reading a calendar event", e)
+        return {"error": "could not read event %s from Google" % eid,
                 "not_found": str(status) in ("404", "410")}
     if (ev or {}).get("status") == "cancelled":
         return {"error": "that event is already deleted", "gone": True}
@@ -678,7 +696,7 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
     and asks first, and the Calendar route is the owner's own click."""
     got = read_event(event_id, calendar_id=calendar_id, account_id=account_id, for_write=True)
     if not got.get("ok"):
-        return got
+        return got          # an already-deleted event says so (test_calendar_event_delete)
     tell = notify_guests_default() if notify_guests is None else bool(notify_guests)
     cal = got["before"]["calendar_id"]
     svc, err = _service(got["account_id"])
@@ -688,8 +706,15 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
         svc.events().delete(calendarId=cal, eventId=got["id"],
                             sendUpdates="all" if tell else "none").execute()
     except Exception as e:
-        from agent_friday.user_errors import exception_text
-        return {"error": exception_text(e, "could not delete the event: %s")}
+        from agent_friday.services import connector_outcome as _co
+        if _co._status(e) in (404, 410):
+            _drop_calendar_cache()
+            return {"ok": True, "id": got["id"], "already_gone": True, "title": got["before"]["title"],
+                    "account_id": got["account_id"], "calendar_id": cal,
+                    "guests_told": "It was already deleted; nothing else was changed.",
+                    "before": got["before"]}
+        return {"error": "could not delete the event. " + _co.failed(
+            e, "Google Calendar", account_id=got["account_id"])}
     _drop_calendar_cache()
     guests = int(got["before"].get("guests") or 0)
     return {"ok": True, "id": got["id"], "title": got["before"]["title"], "account_id": got["account_id"],
@@ -728,6 +753,9 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                                   eventId=event_id).execute()
     except Exception as e:
         _logged("reading a calendar event", e)
+        from agent_friday.services import connector_outcome as _co
+        if _co.classify(e) in ("revoked", "scope", "unreachable"):
+            return _fail("read_failed", _co.failed(e, "Google Calendar", account_id=aid))
         return _fail("read_failed", "could not read event %s" % event_id)
     patch, would_clear = {}, []
     for key, val in (("summary", title), ("location", location),
@@ -759,13 +787,15 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
                                                    if (before.get("end") or {}).get("timeZone") else {}))
     if not patch:
         return {"ok": True, "unchanged": True, "id": event_id}
+    from agent_friday.services import connector_outcome as _co
     try:
         ev = svc.events().patch(calendarId=_cal(calendar_id), eventId=event_id,
                                 body=patch).execute()
     except Exception as e:
-        _logged("updating a calendar event", e)
-        return _fail("update_failed")
+        return _fail("update_failed", _co.failed(e, "Google Calendar", account_id=aid))
     _drop_calendar_cache()
+    if not _co.confirmed(ev):
+        return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "set": patch,
             "before": {"summary": before.get("summary"),

@@ -65,7 +65,8 @@ def _service(account_id: str):
     from agent_friday.services import google_accounts as ga
     creds = ga.credentials_for(account_id)
     if not creds:
-        return None, "The account needs reconnecting before Friday can save to it."
+        from agent_friday.services import connector_outcome as _co
+        return None, _co.no_credentials(account_id, "Google Contacts")
     from googleapiclient.discovery import build
     from agent_friday.services import egress_record as _er
     return _er.contacts(build("people", "v1", credentials=creds, cache_discovery=False)), ""
@@ -126,6 +127,11 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
             out = svc.people().createContact(body=body).execute()
             action = "created"
     except Exception as e:
-        return {"ok": False, "error": "Google refused the save: %s" % str(e)[:300]}
+        from agent_friday.services import connector_outcome as _co
+        return {"ok": False, "error": _co.failed(e, "Google Contacts", account_id=rec["id"])}
+    from agent_friday.services import connector_outcome as _co
+    if not _co.confirmed(out, "resourceName"):
+        return {"ok": False, "unconfirmed": True,
+                "error": _co.not_done("unconfirmed", "Google Contacts")}
     return {"ok": True, "action": action, "account": rec.get("email"),
             "resource_name": out.get("resourceName")}
