@@ -467,8 +467,9 @@ class ConversationMemory:
             docs = (res.get("documents") or [[]])[0]
             metas = (res.get("metadatas") or [[]])[0]
             dists = (res.get("distances") or [[]])[0]
+            ids = (res.get("ids") or [[]])[0] or [None] * len(docs)
             out = []
-            for doc, meta, dist in zip(docs, metas, dists):
+            for doc_id, doc, meta, dist in zip(ids, docs, metas, dists):
                 meta = meta or {}
                 try:
                     rel = max(0.0, min(1.0, 1.0 - float(dist)))
@@ -478,6 +479,9 @@ class ConversationMemory:
                 if is_superseded and not include_superseded:
                     continue
                 out.append({
+                    # The stored turn's id (the conversation message id when the
+                    # turn was indexed from chat): what a recalled line cites.
+                    "id": doc_id,
                     "text": doc,
                     "role": meta.get("role"),
                     "timestamp": meta.get("timestamp"),
@@ -584,11 +588,134 @@ class ConversationMemory:
                 if found:
                     self._collection.update(ids=found, metadatas=new_metas)
             out["superseded"] = found
+            # The full-text search over conversations honours it too
+            # (north star §34.9-4): a superseded turn is not evidence anywhere.
+            try:
+                from agent_friday.services import conversation_fts as _fts
+                # Every id asked for: a turn the full-text index holds but
+                # Chroma does not (its indexing failed) is corrected there too.
+                _fts.mark_superseded(ids, bool(flag))
+            except Exception as _e:
+                print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
         except Exception as e:
             print(f"  [MEMORY] supersede failed (non-fatal): {e}")
             out["missing"] = ids
         return out
+
+    def rebuild_from_transcripts(self, progress=None):
+        """Put back every stored conversation turn this store is missing,
+        from the transcripts (north star §34.9-9). Run it from a background
+        job, never a request: each missing turn is embedded.
+
+        A row already here is left exactly as it is (its text was cleaned by
+        the live path, its correction flag stands), so a rebuild can never
+        undo a correction or re-add words the live path removed. A missing
+        turn is indexed as the live path would index it: transcript turns
+        only (off-the-record, tool and system lines and deleted messages are
+        not in that set), a reply that read the Library as the stand-in
+        (never the documents' words), recalled-memory spans stripped. It is
+        marked superseded right after it is written when conversation search
+        records it as superseded, or when an older row holding the same
+        words is superseded. Returns {"ok", "indexed", "kept", "failed",
+        "kept_superseded"}."""
+        if not self._ensure():
+            return {"ok": False, "error": "conversation memory is not available"}
+        say = progress or (lambda msg: None)
+        present, flagged_text = set(), {}
+        try:
+            with self._lock:
+                got = self._collection.get(include=["metadatas", "documents"])
+            ids = got.get("ids") or []
+            docs = got.get("documents") or [None] * len(ids)
+            for i, m, d in zip(ids, got.get("metadatas") or [{}] * len(ids), docs):
+                present.add(str(i))
+                m = m or {}
+                norm = " ".join(str(d or "").split())
+                if str(m.get(_SUPERSEDED_KEY) or "") == "1" and len(norm) >= 20:
+                    flagged_text[norm] = (m.get(_SUPERSEDED_REASON) or "superseded", m.get(_SUPERSEDED_BY) or "")
+        except Exception as e:
+            say(f"could not read this store: {e}")
+            return {"ok": False, "error": "the store could not be read; nothing was changed"}
+        from agent_friday.services import conversation_fts as fts
+
+        def _fts_superseded():
+            try:
+                return {str(x) for x in fts.superseded_ids()}
+            except Exception:
+                return set()
+        from agent_friday.services import conversations as cv
+        try:
+            from agent_friday.services import memory_fence as _mf
+        except Exception:
+            _mf = None
+        try:
+            from agent_friday.services.library import cite as _cite
+            elided = getattr(_cite, "ELIDED", None)
+        except Exception:
+            elided = None
+        indexed = kept = failed = flagged = 0
+        new_ids = []
+        corrected = _fts_superseded()
+        try:
+            convs = cv.list_all(include_archived=True)
+        except Exception as e:
+            say(f"could not list the conversations: {e}")
+            return {"ok": False, "error": "the conversations could not be listed; nothing was changed"}
+        for conv in convs:
+            cid = conv.get("id")
+            if not cid:
+                continue
+            try:
+                messages = cv._stored_messages(cid)
+            except Exception as e:
+                say(f"conversation {cid} not read: {e}")
+                failed += 1
+                continue
+            for m in messages:
+                try:
+                    if not fts._indexable(m):      # text, an id, a turn, not off the record
+                        continue
+                    mid = str(m["id"])
+                    if mid in present:
+                        kept += 1                  # as the live path left it
+                        continue
+                    meta = m.get("meta") or {}
+                    text = m["text"]
+                    role = m.get("role") or "user"
+                    if role != "user" and (m.get("library") or meta.get("library")):
+                        if not elided:
+                            continue               # never the documents' words
+                        text = elided
+                    if _mf is not None:
+                        text = _mf.strip(text)
+                    if not str(text or "").strip():
+                        continue
+                    try:
+                        ts = datetime.fromtimestamp(float(m["ts"])).isoformat() if m.get("ts") else None
+                    except (TypeError, ValueError, OSError):
+                        ts = None
+                    if not self.index(text, role, session_id=(ts or datetime.now().isoformat())[:10],
+                                      timestamp=ts, msg_id=mid):
+                        failed += 1
+                        continue
+                    indexed += 1
+                    new_ids.append(mid)
+                    norm = " ".join(str(text).split())
+                    flag = (("superseded", "") if mid in corrected
+                            else flagged_text.get(norm) if text != elided else None)
+                    if flag and self._set_supersession([mid], "1", flag[0], flag[1]).get("superseded"):
+                        flagged += 1
+                except Exception as e:
+                    say(f"a turn was not indexed: {e}")
+                    failed += 1
+        # Anything corrected in conversation search while this ran.
+        late = [i for i in new_ids if i in (_fts_superseded() - corrected)]
+        if late:
+            flagged += len(self._set_supersession(late, "1", "superseded", "").get("superseded") or [])
+        say(f"indexed {indexed} missing turns, kept {kept}, {failed} failed, {flagged} marked superseded")
+        return {"ok": failed == 0, "indexed": indexed, "kept": kept, "failed": failed,
+                "kept_superseded": flagged}
 
     def find_ids(self, substring, limit=50):
         """Document ids whose text contains *substring* (case-insensitive).

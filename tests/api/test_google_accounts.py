@@ -24,7 +24,8 @@ class FakeCreds:
 
     def __init__(self, email="user@example.com", scopes=None, valid=True,
                  expired=False, refresh_token="refresh-xyz", token="access-abc"):  # pragma: allowlist secret
-        self.scopes = scopes or list(ga.GOOGLE_MULTI_SCOPES)
+        # An account that also allowed calendar and task changes (their own buttons, BD-06).
+        self.scopes = scopes or list(ga.GOOGLE_MULTI_SCOPES) + [ga.CALENDAR_RW, ga.TASKS_RW]
         self.valid = valid
         self.expired = expired
         self.refresh_token = refresh_token  # pragma: allowlist secret

@@ -1,0 +1,812 @@
+{
+ "about": "The section 34 release-acceptance checklist (north-star amendment A26). A version tag that is not a beta (vX.Y.Z-beta.N) is refused unless every row is pass with its evidence, or is exempted by the amendment scripts/release_acceptance.py allows for it (A10 deferred, A11 moved, A12 removed). verified_for names the version the results were recorded for. Betas are exempt (A19).",
+ "verified_for": "",
+ "rows": [
+  {
+   "id": "NS-34.1-1",
+   "strength": "MUST",
+   "requirement": "Stable release requires evidence of install, use, update, restore, governance on representative machines",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-1",
+   "strength": "REQUIRED",
+   "requirement": "Green unit tests gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-2",
+   "strength": "REQUIRED",
+   "requirement": "Green API tests gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-3",
+   "strength": "REQUIRED",
+   "requirement": "Green integration tests gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-4",
+   "strength": "REQUIRED",
+   "requirement": "Security and egress boundary tests gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-5",
+   "strength": "REQUIRED",
+   "requirement": "Principal-isolation tests gate",
+   "status": "moved",
+   "amendment": "A11",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-6",
+   "strength": "REQUIRED",
+   "requirement": "Packaging tests gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-7",
+   "strength": "REQUIRED",
+   "requirement": "Installer tests gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-8",
+   "strength": "REQUIRED",
+   "requirement": "Update and rollback tests gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-9",
+   "strength": "REQUIRED",
+   "requirement": "Static analysis gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-10",
+   "strength": "REQUIRED",
+   "requirement": "Dependency review gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-11",
+   "strength": "REQUIRED",
+   "requirement": "Secret and personal-data scan gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-12",
+   "strength": "REQUIRED",
+   "requirement": "Documentation link and example tests",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-13",
+   "strength": "REQUIRED",
+   "requirement": "Settings schema tests",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-14",
+   "strength": "REQUIRED",
+   "requirement": "Action-gate completeness tests",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-15",
+   "strength": "REQUIRED",
+   "requirement": "Receipt completeness tests",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-16",
+   "strength": "REQUIRED",
+   "requirement": "Model and capability registry validation",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-17",
+   "strength": "REQUIRED",
+   "requirement": "License and SBOM generation",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.2-18",
+   "strength": "MUST NOT",
+   "requirement": "Security suites not skipped when earlier general tests fail; report independently",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-1",
+   "strength": "MUST",
+   "requirement": "Clean-machine install on supported Windows versions",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-2",
+   "strength": "MUST",
+   "requirement": "Clean-machine: minimum RAM",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-3",
+   "strength": "MUST",
+   "requirement": "Clean-machine: no GPU / low / mid / high-tier GPU",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-4",
+   "strength": "MUST",
+   "requirement": "Clean-machine: non-English locale",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-5",
+   "strength": "MUST",
+   "requirement": "Clean-machine: restricted user account",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-6",
+   "strength": "MUST",
+   "requirement": "Upgrade from oldest supported and immediately prior version",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-7",
+   "strength": "MUST",
+   "requirement": "Restore from portable bundle",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.3-8",
+   "strength": "MUST",
+   "requirement": "Results recorded in release evidence",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-1",
+   "strength": "MUST",
+   "requirement": "First-run: installer signature verified",
+   "status": "deferred",
+   "amendment": "A10",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-2",
+   "strength": "MUST",
+   "requirement": "First-run: preflight accuracy",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-3",
+   "strength": "MUST",
+   "requirement": "First-run: secure key creation",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-4",
+   "strength": "MUST",
+   "requirement": "First-run: setup without a model",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-5",
+   "strength": "MUST",
+   "requirement": "First-run: local-model download and checksum",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-6",
+   "strength": "MUST",
+   "requirement": "First-run: cloud-key setup through secure fields",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-7",
+   "strength": "MUST",
+   "requirement": "First-run: connector scope display",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-8",
+   "strength": "MUST",
+   "requirement": "First-run: first synthesis, first action+receipt, first goal",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-9",
+   "strength": "MUST",
+   "requirement": "First-run: backup setup",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.4-10",
+   "strength": "MUST",
+   "requirement": "First-run: uninstall",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-1",
+   "strength": "MUST",
+   "requirement": "Every registered tool reaches the action gate (test)",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-2",
+   "strength": "MUST",
+   "requirement": "Direct handler call sites cannot bypass gate",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-3",
+   "strength": "MUST",
+   "requirement": "Unknown tools are conservative",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-4",
+   "strength": "MUST",
+   "requirement": "Approvals bind exact arguments",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-5",
+   "strength": "MUST",
+   "requirement": "Tokens cannot replay",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-6",
+   "strength": "MUST",
+   "requirement": "Grants expire and count usage",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-7",
+   "strength": "MUST",
+   "requirement": "Untrusted parameters force stronger approval",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-8",
+   "strength": "MUST",
+   "requirement": "Receipt failure holds action",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-9",
+   "strength": "MUST",
+   "requirement": "STOP works while model loop is wedged",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-10",
+   "strength": "MUST",
+   "requirement": "Principal policy enforced",
+   "status": "moved",
+   "amendment": "A11",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.5-11",
+   "strength": "MUST",
+   "requirement": "Constitution drift holds outward actions",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-1",
+   "strength": "MUST",
+   "requirement": "Egress tests: structured PII",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-2",
+   "strength": "MUST",
+   "requirement": "Egress tests: unstructured sensitive meaning",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-3",
+   "strength": "MUST",
+   "requirement": "Egress tests: secrets",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-4",
+   "strength": "MUST",
+   "requirement": "Egress tests: vault content",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-5",
+   "strength": "MUST",
+   "requirement": "Egress tests: file grants",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-6",
+   "strength": "MUST",
+   "requirement": "Egress tests: provider echo",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-7",
+   "strength": "MUST",
+   "requirement": "Egress tests: partial classifier failure / loading classifier",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-8",
+   "strength": "MUST",
+   "requirement": "Egress tests: malformed payloads",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-9",
+   "strength": "MUST",
+   "requirement": "Egress tests: oversized payloads",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-10",
+   "strength": "MUST",
+   "requirement": "Egress tests: connector tool results",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-11",
+   "strength": "MUST",
+   "requirement": "Egress tests: voice transcripts",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-12",
+   "strength": "MUST",
+   "requirement": "Egress tests: images and image metadata",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-13",
+   "strength": "MUST",
+   "requirement": "Egress tests: remote model substitution",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.6-14",
+   "strength": "MUST",
+   "requirement": "Egress tests: all supported providers",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.7-1",
+   "strength": "MUST",
+   "requirement": "Injection fixtures: email, HTML, PDF, images, calendar, spreadsheet, repo files, tool output, channel msgs, webhooks, screen text, model summaries",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.7-2",
+   "strength": "MUST",
+   "requirement": "Tests verify content cannot create grants",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.7-3",
+   "strength": "MUST",
+   "requirement": "Tests verify content cannot change recipients silently",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.7-4",
+   "strength": "MUST",
+   "requirement": "Tests verify content cannot modify policy",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.7-5",
+   "strength": "MUST",
+   "requirement": "Tests verify content cannot escape sandboxes",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.8-1",
+   "strength": "MUST",
+   "requirement": "Principal-isolation tests across every store and surface; release blockers",
+   "status": "moved",
+   "amendment": "A11",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-1",
+   "strength": "MUST",
+   "requirement": "Memory tests: cross-session recall",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-2",
+   "strength": "MUST",
+   "requirement": "Memory tests: source citation / provenance",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-3",
+   "strength": "MUST",
+   "requirement": "Memory tests: current-state override and freshness",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-4",
+   "strength": "MUST",
+   "requirement": "Memory tests: correction and supersession",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-5",
+   "strength": "MUST",
+   "requirement": "Memory tests: deletion and tombstones",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-6",
+   "strength": "MUST",
+   "requirement": "Memory tests: off-record exclusion",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-7",
+   "strength": "MUST",
+   "requirement": "Memory tests: import staging",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-8",
+   "strength": "MUST",
+   "requirement": "Memory tests: inferred vs confirmed state",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-9",
+   "strength": "MUST",
+   "requirement": "Memory tests: index rebuild",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.9-10",
+   "strength": "MUST",
+   "requirement": "Memory tests: cross-principal isolation",
+   "status": "moved",
+   "amendment": "A11",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-1",
+   "strength": "MUST",
+   "requirement": "Goal tests: state transitions",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-2",
+   "strength": "MUST",
+   "requirement": "Goal tests: typed blockers, continuation preconditions",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-3",
+   "strength": "MUST",
+   "requirement": "Goal tests: no-progress detection",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-4",
+   "strength": "MUST",
+   "requirement": "Goal tests: crash recovery",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-5",
+   "strength": "MUST",
+   "requirement": "Goal tests: budget enforcement",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-6",
+   "strength": "MUST",
+   "requirement": "Goal tests: plan revision, approval waiting",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-7",
+   "strength": "MUST",
+   "requirement": "Goal tests: evidence-first completion, receipt-first evaluation, manual completion labeling",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.10-8",
+   "strength": "MUST",
+   "requirement": "Goal tests: archive and reopen",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.11-1",
+   "strength": "MUST",
+   "requirement": "Per-connector fixtures: auth success/expiry, scopes, rate limits, pagination",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.11-2",
+   "strength": "MUST",
+   "requirement": "Per-connector fixtures: idempotency, partial failure, verification, undo",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.11-3",
+   "strength": "MUST",
+   "requirement": "Per-connector fixtures: revoked access, malformed content, receipt creation",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.12-1",
+   "strength": "MUST",
+   "requirement": "Artifact tests: validity, rendering, bounds, formulas, charts, fonts, accessibility",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.12-2",
+   "strength": "MUST",
+   "requirement": "Artifact tests: source preservation, overwrite safety, provenance, receipt linkage",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.13-1",
+   "strength": "MUST",
+   "requirement": "Persona goldens: directness, dissent, uncertainty, non-sycophancy",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.13-2",
+   "strength": "MUST",
+   "requirement": "Persona goldens: identity consistency, warmth, humor boundaries",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.13-3",
+   "strength": "MUST",
+   "requirement": "Persona goldens: action restraint, source integrity, error admission",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.13-4",
+   "strength": "MUST",
+   "requirement": "Persona goldens: multi-provider parity",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.14-1",
+   "strength": "MUST",
+   "requirement": "Usability acceptance: nontechnical setup, privacy, routing, approvals, memory correction, receipt, stop, restore, principal switch",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.14-2",
+   "strength": "MUST",
+   "requirement": "Key flows completed with screen reader and keyboard",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.15-1",
+   "strength": "MUST",
+   "requirement": "Perf tests: startup, model load, context assembly, retrieval, tool schema overhead",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.15-2",
+   "strength": "MUST",
+   "requirement": "Perf tests: UI responsiveness, trigger storms, large stores, receipt verification, backup/restore",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.15-3",
+   "strength": "MUST",
+   "requirement": "Perf tests: GPU contention",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.15-4",
+   "strength": "MUST",
+   "requirement": "Perf tests: battery and thermal",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.16-1",
+   "strength": "MUST",
+   "requirement": "Chaos: kill during model call and outward action",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.16-2",
+   "strength": "MUST",
+   "requirement": "Chaos: kill during receipt write, file creation, migration",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.16-3",
+   "strength": "MUST",
+   "requirement": "Chaos: kill during backup, restore, index rebuild, update, connector refresh",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.16-4",
+   "strength": "MUST",
+   "requirement": "System recovers without duplicate actions or false completion",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-1",
+   "strength": "MUST NOT",
+   "requirement": "No release with known gate bypass",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-2",
+   "strength": "MUST NOT",
+   "requirement": "No release with cross-principal leak",
+   "status": "moved",
+   "amendment": "A11",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-3",
+   "strength": "MUST NOT",
+   "requirement": "No plaintext credential fallback",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-4",
+   "strength": "MUST NOT",
+   "requirement": "No unsigned update path",
+   "status": "deferred",
+   "amendment": "A10",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-5",
+   "strength": "MUST NOT",
+   "requirement": "No reproducible arbitrary file escape",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-6",
+   "strength": "MUST NOT",
+   "requirement": "No unreviewed critical dependency exposure",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-7",
+   "strength": "MUST NOT",
+   "requirement": "No missing receipt for outward action",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.17-8",
+   "strength": "MUST NOT",
+   "requirement": "No skipped mandatory security suites or unexplained red checks",
+   "status": "open",
+   "evidence": ""
+  },
+  {
+   "id": "NS-34.18-1",
+   "strength": "MUST",
+   "requirement": "Consented 30-day pilot before broad consumer readiness claims, measuring listed outcomes incl. failures",
+   "status": "removed",
+   "amendment": "A12",
+   "evidence": ""
+  }
+ ]
+}

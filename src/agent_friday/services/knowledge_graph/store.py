@@ -498,14 +498,18 @@ class KnowledgeGraphManifest:
         return self._data["sources"]
 
     def record(self, source: str | Path, kind: str,
-               produced: Optional[list[str]] = None) -> None:
-        """Mark a source as ingested with its current fingerprint."""
+               produced: Optional[list[str]] = None,
+               refs: Optional[dict] = None) -> None:
+        """Mark a source as ingested with its current fingerprint. `refs` are
+        the provenance references its nodes carry ({"wiki_pages": [...]}), so
+        a later pass can take them back out when the source changes or goes."""
         key = canonical(source)
         fp = fingerprint(key) or {}
         self.sources[key] = {
             "kind": kind,
             "produced": list(produced or []),
             "ingested_at": time.time(),
+            **({"refs": {k: list(v) for k, v in refs.items()}} if refs else {}),
             **fp,
         }
 

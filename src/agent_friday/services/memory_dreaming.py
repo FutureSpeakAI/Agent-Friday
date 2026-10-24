@@ -233,7 +233,8 @@ def _pull_turns(memory, day: str):
         rdate = r.get("date") or (r.get("timestamp") or "")[:10]
         if rdate:
             oldest_date = rdate
-        if rdate == day:
+        # A superseded turn is history, not evidence: never consolidated.
+        if rdate == day and not r.get("superseded"):
             out.append(r)
     capped = len(rows) >= _PULL_WINDOW and (oldest_date is None or oldest_date >= day)
     return out, capped

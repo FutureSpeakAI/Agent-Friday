@@ -1982,10 +1982,12 @@ def _summarize_multi_account_errors(result):
     return list(by_id.values())
 
 
-def _calendar_write_summary(res, what):
+def _calendar_write_summary(res, what, change=True):
     """Render a write result as prose Friday can repeat truthfully."""
     if not isinstance(res, dict):
         return str(res)
+    if change:
+        _conn_outcome.settle(res)     # an error here is a change that did not happen (BD-06)
     if res.get("needs_reconnect"):
         return ("I could not %s: %s" % (what, res.get("error")))
     if res.get("error"):
@@ -2104,8 +2106,10 @@ def _calendar_event_words(inp):
     eid = str(inp.get("event_id") or "").strip()
     try:
         from agent_friday.services import calendar_write as cw
+        # for_write: the card names the event only when the delete could then happen (read first,
+        # BD-06: a read-only account says how to allow changes instead of showing a card in vain).
         got = cw.read_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
-                            account_id=(inp.get("account_id") or "").strip() or None)
+                            account_id=(inp.get("account_id") or "").strip() or None, for_write=True)
     except Exception:
         got = {}
     b = got.get("before") if got.get("ok") else None
@@ -2123,7 +2127,7 @@ def _tool_find_calendar_events(inp):
     q = ((inp or {}).get("query") or "").strip()
     if not q:
         return "find_calendar_events error: 'query' is required."
-    return _calendar_write_summary(cw.find_events(q), "search your calendar")
+    return _calendar_write_summary(cw.find_events(q), "search your calendar", change=False)
 
 
 def _opt_str(inp, key):
@@ -2141,7 +2145,7 @@ def _tool_find_free_slots(inp):
         count=inp.get("count") or 3,
         min_notice_hours=inp.get("min_notice_hours"),
         buffer_minutes=inp.get("buffer_minutes"))
-    return _calendar_write_summary(res, "find free times")
+    return _calendar_write_summary(res, "find free times", change=False)
 
 
 def _tool_hold_slots(inp):
@@ -2783,13 +2787,14 @@ def _tool_complete_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.complete_task(
         account_id=(inp.get('account_id') or '').strip(),
         tasklist_id=(inp.get('tasklist_id') or '').strip(),
         task_id=(inp.get('task_id') or '').strip(),
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_create_task(inp):
@@ -2798,7 +2803,8 @@ def _tool_create_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.create_task(
         account_id=(inp.get('account_id') or '').strip(),
         title=(inp.get('title') or '').strip(),
@@ -2806,7 +2812,7 @@ def _tool_create_task(inp):
         notes=(inp.get('notes') or '').strip(),
         due=(inp.get('due') or '').strip(),
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_update_task(inp):
@@ -2815,7 +2821,8 @@ def _tool_update_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.update_task(
         account_id=(inp.get('account_id') or '').strip(),
         tasklist_id=(inp.get('tasklist_id') or '').strip(),
@@ -2825,7 +2832,7 @@ def _tool_update_task(inp):
         due=(inp.get('due') or '').strip() or None,
         status=(inp.get('status') or '').strip() or None,
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_delete_task(inp):
@@ -2834,13 +2841,14 @@ def _tool_delete_task(inp):
     try:
         from agent_friday.services import google_accounts as ga
     except Exception as e:
-        return json.dumps({"error": f"google_accounts unavailable: {e}"})
+        _log.warning("google_accounts unavailable: %s", type(e).__name__)
+        return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
     result = ga.delete_task(
         account_id=(inp.get('account_id') or '').strip(),
         tasklist_id=(inp.get('tasklist_id') or '').strip(),
         task_id=(inp.get('task_id') or '').strip(),
     )
-    return json.dumps(result, default=str)
+    return json.dumps(_conn_outcome.settle(result), default=str)
 
 
 def _tool_search_contacts(inp):
@@ -5024,6 +5032,7 @@ def _draft_email_save(inp, gs):
     body = inp.get('body') or ''
     not_saved = {"saved": False, "sent": False}
     if not str(body).strip():
+        _conn_outcome.settle({"error": "empty"})
         return json.dumps({**not_saved, "reason": "The draft has no text. Write the complete "
                                                   "message body. Nothing was saved."})
     try:
@@ -5040,12 +5049,14 @@ def _draft_email_save(inp, gs):
             in_reply_to=(reply or {}).get("in_reply_to"),
             references=(reply or {}).get("references"))
     except gs.DraftNeedsAccount as e:
+        _conn_outcome.settle({"error": "needs_account"})
         return json.dumps({**not_saved, "needs_account": True, "accounts": e.accounts,
                            "question": e.user_message,
                            "note": ("Nothing was saved. Ask the user which account, naming these; "
                                     "then call draft_email again with account_id. Do not guess.")},
                           default=str)
     except gs.DraftScopeMissing as e:
+        _conn_outcome.settle({"error": "scope"})
         a = e.account or {}
         return json.dumps({**not_saved, "missing_permission": "gmail.modify",
                            "account": a.get("email") or a.get("label") or a.get("id"),
@@ -5055,9 +5066,11 @@ def _draft_email_save(inp, gs):
                                     "the account, and offer the reconnect. Never say it was saved.")},
                           default=str)
     except gs.SendRefused as e:
+        _conn_outcome.settle({"error": "refused"})
         return json.dumps({**not_saved, "reason": getattr(e, "user_message", None) or str(e)})
     except Exception as e:
-        return json.dumps({**not_saved, "reason": f"could not save the draft: {e}. Nothing was saved."})
+        return json.dumps({**not_saved, "reason": "could not save the draft. "
+                           + _conn_outcome.failed(e, "Gmail")})
     who = out.get("account_email") or acct.get("email") or acct.get("id")
     label = out.get("account_label") or acct.get("label")
     receipt = ("Saved as a draft in %s's Gmail Drafts%s. Nothing was sent. Open it: %s"
@@ -5414,12 +5427,30 @@ def _task_set(task_id, **fields):
             return
         prev_status = t.get('status')
         prev_started = t.get('started')
+        prev_snap = dict(t)
         snap = dict(t)
         snap.update(fields)
         new_status = snap.get('status')
         name = snap.get('name')
         created = snap.get('created')
         ended = snap.get('ended')
+    # The North Star state (services/task_states, NS-17.7-1) is kept on the record and each
+    # change is journaled, beside the status transitions below.
+    try:
+        from agent_friday.services import task_states as _ts
+        _tjs = _journal()
+        _stop = _tjs.stop_requested(task_id)
+        prev_state = prev_snap.get('state')
+        if _stop:
+            # request_stop records cancel_requested on disk only; read it so it is not journaled twice.
+            prev_state = (_tjs.read_state(task_id) or {}).get('state') or prev_state
+        prev_state = prev_state or _ts.derive(prev_snap, stop_requested=_stop)
+        new_state = _ts.derive(snap, stop_requested=_stop)
+    except Exception:
+        prev_state = new_state = None
+    if new_state:
+        snap['state'] = new_state
+        fields = dict(fields, state=new_state)
     if 'verified' in fields:
         # §17.11: the task's ledger records whether its result was checked.
         try:
@@ -5457,6 +5488,8 @@ def _task_set(task_id, **fields):
                    and not prev_started)
     try:
         tj = _journal()
+        if new_state and new_state != prev_state:
+            tj.append(task_id, "state", state=new_state, was=prev_state)
         if new_status != prev_status or first_start:
             if new_status == 'running':
                 tj.append(task_id, "started", model=snap.get('model'),
@@ -5480,6 +5513,24 @@ def _task_set(task_id, **fields):
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+
+
+def _task_state_sync(task_id):
+    """Record the task's state after something changed its record in place (the seat queue)."""
+    try:
+        _task_set(task_id)
+    except Exception:
+        pass
+
+
+def _planning_over(session_ctx):
+    """The task's first reasoning step has begun: it is no longer planning (NS-17.7-1)."""
+    try:
+        tid = _journal().resolve_task_id(session_ctx)
+        if tid and (TASKS.get(tid) or {}).get('phase') == 'planning':
+            _task_set(tid, phase='working')
+    except Exception:
+        pass
 
 
 def _off_record_active():
@@ -5564,7 +5615,7 @@ def _restore_tasks_from_journal(announce=True, limit=200):
         except Exception:
             summary['resumable'] = []
         if announce:
-            tj.announce_interrupted(summary.get('interrupted') or [])
+            tj.announce_interrupted(summary.get('interrupted') or [], summary.get('previous_exit'))
             try:
                 from agent_friday.services import task_resume as _tr2
                 # AFTER A RESTART, KEEP GOING. reconcile.run_at_boot only sees
@@ -5586,6 +5637,21 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                     summary['workflow_tails_recovered'] = _recover_workflow_tails()
                 summary['auto_resumed'] = _picked
                 _tr2.announce(summary.get('resumable') or [], resumed=_picked)
+            except Exception:
+                pass
+            # §34.16-1: what a crash interrupted mid outward action is told,
+            # never retried: a task whose first outward step was in flight, and
+            # an approved card whose action began and never recorded its end.
+            try:
+                from agent_friday.services import task_resume as _tr3
+                _acted = _tr3.may_have_acted_after_boot()
+                summary['may_have_acted'] = [r['task_id'] for r in _acted]
+                _tr3.announce_may_have_acted(_acted)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import card_recovery as _cards
+                summary['cards_outcome_unknown'] = _cards.reconcile_at_boot()
             except Exception:
                 pass
         try:
@@ -6189,7 +6255,8 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         return
     _tj.push_task(task_id)
     _heartbeat = _tj.Heartbeat(task_id).start()
-    _task_set(task_id, status='running', started=_time.time())
+    # Planning until its first reasoning step (NS-17.7-1); the loop ends it (_planning_over).
+    _task_set(task_id, status='running', started=_time.time(), phase='planning')
     _task_log(task_id, f'Spawning agent: {name}'
                        + (f' (timeout: {int(timeout)}s)' if timeout else ''))
     if description:
@@ -6857,6 +6924,9 @@ def _admit_task_thread(task_id, record, th):
     except Exception as _sup_err:
         _task_log(task_id, 'seat supervisor unavailable (%s); dispatching directly' % _sup_err)
         admission = 'running'
+    if admission == 'queued-for-seat':
+        # The queue changed the record in place: record that it waits for the seat (NS-17.7-1).
+        _task_state_sync(task_id)
     if admission != 'queued-for-seat':
         # Admitted at once: the supervisor's thread factory normally started
         # it already; start it here only if nothing did.
@@ -9312,6 +9382,9 @@ def _tool_office_check(inp):
         lines.append("%s is NOT ready yet:" % out.get("file"))
         for f in out.get("findings", []):
             lines.append("  - %s" % f)
+    if out.get("warnings"):
+        lines.append("Worth fixing:")
+        lines += ["  - %s" % w for w in out["warnings"][:10]]
     lines.append("Look at the render before you decide it is done.")
     note = "\n".join(lines)
     if out.get("image_b64"):
@@ -11524,7 +11597,7 @@ def _tool_save_google_contact(inp):
         name=inp.get("name") or "", email=inp.get("email") or "",
         phone=inp.get("phone") or "", company=inp.get("company") or "",
         job_title=inp.get("job_title") or "")
-    return json.dumps(res, ensure_ascii=False, default=str)
+    return json.dumps(_conn_outcome.settle(res), ensure_ascii=False, default=str)
 
 
 CLAUDE_TOOLS.extend([
@@ -13700,6 +13773,7 @@ def _task_log_tool(session_ctx, name, args):
 
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
+from agent_friday.services import connector_outcome as _conn_outcome
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
 from agent_friday.services import tool_output as _tool_output
@@ -14238,7 +14312,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         try:
             _pilot_call(_sc.get("_laya_pilot"), "increment", "tool_calls")
             _cred_paths.REFUSED.set(False)
-            result = handler(ctx.input)
+            # A change at a connected service that did not happen (or was not
+            # confirmed) is noted by the service layer (services/connector_outcome)
+            # and recorded below as not done, whatever the handler's words were.
+            with _conn_outcome.call() as _not_done:
+                result = handler(ctx.input)
             _refused = _cred_paths.REFUSED.get()
         finally:
             if _crew_origin_tok is not None:
@@ -14283,6 +14361,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipt_credential_refusal(name, ctx.input, "refused by the handler")
         _receipts.record(name, ok=False, denied=True, detail=result)
         _outcome("refused", "credential refusal")
+    elif _not_done:
+        _nd = "not done: %s" % _not_done[0].get("kind", "failed")
+        _receipts.record(name, ok=False, detail=_nd)
+        _outcome("error", _nd)
+        result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
     else:
         _receipts.record(name, ok=True)
         _outcome("ok", "")
@@ -14993,6 +15076,10 @@ def _hook_governance(ctx):
     # the owner pre-approved does not stop the grant (`_taint_clean` checks
     # every other flag); everywhere else the flag stands as it is.
     _clean = _taint_clean(d, key, ctx.session_ctx)
+    # A24: a Google Tasks change in a run may already have its own card; never do it twice.
+    _prior, _waiting_cards = _run_card_prior(ctx, key)
+    if _prior is not None:
+        return _prior
     _lr = _gate.LAST_RECEIPT.set(None)
     try:
         v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
@@ -15003,6 +15090,10 @@ def _hook_governance(ctx):
     finally:
         _gate.LAST_RECEIPT.reset(_lr)
     ctx.meta["governance"] = v
+    if v.action == "allow" and _waiting_cards:
+        _prior = _run_card_supersede(ctx, _waiting_cards, v.grant)
+        if _prior is not None:
+            return _prior
     if (v.detail or {}).get("grant_withheld"):
         # A pre-approval names these recipients but the call drew on outside
         # content: the send gets its card, and the card says why.
@@ -15131,6 +15222,13 @@ def _taint_card(ctx, decision, key):
             why_text = (flags[0].text if flags else
                         "This acts outside the conversation, and nobody could be "
                         "asked about it in chat.")
+            try:
+                from agent_friday.services import run_grants as _rg
+                _extras = _rg.card_extras(name, ctx.session_ctx)
+                if _extras:
+                    why_text = why_text + " " + _rg.card_words(_extras)
+            except Exception:
+                pass
             _ptok = _taint_mod.CURRENT.set(decision)
             try:
                 rec = _appr.create_approval(
@@ -15145,7 +15243,8 @@ def _taint_card(ctx, decision, key):
                     # it an approval decided in the System workspace completes
                     # in silence, which is how five events that never existed
                     # went unnoticed for four turns.
-                    payload=_approval_tool_payload(name, inp, ctx.session_ctx),
+                    payload=_run_grant_payload(_approval_tool_payload(name, inp, ctx.session_ctx),
+                                               name, ctx.session_ctx),
                     # WHAT THIS ACTION IS, from the gate that just classified
                     # it, instead of a substring scan over the card's text.
                     # Five identical create_calendar_event cards came out
@@ -15174,6 +15273,162 @@ def _taint_card(ctx, decision, key):
         f"Do NOT call it again this turn and do not ask for a yes in chat "
         f"instead. Tell the user plainly that a card is waiting and what it is "
         f"for" + (", and where the flagged detail came from." if srcs else "."))
+
+
+def _run_card_prior(ctx, key):
+    """A24: has this exact Google Tasks change, in this run, already got a card?
+
+    The first change in a run raises a card; approving it mints the run's grant AND has the
+    executor carry out that change. If the run then makes the same call again, the grant alone
+    would let it through and the task would be completed, created or changed twice. So for the
+    run-grantable tools, before any grant is used, the call's own card (same subject as
+    `_taint_card`: conversation key plus fingerprint, including the suffixed subjects it uses
+    for a re-raised card after one expired) are looked up, every one of them:
+
+      any approved and carried out (or being carried out)  ->  "[ALREADY DONE]", nothing runs
+      any approved, not yet claimed      ->  this call claims it, passes the checkpoint's
+                                             integrity check and signed receipt, and runs once;
+                                             the executor then finds it taken
+      any declined or blocked by the owner  ->  "[DECLINED]": a grant never overrides the
+                                             owner's no to this exact change
+      every one still waiting            ->  returned, so the caller withdraws them all if the
+                                             grant lets the call through
+      withdrawn as friday:superseded     ->  "[ALREADY DONE]" (the grant carried it out)
+      expired only, or none              ->  nothing to say; the checkpoint decides
+
+    Returns (verdict or None, list of waiting cards or None).
+    """
+    try:
+        from agent_friday.services import run_grants as _rg
+        if ctx.tool_name not in _rg.RUN_GRANTABLE or not _rg.run_scope(ctx.session_ctx):
+            return None, None
+        from agent_friday.services import approvals as _appr
+        subject = f"taint:{key}:{_taint_mod.fingerprint(ctx.tool_name, ctx.input or {})}"
+        recs = [r for r in _appr.list_approvals(subject_type="tool_action", kind="tainted_action")
+                if r.get("subject_id") == subject
+                or str(r.get("subject_id") or "").startswith(subject + ":")]   # newest first
+    except Exception as e:
+        _log.warning("run card lookup failed: %s", type(e).__name__)
+        return _hooks.DENY(
+            f"[NOT RUN] '{ctx.tool_name}' was NOT executed: Friday could not check whether "
+            f"this change already has a card, so it did not risk doing it twice. Tell the "
+            f"user."), None
+    if not recs:
+        return None, None
+    approved = [r for r in recs if r.get("status") == "approved"]
+    done = [r for r in approved if r.get("consumed") or r.get("executing_at")]
+    if done:
+        ok_done = [r for r in done if (r.get("used_detail") or {}).get("ok") is not False]
+        return _run_card_claim(ctx, (ok_done or done)[0]), None
+    if approved:
+        return _run_card_claim(ctx, approved[0]), None
+    superseded = [r for r in recs if r.get("decided_by") == "friday:superseded"]
+    if any(r.get("status") in ("denied", "blocked") and r.get("decided_by") != "friday:superseded"
+           for r in recs):
+        # The owner said no to this exact change on some card: a grant never overrides that.
+        return _run_card_declined(ctx), None
+    waiting = [r for r in recs if r.get("status") == "pending"]
+    if waiting:
+        # Every card still waiting for it (an expired card can leave re-raised ones behind),
+        # so the caller withdraws them all if the grant lets the call through.
+        return None, waiting
+    if superseded:
+        # Withdrawn because the run's grant already carried this change out.
+        return _run_card_claim(ctx, dict(superseded[0], consumed=True)), None
+    return None, None                 # expired only: the checkpoint decides, or asks anew
+
+
+def _run_card_declined(ctx):
+    return _hooks.DENY(
+        f"[DECLINED] The user declined '{ctx.tool_name}' with these details on an approval "
+        f"card. It was NOT executed. Do not retry it.")
+
+
+def _run_card_claim(ctx, rec):
+    """Carry out an approved run card's change in this call, once, or say it is already done.
+
+    The run's own call carrying out the card gets what the executor's would: the cLaws
+    integrity check and a signed receipt naming the card (action_gate.record_external). If
+    either fails the change does not run and the card is spent with ok False."""
+    from agent_friday.services import approvals as _appr
+    aid = rec.get("approval_id")
+    if rec.get("consumed") and (rec.get("used_detail") or {}).get("ok") is False:
+        return _hooks.DENY(
+            f"[NOT RUN] '{ctx.tool_name}' with these details was approved on a card, but it "
+            f"could not be carried out then and was not run. It was NOT run now either. Tell "
+            f"the user; a fresh request raises a new card.")
+    if not rec.get("consumed") and _appr.claim_for_execution(aid):
+        from agent_friday.governance import action_gate as _gate
+        inp = ctx.input or {}
+        try:
+            _gate.record_external(ctx.tool_name, surface="approval_card", approval_id=aid,
+                                  target=str(inp.get("title") or inp.get("task_id") or ""))
+        except Exception as e:
+            _appr.mark_used(aid, f"tool:{ctx.tool_name}",
+                            detail={"ok": False, "error": "held: %s" % e})
+            return _hooks.DENY(
+                f"[NOT RUN] '{ctx.tool_name}' was approved on a card but held at the "
+                f"checkpoint: {e}. It was NOT executed. Tell the user.")
+        _appr.mark_used(aid, f"tool:{ctx.tool_name}")
+        try:
+            from agent_friday.services import run_grants as _rg
+            _rg.mint_on_approval(_appr.get_approval(aid) or rec)
+        except Exception as e:
+            _log.warning("run grant not minted for %s: %s", aid, type(e).__name__)
+        ctx.meta["taint_card_approved"] = True
+        ctx.meta["owner_decided"] = aid
+        return _hooks.ALLOW
+    return _hooks.DENY(
+        f"[ALREADY DONE] '{ctx.tool_name}' with these details was approved on a card and has "
+        f"already been carried out (or is being carried out now). It was NOT run again. Do "
+        f"not retry it.")
+
+
+def _run_card_supersede(ctx, cards, grant):
+    """The run's grant let this call through while cards for it still wait: withdraw every one,
+    so approving any of them later cannot do the change a second time. If the owner decided one
+    in the same instant, their decision stands: a yes is carried out once (here or by the
+    executor), a no is not run."""
+    from agent_friday.services import approvals as _appr
+    if isinstance(cards, dict):
+        cards = [cards]
+    approved, declined = [], False
+    for card in cards or []:
+        aid = card.get("approval_id")
+        try:
+            rec, won = _appr.decide_with_outcome(
+                aid, "deny", decided_by="friday:superseded",
+                note="carried out under the run's grant %s" % ((grant or {}).get("grant_id") or ""))
+        except Exception as e:
+            _log.warning("could not withdraw run card %s: %s", aid, type(e).__name__)
+            return _hooks.DENY(
+                f"[NOT RUN] '{ctx.tool_name}' was NOT executed: a waiting card for it could not "
+                f"be withdrawn, so running it now could do it twice. Tell the user.")
+        if won:
+            continue
+        rec = rec or {}
+        if rec.get("status") == "approved":
+            approved.append(rec)
+        elif rec.get("status") in ("denied", "blocked"):
+            declined = True
+    if approved:
+        return _run_card_claim(ctx, approved[0])
+    if declined:
+        return _run_card_declined(ctx)
+    return None
+
+
+def _run_grant_payload(payload, name, session_ctx):
+    """A24: a Google Tasks change in a run nobody watches asks once for the run. The card's payload
+    carries the grant its approval mints (services/run_grants); its title and description say so."""
+    try:
+        from agent_friday.services import run_grants as _rg
+        extras = _rg.card_extras(name, session_ctx)
+    except Exception:
+        extras = None
+    if extras:
+        payload = dict(payload, run_grant=extras)
+    return payload
 
 
 def _taint_title(name, inp):
@@ -16186,7 +16441,10 @@ _TOOL_PENDING_SENTINELS = ("[APPROVAL CARD RAISED]",)
 # itself as a success — which is the exact defect the receipts work exists to
 # remove. Changing a failure message means updating this tuple in the same edit.
 _TOOL_ERROR_SENTINELS = ("Tool error (", "Unknown tool:", "TOOL CALL FAILED",
-                          "INVALID ARGUMENTS")
+                          "INVALID ARGUMENTS",
+                          # a change at a connected service that did not happen
+                          # (services/connector_outcome.NOT_DONE)
+                          "[NOT DONE]")
 
 
 def _tool_call_status(result):
@@ -16286,6 +16544,21 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
         result = _lib_env.keep_out_of_records(name, result)
     except Exception:
         pass
+    # The artifact manifest (§34.12-2): a file a creating tool made is linked
+    # to its task, its turn and the receipt that allowed the call, with its
+    # hash and structural check. Only a call that went through counts.
+    try:
+        from agent_friday.services import artifact_manifest as _am
+        if name in _am.CREATING_TOOLS:
+            from agent_friday.services import completion_receipts as _cr
+            _went = (_tool_call_status(result) == "ok" and isinstance(result, str)
+                     and not result.lstrip().startswith(_cr.FAILURE_SENTINELS))
+            # Recorded on a background thread: a long video's hash or a big
+            # PDF's check never holds up the conversation.
+            _am.submit(name, args, result, task_id=_journal().current_task(), ok=_went,
+                       started_at=_time.time() - float(duration_ms or 0) / 1000.0)
+    except Exception:
+        pass
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
                           duration_ms=int(duration_ms or 0))
     try:
@@ -16296,15 +16569,26 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
         _presence.tool_finished(name, ok=(_tool_call_status(result) != "error"))
     except Exception:
         pass
+    # Whether the call went through, decided once from its result (a card
+    # raised, a refusal, an unknown tool or bad arguments is not "ok"): the
+    # journal and the ledger record this, and goal checks rely on it (§17.12).
+    try:
+        from agent_friday.services import completion_receipts as _cr
+        _refused = isinstance(result, str) and result.lstrip().startswith(_cr.FAILURE_SENTINELS)
+    except Exception:
+        _refused = True                   # can't tell: not counted as through
+    _ok = _tool_call_status(result) == "ok" and not _refused
     try:
         from agent_friday.services import task_ledger as _tl
-        _tl.note_tool(_journal().current_task(), name, args, result)
+        # A file counts as written only by a write tool that went through.
+        _tl.note_tool(_journal().current_task(), name, args, result,
+                      wrote=bool(_ok and name in _tl.WRITTEN_PATH_ARGS))
     except Exception:
         pass
     try:
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
-                             duration_ms=int(duration_ms or 0))
+                             ok=_ok, duration_ms=int(duration_ms or 0))
     except Exception:
         pass
     if not orb_id:
@@ -16874,6 +17158,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             _tj_loop.checkpoint(iter_count, "model_call",
                                 f"Reasoning (step {iter_count}) on {model or ANTHROPIC_MODEL_DEFAULT}",
                                 session_ctx=session_ctx)
+            _planning_over(session_ctx)
             if _steer_inject:
                 _tj_loop.steer(_steer_inject, source="operator-file", session_ctx=session_ctx)
                 _append_steer(convo, _steer_inject)
@@ -17626,6 +17911,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
         # Anthropic loop; the coverage test counts these against rounds.
         _tj_loop.checkpoint(_round, "model_call", f"Reasoning (step {_round}) on {model}",
                             session_ctx=session_ctx)
+        _planning_over(session_ctx)
         # Every round reports, not only the ones that call tools — a local
         # model that reasons for three rounds before picking a tool was
         # previously indistinguishable from one that had not started.
