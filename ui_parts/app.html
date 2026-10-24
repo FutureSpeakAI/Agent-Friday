@@ -10903,9 +10903,9 @@ function SystemWS(){
     <div className="card" style={{marginBottom:8,padding:8}}>
       <div style={{display:'flex',gap:6,marginBottom:6,flexWrap:'wrap'}}>
         <input value={ctxQuery} onChange={e=>setCtxQuery(e.target.value)} placeholder="Search query..." style={{flex:1,minWidth:140,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:12,outline:'none'}}/>
-        <input type="date" value={ctxFrom} onChange={e=>setCtxFrom(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
-        <input type="date" value={ctxTo} onChange={e=>setCtxTo(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
-        <select value={ctxType} onChange={e=>setCtxType(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}>
+        <input type="date" aria-label="From date" value={ctxFrom} onChange={e=>setCtxFrom(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
+        <input type="date" aria-label="To date" value={ctxTo} onChange={e=>setCtxTo(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
+        <select aria-label="Type of entry" value={ctxType} onChange={e=>setCtxType(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}>
           <option value="">All types</option>
           <option value="chat_user">chat_user</option>
           <option value="chat_agent">chat_agent</option>
