@@ -2042,10 +2042,11 @@ def _tool_create_calendar_event(inp):
         location=(inp.get("location") or "").strip(),
         description=(inp.get("description") or "").strip(),
         attendees=inp.get("attendees") or None,
-        account_id=(inp.get("account_id") or "").strip() or None)
+        account_id=(inp.get("account_id") or "").strip() or None,
+        idempotency_key=_conn_outcome.idem_key("create_calendar_event", inp))
     _receipt_rec = _change_receipts.calendar_created(res, conversation_id=_CURRENT_CONVERSATION.get())
     out = _calendar_write_summary(_with_receipt(res, _receipt_rec), "create that event")
-    if isinstance(res, dict) and res.get("ok"):
+    if isinstance(res, dict) and res.get("ok") and not res.get("already_made"):
         out += _travel_postcheck(res, inp)
     return out
 
@@ -2177,7 +2178,8 @@ def _tool_hold_slots(inp):
     inp = inp or {}
     res = sch.hold_slots(title=(inp.get("title") or "").strip(),
                          slots=inp.get("slots"),
-                         account_id=_opt_str(inp, "account_id"))
+                         account_id=_opt_str(inp, "account_id"),
+                         idempotency_key=_conn_outcome.idem_key("hold_slots", inp))
     return _calendar_write_summary(res, "hold those times")
 
 
@@ -2834,6 +2836,7 @@ def _tool_create_task(inp):
         tasklist_id=(inp.get('tasklist_id') or '').strip() or "@default",
         notes=(inp.get('notes') or '').strip(),
         due=(inp.get('due') or '').strip(),
+        idempotency_key=_conn_outcome.idem_key("create_task", inp),
     )
     _rec = _change_receipts.task_created(
         result, tasklist_id=(inp.get('tasklist_id') or '').strip() or "@default",

@@ -1494,7 +1494,7 @@ def _inbox_fenced(account_id, tasklist_id) -> bool:
 # tasklist_id (except create_task, which may default to "@default") since
 # the Tasks API addresses a task by (tasklist, task), not by task id alone.
 def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | None,
-                          account_id: str | None = None) -> dict:
+                          account_id: str | None = None, adopt: bool = False) -> dict:
     """Create (task_id=None) or patch (task_id given) one task.
 
     A change Google refused, could not be asked for, or did not confirm (a reply that names no
@@ -1505,6 +1505,7 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
     except Exception as e:
         _co.not_done("failed", "Google Tasks")
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
+    svc = None
     try:
         from agent_friday.services import egress_record as _er
         svc = _er.tasks(build("tasks", "v1", credentials=creds, cache_discovery=False))
@@ -1513,11 +1514,51 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
         else:
             result = svc.tasks().insert(tasklist=tasklist_id, body=body).execute()
     except Exception as e:
-        return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
+        # A create that may have reached Google (a timeout, a 5xx, a dropped connection) is looked
+        # for before anyone is told to check (F3): found once, it is done, and never made twice.
+        found = (_find_just_made(svc, tasklist_id, body)
+                 if adopt and not task_id and svc is not None and _co.classify(e) == "unconfirmed" else None)
+        if found is None:
+            return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
+        result = found
+    if not _co.confirmed(result) and adopt and not task_id and svc is not None:
+        result = _find_just_made(svc, tasklist_id, body) or result
     if not _co.confirmed(result):
         return {"error": _co.not_done("unconfirmed", "Google Tasks"), "unconfirmed": True}
     return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
             "status": result.get("status", "needsAction"), "due": result.get("due", "")}
+
+
+#: Creates this process made, by idempotency key (F3): a repeat in the same turn returns the task
+#: already made instead of making a second. Kept 30 minutes.
+_RECENT_CREATES: dict = {}
+_RECENT_TTL_S = 1800.0
+_RECENT_LOCK = threading.Lock()
+
+
+def _find_just_made(svc, tasklist_id: str, body: dict) -> dict | None:
+    """The one open task with exactly this title, notes and due date changed in the last few
+    minutes, when a create's reply was lost (F3; only for a create with an idempotency key). None
+    when there is none or more than one: then nobody can say which, and the owner is asked to look.
+    A task the owner made by hand differs in one of those far more often than not; matching all of
+    them keeps Friday from adopting it (and from offering an Undo that would delete it)."""
+    import datetime as _dt
+    title = str((body or {}).get("title") or "")
+    if not title:
+        return None
+    since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    try:
+        got = svc.tasks().list(tasklist=tasklist_id, showCompleted=True, showHidden=True,
+                               updatedMin=since, maxResults=100).execute()
+    except Exception as e:  # noqa: BLE001 - then nobody can say; the owner is asked to look
+        _log.info("could not look for a task just made: %s", type(e).__name__)
+        return None
+    notes, due = str(body.get("notes") or ""), str(body.get("due") or "")[:10]
+    same = [t for t in ((got or {}).get("items") or []) if isinstance(t, dict)
+            and t.get("title") == title and not t.get("deleted")
+            and (t.get("status") or "needsAction") == "needsAction"
+            and str(t.get("notes") or "") == notes and str(t.get("due") or "")[:10] == due]
+    return same[0] if len(same) == 1 else None
 
 
 def _delete_task_for_creds(creds, tasklist_id: str, task_id: str,
@@ -1602,7 +1643,8 @@ def _no_task_credentials(account_id: str) -> dict:
     return {"error": code, "message": message, "account_id": account_id}
 
 
-def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict) -> dict:
+def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict,
+                    adopt: bool = False) -> dict:
     """Shared account-resolution + audit wrapper for complete/update/create."""
     body, gate_err = _gate_task_text(body)
     if gate_err:
@@ -1621,7 +1663,7 @@ def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body
     creds = credentials_for(account_id)
     if not creds:
         return _no_task_credentials(account_id)
-    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id)
+    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id, adopt=adopt)
     ok = "error" not in result
     cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
                    success=ok, error=None if ok else result.get("error"))
@@ -1665,18 +1707,38 @@ def update_task(account_id: str, tasklist_id: str, task_id: str, *,
 
 
 def create_task(account_id: str, title: str, tasklist_id: str = "@default",
-                notes: str = "", due: str = "") -> dict:
+                notes: str = "", due: str = "", idempotency_key: str | None = None) -> dict:
     """Create a new task in the one account named. tasklist_id defaults to the
-    account's default list — "@default" is a Tasks API alias, not a lookup."""
+    account's default list — "@default" is a Tasks API alias, not a lookup.
+
+    With `idempotency_key` (F3: the same create in the same turn), a repeat returns the task
+    already made, after checking it is still there, instead of making a second."""
     title = (title or "").strip()
     if not title:
         return {"error": "title is required."}
+    import time as _time
+    if idempotency_key:
+        with _RECENT_LOCK:
+            prior = _RECENT_CREATES.get(idempotency_key)
+        if prior and _time.time() - prior[3] < _RECENT_TTL_S:
+            still = read_task(prior[0], prior[1], prior[2])
+            if still is not None:
+                return {"id": prior[2], "title": still.get("title"), "status": still.get("status"),
+                        "due": still.get("due"), "account_id": prior[0],
+                        "already_made": "This task was already made by this same request; it was "
+                                        "not made twice."}
     body = {"title": title}
     if notes:
         body["notes"] = notes
     if due:
         body["due"] = due
-    return _one_task_write(account_id, tasklist_id or "@default", None, body)
+    out = _one_task_write(account_id, tasklist_id or "@default", None, body, adopt=bool(idempotency_key))
+    if idempotency_key and out.get("id") and not out.get("error"):
+        with _RECENT_LOCK:
+            _RECENT_CREATES[idempotency_key] = (account_id, tasklist_id or "@default", out["id"], _time.time())
+            for k in [k for k, v in list(_RECENT_CREATES.items()) if _time.time() - v[3] > _RECENT_TTL_S]:
+                _RECENT_CREATES.pop(k, None)
+    return out
 
 
 def delete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
