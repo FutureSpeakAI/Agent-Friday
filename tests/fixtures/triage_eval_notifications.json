@@ -1,0 +1,202 @@
+{
+ "id": "triage-eval-notifications-v1",
+ "note": "Synthetic. Labels are tiers: needs_you, fyi, log_only. Incumbent: notification_policy.tier_for. Kinds the policy names are never touched by the head.",
+ "items": [
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "medium",
+   "text": "Your bank link stopped working and transfers are paused",
+   "label": "needs_you"
+  },
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "medium",
+   "text": "Login expired, sign in again to keep your calendar syncing",
+   "label": "needs_you"
+  },
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "low",
+   "text": "Storage is nearly full and new files cannot be saved",
+   "label": "needs_you"
+  },
+  {
+   "kind": "backup",
+   "source": "worker",
+   "priority": "medium",
+   "text": "The nightly backup did not finish and nothing was copied",
+   "label": "needs_you"
+  },
+  {
+   "kind": "report",
+   "source": "worker",
+   "priority": "medium",
+   "text": "A payment is overdue and will be charged a late fee tomorrow",
+   "label": "needs_you"
+  },
+  {
+   "kind": "report",
+   "source": "worker",
+   "priority": "low",
+   "text": "Someone you do not know signed in from a new place",
+   "label": "needs_you"
+  },
+  {
+   "kind": "device",
+   "source": "worker",
+   "priority": "medium",
+   "text": "Battery is critically low and the device will shut down soon",
+   "label": "needs_you"
+  },
+  {
+   "kind": "device",
+   "source": "worker",
+   "priority": "low",
+   "text": "Your certificate expires today and the site will go offline",
+   "label": "needs_you"
+  },
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "medium",
+   "text": "Two events overlap on Thursday and one must be moved",
+   "label": "needs_you"
+  },
+  {
+   "kind": "report",
+   "source": "worker",
+   "priority": "low",
+   "text": "The tax filing deadline is tonight and the form is incomplete",
+   "label": "needs_you"
+  },
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "low",
+   "text": "Calendar sync finished",
+   "label": "fyi"
+  },
+  {
+   "kind": "report",
+   "source": "worker",
+   "priority": "low",
+   "text": "Your weekly report is ready to read",
+   "label": "fyi"
+  },
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "low",
+   "text": "Twelve new photos were added to the album",
+   "label": "fyi"
+  },
+  {
+   "kind": "device",
+   "source": "worker",
+   "priority": "low",
+   "text": "An update installed itself overnight",
+   "label": "fyi"
+  },
+  {
+   "kind": "report",
+   "source": "worker",
+   "priority": "low",
+   "text": "The podcast you follow has a new episode",
+   "label": "fyi"
+  },
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "low",
+   "text": "Contacts are up to date",
+   "label": "fyi"
+  },
+  {
+   "kind": "device",
+   "source": "worker",
+   "priority": "low",
+   "text": "Screenshots were saved to the pictures folder",
+   "label": "fyi"
+  },
+  {
+   "kind": "report",
+   "source": "worker",
+   "priority": "low",
+   "text": "Good morning, here is a quick look at your day",
+   "label": "fyi"
+  },
+  {
+   "kind": "sync",
+   "source": "worker",
+   "priority": "low",
+   "text": "Indexing completed for the downloads folder",
+   "label": "fyi"
+  },
+  {
+   "kind": "device",
+   "source": "worker",
+   "priority": "low",
+   "text": "The printer was added to your devices",
+   "label": "fyi"
+  },
+  {
+   "kind": "security",
+   "source": "guard",
+   "priority": "medium",
+   "text": "Review a new connection",
+   "label": "needs_you"
+  },
+  {
+   "kind": "scheduled_failure",
+   "source": "scheduler",
+   "priority": "medium",
+   "text": "The morning job failed",
+   "label": "needs_you"
+  },
+  {
+   "kind": "connector_down",
+   "source": "mail",
+   "priority": "medium",
+   "text": "Mail is unreachable",
+   "label": "needs_you"
+  },
+  {
+   "kind": "seat_notice",
+   "source": "arbiter",
+   "priority": "medium",
+   "text": "The local model is loading",
+   "label": "needs_you"
+  },
+  {
+   "kind": "approval_pending",
+   "source": "gate",
+   "priority": "medium",
+   "text": "Approve this request",
+   "label": "needs_you"
+  },
+  {
+   "kind": "info",
+   "source": "network",
+   "priority": "low",
+   "text": "Network reconnected",
+   "label": "log_only"
+  },
+  {
+   "kind": "build",
+   "source": "lane",
+   "priority": "low",
+   "text": "Build finished",
+   "label": "log_only"
+  },
+  {
+   "kind": "schedule_retired",
+   "source": "scheduler",
+   "priority": "low",
+   "text": "A schedule was retired",
+   "label": "log_only"
+  }
+ ]
+}
