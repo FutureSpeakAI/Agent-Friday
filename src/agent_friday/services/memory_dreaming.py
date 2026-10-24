@@ -139,6 +139,13 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
 
         topics = _extract_topics(turns)
         facts = _mine_facts(turns)
+        try:
+            # The encoder sentence reader: shadow log, or pending proposals the
+            # owner reviews. It never feeds `facts`, so nothing below changes.
+            from agent_friday.services import triage_heads
+            triage_heads.memory_pass(turns, day, facts)
+        except Exception:
+            pass
         pruned = _count_noise(turns)
 
         # A regex over yesterday's turns is not a review. Nothing it finds is
