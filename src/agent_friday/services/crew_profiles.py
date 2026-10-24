@@ -403,7 +403,10 @@ def recalled_source_revisions(profile, project_id=None):
 def remember_result(profile_id, text, expected_revision, project_id=None, source_revisions=None):
     """Persist a bounded worker result only under the still-current write grant."""
     from agent_friday.services import off_record
-    if off_record.skip("crew_memory"):
+    # A worker's memory is what it LEARNS for later runs: off the record it
+    # keeps nothing, whether or not off-record transcripts are stored
+    # (the learning check, NS-15.8-2), as well as nothing to disk (storage).
+    if off_record.skip("crew_memory") or off_record.skip_learning("crew_memory"):
         return False
     with _LOCK:
         profile = get_profile(profile_id)

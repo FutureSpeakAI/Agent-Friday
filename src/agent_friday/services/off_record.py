@@ -41,12 +41,24 @@ RECEIPT_FIELDS = ("tool", "tool_name", "name", "kind", "class", "action_class",
                   "off_record")
 
 
+class _Unreadable(dict):
+    """The settings could not be read. Empty, so `active()` (storage) still
+    fails open as before: failing closed there would silently drop an
+    on-record transcript the owner expects kept whenever the settings file
+    could not be read. `excludes_learning()` (learning) reads it the other
+    way: a turn whose off-record state is unknown is treated as off the
+    record, and nothing is learned from it (NS-15.8-2)."""
+
+
 def _settings() -> dict:
     try:
         from agent_friday.core import _load_settings
-        return _load_settings() or {}
+        s = _load_settings()
     except Exception:
+        return _Unreadable()
+    if s is None:
         return {}
+    return s if isinstance(s, dict) else _Unreadable()
 
 
 def stops_storage(settings: dict | None) -> bool:
@@ -65,6 +77,71 @@ def skip(store: str, settings: dict | None = None) -> bool:
         return False
     with _LOCK:
         SKIPPED[store] = SKIPPED.get(store, 0) + 1
+    return True
+
+
+def excludes_learning(settings: dict | None = None) -> bool:
+    """True while off-record is on: Friday learns nothing from the turn.
+
+    NS-15.8-2: off-record content stays out of learning, introspection,
+    personalization, background summaries and forensic snapshots. Unlike
+    `active()` this does not depend on `off_record_stops_storage`: an owner
+    who keeps the transcript still has an off-record turn, and nothing is
+    inferred from it. Settings that cannot be read count as off-record (fail
+    closed); `active()` keeps failing open (see `_Unreadable`). So do degraded
+    settings (core._load_settings after settings.json existed but could not
+    be read): the last good settings this process read or wrote for that file
+    decide when there are any, otherwise the turn counts as off the record,
+    because the factory defaults it would otherwise get say off_record False."""
+    try:
+        s = _settings() if settings is None else (settings or {})
+        if isinstance(s, _Unreadable):
+            return True
+        if _degraded(s):
+            last = _last_good()
+            return True if last is None else bool(last.get("off_record"))
+        return bool(s.get("off_record"))
+    except Exception:
+        return True
+
+
+def _degraded(settings) -> bool:
+    """True when `settings` came from a failed read of settings.json. A missing
+    settings.json is not a failed read (core seeds the defaults)."""
+    try:
+        from agent_friday import core
+        return bool(core._is_degraded_settings(settings))
+    except Exception:
+        return False
+
+
+def _last_good() -> dict | None:
+    """The last settings successfully read or written for the current settings
+    file, or None when this process has none."""
+    try:
+        from agent_friday import core
+        with core._SETTINGS_LAST_GOOD_LOCK:
+            value = core._SETTINGS_LAST_GOOD.get("value")
+            path = core._SETTINGS_LAST_GOOD.get("path")
+            if value is None or path != str(core.SETTINGS_FILE):
+                return None
+            return dict(value)
+    except Exception:
+        return None
+
+
+def skip_learning(learner: str, settings: dict | None = None,
+                  off_record: bool | None = None) -> bool:
+    """`excludes_learning()`, counting the skipped learner (no content kept).
+
+    `off_record` is the turn's own state when the caller already knows it (a
+    snapshot taken with the turn); None reads the current settings."""
+    off = excludes_learning(settings) if off_record is None else bool(off_record)
+    if not off:
+        return False
+    with _LOCK:
+        key = "learn:" + str(learner)
+        SKIPPED[key] = SKIPPED.get(key, 0) + 1
     return True
 
 

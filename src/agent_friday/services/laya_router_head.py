@@ -574,10 +574,12 @@ def shadow(text: str, final, proto, surface: str, profile: str = DEFAULT_PROFILE
         return False
     try:
         from agent_friday.services import off_record
-        if off_record.active():
-            return False                    # nothing about the conversation is written while off the record
+        # The shadow row is a training example from the owner's words: off the
+        # record (for learning, NS-15.8-2, or for storage) nothing is logged.
+        if off_record.active() or off_record.skip_learning("laya_router_head"):
+            return False
     except Exception:
-        pass
+        return False                        # cannot tell: fail closed
     if sync:
         with _shadow_lock:
             _shadow_pending += 1

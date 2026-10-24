@@ -5542,9 +5542,26 @@ def _planning_over(session_ctx):
 
 
 def _off_record_active():
+    # The task's `off_record` mark is what forensic snapshots
+    # (ops/forensics-snapshot.py) and the desktop views read to leave a task
+    # out, so it follows the learning check (NS-15.8-2: off-record content
+    # stays out of forensic snapshots), not storage: a task started off the
+    # record is marked whether or not off-record transcripts are kept. What
+    # the task journal writes stays governed by storage (task_journal uses
+    # off_record.skip). Cannot tell: marked.
     try:
         from agent_friday.services import off_record as _off
-        return _off.active()
+        return bool(_off.active() or _off.excludes_learning())
+    except Exception:
+        return True
+
+
+def _off_record_storage_active():
+    # Storage only (off_record.active): nothing about the conversation is
+    # written, so a journal write that did not happen is not a failure.
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.active())
     except Exception:
         return False
 
@@ -7579,7 +7596,10 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                    parent_task_id=parent_task_id, scope=scope)
         _tj.index_put(task_id, name, 'queued', TASKS[task_id]['created'])
         stored = _tj.write_state(task_id, TASKS[task_id])
-        if workflow_context and not stored and not TASKS[task_id].get('off_record'):
+        # Only storage being off (task_journal declines the write) excuses an
+        # unwritten run context; the task's off_record mark also follows the
+        # learning check, under which the journal still writes.
+        if workflow_context and not stored and not _off_record_storage_active():
             raise RuntimeError('Workflow could not persist its run context; it was not started.')
     except Exception:
         if workflow_context:

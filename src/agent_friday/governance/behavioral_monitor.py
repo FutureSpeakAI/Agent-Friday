@@ -794,11 +794,16 @@ class BehavioralMonitor:
 # ── Module-level helpers ─────────────────────────────────────────────────
 
 def _off_record() -> bool:
+    # The kept trace is Friday's introspection on the session (a forensic
+    # record of what was asked and touched), so an off-record session keeps
+    # only its receipt whether or not the owner lets off-record transcripts be
+    # stored: the learning check, not storage (NS-15.8-2). Cannot tell: off.
     try:
         from agent_friday.services import off_record
-        return off_record.skip("behavioral_monitor")
+        return bool(off_record.skip("behavioral_monitor")
+                    or off_record.skip_learning("behavioral_monitor"))
     except Exception:
-        return False
+        return True
 
 
 def _receipt_trace(trace: Dict[str, Any]) -> Dict[str, Any]:

@@ -140,6 +140,11 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
         topics = _extract_topics(turns)
         facts = _mine_facts(turns)
         pruned = _count_noise(turns)
+        # NS-15.4-3: a regex is inferring. A sentence or topic that touches a
+        # special category (health, sexuality, politics, religion, ...) is
+        # dropped here, so it is neither queued nor written to dreams.db or
+        # the day's markdown; only a count by category is kept.
+        facts, topics = _drop_special(facts, topics)
 
         # A regex over yesterday's turns is not a review. Nothing it finds is
         # written into what Friday knows (the user model, the knowledge graph):
@@ -289,6 +294,30 @@ def _mine_facts(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                                   "confidence": conf})
                     break
     return facts[:20]
+
+
+def _drop_special(facts: List[Dict[str, Any]], topics: List[Dict[str, Any]]):
+    """Facts and topics less those that touch a special category
+    (services/sensitive_categories). Dropped items are counted, not kept."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+    except Exception:
+        return [], []                       # cannot check: keep nothing inferred
+    kept_facts = []
+    for f in facts:
+        cat = _sc.special_category(f.get("text"))
+        if cat:
+            _sc.note_dropped("dreaming.fact", cat)
+            continue
+        kept_facts.append(f)
+    kept_topics = []
+    for t in topics:
+        cat = _sc.special_category(t.get("topic"))
+        if cat:
+            _sc.note_dropped("dreaming.topic", cat)
+            continue
+        kept_topics.append(t)
+    return kept_facts, kept_topics
 
 
 def _count_noise(turns: List[Dict[str, Any]]) -> int:

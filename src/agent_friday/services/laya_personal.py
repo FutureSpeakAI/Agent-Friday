@@ -386,9 +386,13 @@ def sensitivity_ready() -> bool:
 
 
 def _off_record() -> bool:
+    # Laya's personal learning is learning, not storage: it keys on the
+    # off-record setting itself (skip_learning, NS-15.8-2), whether or not the
+    # owner keeps off-record transcripts (off_record_stops_storage); the
+    # storage check stays too, for its count.
     try:
         from agent_friday.services import off_record
-        return bool(off_record.skip("laya_learning"))
+        return bool(off_record.skip("laya_learning") or off_record.skip_learning("laya_learning"))
     except Exception:
         return True                                  # cannot tell whether the turn is off the record: assume it is
 
