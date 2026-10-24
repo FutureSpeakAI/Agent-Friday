@@ -654,8 +654,9 @@ class ConversationMemory:
         (never the documents' words), recalled-memory spans stripped. It is
         marked superseded right after it is written when conversation search
         records it as superseded, or when an older row holding the same
-        words is superseded. Returns {"ok", "indexed", "kept", "failed",
-        "kept_superseded"}."""
+        words is superseded. A turn the owner forgot stays out, and when the
+        forgotten-turn list cannot be read nothing is re-indexed. Returns
+        {"ok", "indexed", "kept", "failed", "kept_superseded", "forgotten"}."""
         if not self._ensure():
             return {"ok": False, "error": "conversation memory is not available"}
         say = progress or (lambda msg: None)
@@ -691,7 +692,7 @@ class ConversationMemory:
             elided = getattr(_cite, "ELIDED", None)
         except Exception:
             elided = None
-        indexed = kept = failed = flagged = 0
+        indexed = kept = failed = flagged = forgotten = 0
         new_ids = []
         corrected = _fts_superseded()
         try:
@@ -699,60 +700,72 @@ class ConversationMemory:
         except Exception as e:
             say(f"could not list the conversations: {e}")
             return {"ok": False, "error": "the conversations could not be listed; nothing was changed"}
-        for conv in convs:
-            cid = conv.get("id")
-            if not cid:
-                continue
-            try:
-                messages = cv._stored_messages(cid)
-            except Exception as e:
-                say(f"conversation {cid} not read: {e}")
-                failed += 1
-                continue
-            for m in messages:
+        # Inside rebuilding(): the forgotten-turn list is read once, and when it
+        # cannot be read nothing is re-indexed (a bulk rebuild never risks a
+        # turn the owner forgot).
+        with fts.rebuilding() as rb:
+            if rb["refused"]:
+                say("the forgotten-turn list could not be read; nothing was re-indexed")
+                return {"ok": False, "error": "the forgotten-turn list could not be read; "
+                                             "nothing was re-indexed"}
+            for conv in convs:
+                cid = conv.get("id")
+                if not cid:
+                    continue
                 try:
-                    if not fts._indexable(m):      # text, an id, a turn, not off the record
-                        continue
-                    mid = str(m["id"])
-                    if mid in present:
-                        kept += 1                  # as the live path left it
-                        continue
-                    meta = m.get("meta") or {}
-                    text = m["text"]
-                    role = m.get("role") or "user"
-                    if role != "user" and (m.get("library") or meta.get("library")):
-                        if not elided:
-                            continue               # never the documents' words
-                        text = elided
-                    if _mf is not None:
-                        text = _mf.strip(text)
-                    if not str(text or "").strip():
-                        continue
-                    try:
-                        ts = datetime.fromtimestamp(float(m["ts"])).isoformat() if m.get("ts") else None
-                    except (TypeError, ValueError, OSError):
-                        ts = None
-                    if not self.index(text, role, session_id=(ts or datetime.now().isoformat())[:10],
-                                      timestamp=ts, msg_id=mid):
-                        failed += 1
-                        continue
-                    indexed += 1
-                    new_ids.append(mid)
-                    norm = " ".join(str(text).split())
-                    flag = (("superseded", "") if mid in corrected
-                            else flagged_text.get(norm) if text != elided else None)
-                    if flag and self._set_supersession([mid], "1", flag[0], flag[1]).get("superseded"):
-                        flagged += 1
+                    messages = cv._stored_messages(cid)
                 except Exception as e:
-                    say(f"a turn was not indexed: {e}")
+                    say(f"conversation {cid} not read: {e}")
                     failed += 1
+                    continue
+                for m in messages:
+                    try:
+                        if not fts._indexable(m):      # text, an id, a turn, not off the record
+                            continue
+                        mid = str(m["id"])
+                        if mid in present:
+                            kept += 1                  # as the live path left it
+                            continue
+                        if mid in rb["gone"]:
+                            forgotten += 1             # the owner forgot it: it stays out
+                            continue
+                        meta = m.get("meta") or {}
+                        text = m["text"]
+                        role = m.get("role") or "user"
+                        if role != "user" and (m.get("library") or meta.get("library")):
+                            if not elided:
+                                continue               # never the documents' words
+                            text = elided
+                        if _mf is not None:
+                            text = _mf.strip(text)
+                        if not str(text or "").strip():
+                            continue
+                        try:
+                            ts = datetime.fromtimestamp(float(m["ts"])).isoformat() if m.get("ts") else None
+                        except (TypeError, ValueError, OSError):
+                            ts = None
+                        if not self.index(text, role, session_id=(ts or datetime.now().isoformat())[:10],
+                                          timestamp=ts, msg_id=mid):
+                            failed += 1
+                            continue
+                        indexed += 1
+                        new_ids.append(mid)
+                        norm = " ".join(str(text).split())
+                        flag = (("superseded", "") if mid in corrected
+                                else flagged_text.get(norm) if text != elided else None)
+                        if flag and self._set_supersession([mid], "1", flag[0], flag[1]).get("superseded"):
+                            flagged += 1
+                    except Exception as e:
+                        say(f"a turn was not indexed: {e}")
+                        failed += 1
         # Anything corrected in conversation search while this ran.
         late = [i for i in new_ids if i in (_fts_superseded() - corrected)]
         if late:
             flagged += len(self._set_supersession(late, "1", "superseded", "").get("superseded") or [])
-        say(f"indexed {indexed} missing turns, kept {kept}, {failed} failed, {flagged} marked superseded")
+        say(f"indexed {indexed} missing turns, kept {kept}, left out {forgotten} forgotten, "
+            f"{failed} failed, {flagged} marked superseded")
         return {"ok": failed == 0, "indexed": indexed, "kept": kept, "failed": failed,
-                "kept_superseded": flagged}
+                "kept_superseded": flagged, "forgotten": forgotten}
 
     def find_ids(self, substring, limit=50):
         """Document ids whose text contains *substring* (case-insensitive).

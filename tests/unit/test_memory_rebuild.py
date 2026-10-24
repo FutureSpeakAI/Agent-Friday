@@ -149,3 +149,26 @@ def test_a_row_already_here_is_never_rewritten(world):
     doc, meta = mem._collection.rows[mid]
     assert doc == "We agreed the launch is on the ninth."
     assert str(meta.get("superseded") or "") != "1", "a rebuild undid the owner restoring a turn"
+
+
+def test_a_rebuild_never_risks_a_forgotten_turn(world, monkeypatch):
+    """Inside conversation_fts.rebuilding(): a forgotten turn stays out and is
+    counted as such, and when the forgotten-turn list cannot be read the
+    rebuild indexes nothing at all."""
+    mem = world
+    cid = cv.create("Garden")["id"]
+    keep = _say(cid, "The roses by the shed need pruning in March.")
+    forgot = _say(cid, "The neighbour's spare key is under the blue pot.")
+    fts.ensure_built()
+    monkeypatch.setattr(fts, "_read_durable", lambda strict=False: {str(forgot)})
+    mem._collection = FakeCollection()
+    out = mem.rebuild_from_transcripts()
+    assert out["ok"] and out["indexed"] == 1 and out["forgotten"] == 1
+    assert keep in mem._collection.rows and forgot not in mem._collection.rows
+
+    def unreadable(strict=False):
+        raise fts.ForgottenListUnreadable("synthetic")
+    monkeypatch.setattr(fts, "_read_durable", unreadable)
+    mem._collection = FakeCollection()
+    out = mem.rebuild_from_transcripts()
+    assert not out["ok"] and mem._collection.rows == {}, "a rebuild went ahead without the forgotten list"
