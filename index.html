@@ -43074,7 +43074,7 @@ function StagedImportReview({ source, refresh, onDone }) {
       marginBottom: 6,
       lineHeight: 1.5
     }
-  }, items.length + (d.more ? '+' : '') + ' imported ' + (items.length === 1 ? 'person waits' : 'people wait') + ' for your answer. Nothing is saved until you accept it.'), E('div', {
+  }, items.length + (d.more ? '+' : '') + ' imported ' + (items.length === 1 ? 'item waits' : 'items wait') + ' for your answer. Nothing is saved until you accept it.'), E('div', {
     style: {
       display: 'flex',
       gap: 6,
@@ -59843,6 +59843,110 @@ function CalDeleteConfirm({ e, onDone }) {
 // ── Privacy & Data > Locks: how things are locked on this PC, in plain words ──
 // Read from /api/locks (services/locks.py): every line comes from the store that
 // decides it, and a line Friday cannot read says so. The honest limit is always shown.
+// ── Privacy & Data > Bring your AI history in (services/ai_history_import) ──
+// A ChatGPT or Claude data export, read on this PC only. A preview first; then each
+// conversation waits in import staging until the owner accepts it (StagedImportReview).
+function SettingsAiHistoryImport() {
+  const E = React.createElement;
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [prev, setPrev] = useState(null);
+  const [file, setFile] = useState(null);
+  const fileRef = useRef(null);
+  const send = (f, previewOnly) => {
+    setBusy(true);
+    setMsg('');
+    const fd = new FormData();
+    fd.append('file', f);
+    if (previewOnly) fd.append('preview', '1');
+    apiFetch('/api/import/ai-history', {
+      method: 'POST',
+      body: fd
+    }).then(r => r.json()).then(x => {
+      if (!x.ok) {
+        setPrev(null);
+        setFile(null);
+        setMsg(x.error || 'The file could not be read.');
+        return;
+      }
+      if (x.preview) {
+        setPrev(x);
+        setFile(f);
+        return;
+      }
+      setPrev(null);
+      setFile(null);
+      setMsg(x.service + ': ' + x.staged + ' conversation' + (x.staged === 1 ? '' : 's') + ' staged for your review below' + (x.already_decided ? ', ' + x.already_decided + ' already answered' : '') + '. Nothing is saved until you accept it.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  return E(StSection, {
+    title: 'Bring your AI history in',
+    desc: 'Your ChatGPT or Claude data export, read on this PC only: no model reads it and nothing is sent anywhere. You see what it holds first, and each conversation is saved only when you accept it.'
+  }, E('input', {
+    ref: fileRef,
+    type: 'file',
+    accept: '.json,.zip,application/json,application/zip',
+    style: {
+      display: 'none'
+    },
+    onChange: ev => {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (f) send(f, true);
+    }
+  }), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'ai-history-choose',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => fileRef.current && fileRef.current.click()
+  }, busy ? 'Reading…' : 'Choose an export (conversations.json or .zip)'), prev ? E('div', {
+    'data-testid': 'ai-history-preview',
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginTop: 6,
+      lineHeight: 1.5
+    }
+  }, prev.service + ' export: ' + prev.conversations + ' conversation' + (prev.conversations === 1 ? '' : 's') + ', ' + prev.messages + ' messages' + (prev.first ? ', ' + prev.first + ' to ' + prev.last : '') + (prev.cut ? ' (' + prev.cut + ' long ones will be cut)' : '') + '. Nothing has been saved.', E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 6
+    }
+  }, E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy || !file,
+    onClick: () => send(file, false)
+  }, 'Stage them for my review'), E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => {
+      setPrev(null);
+      setFile(null);
+    }
+  }, 'Cancel'))) : null, msg ? E('div', {
+    role: 'status',
+    className: 'sc-msgline'
+  }, msg) : null, E(StagedImportReview, {
+    source: 'chatgpt',
+    refresh: msg
+  }), E(StagedImportReview, {
+    source: 'claude',
+    refresh: msg
+  }));
+}
 function SettingsLocks() {
   const [d, setD] = useState(null);
   const [msg, setMsg] = useState('');
@@ -60126,7 +60230,7 @@ function SettingsTabPrivacy({
     }).then(r => r.json()).then(d => setEraseMsg(d.status === 'ok' ? '✓ ' + (d.message || 'Erased.') : '✗ ' + (d.message || 'Failed'))).catch(() => setEraseMsg('✗ Could not reach the server.'));
   };
   const armed = vaultStatus && vaultStatus.encryption === 'AES-256-GCM';
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(SettingsPrivacyMap, null), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(SettingsAiHistoryImport, null), /*#__PURE__*/React.createElement(SettingsPrivacyMap, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Vault"
   }, vaultStatus && /*#__PURE__*/React.createElement("div", {
     style: {
