@@ -82,6 +82,7 @@ def test_one_proposal_built_from_a_held_record_waits_for_the_press(fa):
     assert card["action_class"] == "internal"
     assert card["payload"]["person"] == "dana@example.org" and card["payload"]["action"] == "follow_up"
     assert "sends nothing to anyone" in card["description"]
+    assert "dana@example.org" in card["description"]     # the owner sees who it is for
     assert "dana" not in card["title"].lower()          # the title travels in notices; no names
     from agent_friday.services import approvals as ap
     assert "first_action" in ap.PRIVATE_DETAIL_KINDS
@@ -167,10 +168,12 @@ def test_the_owners_decline_on_the_card_is_a_skip_but_friday_declining_is_not(fa
     card = fa.rec["cards"][-1]
     fa._on_decision(dict(card, status="denied", decided_by="friday", decided_source="friday"))
     assert fa.state()["state"] == "proposed"
-    for src in ("page_without_desk_key", "text_message", "voice", "page_not_on_this_pc"):
-        fa._on_decision(dict(card, status="denied", decided_by="owner", decided_source=src))
-        assert fa.state()["state"] == "proposed", src           # declined, but not the owner's skip here
-    fa._on_decision(dict(card, status="denied", decided_by="owner:ui", decided_source="desktop_press"))
+    fa._on_decision(dict(card, status="denied", decided_by="owner", decided_source="text_message"))
+    assert fa.state()["state"] == "declined" and fa.skipped() is False   # not the owner's skip here
+    again = fa.propose("owner:home")                                     # a new proposal can be made
+    assert again["state"] == "proposed" and again["approval_id"] != card["approval_id"]
+    card2 = fa.rec["cards"][-1]
+    fa._on_decision(dict(card2, status="denied", decided_by="owner:ui", decided_source="desktop_press"))
     assert fa.state()["state"] == "skipped"
 
 
