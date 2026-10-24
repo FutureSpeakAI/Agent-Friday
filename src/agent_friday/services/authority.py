@@ -209,7 +209,10 @@ def revoke_all(by: str = "owner:ui") -> dict:
 
     def _gate_grants():
         from agent_friday.governance import action_gate
-        ids = [str(g.get("grant_id") or "") for g in action_gate.list_grants() if g.get("grant_id")]
+        # Every grant in the file, not only the live ones list_grants shows: each
+        # revocation is recorded in the action ledger, so none comes back.
+        ids = action_gate.all_grant_ids() if hasattr(action_gate, "all_grant_ids") else [
+            str(g.get("grant_id") or "") for g in action_gate.list_grants() if g.get("grant_id")]
         return _each(ids, action_gate.revoke_grant)
 
     def _send_grants():
