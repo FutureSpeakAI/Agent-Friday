@@ -31,6 +31,8 @@ _LOCK = threading.Lock()
 # DROPPED on write — this is the egress-tier guarantee: names, ids, counts and
 # durations only; never prompt text, never tool args/results.
 _ALLOWED_FIELDS = {
+    # services/first_action: the owner skipped the first governed action (A27): how, nothing else.
+    "first_action_skipped": {"how"},
     "model_invocation": {
         "model", "provider", "seat", "duration_ms",
         "tokens_in", "tokens_out", "orb_id", "task_id", "workspace",
