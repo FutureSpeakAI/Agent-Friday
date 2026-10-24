@@ -119,10 +119,11 @@ def test_the_service_stops_too_and_never_asks_the_model(phone_home, fake_twilio,
 
 def test_the_phone_stop_is_answered_once_with_stopped_and_a_receipt(client, gs, monkeypatch):
     verify_owner(monkeypatch)
+    from tests import ledger_support
+    before = len([d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"])
     r = _text(client, OWNER, "Stop everything", sid="SM" + "1" * 32)
     assert b"<Message>Stopped.</Message>" in r.data
-    from tests import ledger_support
-    acks = [d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"]
+    acks = [d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"][before:]
     assert len(acks) == 1 and acks[0]["surface"] == "sms" and acks[0]["class"] == "OUTWARD"
     r2 = _text(client, OWNER, "Friday stop", sid="SM" + "2" * 32)
     assert b"<Message>" not in r2.data, "a second stop in the same stop got a second reply"
@@ -171,6 +172,43 @@ def test_a_chat_stop_is_answered_once_on_that_chat_only(chans, gs, monkeypatch):
     assert raw.sent == [("42", "Stopped.")]
     chans.handle_incoming("telegram", "999", "Friday stop")      # not on the allowlist
     assert raw.sent == [("42", "Stopped.")]
+
+
+def test_no_receipt_means_no_reply(client, chans, gs, monkeypatch):
+    from agent_friday.governance import action_gate
+    real = action_gate._receipt
+
+    def no_ack_receipt(entry):
+        if entry.get("tool") == "stop_ack":
+            raise RuntimeError("ledger unwritable")
+        return real(entry)
+    monkeypatch.setattr(action_gate, "_receipt", no_ack_receipt)
+    verify_owner(monkeypatch)
+    r = _text(client, OWNER, "Friday stop", sid="SM" + "5" * 32)
+    assert gs.active() and b"<Message>" not in r.data
+    raw = _Raw()
+    monkeypatch.setitem(chans._ADAPTERS, "telegram", raw)
+    monkeypatch.setattr(chans, "_run_agent", lambda t: "x")
+    gs.resume(by="owner", source="button")
+    chans.handle_incoming("telegram", "42", "stop everything")
+    assert gs.active() and raw.sent == []
+
+
+def test_after_resume_a_new_stop_gets_one_new_reply(chans, gs, monkeypatch):
+    from tests import ledger_support
+    before = len([d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"])
+    raw = _Raw()
+    monkeypatch.setitem(chans._ADAPTERS, "discord", raw)
+    monkeypatch.setattr(chans, "_run_agent", lambda t: "x")
+    chans.handle_incoming("discord", "42", "Friday stop")
+    chans.handle_incoming("discord", "42", "Friday stop")
+    assert raw.sent == [("42", "Stopped.")]
+    gs.resume(by="owner", source="button")
+    time.sleep(0.01)
+    chans.handle_incoming("discord", "42", "stop everything")
+    assert raw.sent == [("42", "Stopped."), ("42", "Stopped.")]
+    acks = [d for d in ledger_support.decisions() if d.get("tool") == "stop_ack"][before:]
+    assert len(acks) == 2 and all(a["surface"] == "discord" for a in acks), acks
 
 
 def test_only_the_fixed_text_can_use_the_stop_reply_door(gs):
