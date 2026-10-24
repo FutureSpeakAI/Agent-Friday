@@ -1034,7 +1034,7 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string"},
          "why": {"type": "string"}},
       "required": ["action"]}},
-    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki) or a write_file: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
+    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki), a write_file, or a Google Calendar or Google Tasks change Friday made: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail, calendar and tasks go back on one approval card.",
      "input_schema": {"type": "object", "properties": {
          "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
     {"name": "answer_card", "description": "Record the user's answer to an organize, undo_action or money-paragraph card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer; if it returns a read-back, say it and ask.",
@@ -1982,6 +1982,26 @@ def _summarize_multi_account_errors(result):
     return list(by_id.values())
 
 
+def _scrub_titled_card(approval_id, name):
+    """A calendar or task card answered in chat is decided: its stored copy keeps no title
+    (release-lead call 2026-10-24; services/change_receipts.scrub_card)."""
+    if name in _change_receipts.TITLE_TOOLS:
+        _change_receipts.scrub_card(approval_id)
+
+
+def _with_receipt(res, receipt):
+    """A change's result as the model sees it: its receipt named (so "undo that" can find it),
+    and the whole before-values Undo keeps (services/change_receipts) left out."""
+    if not isinstance(res, dict):
+        return res
+    head = {}
+    if receipt:
+        head["receipt_id"] = receipt.get("receipt_id")
+        if receipt.get("undo"):
+            head["undo"] = "Say \u201cundo that\u201d to put it back (it asks first)."
+    return dict(head, **{k: v for k, v in res.items() if k not in ("undo_before", "receipt_id", "undo")})
+
+
 def _calendar_write_summary(res, what, change=True):
     """Render a write result as prose Friday can repeat truthfully."""
     if not isinstance(res, dict):
@@ -2023,7 +2043,8 @@ def _tool_create_calendar_event(inp):
         description=(inp.get("description") or "").strip(),
         attendees=inp.get("attendees") or None,
         account_id=(inp.get("account_id") or "").strip() or None)
-    out = _calendar_write_summary(res, "create that event")
+    _receipt_rec = _change_receipts.calendar_created(res, conversation_id=_CURRENT_CONVERSATION.get())
+    out = _calendar_write_summary(_with_receipt(res, _receipt_rec), "create that event")
     if isinstance(res, dict) and res.get("ok"):
         out += _travel_postcheck(res, inp)
     return out
@@ -2072,7 +2093,8 @@ def _tool_update_calendar_event(inp):
         description=inp.get("description"),
         allow_clearing=bool(inp.get("allow_clearing")),
         account_id=(inp.get("account_id") or "").strip() or None)
-    return _calendar_write_summary(res, "update that event")
+    _receipt_rec = _change_receipts.calendar_updated(res, conversation_id=_CURRENT_CONVERSATION.get())
+    return _calendar_write_summary(_with_receipt(res, _receipt_rec), "update that event")
 
 
 def _tool_delete_calendar_event(inp):
@@ -2085,7 +2107,8 @@ def _tool_delete_calendar_event(inp):
     res = cw.delete_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
                           account_id=(inp.get("account_id") or "").strip() or None,
                           notify_guests=_notify_guests_arg(inp))
-    return _calendar_write_summary(res, "delete that event")
+    _receipt_rec = _change_receipts.calendar_deleted(res, conversation_id=_CURRENT_CONVERSATION.get())
+    return _calendar_write_summary(_with_receipt(res, _receipt_rec), "delete that event")
 
 
 def _notify_guests_arg(inp):
@@ -2789,12 +2812,12 @@ def _tool_complete_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.complete_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.complete_task(account_id=_a, tasklist_id=_l, task_id=_t)
+    _rec = _change_receipts.task_changed(result, _before, tool="complete_task", changed=["status"],
+                                         tasklist_id=_l, conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_create_task(inp):
@@ -2812,7 +2835,10 @@ def _tool_create_task(inp):
         notes=(inp.get('notes') or '').strip(),
         due=(inp.get('due') or '').strip(),
     )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _rec = _change_receipts.task_created(
+        result, tasklist_id=(inp.get('tasklist_id') or '').strip() or "@default",
+        conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_update_task(inp):
@@ -2823,16 +2849,17 @@ def _tool_update_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.update_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-        title=(inp.get('title') or '').strip() or None,
-        notes=inp.get('notes') if inp.get('notes') is not None else None,
-        due=(inp.get('due') or '').strip() or None,
-        status=(inp.get('status') or '').strip() or None,
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _fields = dict(title=(inp.get('title') or '').strip() or None,
+                   notes=inp.get('notes') if inp.get('notes') is not None else None,
+                   due=(inp.get('due') or '').strip() or None,
+                   status=(inp.get('status') or '').strip() or None)
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.update_task(account_id=_a, tasklist_id=_l, task_id=_t, **_fields)
+    _rec = _change_receipts.task_changed(result, _before, tool="update_task",
+                                         changed=[k for k, v in _fields.items() if v is not None],
+                                         tasklist_id=_l, conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_delete_task(inp):
@@ -2843,12 +2870,12 @@ def _tool_delete_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.delete_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.delete_task(account_id=_a, tasklist_id=_l, task_id=_t)
+    _rec = _change_receipts.task_deleted(result, _before, tasklist_id=_l,
+                                         conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_search_contacts(inp):
@@ -13774,6 +13801,7 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import connector_outcome as _conn_outcome
+from agent_friday.services import change_receipts as _change_receipts
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
 from agent_friday.services import tool_output as _tool_output
@@ -14605,7 +14633,11 @@ def _verifier_card(ctx, why_text):
             rec = _appr.create_approval(
                 kind="tool_confirm", subject_type="tool_action", subject_id=subject,
                 title=_taint_title(name, inp),
-                action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
+                # kept text names no event's or task's words (the dissent check can write it to the
+                # ledger); the card's title shows them on screen
+                action_description=f"{name} " + json.dumps(
+                    _change_receipts.untitled_args(inp) if name in _change_receipts.TITLE_TOOLS else inp,
+                    default=str)[:600],
                 description=f"Held for your yes: {why_text}.",
                 force_gate=True,
                 payload=_approval_tool_payload(name, inp, ctx.session_ctx),
@@ -14760,13 +14792,17 @@ def _resolve_escalated_card(approval_id, name, tool_input):
     try:
         from agent_friday.services import approvals as _appr
         if _appr.claim_chat_confirmation(approval_id, name, tool_input):
+            _scrub_titled_card(approval_id, name)
             return True
         stored = ((_appr.get_approval(approval_id) or {}).get("payload") or {})
         if (stored.get("tool") == name and isinstance(stored.get("input"), dict)
                 and stored.get("input") != tool_input
                 and _action_fingerprint(name, stored["input"])
                 == _action_fingerprint(name, tool_input)):
-            return _appr.claim_chat_confirmation(approval_id, name, stored["input"])
+            won = _appr.claim_chat_confirmation(approval_id, name, stored["input"])
+            if won:
+                _scrub_titled_card(approval_id, name)
+            return won
         return False
     except Exception as e:
         _log.warning("could not claim escalated approval %s: %s", approval_id, e)
@@ -14797,7 +14833,10 @@ def _raise_confirmation_card(session_id, name, tool_input, fingerprint, question
                 kind="tool_confirm", subject_type="tool_action",
                 subject_id=f"{session_id}:{fingerprint}:{request_id}",
                 title=question,
-                action_description=f"{name} {tool_input!r}",
+                # an event's or a task's own words stay off the kept text (the dissent check can write
+            # it to the ledger); the card's title and question show them on screen
+            action_description=f"{name} " + repr(_change_receipts.untitled_args(tool_input)
+                                                 if name in _change_receipts.TITLE_TOOLS else tool_input),
                 description=("Friday asked for your yes before doing this. "
                              "Decide it here, or answer the question in chat."),
                 force_gate=True, payload=_approval_tool_payload(name, tool_input, session_ctx),
@@ -15235,7 +15274,11 @@ def _taint_card(ctx, decision, key):
                     kind="tainted_action", subject_type="tool_action",
                     subject_id=subject,
                     title=_taint_title(name, inp),
-                    action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
+                    # an event's or a task's own words stay off the kept text (the dissent check
+                    # can write it to the ledger); the card's title shows them on screen
+                    action_description=f"{name} " + json.dumps(
+                        _change_receipts.untitled_args(inp) if name in _change_receipts.TITLE_TOOLS else inp,
+                        default=str)[:600],
                     description=why_text,
                     force_gate=True,
                     # The conversation id rides along so the executor can
@@ -15361,8 +15404,9 @@ def _run_card_claim(ctx, rec):
         from agent_friday.governance import action_gate as _gate
         inp = ctx.input or {}
         try:
+            # the target names the item by id, never by its title (kept sealed, 2026-10-24)
             _gate.record_external(ctx.tool_name, surface="approval_card", approval_id=aid,
-                                  target=str(inp.get("title") or inp.get("task_id") or ""))
+                                  target=str(inp.get("task_id") or inp.get("event_id") or ""))
         except Exception as e:
             _appr.mark_used(aid, f"tool:{ctx.tool_name}",
                             detail={"ok": False, "error": "held: %s" % e})
