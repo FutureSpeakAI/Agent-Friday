@@ -6,9 +6,12 @@ is done only when all six of section 9.6 hold:
 
     reviewed     the owner has marked at least one "What I see so far" item
     action       Friday has completed one useful action the owner approved (a ledger outcome
-                 with status ok that names the approval it ran under)
+                 with status ok that names the approval it ran under): the first governed action
+                 (services/first_action, A27) or any earlier one
     receipt      that action has its receipt (the same ledger entry, by its sequence number)
     where_ran    the owner said, by their own press, that they saw where THAT action ran
+                 (A27: the owner's recorded skip of the first action meets these three, and the
+                 check says it was skipped)
     memory       the owner confirmed or corrected a memory: "Remember this" or "Wrong" on an
                  item, or their own edit or deletion of a line on the memory card
     goal         a goal exists, or the owner explicitly skipped it by their own press
@@ -29,7 +32,7 @@ _lock = threading.Lock()
 CHECKS = ("reviewed", "action", "receipt", "where_ran", "memory", "goal")
 LABELS = {
     "reviewed": "You reviewed what I see so far",
-    "action": "I completed one useful action you approved",
+    "action": "I completed one useful action you approved (or you skipped it)",
     "receipt": "That action has its receipt",
     "where_ran": "You saw where it ran",
     "memory": "You confirmed or corrected one memory",
@@ -58,8 +61,16 @@ def _reviewed() -> bool:
 
 
 def _action_receipt() -> Optional[dict]:
-    """The first receipt of an approved action that ran: an `outcome` with status ok that names
-    the approval it ran under. A reading tool's outcome names no approval, so it never counts."""
+    """The first governed action's own receipt when it ran (services/first_action), else the first
+    receipt of an approved action that ran: an `outcome` with status ok that names the approval it
+    ran under. A reading tool's outcome names no approval, so it never counts."""
+    try:
+        from agent_friday.services import first_action
+        seq = first_action.done_receipt()
+        if seq is not None:
+            return {"seq": seq, "tool": first_action.TOOL, "ts": None, "first_action": True}
+    except Exception:
+        pass
     from agent_friday.services import action_ledger
     for r in action_ledger.records("outcome"):
         if r.get("status") == "ok" and r.get("approval") and r.get("_seq") is not None:
@@ -104,6 +115,18 @@ def status() -> Dict[str, Any]:
     met["action"] = receipt is not None
     met["receipt"] = bool(receipt and receipt.get("seq") is not None)
     met["where_ran"] = bool(met["receipt"] and _answers().get("saw_where_it_ran_seq") == receipt["seq"])
+    fa: Dict[str, Any] = {"state": "unknown"}
+    try:
+        from agent_friday.services import first_action
+        fa = first_action.state()
+    except Exception:
+        pass
+    skipped = set()
+    if fa.get("state") == "skipped" and not met["action"]:
+        # A27: the owner's recorded skip of the first governed action is an answer.
+        for k in ("action", "receipt", "where_ran"):
+            met[k] = True
+            skipped.add(k)
     try:
         met["memory"] = bool(_memory())
     except Exception:
@@ -118,8 +141,9 @@ def status() -> Dict[str, Any]:
     except Exception:
         setup = False
     return {"ok": True, "done": all(met[k] for k in CHECKS), "setup_complete": setup,
-            "checks": [{"id": k, "label": LABELS[k], "met": met[k]} for k in CHECKS],
-            "receipt": receipt}
+            "checks": [{"id": k, "label": LABELS[k], "met": met[k], "skipped": k in skipped}
+                       for k in CHECKS],
+            "receipt": receipt, "first_action": fa}
 
 
 def answer(which: str, seq=None) -> Dict[str, Any]:
@@ -135,6 +159,12 @@ def answer(which: str, seq=None) -> Dict[str, Any]:
             a["saw_where_it_ran_seq"] = r["seq"]
         elif which == "skip_goal":
             a["goal_skipped_ts"] = time.time()
+        elif which == "skip_first_action":
+            from agent_friday.services import first_action
+            out = first_action.skip("owner:ui")
+            if not out.get("ok"):
+                return {"ok": False, "error": out.get("why") or "not skipped"}
+            return {"ok": True, "status": status()}
         else:
             return {"ok": False, "error": "unknown answer"}
         p = _path()

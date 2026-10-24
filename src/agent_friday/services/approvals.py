@@ -136,7 +136,10 @@ def _is_public_query_card(rec: Dict[str, Any]) -> bool:
 PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff",
                                   # Website task cards carry the values to type, or a
                                   # question written after reading a page: never in a notice.
-                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question"})
+                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question",
+                                  # The first action (services/first_action) names a contact from
+                                  # the owner's mail: on Friday's page only.
+                                  "first_action"})
 
 
 def notice_title(rec: Dict[str, Any]) -> str:
@@ -170,6 +173,9 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "web_task_plan": frozenset({"owner:ui"}),
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
+    # The first governed action of onboarding (services/first_action, amendment A27): the owner's
+    # own press on this PC, never a spoken or typed yes.
+    "first_action": frozenset({"owner:ui"}),
     # Library changes Friday proposes (services/library/cards.py): the click is
     # the consent, as it is for a file grant.
     "library_add_request": frozenset({"owner:ui"}),

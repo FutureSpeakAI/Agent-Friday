@@ -14,9 +14,13 @@ from urllib.parse import urlparse
 from flask import Blueprint, g, jsonify, request
 
 from agent_friday.core import login_required
-from agent_friday.services import first_synthesis
+from agent_friday.services import first_action, first_synthesis
 
 first_synthesis_bp = Blueprint("first_synthesis", __name__)
+
+# The first governed action's card runs from its own decision hook (services/first_action, A27):
+# registered when the server loads its routes, so a press after a restart still runs it.
+first_action.ensure_hook()
 
 
 @first_synthesis_bp.before_request
@@ -76,7 +80,27 @@ def first_synthesis_mark():
 
 
 #: Section 9.6 answers only the owner gives (services/onboarding_status).
-_ONBOARDING_ANSWERS = ("saw_where_it_ran", "skip_goal")
+_ONBOARDING_ANSWERS = ("saw_where_it_ran", "skip_goal", "skip_first_action")
+
+
+@first_synthesis_bp.route("/api/onboarding/first-action", methods=["GET"])
+@login_required
+def first_action_get():
+    """The first governed action (A27): none / nothing_to_propose / proposed / expired / done /
+    skipped / failed, its card and its receipt's ledger number."""
+    return jsonify({"ok": True, **first_action.state()})
+
+
+@first_synthesis_bp.route("/api/onboarding/first-action/propose", methods=["POST"])
+@login_required
+def first_action_propose():
+    """Ask Friday for the one proposal (it is also made at the end of setup). This only raises a
+    card that waits for the owner's press; nothing runs here."""
+    from agent_friday.services import screen_click
+    if screen_click.is_cross_site(request):
+        return jsonify({"ok": False, "error": "cross-site request refused"}), 403
+    out = first_action.propose(requested_by="owner:home")
+    return jsonify(out), (200 if out.get("ok") else 400)
 
 
 @first_synthesis_bp.route("/api/onboarding/answer", methods=["POST"])

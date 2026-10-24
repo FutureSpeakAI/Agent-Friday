@@ -464,12 +464,15 @@
    * with "What I see so far" and until all six are met. Both answers are the owner's own press. */
   function OnboardingChecks({ api }) {
     const [data, setData] = useState(null), [busy, setBusy] = useState(false), [said, setSaid] = useState('');
+    const [receiptText, setReceiptText] = useState('');
     const live = useRef(true);
     const load = () => api('/api/onboarding/status', { cache: 'no-store' }).then(r => r.json()).then(d => { if (live.current) setData(d && d.ok ? d : null); }).catch(() => { if (live.current) setData(null); });
     useEffect(() => { live.current = true; load(); return () => { live.current = false; }; }, []);
     const checks = (data && data.checks) || [];
     const met = id => !!(checks.find(c => c.id === id) || {}).met;
-    if (!data || data.done || !met('reviewed')) return null;
+    const fa = (data && data.first_action) || {};
+    // Shown once the owner has started (a mark), or while the first action waits for an answer (A27).
+    if (!data || data.done || !(met('reviewed') || fa.state === 'proposed')) return null;
     const answer = body => {
       setBusy(true); setSaid('');
       api('/api/onboarding/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -477,9 +480,46 @@
         .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
         .finally(() => { if (live.current) setBusy(false); });
     };
+    // The first governed action is a normal approval card: approving it here is the same decision,
+    // through the same route, as in Needs you (the owner's press on this PC).
+    const decide = decision => {
+      setBusy(true); setSaid('');
+      api('/api/approvals/' + encodeURIComponent(fa.approval_id) + '/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, decided_by: 'owner:ui' }) })
+        .then(r => r.json()).then(x => { if (!live.current) return; setSaid(x.message || (x.error && x.error.indexOf('_') < 0 ? x.error : '') || (x.error ? 'Approve it with a press in Friday\'s window on this PC.' : '')); load(); })
+        .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
+        .finally(() => { if (live.current) setBusy(false); });
+    };
+    const propose = () => {
+      setBusy(true); setSaid('');
+      api('/api/onboarding/first-action/propose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(r => r.json()).then(x => { if (live.current) { if (x.why) setSaid(x.why); load(); } })
+        .catch(() => { if (live.current) setSaid('Could not reach Friday.'); })
+        .finally(() => { if (live.current) setBusy(false); });
+    };
+    const firstAction = () => {
+      if (fa.state === 'proposed') return h('div', { className: 'fx-first-action', 'data-testid': 'first-action' },
+        h('p', null, h('strong', null, fa.title || 'Your first action')),
+        fa.description && h('p', { className: 'fx-meta' }, fa.description),
+        h('button', { type: 'button', className: 'fx-action', disabled: busy, onClick: () => decide('approve') }, 'Approve'), ' ',
+        h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: () => answer({ answer: 'skip_first_action' }) }, 'Skip'));
+      if (fa.state === 'done') return h('div', { className: 'fx-first-action' },
+        h('p', { className: 'fx-meta' }, 'Your first action ran on this PC and sent nothing to anyone. Receipt #' + fa.receipt_seq + '.'), ' ',
+        fa.receipt_url && h('button', { type: 'button', className: 'fx-action-secondary', onClick: () => api(fa.receipt_url, { cache: 'no-store' }).then(r => r.json()).then(d => {
+          const e = ((d && d.entries) || [])[0];
+          setReceiptText(e && e.seq === fa.receipt_seq ? JSON.stringify(e, null, 2) : 'The receipt could not be read here; it is in the action ledger as #' + fa.receipt_seq + '.');
+        }).catch(() => setReceiptText('The receipt could not be read.')) }, 'Open the receipt'),
+        receiptText && h('pre', { className: 'fx-meta' }, receiptText));
+      if (fa.state === 'skipped') return h('p', { className: 'fx-meta' }, 'You skipped the first action; that is recorded.');
+      if (met('action')) return null;
+      return h('div', { className: 'fx-first-action' },
+        fa.why && h('p', { className: 'fx-meta' }, fa.why),
+        h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: propose }, 'Suggest a first action'), ' ',
+        h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: () => answer({ answer: 'skip_first_action' }) }, 'Skip the first action'));
+    };
     return h('section', { className: 'fx-onboarding-checks', 'aria-label': 'Getting started', 'data-testid': 'onboarding-checks' },
       h('h2', null, 'Getting started'),
-      h('ul', null, checks.map(c => h('li', { key: c.id }, (c.met ? '✓ ' : '○ ') + c.label))),
+      h('ul', null, checks.map(c => h('li', { key: c.id }, (c.met ? '✓ ' : '○ ') + c.label + (c.skipped ? ' (skipped)' : '')))),
+      firstAction(),
       data.receipt && !met('where_ran') && h('p', null, 'The action ran as ' + (data.receipt.tool || 'an approved action') + '; its receipt is in Activity.', ' ',
         h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: () => answer({ answer: 'saw_where_it_ran', seq: data.receipt.seq }) }, 'I saw where it ran')),
       !met('goal') && h('button', { type: 'button', className: 'fx-action-secondary', disabled: busy, onClick: () => answer({ answer: 'skip_goal' }) }, 'Skip setting a goal for now'),

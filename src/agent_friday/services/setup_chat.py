@@ -1516,6 +1516,32 @@ def _complete(st: dict) -> None:
     complete_setup(_completion_payload(st), routing_via="posture")
     st["completed"] = True
     st["stage"] = "done"
+    _propose_first_action()
+
+
+#: Tests that are about the first action set this to [True].
+FIRST_ACTION_IN_TESTS = [False]
+
+
+def _propose_first_action() -> None:
+    """A27: at the end of setup Friday proposes one low-stakes action (services/first_action). A
+    card that waits for the owner's press; on its own thread, so it can never hold up setup. Inert
+    under FRIDAY_TESTING unless a test asks for it (a stray card would change other tests' counts)."""
+    try:
+        from agent_friday import core as _core
+        if getattr(_core, "_TESTING", False) and not FIRST_ACTION_IN_TESTS[0]:
+            return
+    except Exception:
+        pass
+
+    def run():
+        try:
+            from agent_friday.services import first_action
+            first_action.propose(requested_by="setup")
+        except Exception:  # noqa: BLE001 - setup is finished either way
+            pass
+    import threading
+    threading.Thread(target=run, name="first-action-proposal", daemon=True).start()
 
 
 def skip_all() -> dict:
