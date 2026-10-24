@@ -34,6 +34,7 @@ still apply to it. The card says which.
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import os
 import re
@@ -477,6 +478,9 @@ def _without_heredoc_bodies(command: str) -> str:
     """`command` with each heredoc's body (the lines up to its closing word)
     replaced by '<<heredoc', read line by line."""
     out, lines, i = [], command.split("\n"), 0
+    where: Dict[str, List[int]] = {}               # each line's text -> where it occurs, in order
+    for n, text in enumerate(lines):
+        where.setdefault(text.strip(), []).append(n)
     while i < len(lines):
         line = lines[i]
         m = _HEREDOC.search(line)
@@ -484,7 +488,9 @@ def _without_heredoc_bodies(command: str) -> str:
             out.append(line)
             i += 1
             continue
-        end = next((j for j in range(i + 1, len(lines)) if lines[j].strip() == m.group(2)), None)
+        at = where.get(m.group(2), [])
+        k = bisect.bisect_right(at, i)
+        end = at[k] if k < len(at) else None
         if end is None:
             out.append(line)
             i += 1
@@ -503,8 +509,12 @@ def _git_refusal(command: str, aliases: Optional[Dict[str, str]] = None, depth: 
     if any(h in low.replace("\\", "/") for h in _SHARED_HINTS):
         return ("this touches the repository's shared folder (hooks, config) or points git "
                 "elsewhere; it is not run")
-    shell = re.search(r"(?:powershell|pwsh)\S*\s", low)
-    if shell and re.search(r"-encodedcommand|-enc\s|-ec\s|-e\s+[a-z0-9+/=]{16,}", low[shell.end():]):
+    # word by word: a pattern for "the shell's name, then anything" retries from
+    # every position of a long run of non-space text
+    words = low.split()
+    shell_at = next((i for i, w in enumerate(words) if "powershell" in w or "pwsh" in w), None)
+    if shell_at is not None and re.search(r"-encodedcommand|-enc\s|-ec\s|-e\s[a-z0-9+/=]{16,}",
+                                          " ".join(words[shell_at + 1:]) + " "):
         return "an encoded command cannot be read, so it is not run"
     # A heredoc's body is text, not commands (a commit message may mention 'git push').
     body_free = _without_heredoc_bodies(command)
