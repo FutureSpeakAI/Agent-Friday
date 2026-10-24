@@ -67,6 +67,7 @@ import shutil
 import sqlite3
 import stat
 import struct
+import sys
 import tarfile
 import tempfile
 import time
@@ -120,7 +121,7 @@ _EXCLUDED_TOPS = {"runtime", "local_voice", "models", "cache", "backups", "logs"
 #: Exact paths (and folders) never carried, relative, POSIX, lower case.
 _EXCLUDED_PATHS = {"vault/.governance-key", "vault/.attestation-key-ed25519",
                    "vault/.attestation-key-ed25519.pub", "vault/.action-ledger-anchor", "vault/.bundle-schedule-passphrase",
-                   "secret_key", "friday_server.lock", "friday_server.pid",
+                   ".friday-restore-staging", "secret_key", "friday_server.lock", "friday_server.pid",
                    "friday_server.port", "startup-report.json", "friday.log",
                    "server_stderr.log", "ledger/.lock", "phone/secrets",
                    # Google sign-in written by older paths, and OAuth client secrets
@@ -1057,10 +1058,13 @@ def restore(path: Path, passphrase: str, *, home: Optional[Path] = None,
         r0 = _recover_locked(home)                                      # one cut off earlier
         if r0 and r0.get("rolled") == "none" and r0.get("why") != "already finished":
             raise BundleError("Nothing was restored: %s" % r0.get("why"))
-        if r0 is None:
-            _swept_result(home, _sweep_staging(home, None))       # before a new staging copy exists
-        return _restore_locked(path, passphrase, home=home, only=only, replace=replace,
-                               dry_run=dry_run, allow_newer=allow_newer)
+        swept = _sweep_staging(home, None) if r0 is None and not dry_run else []   # before a new copy
+        out = _restore_locked(path, passphrase, home=home, only=only, replace=replace,
+                              dry_run=dry_run, allow_newer=allow_newer)
+        if swept:
+            out = dict(out, staging_removed=swept)
+            _note_swept(home, swept)                                  # in the restored Friday's ledger
+        return out
 
 
 def _restore_locked(path: Path, passphrase: str, *, home: Path, only, replace: bool,
@@ -1096,6 +1100,8 @@ def _restore_locked(path: Path, passphrase: str, *, home: Path, only, replace: b
         return {"dry_run": True, **plan_}
     stage = home.parent / (home.name + ".friday-restore-" + uuid.uuid4().hex[:8])
     stage.mkdir(parents=True)
+    # says "a restore made this folder": only folders carrying it are ever removed
+    (stage / STAGING_MARKER).write_text("a Friday Bundle restore was staging here\n", encoding="utf-8")
     written = []
     stage_root = stage.resolve()
 
@@ -1186,6 +1192,10 @@ JOURNAL_SUFFIX = ".restore-journal.json"
 LOCK_SUFFIX = ".restore.lock"
 #: Inside the restored folder: what the steps after the swap need.
 PENDING_NAME = "pending.json"
+#: In every staging copy from the moment it is made, so only a folder a restore
+#: made is ever removed; dropped once the copy is the data folder, and never
+#: carried in a bundle.
+STAGING_MARKER = ".friday-restore-staging"
 
 
 def _journal_path(home: Path) -> Path:
@@ -1299,6 +1309,10 @@ def _finish(home: Path, keys: dict, moved_aside_name: Optional[str], *, at_start
     again after a stop part way (the receipt is appended once)."""
     pending_p = home / "restore" / PENDING_NAME
     pending = json.loads(pending_p.read_text(encoding="utf-8"))
+    try:
+        (home / STAGING_MARKER).unlink()              # the copy is the data folder now
+    except OSError:
+        pass
     _mark_reindex(home)                                                 # step 9
     from agent_friday.services import action_ledger
     with _as_home(home):
@@ -1470,6 +1484,10 @@ def recover_interrupted_restore(home: Optional[Path] = None) -> Optional[dict]:
             return {"rolled": "none", "stop": True,
                     "why": "a restore is running on this data folder; start Friday when it ends"}
         if not _journal_path(home).exists():       # looked at again under the lock
+            if not home.exists():
+                # a copy may then be the only restored Friday there is (an
+                # older Friday stopped mid-swap): left for the owner
+                return None
             return _swept_result(home, _sweep_staging(home, None))
         try:
             return _recover_locked(home)
@@ -1505,20 +1523,24 @@ def _staging_copies(home: Path) -> list:
     """The staging folders a restore made beside `home` (<name>.friday-restore-*),
     as they are on disk: folders only, never a link or a junction."""
     out = []
-    prefix = os.path.normcase(home.name + ".friday-restore-")
+    if not home.name:
+        return out                               # a drive root as the data folder: nothing beside it
+    name_rx = re.compile(re.escape(home.name) + r"\.friday-restore-[0-9a-f]{8}",
+                         re.IGNORECASE if os.name == "nt" else 0)
     try:
         entries = list(os.scandir(home.parent))
     except OSError:
         return out
     for e in entries:
-        if not os.path.normcase(e.name).startswith(prefix):
+        if not name_rx.fullmatch(e.name):
             continue
         p = Path(e.path)
         try:
             st = os.lstat(p)
+            marked = os.path.isfile(p / STAGING_MARKER) and not os.path.islink(p / STAGING_MARKER)
         except OSError:
             continue
-        if stat.S_ISDIR(st.st_mode) and _ours(p, home, ".friday-restore-"):
+        if stat.S_ISDIR(st.st_mode) and _ours(p, home, ".friday-restore-") and marked:
             out.append(p)
     return out
 
@@ -1542,7 +1564,10 @@ def _sweep_staging(home: Path, keep: Optional[Path]) -> list:
                 fn(path)
             except OSError:
                 pass
-        shutil.rmtree(p, onerror=_retry)
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(p, onexc=_retry)
+        else:
+            shutil.rmtree(p, onerror=_retry)
         if not p.exists():
             gone.append(p.name)
     return gone
