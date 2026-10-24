@@ -127,6 +127,14 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(ga, "_gate_task_text", lambda body: (dict(body), ""))
     monkeypatch.setattr(ga.cs, "audit_event", lambda *a, **k: None)
     monkeypatch.setattr(discovery, "build", lambda *a, **k: tasks)
+    # Undo data is sealed as A20's sent text is (services/undo_store): a stand-in key store here,
+    # and no vault passphrase (never derive a real key).
+    from agent_friday.services import credential_store as cs, sent_text_store as sts
+    monkeypatch.setattr(cs, "protect", lambda data: (b"SEALED:" + data[::-1], "keystore"))
+    monkeypatch.setattr(cs, "unprotect", lambda blob: blob[len(b"SEALED:"):][::-1])
+    monkeypatch.setattr(cs, "looks_protected", lambda blob: "keystore" if blob.startswith(b"SEALED:") else None)
+    monkeypatch.setattr(sts, "_vault_key", lambda derive=True: None)
+    monkeypatch.setattr(sts, "_passphrase_set", lambda: False)
     yield cal, tasks
     journal.reset()
     desktop_bus.reset()
@@ -306,6 +314,71 @@ def test_a_change_already_put_back_is_never_put_back_twice(world):
     assert first["status"] == "partial"
     ia.undo_tasks(journal.get(rec["receipt_id"]))
     assert sum(1 for t in tasks.store.values() if t["title"] == "Again") == 1
+
+
+# ── Undo data is encrypted at rest; the signed receipt keeps none of the words ──
+
+def _undo_files():
+    from agent_friday.services import undo_store
+    d = undo_store._dir()
+    return list(d.glob("u*.bin")) if d.is_dir() else []
+
+
+def test_the_receipt_keeps_no_description_or_notes_and_the_kept_data_is_sealed(world):
+    before = len(_undo_files())
+    rid_e = _rid(agent._tool_delete_calendar_event({"event_id": "e1", "notify_guests": False}))
+    rid_t = _rid(agent._tool_update_task({"account_id": "acct_t1", "tasklist_id": "tl1", "task_id": "k1",
+                                          "notes": "any colour"}))
+    for rid, secret in ((rid_e, "Bring the form"), (rid_t, "the blue ones")):
+        rec = journal.get(rid)
+        assert secret not in json.dumps(rec), "the item's own words are not in the ledger entry"
+        row = rec["undo"][rec["domain"]][0]
+        assert row.get("sealed") and "fields" not in row and row.get("field_names")
+    files = _undo_files()
+    assert len(files) == before + 2
+    for f in files:
+        raw = f.read_bytes()
+        assert raw.startswith(b"SEALED:") and b"Bring the form" not in raw and b"the blue ones" not in raw
+
+
+def test_nothing_readable_is_kept_when_nothing_can_seal_it(world, monkeypatch):
+    from agent_friday.services import credential_store as cs
+    monkeypatch.setattr(cs, "protect", lambda data: (data, "plaintext"))
+    before = len(_undo_files())
+    rec = journal.get(_rid(agent._tool_update_task({"account_id": "acct_t1", "tasklist_id": "tl1",
+                                                    "task_id": "k1", "notes": "any colour"})))
+    assert not rec["undo"] and "could not be kept encrypted" in rec["summary"]
+    assert len(_undo_files()) == before
+
+
+def test_the_sealed_data_goes_once_its_undo_has_run(world):
+    rid = _rid(agent._tool_update_task({"account_id": "acct_t1", "tasklist_id": "tl1", "task_id": "k1",
+                                        "notes": "any colour"}))
+    token = journal.get(rid)["undo"]["tasks"][0]["sealed"]
+    from agent_friday.services import undo_store
+    assert undo_store.read(token) == {"notes": "the blue ones"}
+    _undo_on_card(rid)
+    assert undo_store.read(token) is None and undo_store._path(token).exists() is False
+
+
+def test_forgetting_a_person_removes_undo_data_that_names_them(world):
+    cal, _ = world
+    cal.store["e1"]["description"] = "Lunch with Ann Example about the house"
+    rid = _rid(agent._tool_delete_calendar_event({"event_id": "e1", "notify_guests": False}))
+    token = journal.get(rid)["undo"]["calendar"][0]["sealed"]
+    from agent_friday.services import forget_registry, undo_store
+    assert "undo_data" in forget_registry.registered()
+    assert undo_store.forget_find({"ann example"}, set()) >= 1
+    undo_store.forget_purge({"ann example"}, set())
+    assert undo_store.read(token) is None
+
+
+def test_off_the_record_undo_data_never_touches_disk(world, monkeypatch):
+    from agent_friday.services import off_record, undo_store
+    monkeypatch.setattr(off_record, "active", lambda: True)
+    before = len(_undo_files())
+    token = undo_store.keep({"notes": "private"})
+    assert token and undo_store.read(token) == {"notes": "private"} and len(_undo_files()) == before
 
 
 def test_undo_twice_puts_back_once(world):

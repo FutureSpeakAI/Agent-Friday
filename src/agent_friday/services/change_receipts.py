@@ -76,6 +76,26 @@ def _receipted(domain: str, item_id: str) -> bool:
     return False
 
 
+def _sealed(fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The item's own words for Undo, sealed (services/undo_store): the row keeps a token and the
+    field names, never the values. None when they cannot be kept encrypted: then no Undo."""
+    from agent_friday.services import undo_store
+    token = undo_store.keep(fields)
+    return {"sealed": token, "field_names": sorted(fields)} if token else None
+
+
+NOT_SEALED = " (it cannot be undone: what it was could not be kept encrypted)"
+
+
+def _fields(r: dict) -> Optional[Dict[str, Any]]:
+    """An Undo row's fields: opened from the sealed store (older rows kept them inline)."""
+    if r.get("sealed"):
+        from agent_friday.services import undo_store
+        return undo_store.read(r["sealed"])
+    f = r.get("fields")
+    return dict(f) if isinstance(f, dict) else None
+
+
 def _title(s: Any, fallback: str) -> str:
     s = str(s or "").strip()
     return (s[:80] + "…") if len(s) > 80 else (s or fallback)
@@ -110,14 +130,17 @@ def calendar_updated(res: dict, *, conversation_id: Optional[str] = None) -> Opt
     t = _title(before.get("summary") or res.get("title"), "an event")
     # an all-day event's times are dates, which a change of times cannot set back
     timed = all("T" in str(fields.get(k) or "") for k in ("start", "end") if k in fields)
-    rows = ([{"op": "restore_fields", "id": res["id"], "title": t, "fields": fields,
-              "account": res.get("account_id") or "", "calendar": res.get("calendar_id") or "primary"}]
-            if fields and len(fields) == len(changed) and timed else [])
+    undoable = bool(fields) and len(fields) == len(changed) and timed
+    seal = _sealed(fields) if undoable else None
+    rows = ([dict({"op": "restore_fields", "id": res["id"], "title": t,
+                   "account": res.get("account_id") or "", "calendar": res.get("calendar_id") or "primary"},
+                  **seal)] if seal else [])
     return _record("update_calendar_event", "update", "calendar",
                    items=[{"id": res["id"], "title": t, "changed": changed}],
                    summary="Changed %s of “%s”%s." % (
                        ", ".join(changed) or "nothing", t,
-                       "" if rows else " (it cannot be undone: an all-day event's dates cannot be set "
+                       "" if rows else NOT_SEALED if undoable else
+                       " (it cannot be undone: an all-day event's dates cannot be set "
                        "back by Undo)" if fields and not timed else
                        " (it cannot be undone: the event could not be read first)"),
                    said="Changed an event.", undo_rows=rows, conversation_id=conversation_id)
@@ -132,12 +155,12 @@ def calendar_deleted(res: dict, *, conversation_id: Optional[str] = None) -> Opt
     can = (bool(b.get("start")) and "T" in str(b.get("start")) and "T" in str(b.get("end") or "")
            and not b.get("recurring"))
     guests = int((res.get("before") or {}).get("guests") or 0)
-    rows = ([{"op": "recreate", "id": res["id"], "title": t,
-              "fields": {k: b.get(k, "") for k in EVENT_FIELDS if k != "summary"}
-              | {"summary": str(b.get("summary") or b.get("title") or t)},
-              "guests": guests, "account": res.get("account_id") or "",
-              "calendar": res.get("calendar_id") or "primary"}] if can else [])
-    note = ("" if can else " (a repeating event cannot be made again by Undo)" if b.get("recurring")
+    seal = _sealed({k: b.get(k, "") for k in EVENT_FIELDS if k != "summary"}
+                   | {"summary": str(b.get("summary") or b.get("title") or t)}) if can else None
+    rows = ([dict({"op": "recreate", "id": res["id"], "title": t,
+                   "guests": guests, "account": res.get("account_id") or "",
+                   "calendar": res.get("calendar_id") or "primary"}, **seal)] if seal else [])
+    note = (NOT_SEALED if can and not seal else "" if can else " (a repeating event cannot be made again by Undo)" if b.get("recurring")
             else " (an all-day event cannot be made again by Undo)") + (
         " Undo makes it again without its %d guest(s)." % guests if can and guests else "")
     return _record("delete_calendar_event", "delete", "calendar",
@@ -147,7 +170,15 @@ def calendar_deleted(res: dict, *, conversation_id: Optional[str] = None) -> Opt
 
 
 def undo_calendar_row(cw, r: dict) -> bool:
-    """Put back one calendar change. True when Google confirmed it."""
+    """Put back one calendar change. True when Google confirmed it; its sealed data then goes."""
+    ok = _undo_calendar_row(cw, r)
+    if ok and r.get("sealed"):
+        from agent_friday.services import undo_store
+        undo_store.drop(r["sealed"])
+    return ok
+
+
+def _undo_calendar_row(cw, r: dict) -> bool:
     op = r.get("op") or "move"
     acct, cal = r.get("account") or None, r.get("calendar") or "primary"
     if op == "move":
@@ -167,14 +198,18 @@ def undo_calendar_row(cw, r: dict) -> bool:
         res = cw.delete_event(r["id"], calendar_id=cal, account_id=acct, notify_guests=bool(had))
         return bool(res.get("ok"))
     if op == "restore_fields":
-        f = r.get("fields") or {}
+        f = _fields(r)
+        if f is None:
+            return False                  # gone, expired or cannot be opened: nothing to put back
         res = cw.update_event(r["id"], title=f.get("summary"), location=f.get("location"),
                               description=f.get("description"), start=f.get("start") or None,
                               end=f.get("end") or None, allow_clearing=True,
                               account_id=acct, calendar_id=cal)
         return bool(res.get("ok"))
     if op == "recreate":
-        f = r.get("fields") or {}
+        f = _fields(r)
+        if f is None:
+            return False
         res = cw.create_event(title=f.get("summary") or r.get("title") or "(no title)",
                               start=f.get("start") or "", end=f.get("end") or "",
                               location=f.get("location") or "", description=f.get("description") or "",
@@ -209,13 +244,15 @@ def task_changed(res: dict, before: Optional[dict], *, tool: str, changed: List[
     fields = {k: (before or {}).get(k, "") for k in changed} if before else {}
     if "status" in fields and fields["status"] not in ("needsAction", "completed"):
         fields["status"] = "needsAction"
-    rows = ([{"op": "restore", "id": res["id"], "title": t, "fields": fields,
-              "account": res.get("account_id") or "", "tasklist": tasklist_id}] if fields else [])
+    seal = _sealed(fields) if fields else None
+    rows = ([dict({"op": "restore", "id": res["id"], "title": t,
+                   "account": res.get("account_id") or "", "tasklist": tasklist_id}, **seal)] if seal else [])
     what = "Marked “%s” done" % t if tool == "complete_task" else "Changed %s of “%s”" % (
         ", ".join(changed), t)
     return _record(tool, "complete" if tool == "complete_task" else "update", "tasks",
                    items=[{"id": res["id"], "title": t, "changed": changed}],
-                   summary=what + ("." if rows else " (it cannot be undone: the task could not be read first)."),
+                   summary=what + ("." if rows else (NOT_SEALED + ".") if fields
+                                   else " (it cannot be undone: the task could not be read first)."),
                    said="Changed a task.", undo_rows=rows, conversation_id=conversation_id)
 
 
@@ -225,19 +262,30 @@ def task_deleted(res: dict, before: Optional[dict], *, tasklist_id: str,
     if not (isinstance(res, dict) and res.get("deleted")) or res.get("already_gone"):
         return None
     t = _title((before or {}).get("title"), "a task")
-    rows = ([{"op": "recreate", "id": res.get("id"), "title": t,
-              "fields": {k: (before or {}).get(k, "") for k in TASK_FIELDS},
-              "account": res.get("account_id") or "", "tasklist": tasklist_id}] if before else [])
+    seal = _sealed({k: (before or {}).get(k, "") for k in TASK_FIELDS}) if before else None
+    rows = ([dict({"op": "recreate", "id": res.get("id"), "title": t,
+                   "account": res.get("account_id") or "", "tasklist": tasklist_id}, **seal)] if seal else [])
     return _record("delete_task", "delete", "tasks", items=[{"id": res.get("id"), "title": t}],
                    summary="Deleted the task “%s”%s." % (
-                       t, "" if rows else " (it cannot be undone: the task could not be read first)"),
+                       t, "" if rows else NOT_SEALED if before
+                       else " (it cannot be undone: the task could not be read first)"),
                    said="Deleted a task.", undo_rows=rows, conversation_id=conversation_id)
 
 
 def undo_task_row(ga, r: dict) -> bool:
-    """Put back one Google Tasks change. True when Google confirmed it."""
+    """Put back one Google Tasks change. True when Google confirmed it; its sealed data then goes."""
+    ok = _undo_task_row(ga, r)
+    if ok and r.get("sealed"):
+        from agent_friday.services import undo_store
+        undo_store.drop(r["sealed"])
+    return ok
+
+
+def _undo_task_row(ga, r: dict) -> bool:
     op, acct, tl = r.get("op"), r.get("account") or "", r.get("tasklist") or "@default"
-    f = r.get("fields") or {}
+    f = {} if op == "delete_created" else _fields(r)
+    if f is None:
+        return False                      # gone, expired or cannot be opened: nothing to put back
     if op == "delete_created":
         res = ga.delete_task(account_id=acct, tasklist_id=tl, task_id=r["id"])
         return bool(res.get("deleted") or res.get("not_found"))
@@ -278,7 +326,8 @@ def undo_lines(receipt: dict, domain: str) -> List[str]:
             g = int(r.get("guests") or 0)
             out.append("Make \u201c%s\u201d again%s." % (t, (" without its %d guest(s)" % g) if g else ""))
         elif op in ("restore_fields", "restore"):
-            out.append("Set %s of \u201c%s\u201d back as it was." % (", ".join(sorted(r.get("fields") or {})), t))
+            out.append("Set %s of \u201c%s\u201d back as it was." % (
+                ", ".join(r.get("field_names") or sorted(r.get("fields") or {})), t))
         else:
             out.append("Move \u201c%s\u201d back to %s." % (t, r.get("start") or "its old time"))
     return out
