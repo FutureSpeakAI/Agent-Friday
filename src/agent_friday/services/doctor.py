@@ -373,6 +373,31 @@ def _c_search_index():
     return "degraded", "conversation_search_index_" + state
 
 
+def _c_update_signature():
+    # BD-16's integrity dashboard: whether the last release Friday checked was signed by a key
+    # this copy trusts (services/update_check, stored state only: no network). While the copy
+    # has no release key, builds ship unsigned with a SHA-256 by the owner's decision: off, not
+    # a failure.
+    from agent_friday.services import trust_keys, update_check
+    if not trust_keys.RELEASE_KEYS:
+        return "unavailable_by_configuration", "no_release_key"
+    state = update_check.read_state()
+    verification = state.get("verification")
+    if verification == "verified":
+        return "healthy", "last_release_verified"
+    if verification in update_check.refused_states():
+        return "degraded", "last_release_refused:%s" % verification
+    if not state.get("last_success_ts"):
+        return "unverified", "not_checked_yet"
+    if verification is None and not state.get("update_available"):
+        # Checked, and nothing newer was published: there was no release to verify.
+        return "healthy", "no_newer_release"
+    if verification == "no_trusted_key":
+        return "unverified", "last_release_checked_before_the_key"
+    # Only fixed codes reach the report (it is shareable): an unknown stored value is not echoed.
+    return "unverified", "last_release_unknown"
+
+
 def _c_boot():
     from agent_friday.services import boot_guard
     n = int(boot_guard._read_attempt().get("consecutive_failures") or 0)
@@ -402,6 +427,7 @@ CHECKS = (
     ("model_files", "model files and checksums", _c_models),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
+    ("update_signature", "update status", _c_update_signature),
 )
 
 
