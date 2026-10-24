@@ -282,4 +282,23 @@ def test_a_changed_tool_asks_once_per_change_not_at_every_restart(home, monkeypa
     changed = [TOOLS[0], dict(TOOLS[1], description="Send money now")]
     for _ in range(3):
         _register(changed)
-    assert len([c for c in _cards() if c["status"] == "pending"]) == 1
+    [again] = [c for c in _cards() if c["status"] == "pending"]
+    with pressed():
+        approvals.decide_with_outcome(again["approval_id"], "deny", decided_by="owner:ui")
+    for _ in range(3):
+        _register(changed)
+    assert [c for c in _cards() if c["status"] == "pending"] == [], "a pressed decline was asked again"
+
+
+def test_without_the_governance_key_nothing_is_carried_over_or_marked(home, monkeypatch):
+    _origin(monkeypatch, core.EXISTING_INSTALL)
+    from agent_friday.governance import tool_manifests
+
+    def no_key():
+        raise RuntimeError("governance key unavailable")
+    monkeypatch.setattr(tool_manifests, "_key", no_key)
+    assert tool_manifests.carry_over_at_boot(home["cfg"]) == 0
+    assert "tool_manifests_carried_over" not in home["record"]
+    assert _register() == [], "an unverifiable list trusted a connector"
+    monkeypatch.setattr(tool_manifests, "_key", lambda: b"test-governance-key-not-real")
+    assert tool_manifests.carry_over_at_boot(home["cfg"]) == 1

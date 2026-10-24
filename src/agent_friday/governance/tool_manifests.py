@@ -253,6 +253,10 @@ def carry_over_at_boot(config: Any = None) -> int:
             return 0
         from agent_friday import core
         try:
+            _key()                                 # no key, no carry-over (and no marker): try again later
+        except Exception:
+            return 0
+        try:
             if core.install_choices_state().get("tool_manifests_carried_over"):
                 return 0                           # it ran once already: never again
             # The marker goes first: a carry-over that fails part-way is not retried at a later

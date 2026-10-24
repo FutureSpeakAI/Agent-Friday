@@ -107,8 +107,9 @@ def ask(server: str, manifests: List[Dict[str, Any]], *, grandfathered: bool,
             title = "Review the add-on \"%s\" before Friday uses its tools?" % name
             what = ("The add-on \"%s\" has no manifest yet, so Friday does not offer its tools. "
                     "Approve to add one, after checking what each tool does." % name)
+        subject_id = "%s@%d" % (server, time.time_ns())
         card = _ap().create_approval(
-            kind=KIND, subject_type=SUBJECT_TYPE, subject_id="%s@%d" % (server, time.time_ns()),
+            kind=KIND, subject_type=SUBJECT_TYPE, subject_id=subject_id,
             title=title,
             description=(what + "\n\nIts tools:\n" + lines + more +
                          "\n\nEach call still follows your approval rules. If a tool's "
@@ -116,7 +117,7 @@ def ask(server: str, manifests: List[Dict[str, Any]], *, grandfathered: bool,
                          "review it again."),
             action_description=("Add manifests for the tools of add-on %s" % name),
             payload=_sealed_payload({"server": str(server)[:200], "grandfathered": bool(grandfathered),
-                                     "manifests": manifests, "shas": shas}),
+                                     "manifests": manifests, "shas": shas, "card": subject_id}),
             requested_by="friday:mcp", action_class="outward", force_gate=True)
         return {"state": "pending" if card.get("status") == "pending" else str(card.get("status")),
                 "approval_id": card.get("approval_id", "")}
@@ -193,7 +194,7 @@ def apply(record: dict) -> dict:
     from agent_friday.governance import action_gate, tool_manifests
     payload = record.get("payload") or {}
     server = str(payload.get("server") or "")
-    if not tool_manifests.sealed(payload):
+    if not tool_manifests.sealed(payload) or payload.get("card") != record.get("subject_id"):
         # The card's contents changed after it was raised: nothing is signed or turned off.
         ap.mark_used(record["approval_id"], "tool_manifests", {"ok": False, "error": "card altered"})
         return {"ok": False, "error": "the card was altered after it was raised"}
