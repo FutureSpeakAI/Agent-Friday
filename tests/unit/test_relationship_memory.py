@@ -290,29 +290,71 @@ LINKEDIN_CSV = (
 
 
 def _people(rel):
-    return json.loads((rel.home / "people_graph.json").read_text(encoding="utf-8"))["people"]
+    p = rel.home / "people_graph.json"
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))["people"]
 
 
-def test_linkedin_import_reads_the_export(rel):
-    res = rel.import_linkedin_csv(LINKEDIN_CSV)
+@pytest.fixture
+def staged(rel, monkeypatch):
+    """Import staging writes beside the same home the people graph uses."""
+    monkeypatch.setenv("FRIDAY_HOME", str(rel.home))
+    return rel
+
+
+def _accept_all(rel):
+    import importlib
+    try:
+        st = importlib.import_module("agent_friday.services.import_staging")
+    except ImportError:
+        pytest.fail("there is no import staging to accept the rows from")
+    return st.review_class(rel.LINKEDIN_SOURCE, "accept")
+
+
+def test_linkedin_import_stages_and_saves_nothing_before_an_answer(staged):
+    res = staged.import_linkedin_csv(LINKEDIN_CSV)
     assert res["ok"], res
-    people = _people(rel)
+    assert _people(staged) == {}, "an import became durable before the owner answered"
+    assert res["staged"] == 4 and res["waiting"] == 4
+    assert res["skipped_count"] == 1 and res["skipped"][0]["reason"] == "no name"
+
+
+def test_a_preview_counts_and_writes_nothing(staged):
+    res = staged.import_linkedin_csv(LINKEDIN_CSV, preview=True)
+    assert res["ok"] and res["preview"] is True and res["rows"] == 4 and res["with_email"] == 2
+    assert _people(staged) == {}
+    assert not list((staged.home / "wiki" / "_staging").glob("imp-*.json")) \
+        if (staged.home / "wiki" / "_staging").exists() else True
+
+
+def test_accepted_rows_reach_the_people_graph(staged):
+    staged.import_linkedin_csv(LINKEDIN_CSV)
+    out = _accept_all(staged)
+    assert out["done"] == 4 and out["failed"] == 0
+    people = _people(staged)
     dana = people["dana_okafor"]
     assert dana["company"] == "Acme", "an import never overwrites an existing field"
     assert dana["emails"] == ["dana@acme.example.com", "dana.o@home.example.net"]
     assert dana["linkedin_url"] == "https://www.linkedin.com/in/dana-example"
     assert dana["sources"] == ["linkedin"]
-    assert res["created"] == 3 and res["updated"] == 1
-    assert res["skipped_count"] == 1 and res["skipped"][0]["reason"] == "no name"
 
 
-def test_linkedin_cells_are_stored_as_text(rel):
-    rel.import_linkedin_csv(LINKEDIN_CSV)
-    evil = _people(rel)["evil_cell"]
+def test_linkedin_cells_are_stored_as_text(staged):
+    staged.import_linkedin_csv(LINKEDIN_CSV)
+    _accept_all(staged)
+    evil = _people(staged)["evil_cell"]
     assert evil["company"] == '=HYPERLINK("http://x.example")'
     assert evil["position"] == "+SUM(A1:A9)"
     assert "linkedin_url" not in evil, "a non-LinkedIn URL is not kept as a profile link"
     assert "emails" not in evil, "an invalid address is not kept"
+
+
+def test_importing_the_same_file_again_proposes_nothing_new(staged):
+    staged.import_linkedin_csv(LINKEDIN_CSV)
+    _accept_all(staged)
+    again = staged.import_linkedin_csv(LINKEDIN_CSV)
+    assert again["staged"] == 0 and again["already_decided"] == 4
 
 
 def test_a_file_that_is_not_the_export_is_refused(rel):
@@ -321,12 +363,13 @@ def test_a_file_that_is_not_the_export_is_refused(rel):
     assert rel.import_linkedin_csv(None)["ok"] is False
 
 
-def test_linkedin_import_skips_forgotten_people(rel):
+def test_linkedin_import_skips_forgotten_people(staged):
     from agent_friday.services import forget_person as fp
     fp.forget("Dana Okafor")
-    res = rel.import_linkedin_csv(LINKEDIN_CSV)
+    res = staged.import_linkedin_csv(LINKEDIN_CSV)
     assert res["skipped_forgotten"] == 2
-    assert "dana_okafor" not in _people(rel)
+    _accept_all(staged)
+    assert "dana_okafor" not in _people(staged)
 
 
 # ── forgetting ───────────────────────────────────────────────────────────────

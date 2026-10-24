@@ -13558,7 +13558,7 @@ function RelationshipPanel({onImported}){
     if(d.status==='ok'){const res=d.result||{};setMsg('Added '+(res.added||0)+' interactions'+((res.errors||[]).length?' · '+res.errors.length+' account error(s): '+res.errors.map(x=>x.error).join('; '):'')+((res.truncated_accounts||[]).length?' · some mail not read yet, sync again':''));load()}
     else setMsg(d.message||'Sync failed.')}catch(err){setMsg('Sync failed.')}setBusy('')};
   const importFile=async f=>{if(!f)return;setBusy('import');setMsg('');try{const text=await f.text();const r=await fetch('/api/contacts/import/linkedin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:text})});const d=await r.json();
-    if(d.status==='ok'){const x=d.result;setMsg('LinkedIn: '+x.created+' added, '+x.updated+' updated'+(x.skipped_count?', '+x.skipped_count+' rows skipped':'')+(x.skipped_forgotten?', '+x.skipped_forgotten+' forgotten people left out':'')+'.');if(onImported)onImported()}
+    if(d.status==='ok'){const x=d.result;setMsg('LinkedIn: '+x.staged+' people staged for your review below; nothing is saved until you accept'+(x.already_decided?', '+x.already_decided+' already answered':'')+(x.skipped_count?', '+x.skipped_count+' rows skipped':'')+(x.skipped_forgotten?', '+x.skipped_forgotten+' forgotten people left out':'')+'.');if(onImported)onImported()}
     else setMsg(d.message||'Import failed.')}catch(err){setMsg('Import failed.')}setBusy('')};
   const allowSaving=async a=>{setMsg('');try{const r=await fetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:a.id,email:a.email,include_contacts_write:true})});const d=await r.json();
     if(d.status==='ok'&&d.auth_url)setConsent({url:d.auth_url,brief:d.prebrief||'',email:a.email});else setMsg(d.message||'Could not start sign-in.')}catch(err){setMsg('Could not start sign-in.')}};
@@ -13582,6 +13582,7 @@ function RelationshipPanel({onImported}){
       Google will ask {consent.email} to allow creating and editing contacts. <button className="btn" style={small} onClick={()=>{window.open(consent.url,'_blank','noopener');setConsent(null)}}>Continue to Google</button> <button className="btn" style={small} onClick={()=>setConsent(null)}>Cancel</button>
     </div>}
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:4}}>{msg}</div>}
+    <StagedImportReview source="linkedin_csv" refresh={msg} onDone={onImported}/>
     {follow.length>0&&<div style={{marginTop:8}}>
       <div style={{fontSize:11,color:'#888',marginBottom:4}}>Follow-ups</div>
       {follow.slice(0,8).map(f=><div key={f.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:6,fontSize:11,padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
@@ -13590,6 +13591,140 @@ function RelationshipPanel({onImported}){
       </div>)}
     </div>}
   </div>);
+}
+// ── Imported items waiting for your answer (services/import_staging) ──
+// Nothing an import brings in is saved until you accept it here. Accepting is a press in
+// Friday's window on this PC (routes/import_staging.py); Reject keeps it from being proposed again.
+function StagedImportReview({ source, refresh, onDone }) {
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/import-staging?status=open&source=' + encodeURIComponent(source)).then(r => r.json()).then(setD).catch(() => setD(null));
+  }, [source]);
+  useEffect(() => {
+    load();
+  }, [load, refresh]);
+  const answer = (body, done) => {
+    setBusy(true);
+    setMsg('');
+    apiFetch('/api/import-staging/review', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }).then(r => r.json()).then(x => {
+      setMsg(x.ok ? done(x) : x.error || 'Nothing changed.');
+      load();
+      if (x.ok && onDone) onDone();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const items = d && d.items || [];
+  if (!items.length) return msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null;
+  const small = {
+    fontSize: 10
+  };
+  return E('div', {
+    'data-testid': 'import-staging-review',
+    style: {
+      marginTop: 8,
+      padding: 8,
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 6
+    }
+  }, E('div', {
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginBottom: 6,
+      lineHeight: 1.5
+    }
+  }, items.length + (d.more ? '+' : '') + ' imported ' + (items.length === 1 ? 'person waits' : 'people wait') + ' for your answer. Nothing is saved until you accept it.'), E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginBottom: 6
+    }
+  }, E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'accept',
+      all: true
+    }, x => 'Saved ' + x.done + (x.failed ? '; ' + x.failed + ' could not be saved and still wait' : '') + '.')
+  }, 'Accept all ' + ((d.counts || {}).proposed + (d.counts || {}).deferred || items.length)), E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'reject',
+      all: true
+    }, x => 'Left out ' + x.done + '.')
+  }, 'Reject all')), E('ul', {
+    style: {
+      listStyle: 'none',
+      padding: 0,
+      margin: 0,
+      maxHeight: 220,
+      overflowY: 'auto'
+    }
+  }, items.slice(0, 200).map(it => E('li', {
+    key: it.id,
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: 6,
+      fontSize: 11,
+      padding: '2px 0'
+    }
+  }, E('span', null, it.label + (it.status === 'deferred' ? ' (later)' : '') + (it.error ? ' (' + it.error + ')' : '')), E('span', null, E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'accept'
+    }, () => 'Saved.')
+  }, 'Accept'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'reject'
+    }, () => 'Left out.')
+  }, 'Reject'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'defer'
+    }, () => 'Kept for later.')
+  }, 'Later'))))), msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null);
 }
 function PersonTimelineCard({name}){
   const[t,setT]=useState(null);const[note,setNote]=useState('');const[days,setDays]=useState(3);const[msg,setMsg]=useState('');
