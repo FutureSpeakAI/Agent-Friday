@@ -136,11 +136,19 @@ def _save(items: List[Dict[str, Any]], ledger: Optional[Dict[str, Any]] = None) 
         keep = sorted(ledger.items(), key=lambda kv: str((kv[1] or {}).get("at") or ""))
         ledger = dict(keep[-_LEDGER_MAX:])
     items = [_disk_view(n) if isinstance(n, dict) else n for n in items]
+    # Written beside and swapped in: a write that fails (a full disk, services/disk_guard) leaves
+    # the cards already saved as they were instead of an empty file.
+    tmp = NOTIF_FILE.with_name(NOTIF_FILE.name + ".tmp")
     try:
-        NOTIF_FILE.write_text(json.dumps({"items": items, "dismissed_jobs": ledger}, indent=2),
-                              encoding="utf-8")
+        tmp.write_text(json.dumps({"items": items, "dismissed_jobs": ledger}, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, NOTIF_FILE)
     except Exception as e:
         print(f"[notifications_engine] save failed: {e}")
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 # ── Dismissal, keyed to the job ──────────────────────────────────────────────

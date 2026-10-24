@@ -486,6 +486,7 @@ Test: `tests/unit/test_codeql_beta_regexes.py` (50,000-character hostile input u
 | 1000 | py/clear-text-logging-sensitive-data | services/agent.py:14749 | FALSE_POSITIVE | Model id, `finish_reason` and tool names. |
 | 999 | py/clear-text-storage-sensitive-data | tests/unit/test_credential_self_shares.py:88 | TEST_ONLY | Test writes a fake `.aws/credentials` into a temporary home to prove it is withheld. |
 | 998 | py/clear-text-storage-sensitive-data | notifications_engine.py:139 | FALSE_POSITIVE | Notification queue and dismissal ledger, ordinary local app state (as 705). |
+| 1239 | py/clear-text-storage-sensitive-data | notifications_engine.py:143 | FALSE_POSITIVE | The same write as 998, now to a temporary file swapped in (BD-16 FT1 #398) so a full disk cannot empty the queue. |
 | 997, 996 | py/clear-text-storage-sensitive-data | services/conversations.py:312, :76 | FALSE_POSITIVE | The conversation store is the owner's own chat history in Friday's data folder, which is what the feature stores. |
 | 995 | py/clear-text-storage-sensitive-data | services/codebases.py:100 | FALSE_POSITIVE | The codebase record holds labels, providers and caps only; a guest key's secret goes to the credential store (`add_guest_key`). |
 

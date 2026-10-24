@@ -318,6 +318,13 @@ def _c_backup():
 
 def _c_disk():
     import shutil
+    try:
+        from agent_friday.services import disk_guard
+        if disk_guard.status()["state"] == "low":
+            # services/disk_guard: scheduled background work is waiting for space (NS-32.13-1).
+            return "degraded", "disk_full_background_paused"
+    except Exception:
+        pass
     free = shutil.disk_usage(str(_home() if _home().exists() else Path.home())).free
     gb = free / 1e9
     if gb < 2:
