@@ -387,6 +387,16 @@ def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str,
     return hits[:max(1, int(limit))]
 
 
+def superseded_ids() -> set:
+    """Every message id recorded as superseded (survives rebuilds)."""
+    with _LOCK:
+        conn = _connect()
+        try:
+            return {r[0] for r in conn.execute("SELECT mid FROM superseded")}
+        finally:
+            conn.close()
+
+
 def mark_superseded(mids, on: bool = True) -> int:
     """Record (or clear) that these message ids are superseded, so search
     leaves them out. Survives a rebuild of the index. Returns how many."""
