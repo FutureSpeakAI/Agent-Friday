@@ -42,6 +42,15 @@ _IMPERATIVE = r"(?:^|[.!?:;>\]\n] ?|\b(?:please|kindly|also|now|quietly|immediat
 _SENSITIVE = (r"(?:all|every|each|the last \d+|passwords?|passport|credentials?|api keys?|private keys?|card numbers?|"
               r"bank details|account details|contacts|inbox|(?:the )?vault|contents)")
 
+#: Sending verbs: present tense, or past tense right after "you" ("it would be great if you sent ...").
+_SEND = (r"(?:(?:forward|send|e-?mail|transfer|wire|pay|upload|share|copy|export|post|leak|exfiltrate)|"
+         r"(?<=you )(?:forwarded|sent|e-?mailed|transferred|wired|paid|uploaded|shared|copied|exported|posted|"
+         r"leaked|exfiltrated))\b")
+#: Where it goes: to/into/at/onto an address, link or account; "with" only an address or link.
+_EMAIL_RE = r"[\w.+-]+@[\w-]+\.[\w.]+"
+_DEST = (r"(?:\b(?:to|into|at|onto)\b[^.\n]{0,50}?(?:" + _EMAIL_RE + r"|https?://|\b(?:iban|account|wallet|webhook|"
+         r"server|endpoint)\b)|\bwith\b[^.\n]{0,50}?(?:" + _EMAIL_RE + r"|https?://))")
+
 _PATTERNS = [
     ("role", re.compile(r"\b(?:SYSTEM|ASSISTANT|DEVELOPER|AI MODEL|TOOL SERVER|ADMIN)\b(?: (?:NOTICE|MESSAGE|NOTE|"
                         r"INSTRUCTIONS?|OVERRIDE))?(?: TO [A-Z ]{2,30})? ?[:>]")),
@@ -75,25 +84,26 @@ _PATTERNS = [
                              r"approve|accept|book|buy|reply)\b", re.I)),
     ("directive", re.compile(_ADDRESSEE + r" (?:reading|working|processing|parsing|summari[sz]ing|that (?:read|see)s?|"
                              r"who (?:read|see)s?)\b", re.I)),
-    ("directive", re.compile(r"\b" + _ADDRESSEE_ONE + r"\b[^.\n]{0,40}?\b(?:must|should|shall|needs? to|is "
+    ("directive", re.compile(r"\b" + _ADDRESSEE_ONE + r"\b(?! (?:assistants|agents|models|chatbots)\b)"
+                             r"[^.\n]{0,40}?\b(?:must|should|shall|needs? to|is "
                              r"(?:required|instructed|asked) to|has to|will now) (?!be\b|comply\b|adhere\b|obey the law)\w",
                              re.I)),
-    ("action_request", re.compile(_IMPERATIVE + r"(?:call|invoke|execute) (?:the )?`?[a-z]+_[a-z_]+\b", re.I | re.M)),
+    ("directive", re.compile(r"\b" + _ADDRESSEE + r"\b[^.\n]{0,40}?\b(?:must|should|shall|needs? to|are "
+                             r"(?:required|instructed|asked) to|have to|will now) (?:now |immediately |also )?(?:send|"
+                             r"forward|e-?mail|transfer|wire|pay|delete|share|upload|reply|ignore|disregard|approve)\b",
+                             re.I)),
+    ("action_request", re.compile(_IMPERATIVE + r"(?:(?:call|invoke|execute) (?:the )?`?[a-z]+_[a-z_]+|(?:run|use) (?:the )?`?(?:send|read|"
+                                  r"delete|create|update|write|post|forward|draft|text|transfer|upload|share|"
+                                  r"export|schedule|submit|browse|run|execute|pay)_[a-z_]+)\b", re.I | re.M)),
     ("action_request", re.compile(
-        _IMPERATIVE + r"(?:forward(?:ed)?|send|sent|e-?mail(?:ed)?|transfer(?:red)?|wired?|pay|paid|upload(?:ed)?|"
-        r"shared?|cop(?:y|ied)|export(?:ed)?|post(?:ed)?|leak(?:ed)?|exfiltrated?)\b"
-        r"[^.\n]{0,30}?\b" + _SENSITIVE + r"\b[^.\n]{0,60}?\b(?:to|into|at|onto|with)\b[^.\n]{0,50}?(?:[\w.+-]+@[\w-]+\.[\w.]+|"
-        r"https?://|\b(?:iban|account|wallet|webhook|server|endpoint)\b)", re.I | re.M)),
+        _IMPERATIVE + _SEND + r"[^.\n]{0,30}?\b" + _SENSITIVE + r"\b[^.\n]{0,60}?" + _DEST, re.I | re.M)),
     ("action_request", re.compile(_IMPERATIVE + r"(?:press|click|tap|accept|approve|allow)\b[^.\n]{0,30}?\b(?:every|all|"
                                   r"each|any)\b[^.\n]{0,30}?\b(?:dialogs?|prompts?|requests?|permissions?|invitations?|"
                                   r"items?|buttons?)\b", re.I | re.M)),
     ("action_request", re.compile(r"\bwrite\b[^.\n]{0,40}?\b(?:startup|autorun|authorized_keys|\.bashrc|\.ssh|registry)\b"
                                   r"|\bauthorized_keys\b|\bdownloads? and runs?\b|\| ?(?:sh|bash|powershell)\b", re.I)),
     ("action_hint", re.compile(
-        _IMPERATIVE + r"(?:forward(?:ed)?|send|sent|e-?mail(?:ed)?|transfer(?:red)?|wired?|pay|paid|upload(?:ed)?|"
-        r"shared?|cop(?:y|ied)|export(?:ed)?|post(?:ed)?|leak(?:ed)?|exfiltrated?)\b"
-        r"[^.\n]{0,80}?\b(?:to|into|at|onto|with)\b[^.\n]{0,50}?(?:[\w.+-]+@[\w-]+\.[\w.]+|https?://|\b(?:iban|account|"
-        r"wallet|webhook|server|endpoint)\b)", re.I | re.M)),
+        _IMPERATIVE + _SEND + r"[^.\n]{0,80}?" + _DEST, re.I | re.M)),
     ("action_hint", re.compile(r"\b(?:delete|erase|wipe|remove)\b[^.\n]{0,30}?\b(?:all|every|the user'?s|the owner'?s)\b"
                                r"[^.\n]{0,30}?\b(?:files?|emails?|messages?|data|memor(?:y|ies)|contacts?)\b", re.I)),
     ("secrecy", re.compile(r"\b(?:do not|don'?t|never|without)\b[^.\n]{0,25}?\b(?:tell|telling|inform|informing|mention|"

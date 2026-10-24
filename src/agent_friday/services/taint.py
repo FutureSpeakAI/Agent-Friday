@@ -897,8 +897,10 @@ def _outward(low_name: str) -> bool:
 
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b")
 _CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_URL = re.compile(r"(?:https?://|www\.)[^\s\"'<>)]+|\b[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|ai|co|info|biz|xyz|ru|cn)(?:/[^\s\"'<>)]*)?", re.I)
+# Each starts only where an address or dotted name begins: a long run of name characters is
+# scanned once, not again from every position inside it (BD-24 review: quadratic on "a-a-a-...").
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_URL = re.compile(r"(?:https?://|www\.)[^\s\"'<>)]+|(?<![\w-])(?<!\w\.)[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|ai|co|info|biz|xyz|ru|cn)(?:/[^\s\"'<>)]*)?", re.I)
 
 
 #: File names Friday loads into its own system prompt wherever they sit.
@@ -1200,11 +1202,12 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
     return d
 
 
-_PHONE_LIKE = re.compile(r"\+?\(?\d[\d ().\-]{7,}\d")
+_PHONE_LIKE = re.compile(r"\+?\(?\d[\d ().\-]{7,25}\d")
 #: The exemption for the owner's own words is stricter than provenance's "mostly theirs" (30%):
-#: an acting value must be nearly all the owner's (80% of its five-word runs), so repeating their
-#: request and appending a new instruction does not ride on it.
-OWNER_WORDS_THRESHOLD = 0.8
+#: every five-word run of an acting value must be the owner's. A share would scale with the
+#: owner's message (a long request plus "then delete every backup" is still 80% theirs), so the
+#: rule counts the new runs instead, and allows none.
+OWNER_WORDS_NEW_RUNS = 0
 
 
 def _links_and_addresses(text: str) -> list:
@@ -1228,7 +1231,7 @@ def _owners_words(key: str, text: str, free_text: bool) -> bool:
     if not sh:
         return origin_of(key, text).kind == "user"
     user_sh = set().union(*[_shingles(e.raw) for e in users]) if users else set()
-    return len(sh & user_sh) / len(sh) >= OWNER_WORDS_THRESHOLD
+    return len(sh - user_sh) <= OWNER_WORDS_NEW_RUNS
 
 
 def _instruction_read_rule(key: str, tool_name: str, tool_input: Optional[dict], d: "Decision") -> None:
