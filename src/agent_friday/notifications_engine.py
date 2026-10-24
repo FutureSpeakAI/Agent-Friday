@@ -279,7 +279,12 @@ def push(
                   "created_at": _now_iso()}
         _log_only(pulled)
         return pulled
-    t = _pol.tier_for(kind, source, priority, tier)
+    # The title and body let the local triage head raise an FYI of a kind the
+    # policy does not name to NEEDS_YOU (services/triage_heads; escalate only,
+    # and only when its decision head is in act mode). Off the record it reads
+    # nothing; the head checks that itself.
+    t = _pol.tier_for(kind, source, priority, tier,
+                      text=None if private else "%s. %s" % (title or "", body or ""))
     place = _reg.place_of(kind, source, emitter, t)
     # An Activity-place notice (a routine run, a heartbeat, a background start)
     # is visible in Activity, not as a tray card.
