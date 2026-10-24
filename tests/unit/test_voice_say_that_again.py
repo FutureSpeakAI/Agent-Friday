@@ -8,9 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from agent_friday.services import voice_repeat
 from tests.unit import test_voice_session as tvs
 from tests.unit.phone_fakes import phone_home, quiet  # noqa: F401
+
+
+def _vr():
+    ""The module under test, imported in each test: on code without it every test fails on its own.""
+    from agent_friday.services import voice_repeat
+    return voice_repeat
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +41,7 @@ def _quiet(monkeypatch):
     "Could you say that one more time?",
 ])
 def test_repeat_requests(said):
-    assert voice_repeat.is_repeat_request(said), said
+    assert _vr().is_repeat_request(said), said
 
 
 @pytest.mark.parametrize("said", [
@@ -46,7 +51,7 @@ def test_repeat_requests(said):
     "please repeat that sentence to Mum in an email",
 ])
 def test_not_repeat_requests(said):
-    assert not voice_repeat.is_repeat_request(said), said
+    assert not _vr().is_repeat_request(said), said
 
 
 def test_a_local_call_says_its_last_reply_again_without_the_model():
@@ -71,7 +76,7 @@ def test_a_repeat_before_anything_was_said_says_so():
     s.start()
     s.generate = lambda *a: pytest.fail("a repeat must not ask the model")
     s.run_turn("repeat that")
-    assert mouth.spoken == [voice_repeat.NOTHING_YET]
+    assert mouth.spoken == [_vr().NOTHING_YET]
 
 
 def test_a_question_about_the_past_still_goes_to_the_mind():
