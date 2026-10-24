@@ -177,6 +177,9 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # A remote add-on (MCP) server host Friday may reach (services/mcp_host_cards): the
     # server is sent what each call with its tools contains, so a press on screen only.
     "mcp_host": frozenset({"owner:ui"}),
+    # A connector's tool manifests (services/tool_manifest_cards; BD-07, A30): approving adds
+    # what Friday may offer the model, turning it off stops a connector, so a press on screen.
+    "tool_manifest": frozenset({"owner:ui"}),
     "library_forget_request": frozenset({"owner:ui"}),
     # Loosening one of Laya's learned thresholds (services/laya_personal_fit, swot spec
     # decision 15): only the owner, per head, by a click on the report card. A spoken "yes"
