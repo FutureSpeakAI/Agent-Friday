@@ -317,6 +317,15 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _metric(kind: str, n: int = 1, **labels: str) -> None:
+    """A count for services/memory_metrics (never a fact's text)."""
+    try:
+        from agent_friday.services import memory_metrics as _mm
+        _mm.note_count(kind, n, **labels)
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
 def _already_proposed(conn, text: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM proposed_facts WHERE lower(text)=lower(?) LIMIT 1",
@@ -396,6 +405,7 @@ def propose(day: Optional[str] = None, *, memory=None,
         try:
             for f in facts:
                 if _already_proposed(conn, f["text"]):
+                    _metric("duplicate_suppressed", 1, path="proposals")
                     continue
                 conn.execute(
                     "INSERT INTO proposed_facts (fact_id, ts, day, category, "
@@ -407,6 +417,7 @@ def propose(day: Optional[str] = None, *, memory=None,
             conn.commit()
         finally:
             conn.close()
+        _metric("inference_queued", stored, path="proposals")
 
     if barren:
         summary = (f"Read {len(turns)} turns from {day} and found no durable "
@@ -464,6 +475,7 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
         conn.commit()
     finally:
         conn.close()
+    _metric("inference_queued", stored, path="meeting")
     return stored
 
 
@@ -566,6 +578,7 @@ def approve(fact_ids: List[str]) -> Dict[str, Any]:
         conn.commit()
     finally:
         conn.close()
+    _metric("inference_kept", len(promoted), path="proposals")
     out = {"ok": True, "approved": len(promoted), "facts": promoted}
     if unopened:
         out.update(ok=bool(promoted), refused=unopened,
@@ -589,6 +602,7 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
         conn.execute(f"UPDATE proposed_facts SET text='', evidence='' WHERE fact_id IN ({marks}) "
                      f"AND status='rejected' AND provenance IS NOT NULL AND provenance != ''", ids)   # a decided meeting suggestion keeps no text
         conn.commit()
+        _metric("inference_discarded", cur.rowcount, path="proposals")
         return {"ok": True, "rejected": cur.rowcount}
     finally:
         conn.close()

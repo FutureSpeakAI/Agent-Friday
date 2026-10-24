@@ -2604,6 +2604,13 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
             return
     except Exception:
         pass
+    # How many of the items recalled for this turn the reply cited (counts
+    # only, services/memory_metrics); read before anything is elided below.
+    try:
+        from agent_friday.services import memory_metrics as _mm
+        _mm.note_reply(session_id, reply)
+    except Exception:
+        pass
     if library:
         try:
             from agent_friday.services.library import cite as _library_cite
@@ -2979,6 +2986,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         kept.sort(key=lambda h: str(h.get("timestamp") or h.get("date") or ""), reverse=True)
         used = 0
         recalled = []
+        shown_ids = []
         for h in kept:
             date = h.get("date") or (h.get("timestamp") or "")[:10]
             role = "You" if h.get("role") == "friday" else "User"
@@ -2993,7 +3001,15 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 break
             lines.append(entry)
             recalled.append(" ".join((h.get("text") or "").split()))
+            shown_ids.append(h.get("id"))
             used += len(entry)
+        # Counts only (services/memory_metrics): how many came back, how many
+        # were shown; the shown refs wait for the reply's citations.
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_recall(session_id, len(hits), shown_ids)
+        except Exception:
+            pass
         # Labelled as recalled (services/memory_fence), and remembered for this
         # session so the end-of-turn index does not store a reply's repeat of it
         # as a new exchange.

@@ -7,6 +7,7 @@ Agent Friday — Memory card API (services/core_memory)
   POST  /api/core-memory/delete       {target, index}           the owner deletes a line
   POST  /api/core-memory/undo         {change_id}               undo one of Friday's changes
   POST  /api/core-memory/review       {id, keep: bool}          keep or discard a queued suggestion
+  GET   /api/memory/metrics?days=30   memory measures, counts and rates only (services/memory_metrics)
 
 Every write here is the owner's own, so it reaches every open conversation's
 next turn at once (services/prompt_freeze).
@@ -70,3 +71,15 @@ def review_suggestion():
     d = _body()
     return jsonify(public_result(core_memory.decide(str(d.get("id") or ""), bool(d.get("keep"))),
                                  "Couldn't record that"))
+
+
+@core_memory_bp.route("/api/memory/metrics", methods=["GET"])
+@login_required
+def memory_metrics_summary():
+    """How memory is doing (services/memory_metrics): counts and rates only."""
+    from agent_friday.services import memory_metrics
+    try:
+        days = int(request.args.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    return jsonify(public_result(memory_metrics.summary(days), "Couldn't read the memory measures"))

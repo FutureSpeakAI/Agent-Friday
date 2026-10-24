@@ -357,6 +357,15 @@ def _err(msg: str) -> Dict[str, Any]:
     return {"ok": False, "error": msg}
 
 
+def _metric(kind: str, n: int = 1, **labels: str) -> None:
+    """A count for services/memory_metrics (never the line's text)."""
+    try:
+        from agent_friday.services import memory_metrics as _mm
+        _mm.note_count(kind, n, **labels)
+    except Exception:
+        pass
+
+
 def add(target: str, text: str, *, actor: str = "friday",
         dedupe: Optional[bool] = None) -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
@@ -376,6 +385,7 @@ def add(target: str, text: str, *, actor: str = "friday",
             # (services/memory_dedupe). The owner's own add is theirs to make.
             dup = _near_duplicate(text, items)
             if dup:
+                _metric("duplicate_suppressed", path="core_memory_add")
                 return {"ok": True, "unchanged": True, "duplicate_of": dup,
                         "note": f"already on the card as: {dup!r}; use replace to reword it"}
         new = items + [text]
@@ -441,7 +451,10 @@ def owner_set(target: str, index: int, text: str) -> Dict[str, Any]:
         return _err("index must be a number")
     if not 0 <= index < len(items):
         return _err("that line is no longer there; reload the panel")
-    return replace(target, items[index], text, actor="owner")
+    res = replace(target, items[index], text, actor="owner")
+    if res.get("ok"):
+        _metric("correction", store="core_memory", op="edit")
+    return res
 
 
 def owner_delete(target: str, index: int) -> Dict[str, Any]:
@@ -452,7 +465,10 @@ def owner_delete(target: str, index: int) -> Dict[str, Any]:
         return _err("index must be a number")
     if not 0 <= index < len(items):
         return _err("that line is no longer there; reload the panel")
-    return remove(target, items[index], actor="owner")
+    res = remove(target, items[index], actor="owner")
+    if res.get("ok"):
+        _metric("correction", store="core_memory", op="delete")
+    return res
 
 
 # ── what Friday changed, and undoing it ───────────────────────────────────────
@@ -531,6 +547,7 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
         if why:
             return _err("NOT QUEUED: " + why)
         if op == "add" and _near_duplicate(text, entries(target)):
+            _metric("duplicate_suppressed", path="core_memory_queue")
             return {"ok": True, "unchanged": True}
     with _LOCK:
         rows = _read_jsonl(_pending_path())
@@ -543,6 +560,7 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
             dup = _near_duplicate(text, waiting)
             if dup:
                 hit = next(r for r in rows if r.get("op") == "add" and r.get("text") == dup)
+                _metric("duplicate_suppressed", path="core_memory_queue")
                 return {"ok": True, "unchanged": True, "id": hit.get("id")}
         row = {"id": "pend-" + uuid.uuid4().hex[:10], "ts": time.time(), "target": target,
                "op": op, "text": text, "old": old, "source": str(source)[:80],
@@ -552,6 +570,7 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
             _write_jsonl(_pending_path(), rows)
         except Exception as e:
             return _err(str(e))
+    _metric("inference_queued", path="core_memory")
     return {"ok": True, "id": row["id"]}
 
 
@@ -584,6 +603,7 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
                 return res
         rows = [r for r in _read_jsonl(_pending_path()) if r.get("id") != pending_id]
         _write_jsonl(_pending_path(), rows)
+    _metric("inference_kept" if approve else "inference_discarded", path="core_memory")
     if row.get("target") == "friday" and row.get("op") in ("add", "replace"):
         # The proposed lesson's learning record: active once kept; a discarded
         # one leaves no record behind.
