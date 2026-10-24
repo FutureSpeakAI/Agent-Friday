@@ -285,11 +285,21 @@ class MCPServerProcess:
             from agent_friday.services import appcontainer as _ac
             own = _own_workdir(self.name)
             if self.cwd and Path(self.cwd).resolve() != own.resolve():
-                # Only the folder Friday made for it is ever opened to it.
-                raise RuntimeError("an isolated server runs in its own folder only; "
-                                   "remove its 'cwd' to isolate it")
-            self.proc = _ac.start(cmd, cwd=str(own), env=full_env, write=[own],
-                                  profile=_ac.server_profile(self.name))
+                # It works in the folder Friday made for it; other folders are declared.
+                raise RuntimeError("an isolated server runs in its own folder; remove its "
+                                   "'cwd' and declare other folders under 'folders'")
+            # Its own folder, the folders it declares (judged like Friday's file
+            # tools), and read on its own program. Anything refused: it does not run.
+            from agent_friday.services import connector_folders as _cf
+            reads, writes, keep, refused = _cf.plan(self.network.get("folders"), cmd[0], cmd[1:])
+            if refused:
+                raise RuntimeError("an isolated server's folders were refused, so it was not "
+                                   "started: " + "; ".join(refused))
+            profile = _ac.server_profile(self.name)
+            # Exactly these, to this server's identity alone; anything given before
+            # and no longer declared is taken back first.
+            _ac.set_server_access(profile, read=reads, write=[own, *writes])
+            self.proc = _ac.start(cmd, cwd=str(own), env=full_env, profile=profile)
             self._job = None
             self._reader = threading.Thread(
                 target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True)
@@ -1173,12 +1183,25 @@ class MCPManager:
                         cwd=spec.get("cwd"),
                         log=self._log,
                         trust_level=_extsec.get_trust_level(spec),
-                        network={k: spec[k] for k in ("allow_hosts", "isolation") if k in spec},
+                        network={k: spec[k] for k in ("allow_hosts", "isolation", "folders") if k in spec},
                     )
                 if spec.get("enabled") is False:
                     # Keep a stopped placeholder so status() still lists it.
                     sp.status = "disabled"
                 self.servers[name] = sp
+            isolated = [n for n, s in (servers or {}).items()
+                        if isinstance(s, dict) and not s.get("url")
+                        and str(s.get("isolation") or "").lower() == "appcontainer"]
+        # A server removed from the config, or no longer isolated, keeps nothing it
+        # was given: its folders are taken back and its identity deleted.
+        try:
+            from agent_friday.services import appcontainer as _ac
+            if _ac.available() and _ac._given_file().exists():
+                gone = _ac.forget_servers({_ac.server_profile(n) for n in isolated})
+                if gone:
+                    self._log(f"[mcp] took back the folders of {len(gone)} removed isolated server(s)")
+        except Exception as e:  # noqa: BLE001 - a failure is logged; the record stays for next time
+            self._log(f"[mcp] could not take back a removed isolated server's folders: {e}")
 
     def start_all(self, on_ready: Callable[[str, list[dict]], None] | None = None) -> None:
         """Start every enabled server in its own thread. on_ready(name, tools)

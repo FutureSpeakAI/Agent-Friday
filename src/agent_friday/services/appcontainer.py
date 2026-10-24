@@ -91,14 +91,170 @@ def _profile(api, name: str):
     return sid, text
 
 
-def grant(path, sid_text: str, write: bool = False) -> None:
-    """Give `sid_text` read (or modify) access to `path` and what is under it."""
-    rights = "(OI)(CI)M" if write else "(OI)(CI)RX"
-    r = subprocess.run(["icacls", str(path), "/grant", "*%s:%s" % (sid_text, rights), "/T", "/Q"],
-                       capture_output=True, text=True, timeout=600,
+def _icacls(args: List[str], what: str) -> None:
+    r = subprocess.run(["icacls", *args, "/Q"], capture_output=True, text=True, timeout=120,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if r.returncode != 0:
-        raise IsolationError("access for isolated work could not be granted on %s" % Path(path).name)
+        raise IsolationError(what)
+
+
+def grant(path, sid_text: str, write: bool = False) -> None:
+    """Give `sid_text` read (or modify) access to `path` and what is under it.
+
+    One inheritable entry on the folder itself (no /T): Windows carries it down to
+    what inherits, and it does not follow junctions or links to somewhere else."""
+    rights = "(OI)(CI)M" if write else "(OI)(CI)RX"
+    _icacls([str(path), "/grant", "*%s:%s" % (sid_text, rights)],
+            "access for isolated work could not be granted on %s" % Path(path).name)
+
+
+
+def revoke(path, sid_text: str) -> bool:
+    """Take back every entry `sid_text` has on `path` (grants and denials). False when
+    the folder is not there (moved or deleted): its record is kept for next time."""
+    if not Path(path).exists():
+        return False
+    _icacls([str(path), "/remove", "*%s" % sid_text],
+            "access for isolated work could not be taken back on %s" % Path(path).name)
+    return True
+
+
+def _pkey(p) -> str:
+    s = os.path.normpath(os.path.abspath(str(p))).replace("\\", "/")
+    return s.lower() if os.name == "nt" else s
+
+
+def _path_within(p, root) -> bool:
+    a, b = _pkey(p), _pkey(root)
+    return a == b or a.startswith(b.rstrip("/") + "/")
+
+
+#: One writer at a time for the record of what was given (servers start in parallel).
+import threading as _threading  # noqa: E402
+_GIVEN_LOCK = _threading.RLock()
+
+
+# ── a connector server's identity and what it was given ──────────────────────
+
+def _state_dir() -> Path:
+    import agent_friday.core as core
+    d = Path(core.FRIDAY_DIR) / "mcp-isolation"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _salt() -> str:
+    """Unique to this install: a server of the same name elsewhere, or after the
+    install is replaced, is a different identity and inherits nothing."""
+    f = _state_dir() / "salt"
+    try:
+        s = f.read_text(encoding="ascii").strip()
+        if len(s) >= 32:
+            return s
+    except OSError:
+        pass
+    s = uuid.uuid4().hex + uuid.uuid4().hex
+    f.write_text(s, encoding="ascii")
+    return s
+
+
+def _given_file() -> Path:
+    return _state_dir() / "given.json"
+
+
+def _given() -> dict:
+    import json
+    try:
+        data = json.loads(_given_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_given(data: dict) -> None:
+    import json
+    f = _given_file()
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    os.replace(tmp, f)
+
+
+def _sid_text(name: str) -> str:
+    api = _api()
+    sid, text = _profile(api, name)
+    api.a.FreeSid(sid)
+    return text
+
+
+def set_server_access(profile: str, read: Iterable = (), write: Iterable = ()) -> None:
+    """Make what `profile` may reach exactly this: take back anything given before
+    that is not in the new set (or is now read-only), then grant. Recorded in
+    Friday's state so a later change or removal can take it back.
+
+    Only allow entries: Windows does not apply a deny entry to an isolated app's
+    identity (checked on Windows 11), so nothing here relies on one."""
+    with _GIVEN_LOCK:
+        _set_server_access(profile, read, write)
+
+
+def _set_server_access(profile, read, write) -> None:
+    sid_text = _sid_text(profile)
+    want = ([{"path": str(p), "kind": "read"} for p in read]
+            + [{"path": str(p), "kind": "write"} for p in write])
+    data = _given()
+    before = data.get(profile, {}).get("entries", [])
+    keys = {(e["path"].lower() if os.name == "nt" else e["path"], e["kind"]) for e in want}
+    # Record first (so a crash part-way leaves a list that covers what was given).
+    data[profile] = {"sid": sid_text, "entries": before + [e for e in want if e not in before]}
+    _save_given(data)
+    missing = []
+    for e in before:
+        k = (e["path"].lower() if os.name == "nt" else e["path"], e["kind"])
+        if k not in keys and not revoke(e["path"], sid_text):
+            missing.append(e)          # moved or deleted: kept, taken back if it returns
+    for e in want:
+        if e["kind"] == "read":
+            grant(e["path"], sid_text, write=False)
+        elif e["kind"] == "write":
+            grant(e["path"], sid_text, write=True)
+    data = _given()
+    data[profile] = {"sid": sid_text, "entries": want + missing}
+    _save_given(data)
+
+
+def forget_servers(keep_profiles: Iterable[str]) -> List[str]:
+    """Take back everything given to server identities not in `keep_profiles` and
+    delete those identities. Returns the profiles forgotten."""
+    with _GIVEN_LOCK:
+        return _forget_servers(set(keep_profiles))
+
+
+def _forget_servers(keep: set) -> List[str]:
+    data = _given()
+    gone = []
+    for profile in [p for p in data if p not in keep]:
+        sid_text = data[profile].get("sid") or ""
+        ok = True
+        left = []
+        for e in data[profile].get("entries", []):
+            try:
+                if sid_text and not revoke(e["path"], sid_text):
+                    left.append(e)        # moved or deleted: kept for next time
+            except Exception:
+                ok = False
+                left.append(e)
+        if left:
+            data[profile]["entries"] = left
+            ok = False
+        if ok:
+            try:
+                _api().ue.DeleteAppContainerProfile(profile)
+            except Exception:
+                pass
+            data.pop(profile, None)
+            gone.append(profile)
+    _save_given(data)
+    return gone
 
 
 def ensure_readable(folder) -> None:
@@ -342,7 +498,7 @@ def run(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterable
 
 
 def server_profile(server_name: str) -> str:
-    return "AgentFriday.MCP." + hashlib.sha256(str(server_name).encode("utf-8")).hexdigest()[:16]
+    return "AgentFriday.MCP." + hashlib.sha256((_salt() + "\0" + str(server_name)).encode("utf-8")).hexdigest()[:16]
 
 
 def friday_owned(path) -> bool:
