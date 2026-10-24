@@ -2194,7 +2194,7 @@ def chat():
         # gives Friday cross-session continuity (RAG over past conversations);
         # the citation block (only in cite_sources mode) tells Friday to
         # attribute every factual claim. Both are PII-scrubbed for cloud below.
-        _mem_part = _build_memory_context_block(message, session_id)
+        _mem_part = _build_memory_context_block(message, session_id, turn_key=_turn_id)
         # Continuity from the most recent end-of-day session summary + tone
         # adaptation from the accumulated emotional arc. Both are content-free /
         # already-summarised, provider-independent, and PII-scrubbed for cloud
@@ -3205,6 +3205,7 @@ def chat():
                 threading.Thread(
                     target=_index_chat_turn,
                     args=(message, reply, session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
+                    kwargs={'turn_key': _turn_id},
                     daemon=True,
                 ).start()
             except Exception:
@@ -3651,7 +3652,7 @@ def chat_send():
             # else above, so a local seat's memory recall isn't scrubbed as
             # if it were headed to the cloud either.
             try:
-                _recall = _build_memory_context_block(message, _session_id)
+                _recall = _build_memory_context_block(message, _session_id, turn_key=_turn_id)
                 if _RECALL_MARKER in (_recall or ""):
                     # As in /api/chat: no pre-approved send in a turn whose
                     # prompt carried recalled conversations. The prompt is
@@ -3959,6 +3960,7 @@ def chat_send():
                 threading.Thread(
                     target=_index_chat_turn,
                     args=(message, reply, _session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
+                    kwargs={'turn_key': _turn_id},
                     daemon=True,
                 ).start()
             except Exception:

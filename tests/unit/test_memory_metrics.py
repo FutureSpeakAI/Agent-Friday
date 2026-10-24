@@ -25,6 +25,7 @@ import pytest
 from agent_friday.services import memory_metrics as mm
 
 SECRET_WORDS = ("Wren", "Harwich", "Skoda", "bees", "Suffolk", "Norfolk", "oolong", "msg-boat")
+_REAL_OFF_RECORD = mm._off_record
 
 
 @pytest.fixture(autouse=True)
@@ -120,21 +121,22 @@ class _Recall:
         return []
 
 
-def _block(monkeypatch, memory, message, session="s-today"):
+def _block(monkeypatch, memory, message, session="s-today", turn_key=None):
     from agent_friday.services import model_router, turn_vector
     monkeypatch.setattr(turn_vector, "compute", lambda *a, **k: None)
     monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: memory)
     monkeypatch.setattr(model_router, "_load_settings", lambda: {"memory_recall_enabled": True})
-    return model_router._build_memory_context_block(message, session, min_relevance=0.0)
+    return model_router._build_memory_context_block(message, session, min_relevance=0.0,
+                                                    turn_key=turn_key)
 
 
-def _end_turn(monkeypatch, memory, message, reply, session="s-today"):
+def _end_turn(monkeypatch, memory, message, reply, session="s-today", turn_key=None):
     from agent_friday.services import memory_review, model_router
     monkeypatch.setattr(memory_review, "note_turn", lambda *a, **k: None)
     monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: memory)
     monkeypatch.setattr(model_router, "_get_emotional_arc",
                         lambda: types.SimpleNamespace(record=lambda *a, **k: None))
-    model_router._index_chat_turn_body(message, reply, session)
+    model_router._index_chat_turn_body(message, reply, session, turn_key=turn_key)
 
 
 # ── recall and citation, from the chat's own memory block and end of turn ────
@@ -164,11 +166,13 @@ def test_supersession_and_its_reverse_are_counted_with_hashes_only(store, mem):
     mem.index("The mooring fee for Wren is 400 pounds.", "user", session_id="2026-09-01", msg_id="m-fee-old")
     mem.index("Harwich harbour master is Peter.", "user", session_id="2026-09-01", msg_id="m-hm")
     mem.supersede(["m-fee-old"], "the owner corrected the fee")
-    mem.supersede(["m-hm"], "display said so", superseded_by="services.harbour.live_status")
+    # An id the store does not hold is not counted.
+    mem.supersede(["m-hm", "m-not-held"], "display said so", superseded_by="services.harbour.live_status")
     mem.unsupersede(["m-fee-old"])
     sup = _kind(store, "supersession")
     assert [(r["n"], r["live"]) for r in sup] == [(1, 0), (1, 1)]
     assert sup[0]["refs"] == [mm.ref_hash("m-fee-old")]
+    assert sup[1]["refs"] == [mm.ref_hash("m-hm")]
     assert _kind(store, "unsupersession")[0]["n"] == 1
     _no_content(store, "m-fee-old", "mooring", "Peter")
 
@@ -197,7 +201,141 @@ def test_a_recalled_item_corrected_soon_after_is_a_stale_error_and_lowers_the_pr
     assert c["stale_errors"] == 1 and c["live_state_errors"] == 1
     assert c["recalled_items_later_corrected"] == 2
     assert r["precision_proxy"] == pytest.approx(1 - 2 / 4, abs=1e-4)   # 4 items recalled in the window
+    assert r["stale_error_rate"] == pytest.approx(0.25) and r["live_state_error_rate"] == pytest.approx(0.25)
     assert "labelled" in s["notes"]["precision_proxy"]
+
+
+def test_precision_and_stale_rates_wait_for_a_supersession_that_names_turns(store):
+    mm.note_recall("s1", 3, ["a1", "b2"])
+    mm.note_count("correction", 1, store="core_memory", op="edit")   # carries no refs
+    s = mm.summary(30)
+    r = s["rates"]
+    assert r["precision_proxy"] is None
+    assert r["stale_error_rate"] is None and r["live_state_error_rate"] is None
+    assert r["correction_rate"] == pytest.approx(0.5)                # the count still moves
+    assert "not enough yet" in s["notes"]["precision_proxy"]
+    mm.note_supersession(["unrelated"], True)                         # one that names a turn
+    r = mm.summary(30)["rates"]
+    assert r["precision_proxy"] == 1.0 and r["stale_error_rate"] == 0.0
+
+
+def test_stale_errors_count_distinct_items_and_the_rate_never_passes_one(store):
+    mm.note_recall("s1", 2, ["a1", "b2"])
+    mm.note_recall("s2", 2, ["a1", "b2"])                 # the same items recalled again
+    for _ in range(3):
+        mm.note_supersession(["a1"], True)                # one item, superseded three times
+    mm.note_supersession(["b2"], True)
+    mm.note_supersession(["b2"], True, "live:accounts")   # live wins for b2
+    c, r = (lambda s: (s["counts"], s["rates"]))(mm.summary(30))
+    assert (c["stale_errors"], c["live_state_errors"]) == (1, 1)
+    assert c["recalled_items"] == 2 and c["recalled_items_later_corrected"] == 2
+    assert r["stale_error_rate"] + r["live_state_error_rate"] <= 1.0
+    assert r["precision_proxy"] == 0.0
+
+
+# ── retention, compaction, off the record ─────────────────────────────────────
+
+def _old_rows(p, n=3, days=None):
+    days = mm.RETENTION_DAYS + 20 if days is None else days
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a", encoding="utf-8") as f:
+        for _ in range(n):
+            f.write(json.dumps({"ts": time.time() - days * 86400, "kind": "forget", "n": 1,
+                                "store": "conversation"}) + "\n")
+
+
+def test_events_past_retention_are_pruned_at_the_first_record_and_on_summary(store):
+    _old_rows(store, 3)
+    _old_rows(store, 1, days=10)                          # inside retention: kept
+    mm.note_count("forget", 1, store="conversation")      # the process's first record
+    assert len(_rows(store)) == 2
+    assert store.stat().st_size < mm.MAX_BYTES            # pruned by age, not by size
+    _old_rows(store, 2)
+    mm.note_count("forget", 1, store="conversation")      # once per process: not again here
+    assert len(_rows(store)) == 5
+    s = mm.summary(mm.RETENTION_DAYS)                     # ...but every summary prunes
+    assert len(_rows(store)) == 3 and s["counts"]["forgets"] == 3
+    assert all(r["ts"] >= time.time() - mm.RETENTION_DAYS * 86400 for r in _rows(store))
+
+
+def test_a_failed_compaction_backs_off_and_summary_reads_under_the_lock(store, monkeypatch):
+    calls = []
+
+    def failing(p, shrink=True):
+        calls.append(shrink)
+        raise PermissionError("the file is open elsewhere")
+    monkeypatch.setattr(mm, "_compact", failing)
+    monkeypatch.setattr(mm, "MAX_BYTES", 10)
+    mm.note_count("forget", 1, store="conversation")
+    mm.note_count("forget", 1, store="conversation")
+    mm.summary(30)
+    assert len(calls) == 1, calls                         # no retry inside the back-off
+    assert len(_kind(store, "forget")) == 2               # the events themselves were kept
+
+    seen = []
+    real_read = mm._read
+    monkeypatch.setattr(mm, "_read", lambda p=None: (seen.append(mm._LOCK.locked()), real_read(p))[1])
+    mm.summary(30)
+    assert seen and all(seen)
+
+
+def test_off_record_that_cannot_be_read_records_nothing(store, monkeypatch):
+    from agent_friday.services import off_record
+
+    def broken(*a, **k):
+        raise RuntimeError("settings unreadable")
+    monkeypatch.setattr(mm, "_off_record", _REAL_OFF_RECORD)
+    monkeypatch.setattr(off_record, "active", broken)
+    assert mm._off_record() is True
+    mm.note_count("forget", 1, store="conversation")
+    assert not store.exists()
+
+
+# ── citation matching by turn, and quote-style citations ─────────────────────
+
+def test_two_concurrent_turns_in_one_session_do_not_cross_score(store, monkeypatch):
+    mm.note_recall("s1", 1, ["aaaa-1111"], turn_key="turn-1")
+    mm.note_recall("s1", 1, ["bbbb-2222"], turn_key="turn-2")
+    # Turn 2's reply cites turn 1's item: not a citation of anything turn 2 showed.
+    mm.note_reply("s1", "x [conversation:2026-09-01/aaaa-1111]", turn_key="turn-2")
+    mm.note_reply("s1", "y [conversation:2026-09-01/aaaa-1111]", turn_key="turn-1")
+    assert [(r["shown"], r["cited"]) for r in _kind(store, "citation")] == [(1, 0), (1, 1)]
+    # A reply with no matching turn records nothing.
+    mm.note_reply("s1", "z [conversation:2026-09-01/aaaa-1111]", turn_key="turn-3")
+    assert len(_kind(store, "citation")) == 2
+
+
+def test_the_chat_paths_pass_the_turn_through(store, monkeypatch):
+    _block(monkeypatch, _Recall(), "what is my boat called", turn_key="turn-a")
+    _end_turn(monkeypatch, _Recall(), "q", "Wren [conversation:2026-09-01/msg-boat-000].", turn_key="turn-b")
+    assert _kind(store, "citation") == []
+    _end_turn(monkeypatch, _Recall(), "q", "Wren [conversation:2026-09-01/msg-boat-000].", turn_key="turn-a")
+    assert [(r["shown"], r["cited"]) for r in _kind(store, "citation")] == [(2, 1)]
+
+
+def test_a_recall_waiting_too_long_expires(store, monkeypatch):
+    mm.note_recall("s1", 1, ["aaaa-1111"], turn_key="t")
+    monkeypatch.setattr(mm, "PENDING_TTL_S", -1.0)
+    mm.note_reply("s1", "[conversation:2026-09-01/aaaa-1111]", turn_key="t")
+    assert _kind(store, "citation") == []
+
+
+def test_quote_style_citations_are_matched_against_the_snippets_shown(store, monkeypatch):
+    mm.note_recall("s1", 3, ["id-boat", "id-car"], turn_key="t",
+                   shown_texts=["My sailing boat is called Wren, moored at Harwich.",
+                                "My car is a green Skoda."])
+    mm.note_reply("s1", 'She is "Wren" [conversation:2026-09-01/"boat is called  WREN, moored"] '
+                        'and [memory:2026-08-01/“a purple bicycle”] and '
+                        '[conversation:2026-08-01/"Skoda"]', turn_key="t")   # too short to count
+    cit = _kind(store, "citation")
+    assert [(r["shown"], r["cited"]) for r in cit] == [(2, 1)]
+    _no_content(store, "sailing", "bicycle")
+    # Through the chat's own memory block and end of turn.
+    _block(monkeypatch, _Recall(), "what car do I drive", turn_key="t2")
+    _end_turn(monkeypatch, _Recall(), "q", 'A Skoda [conversation:2026-08-01/"car is a green Skoda"].',
+              turn_key="t2")
+    assert [(r["shown"], r["cited"]) for r in _kind(store, "citation")][-1] == (2, 1)
+    _no_content(store, "sailing")
 
 
 # ── the memory card and the review queue ──────────────────────────────────────
@@ -409,22 +547,52 @@ def test_present_counter_modules_are_read(store, monkeypatch):
 
 # ── the route ─────────────────────────────────────────────────────────────────
 
-def test_the_route_is_login_required_and_returns_the_summary(store):
+def test_the_route_is_login_required_and_returns_the_summary_without_content(store, monkeypatch):
     from flask import Flask
 
+    import agent_friday.core as core
     from agent_friday.routes import core_memory as routes
-    fn = routes.memory_metrics_summary
-    assert getattr(fn, "__wrapped__", None) is not None, "GET /api/memory/metrics is not login_required"
+    # A remote caller with a key configured (tests/security/test_auth_hardening.py).
+    monkeypatch.setattr(core, "_HTTP_AUTH_KEY", "a-test-key")
+    monkeypatch.setattr(core, "_loopback_trusted", lambda: False)
+    mm.note_recall("s1", 2, ["msg-boat-0001"], turn_key="t",
+                   shown_texts=["My sailing boat is called Wren, moored at Harwich."])
+    mm.note_reply("s1", '[conversation:2026-09-01/"boat is called Wren"]', turn_key="t")
     mm.note_count("forget", 2, store="conversation")
     app = Flask(__name__)
-    app.secret_key = "test"                 # login_required keeps a session
+    app.secret_key = "test"
     app.register_blueprint(routes.core_memory_bp)
     with app.test_client() as c:
         r = c.get("/api/memory/metrics?days=7")
-    assert r.status_code in (200, 401, 403), r.status_code
-    if r.status_code == 200:
+        assert r.status_code == 401, r.status_code
+        assert "forgets" not in r.get_data(as_text=True)
+        with c.session_transaction() as sess:
+            sess["authenticated"] = True
+        r = c.get("/api/memory/metrics?days=7")
+        assert r.status_code == 200, r.status_code
         d = r.get_json()
         assert d["ok"] and d["days"] == 7 and d["counts"]["forgets"] == 2
+        assert d["counts"]["cited"] == 1
+        raw = r.get_data(as_text=True)
+        for w in SECRET_WORDS + ("sailing", "boat is called"):
+            assert w.lower() not in raw.lower(), w
+        bad = c.get("/api/memory/metrics?days=lots")
+        assert bad.status_code == 200 and bad.get_json()["days"] == 30
+
+
+def test_the_panel_labels_say_what_is_counted_and_both_ui_copies_match():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+
+    def panel(name):
+        t = (root / name).read_text(encoding="utf-8")
+        start = t.index("function MemoryMeasures()")
+        return t[start:t.index("// End memory measures", start)]
+    a, b = panel("index.html"), panel("ui_parts/app.html")
+    assert a == b
+    assert "Suggestions made, kept, discarded" in a and "Suggestions waiting" not in a
+    assert "Fields containing recalled memory withheld from a cloud model" in a
+    assert "r.stale_error_rate === null" in a and "not enough yet" in a
 
 
 # ── the offline retrieval evaluation ──────────────────────────────────────────

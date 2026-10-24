@@ -598,10 +598,11 @@ class ConversationMemory:
             except Exception as _e:
                 print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
-            # Counts and one-way hashes only (services/memory_metrics).
+            # Counts and one-way hashes only (services/memory_metrics), of
+            # the ids this store actually held.
             try:
                 from agent_friday.services import memory_metrics as _mm
-                _mm.note_supersession(ids, bool(flag), superseded_by)
+                _mm.note_supersession(found, bool(flag), superseded_by)
             except Exception:
                 pass
         except Exception as e:

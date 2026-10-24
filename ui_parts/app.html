@@ -21665,14 +21665,14 @@ function MemoryMeasures() {
     line('Citation coverage', pct(r.citation_coverage), 'cov'),
     line('Corrections (card edits and corrected turns)', num(c.corrections) + ' (' + pct(r.correction_rate) + ' of items shown)', 'corr'),
     line('Precision estimate (recalled items not later corrected)', pct(r.precision_proxy), 'prec'),
-    line('Stale / live-state errors', num(c.stale_errors) + ' / ' + num(c.live_state_errors), 'stale'),
-    line('Suggestions waiting, kept, discarded', num(c.inference_queued) + ', ' + num(c.inference_kept) + ', ' + num(c.inference_discarded), 'inf'),
+    line('Stale / live-state errors', (r.stale_error_rate === null || r.stale_error_rate === undefined) ? 'not enough yet' : num(c.stale_errors) + ' / ' + num(c.live_state_errors), 'stale'),
+    line('Suggestions made, kept, discarded', num(c.inference_queued) + ', ' + num(c.inference_kept) + ', ' + num(c.inference_discarded), 'inf'),
     line('Suggestions kept', pct(r.inference_acceptance_rate), 'acc'),
     line('Duplicates left out', num(c.duplicates_suppressed), 'dup'),
     line('Sensitive-category guesses dropped', num(c.special_category_dropped), 'spec'),
-    line('Recalled memory kept from a cloud model', num(c.leakage_blocked), 'leak'),
+    line('Fields containing recalled memory withheld from a cloud model', num(c.leakage_blocked), 'leak'),
     line('Turns forgotten', num(c.forgets), 'forget'),
-    E('div', {style: dim}, 'The precision figure is an estimate: real precision needs someone to mark each recalled item right or wrong.'));
+    E('div', {style: dim}, 'The precision figure is an estimate: real precision needs someone to mark each recalled item right or wrong. It and the stale figures read ‘not enough yet’ until a recalled conversation turn is itself corrected; memory card edits do not say which recalled turn they correct.'));
 }
 // End memory measures
 
