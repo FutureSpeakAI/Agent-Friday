@@ -43,7 +43,7 @@ test('at 200% the text in windows and the chat is twice the size, scaled once, a
       zoom: getComputedStyle(e).zoom, width: Math.round(e.getBoundingClientRect().width), over: e.scrollWidth - e.clientWidth };
   }));
   const results: { ws: string, before: number, after: number }[] = [];
-  for (const ws of ['tasks', 'knowledge', 'messages']) {
+  for (const ws of ['knowledge', 'messages', 'news']) {
     // One window at a time, maximized: the width a person gives the text they are reading.
     await page.evaluate(w => (window as any).fridayRunActions([{ type: 'navigate', workspace: w, max: true }]), ws);
     const win = page.locator(`.fwin[data-friday-workspace="${ws}"] .fwin-body`);
