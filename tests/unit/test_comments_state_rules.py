@@ -52,6 +52,7 @@ FILES = [
     "tests/api/test_store_inventory_route.py",
     "tests/unit/test_restore_crash_safe.py",
     "tests/unit/test_migrations.py",
+    "tests/api/test_migration_safe_mode_route.py",
     "tests/api/test_authority_routes.py",
     "tests/api/test_bundle_routes.py",
     "tests/api/test_bundle_schedule_routes.py",

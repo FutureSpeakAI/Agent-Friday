@@ -158,7 +158,9 @@
     api('/api/safe-mode').then(({ d }) => {
       const now = d.active ? 'This run is in safe mode (' + (d.why || '') + '): extensions and the cloud are off, schedules are paused, outward actions are held.'
                            : 'This run is a normal start.';
-      const next = d.next_start_safe ? ' The next start will be in safe mode.' : ' The next start will be normal.';
+      const next = d.reason === 'migration_failed'
+        ? ' An upgrade step failed, so Friday stays in safe mode until you press "Leave safe mode at the next start" here.'
+        : (d.next_start_safe ? ' The next start will be in safe mode.' : ' The next start will be normal.');
       text($('safe-state'), now + next);
       $('safe').className = d.active ? 'safe' : '';
     });

@@ -2262,6 +2262,10 @@ def cmd_resume(args) -> int:
 
 def cmd_safe_mode(state):
     from agent_friday.services import safe_mode
+    if state == "off" and safe_mode.marker_reason() == safe_mode.MIGRATION_FAILED:
+        print("An upgrade step failed, so Friday stays in safe mode until you leave it with a press on "
+              "the Doctor page (open Friday, then Doctor, Safe mode).")
+        return 2
     if state == "status":
         p = safe_mode.plan()
     else:
