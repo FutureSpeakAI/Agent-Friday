@@ -19,7 +19,7 @@ def test_resume_waits_for_what_is_missing_and_says_what(client, monkeypatch):
         "nothing checks what a restored PC still needs"
     from agent_friday.services import restore_reestablish
     left = [{"code": "channel_signin", "what": "telegram", "said": "Telegram is switched on; reconnect it."}]
-    monkeypatch.setattr(restore_reestablish, "blockers", lambda home=None: left)
+    monkeypatch.setattr(restore_reestablish, "blockers", lambda home=None, **k: left)
     hold = friday_home() / "restore" / "hold.json"
     hold.parent.mkdir(parents=True, exist_ok=True)
     hold.write_text(json.dumps({"bundle_id": "fb-test", "restored_at": time.time()}), encoding="utf-8")
@@ -29,7 +29,7 @@ def test_resume_waits_for_what_is_missing_and_says_what(client, monkeypatch):
         r = client.post("/api/restore/resume", json={}, headers=_press())
         assert r.status_code == 409 and r.get_json()["code"] == "not_reestablished"
         assert r.get_json()["blockers"] == left and hold.exists()
-        monkeypatch.setattr(restore_reestablish, "blockers", lambda home=None: [])
+        monkeypatch.setattr(restore_reestablish, "blockers", lambda home=None, **k: [])
         r = client.post("/api/restore/resume", json={}, headers=_press())
         assert r.status_code == 200 and r.get_json()["resumed"] is True
     finally:
