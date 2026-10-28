@@ -127,14 +127,17 @@ def test_a_report_saved_twice_in_one_start_is_saved_once(home, monkeypatch):
 
 def test_the_next_start_can_be_chosen_once_and_is_used_once(home, monkeypatch):
     ds = _ds()
-    monkeypatch.delenv("FRIDAY_DIAGNOSTIC_START")
+    # setenv, not delenv: claim_next_start writes os.environ itself, and only a
+    # setenv records the value to put back, so nothing leaks into later tests
+    monkeypatch.setenv("FRIDAY_DIAGNOSTIC_START", "0")
+    monkeypatch.setenv("FRIDAY_SAFE_START", "0")
     assert ds.claim_next_start() is False                       # nothing chosen: a normal start
     assert ds.set_next_start(True) is True and ds.next_marker().exists()
     assert ds.claim_next_start() is True and not ds.next_marker().exists()
     import os
     assert os.environ.get("FRIDAY_DIAGNOSTIC_START") == "1" and os.environ.get("FRIDAY_SAFE_START") == "1"
-    monkeypatch.delenv("FRIDAY_DIAGNOSTIC_START")
-    monkeypatch.delenv("FRIDAY_SAFE_START")
+    monkeypatch.setenv("FRIDAY_DIAGNOSTIC_START", "0")
+    monkeypatch.setenv("FRIDAY_SAFE_START", "0")
     assert ds.claim_next_start() is False                        # and the start after it is normal
 
 

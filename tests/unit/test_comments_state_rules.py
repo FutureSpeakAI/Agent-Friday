@@ -59,6 +59,8 @@ FILES = [
     "tests/api/test_diagnostic_route.py",
     "tests/unit/test_after_upgrade.py",
     "tests/api/test_after_upgrade_routes.py",
+    "tests/unit/test_home_leftovers_card.py",
+    "tests/api/test_migration_safe_mode_route.py",
     "tests/api/test_authority_routes.py",
     "tests/api/test_bundle_routes.py",
     "tests/api/test_bundle_schedule_routes.py",

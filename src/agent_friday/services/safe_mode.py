@@ -29,8 +29,9 @@ How it is entered, in order of precedence:
   sets it);
 * ``<home>/safe_mode/ON``, written by "Start in safe mode next time" (CLI
   ``friday safe-mode on``, the Doctor page or the tray's "Restart in safe
-  mode"); it stays until the owner leaves
-  safe mode, so a start that keeps failing cannot slip out of it;
+  mode"); it stays until the owner leaves safe mode, so a start that keeps
+  failing cannot slip out of it. A failed upgrade writes it too (reason
+  "migration_failed"); that one is left only with a press on the Doctor page;
 * automatically, when the last three starts failed (services/boot_guard keeps
   the count): safe mode must stay reachable after a failed migration or a
   runtime that will not load (§28.5-2).
@@ -61,6 +62,7 @@ DISABLED = (
 )
 
 FAILED_STARTS = 3
+MIGRATION_FAILED = "migration_failed"   # services/migrations: kept until the owner's press
 _LOCK = threading.Lock()
 _DECIDED: dict = {}
 
@@ -86,6 +88,10 @@ def _decide() -> dict:
         return {"active": True, "why": "started in safe mode", "how": "start"}
     try:
         if marker_path().exists():
+            if marker_reason() == MIGRATION_FAILED:
+                return {"active": True, "how": "marker",
+                        "why": "an upgrade step failed; Friday stays in safe mode until you leave it "
+                               "on the Doctor page"}
             return {"active": True, "why": "safe mode was chosen for the next start",
                     "how": "marker"}
     except OSError:
@@ -121,13 +127,27 @@ def refusal(part: str) -> Optional[str]:
             "you leave safe mode and restart." % state().get("why"))
 
 
-def set_next_start(on: bool) -> dict:
+def marker_reason() -> Optional[str]:
+    """Why the marker was written (None when chosen by the owner, or absent)."""
+    try:
+        d = json.loads(marker_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    r = d.get("reason") if isinstance(d, dict) else None
+    return r if isinstance(r, str) else None
+
+
+def set_next_start(on: bool, reason: Optional[str] = None) -> dict:
     """Write or remove the marker for the next start. Returns the new plan.
-    The running process keeps its mode until it restarts."""
+    The running process keeps its mode until it restarts. A marker written
+    for a failed upgrade (reason MIGRATION_FAILED) is kept when the owner asks
+    for safe mode again, and is left only by the owner's press on the Doctor
+    page (routes/doctor.py); the CLI does not remove it."""
     p = marker_path()
     if on:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"chosen_at": time.time()}), encoding="utf-8")
+        keep = reason or (MIGRATION_FAILED if marker_reason() == MIGRATION_FAILED else None)
+        p.write_text(json.dumps({"chosen_at": time.time(), "reason": keep}), encoding="utf-8")
     else:
         try:
             p.unlink()
@@ -144,7 +164,8 @@ def plan() -> dict:
     except OSError:
         nxt = False
     return {"active": now["active"], "why": now.get("why"), "how": now.get("how"),
-            "next_start_safe": bool(nxt), "disabled": list(DISABLED) if now["active"] else []}
+            "next_start_safe": bool(nxt), "reason": marker_reason(),
+            "disabled": list(DISABLED) if now["active"] else []}
 
 
 _GUARD = {"installed": False}
