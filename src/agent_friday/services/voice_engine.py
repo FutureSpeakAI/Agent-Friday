@@ -1930,7 +1930,10 @@ def _tool_search_past_conversations(inp, session=None):
     if not query:
         return "search_past_conversations needs something to look for."
     from agent_friday.services import conversation_recall as _rc
-    hits = _rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12)
+    # Near-duplicates collapse to the turn Gemini already heard, if any, so the
+    # dedupe never swaps a direct turn for a card-only twin (recall_dedupe).
+    hits = _rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12,
+                      provider=_rc.prov.GEMINI)
     direct, rest = _rc.split_by_provenance(hits)
     parts = []
     if direct:
