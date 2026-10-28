@@ -97,8 +97,9 @@ def test_a_crash_after_an_outward_tool_finished_does_not_resume_into_running_it_
     _client(monkeypatch, [["write_file"], None])
     monkeypatch.setattr(ag, "_execute_tool", lambda name, args, **kw: ran_after.append(name) or "ok")
     monkeypatch.setattr(ag, "_ledger_tool_call", real_ledger)
-    with pytest.raises(tr.ResumeRefused):
+    with pytest.raises(tr.ResumeRefused) as e:
         tr.resume(task)
+    assert "write_file" in str(e.value)
     assert ran_after == [], "the outward call was made a second time"
 
 
@@ -130,3 +131,32 @@ def test_after_the_round_is_saved_nothing_is_held(monkeypatch, task):
     blob = tr.read(task)
     assert blob["pending_tool"] is None and not blob.get("round_done")
     assert tr.resumability(task)["needs_confirmation"] is False
+
+def test_a_confirmed_resume_tells_the_model_what_already_ran(monkeypatch, task):
+    """The owner said go on. With no ledger to continue from, the transcript is told which calls
+    already ran, so the model does not ask for them again."""
+    _client(monkeypatch, [["read_file"], ["write_file"]])
+    monkeypatch.setattr(ag, "_execute_tool", lambda name, args, **kw: "result of " + name)
+    real_ledger = ag._ledger_tool_call
+
+    def ledger(name, *a, **kw):
+        if name == "write_file":
+            raise _Crash("died after write_file returned")
+        return real_ledger(name, *a, **kw)
+    monkeypatch.setattr(ag, "_ledger_tool_call", ledger)
+    with pytest.raises(_Crash):
+        ag._call_claude_agent([{"role": "user", "content": "go"}], session_ctx={"task_id": task})
+    monkeypatch.setattr(ag, "_ledger_tool_call", real_ledger)
+    monkeypatch.setattr(tr, "_ledger_resumability",
+                        lambda tid, prior_attempts=0: {"resumable": False, "reason": "no ledger"})
+    seen = {}
+
+    class _Msgs:
+        def create(self, **kw):
+            seen["messages"] = kw["messages"]
+            return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text="done")],
+                                         stop_reason="end_turn",
+                                         usage=types.SimpleNamespace(input_tokens=1, output_tokens=1))
+    monkeypatch.setattr(ag, "get_anthropic_client", lambda: types.SimpleNamespace(messages=_Msgs()))
+    tr.resume(task, confirm_pending=True)
+    assert "Do NOT call them again" in str(seen["messages"]) and "write_file" in str(seen["messages"])
