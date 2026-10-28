@@ -373,6 +373,36 @@ def _c_search_index():
     return "degraded", "conversation_search_index_" + state
 
 
+def _c_vector_memory():
+    # services/memory_store_repair (32.5, NS-32.6-1): the conversation vector store, rebuilt
+    # from the transcripts by the owner's press here.
+    from agent_friday.services import memory_store_repair
+    state = memory_store_repair.vector_health()["state"]
+    if state == "ok":
+        return "healthy", "ok"
+    if state == "missing":
+        return "healthy", "not_built_yet"
+    if state == "unavailable":
+        return "unavailable_by_configuration", "vector_store_not_installed"
+    if state == "repairing":
+        return "repairing", "conversation_memory_rebuilding"
+    return "degraded", "conversation_memory_" + state
+
+
+def _c_knowledge_graph():
+    # services/memory_store_repair: a graph file that does not parse (it used to read as
+    # empty). The wiki layer is rebuilt by the owner's press here; damaged files are kept.
+    from agent_friday.services import memory_store_repair
+    h = memory_store_repair.kg_health()
+    if h["state"] == "repairing":
+        return "repairing", "knowledge_graph_rebuilding"
+    if h["state"] == "damaged":
+        return "degraded", "knowledge_graph_damaged:" + ",".join(h["damaged"])
+    if h["state"] != "ok":
+        return "degraded", "knowledge_graph_" + h["state"]
+    return "healthy", "ok" if not h.get("kept") else "ok;damaged_copies_kept:%d" % h["kept"]
+
+
 def _c_boot():
     from agent_friday.services import boot_guard
     n = int(boot_guard._read_attempt().get("consecutive_failures") or 0)
@@ -399,6 +429,8 @@ CHECKS = (
     ("disk", "GPU and resource state", _c_disk),
     ("recall", "memory and search indexes", _c_recall),
     ("search_index", "memory and search indexes", _c_search_index),
+    ("vector_memory", "memory and search indexes", _c_vector_memory),
+    ("knowledge_graph", "memory and search indexes", _c_knowledge_graph),
     ("model_files", "model files and checksums", _c_models),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),

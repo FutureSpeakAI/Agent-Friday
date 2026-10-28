@@ -168,6 +168,48 @@ def repair_search_index():
                     "message": "Rebuilding the search index from your conversations. They are not changed."}), 202
 
 
+def _repair_route(target: str, running, run, started: str, busy: str, where: str):
+    if not _press_here():
+        return jsonify({"status": "error", "code": _DESK_PROOF, "error": where}), 403
+    if running():
+        return jsonify({"status": "error", "error": busy}), 409
+
+    def _run():
+        try:
+            run("owner:doctor")
+        except Exception as e:  # noqa: BLE001
+            print(f"[doctor] {target} rebuild failed: {type(e).__name__}")
+    _threading.Thread(target=_run, name="doctor-%s-repair" % target, daemon=True).start()
+    return jsonify({"status": "ok", "started": True, "message": started}), 202
+
+
+@doctor_bp.route("/api/doctor/repair/vector-memory", methods=["POST"])
+@login_required
+def repair_vector_memory():
+    """Rebuild the conversation vector store from the transcripts (BD-16; 32.5). The owner's
+    press on this PC; the transcripts are only read."""
+    from agent_friday.services import memory_store_repair as m
+    return _repair_route("vector-memory", m.vector_repair_running, m.repair_vector,
+                         "Rebuilding Friday's memory of your conversations from the conversations "
+                         "themselves. They are not changed.",
+                         "Friday's conversation memory is already being rebuilt.",
+                         "Rebuild Friday's conversation memory on Friday's own page, on this PC.")
+
+
+@doctor_bp.route("/api/doctor/repair/knowledge-graph", methods=["POST"])
+@login_required
+def repair_knowledge_graph():
+    """Keep the graph's damaged files aside and rebuild its wiki layer from the wiki pages
+    (BD-16; 32.5). Runs no model. The owner's press on this PC."""
+    from agent_friday.services import memory_store_repair as m
+    return _repair_route("knowledge-graph", m.kg_repair_running, m.repair_kg,
+                         "Rebuilding the knowledge graph's page layer from your wiki. Damaged "
+                         "files are kept, not deleted. Facts a model found are not re-extracted "
+                         "here; you can start that on the knowledge graph page.",
+                         "The knowledge graph is already being rebuilt.",
+                         "Rebuild the knowledge graph on Friday's own page, on this PC.")
+
+
 @doctor_bp.route("/api/restore/state", methods=["GET"])
 @login_required
 def restore_state():
