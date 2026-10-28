@@ -103,6 +103,12 @@ def _zip_manifest(src: Path):
         # The shallowest manifest is the skill (the same choice as a folder import).
         manifests.sort(key=lambda i: (i.filename.replace("\\", "/").count("/"), i.filename))
         man = manifests[0]
+        if man.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            # bzip2 and LZMA are read without an output bound: a small entry could
+            # expand without limit before the size check.
+            return Refusal("the SKILL.md is packed in a way Friday does not read")
+        if man.flag_bits & 0x1:
+            return Refusal("the SKILL.md is encrypted")
         if man.file_size > MAX_MANIFEST_BYTES:
             return Refusal("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
         with zf.open(man) as stream:
@@ -114,10 +120,24 @@ def _zip_manifest(src: Path):
     return raw.decode("utf-8", errors="replace"), folder, left_out
 
 
+def _within_folder(p: Path, folder: Path) -> bool:
+    import os as _os
+    a = _os.path.normcase(_os.path.realpath(str(p)))
+    b = _os.path.normcase(_os.path.realpath(str(folder)))
+    return a == b or a.startswith(b.rstrip(_os.sep) + _os.sep)
+
+
 def _folder_manifest(src: Path):
     man = next((src / n for n in _MANIFEST_NAMES if (src / n).is_file()), None)
     if man is None:
         return Refusal("the folder has no SKILL.md")
+    # A SKILL.md that is a link (or leads out of the folder) could make any file the
+    # skill's text, copied into the review before the owner presses anything.
+    try:
+        if man.is_symlink() or not _within_folder(man, src):
+            return Refusal("the SKILL.md is a link or lies outside the folder")
+    except OSError:
+        return Refusal("the SKILL.md could not be checked")
     if man.stat().st_size > MAX_MANIFEST_BYTES:
         return Refusal("the SKILL.md is larger than %d KB" % (MAX_MANIFEST_BYTES // 1024))
     left_out = []
