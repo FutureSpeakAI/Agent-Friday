@@ -21,33 +21,19 @@ Rules:
 - An object followed later in the reply by `</think>` was written while the
   model was still thinking (a draft), so it is never taken. A `</think>` inside
   the object, in a file's contents, does not count.
+
+The scan is services/reply_json's, shared with every other reader of a model's
+JSON answer.
 """
 from __future__ import annotations
 
 import json
-import re
 from typing import Optional
 
+from agent_friday.services import reply_json as _rj
+
 #: The marker a thinking model writes when its reasoning ends.
-THINK_END = "</think>"
-
-#: Upper bounds on the scan, so a huge or hostile reply cannot stall a request.
-#: A 16K-token answer is well under 100,000 characters.
-_MAX_REPLY_CHARS = 400_000
-_MAX_STARTS = 20_000
-
-_OBJECT_START = re.compile(r'\{\s*["}]')
-
-_FENCE_OPEN = re.compile(r"^```[a-zA-Z]*\n")
-_FENCE_CLOSE = re.compile(r"\n```\s*$")
-
-
-def _strip_fences(text: str) -> str:
-    t = text.strip()
-    if t.startswith("```"):
-        t = _FENCE_OPEN.sub("", t)
-        t = _FENCE_CLOSE.sub("", t)
-    return t
+THINK_END = _rj.THINK_END
 
 
 def _is_plan(obj) -> bool:
@@ -58,49 +44,15 @@ def _is_plan(obj) -> bool:
     return isinstance(files, list) and all(isinstance(f, dict) for f in files)
 
 
-def _last_plan(text: str) -> Optional[dict]:
-    """The last top-level JSON object in `text` that has a `files` list and is
-    not followed by an end-of-thinking marker.
-
-    Scans forward. A `{` that starts a complete object is skipped past as a
-    whole, so braces inside it (in file contents, or in the plan's own file
-    entries) are never visited and an inner object never stands in for the
-    one around it. A `{` that does not start an object usually fails within a
-    character or two, which keeps the scan close to linear.
-    """
-    decoder = json.JSONDecoder()
-    found = None
-    pos = 0
-    starts = 0
-    while starts < _MAX_STARTS:
-        # Only a `{` followed by a key or `}` can start an object; skipping the
-        # rest keeps stray braces in prose and code from costing a decode each.
-        m = _OBJECT_START.search(text, pos)
-        if m is None:
-            break
-        i = m.start()
-        starts += 1
-        try:
-            obj, end = decoder.raw_decode(text, i)
-        except (ValueError, RecursionError):
-            pos = i + 1
-            continue
-        pos = end
-        if _is_plan(obj) and text.find(THINK_END, end) < 0:
-            found = obj
-    return found
-
-
 def extract_plan(raw) -> Optional[dict]:
     """The plan object in a model reply, or None. Pure."""
     if not isinstance(raw, str) or not raw.strip():
         return None
-    text = raw if len(raw) <= _MAX_REPLY_CHARS else raw[-_MAX_REPLY_CHARS:]
-    whole = _strip_fences(text)
+    text = _rj.bounded(raw)
     try:
-        obj = json.loads(whole)
+        obj = json.loads(_rj.strip_fences(text))
     except (ValueError, RecursionError):
         obj = None
     if isinstance(obj, dict) and "files" in obj:
         return obj
-    return _last_plan(text)
+    return _rj.scan_last(text, _is_plan)

@@ -416,8 +416,8 @@ def _skillopt_llm_researcher(skill_name, context):
     raw = _generate_text(prompt) or ""
     hypotheses, edits = [], []
     try:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        data = json.loads(m.group(0)) if m else {}
+        from agent_friday.services.reply_json import last_object
+        data = last_object(raw, keys=("hypotheses", "edits")) or {}
         hypotheses = [str(h).strip() for h in (data.get("hypotheses") or [])
                       if str(h).strip()][:5]
         edits = [e for e in (data.get("edits") or [])

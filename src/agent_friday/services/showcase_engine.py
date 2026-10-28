@@ -54,14 +54,12 @@ def _parse_json_spec(text):
         blocks = re.findall(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
         if blocks:
             t = max(blocks, key=len).strip()
-    start = t.find("{")
-    end = t.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        return json.loads(t[start:end + 1])
-    except Exception:
-        return None
+    from agent_friday.services.reply_json import last_object
+    found = last_object(t)
+    if found is None and t != text.strip():
+        # The largest fenced block held no object: read the whole reply.
+        found = last_object(text)
+    return found
 
 
 def _spec_from_llm(prompt, orb_label, workspace=None):

@@ -916,17 +916,8 @@ def _parse_verdicts(raw: str, n: int) -> list[dict] | None:
     malformed verdict, which means judgment did not run."""
     if not raw or not isinstance(raw, str):
         return None
-    txt = raw.strip()
-    if txt.startswith("```"):
-        txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
-        txt = re.sub(r"\n?```\s*$", "", txt).strip()
-    start, end = txt.find("{"), txt.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        data = json.loads(txt[start:end + 1])
-    except Exception:
-        return None
+    from agent_friday.services.reply_json import last_object
+    data = last_object(raw, accept=lambda d: isinstance(d.get("verdicts"), list))
     items = data.get("verdicts") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return None

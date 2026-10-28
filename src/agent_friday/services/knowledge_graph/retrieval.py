@@ -163,10 +163,11 @@ def global_search(question: str,
                        mode, orb_label="🧠 global search (map)")
         except Exception:
             continue
-        m = re.search(r"\{.*\}", raw or "", re.DOTALL)
-        if m:
+        from agent_friday.services.reply_json import last_object
+        found = last_object(raw, keys=("points",))
+        if found is not None:
             try:
-                for p in (json.loads(m.group(0)).get("points") or []):
+                for p in (found.get("points") or []):
                     points.append({"report": rep.get("title", ""),
                                    "answer": p.get("description", ""),
                                    "score": p.get("score", 0)})

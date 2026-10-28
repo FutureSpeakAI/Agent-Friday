@@ -81,10 +81,10 @@ def _parse_score(raw: str) -> Dict[str, Any]:
     verdict: Dict[str, Any] = {"score": None, "critique": "", "suggestions": ""}
 
     # 1) JSON object.
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
+    from agent_friday.services.reply_json import last_object
+    obj = last_object(text, keys=("score", "critique", "reason", "suggestions", "improvements"))
+    if obj is not None:
         try:
-            obj = json.loads(m.group(0))
             if isinstance(obj, dict):
                 if "score" in obj:
                     verdict["score"] = _norm_score(obj.get("score"))
