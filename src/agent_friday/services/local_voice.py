@@ -431,6 +431,29 @@ def _is_cuda_library_error(exc: BaseException) -> bool:
     return bool(_CUDA_LIB_ERROR.search("%s: %s" % (type(exc).__name__, exc)))
 
 
+
+def heard_confidence(segments) -> float | None:
+    """How sure faster-whisper was of what it heard, 0 to 1 (north star NS-22.2-6).
+
+    Each segment's average log-probability per token, as a probability, weighted
+    by the segment's length; a segment the model thinks is not speech at all
+    (no_speech_prob) counts for less. None when there is nothing to judge."""
+    import math
+    total = weight = 0.0
+    for seg in segments or ():
+        text = (getattr(seg, "text", "") or "").strip()
+        lp = getattr(seg, "avg_logprob", None)
+        if not text or lp is None:
+            continue
+        try:
+            p = math.exp(min(0.0, float(lp)))
+            p *= 1.0 - max(0.0, min(1.0, float(getattr(seg, "no_speech_prob", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            continue
+        total += p * len(text)
+        weight += len(text)
+    return round(total / weight, 2) if weight else None
+
 class WhisperASR:
     """faster-whisper ASR. Loads lazily; transcribes 16 kHz mono PCM16 bytes."""
 
@@ -621,6 +644,8 @@ class WhisperASR:
     def _run(self, audio) -> str:
         segments, _info = self._model.transcribe(
             audio, language=None, beam_size=1, vad_filter=False)
+        segments = list(segments)
+        self.last_confidence = heard_confidence(segments)
         return "".join(seg.text for seg in segments).strip()
 
     def transcribe(self, pcm16_16k: bytes) -> str:
@@ -1281,7 +1306,11 @@ class LocalVoiceEngine:
 
     def transcribe(self, pcm16_16k: bytes) -> str:
         t0 = time.perf_counter()
-        out = self._get_asr().transcribe(pcm16_16k)
+        asr = self._get_asr()
+        self.last_confidence = None
+        out = asr.transcribe(pcm16_16k)
+        # How sure the ear was of these words, when the engine says (faster-whisper does; NS-22.2-6).
+        self.last_confidence = getattr(asr, "last_confidence", None)
         self._record("asr", (time.perf_counter() - t0) * 1000.0)
         return out
 
