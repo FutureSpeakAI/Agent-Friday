@@ -61,7 +61,13 @@ the owner to undo (``list_discarded`` / ``undo_discard``), so its entry also
 carries an id and a short label SEALED with Friday's keystore
 (credential_store.protect); the file still holds no readable text. Without a
 keystore the label is not kept and the list shows "a discarded suggestion from
-<day>". Forget-person drops labels that name the person.
+<day>". A meeting's suggestion never keeps a label ("a discarded meeting
+suggestion from <day>"), and deleting a meeting drops any it had
+(``drop_labels``). Forget-person drops labels that name the person. Only a new
+entry (or one already a discard) is marked: the owner's own delete tombstone
+of the same text is never turned into a discard. The same text discarded as a
+card suggestion and as a proposal shares a group hash ``g``, is listed once,
+and "Allow again" lifts both.
 
 The key is this module's own, not the governance key: that one may live in the
 OS keychain (a test run or a practice task must never touch it) and rotating
@@ -620,15 +626,46 @@ def _open_label(sealed: Any) -> str:
         return ""
 
 
-def add_discard(kind: str, text: Any) -> Dict[str, Any]:
+#: Where a discard came from, when it changes what is kept: a meeting's.
+SRC_MEETING = "meeting"
+
+
+def digest(kind: str, text: Any) -> Optional[str]:
+    """The keyed hash `kind`'s tombstone of `text` carries, or None (no key
+    yet, nothing to hash). For a store matching its own rows to a tombstone
+    (memory_proposals marks rejected rows allowed again). Never raises."""
+    try:
+        if kind not in HASHED:
+            return None
+        key = _key(create=False)
+        norm = _ident(kind, text)
+        return _digest(key, kind, norm) if key is not None and norm else None
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def add_discard(kind: str, text: Any, *, source: Optional[str] = None) -> Dict[str, Any]:
     """Tombstone a suggestion the owner discarded, as `add` does, and mark the
-    entry for the owner's list with an id and a sealed label. Returns `add`'s
-    result plus "id" (and "sealed": whether a label was kept). Never raises."""
+    entry for the owner's list with an id, a group hash and a sealed label.
+    Returns `add`'s result plus "id", "h" (the entry's keyed hash) and "sealed"
+    (whether a label was kept). Never raises.
+
+    Only a NEW entry, or one that is already a discard, is marked: an existing
+    tombstone from the owner's own delete stays exactly as it was (no id, no
+    label, not listed, not liftable by "Allow again"); the result then has
+    "id": None and "listed": False. The group hash ``g`` (the normalised text,
+    kind-free) ties the same text discarded as a card line and as a proposal
+    together, so the list shows it once and "Allow again" lifts both.
+
+    `source` "meeting": a meeting's suggestion is meeting content, and keeps
+    NO label here (the list says "a discarded meeting suggestion from <day>");
+    a label it had is dropped."""
     if kind not in DISCARD_KINDS:
         return {"ok": False, "error": "only a card suggestion or a proposal is discarded"}
     r = add(kind, text)
     if not r.get("ok"):
         return r
+    from_meeting = source == SRC_MEETING
     try:
         with _LOCK:
             entries = _read(strict=True)
@@ -637,23 +674,36 @@ def add_discard(kind: str, text: Any) -> Dict[str, Any]:
             if key is None or not norm:
                 return r
             h = _digest(key, kind, norm)
-            label = _seal_label(text)
-            out, did = [], None
+            g = _digest(key, "discard", norm)
+            label = None
+            out, did, refused = [], None, False
             for e in entries:
-                if did is None and e.get("kind") == kind and e.get("h") == h:
+                if did is None and not refused and e.get("kind") == kind and e.get("h") == h:
+                    if not r.get("added") and not e.get("discard"):
+                        refused = True             # the owner's own delete: never turned into a discard
+                        out.append(e)
+                        continue
                     e = dict(e)
                     e["discard"] = True
+                    e["g"] = g
                     if not (isinstance(e.get("id"), str) and _ID_RE.match(e["id"])):
                         e["id"] = secrets.token_hex(8)
-                    if label:
-                        e["label"] = label
-                    else:
+                    if from_meeting or e.get("src") == SRC_MEETING:
+                        e["src"] = SRC_MEETING
                         e.pop("label", None)
+                    else:
+                        label = _seal_label(text)
+                        if label:
+                            e["label"] = label
+                        else:
+                            e.pop("label", None)
                     did = e["id"]
                 out.append(e)
+            if refused:
+                return {**r, "id": None, "h": h, "listed": False, "sealed": False}
             if did:
                 _write(out)
-        return {**r, "id": did, "sealed": bool(label)}
+        return {**r, "id": did, "h": h, "sealed": bool(label)}
     except Exception as e:                                   # noqa: BLE001
         # The tombstone itself is in place: the suggestion stays blocked, it is
         # only missing from the owner's list.
@@ -661,53 +711,127 @@ def add_discard(kind: str, text: Any) -> Dict[str, Any]:
         return {**r, "listed": False}
 
 
+def _is_discard(e: Dict[str, Any]) -> bool:
+    return bool(e.get("discard")) and isinstance(e.get("id"), str) and e.get("kind") in DISCARD_KINDS
+
+
 def list_discarded(limit: int = 200) -> builtins.list:
     """The owner's list of discarded suggestions, newest first: [{"id", "kind",
-    "day", "label", "sealed"}]. The label is opened here, for the owner only;
-    with none (sealing unavailable, or purged by forget-person) or one that
-    cannot be opened, it reads "a discarded suggestion from <day>". Never
-    raises: an unreadable list is empty."""
+    "kinds", "day", "label", "sealed"}]. The same text discarded as a card
+    suggestion and as a proposal is one row (grouped by ``g``); "kinds" says
+    which. The label is opened here, for the owner only; a meeting's
+    suggestion has none ("a discarded meeting suggestion from <day>"); with
+    none otherwise (sealing unavailable, or purged by forget-person) or one
+    that cannot be opened, it reads "a discarded suggestion from <day>".
+    Never raises: an unreadable list is empty."""
     try:
         n = max(1, min(int(limit or 200), 500))
     except (TypeError, ValueError):
         n = 200
-    rows = []
+    rows: builtins.list = []
+    groups: Dict[Any, Dict[str, Any]] = {}
     try:
         entries = _read()
     except Exception:                                        # noqa: BLE001
         entries = ()
     for e in reversed(entries):
-        if not e.get("discard") or not isinstance(e.get("id"), str) or e.get("kind") not in DISCARD_KINDS:
+        if not _is_discard(e):
             continue
-        day = str(e.get("day") or "")[:10]
-        opened = _open_label(e.get("label"))
-        rows.append({"id": e["id"], "kind": e["kind"], "day": day or None,
-                     "label": opened or ("a discarded suggestion from %s" % (day or "an earlier day")),
-                     "sealed": bool(opened)})
-        if len(rows) >= n:
-            break
-    return rows
+        gk = ("g", e["g"]) if isinstance(e.get("g"), str) and e["g"] else ("id", e["id"])
+        row = groups.get(gk)
+        if row is None:
+            if len(rows) >= n:
+                continue
+            row = {"id": e["id"], "kind": e["kind"], "kinds": [], "day": str(e.get("day") or "")[:10] or None,
+                   "_label": "", "_meeting": False}
+            groups[gk] = row
+            rows.append(row)
+        if e["kind"] not in row["kinds"]:
+            row["kinds"].append(e["kind"])
+        row["_meeting"] = row["_meeting"] or e.get("src") == SRC_MEETING
+        if not row["_label"]:
+            row["_label"] = _open_label(e.get("label"))
+    out = []
+    for row in rows:
+        opened, meeting = row.pop("_label"), row.pop("_meeting")
+        day = row["day"] or "an earlier day"
+        row["label"] = opened or ("a discarded meeting suggestion from %s" % day if meeting
+                                  else "a discarded suggestion from %s" % day)
+        row["sealed"] = bool(opened)
+        out.append(row)
+    return out
 
 
 def undo_discard(discard_id: Any) -> Dict[str, Any]:
     """The owner's "Allow again": remove that discard's tombstone (and its
-    label). The suggestion is NOT put back in the queue; a later pass may now
-    suggest it again. Returns {"ok", "removed"}. Never raises."""
+    label), and every other discard of the same text (its group: the card
+    suggestion and the proposal alike). An owner's own delete tombstone of the
+    same text is not a discard and stays. Rejected proposal rows for the text
+    are marked 'allowed_again' (memory_proposals.allow_again), so they no
+    longer hold it back. The suggestion is NOT put back in the queue; a later
+    pass may now suggest it again. Returns {"ok", "removed", "allowed_again"}.
+    Never raises."""
     did = str(discard_id or "").strip().lower()
     if not _ID_RE.match(did):
         return {"ok": False, "error": "no such discarded suggestion"}
     try:
         with _LOCK:
             entries = _read(strict=True)
-            keep = tuple(e for e in entries if not (e.get("discard") and e.get("id") == did))
-            if len(keep) == len(entries):
+            hit = next((e for e in entries if _is_discard(e) and e.get("id") == did), None)
+            if hit is None:
                 return {"ok": False, "error": "no such discarded suggestion", "removed": 0}
-            _write(keep)
-        return {"ok": True, "removed": len(entries) - len(keep)}
+            g = hit.get("g") if isinstance(hit.get("g"), str) and hit.get("g") else None
+            gone = [e for e in entries if _is_discard(e)
+                    and (e.get("id") == did or (g is not None and e.get("g") == g))]
+            ids = {id(e) for e in gone}
+            _write(tuple(e for e in entries if id(e) not in ids))
+        res: Dict[str, Any] = {"ok": True, "removed": len(gone), "allowed_again": 0}
+        proposal_hashes = {e.get("h") for e in gone if e.get("kind") == "proposal" and e.get("h")}
+        if proposal_hashes:
+            try:
+                from agent_friday.services import memory_proposals as _mp
+                res["allowed_again"] = int(_mp.allow_again(proposal_hashes) or 0)
+            except Exception as e:                           # noqa: BLE001
+                # The tombstone is lifted; a kept rejected row of the exact text
+                # may still hold it back, which is said rather than hidden.
+                _log.warning("tombstones: rejected suggestions could not be marked allowed again: %s",
+                             type(e).__name__)
+                res["warning"] = ("the block is lifted, but the rejected suggestion's record could not be "
+                                  "updated, so the same wording may still be held back")
+        return res
     except Exception as e:                                   # noqa: BLE001
         _log.warning("tombstones: a discard could not be lifted: %s", type(e).__name__)
         return {"ok": False, "error": "the discarded suggestion could not be allowed again (%s)"
                                       % type(e).__name__}
+
+
+def drop_labels(kind: str, hashes) -> int:
+    """Drop the sealed label of every `kind` discard whose keyed hash is in
+    `hashes` and mark it a meeting's ("a discarded meeting suggestion from
+    <day>"): a meeting deleted takes its words with it. The hash stays and
+    keeps blocking. Returns how many labels went. Never raises."""
+    hs = {h for h in (hashes or ()) if isinstance(h, str) and h}
+    if not hs:
+        return 0
+    try:
+        with _LOCK:
+            entries = _read(strict=True)
+            out, n, changed = [], 0, False
+            for e in entries:
+                if e.get("kind") == kind and e.get("h") in hs and _is_discard(e):
+                    e = dict(e)
+                    if e.pop("label", None):
+                        n += 1
+                    if e.get("src") != SRC_MEETING:
+                        e["src"] = SRC_MEETING
+                        changed = True
+                out.append(e)
+            if n or changed:
+                _write(out)
+        return n
+    except Exception as e:                                   # noqa: BLE001
+        _log.warning("tombstones: meeting discard labels could not be dropped: %s", type(e).__name__)
+        return 0
 
 
 def _label_rows(names, emails):

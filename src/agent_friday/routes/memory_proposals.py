@@ -127,8 +127,11 @@ def api_memory_discarded_undo(discard_id):
         if not r.get("ok"):
             return jsonify({"ok": False, "reason": r.get("error") or "That did not work."}), \
                 (404 if "no such" in str(r.get("error") or "") else 500)
-        return jsonify({"ok": True, "removed": int(r.get("removed") or 0),
-                        "note": "Friday may suggest it again later. It was not put back in the queue."})
+        out = {"ok": True, "removed": int(r.get("removed") or 0),
+               "note": "Friday may suggest it again later. It was not put back in the queue."}
+        if r.get("warning"):
+            out["warning"] = r["warning"]
+        return jsonify(out)
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't allow the suggestion again", shape="ok", key="reason")

@@ -318,11 +318,12 @@ def _connect() -> sqlite3.Connection:
 
 
 def _already_proposed(conn, text: str) -> bool:
-    # A rejected row does not count: the owner's no is its tombstone
-    # (_refused_before), which "Allow again" (tombstones.undo_discard) lifts;
-    # the kept row must not go on blocking what the owner allowed again.
+    # A rejected row still blocks (a second guard beside its tombstone, which
+    # a damaged list or key would lose). "Allow again" (tombstones.undo_discard)
+    # marks the rejected rows of that text 'allowed_again' (allow_again), and
+    # only those stop counting, so the owner's yes really lets it through.
     row = conn.execute(
-        "SELECT 1 FROM proposed_facts WHERE lower(text)=lower(?) AND status != 'rejected' LIMIT 1",
+        "SELECT 1 FROM proposed_facts WHERE lower(text)=lower(?) AND status != 'allowed_again' LIMIT 1",
         (text,)).fetchone()
     return bool(row)
 
@@ -599,25 +600,37 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
     Each rejected statement is tombstoned (services/tombstones: a keyed hash,
     never the text) so no later run proposes it again, even after the row is
     blanked (a meeting's) or deleted (a forget). It is listed for the owner
-    under "Discarded suggestions" by a label sealed with the keystore, where
-    "Allow again" lifts the tombstone (tombstones.add_discard / undo_discard)."""
+    under "Discarded suggestions" by a label sealed with the keystore (a
+    meeting's by its day only: no label), where "Allow again" lifts the
+    tombstone and marks the rejected rows 'allowed_again'
+    (tombstones.add_discard / undo_discard, allow_again)."""
     ids = [str(i) for i in (fact_ids or []) if str(i).strip()]
     if not ids:
         return {"ok": True, "rejected": 0}
     conn = _connect()
     try:
         marks = ",".join("?" * len(ids))
-        texts = [_open(t) for (t,) in conn.execute(
-            f"SELECT text FROM proposed_facts WHERE fact_id IN ({marks}) AND status='pending'",
-            ids).fetchall()]
+        rows = [(fid, _open(t), prov) for (fid, t, prov) in conn.execute(
+            f"SELECT fact_id, text, provenance FROM proposed_facts WHERE fact_id IN ({marks}) "
+            f"AND status='pending'", ids).fetchall()]
+        texts = [t for (_fid, t, _prov) in rows]
         unmarked = 0
+        tombs: Dict[str, str] = {}          # a meeting row's tombstone hash, kept on the row it blanks
         try:
             from agent_friday.services import tombstones
-            for t in texts:
-                # add_discard: the tombstone plus a sealed label for the owner's
-                # "Discarded suggestions" list, where it can be allowed again.
-                if (t or "").strip() and not tombstones.add_discard("proposal", t).get("ok"):
+            for fid, t, prov in rows:
+                if not (t or "").strip():
+                    continue
+                # add_discard: the tombstone plus, for a suggestion from chat, a
+                # sealed label for the owner's "Discarded suggestions" list; a
+                # meeting's keeps no label (it is meeting content).
+                meeting = bool(_meeting_id_of(prov))
+                r = tombstones.add_discard("proposal", t,
+                                           source=tombstones.SRC_MEETING if meeting else None)
+                if not r.get("ok"):
                     unmarked += 1
+                elif meeting and r.get("h"):
+                    tombs[fid] = str(r["h"])
         except Exception as e:                              # noqa: BLE001
             _log.warning("memory_proposals: rejected suggestions could not be tombstoned: %s: %s",
                          type(e).__name__, e)
@@ -628,6 +641,20 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
             [time.time(), *ids])
         conn.execute(f"UPDATE proposed_facts SET text='', evidence='' WHERE fact_id IN ({marks}) "
                      f"AND status='rejected' AND provenance IS NOT NULL AND provenance != ''", ids)   # a decided meeting suggestion keeps no text
+        # The blanked row keeps the tombstone's keyed hash (it names nothing) in
+        # its provenance, so "Allow again" can find it and a meeting delete can
+        # drop the discard's label (allow_again, purge_meeting).
+        for fid, h in tombs.items():
+            prov = next((p for (f, _t, p) in rows if f == fid), None)
+            try:
+                meta = json.loads(prov) if prov else {}
+                if not isinstance(meta, dict):
+                    meta = {}
+            except ValueError:
+                meta = {}
+            meta["tomb"] = h
+            conn.execute("UPDATE proposed_facts SET provenance=? WHERE fact_id=?",
+                         (json.dumps(meta, ensure_ascii=False), fid))
         conn.commit()
         out: Dict[str, Any] = {"ok": True, "rejected": cur.rowcount}
         if unmarked:
@@ -702,12 +729,62 @@ def purge_meeting(meeting_id: Optional[str] = None) -> int:
     try:
         rows = conn.execute("SELECT fact_id, provenance FROM proposed_facts "
                             "WHERE provenance IS NOT NULL AND provenance != ''").fetchall()
-        ids = [fid for fid, prov in rows
+        hit = [(fid, prov) for fid, prov in rows
                if _meeting_id_of(prov) and (meeting_id is None or _meeting_id_of(prov) == str(meeting_id))]
+        ids = [fid for fid, _prov in hit]
+        tombs = {_tomb_of(prov) for _fid, prov in hit} - {""}
         for fid in ids:
             conn.execute("DELETE FROM proposed_facts WHERE fact_id=?", (fid,))
         conn.commit()
-        return len(ids)
+    finally:
+        conn.close()
+    if tombs:
+        # A rejected suggestion from the meeting stays blocked (its keyed hash
+        # names nothing), but any label it had goes with the meeting.
+        try:
+            from agent_friday.services import tombstones
+            tombstones.drop_labels("proposal", tombs)
+        except Exception as e:                              # noqa: BLE001
+            _log.warning("memory_proposals: discard labels of a deleted meeting could not be dropped: %s",
+                         type(e).__name__)
+    return len(ids)
+
+
+def _tomb_of(provenance) -> str:
+    """The tombstone hash a rejected meeting row keeps in its provenance, or ""."""
+    try:
+        meta = json.loads(provenance) if provenance else None
+        return str(meta.get("tomb") or "") if isinstance(meta, dict) else ""
+    except (TypeError, ValueError):
+        return ""
+
+
+def allow_again(hashes) -> int:
+    """The owner allowed a rejected suggestion again (tombstones.undo_discard):
+    mark every rejected row of that text 'allowed_again', so _already_proposed
+    stops holding it back. A row is matched by the tombstone's keyed hash: the
+    one a blanked meeting row keeps in its provenance, or the hash of a chat
+    row's own text. Returns how many rows were marked."""
+    hs = {h for h in (hashes or ()) if isinstance(h, str) and h}
+    if not hs:
+        return 0
+    from agent_friday.services import tombstones
+    conn = _connect()
+    try:
+        marked = []
+        for fid, text, prov in conn.execute("SELECT fact_id, text, provenance FROM proposed_facts "
+                                            "WHERE status='rejected'").fetchall():
+            h = _tomb_of(prov)
+            if not h:
+                t = _open(text)
+                h = tombstones.digest("proposal", t) if t.strip() else ""
+            if h and h in hs:
+                marked.append(fid)
+        for fid in marked:
+            conn.execute("UPDATE proposed_facts SET status='allowed_again', decided_ts=? WHERE fact_id=?",
+                         (time.time(), fid))
+        conn.commit()
+        return len(marked)
     finally:
         conn.close()
 
