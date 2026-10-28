@@ -74,6 +74,7 @@ def part_name(field: str) -> str:
     segs = _INDEX.sub("[]", str(field or "?")).split(".")
     out = []
     for i, seg in enumerate(segs):
+        seg = seg.split(":", 1)[0]        # "tool_result:search_email": the tool's name is not structure
         if not _STRUCT.fullmatch(seg):
             out.append("{…}")
             break
