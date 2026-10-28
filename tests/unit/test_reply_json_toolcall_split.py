@@ -187,6 +187,11 @@ class TestUnique:
     def test_whole_reply_is_taken(self):
         assert self._lo('{"a": 1}', unique=True) == {"a": 1}
 
+    def test_cut_off_draft_mentioning_the_marker_is_refused(self):
+        reply = '<tool_call>{"name": "x"} quoted. Draft: {"a": 1, "note": "ends with </think>"}'
+        assert self._lo(reply, keys=("a",), unique=True) is None
+        assert self._lo(reply, keys=("a",)) is not None   # the plain reader takes it
+
     def test_answer_after_thinking_is_taken(self):
         assert self._lo(split_reply({"a": 2}, draft={"a": 1}), unique=True) == {"a": 2}
 
