@@ -1,9 +1,10 @@
 """
 Agent Friday — forget a fact, a conversation or a source; show where something is (NS-15.7-1)
 
-  POST  /api/memory/forget-fact           {text | fact_id | proposal_id, confirm: true}
-  POST  /api/memory/forget-conversation   {conversation_id, confirm: true}
-  POST  /api/memory/stop-using-source     {source, confirm: true}
+  POST  /api/memory/forget-fact           {text | fact_id | proposal_id, turn_ids?: [message id], confirm: true}
+                                          only the turns the owner ticked leave recall
+  POST  /api/memory/forget-conversation   {conversation_id, confirm: true}       a press in Friday's page
+  POST  /api/memory/stop-using-source     {source, confirm: true}                a press in Friday's page
                                           library:<id> | meeting:<id> | web:<domain> | sender:<address>
   GET   /api/memory/show-everywhere?q=    read-only: where a statement, person or source appears
 
@@ -33,6 +34,7 @@ OWNER_PRINCIPALS = frozenset({"user"})
 
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _CONV_ID = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+_TURN_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 
 @memory_forget_bp.before_request
@@ -72,10 +74,16 @@ def forget_fact():
         return _bad("that id is not valid")
     if not (text.strip() or fact_id or proposal_id):
         return _bad("say which statement to forget")
+    turn_ids = d.get("turn_ids", [])
+    if turn_ids is None:
+        turn_ids = []
+    if (not isinstance(turn_ids, list) or len(turn_ids) > forget_kinds.MAX_TURN_IDS
+            or not all(isinstance(t, str) and _TURN_ID.match(t) for t in turn_ids)):
+        return _bad("turn_ids is a list of at most %d message ids" % forget_kinds.MAX_TURN_IDS)
     if not _confirmed(d):
         return _bad("forgetting needs the owner's confirmation")
-    out = forget_kinds.forget_fact(text, fact_id=fact_id, proposal_id=proposal_id)
-    _log.info("forget-fact requested (ok=%s)", bool(out.get("ok")))
+    out = forget_kinds.forget_fact(text, fact_id=fact_id, proposal_id=proposal_id, turn_ids=turn_ids)
+    _log.info("forget-fact requested (ok=%s, %d turns chosen)", bool(out.get("ok")), len(turn_ids))
     return jsonify(public_result(out, "Couldn't forget that"))
 
 
@@ -88,21 +96,32 @@ def forget_conversation():
         return _bad("say which conversation")
     if not _confirmed(d):
         return _bad("forgetting needs the owner's confirmation")
+    held = _press()
+    if held:
+        return held
     out = forget_kinds.forget_conversation(cid)
     _log.info("forget-conversation requested (ok=%s)", bool(out.get("ok")))
     return jsonify(public_result(out, "Couldn't forget that conversation")), (200 if out.get("ok") else 404)
+
+
+def _press():
+    """Forgetting a conversation or stopping a source is the owner's press in
+    Friday's own page on this PC (screen_click.screen_session: the page's
+    session token, its browser headers and this launch's desk key, all of
+    which Friday's page sends on every POST). Anything else gets the coded 403
+    the page answers by fetching the desk key and pressing once more."""
+    from agent_friday.services import screen_click
+    return screen_click.press_refusal(request, "Do this with a press in Friday's page, on the computer Friday "
+                                               "runs on.")
 
 
 def _library_checks():
     """A Library forget is held to the Library's own rules (routes/library):
     Friday's own page, its session token, and the action gate's receipt."""
     from agent_friday import core
-    from agent_friday.services import screen_click
     if not core._api_token_valid(request.headers.get("X-Friday-Token")):
         return _bad("the Library answers only Friday's own page", 403)
-    if not screen_click.screen_session(request):
-        return _bad("this change must come from Friday's page", 403)
-    return None
+    return _press()
 
 
 @memory_forget_bp.route("/api/memory/stop-using-source", methods=["POST"])
@@ -121,6 +140,10 @@ def stop_using_source():
             return bad
         from agent_friday.routes.library import _gated
         held = _gated("library_forget", {"doc_id": int(value)})
+        if held:
+            return held
+    else:
+        held = _press()
         if held:
             return held
     out = forget_kinds.stop_using_source(source)

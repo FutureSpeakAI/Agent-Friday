@@ -3,7 +3,8 @@
 The owner's alone: every route needs a signed-in caller (login_required) and
 the owner principal (an observer is refused before the view runs). The three
 forgets need ``confirm: true``; inputs are bounded; a Library document is held
-to the Library's own page-and-token rule. The routes hand the request to
+to the Library's own page-and-token rule, and forgetting a conversation or
+stopping any other source to the same press in Friday's page. The routes hand the request to
 services/forget_kinds and return its receipt (tested in
 tests/unit/test_forget_kinds.py); here the service is replaced so only the
 wiring is under test.
@@ -49,7 +50,36 @@ def test_forget_fact_needs_confirmation_and_a_bounded_statement(client, calls):
     assert r.status_code == 200 and calls[-1][2]["fact_id"] == "abc123"
 
 
-def test_forget_conversation_and_stop_using_source(client, calls):
+def test_forget_fact_takes_only_a_bounded_list_of_confirmed_turn_ids(client, calls):
+    for bad in ("m-1", ["../x"], [1], ["m"] * 201):
+        r = client.post("/api/memory/forget-fact", json={"text": "tea", "turn_ids": bad, "confirm": True})
+        assert r.status_code == 400, bad
+    assert calls == []
+    r = client.post("/api/memory/forget-fact", json={"text": "tea", "turn_ids": ["m-1", "a1b2"], "confirm": True})
+    assert r.status_code == 200 and calls[-1][2]["turn_ids"] == ["m-1", "a1b2"]
+    r = client.post("/api/memory/forget-fact", json={"text": "tea", "confirm": True})
+    assert r.status_code == 200 and calls[-1][2]["turn_ids"] == []
+
+
+@pytest.mark.parametrize("path, body", [
+    ("/api/memory/forget-conversation", {"conversation_id": "conv-1", "confirm": True}),
+    ("/api/memory/stop-using-source", {"source": "meeting:m-1", "confirm": True}),
+    ("/api/memory/stop-using-source", {"source": "web:example.com", "confirm": True}),
+    ("/api/memory/stop-using-source", {"source": "sender:dana@example.com", "confirm": True}),
+])
+def test_forgetting_a_conversation_or_stopping_a_source_needs_a_press_in_friday_s_page(client, calls, path, body):
+    """Like the Library path: the owner's press in Friday's own page on this PC
+    (screen_click.screen_session), answered otherwise with the coded 403 the
+    page retries after fetching its desk key."""
+    from agent_friday.services import desk_press
+    r = client.post(path, json=body)
+    assert r.status_code == 403 and r.get_json()["code"] == desk_press.REFUSAL_CODE
+    assert calls == []
+
+
+def test_forget_conversation_and_stop_using_source(client, calls, monkeypatch):
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
     assert client.post("/api/memory/forget-conversation", json={"conversation_id": "conv-1"}).status_code == 400
     assert client.post("/api/memory/forget-conversation",
                        json={"conversation_id": "../x", "confirm": True}).status_code == 400

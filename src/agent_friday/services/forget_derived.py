@@ -95,11 +95,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 _log = logging.getLogger(__name__)
+
+#: The id ConversationMemory.index gives a turn stored without a message id
+#: (uuid4().hex). Transcript message ids are shorter (secrets.token_hex(8)).
+_LEGACY_ID = re.compile(r"^[0-9a-f]{32}$")
 
 _TRANSCRIPT_REASON = ("your own conversation history, in your words: Friday does not rewrite it (you can "
                       "delete any message from History). Those messages are no longer recalled, searched, "
@@ -265,12 +270,28 @@ def purge_turns(m, transcript, index_match=None, retained_reason: str = "",
     (conversation id, message) pairs it covers. `index_match` is the predicate
     run over conversation search's own rows (default `m`): a conversation's
     forget passes one that matches nothing, so only its own message ids go.
-    `by_id` also deletes each transcript message id from the vector memory
-    whatever its text (a conversation's forget). The receipt row has the same
-    shape as forget-person's."""
+    `by_id` is a conversation's forget: each transcript message id is deleted
+    from the vector memory whatever its text, and a vector row `m` accepts by
+    its text is taken only when it is one of those ids, or a legacy row (stored
+    under a random id before turns carried their message id) dated on a day of
+    this conversation's own turns. A row under any other message id belongs to
+    another conversation and is never taken, nor added to the forgotten list;
+    the count is of this conversation's turns only. The receipt row has the
+    same shape as forget-person's."""
     not_removable = list(m.notes()) if hasattr(m, "notes") else []
     removed_ids, texts, days = set(), [], set()
     t_ids = [str(msg.get("id")) for _c, msg in transcript if msg.get("id")]
+    own_ids = set(t_ids)
+    own_days = {_day_of(msg.get("ts")) for _c, msg in transcript} - {""} if by_id else set()
+
+    def _ours(h) -> bool:
+        """With `by_id`: is this vector row one of this conversation's turns?"""
+        if not by_id:
+            return True
+        hid = str(h.get("id") or "")
+        if hid in own_ids:
+            return True
+        return bool(_LEGACY_ID.match(hid)) and str(h.get("date") or "")[:10] in own_days
     # Turns an earlier forget already took out: their days and graph turns
     # were handled then, so running forget again queues nothing twice.
     try:
@@ -289,6 +310,8 @@ def purge_turns(m, transcript, index_match=None, retained_reason: str = "",
             not_removable.append({"what": "conversation memory (vector recall)", "reason": why})
         if mem is not None:
             hits = mem.matching(m)
+            if hits is not None:
+                hits = [h for h in hits if _ours(h)]
             if hits is None:
                 not_removable.append({"what": "conversation memory (vector recall)",
                                       "reason": "it could not be read, so it was not checked"})
@@ -299,7 +322,7 @@ def purge_turns(m, transcript, index_match=None, retained_reason: str = "",
                 gone = set(want)
                 if int(n or 0) < len(want):
                     after = mem.matching(m)
-                    left = {str(r["id"]) for r in after} if after is not None else set(want)
+                    left = ({str(r["id"]) for r in after if _ours(r)} & set(want)) if after is not None else set(want)
                     gone -= left
                     if left:
                         not_removable.append({
@@ -397,7 +420,14 @@ def purge_turns(m, transcript, index_match=None, retained_reason: str = "",
     if transcript:
         retained.append({"what": retained_what or "messages in your conversation history",
                          "count": len(transcript), "reason": retained_reason or _TRANSCRIPT_REASON})
-    return {"removed": len(removed_ids), "kind": "conversation turns removed from recall and search",
+    count = len(removed_ids)
+    if by_id:
+        # This conversation's turns only: by id, or (a legacy vector row) by its text.
+        legacy = {" ".join(str(t).split()) for t in texts}
+        count = sum(1 for _c, msg in transcript
+                    if str(msg.get("id") or "") in removed_ids
+                    or " ".join(str(msg.get("text") or "").split()) in legacy)
+    return {"removed": count, "kind": "conversation turns removed from recall and search",
             "not_removable": not_removable, "retained": retained, "also": [graph, summaries]}
 
 

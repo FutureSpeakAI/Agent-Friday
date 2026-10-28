@@ -9,16 +9,22 @@ Through the real entry points, on synthetic data:
 
 * forget_fact removes the statement from the memory card, its review queue,
   the older user model, proposals, the dreaming log and the graph's fact node;
-  the turns that stated it leave recall and search (not after a rebuild
-  either) while the transcript keeps them; the day summary made from them is
-  queued again; tombstones stop every derived path making it again, and the
-  owner can still say it; unrelated lines, facts and turns are untouched.
+  only the turns the owner confirmed (show_everywhere's candidates: their own
+  turns, no negation the statement lacks, not long unrelated ones) leave
+  recall and search (not after a rebuild either) while the transcript keeps
+  them; with none confirmed no turn is touched and the receipt says so; the
+  day summary made from them is queued again; tombstones stop every derived
+  path making it again, and the owner can still say it; unrelated lines,
+  facts and turns are untouched.
 * forget_conversation takes every turn of one conversation out of recall and
   search (a short one too, by its id), keeps the transcript byte for byte,
-  queues its day and its graph turns, and leaves another conversation alone.
-* stop_using_source handles a meeting, a site, a sender and a Library
-  document, records a stopped meeting or site without its id or domain, and
-  says "not supported yet" for what it cannot do.
+  queues its day and its graph turns, and leaves another conversation alone,
+  the same words said there included.
+* stop_using_source handles a meeting (its archive documents too, which the
+  archive then refuses, failing closed), a site (never a public suffix), a
+  sender and a Library document, records a stopped meeting or site without
+  its id or domain, reports a tombstone it could not save, and says "not
+  supported yet" for what it cannot do.
 * show_everywhere finds the statement in every store and writes nothing.
 * every receipt has forget-person's row shape and carries no content.
 * the desktop controls are in both UI files, identical where they are shared.
@@ -43,7 +49,7 @@ DAY1, DAY2 = "2026-09-10", "2026-09-11"
 CID, CID2 = "conv-kinds01", "conv-kinds02"
 
 TEA = "The user prefers green tea at breakfast."
-TEA_TURN = "I drink green tea at breakfast every day, no sugar."
+TEA_TURN = "I drink green tea at breakfast every day, with honey."
 COFFEE_TURN = "Green tea is fine, but I want coffee at lunch."
 FEE_TURN = "The mooring fee went up to 520 pounds this year, payable in March."
 PRIYA_TURN = "Priya Shah sent the insurance papers for the boat this morning."
@@ -254,7 +260,7 @@ def test_forgetting_a_fact_reaches_every_store_and_keeps_the_transcript(home):
     assert any(r["text"] == TEA_TURN for r in mem.search("green tea breakfast", n=10))
     assert fts.search("breakfast")
 
-    receipt = fk.forget_fact("  the user prefers green tea at breakfast  ")
+    receipt = fk.forget_fact("  the user prefers green tea at breakfast  ", turn_ids=["m-tea"])
 
     assert receipt["ok"]
     _shape_ok(receipt)
@@ -296,7 +302,7 @@ def test_forgetting_a_fact_reaches_every_store_and_keeps_the_transcript(home):
     assert TEA_TURN in asked and COFFEE_TURN not in asked and FEE_TURN not in asked
     # Counts and kinds only.
     dumped = json.dumps(receipt).lower()
-    assert "green" not in dumped and "breakfast" not in dumped and "sugar" not in dumped
+    assert "green" not in dumped and "breakfast" not in dumped and "honey" not in dumped
 
 
 def test_a_forgotten_fact_is_not_made_again_but_the_owner_can_still_say_it(home):
@@ -308,7 +314,7 @@ def test_a_forgotten_fact_is_not_made_again_but_the_owner_can_still_say_it(home)
     from agent_friday.services.knowledge_graph import integration
     _seed_tea(tmp, mem)
 
-    r = fk.forget_fact(TEA)
+    r = fk.forget_fact(TEA, turn_ids=["m-tea"])
 
     assert _rows(r)["tombstones"]["removed"] == 3 and _rows(r)["tombstones"]["not_removable"] == []
     # Nightly dreaming or the review pass suggesting it for the card again:
@@ -339,11 +345,15 @@ def test_a_short_statement_leaves_turns_alone_and_says_why(home):
     fts.build(force=True)
     _card(tmp, ["Likes jazz.", "The user sails to Harwich in June."])
 
+    where = {s["store"]: s for s in fk.show_everywhere("Likes jazz.")["stores"]}
+    assert where["conversation_turns"]["candidates"] == []
+    assert "fewer than 3 meaningful words" in where["conversation_turns"]["note"]
+
     r = fk.forget_fact("Likes jazz.")
 
     assert core_memory.entries("user") == ["The user sails to Harwich in June."]
     row = _rows(r)["conversation_recall"]
-    assert row["removed"] == 0 and "fewer than 3 meaningful words" in row["not_removable"][0]["reason"]
+    assert row["removed"] == 0 and "none were chosen" in row["retained"][0]["reason"]
     assert fts.search("jazz") and not fts.is_forgotten("m-jazz")
     assert graph == []
 
@@ -410,16 +420,104 @@ def test_forgetting_a_conversation_stops_using_every_turn_and_keeps_the_transcri
     assert fk.forget_conversation("conv-nope")["ok"] is False
 
 
+def test_forgetting_a_conversation_leaves_the_same_words_in_another_one_alone(home):
+    """The same 20+ character message said in a second conversation is that
+    conversation's: it stays in recall and search and is not added to the
+    forgotten list. A legacy vector row (random id, stored before turns
+    carried their message id) goes only when it is dated on this
+    conversation's own day."""
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_kinds as fk
+    _conv(tmp, mem, CID, "Boat", [("c1", "user", DAY1, 10, TEA_TURN), ("c3", "user", DAY1, 11, FEE_TURN)])
+    _conv(tmp, mem, CID2, "Boat again", [("d3", "user", DAY2, 9, FEE_TURN), ("d4", "user", DAY2, 9, PRIYA_TURN)])
+    legacy_here = mem.index(TEA_TURN, "user", session_id=DAY1, timestamp="%sT10:00:00" % DAY1)
+    legacy_there = mem.index(FEE_TURN, "user", session_id=DAY2, timestamp="%sT09:00:00" % DAY2)
+    assert len(legacy_here) == 32 and len(legacy_there) == 32
+    fts.build(force=True)
+    day2 = _summary(DAY2, "Insurance papers arrived.")
+
+    r = fk.forget_conversation(CID)
+
+    rows = _rows(r)
+    assert not {"c1", "c3", legacy_here} & set(mem._collection.rows)
+    # The other conversation's identical message: still recalled and searched, never forgotten.
+    assert {"d3", "d4", legacy_there} <= set(mem._collection.rows)
+    assert not fts.is_forgotten("d3") and not fts.is_forgotten(legacy_there)
+    assert fts.search("mooring"), "the other conversation's message left search"
+    # The receipt counts this conversation's two turns, not the other's; the other day is not redone.
+    assert rows["conversation_recall"]["removed"] == 2
+    assert day2.exists()
+
+
+# ── forget a fact: candidate turns, confirmed by the owner ──────────────────
+LONG_TURN = ("Yesterday we walked along the harbour and talked for hours about the boat, the mooring fee, the "
+             "insurance papers, the engine service, the sails that need replacing, the winter storage costs, and "
+             "then we had green tea at breakfast before driving home through the hills in the rain.")
+NEG_TURN = "I do not drink green tea at breakfast any more."
+
+
+def test_turn_candidates_are_the_owner_s_close_turns_only(home):
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_kinds as fk
+    _conv(tmp, mem, CID, "Mornings", [("m-tea", "user", DAY1, 8, TEA_TURN), ("m-neg", "user", DAY1, 9, NEG_TURN),
+                                     ("m-long", "user", DAY1, 10, LONG_TURN),
+                                     ("m-fri", "friday", DAY1, 11, "Noted: green tea at breakfast.")])
+    fts.build(force=True)
+
+    turns = {s["store"]: s for s in fk.show_everywhere(TEA)["stores"]}["conversation_turns"]
+
+    # A negation the statement lacks, a long unrelated turn and Friday's own turn are not candidates.
+    assert [c["message_id"] for c in turns["candidates"]] == ["m-tea"]
+    assert turns["count"] == 1 and turns["candidates"][0]["close"] is True
+    # Common verbs and negations are not content words; a negated statement may match a negated turn.
+    assert fk.TurnMatcher("The user does not drink green tea at breakfast.").words == {"drink", "green", "tea",
+                                                                                      "breakfast"}
+    assert fk.TurnMatcher("The user does not drink green tea at breakfast.")(NEG_TURN)
+    assert not fk.TurnMatcher(TEA)(NEG_TURN) and not fk.TurnMatcher(TEA)(LONG_TURN)
+
+
+def test_forget_fact_removes_only_the_turns_the_owner_confirmed(home):
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_kinds as fk
+    other = "Green tea at breakfast again today, lovely."
+    _conv(tmp, mem, CID, "Mornings", [("m-a", "user", DAY1, 8, TEA_TURN), ("m-b", "user", DAY1, 9, other),
+                                     ("m-fri", "friday", DAY1, 10, "Green tea at breakfast it is, then.")])
+    fts.build(force=True)
+    _card(tmp, [TEA])
+
+    # Without confirmed ids no turn is touched, and the receipt says so.
+    r = fk.forget_fact(TEA)
+    row = _rows(r)["conversation_recall"]
+    assert row["removed"] == 0 and "none were chosen" in row["retained"][0]["reason"]
+    assert "No conversation messages were chosen" in r["note"]
+    assert not any(fts.is_forgotten(m) for m in ("m-a", "m-b", "m-fri")) and graph == []
+    assert {"m-a", "m-b"} <= set(mem._collection.rows)
+
+    # Only the confirmed one goes; an id that is Friday's turn or no turn at all is ignored.
+    r = fk.forget_fact(TEA, turn_ids=["m-a", "m-fri", "no-such-turn"])
+    assert _rows(r)["conversation_recall"]["removed"] == 1
+    assert fts.is_forgotten("m-a") and not fts.is_forgotten("m-b") and not fts.is_forgotten("m-fri")
+    assert "m-a" not in mem._collection.rows and {"m-b", "m-fri"} <= set(mem._collection.rows)
+    assert [t for batch in graph for t in batch] == [TEA_TURN]
+    assert "messages you chose" in r["note"]
+
+
 # ── stop using a source ──────────────────────────────────────────────────────
 MEET_FACT = "The user agreed to ship the Atlas beta on the 14th."
 OTHER_MEET_FACT = "The user owns the Mercury budget review."
 
 
-def test_stopping_a_meeting_removes_what_came_from_it_and_nothing_new_comes_in(home):
+def test_stopping_a_meeting_removes_what_came_from_it_and_nothing_new_comes_in(home, monkeypatch):
     tmp, mem, graph = home
     from agent_friday.services import core_memory
     from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import meeting_archive as ma
     from agent_friday.services import memory_proposals as mp
+    archived = []
+    monkeypatch.setattr(ma, "remove_meeting", lambda mid, store=None: archived.append(mid) or 2)
     from agent_friday.services import user_model
     from agent_friday.services.knowledge_graph import integration
     from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
@@ -446,6 +544,10 @@ def test_stopping_a_meeting_removes_what_came_from_it_and_nothing_new_comes_in(h
     assert rows["memory_proposals"]["removed"] == 1 and rows["user_model"]["removed"] == 1
     assert rows["memory_card"]["removed"] == 1 and rows["kg_facts"]["removed"] == 2
     assert rows["meeting_record"]["retained"] and "Meetings" in rows["meeting_record"]["retained"][0]["reason"]
+    # Its searchable Library copies (the meetings archive) are removed too, and the note says so.
+    assert archived == ["m-1"] and rows["meeting_archive"]["removed"] == 2
+    assert "searchable copies" in r["note"] and "Meetings" in r["note"]
+    assert "tombstones" not in rows, "a tombstone failure was reported when every one was saved"
     # Nothing new from it: no proposal, no graph fact; the statements it gave are held back.
     assert mp.propose_from_meeting([{"text": "Atlas beta moves.", "category": "project", "span": {"i": 0}}],
                                    "m-1", DAY1, "gemma") == 0
@@ -476,6 +578,7 @@ def test_stopping_a_site_removes_facts_learned_only_from_it(home):
     r = fk.stop_using_source("https://www.example.com/some/page")
 
     assert r["source_kind"] == "web"
+    assert "research" in r["note"] and "no longer recalled" not in r["note"]
     _shape_ok(r)
     ids = {e["id"] for e in KnowledgeGraphStore(base_dir=tmp / "kg").load("entities")}
     assert ids == {"fact_bbbbbbbbbbbb", "fact_cccccccccccc", "fact_dddddddddddd"}
@@ -501,8 +604,10 @@ def test_a_sender_a_library_document_and_an_unknown_source(home, monkeypatch):
     from agent_friday.services.library import principal as pr
     seen = []
     monkeypatch.setattr(mt, "forget_sender", lambda e, lane_id=None: seen.append(e) or {"ok": True, "removed": True})
-    r = _rows(fk.stop_using_source("Dana@Example.com"))
+    sender = fk.stop_using_source("Dana@Example.com")
+    r = _rows(sender)
     assert seen == ["dana@example.com"] and r["sender_signals"]["removed"] == 1
+    assert "triage" in sender["note"] and "no longer recalled" not in sender["note"]
     assert "not supported yet" in r["mail_content"]["not_removable"][0]["reason"]
 
     calls = []
@@ -549,9 +654,12 @@ def test_show_everywhere_finds_it_in_every_store_and_writes_nothing(home):
     turns = where["conversation_turns"]
     assert turns["count"] == 1 and turns["locations"][0]["conversation_id"] == CID
     assert turns["locations"][0]["title"] == "Mornings" and turns["locations"][0]["messages"] == 1
+    # The candidate itself, for the owner to tick: their own message, with a short snippet.
+    assert [(c["message_id"], c["conversation_id"], c["close"]) for c in turns["candidates"]] == [("m-tea", CID, True)]
+    assert turns["candidates"][0]["snippet"] == TEA_TURN
     assert where["tombstones"]["count"] == 0
-    # After the forget it is found nowhere, and recorded as deleted.
-    fk.forget_fact(TEA)
+    # After the forget (with the candidate ticked) it is found nowhere, and recorded as deleted.
+    fk.forget_fact(TEA, turn_ids=["m-tea"])
     after = {r["store"]: r for r in fk.show_everywhere(TEA)["stores"]}
     assert all(r["count"] == 0 for k, r in after.items() if k != "tombstones")
     assert after["tombstones"]["count"] == 1
@@ -584,6 +692,93 @@ def test_sources_are_parsed_strictly():
     assert fk.parse_source("web:news.example.co.uk") == ("web", "news.example.co.uk")
     assert fk.parse_source("sender:Dana@x.com") == ("sender", "dana@x.com")
     assert fk.parse_source("the user prefers tea")[0] == ""
+    # A Library id is ASCII digits only (str.isdigit also takes other scripts' digits and superscripts).
+    assert fk.parse_source("library:١٢")[0] == "" and fk.parse_source("library:²")[0] == ""
+    # A public suffix on its own is no one site; a site under it is.
+    for s in ("co.uk", "web:co.uk", "github.io", "https://github.io/x", "site:com.au", "web:herokuapp.com"):
+        assert fk.parse_source(s)[0] == "", s
+    assert fk.parse_source("bbc.co.uk") == ("web", "bbc.co.uk")
+    assert fk.parse_source("https://dana.github.io/blog") == ("web", "dana.github.io")
+
+
+def test_a_public_suffix_is_not_stopped(home):
+    tmp, mem, graph = home
+    from agent_friday.services import forget_kinds as fk
+    r = fk.stop_using_source("web:co.uk")
+    assert r["source_kind"] == "unknown" and not (tmp / fk.STOPPED_FILE).exists()
+    assert not fk.site_stopped("https://www.bbc.co.uk/news")
+
+
+def test_no_new_key_is_made_beside_existing_stopped_sources(home):
+    """A new tombstone key beside stopped-source entries made under a lost one
+    would orphan them all (every stopped meeting or site starts again)."""
+    tmp, mem, graph = home
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import tombstones
+    (tmp / fk.STOPPED_FILE).write_text(json.dumps({"version": 1, "entries": [{"h": "0" * 64, "day": DAY1}]}),
+                                       encoding="utf-8")
+    assert not tombstones._key_path().exists()
+
+    out = fk.record_stopped("web:example.com")
+
+    assert out["ok"] is False and not tombstones._key_path().exists()
+    assert json.loads((tmp / fk.STOPPED_FILE).read_text(encoding="utf-8"))["entries"] == [{"h": "0" * 64,
+                                                                                          "day": DAY1}]
+
+
+MID = "0123456789ab"
+OTHER_MID = "ba9876543210"
+
+
+def test_the_meetings_archive_refuses_a_stopped_meeting_failing_closed(home, monkeypatch):
+    tmp, mem, graph = home
+    from types import SimpleNamespace
+    from agent_friday.services import file_grants as fg
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import meeting_archive as ma
+    monkeypatch.setattr(ma, "owns", lambda p: True)
+    monkeypatch.setattr(ma, "visible", lambda: True)
+    monkeypatch.setattr(ma, "meeting_exists", lambda mid: True)
+    monkeypatch.setattr(ma, "choice", lambda: "on")
+    monkeypatch.setattr(ma, "unavailable", lambda store=None: "")
+    monkeypatch.setattr(fg, "check_grant", lambda p: SimpleNamespace(state="granted"))
+
+    def doc(mid):
+        return str(tmp / "meetings" / mid / "library" / "notes.md")
+    assert ma.covers(doc(MID)) and ma.covers(doc(OTHER_MID))
+
+    r = fk.stop_using_source("meeting:" + MID)
+
+    assert _rows(r)["stopped_sources"]["removed"] == 1
+    # Not shown, not read in again; another meeting is unaffected.
+    assert not ma.covers(doc(MID)) and ma.covers(doc(OTHER_MID))
+    assert ma.index_meeting({"id": MID, "state": "done"}, store=object()) == {"indexed": 0, "skipped": "stopped"}
+    # A record that cannot be read hides every archive document (fail closed), while the
+    # proposal and graph checks stay open (a source never stopped is not lost).
+    (tmp / fk.STOPPED_FILE).write_text("{not json", encoding="utf-8")
+    assert not ma.covers(doc(OTHER_MID)) and ma.stopped(OTHER_MID)
+    assert fk.source_stopped("meeting:" + OTHER_MID) is False
+
+
+def test_a_tombstone_that_cannot_be_saved_is_reported_when_a_meeting_is_stopped(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import meeting_archive as ma
+    from agent_friday.services import tombstones
+    from agent_friday.services import user_model
+    monkeypatch.setattr(ma, "remove_meeting", lambda mid, store=None: 0)
+    user_model.note_fact("project", MEET_FACT, source="meeting:m-1")
+    real_add = tombstones.add
+    monkeypatch.setattr(tombstones, "add", lambda kind, ident: ({"ok": False, "error": "disk full"}
+                                                                if kind == "card_line" else real_add(kind, ident)))
+
+    r = fk.stop_using_source("meeting:m-1")
+
+    nr = _rows(r)["tombstones"]["not_removable"]
+    assert nr and "card_line" in nr[0]["what"] and "user_fact" not in nr[0]["what"]
+    # The meeting's fact is recorded as deleted, so a later pass does not save it again.
+    monkeypatch.setattr(tombstones, "add", real_add)
+    assert tombstones.is_tombstoned(("user_fact",), MEET_FACT)
 
 
 # ── the desktop controls ─────────────────────────────────────────────────────

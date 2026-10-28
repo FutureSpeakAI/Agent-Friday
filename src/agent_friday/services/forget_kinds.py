@@ -17,12 +17,15 @@ with why; counts only, never the content).
     fact nodes for it (``fact_<hash of its text>``). The statement is
     tombstoned FIRST (card_line, user_fact, proposal; the graph fact by its
     id), so no derived pass running meanwhile writes it back.
-    The conversation turns that stated it leave recall and search the way a
-    forgotten person's turns do (forget_derived.purge_turns): a turn is taken
-    when it contains every content word of the statement (core_memory.
-    content_words, one-letter tokens dropped), and only when the statement has
-    at least three, since a shorter one would take unrelated turns. The
-    transcript keeps the turns (the owner's words); the receipt says so.
+    Conversation turns are never taken by matching alone: show_everywhere
+    lists CANDIDATES (TurnMatcher: the owner's own turns only, containing
+    every content word of the statement less common verbs and negations, not
+    much longer than it, and with no negation the statement lacks; only when
+    the statement has at least three such words), each with a short snippet,
+    and the owner ticks the ones that said it. forget_fact(turn_ids=...)
+    takes exactly those out of recall and search the way a forgotten person's
+    turns go (forget_derived.purge_turns); with no ids it takes none and the
+    receipt says so. The transcript keeps the turns (the owner's words).
 
 ``forget_conversation(conversation_id)``
     Stop using one conversation: every one of its turns leaves recall and
@@ -39,11 +42,14 @@ with why; counts only, never the content).
                            chats rewritten); the file on disk stays.
     ``meeting:<id>``       the meeting's proposals (tombstoned, then removed),
                            the facts and card lines it gave (tombstoned, then
-                           removed) and its graph fact nodes; the meeting's
-                           own record stays in Meetings.
+                           removed), its graph fact nodes and its searchable
+                           Library copies (meeting_archive, which refuses a
+                           stopped meeting from then on, failing closed); the
+                           meeting's own record stays in Meetings.
     ``web:<domain>``       graph facts whose only recorded sources are pages
                            on that site (setup research); a URL or a bare
-                           domain is read as its site.
+                           domain is read as its site. A public suffix alone
+                           (co.uk, github.io) is refused: it is no one site.
     ``sender:<address>``   what the triage learned about the sender is
                            removed; mail content is not linked to its sender
                            in memory on this build, so that row says
@@ -89,6 +95,17 @@ MAX_SOURCE = 300
 MIN_CONTENT_WORDS = 3
 #: Locations listed per store by show_everywhere.
 LOCATIONS_MAX = 10
+#: Candidate turns listed by show_everywhere for the owner to confirm.
+CANDIDATES_MAX = 50
+#: Most confirmed turn ids one forget_fact takes.
+MAX_TURN_IDS = 200
+#: A candidate turn has at most max(CANDIDATE_MIN_CAP, CANDIDATE_FACTOR x the statement's words) words.
+CANDIDATE_MIN_CAP = 30
+CANDIDATE_FACTOR = 4
+#: A candidate the statement covers this much of is ticked by default.
+CLOSE_RATIO = 0.4
+#: Characters of a candidate turn shown to the owner.
+SNIPPET = 120
 
 STOPPED_FILE = "stopped-sources.json"
 
@@ -106,6 +123,19 @@ _EMAIL = re.compile(r"^[^@\s]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$")
 _DOMAIN = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$")
 _MEETING_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _FACT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_TURN_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+#: Negations: a turn with one the statement lacks says something else.
+_NEGATION = re.compile(r"\b(?:no|not|never|nor|none|nothing|nobody|nowhere|neither|cannot|without|dont|doesnt|"
+                       r"didnt|isnt|wasnt|werent|arent|cant|wont|wouldnt|shouldnt|couldnt|havent|hasnt|hadnt)\b"
+                       r"|n['’]t\b")
+#: Verbs (and contraction stubs) too common to say what a statement is about.
+_COMMON_VERBS = frozenset((
+    "am", "were", "been", "being", "have", "has", "had", "do", "does", "did", "done", "get", "gets", "got",
+    "go", "goes", "went", "make", "makes", "made", "take", "takes", "took", "say", "says", "said", "think",
+    "thinks", "know", "knows", "want", "wants", "wanted", "need", "needs", "like", "liked", "love", "loves",
+    "prefer", "preferred", "use", "uses", "used", "will", "would", "can", "could", "should", "may", "might",
+    "must", "also", "always", "usually", "really", "just", "don", "doesn", "didn", "isn", "wasn", "won",
+    "ll", "ve", "re"))
 
 
 # ── small helpers ────────────────────────────────────────────────────────────
@@ -144,24 +174,51 @@ def statement_matcher(text: Any) -> Callable[[Any], bool]:
     return same
 
 
+def _content(text: Any) -> frozenset:
+    """A statement's or turn's meaning words: core_memory.content_words, less
+    one-letter tokens, common verbs and negations."""
+    from agent_friday.services import core_memory
+    return frozenset(w for w in core_memory.content_words(text)
+                     if len(w) >= 2 and w not in _COMMON_VERBS and not _NEGATION.fullmatch(w))
+
+
 class TurnMatcher:
-    """Does a conversation turn state this? Every content word of the
-    statement (core_memory.content_words, one-letter tokens dropped) must be in
-    the turn as a whole word. With fewer than MIN_CONTENT_WORDS words it
-    matches nothing (False), and ``notes()`` says why."""
+    """Which of the owner's turns may have stated this? Only CANDIDATES for the
+    owner to confirm (show_everywhere lists them; forget_fact removes only the
+    ids the owner ticks). A turn is a candidate when every content word of the
+    statement (no common verbs or negations) is in it as a whole word, it is
+    not much longer than the statement (CANDIDATE_FACTOR times its words, at
+    least CANDIDATE_MIN_CAP), and it has no negation the statement lacks ("I
+    do not drink green tea at breakfast" is not "drinks green tea at
+    breakfast"). With fewer than MIN_CONTENT_WORDS words it matches nothing
+    (False), and ``notes()`` says why."""
 
     def __init__(self, text: Any):
         from agent_friday.services import core_memory
-        self.words = frozenset(w for w in core_memory.content_words(text) if len(w) >= 2)
+        clean = core_memory._clean(text).lower()
+        self.words = _content(text)
+        self.negated = bool(_NEGATION.search(clean))
+        self.max_words = max(CANDIDATE_MIN_CAP, CANDIDATE_FACTOR * len(re.findall(r"[a-z0-9]+", clean)))
 
     def __bool__(self) -> bool:
         return len(self.words) >= MIN_CONTENT_WORDS
 
-    def __call__(self, text) -> bool:
+    def score(self, text) -> Optional[float]:
+        """None when the turn is not a candidate; else how much of the turn the
+        statement covers (1.0: the turn says nothing else)."""
         if not self or not isinstance(text, str) or not text:
-            return False
+            return None
         from agent_friday.services import core_memory
-        return self.words <= set(re.findall(r"[a-z0-9]+", core_memory._clean(text).lower()))
+        clean = core_memory._clean(text).lower()
+        tokens = re.findall(r"[a-z0-9]+", clean)
+        if len(tokens) > self.max_words or not self.words <= set(tokens):
+            return None
+        if not self.negated and _NEGATION.search(clean):
+            return None
+        return len(self.words) / max(1, len(_content(clean)))
+
+    def __call__(self, text) -> bool:
+        return self.score(text) is not None
 
     def notes(self) -> List[Dict[str, Any]]:
         if self:
@@ -172,11 +229,64 @@ class TurnMatcher:
                             "the conversation instead" % MIN_CONTENT_WORDS)}]
 
 
+def _user_turns() -> Iterable[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    """(conversation, message) for every stored user turn with an id."""
+    from agent_friday.services import conversations as cv
+    if not cv._root().exists():
+        return
+    for conv in cv.list_all(include_archived=True):
+        cid = conv.get("id")
+        if not cid:
+            continue
+        for msg in cv._stored_messages(cid):
+            if (isinstance(msg, dict) and msg.get("role") == "user" and msg.get("id")
+                    and isinstance(msg.get("text"), str) and msg["text"].strip()):
+                yield conv, msg
+
+
+def turn_candidates(text: Any) -> List[Dict[str, Any]]:
+    """The owner's own turns that may have stated this (TurnMatcher), not yet
+    forgotten: {message_id, conversation_id, title, snippet, close}. Read-only.
+    ``close`` (the statement covers at least CLOSE_RATIO of the turn) is the
+    dialog's default tick."""
+    tm = text if isinstance(text, TurnMatcher) else TurnMatcher(text)
+    if not tm:
+        return []
+    out = []
+    for conv, msg in _user_turns():
+        s = tm.score(msg["text"])
+        if s is None:
+            continue
+        out.append({"message_id": str(msg["id"]), "conversation_id": str(conv.get("id")),
+                    "title": str(conv.get("title") or "")[:80], "snippet": _clip(msg["text"], SNIPPET),
+                    "close": s >= CLOSE_RATIO})
+    try:
+        from agent_friday.services import conversation_fts as fts
+        gone = fts.forgotten_ids([c["message_id"] for c in out])
+    except Exception:
+        gone = set()
+    return [c for c in out if c["message_id"] not in gone][:CANDIDATES_MAX]
+
+
+def _confirmed_turns(turn_ids: Iterable[Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """(conversation id, message) for each id the owner confirmed that names
+    one of their own stored turns; anything else is ignored."""
+    if isinstance(turn_ids, (str, bytes)):
+        turn_ids = [turn_ids]
+    want = {str(i) for i in list(turn_ids or [])[:MAX_TURN_IDS] if _TURN_ID.match(str(i or ""))}
+    if not want:
+        return []
+    return [(str(conv.get("id")), msg) for conv, msg in _user_turns() if str(msg["id"]) in want]
+
+
 class _ConversationTexts:
     """A conversation's own turns, by their exact text (for a vector-memory row
     stored before turns carried their message id). Only texts of at least 20
     characters, as conversation_fts.delete_message does, so a short "ok" said
-    elsewhere is never taken."""
+    elsewhere is never taken. purge_turns(by_id=True) takes a row this matches
+    only when it is a legacy row (random id) dated on one of this
+    conversation's days: the same words under another conversation's message
+    id stay."""
 
     def __init__(self, texts: Iterable[str], present: bool):
         self.texts = {t for t in (" ".join(str(x or "").split()) for x in texts) if len(t) >= 20}
@@ -234,14 +344,17 @@ def _stopped_path() -> Path:
 
 def _key(create: bool) -> Optional[bytes]:
     """The tombstone key (services/tombstones). A key is only ever made while
-    no hashed tombstone exists: a new key beside existing entries would
-    orphan every one of them."""
+    no hashed tombstone and no stopped-source entry exists: a new key beside
+    existing entries would orphan every one of them (a stopped meeting or site
+    would silently start again)."""
     from agent_friday.services import tombstones as t
     key = t._key(create=False)
     if key is not None or not create:
         return key
     try:
         if t._read(strict=True) or t._key_path().exists():
+            return None
+        if _stopped_path().exists() and _read_stopped():
             return None
     except Exception:
         return None
@@ -290,20 +403,27 @@ def record_stopped(ident: str) -> Dict[str, Any]:
         return {"ok": False, "error": "the record could not be saved (%s)" % type(e).__name__}
 
 
-def source_stopped(ident: str) -> bool:
+def source_stopped(ident: str, *, fail_closed: bool = False) -> bool:
     """Whether the owner stopped this source ("meeting:<id>", "web:<domain>").
-    Cheap and never raises: an unreadable record answers False (logged)."""
+    Cheap and never raises. A record that exists but cannot be read (or whose
+    key is missing) answers False, logged (fail open: a proposal or graph fact
+    from a source never stopped is not lost), or True with ``fail_closed``
+    (meeting_archive: a stopped meeting's documents are never shown for want
+    of the record)."""
     try:
         if not _stopped_path().exists():
             return False
         rows = _read_stopped()
-        key = _key(create=False)
-        if not rows or key is None:
+        if not rows:
             return False
+        key = _key(create=False)
+        if key is None:
+            return bool(fail_closed)
         return _digest(key, str(ident)) in {r["h"] for r in rows}
     except Exception as e:
-        _log.warning("forget_kinds: the stopped-source check failed (fail open): %s", type(e).__name__)
-        return False
+        _log.warning("forget_kinds: the stopped-source check failed (%s): %s",
+                     "fail closed" if fail_closed else "fail open", type(e).__name__)
+        return bool(fail_closed)
 
 
 def site_stopped(url_or_host: str) -> bool:
@@ -420,11 +540,15 @@ def _turns_purge(m, transcript=None, **kw) -> List[Dict[str, Any]]:
     return rows
 
 
-def forget_fact(text: str = "", *, fact_id: str = "", proposal_id: str = "") -> Dict[str, Any]:
+def forget_fact(text: str = "", *, fact_id: str = "", proposal_id: str = "",
+                turn_ids: Optional[Iterable[str]] = None) -> Dict[str, Any]:
     """Forget one statement everywhere it was stored or derived, and stop it
     being learned again. `text` is the statement, or name a saved fact
-    (`fact_id`) or a proposal (`proposal_id`) and its text is used. Returns a
-    receipt: {"ok", "stores": [rows], "note"}; never the statement itself."""
+    (`fact_id`) or a proposal (`proposal_id`) and its text is used.
+    `turn_ids` are the owner's own turns they confirmed said it (from
+    show_everywhere's candidates): only those leave recall and search; with
+    none, no turn is touched and the receipt says so. Returns a receipt:
+    {"ok", "stores": [rows], "note"}; never the statement itself."""
     text = _clip(text)
     try:
         if not text and fact_id and _FACT_ID.match(str(fact_id)):
@@ -484,18 +608,33 @@ def forget_fact(text: str = "", *, fact_id: str = "", proposal_id: str = "") -> 
             rows.append(_graph_fact_purge(match, forms))
         except Exception as e:
             rows.append(_failed("kg_facts", "knowledge-graph fact nodes", e, "the knowledge graph"))
-        # 7. The turns that stated it: out of recall and search, the summaries
-        #    made from them queued again, the graph's retraction requested.
+        # 7. The turns the owner confirmed said it (and only those): out of
+        #    recall and search, the summaries made from them queued again, the
+        #    graph's retraction requested.
+        chosen: List[Tuple[str, Dict[str, Any]]] = []
         try:
-            rows += _turns_purge(TurnMatcher(text))
+            chosen = _confirmed_turns(turn_ids or [])
+            if chosen:
+                m = _ConversationTexts([msg["text"] for _c, msg in chosen], present=True)
+                rows += _turns_purge(m, chosen, index_match=lambda _t: False, by_id=True,
+                                     retained_what="the messages you chose")
+            else:
+                rows.append(_row("conversation_recall", 0, "conversation turns removed from recall and search", (),
+                                 [{"what": "messages that may have said it",
+                                   "reason": ("none were chosen, so no message was changed: tick them under "
+                                              "Forget this (or delete them from History) to stop them being "
+                                              "recalled")}]))
         except Exception as e:
             rows.append(_failed("conversation_recall", "conversation turns", e, "conversation recall"))
-    _log.info("forget-fact: %d stores, %d items removed", len(rows), sum(r["removed"] for r in rows))
+    _log.info("forget-fact: %d stores, %d items removed, %d turns chosen",
+              len(rows), sum(r["removed"] for r in rows), len(chosen))
+    turns_note = ("The messages you chose are no longer recalled or searched; your conversation history keeps "
+                  "them, in your words." if chosen else
+                  "No conversation messages were chosen, so none were changed; they are still recalled.")
     return {"ok": True, "kind": "fact", "stores": rows,
             "note": ("The statement is gone from the memory card, saved facts, suggestions, the dreaming log and "
                      "the knowledge graph, and Friday will not save or suggest it again unless you say it "
-                     "yourself. The messages that said it are no longer recalled or searched; your conversation "
-                     "history keeps them, in your words.")}
+                     "yourself. " + turns_note)}
 
 
 # ── forget a conversation ────────────────────────────────────────────────────
@@ -529,6 +668,33 @@ def forget_conversation(conversation_id: str) -> Dict[str, Any]:
 
 
 # ── stop using a source ──────────────────────────────────────────────────────
+#: Common public suffixes (a small built-in subset of the Public Suffix List:
+#: registries' second levels and shared hosting domains). Stopping one of
+#: these would stop every unrelated site under it, so a site must have at
+#: least one label beyond its suffix. A one-label suffix (com, io, uk) never
+#: passes _DOMAIN, which needs a dot.
+_PUBLIC_SUFFIXES = frozenset((
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "sch.uk", "nhs.uk",
+    "police.uk", "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au", "co.nz", "org.nz",
+    "net.nz", "govt.nz", "ac.nz", "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp", "co.kr", "or.kr", "com.br",
+    "net.br", "org.br", "gov.br", "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "com.mx", "org.mx",
+    "com.ar", "com.tr", "com.sg", "edu.sg", "com.hk", "com.tw", "co.in", "net.in", "org.in", "gov.in",
+    "ac.in", "co.za", "org.za", "gov.za", "com.my", "co.id", "co.il", "org.il", "co.th", "com.ph",
+    "com.vn", "com.pk", "com.ng", "com.eg", "com.sa", "co.ke", "com.ua", "com.pl", "co.at", "or.at",
+    "com.es", "com.pt", "com.co", "com.pe", "com.ve", "gc.ca", "qc.ca", "on.ca", "bc.ca", "eu.org",
+    "github.io", "gitlab.io", "githubusercontent.com", "blogspot.com", "herokuapp.com", "appspot.com",
+    "netlify.app", "vercel.app", "pages.dev", "workers.dev", "web.app", "firebaseapp.com",
+    "azurewebsites.net", "cloudfront.net", "s3.amazonaws.com", "readthedocs.io", "ngrok.io",
+    "ngrok-free.app", "duckdns.org", "glitch.me", "onrender.com", "fly.dev", "r2.dev", "repl.co"))
+
+
+def public_suffix_only(host: str) -> bool:
+    """True when `host` is itself a public suffix (co.uk, github.io), so it
+    names no one site."""
+    h = str(host or "").lower().strip(".")
+    return "." not in h or h in _PUBLIC_SUFFIXES
+
+
 def parse_source(source: Any) -> Tuple[str, str]:
     """(kind, value): kind is library, meeting, web, sender or "" (not a source
     this build knows). The value is normalised (a URL is read as its site)."""
@@ -548,13 +714,13 @@ def parse_source(source: Any) -> Tuple[str, str]:
         elif _DOMAIN.match(low.strip(".")):
             kind = "web"
     if kind == "library":
-        return ("library", value) if value.isdigit() and len(value) <= 12 else ("", s)
+        return ("library", value) if value.isascii() and value.isdigit() and len(value) <= 12 else ("", s)
     if kind == "meeting":
         return ("meeting", value) if _MEETING_ID.match(value) else ("", s)
     if kind == "web":
         host = _host(value) if "/" in value else value.lower().strip(".")
         host = host[4:] if host.startswith("www.") else host
-        return ("web", host) if _DOMAIN.match(host) else ("", s)
+        return ("web", host) if _DOMAIN.match(host) and not public_suffix_only(host) else ("", s)
     if kind == "sender":
         return ("sender", value.lower()) if _EMAIL.match(value) else ("", s)
     return "", s
@@ -602,6 +768,15 @@ def _stop_meeting(mid: str) -> List[Dict[str, Any]]:
         _log.warning("stop-using-source: the card's one-time move did not run: %s", type(e).__name__)
     rows = [_stop_row(origin)]
     texts: List[str] = []
+    tomb_failed: List[str] = []
+
+    def _tomb(kind: str, text: str) -> None:
+        try:
+            ok = bool(tombstones.add(kind, text).get("ok"))
+        except Exception:
+            ok = False
+        if not ok and kind not in tomb_failed:
+            tomb_failed.append(kind)
     # Its proposals: each statement tombstoned, then every row from it removed.
     try:
         n, locked = 0, 0
@@ -618,7 +793,7 @@ def _stop_meeting(mid: str) -> List[Dict[str, Any]]:
                 if isinstance(t, str) and t.startswith(mp._SEALED) and not opened:
                     locked += 1
                 elif (opened or "").strip():
-                    tombstones.add("proposal", opened)
+                    _tomb("proposal", opened)
                     texts.append(opened)
             n = mp.purge_meeting(mid)
         rows.append(_row("memory_proposals", n, "memory suggestions from this meeting",
@@ -632,20 +807,26 @@ def _stop_meeting(mid: str) -> List[Dict[str, Any]]:
         facts = _ro(user_model.DB_PATH, "SELECT fact_id, text FROM facts WHERE source=?", (origin,)) or []
         n = 0
         for fid, t in facts:
-            n += int(user_model.forget_fact(str(fid)).get("deleted") or 0)
             if t:
+                _tomb("user_fact", str(t))          # before the delete: a pass meanwhile does not save it again
                 texts.append(str(t))
+            n += int(user_model.forget_fact(str(fid)).get("deleted") or 0)
         rows.append(_row("user_model", n, "facts kept from this meeting"))
     except Exception as e:
         rows.append(_failed("user_model", "facts kept from this meeting", e, "the saved facts"))
     try:
         norms = {_norm(t) for t in texts if _norm(t)}
         for t in texts:
-            tombstones.add("card_line", t)
+            _tomb("card_line", t)
         rows += _card_purge(lambda s: bool(s) and _norm(s) in norms) if norms else [
             _row("memory_card", 0, "memory card lines")]
     except Exception as e:
         rows.append(_failed("memory_card", "memory card lines", e, "the memory card"))
+    if tomb_failed:
+        rows.append(_row("tombstones", 0, "records that stop Friday saving or suggesting its statements again",
+                         [{"what": "the record that stops Friday saving them again (%s)" % ", ".join(tomb_failed),
+                           "reason": "it could not be saved, so a later pass may learn them again; running stop "
+                                     "again retries"}]))
     try:
         norms = {_norm(t) for t in texts if _norm(t)}
         rows.append(_graph_fact_purge(
@@ -653,6 +834,16 @@ def _stop_meeting(mid: str) -> List[Dict[str, Any]]:
             extra=lambda e: origin in ((e.get("provenance") or {}).get("conversations") or [])))
     except Exception as e:
         rows.append(_failed("kg_facts", "knowledge-graph fact nodes", e, "the knowledge graph"))
+    # Its searchable copies in the Library (meeting_archive: the transcript and
+    # notes as Library documents), through the Library's forget module; from
+    # now on meeting_archive.covers and its indexing refuse a stopped meeting.
+    try:
+        from agent_friday.services import meeting_archive as ma
+        rows.append(_row("meeting_archive", int(ma.remove_meeting(mid) or 0),
+                         "searchable copies of its transcript and notes in the Library (never read in again)"))
+    except Exception as e:
+        rows.append(_failed("meeting_archive", "searchable copies of its transcript and notes", e,
+                            "the meetings archive"))
     rows.append(_row("meeting_record", 0, "the meeting's own record", (),
                      [{"what": "the meeting's transcript and notes", "count": 1,
                        "reason": "the meeting's own record stays in Meetings, under its own protection; delete "
@@ -720,8 +911,21 @@ def stop_using_source(source: str) -> Dict[str, Any]:
         except Exception as e:
             rows = [_failed(kind, "source", e, "this source")]
     _log.info("stop-using-source: %s, %d stores", kind, len(rows))
-    return {"ok": True, "kind": "source", "source_kind": kind, "stores": rows,
-            "note": "What came from this source is no longer recalled or proposed; what is kept is listed below."}
+    return {"ok": True, "kind": "source", "source_kind": kind, "stores": rows, "note": _SOURCE_NOTES[kind]}
+
+
+#: The receipt's note for each kind of source: what stopping it reaches, and no more.
+_SOURCE_NOTES = {
+    "library": ("The document is forgotten from the Library and is never read in again; saved chats that cited "
+                "it were rewritten without it. The file on disk is yours and stays."),
+    "meeting": ("The meeting's suggestions, the facts and card lines it gave, its knowledge-graph facts and its "
+                "searchable copies in the Library are removed, and nothing new is taken from it. The meeting's "
+                "own record stays in Meetings."),
+    "web": ("Knowledge-graph facts learned only from this site during research are removed, and research "
+            "findings from it are not taken in again. Conversations that used its pages are not changed."),
+    "sender": ("What the mail triage learned about this sender is removed. Nothing else is changed: mail is not "
+               "linked to its sender in Friday's memory on this build."),
+}
 
 
 # ── show everywhere (read-only) ──────────────────────────────────────────────
@@ -733,28 +937,17 @@ def _unchecked(store: str, kind: str, e: BaseException) -> Dict[str, Any]:
     return dict(_where(store, 0, kind), unchecked=_scrubbed(e, "it could not be read"))
 
 
-def _turn_locations(m) -> Tuple[int, List[Dict[str, Any]]]:
-    from agent_friday.services import conversations as cv
-    from agent_friday.services import forget_derived as fd
-    from agent_friday.services import conversation_fts as fts
-    hits = fd._transcript_hits(m) if m else []
-    try:
-        gone = fts.forgotten_ids([str(msg.get("id")) for _c, msg in hits if msg.get("id")])
-    except Exception:
-        gone = set()
+def _turn_locations(m) -> Tuple[int, List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """(count, per-conversation locations, the candidate turns themselves)."""
+    cands = turn_candidates(m)
     per: Dict[str, int] = {}
-    for c, msg in hits:
-        if str(msg.get("id") or "") not in gone:
-            per[c] = per.get(c, 0) + 1
-    titles = {}
-    for c in per:
-        try:
-            titles[c] = str((cv.load(c) or {}).get("title") or "")[:80]
-        except Exception:
-            titles[c] = ""
+    titles: Dict[str, str] = {}
+    for c in cands:
+        per[c["conversation_id"]] = per.get(c["conversation_id"], 0) + 1
+        titles[c["conversation_id"]] = c["title"]
     locs = [{"conversation_id": c, "title": titles[c], "messages": n}
             for c, n in sorted(per.items(), key=lambda kv: -kv[1])]
-    return sum(per.values()), locs
+    return len(cands), locs, cands
 
 
 def _statement_report(q: str) -> List[Dict[str, Any]]:
@@ -809,9 +1002,10 @@ def _statement_report(q: str) -> List[Dict[str, Any]]:
         out.append(_unchecked("kg_facts", "knowledge-graph fact nodes", e))
     tm = TurnMatcher(q)
     try:
-        n, locs = _turn_locations(tm)
-        row = _where("conversation_turns", n, "conversation messages that state it (still recalled and searched)",
-                     locs)
+        n, locs, cands = _turn_locations(tm)
+        row = _where("conversation_turns", n, "your messages that may have said it (still recalled and searched; "
+                                              "Forget this removes only the ones you tick)", locs)
+        row["candidates"] = cands
         if not tm:
             row["note"] = tm.notes()[0]["reason"]
         out.append(row)

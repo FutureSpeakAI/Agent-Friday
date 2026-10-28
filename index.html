@@ -61097,6 +61097,7 @@ function LayaLearningPanel({s, save}) {
 function fridayMemoryJSON(path, opts) {
   return apiFetch(path, opts).then(r => r.json().catch(() => ({})).then(d => {
     d = d || {};
+    if (!r.ok && d.message) d.error = d.message;   // a coded refusal (a press in Friday's page) says why in words
     if (!r.ok && !d.error) d.error = 'That did not work.';
     return d;
   }));
@@ -61143,29 +61144,55 @@ function fridayKgDeleteEntity(node, after) {
   }).catch(e => { window.alert((e && e.message) || 'It was not deleted.'); return null; });
 }
 function ForgetThisControls({text, factId, onDone, disabled}) {
-  // "Show everywhere" (read-only) and "Forget this" for one statement: the confirmation
-  // shows what Show everywhere found before anything is removed.
+  // "Show everywhere" (read-only) and "Forget this" for one statement. Forget this first shows
+  // what Show everywhere found, with the owner's own messages that may have said it as a list
+  // to tick (close matches ticked); only the ticked messages leave recall and search.
   const E = React.createElement;
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ask, setAsk] = useState(null);
   const q = String(text || '').slice(0, 400);
   const where = () => fridayMemoryJSON('/api/memory/show-everywhere?q=' + encodeURIComponent(q));
   const look = () => { setBusy(true); where().then(d => setNote(fridayEverywhereSummary(d))).catch(e => setNote(e.message || 'Could not look that up.')).finally(() => setBusy(false)); };
+  const candidatesOf = w => ((((w && w.stores) || []).find(r => r.store === 'conversation_turns') || {}).candidates || []);
   const forget = () => {
     setBusy(true); setNote('');
     where().then(w => {
-      if (!window.confirm('Forget this everywhere?\n\n' + fridayEverywhereSummary(w) + '\n\n' + fridayName() + ' will not save or suggest it again unless you say it yourself. Messages that said it stay in your history but are no longer recalled.')) return null;
-      return fridayMemoryPost('/api/memory/forget-fact', factId ? {fact_id: factId, text: q, confirm: true} : {text: q, confirm: true});
-    }).then(d => {
-      if (!d) return;
-      if (!d.ok) { setNote(d.error || 'That did not work.'); return; }
-      if (onDone) onDone(d); else setNote(fridayForgetSummary(d));
-    }).catch(e => setNote(e.message || 'That did not work.')).finally(() => setBusy(false));
+      if (!w || !w.ok) { setNote(fridayEverywhereSummary(w)); return; }
+      const cands = candidatesOf(w);
+      const picked = {};
+      cands.forEach(c => { if (c.close) picked[c.message_id] = true; });
+      setAsk({summary: fridayEverywhereSummary(w), candidates: cands, picked: picked});
+    }).catch(e => setNote(e.message || 'Could not look that up.')).finally(() => setBusy(false));
   };
+  const confirmForget = () => {
+    const ids = ask ? ask.candidates.filter(c => ask.picked[c.message_id]).map(c => c.message_id) : [];
+    setBusy(true); setNote('');
+    fridayMemoryPost('/api/memory/forget-fact', factId ? {fact_id: factId, text: q, turn_ids: ids, confirm: true} : {text: q, turn_ids: ids, confirm: true})
+      .then(d => {
+        if (!d.ok) { setNote(d.error || 'That did not work.'); return; }
+        setAsk(null);
+        if (onDone) onDone(d); else setNote(fridayForgetSummary(d));
+      }).catch(e => setNote(e.message || 'That did not work.')).finally(() => setBusy(false));
+  };
+  const toggle = id => setAsk(a => a && Object.assign({}, a, {picked: Object.assign({}, a.picked, {[id]: !a.picked[id]})}));
   const b = (label, fn, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: busy || !!disabled, onClick: fn, key: key}, label);
+  const dim = {fontSize:11, lineHeight:1.5, color:'rgba(255,255,255,0.65)'};
+  const dialog = ask && E('div', {role:'dialog', 'aria-label':'Forget this everywhere?', 'data-forget-confirm':'1', key:'ask',
+      style:{flexBasis:'100%', marginTop:4, padding:8, borderRadius:6, background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)'}},
+    E('div', {style: dim}, 'Forget this everywhere? ' + ask.summary + ' ' + fridayName() + ' will not save or suggest it again unless you say it yourself.'),
+    ask.candidates.length > 0
+      ? E('div', {style:{marginTop:6}},
+          E('div', {style: dim}, 'Your messages that may have said it. Ticked ones stay in your history but are no longer recalled or searched; unticked ones are not changed.'),
+          ask.candidates.map(c => E('label', {key: c.message_id, 'data-forget-turn': c.message_id, style: Object.assign({}, dim, {display:'flex', gap:6, alignItems:'flex-start', marginTop:4, cursor:'pointer'})},
+            E('input', {type:'checkbox', checked: !!ask.picked[c.message_id], onChange: () => toggle(c.message_id), 'aria-label': 'Also stop recalling this message'}),
+            E('span', {style:{wordBreak:'break-word'}}, (c.title ? c.title + ': ' : '') + '“' + c.snippet + '”'))))
+      : E('div', {style: Object.assign({}, dim, {marginTop:6})}, 'None of your messages look like they said it, so no message is changed.'),
+    E('div', {style:{display:'flex', gap:6, marginTop:8}}, b('Forget', confirmForget, 'yes'), b('Cancel', () => setAsk(null), 'no')));
   return E('span', {'data-forget-this': '1', style:{display:'inline-flex', gap:6, flexWrap:'wrap', alignItems:'center'}},
     b('Show everywhere', look, 'where'),
     b('Forget this', forget, 'forget'),
+    dialog,
     note && E('span', {role:'status', key:'note', style:{fontSize:11, lineHeight:1.5, color:'rgba(255,255,255,0.55)', flexBasis:'100%'}}, note));
 }
 // End forget controls
@@ -61263,7 +61290,7 @@ function MemoryCardPanel({s, save}) {
     rep && E('div', null,
       file('user'), file('friday'),
       (facts || []).length > 0 && E('div', {style: head, 'data-user-facts': '1'}, 'Saved facts'),
-      (facts || []).length > 0 && E('div', {style: dim}, 'The older list of facts ' + fridayName() + ' kept about you. Delete removes one fact; Forget this removes the statement from every store and the messages that said it from recall.'),
+      (facts || []).length > 0 && E('div', {style: dim}, 'The older list of facts ' + fridayName() + ' kept about you. Delete removes one fact; Forget this removes the statement from every store, and the messages you tick from recall.'),
       (facts || []).slice(0, 50).map(f => E('div', {key: 'f' + f.fact_id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'})},
         E('div', {style:{flex:'1 1 200px', fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, f.text),
         btn('Delete', () => delFact(f), 'fdel'),
