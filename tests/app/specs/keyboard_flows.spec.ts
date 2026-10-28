@@ -3,8 +3,8 @@
 //
 // No mouse anywhere. Controls are reached with Tab (or the arrow keys inside a tab list) and found by the name a
 // screen reader announces: role plus accessible name. The flows: find the privacy settings; approve one waiting
-// action and deny another; stop a running task; find a receipt. (The first-run choices are radio groups driven by
-// keyboard in accessibility_keyboard.spec.ts.)
+// action and deny another; stop a running task; find a receipt. (The first-run choices are radio groups; AX1's
+// accessibility_keyboard.spec.ts drives them by keyboard.)
 //
 // SCRATCH server only (FRIDAY_BASE must be set; the live :3000 is refused). Every write is answered here and
 // recorded; nothing reaches a Friday.
@@ -13,7 +13,8 @@ import { bootApp, BASE } from '../harness';
 import { settle } from '../helpers/settle';
 
 test.skip(!BASE || /:3000(\/|$)/.test(BASE), 'set FRIDAY_BASE to a scratch server (never the live :3000)');
-test.use({ viewport: { width: 1440, height: 900 } });
+// Wide enough that the top bar keeps the Activity chip in the bar, not behind its overflow.
+test.use({ viewport: { width: 1920, height: 1080 } });
 
 const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 const now = Math.floor(Date.now() / 1000);
@@ -102,7 +103,8 @@ test('the privacy settings, found and opened by keyboard', async ({ page }) => {
   await page.keyboard.press('Enter');
   const rail = page.getByRole('navigation', { name: 'Settings sections' });
   await expect(rail).toBeVisible({ timeout: 30_000 });
-  await tabTo(page, 'the "Privacy & Data" section', f => f.name === 'Privacy & Data');
+  // Opening a window leaves focus on the dock: Tab wraps round the page to the window's section list.
+  await tabTo(page, 'the "Privacy & Data" section', f => f.name === 'Privacy & Data', 200);
   await page.keyboard.press('Enter');
   await expect(rail.getByRole('button', { name: 'Privacy & Data', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('heading', { name: 'Privacy & Data' }).first()).toBeVisible();
@@ -117,6 +119,9 @@ test('approve one waiting action and deny another, by keyboard, each heard insid
   await page.keyboard.press('Enter');
   await expect.poll(() => writes.filter(w => w.url === `/api/approvals/${A.approval_id}/decide`).map(w => w.body && w.body.decision))
     .toEqual(['approve']);
+  // The decided card leaves, and the other card's buttons are enabled again once the decision is answered.
+  await expect(page.getByRole('group', { name: A.title })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: B.title }).getByRole('button', { name: 'Deny' })).toBeEnabled();
   await tabTo(page, `"Deny" in "${B.title}"`, f => f.name === 'Deny' && f.group === B.title);
   await page.keyboard.press('Space');
   await expect.poll(() => writes.filter(w => w.url === `/api/approvals/${B.approval_id}/decide`).map(w => w.body && w.body.decision))
@@ -126,7 +131,14 @@ test('approve one waiting action and deny another, by keyboard, each heard insid
 
 async function openActivity(page: Page) {
   const chip = page.getByTestId('local-ai-queue-chip');
-  await expect(chip).toBeVisible({ timeout: 30_000 });
+  const more = page.getByRole('button', { name: 'More Friday controls' });
+  await expect(chip.or(more).first()).toBeVisible({ timeout: 30_000 });
+  if (!(await chip.isVisible())) {
+    // The top bar tucked the chip behind its overflow: open that by keyboard first.
+    await more.focus();
+    await page.keyboard.press('Enter');
+    await expect(chip).toBeVisible();
+  }
   await chip.focus();
   await page.keyboard.press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Activity' });
