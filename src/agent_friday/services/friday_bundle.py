@@ -178,6 +178,15 @@ class BundleError(RuntimeError):
     is for the owner."""
 
 
+class NotReestablished(BundleError):
+    """Resume after a restore waits: `blockers` (services/restore_reestablish)
+    says what this PC still needs (§27.6-2)."""
+
+    def __init__(self, blockers: list):
+        self.blockers = list(blockers)
+        super().__init__("Not resumed yet: " + " ".join(b["said"] for b in self.blockers))
+
+
 # ── Choosing the files ──────────────────────────────────────────────────────
 
 def category_of(rel: PurePosixPath) -> Optional[str]:
@@ -1011,10 +1020,17 @@ def restore_hold() -> Optional[str]:
 
 
 def resume_after_restore(by: str = "owner:ui") -> bool:
-    """The owner's re-attestation on this device: outward actions may go."""
+    """The owner's re-attestation on this device: outward actions may go, once
+    this PC's governance key checks the restored receipts and every remote
+    channel that is switched on has its sign-in here again (or is switched
+    off). Raises NotReestablished while anything is missing."""
     p = hold_path()
     if not p.exists():
         return False
+    from agent_friday.services import restore_reestablish
+    left = restore_reestablish.blockers()
+    if left:
+        raise NotReestablished(left)
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
