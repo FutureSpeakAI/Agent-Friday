@@ -539,17 +539,36 @@ def resolve_approval(approval_id: str) -> int:
         return 0
     key = "approval:%s" % approval_id
     closed = 0
+    scrubbed = 0
     with _LOCK:
         items = _load()
         for n in items:
-            if n.get("dedupe_key") == key and not n.get("dismissed"):
+            if n.get("dedupe_key") != key:
+                continue
+            if not n.get("dismissed"):
                 n["dismissed"] = True
                 n["read"] = True
                 n["resolved_at"] = _now_iso()
                 closed += 1
-        if closed:
+            # The stored notice keeps no words about the card once it is decided (owner ruling 5):
+            # a notice from before generic titles, or a memory proposal's text, is dropped here.
+            if _scrub_decided(n, approval_id):
+                scrubbed += 1
+        if closed or scrubbed:
             _save(items)
     return closed
+
+
+DECIDED_TITLE = "An approval was decided"
+
+
+def _scrub_decided(n: dict, approval_id: str) -> bool:
+    before = (n.get("title"), n.get("body"), n.get("meta"), n.get("chat_message"))
+    n["title"] = DECIDED_TITLE
+    n["body"] = ""
+    n["meta"] = {"approval_id": approval_id}
+    n.pop("chat_message", None)
+    return before != (n.get("title"), n.get("body"), n.get("meta"), n.get("chat_message"))
 
 
 def mute(kind: str, source: str) -> list:

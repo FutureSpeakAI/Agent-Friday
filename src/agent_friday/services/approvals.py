@@ -139,25 +139,77 @@ PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff",
                                   "web_task_plan", "web_task_plan_new_sites", "web_task_question"})
 
 
-def notice_title(rec: Dict[str, Any]) -> str:
-    """The words a card's tray notice or text-message offer may carry: for a card that repeats the
-    action's details, a generic line naming only the tool; otherwise the card's own title."""
+#: What kind of thing a waiting card is, in words a notice may carry (owner ruling 5, 2026-10-28):
+#: never the card's own title, which can name an event, a task, a recipient, a file or a page.
+_NOTICE_WORDS = {
+    "calendar": "A calendar change is waiting for you",
+    "task": "A task change is waiting for you",
+    "email": "An email is waiting for you",
+    "text": "A text message is waiting for you",
+    "call": "A phone call is waiting for you",
+    "file": "A file change is waiting for you",
+    "memory": "A memory change is waiting for you",
+    "web": "A website task is waiting for you",
+    "connection": "A connection is waiting for you",
+    "seat": "A switch to another device is waiting for you",
+}
+_NOTICE_FALLBACK = "An action is waiting for you"
+NOTICE_BODY = "Open Friday to see what it would do, and to approve or decline it."
+
+
+def notice_category(rec: Dict[str, Any]) -> str:
+    """calendar, task, email, text, call, file, memory, web, connection, seat, or "" (anything else),
+    from the card's kind and the tool, domain or handler on its payload. Never from its words."""
     rec = rec or {}
-    if rec.get("kind") in PRIVATE_DETAIL_KINDS:
-        if rec.get("kind") == "seat_handoff":
-            tool = "switch_seat"
-        else:
-            tool = str((rec.get("payload") or {}).get("tool") or "").strip() or "an action"
-        return "Friday needs your approval for %s" % tool
-    return str(rec.get("title") or "")
+    p = rec.get("payload") or {}
+    kind = str(rec.get("kind") or "")
+    tool = str(p.get("tool") or "").lower()
+    domain = str(p.get("domain") or "").lower()
+    handler = str(p.get("handler") or "").lower()
+    if kind == "seat_handoff":
+        return "seat"
+    if kind.startswith("web_task"):
+        return "web"
+    if kind == "connector_auth":
+        return "connection"
+    if handler == "phone_sms":
+        return "text"
+    if handler == "phone_call":
+        return "call"
+    if handler == "gmail_send":
+        return "email"
+    if domain.startswith("calendar") or "calendar" in tool or tool in ("book_slot", "hold_slots") \
+            or kind == "meeting_calendar":
+        return "calendar"
+    if domain.startswith("task") or tool.endswith("_task") or tool.endswith("_tasks") or "task_list" in tool:
+        return "task"
+    if domain.startswith("email") or domain.startswith("mail") or "email" in tool or tool.startswith("gmail"):
+        return "email"
+    if "sms" in tool or tool.startswith("text_"):
+        return "text"
+    if domain.startswith("file") or "file" in tool or kind in ("file_grant_request", "studio_file_change"):
+        return "file"
+    try:
+        from agent_friday.services import notification_policy as _pol
+        if _pol.is_memory_proposal(rec):
+            return "memory"
+    except Exception:
+        pass
+    if "memory" in tool or "memory" in kind:
+        return "memory"
+    return ""
+
+
+def notice_title(rec: Dict[str, Any]) -> str:
+    """The words a card's tray notice, text-message offer or expiry notice may carry: what KIND of
+    thing is waiting ("A calendar change is waiting for you"), never the card's own title, which
+    stays on the card in the app (owner ruling 5)."""
+    return _NOTICE_WORDS.get(notice_category(rec), _NOTICE_FALLBACK)
 
 
 def notice_body(rec: Dict[str, Any]) -> str:
-    """A notice's body: for a card that repeats the action's details, where to decide it, nothing more."""
-    rec = rec or {}
-    if rec.get("kind") in PRIVATE_DETAIL_KINDS:
-        return "Open Friday to see what it would do, and to approve or decline it."
-    return str(rec.get("description") or rec.get("action_description") or "")
+    """A notice's body: where to decide it, nothing more."""
+    return NOTICE_BODY
 
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # A website task's plan that adds a site to the owner's list
@@ -1133,7 +1185,8 @@ def _notify_expired_while_held(rec: Dict[str, Any]) -> None:
             title = "An off-the-record approval expired before you saw it"
             body = "It was waiting in your badge and its time ran out. Nothing was done."
         else:
-            title = "An approval expired before you saw it: %s" % (rec.get("title") or "an action")
+            title = "An approval expired before you saw it (%s)" % (
+                notice_title(rec)[:1].lower() + notice_title(rec)[1:]).replace(" is waiting for you", "")
             body = ("It was waiting in your badge while quiet hours, the hourly limit or Focus Assist "
                     "held it back, and its time ran out. Nothing was done. Ask again if you still want it.")
         _ne.push(title=title, body=body, priority="medium", source="approvals",
@@ -1341,7 +1394,7 @@ def _notify_pending(record: Dict[str, Any]) -> None:
     try:
         _ne.push(
             meta=meta,
-            title=f"Approval needed: {notice_title(record)}",
+            title=notice_title(record),
             body=body[:300],
             priority="medium", source="approvals", kind="approval_pending",
             # `target` is the shape the notification tray's click handler

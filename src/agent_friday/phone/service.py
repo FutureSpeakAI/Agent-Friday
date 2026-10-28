@@ -645,14 +645,10 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
             if isinstance((rec.get("payload") or {}).get("public_query"), dict):
                 continue                    # a search card is sent only from its Send button, where its text shows
             code, salt = _new_code(), secrets.token_hex(8)
-            if rec.get("kind") in ap.PRIVATE_DETAIL_KINDS:
-                # The card's title repeats what the action carries (a path, an address, guests, a
-                # task's text): the text names only the tool, and the details stay in the app.
-                title = ap.notice_title(rec)[:120]
-                line = title
-            else:
-                title = _gate_text((rec.get("title") or "an action")[:120])
-                line = "Friday needs your approval: %s" % title
+            # A card's title can name an event, a task, a recipient or a file: the text says only
+            # what kind of thing is waiting, and the details stay in the app (owner ruling 5).
+            title = ap.notice_title(rec)[:120]
+            line = title
             body = ("%s\nReply YES %s to approve or NO %s to "
                     "deny. Details are in the app." % (line, code, code))
             try:
@@ -664,8 +660,7 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
                 break
             st["codes"][aid] = {"salt": salt, "hash": _hash_code(code, salt),
                                 "expires": rec.get("expires_at") or (now + 86400),
-                                "title": (title if rec.get("kind") in ap.PRIVATE_DETAIL_KINDS
-                                          else (rec.get("title") or "")[:120])}
+                                "title": title}
             sent += 1
         for aid in list(st["codes"]):                 # decided elsewhere, or expired
             if aid not in live_ids or now > st["codes"][aid]["expires"]:

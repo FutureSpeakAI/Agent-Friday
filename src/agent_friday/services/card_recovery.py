@@ -142,7 +142,18 @@ def reconcile_at_boot(started_at: Optional[float] = None, *, announce: bool = Tr
 
 
 def _announce(cards: List[Dict[str, Any]]) -> None:
-    names = "; ".join(str(c.get("title") or c.get("kind") or c["approval_id"])[:80] for c in cards[:5])
+    # What kind of action each was, never its title (owner ruling 5): the cards themselves, in
+    # Approvals, say exactly what they were.
+    try:
+        from agent_friday.services import approvals as _ap
+        kinds = [_ap.notice_category(c) for c in cards[:5]]
+        names = "; ".join(("a %s" % {"calendar": "calendar change", "task": "task change", "email": "email",
+                                     "text": "text message", "call": "phone call", "file": "file change",
+                                     "memory": "memory change", "web": "website task",
+                                     "connection": "connection", "seat": "device switch"}.get(k, "an action"))
+                          .replace("a an ", "an ").replace("a email", "an email") for k in kinds)
+    except Exception:
+        names = "see Approvals"
     more = " and %d more" % (len(cards) - 5) if len(cards) > 5 else ""
     n = len(cards)
     body = ("Friday stopped while carrying out %s you approved: %s%s. Whether %s happened is not known, "
