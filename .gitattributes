@@ -18,3 +18,6 @@ static/vendor/** -text
 # Friday's core instruction files are hashed byte for byte (manifest.json);
 # never convert their line endings on checkout.
 src/agent_friday/resources/instructions/** -text
+
+# Decision-head files are pinned by sha256 in their manifest (services/decision_heads).
+src/agent_friday/resources/decision_heads/** -text

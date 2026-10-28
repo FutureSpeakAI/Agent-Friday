@@ -1,0 +1,10 @@
+{
+  "about": "Decision heads (specs/decision_models_STORM_2026-10-24.md section 6). Each row pins one head file by sha256 (LF text). Directions, allowed scorers and the abstain rule live in services/decision_heads.py, not here.",
+  "version": 1,
+  "heads": [
+    {"id": "triage.mail", "file": "triage.mail.json", "version": 1, "sha256": "93d85fa20e7d55ca905c8d02d9b70825e0d93759513611f5abc5002bfd256f71"},
+    {"id": "triage.news", "file": "triage.news.json", "version": 1, "sha256": "6de50fe7a11cdb22140d9c05718280897d2dfb87b05d25681cb0a87890070f73"},
+    {"id": "triage.notify", "file": "triage.notify.json", "version": 1, "sha256": "5ef547459955edc1c7935c0a3c7152a30c9dfddd8902566fe6fceb9de90fb12d"},
+    {"id": "triage.memory", "file": "triage.memory.json", "version": 1, "sha256": "7af897cdbb65d129aeaac3bf441a80150e91c4322e7c6a09881876484e869fe9"}
+  ]
+}

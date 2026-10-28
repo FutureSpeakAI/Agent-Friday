@@ -1,0 +1,14 @@
+{
+  "id": "triage.news",
+  "version": 1,
+  "preset": "triage.news",
+  "question_type": "choice",
+  "labels": ["hard", "analysis", "service", "promo", "other"],
+  "direction": "label_only",
+  "scorer": "series_one",
+  "thresholds": {"act": 0.50, "margin": 0.10, "abstain": 0.30},
+  "budget_ms": 400,
+  "calibration_ref": "triage.news",
+  "mode_default": "shadow",
+  "about": "News value reading. Shadow only in this build: it logs how its order differs from the regex order; the Front Page never uses it."
+}

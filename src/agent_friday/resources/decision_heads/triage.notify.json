@@ -1,0 +1,14 @@
+{
+  "id": "triage.notify",
+  "version": 1,
+  "preset": "triage.notify",
+  "question_type": "choice",
+  "labels": ["needs_you", "fyi", "other"],
+  "direction": "add_only",
+  "scorer": "series_one",
+  "thresholds": {"act": 0.70, "margin": 0.10, "abstain": 0.55},
+  "budget_ms": 400,
+  "calibration_ref": "triage.notify",
+  "mode_default": "shadow",
+  "about": "Tier for a notification kind the policy does not name. Escalate only: FYI to NEEDS_YOU, nothing else; NEEDS_YOU and approvals are decided before it is asked."
+}

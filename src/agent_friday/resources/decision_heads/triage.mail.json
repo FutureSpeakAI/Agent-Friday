@@ -1,0 +1,14 @@
+{
+  "id": "triage.mail",
+  "version": 1,
+  "preset": "triage.mail",
+  "question_type": "choice",
+  "labels": ["career", "finance", "futurespeak", "family", "subscriptions", "noise", "other"],
+  "direction": "label_only",
+  "scorer": "series_one",
+  "thresholds": {"act": 0.55, "margin": 0.10, "abstain": 0.30},
+  "budget_ms": 400,
+  "calibration_ref": "triage.mail",
+  "mode_default": "shadow",
+  "about": "Mail lane for a message no rule or learned prior matched. Acting (mode act) may only move it from the fallback lane to an actionable lane; never toward a quieter lane, never over a rule hit."
+}

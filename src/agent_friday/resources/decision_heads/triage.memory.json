@@ -1,0 +1,14 @@
+{
+  "id": "triage.memory",
+  "version": 1,
+  "preset": "triage.memory",
+  "question_type": "choice",
+  "labels": ["preference", "bio", "decision", "deadline", "none"],
+  "direction": "label_only",
+  "scorer": "series_one",
+  "thresholds": {"act": 0.60, "margin": 0.10, "abstain": 0.30},
+  "budget_ms": 400,
+  "calibration_ref": "triage.memory",
+  "mode_default": "shadow",
+  "about": "Memory-worthy sentence reader. It never writes the user model: candidates become PENDING proposals the owner reviews."
+}
