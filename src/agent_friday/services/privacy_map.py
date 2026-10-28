@@ -399,6 +399,12 @@ def _stores() -> List[dict]:
          "paths": ["tasks"], "enc": _enc_tasks, "ret": _ret_tasks,
          "controls": [_ctl("delete", "Task records", "Delete a task's record, or choose how long they are kept.",
                            nav={"workspace": "system"}), _EXPORT_ALL]},
+        {"key": "events", "name": "Event log",
+         "holds": "When Friday raised something that needs you or a safety notice, and what kind: "
+                  "ids and kinds only, never the words of the card.",
+         "paths": ["events"], "enc": _PLAIN,
+         "ret": lambda: "Kept until it passes 20 MB; then the older half is replaced.",
+         "controls": [_EXPORT_ALL, _ERASE_ALL]},
         {"key": "goals", "name": "Goals",
          "holds": "Goals you set, their steps and the signed record of what was done.",
          "paths": ["goals"], "enc": _PLAIN, "ret": lambda: _FOREVER,

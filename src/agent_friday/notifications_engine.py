@@ -405,6 +405,23 @@ def push(
             entry["read"] = True              # an FYI never bumps the badge
         if off:
             entry["off_record"] = True
+        elif approval or safety or t == _pol.NEEDS_YOU:
+            # NS-31.6-1 / 31.7-1: a critical event is recorded, in the one envelope, before the
+            # owner is told. Ids and kinds only: the words stay in the card. If the record cannot
+            # be written the owner is still told (a safety notice must reach him); the card says
+            # it was not recorded.
+            try:
+                from agent_friday.services import events as _ev
+                rec = _ev.record_critical(
+                    "notification." + ("approval" if approval else "safety" if safety else "needs_you"),
+                    source="notifications_engine",
+                    payload={"kind": kind, "source": source, "priority": priority, "tier": t,
+                             "place": place, "emitter": entry["emitter"], "safety_critical": safety},
+                    related_ids={"notification": entry["id"], "job": job,
+                                 "approval": (meta or {}).get("approval_id")})
+                entry["event_id"] = rec.id if rec else None
+            except Exception:
+                entry["event_id"] = None
         items.append(entry)
         _save(items, ledger)
         _notice_line(em, kind, place, not entry["held"] and (interrupt or t != _pol.NEEDS_YOU), safety)
