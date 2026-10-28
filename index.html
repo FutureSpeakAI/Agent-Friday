@@ -15775,6 +15775,91 @@ function FridayOffRecordElsewhere() {
     React.createElement('ul', { 'aria-label': FRIDAY_OFF_RECORD_ELSEWHERE_TITLE, style: { margin: '4px 0 0', paddingLeft: 16 } },
       (d.lines || []).map((t, i) => React.createElement('li', { key: i }, t))));
 }
+// Owner ruling 12 (2026-10-28): turning off the record on first shows the list
+// of services that keep their own records. Every switch that turns it on asks
+// here first and writes the setting only on "Go off the record"; turning it off
+// asks nothing. If the list cannot be read the dialog still opens and says so.
+const FRIDAY_OFF_RECORD_CONFIRM_TITLE = 'Go off the record?';
+const FRIDAY_OFF_RECORD_CONFIRM_LEAD = 'Off the record stops this conversation being kept or learned from on this PC. Services you connected still keep their own records:';
+const FRIDAY_OFF_RECORD_CONFIRM_UNREAD = "The list of connected services couldn't be read right now. Any service you connected can still keep its own records of what it is asked to do.";
+const FRIDAY_OFF_RECORD_CONFIRM_LIMIT = 'Off the record cannot delete what other services keep.';
+const FRIDAY_OFF_RECORD_CONFIRM_GO = 'Go off the record';
+const FRIDAY_OFF_RECORD_CONFIRM_CANCEL = 'Cancel';
+// Resolves true only when the owner presses "Go off the record".
+function fridayConfirmOffRecord() {
+  return new Promise(resolve => {
+    const detail = { resolve: ok => resolve(!!ok), handled: false };
+    try { window.dispatchEvent(new CustomEvent('friday:off-record-confirm', { detail })); } catch (e) {}
+    // No dialog host on this page: ask plainly rather than skip the question.
+    if (!detail.handled) resolve(!!window.confirm(FRIDAY_OFF_RECORD_CONFIRM_LEAD.replace(/:$/, '.') + ' ' + FRIDAY_OFF_RECORD_CONFIRM_LIMIT));
+  });
+}
+// The switch handler: on asks first; off is written at once.
+function fridayToggleOffRecord(isOn, write) {
+  if (isOn) { write({ off_record: false }); return; }
+  fridayConfirmOffRecord().then(ok => { if (ok) write({ off_record: true }); });
+}
+function FridayOffRecordConfirmHost() {
+  const [req, setReq] = useState(null);
+  const [d, setD] = useState(null);
+  const ref = useRef(null), goRef = useRef(null), cancelRef = useRef(null), seq = useRef(0);
+  useEffect(() => {
+    const on = e => {
+      const det = e.detail || {};
+      det.handled = true;
+      const n = ++seq.current;
+      setD(null);
+      setReq({ resolve: typeof det.resolve === 'function' ? det.resolve : () => {}, back: document.activeElement });
+      apiFetch('/api/off-record/external').then(r => r.json())
+        .then(j => { if (seq.current === n) setD(j && j.ok ? j : { failed: true }); })
+        .catch(() => { if (seq.current === n) setD({ failed: true }); });
+    };
+    window.addEventListener('friday:off-record-confirm', on);
+    return () => window.removeEventListener('friday:off-record-confirm', on);
+  }, []);
+  useEffect(() => { if (req && ref.current) ref.current.focus(); }, [req]);
+  if (!req) return null;
+  const finish = ok => {
+    const r = req;
+    seq.current++;
+    setReq(null); setD(null);
+    try { if (r.back && r.back.focus && document.contains(r.back)) r.back.focus(); } catch (_) {}
+    r.resolve(!!ok);
+  };
+  const cancel = () => finish(false);
+  const onKey = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
+    else if (e.key === 'Tab') {
+      const a = goRef.current, b = cancelRef.current, at = document.activeElement;
+      const order = [b, a].filter(x => x && !x.disabled);
+      if (!order.length) return;
+      e.preventDefault();
+      const i = order.indexOf(at);
+      order[(i < 0 ? 0 : (i + (e.shiftKey ? order.length - 1 : 1)) % order.length)].focus();
+    }
+  };
+  const E = React.createElement;
+  const failed = !!(d && (d.failed || d.readable === false));
+  const lines = d && !d.failed ? (d.lines || []).filter(t => t !== d.always) : [];
+  return E('div', { className: 'keys-sheet-overlay key-form-overlay', onClick: cancel },
+    E('div', { ref, className: 'keys-sheet key-form-sheet', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'off-record-confirm-title', 'aria-describedby': 'off-record-confirm-lead',
+      tabIndex: -1, 'data-testid': 'off-record-confirm', onClick: e => e.stopPropagation(), onKeyDown: onKey },
+      E('div', { className: 'keys-sheet-head' },
+        E('h2', { id: 'off-record-confirm-title' }, FRIDAY_OFF_RECORD_CONFIRM_TITLE)),
+      E('div', { className: 'key-form-body' },
+        E('p', { id: 'off-record-confirm-lead', className: 'sc-sub' }, FRIDAY_OFF_RECORD_CONFIRM_LEAD),
+        !d ? E('p', { className: 'sc-sub', role: 'status' }, 'Reading which services are connected…')
+          : E(React.Fragment, null,
+            failed && E('p', { className: 'sc-sub', role: 'alert', 'data-off-record-unread': 'true' }, FRIDAY_OFF_RECORD_CONFIRM_UNREAD),
+            !d.failed && d.short && E('p', { className: 'sc-sub', 'data-off-record-short': 'true' }, d.short),
+            lines.length > 0 && E('ul', { 'aria-label': FRIDAY_OFF_RECORD_ELSEWHERE_TITLE, style: { margin: '0 0 12px', paddingLeft: 18, lineHeight: 1.5 } },
+              lines.map((t, i) => E('li', { key: i }, t)))),
+        E('p', { className: 'sc-sub', 'data-off-record-limit': 'true' }, E('strong', null, FRIDAY_OFF_RECORD_CONFIRM_LIMIT)),
+        E('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          E('button', { ref: cancelRef, type: 'button', className: 'sc-btn quiet', onClick: cancel }, FRIDAY_OFF_RECORD_CONFIRM_CANCEL),
+          E('button', { ref: goRef, type: 'button', className: 'sc-btn', disabled: !d, onClick: () => finish(true) }, FRIDAY_OFF_RECORD_CONFIRM_GO)))));
+}
 function FridayChatInput({ value, onChange, onSend, placeholder, disabled, inputRef, className, style, maxHeight, autoFocus }) {
   const offRecord = useFridayOffRecord();
   if (offRecord) placeholder = FRIDAY_OFF_RECORD_TEXT;
@@ -60327,9 +60412,7 @@ function SettingsTabPrivacy({
   }), /*#__PURE__*/React.createElement(StToggle, {
     label: "Go off the record",
     value: !!s.off_record,
-    onChange: () => save({
-      off_record: !s.off_record
-    }),
+    onChange: () => fridayToggleOffRecord(!!s.off_record, save),
     desc: "Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."
   }), fridayOffRecordFrom(s) && React.createElement(FridayOffRecordElsewhere, null), /*#__PURE__*/React.createElement(StToggle, {
     label: "Artifact panel beside the chat",
@@ -74447,9 +74530,7 @@ function App() {
       })),
   /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
-    onClick: () => saveAgentSettings({
-      off_record: !agentSettings.off_record
-    })
+    onClick: () => fridayToggleOffRecord(!!agentSettings.off_record, saveAgentSettings)
   }, /*#__PURE__*/React.createElement("span", {
     className: "settings-toggle-label",
     style: {
@@ -74758,7 +74839,7 @@ function App() {
     const sw = wsInfo[STANDALONE_WS];
     return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
       value: { map: wsCustMap, setCust }
-    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
+    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), React.createElement(FridayOffRecordConfirmHost, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
       /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || fridayBundleBody(sw.id)))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',
@@ -74769,7 +74850,7 @@ function App() {
       map: wsCustMap,
       setCust
     }
-  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), /*#__PURE__*/React.createElement(CloudSlicingCard, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
+  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), React.createElement(FridayOffRecordConfirmHost, null), /*#__PURE__*/React.createElement(CloudSlicingCard, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
     // The server stores the passphrase as the chat begins; this page does
     // not keep it.
     onDone: seed => {

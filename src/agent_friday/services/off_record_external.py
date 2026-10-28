@@ -344,3 +344,39 @@ def view(items: Optional[Iterable[dict]] = None, settings: Optional[dict] = None
             "short": (SHORT_PREFIX + ", ".join(names)) if names else "",
             "lines": [r["line"] for r in records], "always": ALWAYS,
             "readable": not any(r["key"] == "unreadable" for r in records)}
+
+
+#: Said first when a write that is not the on-screen switch turns it on.
+TURNED_ON = "You're off the record."
+
+
+def turned_on(before: Optional[dict], after: Optional[dict]) -> bool:
+    """True when this change switched off the record from off to on."""
+    return (not bool((before or {}).get("off_record"))) and bool((after or {}).get("off_record"))
+
+
+def reply(before: Optional[dict], after: Optional[dict], items: Optional[Iterable[dict]] = None,
+          tunnel: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+    """Owner ruling 12 (2026-10-28): turning off the record on first shows the
+    services that keep their own records. On screen that is a confirm before
+    the setting is written (index.html, FridayOffRecordConfirmHost); a write
+    from anywhere else (the settings API a phone or script calls) is not
+    blocked, but what it gets back says the same short line and the line about
+    what off the record cannot delete. None when off the record was not just
+    turned on. Never raises; an unreadable list is said, never skipped."""
+    if not turned_on(before, after):
+        return None
+    try:
+        v = view(items, after or {}, tunnel)
+    except Exception:
+        v = {"short": "", "lines": [UNREADABLE, ALWAYS], "readable": False}
+    short = str(v.get("short") or "")
+    readable = bool(v.get("readable"))
+    parts = [TURNED_ON]
+    if short:
+        parts.append(short + ".")
+    if not readable:
+        parts.append(UNREADABLE)
+    parts.append(ALWAYS)
+    return {"said": " ".join(parts), "short": short, "lines": list(v.get("lines") or []),
+            "readable": readable, "always": ALWAYS}
