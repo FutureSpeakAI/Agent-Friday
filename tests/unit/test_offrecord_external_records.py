@@ -290,3 +290,125 @@ def test_the_shared_component_and_map_section_are_identical_in_both_copies():
         i = t.index("d.off_record && d.off_record.external && E('h4'")
         return t[i:t.index("\n", t.index("d.off_record && d.off_record.external && E('ul'", i))]
     assert map_section(a) == map_section(b)
+
+
+# ── ruling 12: turning it on first shows the list, then writes ───────────────
+
+def _confirm(text):
+    start = text.index("const FRIDAY_OFF_RECORD_CONFIRM_TITLE")
+    end = text.index("\n}\n", text.index("function FridayOffRecordConfirmHost(")) + 3
+    return text[start:end]
+
+
+def _fn(text, name):
+    i = text.index("function %s(" % name)
+    return text[i:text.index("\n}\n", i) + 3]
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_turning_on_opens_the_confirm_with_the_list_and_both_buttons(source):
+    comp = _confirm(_src(source))
+    host = _fn(comp, "FridayOffRecordConfirmHost")
+    # The full list, read from the route, with its short line.
+    assert "apiFetch('/api/off-record/external')" in host
+    assert "d.short" in host and "d.lines" in host
+    # The fixed line and the two real, labelled buttons.
+    assert "const FRIDAY_OFF_RECORD_CONFIRM_LIMIT = 'Off the record cannot delete what other services keep.';" in comp
+    assert "FRIDAY_OFF_RECORD_CONFIRM_LIMIT" in host
+    assert "const FRIDAY_OFF_RECORD_CONFIRM_GO = 'Go off the record';" in comp
+    assert "const FRIDAY_OFF_RECORD_CONFIRM_CANCEL = 'Cancel';" in comp
+    assert host.count("E('button', { ref:") == 2 and host.count("type: 'button'") == 2
+    assert "FRIDAY_OFF_RECORD_CONFIRM_GO)" in host and "FRIDAY_OFF_RECORD_CONFIRM_CANCEL)" in host
+    # A real dialog, in the repo's sheet pattern, that takes the focus.
+    assert "role: 'dialog'" in host and "'aria-modal': 'true'" in host
+    assert "'aria-labelledby': 'off-record-confirm-title'" in host
+    assert "className: 'keys-sheet-overlay key-form-overlay'" in host
+    assert "ref.current.focus()" in host
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_a_list_that_cannot_be_read_is_said_never_skipped(source):
+    comp = _confirm(_src(source))
+    host = _fn(comp, "FridayOffRecordConfirmHost")
+    assert "FRIDAY_OFF_RECORD_CONFIRM_UNREAD = \"The list of connected services couldn't be read" in comp
+    # A failed fetch or a bad answer still opens the dialog, saying so.
+    assert ".catch(() => { if (seq.current === n) setD({ failed: true }); })" in host
+    assert "j && j.ok ? j : { failed: true }" in host
+    assert "failed && E('p'" in host and "FRIDAY_OFF_RECORD_CONFIRM_UNREAD" in host
+    # The request is shown before the list arrives (the dialog never waits to open).
+    assert "setReq({" in host and host.index("setReq({") < host.index("apiFetch(")
+    # No host on the page: ask plainly, never write unasked.
+    ask = _fn(comp, "fridayConfirmOffRecord")
+    assert "if (!detail.handled) resolve(!!window.confirm(" in ask
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_escape_and_cancel_resolve_false_and_only_go_resolves_true(source):
+    host = _fn(_confirm(_src(source)), "FridayOffRecordConfirmHost")
+    assert "const cancel = () => finish(false);" in host
+    assert "if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }" in host
+    assert "onClick: cancel }, FRIDAY_OFF_RECORD_CONFIRM_CANCEL)" in host
+    assert "onClick: () => finish(true) }, FRIDAY_OFF_RECORD_CONFIRM_GO)" in host
+    assert host.count("finish(true)") == 1
+    assert "r.resolve(!!ok)" in host
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_the_switch_asks_before_writing_on_and_writes_off_at_once(source):
+    text = _src(source)
+    toggle = _fn(text, "fridayToggleOffRecord")
+    # Off: written at once. On: written only when the confirm says yes.
+    assert "if (isOn) { write({ off_record: false }); return; }" in toggle
+    assert "fridayConfirmOffRecord().then(ok => { if (ok) write({ off_record: true }); });" in toggle
+    assert toggle.count("off_record: true") == 1
+    # No switch writes off_record directly any more: both go through the confirm.
+    assert not re.search(r"off_record\s*:\s*!", text)
+    if source == "index.html":
+        assert "onChange: () => fridayToggleOffRecord(!!s.off_record, save)," in text
+        assert "onClick: () => fridayToggleOffRecord(!!agentSettings.off_record, saveAgentSettings)" in text
+        assert text.count("React.createElement(FridayOffRecordConfirmHost, null)") == 2
+    else:
+        assert "onChange={()=>fridayToggleOffRecord(!!s.off_record,save)}" in text
+        assert "onClick={()=>fridayToggleOffRecord(!!agentSettings.off_record,saveAgentSettings)}" in text
+        assert text.count("<FridayOffRecordConfirmHost/>") == 2
+
+
+def test_the_confirm_is_identical_in_both_copies():
+    a, b = (_src(s) for s in SOURCES)
+    assert _confirm(a) == _confirm(b)
+
+
+# ── a write that is not the on-screen switch: the reply says the list ───────
+
+def test_a_write_that_turns_it_on_says_the_short_line_and_the_limit():
+    out = ext.reply({"off_record": False}, dict(CLOUD, off_record=True), _everything()[:2], tunnel=False)
+    assert out is not None
+    assert out["short"].startswith(ext.SHORT_PREFIX) and "Gmail" in out["short"]
+    assert out["said"].startswith(ext.TURNED_ON)
+    assert out["short"] in out["said"] and out["said"].endswith(ext.ALWAYS)
+    assert out["lines"][-1] == ext.ALWAYS and out["readable"] is True
+    assert SECRET not in repr(out) and SID not in repr(out)
+
+
+def test_no_reply_unless_it_was_just_turned_on():
+    on = dict(CLOUD, off_record=True)
+    assert ext.reply(on, on, []) is None                       # already on
+    assert ext.reply(on, {"off_record": False}, []) is None    # turned off
+    assert ext.reply({}, {"off_record": False}, []) is None
+
+
+def test_an_unreadable_list_is_said_in_the_reply(monkeypatch):
+    monkeypatch.setattr(ext, "_items", lambda: None)
+    out = ext.reply({}, dict(CLOUD, off_record=True), None, tunnel=False)
+    assert out["readable"] is False
+    assert ext.UNREADABLE in out["said"] and out["said"].endswith(ext.ALWAYS)
+
+
+def test_the_settings_route_adds_the_reply_without_blocking_the_write():
+    src = (REPO / "src/agent_friday/routes/core_routes.py").read_text(encoding="utf-8-sig")
+    body = src[src.index("def api_settings("):]
+    body = body[:body.index("\n@core_bp.route", 1)]
+    assert "new_settings.get('off_record')" in body
+    assert body.index("_off_before = dict(_load_settings() or {})") < body.index("merged = _save_settings(")
+    assert "_ore.reply(_off_before, merged)" in body
+    assert '_out["off_record_external"] = _said' in body
