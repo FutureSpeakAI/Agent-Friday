@@ -464,6 +464,7 @@
     const [notice, setNotice] = useState('');
     const [error, setError] = useState('');
     const [approvals, setApprovals] = useState([]);
+    const [leftovers, setLeftovers] = useState([]);
     const [homeClock, setHomeClock] = useState(() => Date.now());
     const [files, setFiles] = useState({ loading: false, error: '', items: [] });
     const [draft, setDraft] = useState('');
@@ -533,6 +534,23 @@
       if (!window.fridayApprovalFeed) return undefined;
       return window.fridayApprovalFeed.subscribe(setApprovals);
     }, []);
+    useEffect(() => {
+      // What an upgrade or a restore could not sort out (services/upgrade_review.py):
+      // a Home card until the owner marks each item sorted on the Doctor page.
+      if (view !== 'day' || !visible || p.enabled === false) return undefined;
+      let stopped = false;
+      const load = () => {
+        if (document.hidden) return;
+        api('/api/doctor/after-upgrade', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(d => {
+          if (stopped) return;
+          const items = d && d.status === 'ok' && Array.isArray(d.items) ? d.items : [];
+          setLeftovers(items.filter(x => x && typeof x.said === 'string').slice(0, 5));
+        }).catch(() => {});
+      };
+      load(); const timer = setInterval(load, 60000);
+      window.addEventListener('focus', load); window.addEventListener('friday:home-refresh', load);
+      return () => { stopped = true; clearInterval(timer); window.removeEventListener('focus', load); window.removeEventListener('friday:home-refresh', load); };
+    }, [view, visible, p.enabled]);
     useEffect(() => {
       if (view !== 'day' || !visible || p.enabled === false) return undefined;
       const tick = () => { if (!document.hidden) setHomeClock(Date.now()); };
@@ -725,6 +743,10 @@
           h('h1', null, greeting), h('p', { className: 'fx-meta' }, 'Your space. Your work. Your ' + agentName + '.')),
           h('div', { className: 'fx-day-links' }, action('Calendar', () => openWorkspace('calendar'), { className: 'fx-action-secondary' }), action('Avatars & depth', () => window.FridayHolographicWorkspace?.open(), { className: 'fx-action-secondary' }),
             approvals.length > 0 && action(approvals.length + ' decision' + (approvals.length === 1 ? '' : 's') + ' to review', () => { go('activity'); setActivityTab('needs'); }, { className: 'fx-attention-action' }))),
+        leftovers.length > 0 && h('section', { className: 'fx-leftovers', 'aria-labelledby': 'fx-leftovers-h' },
+          h('h2', { id: 'fx-leftovers-h' }, 'After an upgrade or a restore'),
+          h('ul', null, leftovers.map(it => h('li', { key: it.id }, it.said + (it.todo ? ' ' + it.todo : '')))),
+          h('a', { className: 'fx-action-secondary', href: '/doctor#afterupgrade', target: '_blank', rel: 'noopener' }, 'Open the Doctor to sort these out')),
         h(HomeCards, { api, active: visible && p.enabled !== false, onNavigate: openWorkspace, onView: go, workspaces, clock: homeClock, draftCache: homeCardEditor, privacyContext: homeCardPrivacy, mutationContext: homeCardMutation }),
         !p.chatOpen && h('form',{className:'fx-day-composer',onSubmit:prepare},
           h('textarea',{value:homePrompt,onChange:e=>setHomePrompt(e.target.value),placeholder:'Ask, make, or pick up where you left off…','aria-label':'Ask '+agentName,rows:3,disabled:preparing}),
