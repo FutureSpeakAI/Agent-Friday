@@ -12,8 +12,8 @@ type Shape = { radius: string; transform: string; image: string; filled: boolean
 test('each kind of state has its own shape, not just its own colour', async ({ page }) => {
   await bootApp(page);
   const shapes = await page.evaluate(() => {
+    // A plain host: inside a real container (the dock, say) other rules would add their own transforms.
     const host = document.createElement('div');
-    host.className = 'dock-btn';
     document.body.appendChild(host);
     const groups: Record<string, string[][]> = {
       'fr-state': [['ok'], ['busy'], ['warn'], ['bad'], ['off']],
@@ -59,5 +59,5 @@ test('the camera light says its state in words too', async ({ page }) => {
   await bootApp(page);
   const cam = page.locator('#camera-indicator');
   await expect(cam).toHaveAttribute('role', 'img');
-  await expect(cam).toHaveAttribute('aria-label', /^Camera (off|on)/);
+  await expect(cam).toHaveAttribute('aria-label', /^Camera (off|on|not live)/);
 });

@@ -4701,7 +4701,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             function render() {
                 const ind = document.getElementById('camera-indicator');
-                if (ind) { ind.dataset.status = state.status; const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : 'Camera off'; ind.setAttribute('aria-label', lab); ind.title = lab; }
+                if (ind) { ind.dataset.status = state.status; const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab; }
                 const s = document.getElementById('camera-status');
                 if (!s) return;
                 const show = state.wanted && state.status !== 'live' && state.status !== 'off';
@@ -5097,7 +5097,7 @@ window.addEventListener('DOMContentLoaded',function(){
             if (!ind) return;
             if (active && isHologramMode) { ind.classList.add('holo-active'); }
             else { ind.classList.remove('holo-active'); }
-            const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : 'Camera off'; ind.setAttribute('aria-label', lab); ind.title = lab;
+            const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab;
         }
 
         // --- AESTHETIC CONFIGURATION ---

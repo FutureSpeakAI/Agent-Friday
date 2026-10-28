@@ -54,7 +54,7 @@ def test_the_camera_light_has_a_name_that_follows_it():
         s = _t(page)
         assert '<div id="camera-indicator" role="img" aria-label="Camera off" title="Camera off"></div>' in s, page.name
     s = _t(INDEX)
-    assert s.count("'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : 'Camera off'") == 2
+    assert s.count("'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'") == 2
 
 
 @pytest.mark.parametrize("page", [INDEX, APP], ids=lambda p: p.name)
