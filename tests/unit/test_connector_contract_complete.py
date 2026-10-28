@@ -100,7 +100,8 @@ def test_every_google_host_the_code_calls_is_declared():
 
 
 def test_every_google_api_client_built_is_declared():
-    declared = cc.GOOGLE_API_CLIENTS
+    declared = getattr(cc, "GOOGLE_API_CLIENTS", None)
+    assert declared, "the contract does not declare which Google API clients Friday builds"
     for p, text in _py_sources():
         for svc, ver in re.findall(r"\bbuild\(\s*[\"']([a-z0-9]+)[\"']\s*,\s*[\"'](v\d+)[\"']", text):
             assert declared.get(svc) == ver, "%s %s built in %s but not declared" % (svc, ver, p.name)
