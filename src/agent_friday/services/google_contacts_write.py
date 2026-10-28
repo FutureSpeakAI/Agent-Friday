@@ -112,15 +112,22 @@ def _create_key(account_id: str, body: dict):
     import json
     scope = None
     try:
-        from agent_friday.services import turn_plan
-        scope = turn_plan.current_turn_id()
+        # A workflow run first: a step retried after a timeout gets a new task (and turn) id,
+        # and is still the same create.
+        from agent_friday.services import agent as _ag
+        scope = (_ag._CURRENT_TOOL_CONTEXT.get() or {}).get("run_id")
     except Exception:
         scope = None
     if not scope:
         try:
+            from agent_friday.services import turn_plan
+            scope = turn_plan.current_turn_id()
+        except Exception:
+            scope = None
+    if not scope:
+        try:
             from agent_friday.services import agent as _ag
-            ctx = _ag._CURRENT_TOOL_CONTEXT.get() or {}
-            scope = ctx.get("run_id") or ctx.get("task_id")
+            scope = (_ag._CURRENT_TOOL_CONTEXT.get() or {}).get("task_id")
         except Exception:
             scope = None
     if not scope:
@@ -185,9 +192,10 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
         if prior.get("resource_name"):
             return {"ok": True, "action": "already_saved", "account": rec.get("email"),
                     "resource_name": prior["resource_name"],
-                    "note": "This contact was already saved a moment ago; no second copy was made."}
+                    "note": ("This contact was already saved earlier in this turn or task; no second copy "
+                             "was made.")}
         return {"ok": False, "unconfirmed": True,
-                "error": ("A moment ago Google did not confirm saving this same contact, so it may "
+                "error": ("Earlier in this turn or task Google did not confirm saving this same contact, so it may "
                           "already be in Google Contacts. It was not saved again: check Contacts first.")}
     try:
         if resource_name:
@@ -208,13 +216,13 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
     except Exception as e:
         from agent_friday.services import connector_outcome as _co
         try:
-            from agent_friday.services import egress_gate as _eg
-            if _eg.result_for_error(e) != "failed":
-                _remember(key, None)       # the answer was lost after it left: it may exist
-            else:
-                _release(key)
+            kind = _co.classify(e)
         except Exception:
-            _remember(key, None)
+            kind = "failed"
+        if kind in ("unconfirmed", "failed"):
+            _remember(key, None)           # the request may have reached Google: it may exist
+        else:
+            _release(key)                  # refused, unreachable, revoked, busy: nothing was made
         return {"ok": False, "error": _co.failed(e, "Google Contacts", account_id=rec["id"])}
     from agent_friday.services import connector_outcome as _co
     if not _co.confirmed(out, "resourceName"):
