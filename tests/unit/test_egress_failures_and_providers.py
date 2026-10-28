@@ -119,7 +119,7 @@ def test_background_work_is_told_what_was_sent_while_the_check_was_starting(monk
         def push(self, **kw):
             pushed.append(kw)
     monkeypatch.setattr(notifications, "_notif_engine", _Engine(), raising=False)
-    monkeypatch.setitem(sc._BG_NOTIFIED_AT, 0, 0.0)
+    monkeypatch.setattr(sc, "_BG_NOTIFIED_AT", [0.0])
     sc._record_layer3_hold("synthetic text")
     assert pushed, "a hold outside a turn is never silent"
     body = pushed[-1]["body"]
