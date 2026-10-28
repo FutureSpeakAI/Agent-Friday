@@ -551,7 +551,10 @@ def _preset_triage(ctx: Ctx, spec: dict) -> dict:
     if not out:
         return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
                 "why": "the reading model or this head's prototypes are not ready"}
-    label, p = triage_heads.argmax(out[0])
+    # The head's decision head (services/decision_heads) supplies the abstain rule:
+    # a reading below its abstain threshold is "other" (or "none"), never a guess.
+    decide = getattr(triage_heads, "decide", None)
+    label, p = decide(head, out[0]) if callable(decide) else triage_heads.argmax(out[0])
     cal = _calibrated_triage(ctx, head, texts, ctx.opts.get("allowed"))
     return {"answer": _answer(label, p, (cal or {}).get("set")), "layer": "t1", "verdict": None, "native": out,
             "calibrated": cal, "why": "nearest prototype over the %s head's seeds" % head}

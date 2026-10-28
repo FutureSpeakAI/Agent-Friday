@@ -339,7 +339,23 @@ def classify(
 
     positive = {k: v for k, v in scores.items() if v > 0}
     if not positive:
-        return _fallback_lane(), 0.0, ["no rule or learned signal matched"]
+        fallback = _fallback_lane()
+        if not scores and not bulk:
+            # Nothing matched at all (not even a penalised rule hit), and it is not
+            # bulk or automated mail: the local triage head may move the message to
+            # an important lane. It never sees a message a rule or a learned sender
+            # spoke for, and never lifts automated mail the bulk penalty holds down.
+            try:
+                from agent_friday.services import triage_heads
+                head_hit = triage_heads.mail_fallback(
+                    msg.get("subject"), msg.get("snippet"), fallback=fallback,
+                    lane_ids=lane_ids(),
+                    actionable=[l["id"] for l in lanes() if l.get("actionable")])
+            except Exception:
+                head_hit = None
+            if head_hit:
+                return head_hit
+        return fallback, 0.0, ["no rule or learned signal matched"]
 
     ranked = sorted(positive.items(), key=lambda kv: kv[1], reverse=True)
     best_id, best_score = ranked[0]
