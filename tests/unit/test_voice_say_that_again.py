@@ -37,7 +37,7 @@ def _quiet(monkeypatch):
     "say that again", "Say that again, please.", "Sorry, could you say that again?", "repeat that",
     "Can you repeat that?", "what did you say?", "What did you just say", "pardon?", "Pardon me?",
     "come again?", "I didn't catch that", "Sorry, I didn't hear that.", "Friday, repeat that please",
-    "huh, what was that?", "say it again", "repeat the last thing you said", "once more",
+    "huh, what was that?", "say it again", "repeat the last thing you said",
     "Could you say that one more time?",
 ])
 def test_repeat_requests(said):
@@ -48,7 +48,7 @@ def test_repeat_requests(said):
     "what did you say about the budget?", "what did I say yesterday?", "repeat the report every Monday",
     "say hello to Priya", "that again was wrong", "can you say that in French?",
     "what did we say about Tuesday's meeting", "send that again", "", "again",
-    "please repeat that sentence to Mum in an email",
+    "please repeat that sentence to Mum in an email", "OK, repeat it", "once more", "repeat it weekly",
 ])
 def test_not_repeat_requests(said):
     assert not _vr().is_repeat_request(said), said
@@ -102,7 +102,7 @@ def test_a_repeat_is_not_stored_or_summarised_again():
     assert mouth.spoken == ["Pay the gas bill of 84 pounds?"] * 2
 
 
-def test_the_phone_says_its_last_line_again(phone_home, quiet):
+def test_the_phone_says_its_last_line_again(phone_home, quiet, monkeypatch):
     import array
     from agent_friday.phone import live_call as lc
     from tests.unit.test_phone_live_call import FakeWS, OneShotVAD
@@ -121,6 +121,9 @@ def test_the_phone_says_its_last_line_again(phone_home, quiet):
 
     eng = Engine()
     calls = []
+    gated = []
+    real_gate = lc._gate_spoken
+    monkeypatch.setattr(lc, "_gate_spoken", lambda t: gated.append(t) or real_gate(t))
     bridge = lc.CallBridge(FakeWS(), engine=eng, vad=OneShotVAD(), threaded=False,
                            agent=lambda h: calls.append(1) or "It's half past two.")
     bridge._turn(b"\x00" * 3200)
@@ -129,3 +132,15 @@ def test_the_phone_says_its_last_line_again(phone_home, quiet):
     assert eng.said[-1] == eng.said[-2]
     assert bridge.history[-1]["who"] == "friday"
     assert bridge.history[-1]["text"] == bridge.history[-3]["text"]
+    assert len(gated) == 2 and gated[0] == gated[1], "the repeated words go through the gate again"
+
+
+def test_a_repeat_never_becomes_the_thing_to_repeat():
+    """What a repeat says (cut short by a barge, or "I haven't said anything yet")
+    is never stored as her last words: the next repeat still has the whole reply."""
+    mouth = tvs._Mouth()
+    s, _frames = tvs._session(["unused"], mouth=mouth, stream=False)
+    s.start()
+    s.generate = lambda *a: pytest.fail("a repeat must not ask the model")
+    s.run_turn("repeat that")
+    assert s.last_spoken == ""

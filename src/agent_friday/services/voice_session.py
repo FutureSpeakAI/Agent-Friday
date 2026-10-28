@@ -903,7 +903,8 @@ class VoiceSession:
                 reply = " ".join(turn["spoken"])
             heard = (" ".join(c for c in turn["spoken"] if c != FILLER_LINE)
                      if turn["cancel"].is_set() else reply)
-            if (heard or "").strip():
+            # A repeat cut short leaves the whole reply to be asked for again.
+            if (heard or "").strip() and not turn.get("repeat"):
                 self.last_spoken = heard.strip()
             prefill = None
             try:

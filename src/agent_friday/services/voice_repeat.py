@@ -6,7 +6,9 @@ ones she actually said: after a barge, only what was heard.
 
 Only the whole utterance counts. "What did you say about the budget?" is a
 question about the past (laya_router sends it to the conversation search),
-not a request to repeat, and is never matched here.
+not a request to repeat, and is never matched here. Neither are a bare
+"repeat it" or "once more": both are also answers ("OK, repeat it" to "shall I
+repeat the reminder weekly?").
 """
 from __future__ import annotations
 
@@ -18,13 +20,12 @@ _ASK = r"(?:(?:can|could|would|will) you\s+)?(?:please\s+)?"
 _FORMS = (
     r"(?:say|repeat) (?:that|it|this|the last (?:thing|bit|part|sentence|line)(?: you said)?) (?:again|once more|one more time)",
     r"(?:say|repeat) again",
-    r"repeat (?:that|it|yourself|what you (?:just )?said|the last (?:thing|bit|part|sentence|line)(?: you (?:just )?said)?)",
+    r"repeat (?:that|yourself|what you (?:just )?said|the last (?:thing|bit|part|sentence|line)(?: you (?:just )?said)?)",
     r"what (?:did|was it) you (?:just )?(?:say|said)",
     r"what was that",
     r"come again",
     r"pardon(?: me)?",
     r"(?:i )?(?:didn't|did not) (?:catch|hear|get) (?:that|it|what you said)",
-    r"once more",
 )
 _RX = re.compile(r"^\s*" + _LEAD + _ASK + r"(?:" + "|".join(_FORMS) + r")" + _PLEASE + r"\s*[.!?]*\s*$",
                  re.IGNORECASE)
