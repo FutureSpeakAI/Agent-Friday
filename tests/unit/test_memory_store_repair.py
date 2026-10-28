@@ -161,5 +161,18 @@ def test_a_forget_removes_the_kept_copies(kg, msr):
     kg["store"].save("entities", [])
     assert list(kg["base"].glob("entities.json.damaged-*"))
     from agent_friday.services.knowledge_graph.store import KnowledgeGraphManifest
-    KnowledgeGraphManifest(base_dir=kg["base"]).forget("C:/somewhere/notes.md")
+    m = KnowledgeGraphManifest(base_dir=kg["base"])
+    m.forget("C:/somewhere/capped.md", scrub=False)          # routine bookkeeping in a pass
+    assert list(kg["base"].glob("entities.json.damaged-*")), "bookkeeping threw away a kept copy"
+    m.forget("C:/somewhere/notes.md")
     assert not list(kg["base"].glob("*.damaged-*")), "a forgotten document survives in a kept copy"
+
+
+def test_a_library_purge_also_removes_a_damaged_file_it_cannot_read(kg, msr, monkeypatch):
+    from agent_friday.services.knowledge_graph import indexer
+    from agent_friday.services.knowledge_graph import store as kgs
+    monkeypatch.setattr(kgs.KnowledgeGraphStore, "__init__",
+                        lambda self, base_dir=None, _i=kgs.KnowledgeGraphStore.__init__: _i(self, kg["base"]))
+    (kg["base"] / "entities.json").write_bytes(DAMAGED)
+    indexer.purge_all_library()
+    assert not (kg["base"] / "entities.json").exists(), "Library words may survive in a damaged file"
