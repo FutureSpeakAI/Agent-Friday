@@ -224,9 +224,12 @@ class TestVoiceTranscript:
 
 # ── NS-34.6-12 images and image metadata ─────────────────────────────────────
 
-def _photo_with_metadata(size=(8, 4)):
+def _photo_with_metadata(size=(8, 4), noisy=False):
     from PIL import Image
-    im = Image.new("RGB", size, (200, 10, 10))
+    if noisy:
+        im = Image.merge("RGB", [Image.effect_noise(size, 80)] * 3)
+    else:
+        im = Image.new("RGB", size, (200, 10, 10))
     ex = Image.Exif()
     ex[0x010F] = "TestCamMake"      # Make
     ex[0x0131] = "OwnerSoftware"    # Software
@@ -290,11 +293,23 @@ class TestImageMetadata:
 
     def test_a_truncated_jpeg_still_loses_its_metadata(self):
         from agent_friday.services.image_egress import strip_metadata
-        raw = _photo_with_metadata((64, 64))
-        cut = raw[: len(raw) - 40]
+        raw = _photo_with_metadata((96, 96), noisy=True)
+        sos = raw.find(b"\xff\xda")
+        assert 0 < sos < len(raw) - 400
+        cut = raw[: sos + 200]          # well inside the coded data
         out, what = strip_metadata(cut)
         assert b"TestCamMake" not in out and b"OwnerSoftware" not in out
         assert what == "stripped"
+
+    def test_the_byte_walker_drops_what_follows_the_first_picture(self):
+        from agent_friday.services.image_egress import strip_jpeg_segments
+        first = _photo_with_metadata((16, 16), noisy=True)
+        trailer = _photo_with_metadata((16, 16))    # a second picture, with its own EXIF
+        out = strip_jpeg_segments(first + trailer)
+        assert out is not None
+        assert out.endswith(b"\xff\xd9")
+        assert b"TestCamMake" not in out
+        assert len(out) < len(first)
 
     def test_unreadable_bytes_go_unchanged_and_say_so(self):
         from agent_friday.services.image_egress import strip_metadata
