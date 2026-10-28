@@ -133,6 +133,12 @@ def reconcile_at_boot(started_at: Optional[float] = None, *, announce: bool = Tr
                                    outcome_found_at=time.time(), consumed=True)
             if rec is not None:
                 ids.append(c["approval_id"])
+                # BD-16 / NS-32.11-1: one signed recovery receipt for this interruption.
+                try:
+                    from agent_friday.services import recovery_receipts
+                    recovery_receipts.card_interrupted(dict(c, executing_at=c.get("executing_at")))
+                except Exception as _rr:
+                    _log.warning("recovery receipt failed: %s", type(_rr).__name__)
         if ids and announce:
             _announce([c for c in found if c["approval_id"] in ids])
         return ids

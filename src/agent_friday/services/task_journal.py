@@ -682,6 +682,14 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
             write_state(tid, st)
             index_put(tid, st.get("name", ""), "interrupted", st.get("created"), st["ended"])
             interrupted.append(st)
+            # BD-16 / NS-32.11-1: one signed recovery receipt for this interruption.
+            try:
+                from agent_friday.services import recovery_receipts
+                recovery_receipts.task_interrupted(
+                    tid, st, previous,
+                    (last_cp or {}).get("summary") or (last_cp or {}).get("kind"))
+            except Exception as _rr:
+                _log.error("recovery receipt failed for %s: %s", tid, type(_rr).__name__)
     except Exception as e:
         _log.error("task journal reconciliation failed: %s", e)
     return {"interrupted": interrupted, "restored": restored, "previous_exit": previous}
