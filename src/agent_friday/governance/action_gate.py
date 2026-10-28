@@ -1564,10 +1564,11 @@ class Held(RuntimeError):
 
 
 def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
-                    target: str = "") -> None:
+                    target: str = "") -> Optional[dict]:
     """The checkpoint's integrity check and signed receipt, for an executor
     that carries out an already-decided action outside a tool call (an
-    approved email, an approved text).
+    approved email, an approved text). Returns the signed receipt (a
+    delivery names it: services/artifact_manifest.record_delivery).
 
     The decision itself (the card) is the caller's to verify. This adds the
     two steps every tool call gets in `authorize`: the cLaws are intact, and
@@ -1588,12 +1589,14 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     if hold:
         raise Held(hold)
     try:
-        _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
-                  "surface": surface,
-                  "reason": "approved card" if approval_id else surface,
-                  "approval": approval_id, "target": target})
+        written = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
+                            "surface": surface,
+                            "reason": "approved card" if approval_id else surface,
+                            "approval": approval_id, "target": target})
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
+    rec = (written or {}).get("rec") if isinstance(written, dict) else None
+    return dict(rec) if isinstance(rec, dict) else None
 
 
 def external_subject(action: str, detail: dict) -> str:

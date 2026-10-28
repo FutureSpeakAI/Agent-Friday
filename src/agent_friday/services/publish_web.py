@@ -835,7 +835,8 @@ def _on_decision(record: dict) -> None:
     url = _this_pc_url(bundle.slug) if adapter == "this_pc" else ""
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external(KIND, surface="approval_card", approval_id=aid, target=url or bundle.slug)
+        publish_receipt = _gate.record_external(KIND, surface="approval_card", approval_id=aid,
+                                                target=url or bundle.slug)
     except Exception as e:
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": "held: %s" % e})
         _post_back(record, 'I could not publish "%s": %s. Nothing was published.' % (title, e))
@@ -862,6 +863,17 @@ def _on_decision(record: dict) -> None:
         _write_index(items)
         shutil.rmtree(_staging_root() / str(payload.get("staging") or ""), ignore_errors=True)
     _ap.mark_used(aid, "publish_web", detail={"ok": True, "url": url})
+    # A published file that Friday made (a picture, a page) gets this
+    # publication's receipt in the artifact manifest, found by its bytes.
+    try:
+        if publish_receipt:
+            import hashlib as _hl
+            from agent_friday.services import artifact_manifest as _am
+            for _data in bundle.files.values():
+                _am.record_delivery(publish_receipt, channel="publish_web:%s" % adapter,
+                                    sha256=_hl.sha256(_data).hexdigest(), ref=bundle.slug, approval_id=aid)
+    except Exception:
+        pass
     note = (" It is reachable only while this PC is on and its tunnel is up." if adapter == "this_pc" else "")
     _post_back(record, 'Published "%s" (v%d) via %s: %s%s Say "take it down" to unpublish.'
                % (title, bundle.version, label, url, note))

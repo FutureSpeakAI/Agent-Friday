@@ -26365,6 +26365,147 @@ function ProvenanceBar({
 // list is backend-driven via useModelCatalog() (role 'creative'), filtered by
 // modality. Posts to the unified /api/creations/generate endpoint; the process
 // orb in the 3-D scene shows progress while it renders.
+// The artifact manifest of a file Friday made (NS-24.1-2): whose work it is,
+// which goal it serves, its sensitivity level, its checks, whether it was
+// verified and delivered, and its earlier versions. Self-contained: fetches
+// /api/artifacts/manifest, and says so when Friday has no record of the file.
+function ManifestBar({
+  path
+}) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const load = () => {
+    if (!path) {
+      setData(null);
+      return Promise.resolve();
+    }
+    return fetch('/api/artifacts/manifest?path=' + encodeURIComponent(path)).then(r => r.json()).then(d => setData(d)).catch(() => setData(null));
+  };
+  useEffect(() => {
+    setData(null);
+    setOpen(false);
+    load();
+  }, [path]);
+  if (!path || !data) return null;
+  if (data.status !== 'ok' || !data.manifest) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#6a8b98',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 8
+    }
+  }, "Manifest: no record for this file as it is now.");
+  const m = data.manifest;
+  const st = m.verification_state || 'unverified';
+  const col = {
+    qa_passed: '#00e87a',
+    owner_verified: '#00ff80',
+    qa_failed: '#ff5470'
+  }[st] || '#8891a8';
+  const lbl = {
+    qa_passed: 'Checks passed',
+    qa_failed: 'Checks failed',
+    owner_verified: 'Verified by you',
+    unverified: 'Not verified'
+  }[st] || st;
+  const ga = m.goal_ancestry;
+  const sens = m.sensitivity || {};
+  const dr = m.delivery_receipt;
+  const vh = m.version_history || [];
+  const qa = m.qa || {};
+  const verify = async () => {
+    setBusy(true);
+    try {
+      await fetch('/api/artifacts/manifest/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          path
+        })
+      });
+      await load();
+    } catch (e) {}
+    setBusy(false);
+  };
+  const row = (k, v) => /*#__PURE__*/React.createElement("div", {
+    key: k,
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#6a8b98',
+      minWidth: 110
+    }
+  }, k), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#aab',
+      wordBreak: 'break-all'
+    }
+  }, v));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10,
+      padding: '8px 10px',
+      borderRadius: 8,
+      background: 'rgba(127,182,201,0.05)',
+      border: '1px solid rgba(127,182,201,0.14)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: '#7fb6c9'
+    }
+  }, "Manifest"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: col
+    }
+  }, lbl), dr && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: '#7fb6c9'
+    }
+  }, "Delivered"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 9,
+      padding: '1px 7px',
+      marginLeft: 'auto'
+    },
+    onClick: () => setOpen(!open)
+  }, open ? 'Close' : 'Manifest')), open && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 3
+    }
+  }, row('Made by', (m.tool || '?') + (m.task_id ? ' · task ' + m.task_id : '')), row('For', m.principal || 'unknown'), row('Goal', ga ? ga.goal_id + (ga.milestone_id ? ' › ' + ga.milestone_id : '') : 'none'), row('Sensitivity', sens.level || 'unknown'), row('Checks', qa.summary || (qa.checked ? 'checked' : 'not checked')), row('Delivery receipt', dr ? (dr.channel || '') + ' · ' + String(dr.id || '').slice(0, 16) + '…' : 'not sent'), row('Versions', vh.length ? vh.length + ' earlier: ' + vh.map(v => String(v.sha256 || '').slice(0, 8) + (v.backup ? ' (backup kept)' : '')).join(', ') : 'first version'), row('SHA-256', String(m.sha256 || '').slice(0, 16) + '…'), st !== 'owner_verified' && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      marginTop: 4
+    },
+    disabled: busy,
+    onClick: verify
+  }, busy ? 'Saving…' : 'I checked it: mark verified')));
+}
 const IMG_STYLES = ['none', 'photorealistic', 'cinematic', 'digital-art', 'watercolor', 'oil-painting', 'anime', '3d-render', 'neon', 'minimalist', 'sketch'];
 function GeneratePanel({
   onCreated
@@ -28991,6 +29132,8 @@ function StudioWS() {
       }
     }, "\u2197 Open in Tab"))), /*#__PURE__*/React.createElement(ProvenanceBar, {
       filename: selected.name
+    }), /*#__PURE__*/React.createElement(ManifestBar, {
+      path: selected.path
     }), ext === 'html' && /*#__PURE__*/React.createElement("iframe", {
       src: url,
       ref: window.fridayAttachFrame,

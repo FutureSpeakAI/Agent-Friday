@@ -7,6 +7,9 @@
   GET   /api/artifacts/<cid>/<aid>/versions       the timeline (metadata)
   POST  /api/artifacts/<cid>/<aid>                a hand edit: a new version by "you"
   POST  /api/artifacts/<cid>/<aid>/restore        {version}: a new version with old content
+  GET   /api/artifacts/manifest?path=             the manifest record of a file Friday made
+                                                  (services/artifact_manifest.lookup)
+  POST  /api/artifacts/manifest/verify            {path}: the owner checked it ("owner_verified")
 
 Every write goes through services/artifacts.put, which asks off_record first.
 """
@@ -39,6 +42,36 @@ def list_artifacts():
         return jsonify({"status": "ok", "artifacts": art.list_for(cid)})
     except ValueError as e:
         return _fail(e)
+
+
+@artifacts_bp.route("/api/artifacts/manifest", methods=["GET"])
+@login_required
+def artifact_manifest_record():
+    """The owner's view of one file Friday made (NS-24.1-2): principal, goal,
+    sensitivity level, verification state, checks, delivery receipt and
+    version history. 404 when Friday has no line for the file as it is now."""
+    from agent_friday.services import artifact_manifest as am
+    path = str(request.args.get("path") or "").strip()
+    if not path or len(path) > 4096 or "\x00" in path:
+        return _bad("path is required")
+    rec = am.lookup(path)
+    if rec is None:
+        return _bad("Friday has no manifest record for this file as it is now", 404)
+    return jsonify({"status": "ok", "manifest": rec})
+
+
+@artifacts_bp.route("/api/artifacts/manifest/verify", methods=["POST"])
+@login_required
+def artifact_manifest_verify():
+    """The owner checked the file and says it is right."""
+    from agent_friday.services import artifact_manifest as am
+    body = request.get_json(silent=True) or {}
+    path = str(body.get("path") or "").strip()
+    if not path or len(path) > 4096 or "\x00" in path:
+        return _bad("path is required")
+    if am.mark_owner_verified(path) is None:
+        return _bad("Friday has no manifest record for this file as it is now", 404)
+    return jsonify({"status": "ok", "manifest": am.lookup(path)})
 
 
 @artifacts_bp.route("/api/artifacts/<cid>", methods=["POST"])

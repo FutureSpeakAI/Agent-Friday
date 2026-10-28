@@ -83,6 +83,9 @@ def list_creations():
             "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
             "type": f.suffix.lstrip('.'),
             "source": source,
+            # Where it is, so the viewer can show its artifact manifest
+            # (GET /api/artifacts/manifest?path=, owner-only like this list).
+            "path": str(f),
         })
 
     if CREATIONS_DIR.exists():
