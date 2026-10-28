@@ -72,7 +72,7 @@ def test_each_credential_says_what_it_is_for_and_where_it_came_from(client, stor
     row = _row(_rows(client), "providers/keys/example.key")
     assert row.get("for") == "example", "a credential does not say what it is for"
     assert row.get("came_from") == "saved in Friday" and row.get("first_set")
-    assert "AI providers" in row.get("replace_in", "")
+    assert "Model providers" in row.get("replace_in", "")
     assert row["remove"]["revokes_at_provider"] is False and "provider's site" in row["remove"]["note"]
     assert FAKE_KEY not in json.dumps(_rows(client))
 
@@ -145,3 +145,37 @@ def test_settings_lists_the_credentials_with_remove(page):
     text = (ROOT / page).read_text(encoding="utf-8")
     assert "CredentialsPanel" in text and "/api/security/credentials/remove" in text, \
         "Settings has no list of stored credentials to replace or remove"
+
+
+def test_a_credential_saved_again_after_removal_starts_its_history_again(client, store):
+    cl = _cl()
+    cs.set_provider_key("example", FAKE_KEY)
+    first = _row(cl.rows(), "providers/keys/example.key")["first_set"]
+    cl.remove("providers/keys/example.key")
+    import time
+    time.sleep(0.05)                   # past a Windows clock tick
+    cs.set_provider_key("example", FAKE_KEY)
+    again = _row(cl.rows(), "providers/keys/example.key")["first_set"]
+    assert again and again != first, "a removed credential's history carried over"
+
+
+def test_a_sign_in_file_with_no_account_behind_it_can_still_be_removed(client, store, monkeypatch):
+    cl = _cl()
+    from agent_friday.services import google_accounts as ga
+    monkeypatch.setattr(ga, "_load_index", lambda: {"accounts": []})
+    orphan = store / "google_accounts" / "tokens" / "0123456789abcdef.token.enc"
+    orphan.parent.mkdir(parents=True)
+    cs.write_secret(orphan, b"synthetic")
+    out = cl.remove("google_accounts/tokens/0123456789abcdef.token.enc")
+    assert out["removed"] is True and not orphan.exists()
+
+
+def test_removing_a_platform_key_leaves_that_platforms_sign_in(client, store):
+    cl = _cl()
+    cs.set_provider_key("platform_mastodon", FAKE_KEY)
+    signin = store / "platforms" / "mastodon.cred"
+    signin.parent.mkdir(parents=True)
+    cs.write_secret(signin, b"{}")
+    cl.remove("providers/keys/platform_mastodon.key")
+    assert signin.exists(), "removing a platform's key also removed its sign-in"
+    assert cs.provider_key_status("platform_mastodon") != "connected"

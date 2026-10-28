@@ -28,12 +28,12 @@ from agent_friday.services import credential_store as cs
 _log = logging.getLogger("friday.credential_lifecycle")
 
 _REPLACE_IN = {
-    "AI provider key": "Settings > Connections > AI providers: paste the new key over the old one",
+    "AI provider key": "Settings > Connections > Model providers: paste the new key over the old one",
     "Google account sign-in": "Settings > Connections > Google accounts: Reconnect",
     "Google sign-in (older format)": "Remove it, then connect the account under Google accounts",
-    "tool server sign-in": "Settings > Connections > Add-ons: sign in to the add-on again",
-    "publishing platform sign-in": "Settings > Accounts: connect the platform again",
-    "publishing platform key": "Settings > Accounts: enter the platform's new key",
+    "tool server sign-in": "Settings > Advanced > MCP servers: sign in to the server again",
+    "publishing platform sign-in": "Content > Accounts: connect the platform again",
+    "publishing platform key": "Content > Accounts: enter the platform's new key",
     "phone secret": "Settings > Connections > Phone: enter the new secret",
 }
 _REMOVE_NOTE = {
@@ -44,7 +44,8 @@ _REMOVE_NOTE = {
     "tool server sign-in": ("Friday deletes its copy. Add-on sign-ins cannot be revoked from here: "
                             "revoke Friday in the service's own account settings."),
     "publishing platform sign-in": ("Friday asks the platform to revoke it where the platform allows "
-                                    "that, then deletes it from this PC."),
+                                    "that, then deletes it from this PC, with any key saved for the "
+                                    "same platform."),
     "publishing platform key": "Friday deletes its copy. Cancel the key on the platform too if needed.",
     "phone secret": ("Friday deletes its copy. The key stays valid at Twilio: delete it in the Twilio "
                      "console if it may have been seen."),
@@ -92,25 +93,32 @@ def _kind_and_for(name: str, kind: str) -> tuple:
     return kind, stem
 
 
-def _provenance(kind: str, target: str, audit: list) -> Dict[str, Optional[str]]:
-    """(came_from, first_set) from the credential audit log, oldest first."""
+def _provenance(kind: str, target: str, audit: list, row_name: str = "") -> Dict[str, Optional[str]]:
+    """(came_from, first_set) from the credential audit log, oldest first. Any removal of the
+    same credential starts its history again."""
+    account_id = row_name.rsplit("/", 1)[-1].split(".", 1)[0] if kind == "Google account sign-in" else ""
+
     def match(e) -> Optional[str]:
         cat, ev = e.get("category"), e.get("event")
+        if cat == "credential" and ev == "removed" and e.get("name") == row_name:
+            return "removed"
         if kind == "AI provider key" and cat == "provider_key" and e.get("provider") == target:
-            return {"set": "saved in Friday", "reencrypt": None, "delete": "removed"}.get(ev)
-        if kind == "publishing platform key" and cat in ("provider_key", "platform") and \
-                (e.get("provider") == "platform_" + target or e.get("platform") == target):
-            return {"set": "saved in Friday", "secret_stored": "saved in Friday"}.get(ev)
+            return {"set": "saved in Friday", "delete": "removed"}.get(ev)
+        if kind == "publishing platform key":
+            if cat == "provider_key" and e.get("provider") == "platform_" + target:
+                return {"set": "saved in Friday", "delete": "removed"}.get(ev)
+            if cat == "platform" and e.get("platform") == target:
+                return {"secret_stored": "saved in Friday", "credentials_cleared": "removed"}.get(ev)
         if kind == "publishing platform sign-in" and cat == "platform" and e.get("platform") == target:
-            return {"credentials_stored": "signed in to the platform"}.get(ev)
-        if kind == "Google account sign-in" and cat == "google_account":
-            if e.get("account_id") and target in (e.get("account_id"), e.get("label")):
-                return {"connect": "signed in with Google", "reconnect": "signed in with Google again",
-                        "migrate": "moved from the older Google sign-in"}.get(ev)
+            return {"credentials_stored": "signed in to the platform", "credentials_cleared": "removed"}.get(ev)
+        if kind == "Google account sign-in" and cat == "google_account" and \
+                account_id and e.get("account_id") == account_id:
+            return {"connect": "signed in with Google", "reconnect": "signed in with Google again",
+                    "migrate": "moved from the older Google sign-in", "disconnect": "removed"}.get(ev)
         if kind == "tool server sign-in" and cat == "mcp_oauth" and e.get("server") == target:
-            return {"signed_in": "signed in to the add-on"}.get(ev)
+            return {"signed_in": "signed in to the add-on", "cleared": "removed"}.get(ev)
         if kind == "phone secret" and cat == "phone" and e.get("name") == target:
-            return {"secret_set": "saved in phone settings"}.get(ev)
+            return {"secret_set": "saved in phone settings", "secret_deleted": "removed"}.get(ev)
         return None
     first = came = None
     for e in audit:
@@ -151,7 +159,7 @@ def rows() -> List[Dict[str, Any]]:
     for r in base:
         kind, target = _kind_and_for(r["name"], r.get("kind") or "")
         row = dict(r, kind=kind, **{"for": target})
-        row.update(_provenance(kind, target, audit))
+        row.update(_provenance(kind, target, audit, r["name"]))
         row["replace_in"] = _REPLACE_IN.get(kind, "")
         row["remove"] = {"note": _REMOVE_NOTE.get(kind, "Friday deletes its copy."),
                          "revokes_at_provider": kind in ("Google account sign-in",
@@ -172,23 +180,29 @@ def remove(name: str) -> Dict[str, Any]:
         raise NotListed("not a stored credential")
     kind, target = row["kind"], row["for"]
     revoked: Optional[bool] = None
-    if kind == "AI provider key":
-        cs.delete_provider_key(target)
-        try:
-            cs.clear_provider_key_live(target)
-        except Exception:  # noqa: BLE001
-            pass
-    elif kind in ("publishing platform key", "publishing platform sign-in"):
+    if kind in ("AI provider key", "publishing platform key"):
+        key_name = target if kind == "AI provider key" else "platform_" + target
+        # Only the listed file: the store's own name for it must be this row's name (a stray
+        # file whose name the store would rewrite never reaches another key).
+        if cs._credential_name(cs._provider_key_path(key_name)) == row["name"]:
+            cs.delete_provider_key(key_name)
+            if kind == "AI provider key":
+                try:
+                    cs.clear_provider_key_live(target)
+                except Exception:  # noqa: BLE001
+                    pass
+    elif kind == "publishing platform sign-in":
         from agent_friday.services import platforms as reg
         adapter = reg.get_adapter(target)
-        if adapter is not None:
+        if adapter is not None and cs._credential_name(adapter._cred_path()) == row["name"]:
+            # The platform's own disconnect: asks the platform to revoke where it can, and
+            # removes this platform's sign-in and its key together (the note says so). Whether
+            # the platform confirmed is not known here.
             try:
-                revoked = bool(adapter.revoke())
+                adapter.revoke()
             except Exception:  # noqa: BLE001
-                revoked = False
+                pass
             adapter.clear_credentials()
-        if kind == "publishing platform key":
-            cs.delete_provider_key("platform_" + target)
     elif kind == "Google account sign-in":
         from agent_friday.services import google_accounts as ga
         aid = row["name"].rsplit("/", 1)[-1].split(".", 1)[0]
@@ -208,6 +222,21 @@ def remove(name: str) -> Dict[str, Any]:
         from agent_friday.phone import config as pc
         pc.delete_secret(target)
     still = any(r["name"] == row["name"] for r in rows())
+    if still and kind in ("AI provider key", "publishing platform key", "publishing platform sign-in",
+                          "Google account sign-in", "tool server sign-in"):
+        # Left over (no account entry, an adapter not present, a name the store would
+        # rewrite): the listed file itself goes, and only it. The path is the listed one,
+        # inside Friday's folder and among the files the store enumerates.
+        import agent_friday.core as core
+        listed = {cs._credential_name(p): p for p in cs._credential_files()}
+        p = listed.get(row["name"])
+        home = Path(core.FRIDAY_DIR).resolve()
+        if p is not None and home in Path(p).resolve().parents:
+            try:
+                Path(p).unlink()
+            except OSError:
+                pass
+        still = any(r["name"] == row["name"] for r in rows())
     cs.audit_event("credential", "removed", name=row["name"], kind=kind, removed=not still,
                    revoked_at_provider=revoked)
     return {"name": row["name"], "kind": kind, "for": target, "removed": not still,
