@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import json
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -63,13 +62,24 @@ def test_machine_state_belongs_to_this_pc_and_is_not_migrated():
             assert pol[s.name]["owner_scope"] == "this PC" and pol[s.name]["migration"].startswith("none")
 
 
-def test_the_inventory_and_the_doctor_page_carry_the_declarations(tmp_path):
+def test_named_stores_are_described_as_they_are():
+    sp = _sp()
+    pol = sp.all_policies()
+    for name in ("tls", "local_address", "web_session_secret", "dotenv", "desktop_control_grant"):
+        assert pol[name]["encryption"] == sp.ENC_PLAIN_SECRET, name     # plain files: never called sealed
+    for name in ("provider_keys", "google_accounts", "mcp_oauth", "platforms", "signing"):
+        assert pol[name]["encryption"] == sp.ENC_CREDENTIAL_STORE, name
+    assert pol["vault"]["encryption"].startswith("partly encrypted")
+    assert pol["work_orders"]["encryption"] == sp.ENC_FRIDAY
+    assert "never empties" in pol["trash"]["retention"]
+    assert "counts as 0" in pol["data_schema"]["corruption_check"]
+    assert "100-byte header" in pol["costs"]["corruption_check"]
+
+
+def test_the_doctor_store_list_carries_the_declarations():
     _sp()
-    from agent_friday.services import store_inventory as si
-    home = tmp_path / ".friday"
-    home.mkdir()
-    (home / "settings.json").write_text(json.dumps({"version": 3}), encoding="utf-8")
-    rows = {r["store"]: r for r in si.public(si.inventory(home))["stores"]}
-    assert rows["settings"]["policy"]["backup"] == "in a Friday Bundle, as settings"
+    src = (ROOT / "src" / "agent_friday" / "routes" / "doctor.py").read_text(encoding="utf-8")
+    assert "store_policy.all_policies()" in src and 'inv["policies"]' in src
     html = (ROOT / "static" / "doctor.html").read_text(encoding="utf-8")
-    assert "'protection', 'backup'" in html and "pol.encryption, pol.backup" in html
+    assert "'protection', 'backup'" in html and "(d.policies || {})[r.store]" in html
+    assert "pol.encryption, pol.backup" in html
