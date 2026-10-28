@@ -390,6 +390,23 @@
     t.appendChild(head);
     (rep.checks || []).forEach(c => t.appendChild(row(c)));
     out.appendChild(t);
+    // the deterministic repairs each not-healthy check offers (services/doctor_repairs)
+    const reps = rep.repairs && !rep.repairs.error ? Object.keys(rep.repairs).sort() : [];
+    if (reps.length) {
+      const h3 = document.createElement('h3'); h3.textContent = 'Repairs offered (none needs a model)'; out.appendChild(h3);
+      const ul = document.createElement('ul'); ul.id = 'repairs';
+      reps.forEach(cid => (rep.repairs[cid] || []).forEach(r => {
+        const li = document.createElement('li');
+        li.appendChild(document.createTextNode(cid + ': '));
+        if (typeof r.where === 'string' && /^#[a-z]+$/.test(r.where)) {
+          const a = document.createElement('a'); a.href = r.where; a.textContent = r.label; li.appendChild(a);
+        } else {
+          li.appendChild(document.createTextNode(r.label));
+        }
+        ul.appendChild(li);
+      }));
+      out.appendChild(ul);
+    }
     const pre = document.createElement('pre'); pre.textContent = txt || ''; out.appendChild(pre);
     const f = $('files'); f.textContent = '';
     ['txt', 'json'].forEach(k => {
