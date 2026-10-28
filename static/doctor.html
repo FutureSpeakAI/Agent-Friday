@@ -361,14 +361,15 @@
         (u.entries ? ' ' + u.entries + ' other entries in the folder (' + size(u.bytes) + ') are not Friday stores.' : ''));
       const tb = document.createElement('table');
       const head = document.createElement('tr');
-      ['store', 'version', 'size', 'files', 'where (in the data folder)', 'kind'].forEach(h => {
+      ['store', 'version', 'size', 'files', 'where (in the data folder)', 'kind', 'protection', 'backup'].forEach(h => {
         const th = document.createElement('th'); th.textContent = h; head.appendChild(th);
       });
       tb.appendChild(head);
       kept.concat(rows.filter(r => r.durable === false)).forEach(r => {
         const tr = document.createElement('tr');
+        const pol = r.policy || {};
         [r.store, r.version, size(r.bytes) + (r.at_least ? ' or more' : ''), r.files, r.location,
-         r.durable === false ? r.format + ' (not durable)' : r.format].forEach(v => {
+         r.durable === false ? r.format + ' (not durable)' : r.format, pol.encryption, pol.backup].forEach(v => {
           const td = document.createElement('td'); td.textContent = v == null ? '' : String(v); tr.appendChild(td);
         });
         tb.appendChild(tr);
