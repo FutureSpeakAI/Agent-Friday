@@ -14,7 +14,7 @@ def test_the_doctor_page_lists_the_known_issues(client):
     assert r.status_code == 200, r.get_data(as_text=True)[:200]
     d = r.get_json()
     assert d["available"] is True and d["count"] >= 10
-    assert all(s["title"] and s["items"] for s in d["sections"])
+    assert all(s["title"] and (s["items"] or s["notes"]) for s in d["sections"])   # a section may hold notes only
     html = (ROOT / "static" / "doctor.html").read_text(encoding="utf-8")
     for needle in ('id="known"', 'id="known-out"', "/api/doctor/known-issues", "Known issues in this release"):
         assert needle in html, needle
