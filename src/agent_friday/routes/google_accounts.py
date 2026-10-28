@@ -407,10 +407,16 @@ def toggle_google_account_services(account_id):
 @google_accounts_bp.route("/api/google/accounts/<account_id>/remove", methods=["POST"])
 @rate_limited(max_calls=10, window_s=300, bucket="remove")
 def remove_google_account(account_id):
-    ok = ga.remove_account(account_id)
-    if not ok:
+    out = ga.remove_account_detail(account_id)
+    if not out:
         return jsonify({"status": "error", "message": "account not found"}), 404
-    return jsonify({"status": "ok", "removed": account_id})
+    # The contract (services/connector_contracts.GOOGLE_REVOCATION) promises the owner is told
+    # when Google could not be asked to revoke: the token is gone from this PC either way.
+    message = ("Removed. Google confirmed access is revoked." if out["revoked_at_google"] else
+               "Removed from this PC, but Google did not confirm the revoke. To be sure, remove "
+               "Friday at myaccount.google.com > Security > Third-party access.")
+    return jsonify({"status": "ok", "removed": account_id,
+                    "revoked_at_google": out["revoked_at_google"], "message": message})
 
 
 @google_accounts_bp.route("/api/google/accounts/gmail")

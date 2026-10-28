@@ -62584,11 +62584,12 @@ function GoogleAccountsPanel() {
   const removeAccount = async (id, email) => {
     if (!window.confirm('Remove ' + email + '? This revokes access.')) return;
     try {
-      await apiFetch('/api/google/accounts/' + id + '/remove', {
+      const r = await apiFetch('/api/google/accounts/' + id + '/remove', {
         method: 'POST'
       });
+      const d = await r.json().catch(() => ({}));
       setAccounts(a => a.filter(x => x.id !== id));
-      setMsg('Removed.');
+      setMsg(d.message || 'Removed.');
     } catch (e) {
       setMsg('Error.');
     }
@@ -62920,7 +62921,36 @@ function GoogleAccountsPanel() {
       color: '#00d4ff',
       marginTop: 8
     }
-  }, msg));
+  }, msg), /*#__PURE__*/React.createElement(GoogleConnectorCard, null));
+}
+// The Google connection's card (BD-06, NS-8.9-2): what it lets Friday do, the permissions it asks
+// for (reading and changing apart), what runs without a card, what Google receives, what is kept
+// on this PC, the limits and how to remove it. Read from /api/google/accounts/contract, which
+// tests tie to the code (services/connector_contracts.google_card).
+function GoogleConnectorCard() {
+  const [card, setCard] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/google/accounts/contract').then(r => r.json()).then(d => {
+      const c = d && d.contract && d.contract.card;
+      if (Array.isArray(c)) setCard(c);
+    }).catch(() => {});
+  }, []);
+  if (!card) return null;
+  return /*#__PURE__*/React.createElement("details", {
+    className: "google-connector-card",
+    style: { marginTop: 10, fontSize: 11, color: 'rgba(255,255,255,0.78)' }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: { cursor: 'pointer', color: '#00d4ff' }
+  }, "What this connection does"), card.map(sec => /*#__PURE__*/React.createElement("div", {
+    key: sec.heading,
+    style: { marginTop: 6 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontWeight: 600, color: '#fff' }
+  }, sec.heading), /*#__PURE__*/React.createElement("ul", {
+    style: { margin: '2px 0 0 16px', padding: 0 }
+  }, (sec.lines || []).map((l, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, l))))));
 }
 // ─── Settings → Connections — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),

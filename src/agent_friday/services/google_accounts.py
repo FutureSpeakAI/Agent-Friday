@@ -637,12 +637,19 @@ def set_label(account_id: str, label: str) -> dict | None:
 def remove_account(account_id: str) -> bool:
     """Revoke the grant at Google (best-effort), delete the encrypted token, and
     drop the index entry. Audited."""
+    return remove_account_detail(account_id) is not None
+
+
+def remove_account_detail(account_id: str):
+    """remove_account, saying what happened: None when there is no such account, else
+    {"removed", "revoked_at_google", "last_account"}. With the last account gone, the
+    record of which Google services answered goes too (connector contract, NS-23.1-6)."""
     with _LOCK:
         index = _load_index()
         accounts = index.get("accounts", [])
         rec = next((r for r in accounts if r.get("id") == account_id), None)
         if not rec:
-            return False
+            return None
         # Best-effort remote revocation before we delete the local token.
         revoked = _revoke_remote(account_id)
         try:
@@ -651,9 +658,15 @@ def remove_account(account_id: str) -> bool:
             pass
         index["accounts"] = [r for r in accounts if r.get("id") != account_id]
         _save_index(index)
+        last = not index["accounts"]
+        if last:
+            try:
+                _SERVICE_STATE_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
     cs.audit_event(_AUDIT_CATEGORY, "disconnect", account_id=account_id,
                    remote_revoked=revoked, success=True)
-    return True
+    return {"removed": account_id, "revoked_at_google": bool(revoked), "last_account": last}
 
 
 def _revoke_remote(account_id: str) -> bool:
