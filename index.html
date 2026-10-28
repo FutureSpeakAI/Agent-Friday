@@ -51536,8 +51536,11 @@ function SetupConnectionItem({
   const canConnect = ['secret', 'fields', 'google_oauth', 'oauth_connector', 'platform_oauth', 'local_endpoint', 'custom_endpoint'].indexOf(c.kind) >= 0 || c.kind === 'mcp_server' && !!c.sign_in;
   const connectWord = c.kind === 'secret' || c.kind === 'fields' ? 'Save securely' : c.kind === 'local_endpoint' || c.kind === 'custom_endpoint' ? 'Save' : c.kind === 'mcp_server' ? 'Sign in' : c.kind === 'google_oauth' && it.status === 'connected' ? 'Add another account' : 'Connect';
   const form = c.kind === 'mcp_add' || c.kind === 'custom_endpoint';
-  const required = (it.permissions || []).filter(p => !p.optional);
+  const required = (it.permissions || []).filter(p => !p.optional && !p.later);
   const optional = (it.permissions || []).filter(p => p.optional);
+  // Asked for later, each from its own button, never on this connect: listed so the card names
+  // everything Google's consent screen can ever show (north star 34.4-7).
+  const later = (it.permissions || []).filter(p => p.later);
   const access = it.access || [];
   return /*#__PURE__*/React.createElement("div", {
     className: "sc-item",
@@ -51596,7 +51599,17 @@ function SetupConnectionItem({
         [p.key]: v
       }));
     }
-  }), /*#__PURE__*/React.createElement("span", null, "Also: ", p.text, " ", /*#__PURE__*/React.createElement("em", null, "(optional, off unless you tick it)")))), it.cost && /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("span", null, "Also: ", p.text, " ", /*#__PURE__*/React.createElement("em", null, "(optional, off unless you tick it)")))), later.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "sc-group",
+    style: {
+      margin: '10px 0 2px'
+    }
+  }, "Asked for later, never on this connect"), /*#__PURE__*/React.createElement("ul", {
+    className: "sc-perms",
+    "data-perms": "later"
+  }, later.map((p, i) => /*#__PURE__*/React.createElement("li", {
+    key: 'l' + i
+  }, p.text, " ", /*#__PURE__*/React.createElement("em", null, "(only if you press \u201C", p.later, "\u201D)"))))), it.cost && /*#__PURE__*/React.createElement("div", {
     className: "sc-cost"
   }, /*#__PURE__*/React.createElement("strong", null, "Cost:"), " ", it.cost), (it.how || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "sc-group",

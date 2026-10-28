@@ -17391,8 +17391,11 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip, curated })
     : c.kind === 'mcp_server' ? 'Sign in'
     : (c.kind === 'google_oauth' && it.status === 'connected') ? 'Add another account' : 'Connect';
   const form = c.kind === 'mcp_add' || c.kind === 'custom_endpoint';
-  const required = (it.permissions || []).filter(p => !p.optional);
+  const required = (it.permissions || []).filter(p => !p.optional && !p.later);
   const optional = (it.permissions || []).filter(p => p.optional);
+  // Asked for later, each from its own button, never on this connect: listed so the card names
+  // everything Google's consent screen can ever show (north star 34.4-7).
+  const later = (it.permissions || []).filter(p => p.later);
   const access = it.access || [];
   return (
     <div className="sc-item" id={domId} data-connection={it.id}>
@@ -17421,6 +17424,12 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip, curated })
             <span>Also: {p.text} <em>(optional, off unless you tick it)</em></span>
           </label>
         ))}
+        {later.length > 0 && <>
+          <div className="sc-group" style={{ margin: '10px 0 2px' }}>Asked for later, never on this connect</div>
+          <ul className="sc-perms" data-perms="later">
+            {later.map((p, i) => <li key={'l' + i}>{p.text} <em>(only if you press “{p.later}”)</em></li>)}
+          </ul>
+        </>}
         {it.cost && <div className="sc-cost"><strong>Cost:</strong> {it.cost}</div>}
         {(it.how || []).length > 0 && <>
           <div className="sc-group" style={{ margin: '10px 0 2px' }}>How to connect</div>
