@@ -15899,6 +15899,16 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
   const taskId = meta?.linked_task_id || orb.task_id || null;
   const status = meta?.status || orb.status || 'running';
   const running = /^(running|queued|paused|awaiting_approval)$/.test(status);
+  // Cancel without throwing the orb (Stephen's ruling, 2026-10-28; WCAG 2.5.7): the same cancel as a throw, with its
+  // undo window and its note; the button says so while it waits.
+  const [cancelling,setCancelling] = useState(false);
+  useEffect(()=>{setCancelling(false);},[orb.id]);
+  const cancelTask = e => {
+    e.stopPropagation();
+    if (typeof FridayOrbHands === 'undefined') return;
+    const r = (FridayOrbHands.act('cancel',[orb.id],'button')||[])[0];
+    if (r && r.ok) setCancelling(true);
+  };
   const hasActivity = !!(log?.length || steps.length || meta?.result);
   const [area,setArea] = useState(()=>fridayDesktopArea());
   useEffect(()=>{
@@ -15923,6 +15933,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
       rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
+      running&&typeof FridayOrbHands!=='undefined'&&rtEl('button',{type:'button',className:'thread-cancel','data-orb-cancel':orb.id,'aria-label':cancelling?'Cancelling this task; undo it from the note':'Cancel this task',title:cancelling?'Stopping. Undo it from the note while it shows.':'Stop this task (you can undo it for a few seconds)',disabled:cancelling,onMouseDown:e=>e.stopPropagation(),onClick:cancelTask,style:{minHeight:24,minWidth:24,padding:'2px 8px',borderRadius:6,border:'1px solid rgba(255,0,128,0.45)',background:'transparent',color:'#ff6fa8',font:'600 11px Inter,system-ui,sans-serif',cursor:cancelling?'default':'pointer'}},cancelling?'Cancelling…':'Cancel'),
       rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
       (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
     rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
