@@ -649,11 +649,14 @@ _GIT_WRITE_OPTIONS = ("--output", "--ext-diff", "--textconv", "--exec", "--uploa
                       "--receive-pack", "--config-env", "--show-signature")
 
 
+def _unquoted(a: str) -> str:
+    """An argument as PowerShell hands it on: quotes gone, typographic dashes plain."""
+    return "".join(_DASHES.get(ch, ch) for ch in a if ch not in _QUOTES)
+
+
 def _normal_token(a: str) -> str:
-    """An argument as PowerShell will see it, for these checks: quotes gone,
-    typographic dashes made plain, lower case."""
-    s = "".join(_DASHES.get(ch, ch) for ch in a if ch not in _QUOTES)
-    return s.lower()
+    """_unquoted, lower case: for checks that ignore case."""
+    return _unquoted(a).lower()
 
 
 def _argument_reach(head: str, args: list) -> str:
@@ -667,10 +670,13 @@ def _argument_reach(head: str, args: list) -> str:
             return "it names another machine or a device path"
         if "::" in low:
             return "a provider path can name another store or machine"
-        if low.startswith("-") and len(low) >= 3:
+        if head != "git" and low.startswith("-") and not low.startswith("--"):
+            # PowerShell binds any unambiguous prefix, down to one letter
+            # (`-C` is -ComputerName on Get-Service); git's own flags are not
+            # PowerShell parameters.
             flag = low.split(":", 1)[0]
             hit = next((r for r in _REMOTE_FLAGS if r.startswith(flag)), None)
-            if hit and len(flag) >= 3:
+            if hit and len(flag) >= 2:
                 return "it asks another machine or goes online (%s)" % hit
         if low == "/s":
             return "it asks another machine (/s)"
@@ -683,7 +689,7 @@ def _argument_reach(head: str, args: list) -> str:
     if not args or args[0].lower() not in _GIT_READ:
         return "a git command that is not read-only"
     sub = args[0].lower()
-    raw_rest = [_DASHES.get(a[:1], a[:1]) + a[1:] for a in args[1:]]
+    raw_rest = [_unquoted(a) for a in args[1:]]
     rest = [a.lower() for a in raw_rest]
     for a, raw in zip(rest, raw_rest):
         if a.startswith(_GIT_WRITE_OPTIONS):

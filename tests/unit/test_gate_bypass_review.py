@@ -55,6 +55,12 @@ REACHES_OUT = [
     "git log --show-signature",
     "git log --format=%G?",
     "git log --pretty=format:%GS",
+    "Get-Service -C srv01",
+    "Get-Process -C:srv01",
+    "git log '--show-signature'",
+    'git log "--format=%G?"',
+    "git diff '--ext-diff'",
+    "git log '--output=x.txt'",
 ]
 
 STILL_READ_ONLY = [
@@ -157,3 +163,18 @@ def test_a_setting_card_runs_only_an_internal_settings_tool(monkeypatch):
         "handler": sp.HANDLER, "path": "settings.x", "tool": "draft_email",
         "input": {"to": "someone@example.invalid", "send": True}}})
     assert ran == []
+
+
+def test_every_held_setting_names_a_settings_tool():
+    """Every settings tool that holds its change for a Yes is on the list a
+    setting card may run, so the list cannot fall behind the tools."""
+    import re
+    from pathlib import Path
+    import agent_friday
+    from agent_friday.services import setting_proposals as sp
+    root = Path(agent_friday.__file__).parent
+    held = set()
+    for py in root.rglob("*.py"):
+        text = py.read_text(encoding="utf-8", errors="replace")
+        held |= set(re.findall(r'(?:_sp|setting_proposals)\.hold\(\s*"([a-z_]+)"', text))
+    assert held and held <= set(sp.SETTINGS_TOOLS), held - set(sp.SETTINGS_TOOLS)
