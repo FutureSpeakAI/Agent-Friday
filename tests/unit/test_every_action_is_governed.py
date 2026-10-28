@@ -155,20 +155,71 @@ def _handler_names():
     return names - {"", "<lambda>", "h", "_handler"}
 
 
+#: Calls through a name bound to a tool handler (an alias, a registry lookup
+#: kept in a variable, getattr of a `_tool_*` name), each reviewed: (file,
+#: enclosing function) -> why it is not a way around the checkpoint.
+REVIEWED_INDIRECT: dict = {}
+
+
+def _handler_ref(node, handler_names) -> bool:
+    """Does this expression evaluate to a tool handler?"""
+    if isinstance(node, ast.Name):
+        return node.id in handler_names
+    if isinstance(node, ast.Attribute):
+        return node.attr in handler_names
+    if isinstance(node, ast.Subscript):
+        v = node.value
+        return (v.id if isinstance(v, ast.Name) else getattr(v, "attr", "")) == "CLAUDE_TOOL_HANDLERS"
+    if isinstance(node, ast.Call):
+        f = node.func
+        if isinstance(f, ast.Attribute) and f.attr == "get":
+            v = f.value
+            return (v.id if isinstance(v, ast.Name) else getattr(v, "attr", "")) == "CLAUDE_TOOL_HANDLERS"
+        if isinstance(f, ast.Name) and f.id == "getattr" and len(node.args) >= 2:
+            name = node.args[1]
+            if isinstance(name, ast.BinOp) and isinstance(name.op, ast.Add):
+                name = name.left
+            if isinstance(name, ast.JoinedStr) and name.values:
+                name = name.values[0]
+            return isinstance(name, ast.Constant) and str(name.value).startswith("_tool_")
+    return False
+
+
 def scan(source: str, rel: str, handler_names: set) -> list:
     """Executor paths in one file that bypass the checkpoint: [(rel, line, why)]."""
     tree = ast.parse(source)
     out = []
+    # Names that hold a handler: import aliases for the whole file, and
+    # assignments for the function that makes them.
+    file_aliases = {a.asname for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                    for a in n.names if a.asname and a.name in handler_names}
+    local_aliases: dict = {}
 
     def enclosing(stack):
         return next((n.name for n in reversed(stack)
                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))), "<module>")
 
     def visit(node, stack):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None \
+                and _handler_ref(node.value, handler_names):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    local_aliases.setdefault(enclosing(stack + [node]), set()).add(t.id)
         if isinstance(node, ast.Call):
             fn = node.func
             where = enclosing(stack)
             called = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+            # 0. calling through a name that holds a handler
+            if isinstance(fn, ast.Name) and where != "_execute_tool" and \
+                    (fn.id in file_aliases or fn.id in local_aliases.get(where, ())) and \
+                    (rel, where) not in REVIEWED_INDIRECT:
+                out.append((rel, node.lineno, f"calls a tool handler through '{fn.id}' in {where}()"))
+            # getattr(module, "_tool_…")(…) called on the spot
+            if isinstance(fn, ast.Call) and where != "_execute_tool" and \
+                    isinstance(fn.func, ast.Name) and fn.func.id == "getattr" and \
+                    _handler_ref(fn, handler_names) and (rel, where) not in REVIEWED_INDIRECT:
+                out.append((rel, node.lineno, f"calls a tool handler found by getattr in {where}()"))
             # 1. calling a registered tool handler by name
             # No exemption for calls from inside another handler: a governed
             # internal tool must not be able to run an outward one unseen.
@@ -220,6 +271,34 @@ def test_the_scanner_catches_a_planted_bypass():
         "    _MCP_MANAGER.call('bank', 'send_money', {})\n")
     hits = scan(planted, "services/planted.py", _handler_names())
     assert len(hits) == 3, hits
+
+
+def test_the_scanner_catches_a_handler_called_through_another_name():
+    """Indirect forms: an import alias, a registry lookup kept in a variable,
+    and getattr of a `_tool_` name, each called later or on the spot."""
+    planted = (
+        "from agent_friday.services.agent import _tool_run_command as rc\n"
+        "from agent_friday.services import agent\n"
+        "def sneaky(name, cmd):\n"
+        "    rc({'command': cmd})\n"
+        "    y = agent.CLAUDE_TOOL_HANDLERS.get('draft_email')\n"
+        "    y({'to': 'x@y.z'})\n"
+        "    z = agent.CLAUDE_TOOL_HANDLERS['draft_email']\n"
+        "    z({})\n"
+        "    fn = getattr(agent, '_tool_' + name)\n"
+        "    fn({})\n"
+        "    getattr(agent, f'_tool_{name}')({})\n"
+        "def fine(name):\n"
+        "    fn = lambda inp: inp\n"
+        "    return fn({})\n")
+    hits = scan(planted, "services/planted.py", _handler_names())
+    assert len(hits) == 5, hits
+    assert not [h for h in hits if "fine()" in h[2]], hits
+
+
+def test_every_indirect_exemption_says_why():
+    for where, why in list(REVIEWED_INDIRECT.items()) + list(REVIEWED_DIRECT_MCP.items()):
+        assert why and "todo" not in why.lower(), where
 
 
 def test_run_command_is_classified_per_command():

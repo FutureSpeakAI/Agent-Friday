@@ -617,9 +617,87 @@ def classify_command(cmd: str) -> tuple:
         head = words[0].lower()
         if head not in READ_ONLY_COMMANDS:
             return OUTWARD, f"'{words[0]}' is not on the read-only list"
-        if head == "git" and (len(words) < 2 or words[1].lower() not in _GIT_READ):
-            return OUTWARD, "a git command that is not read-only"
+        why = _argument_reach(head, words[1:])
+        if why:
+            return OUTWARD, why
     return INTERNAL, "read-only"
+
+
+#: Arguments that take a read-only command to another machine or online.
+_REMOTE_FLAGS = frozenset({"-computername", "-cn", "-cimsession", "-session", "-online",
+                           "-pssession", "/s", "-uri"})
+#: What may follow `git branch` / `git tag` / `git remote` and still only list.
+_GIT_LIST_FLAGS = {
+    "branch": {"-l", "--list", "-v", "-vv", "-a", "--all", "-r", "--remotes",
+               "--show-current", "--merged", "--no-merged", "--contains", "--no-contains"},
+    "tag": {"-l", "--list", "-n", "--contains", "--no-contains", "--merged", "--no-merged"},
+    "remote": {"-v", "--verbose"},
+}
+#: git options that write a file, run a program or change configuration.
+_GIT_WRITE_OPTIONS = ("--output", "--ext-diff", "--textconv", "--exec", "--upload-pack",
+                      "--receive-pack", "--config-env", "--git-dir", "--work-tree")
+
+
+def _argument_reach(head: str, args: list) -> str:
+    """Why the arguments of an allowlisted command make it reach further than
+    reading this machine, or "" when they do not."""
+    for a in args:
+        low = a.lower().strip("'\"")
+        if low.startswith(("\\\\", "//")) or "\\\\?\\" in low or "\\\\.\\" in low:
+            return "it names another machine or a device path"
+        flag = low.split(":", 1)[0]
+        if flag in _REMOTE_FLAGS:
+            return "it asks another machine or goes online (%s)" % flag
+        if "$" in low and not re.fullmatch(r"\$env:[a-z_][a-z0-9_]*(?:[\\/][^$]*)?", low):
+            return "a variable can hold anything"
+        if low.startswith("@"):
+            return "splatted arguments can hold anything"
+    if head != "git":
+        return ""
+    if not args or args[0].lower() not in _GIT_READ:
+        return "a git command that is not read-only"
+    sub = args[0].lower()
+    rest = [a.lower() for a in args[1:]]
+    for a in rest:
+        if a == "-c" or a.startswith(_GIT_WRITE_OPTIONS):
+            return "a git option that writes, runs a program or changes configuration"
+    if sub in _GIT_LIST_FLAGS:
+        allowed = _GIT_LIST_FLAGS[sub]
+        lists = any(a in ("-l", "--list") for a in rest)
+        for a in rest:
+            if a.startswith("-"):
+                if a.split("=", 1)[0] not in allowed:
+                    return "git %s %s can change the repository" % (sub, a)
+            elif not (lists or sub == "branch" and any(
+                    f in rest for f in ("--contains", "--no-contains", "--merged", "--no-merged"))):
+                # a bare name creates (branch, tag) or a word picks an action (remote)
+                return "git %s with a name changes the repository" % sub
+    return ""
+
+
+#: git subcommands that can run a program the repository's own configuration
+#: names (a diff driver, a text converter, a file-system monitor).
+_GIT_RUNS_CONFIGURED = {"status", "diff", "log", "show", "blame"}
+#: The options each of those takes to keep diff drivers and text converters off.
+_GIT_NO_DRIVERS = {"diff": " --no-ext-diff --no-textconv", "log": " --no-ext-diff --no-textconv",
+                   "show": " --no-ext-diff --no-textconv", "blame": " --no-textconv"}
+
+
+def harden_read_only_git(cmd: str) -> str:
+    """A read-only command with every `git` stage told not to run programs its
+    repository's configuration names. The command is unchanged when it has no
+    git stage. Apply only to a command classify_command called read-only."""
+    out = []
+    for stage in (cmd or "").split("|"):
+        m = re.match(r"(\s*)git(\s+)(\S+)(.*)$", stage, re.S | re.I)
+        if not m or m.group(3).lower() not in _GIT_RUNS_CONFIGURED:
+            out.append(stage)
+            continue
+        sub = m.group(3)
+        extra = _GIT_NO_DRIVERS.get(sub.lower(), "")
+        out.append("%sgit -c core.fsmonitor=false -c diff.external=%s%s%s%s" % (
+            m.group(1), m.group(2), sub, extra, m.group(4)))
+    return "|".join(out)
 
 
 def _resolve(path) -> Optional[Path]:
