@@ -13424,7 +13424,9 @@ function fridayAnnounce(msg, opts) {
     var el = document.getElementById(opts && opts.assertive ? 'fr-announce-assertive' : 'fr-announce-polite');
     if (!el) return;
     el.textContent = '';
-    setTimeout(function () { el.textContent = text; }, 60);
+    // The latest words win: a message set within the pause replaces one still waiting to be set.
+    clearTimeout(el._frAnnounce);
+    el._frAnnounce = setTimeout(function () { el.textContent = text; }, 60);
   } catch (e) { /* never in the way */ }
 }
 if (typeof window !== 'undefined') window.fridayAnnounce = fridayAnnounce;

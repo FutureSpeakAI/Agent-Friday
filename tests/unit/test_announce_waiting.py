@@ -32,7 +32,8 @@ def test_announce_and_the_approvals_popup_use_them(rel):
     fn = s[s.index("function fridayAnnounce(msg, opts) {"):]
     fn = fn[:fn.index("\n}\n")]
     assert "opts && opts.assertive ? 'fr-announce-assertive' : 'fr-announce-polite'" in fn
-    assert "el.textContent = '';" in fn and "setTimeout(function () { el.textContent = text; }, 60);" in fn
+    assert "el.textContent = '';" in fn and "el._frAnnounce = setTimeout(function () { el.textContent = text; }, 60);" in fn
+    assert "clearTimeout(el._frAnnounce);" in fn
     assert "if (fresh) fridayAnnounce(freshItems.length === 1" in s
     assert "' is waiting for your approval: ' + (freshItems[0].title || 'a request') + '.'" in s
 
