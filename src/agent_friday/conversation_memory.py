@@ -683,10 +683,14 @@ class ConversationMemory:
                 )
             docs = res.get("documents") or []
             metas = res.get("metadatas") or []
+            # The stored turn's id (the message id when indexed from chat): a
+            # summary of the session points back at the turns it came from.
+            ids = list(res.get("ids") or []) or [None] * len(docs)
             rows = []
-            for doc, meta in zip(docs, metas):
+            for doc_id, doc, meta in zip(ids, docs, metas):
                 meta = meta or {}
                 rows.append({
+                    "id": doc_id,
                     "text": doc,
                     "role": meta.get("role"),
                     "timestamp": meta.get("timestamp"),
@@ -728,14 +732,17 @@ class ConversationMemory:
                 res = self._collection.get(include=["documents", "metadatas"])
             docs = res.get("documents") or []
             metas = res.get("metadatas") or []
+            # Turn ids: what consolidation cites as its source (NS-15.9-1).
+            ids = list(res.get("ids") or []) or [None] * len(docs)
             role_set = set(roles) if roles else None
             rows = []
-            for doc, meta in zip(docs, metas):
+            for doc_id, doc, meta in zip(ids, docs, metas):
                 meta = meta or {}
                 role = meta.get("role")
                 if role_set is not None and role not in role_set:
                     continue
                 rows.append({
+                    "id": doc_id,
                     "text": doc,
                     "role": role,
                     "timestamp": meta.get("timestamp"),

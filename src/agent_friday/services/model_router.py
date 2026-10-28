@@ -2698,14 +2698,28 @@ def _session_summary_path(date_str, ext="md"):
     return SESSION_SUMMARY_DIR / f"{date_str}.{ext}"
 
 
+#: Whose summaries these are (A11). Every sidecar carries it; reads filter by it.
+SESSION_SUMMARY_PRINCIPAL = "owner"
+#: The visible first line of a saved summary: a model wrote it (NS-15.9-1).
+#: Stripped again on load, so the summary text itself is unchanged.
+MODEL_SUMMARY_MARKER = ("> Model summary: written by Friday's local model from the day's "
+                        "turns, not the owner's words. Source message ids are in the .json.")
+
+
 def _save_session_summary(date_str, summary_text, meta=None):
-    """Persist a session summary as markdown + a small JSON sidecar."""
+    """Persist a session summary as markdown + a small JSON sidecar.
+
+    Both say it is a model summary (the md's first line, the sidecar's
+    `model_summary`), and the sidecar names its principal; a caller's `meta`
+    carries the turn ids it was written from (`message_ids`)."""
     try:
         SESSION_SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
         _session_summary_path(date_str, "md").write_text(
-            summary_text, encoding="utf-8")
+            MODEL_SUMMARY_MARKER + "\n\n" + (summary_text or ""), encoding="utf-8")
         sidecar = {"date": date_str, "generated": datetime.now().isoformat(),
-                   "chars": len(summary_text or "")}
+                   "chars": len(summary_text or ""),
+                   "model_summary": True, "kind": "inferred",
+                   "principal": SESSION_SUMMARY_PRINCIPAL}
         if meta:
             sidecar.update(meta)
         _session_summary_path(date_str, "json").write_text(
@@ -2717,25 +2731,40 @@ def _save_session_summary(date_str, summary_text, meta=None):
 
 
 def _load_session_summary(date_str):
-    """Return the markdown summary for one date, or '' if none exists."""
+    """Return the markdown summary for one date, or '' if none exists (the
+    model-summary marker line is not part of the summary)."""
     try:
         p = _session_summary_path(date_str, "md")
-        return p.read_text(encoding="utf-8") if p.exists() else ""
+        text = p.read_text(encoding="utf-8") if p.exists() else ""
+        if text.startswith(MODEL_SUMMARY_MARKER):
+            text = text[len(MODEL_SUMMARY_MARKER):].lstrip("\n")
+        return text
     except Exception:
         return ""
 
 
-def _latest_session_summary():
-    """Return (date_str, markdown) for the most recent stored summary, or
-    (None, '') when there are none."""
+def _session_summary_meta(date_str):
+    """The JSON sidecar for one date, or {}."""
+    try:
+        p = _session_summary_path(date_str, "json")
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception:
+        return {}
+
+
+def _latest_session_summary(principal=SESSION_SUMMARY_PRINCIPAL):
+    """Return (date_str, markdown) for the most recent stored summary of
+    `principal`, or (None, '') when there are none. A sidecar without a
+    principal predates the field and is the owner's."""
     try:
         if not SESSION_SUMMARY_DIR.exists():
             return None, ""
         dates = sorted(p.stem for p in SESSION_SUMMARY_DIR.glob("*.md"))
-        if not dates:
-            return None, ""
-        latest = dates[-1]
-        return latest, _load_session_summary(latest)
+        for d in reversed(dates):
+            owner = str(_session_summary_meta(d).get("principal") or SESSION_SUMMARY_PRINCIPAL)
+            if owner == principal:
+                return d, _load_session_summary(d)
+        return None, ""
     except Exception:
         return None, ""
 
@@ -2767,12 +2796,16 @@ def _build_session_continuity_block():
         if len(snippet) > 1400:
             snippet = snippet[:1400].rsplit("\n", 1)[0] + "\n…"
         from agent_friday.services import memory_fence as _mf
+        from agent_friday.services import knowledge_kinds as _kk
+        # A model summary is Friday's own reading of the day (NS-3.4-1, NS-15.9-1).
         return (
             "\n== CONTINUITY FROM YOUR LAST SESSION (" + date_str + ") ==\n"
             + _mf.fence("last_session_summary",
                         "This is your own summary of the most recent day you spoke with the "
                         "user. Use it for continuity — pick up open threads naturally — but "
-                        "don't recite it back at them.\n" + snippet) + "\n")
+                        "don't recite it back at them.\n" + snippet,
+                        kind_label=_kk.header(_kk.INFERRED, "your model summary of "
+                                              + date_str + ", not confirmed")) + "\n")
     except Exception:
         return ""
 
@@ -2788,6 +2821,12 @@ def _generate_session_summary(date_str, force=False):
     try:
         if not force and _load_session_summary(date_str).strip():
             return _load_session_summary(date_str)
+        try:
+            from agent_friday.services import off_record as _offr
+            if _offr.skip("session_summary"):
+                return None              # off the record nothing is written
+        except Exception:
+            pass
         mem = _get_conversation_memory()
         if not mem.available():
             return None
@@ -2796,13 +2835,16 @@ def _generate_session_summary(date_str, force=False):
             return None
         # Build a compact transcript (oldest-first; get_session already sorts).
         lines = []
+        source_ids = []                  # the turns the summary is written from (NS-15.9-1)
         for t in turns:
-            if t.get("superseded"):
+            if t.get("superseded") or t.get("off_record"):
                 continue                 # history, not evidence (§34.9-4)
             role = "Friday" if t.get("role") == "friday" else "User"
             txt = " ".join((t.get("text") or "").split())
             if txt:
                 lines.append(f"{role}: {txt}")
+                if t.get("id"):
+                    source_ids.append(str(t.get("id")))
         if not lines:
             return None
         transcript = "\n".join(lines)[:18000]
@@ -2867,6 +2909,12 @@ def _generate_session_summary(date_str, force=False):
             "mood": arc_state.get("mood"),
             "ema": arc_state.get("ema"),
             "trend": arc_state.get("trend"),
+            # A model wrote it, from these turns, for this principal (NS-15.9-1).
+            "model_summary": True,
+            "made_by": "local model",
+            "kind": "inferred",
+            "principal": SESSION_SUMMARY_PRINCIPAL,
+            "message_ids": source_ids,
         })
         print(f"  [SUMMARY] wrote session summary for {date_str} "
               f"({len(turns)} turns, mood={arc_state.get('mood')})")
@@ -2998,11 +3046,14 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         # session so the end-of-turn index does not store a reply's repeat of it
         # as a new exchange.
         from agent_friday.services import memory_fence as _mf
+        from agent_friday.services import knowledge_kinds as _kk
         _mf.remember(session_id, recalled)
         if not lines:
             return live_block
+        # Each line is a remembered turn with its date and ref (NS-3.4-1).
         return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
-                + guide + "\n" + _mf.fence("past_conversations", "\n".join(lines)) + "\n")
+                + guide + "\n" + _mf.fence("past_conversations", "\n".join(lines),
+                                           kind_label=_kk.header(_kk.REMEMBERED)) + "\n")
     except Exception as _e:
         return ""
 
@@ -3395,7 +3446,16 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
     TIER_2 (redacted for the cloud), whatever a keyword scan would say.
     """
     from agent_friday.services import prompt_freeze as _pf
-    out = ''
+    from agent_friday.services import knowledge_kinds as _kk
+    # The memory section opens with how to speak about each kind of
+    # information (NS-3.4-1): once per prompt, a Friday-authored constant with
+    # no user data, so it is gate-exempt like the core instructions.
+    try:
+        from agent_friday.services.egress_gate import register_trusted_text as _rst
+        _rst(_kk.STANDING_INSTRUCTION)
+    except Exception:
+        pass
+    out = "\n\n== KINDS OF INFORMATION ==\n" + _kk.STANDING_INSTRUCTION + "\n"
 
     gate_fn, gate_key = None, "ungated"
     if vault_control is not None:
@@ -3425,7 +3485,8 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
     if core:
         from agent_friday.services import memory_fence as _mf
         out += ("\n\n== CORE MEMORY ==\n"
-                + _mf.fence("memory_card", _strip_overrides(core, "core-memory")) + "\n")
+                + _mf.fence("memory_card", _strip_overrides(core, "core-memory"),
+                            kind_label=_kk.header(_kk.KNOWN, "your memory card")) + "\n")
 
     def _um():
         from agent_friday.services.user_model import render_user_model_prompt
@@ -3437,13 +3498,16 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
 
     um = _pf.frozen(freeze_key, "user_model", _um)
     if um:
-        out += "\n\n== USER MODEL ==\n" + um + "\n"
+        # Style traits read from sessions: Friday's inference about the owner.
+        out += ("\n\n== USER MODEL ==\n" + _kk.header(_kk.INFERRED, "Friday's read of your "
+                                                      "style, not confirmed") + "\n" + um + "\n")
     heur = _pf.frozen(freeze_key, "heuristics:" + str(workspace or ''), _heur)
     if heur:
         # Learned heuristics are RSI output: Friday's own writing, fed back
         # into Friday's own prompt. That is precisely the loop that must not
         # be able to grant new authority.
         out += ("\n\n== LEARNED HEURISTICS (advisory) ==\n"
+                + _kk.header(_kk.INFERRED) + "\n"
                 + _strip_overrides(heur, "learned-heuristics") + "\n")
     return out
 
