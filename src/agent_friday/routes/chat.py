@@ -1809,6 +1809,13 @@ def chat():
                     _record('gemini', 'error', f'cloud vision failed: {ve}')
 
         settings = _load_settings()
+        # The private-memory generation at the turn's start: a shadow reading of
+        # this turn is written only if it is unchanged when the reading is taken.
+        try:
+            from agent_friday.services import off_record as _off_turn
+            _turn_gen = int(_off_turn.generation())
+        except Exception:
+            _turn_gen = None
         personality = _load_agent_personality()
 
         # ── Demo mode ── no provider configured → return a labelled canned reply so
@@ -3214,6 +3221,16 @@ def chat():
         # returned the block, and gone if its source was forgotten meanwhile.
         reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
 
+        # Decision models, evidence.supports (shadow): does each footnote's passage
+        # support its sentence? Read afterwards on the head's own worker; nothing
+        # here waits for it or changes. Not for a turn that began off the record.
+        if not settings.get('off_record'):
+            try:
+                from agent_friday.services import citation_heads as _cite_head
+                _cite_head.shadow_reply(reply, tool_trace, surface=chat, gen=_turn_gen)
+            except Exception:
+                pass
+
         # ── Fact-check: flag low-trust news citations. ──
         # When Friday cites a news outlet, consult its Source Trust Graph score
         # and append a verify-independently warning for anything below 0.5.
@@ -3754,6 +3771,13 @@ def chat_send():
         # exactly the seam /api/chat's own _prep_for(provider) (chat.py:748)
         # was written to close. Mirrors that pattern here.
         settings = _load_settings()
+        # The private-memory generation at the turn's start: a shadow reading of
+        # this turn is written only if it is unchanged when the reading is taken.
+        try:
+            from agent_friday.services import off_record as _off_turn
+            _turn_gen = int(_off_turn.generation())
+        except Exception:
+            _turn_gen = None
         _session_id = _current_session_id()
         _send_sources = []
 
@@ -4053,6 +4077,16 @@ def chat_send():
             'workspace': workspace,
         }
         reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+
+        # Decision models, evidence.supports (shadow): does each footnote's passage
+        # support its sentence? Read afterwards on the head's own worker; nothing
+        # here waits for it or changes. Not for a turn that began off the record.
+        if not settings.get('off_record'):
+            try:
+                from agent_friday.services import citation_heads as _cite_head
+                _cite_head.shadow_reply(reply, tool_trace, surface=chat, gen=_turn_gen)
+            except Exception:
+                pass
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
         friday_msg = {
             'id': str(uuid.uuid4()),
