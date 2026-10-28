@@ -209,6 +209,10 @@ def revoke_all(by: str = "owner:ui") -> dict:
 
     def _gate_grants():
         from agent_friday.governance import action_gate
+        # One ledger entry ends every grant made until now, listed or not, so none
+        # comes back (action_gate.revoke_all_grants).
+        if hasattr(action_gate, "revoke_all_grants"):
+            return action_gate.revoke_all_grants()
         ids = [str(g.get("grant_id") or "") for g in action_gate.list_grants() if g.get("grant_id")]
         return _each(ids, action_gate.revoke_grant)
 
