@@ -296,7 +296,7 @@ def purge_library_documents(doc_ids) -> dict:
         # BD-16: a kept damaged graph file may hold the purged documents' words and cannot be
         # scrubbed record by record, so it goes too.
         from agent_friday.services import memory_store_repair as _msr
-        _msr.drop_kept_copies(store.base, why="library purge")
+        _msr.drop_kept_copies(store.base, why="library purge", damaged_live=True)
     except Exception:
         pass
     return out
@@ -313,7 +313,16 @@ def purge_all_library() -> dict:
     for name in ("entities", "relationships"):
         for r in store.load(name):
             keys.update((r.get("provenance") or {}).get("docs") or [])
-    return purge_library_documents(keys) if keys else {"entities": 0, "relationships": 0, "described_again": 0, "reports": 0}
+    if keys:
+        return purge_library_documents(keys)
+    try:
+        # A damaged graph file read as empty, so no keys were found: what it (or a kept copy)
+        # holds may still carry Library words, so those go too (BD-16).
+        from agent_friday.services import memory_store_repair as _msr
+        _msr.drop_kept_copies(store.base, why="library purge", damaged_live=True)
+    except Exception:
+        pass
+    return {"entities": 0, "relationships": 0, "described_again": 0, "reports": 0}
 
 
 def _link_to_library(entities: dict[str, dict]) -> tuple[list[dict], list[dict]]:
@@ -1004,7 +1013,7 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         # next delta pass. forget() is a no-op for a file that was never
         # recorded this pass, so this is safe either way.
         for _src in capped_sources:
-            manifest.forget(_src)
+            manifest.forget(_src, scrub=False)   # bookkeeping, not a forget: kept copies stay
 
     # ASCII only: progress strings reach cp1252 Windows consoles via callbacks.
     say(f"extracted {extracted} chunks -> {len(entities)} entities, "

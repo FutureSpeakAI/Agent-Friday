@@ -63,7 +63,8 @@ def vector_health() -> Dict[str, Any]:
             return {"state": "missing"}
         db = d / "chroma.sqlite3"
         wal = d / "chroma.sqlite3-wal"
-        if db.exists() and not (wal.exists() and wal.stat().st_size):
+        journal = d / "chroma.sqlite3-journal"
+        if db.exists() and not (wal.exists() and wal.stat().st_size) and not journal.exists():
             conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro&immutable=1", uri=True, timeout=5)
             try:
                 row = conn.execute("PRAGMA quick_check").fetchone()
@@ -116,12 +117,16 @@ def keep_aside(path: Path, *, by: str = "friday:save") -> Path:
     return dest
 
 
-def drop_kept_copies(base: Path = None, *, why: str) -> int:
-    """Remove every kept damaged graph file: after a forget or a Library purge, what was
-    forgotten must not survive in a copy that cannot be scrubbed record by record."""
+def drop_kept_copies(base: Path = None, *, why: str, damaged_live: bool = False) -> int:
+    """Remove every kept damaged graph file (and, with ``damaged_live``, a live plain file
+    that does not parse): after a forget or a Library purge, what was forgotten must not
+    survive in a file that cannot be scrubbed record by record. A signed receipt names how many."""
     base = Path(base) if base else _kg_dir()
     n = 0
-    for p in (base.glob("*.json.damaged-*") if base.exists() else []):
+    targets = list(base.glob("*.json.damaged-*")) if base.exists() else []
+    if damaged_live and base.exists():
+        targets += [base / ("%s.json" % a) for a in _artifacts() if plain_damaged(base / ("%s.json" % a))]
+    for p in targets:
         try:
             p.unlink()
             n += 1
@@ -130,6 +135,11 @@ def drop_kept_copies(base: Path = None, *, why: str) -> int:
                        type(e).__name__)
     if n:
         _log.warning("knowledge graph: %d kept damaged file(s) removed (%s)", n, why)
+        try:
+            _receipt("knowledge_graph", "kept_copies_removed", "friday:" + why.replace(" ", "_"),
+                     removed=n)
+        except Exception:
+            pass
     return n
 
 

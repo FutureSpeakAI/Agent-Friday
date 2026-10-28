@@ -532,13 +532,15 @@ class KnowledgeGraphManifest:
             **fp,
         }
 
-    def forget(self, source: str | Path) -> None:
-        try:
-            # BD-16: what is forgotten must not survive in a kept damaged copy.
-            from agent_friday.services import memory_store_repair as _msr
-            _msr.drop_kept_copies(self.path.parent, why="forget")
-        except Exception:
-            pass
+    def forget(self, source: str | Path, scrub: bool = True) -> None:
+        if scrub:
+            try:
+                # BD-16: what is forgotten must not survive in a kept damaged copy (or in a
+                # damaged file no one can read record by record).
+                from agent_friday.services import memory_store_repair as _msr
+                _msr.drop_kept_copies(self.path.parent, why="forget", damaged_live=True)
+            except Exception:
+                pass
         self.sources.pop(canonical(source), None)
 
     def delta(self, paths: Iterable[str | Path]) -> dict:
