@@ -308,6 +308,11 @@ def check(url: str) -> str:
             try:
                 from agent_friday.governance import trust_anchor
                 anchored = trust_anchor.carried(ANCHOR_NAME)
+                if anchored is None and _marked(raw):
+                    # Carried over before the anchor existed (or the ledger was unreadable at
+                    # the start, since reviewed): anchor it now rather than wait for a restart.
+                    carry_over_at_boot({})
+                    anchored = trust_anchor.carried(ANCHOR_NAME, fresh=True)
             except Exception:
                 anchored = None
             if not anchored or key not in anchored["items"]:
@@ -366,11 +371,13 @@ def remove(url_or_key: str, *, made_by: str) -> bool:
             # so a deleted list is never rebuilt with it. If that cannot be recorded, nothing
             # changes.
             from agent_friday.governance import trust_anchor
-            anchored = trust_anchor.carried(ANCHOR_NAME)
-            if anchored and key in anchored["items"]:
+            try:
+                anchored = trust_anchor.carried(ANCHOR_NAME)
+                carried_here = bool(anchored) and key in anchored["items"]
+            except trust_anchor.AnchorUnavailable:
+                carried_here = True                    # cannot tell: record the release anyway
+            if carried_here:
                 trust_anchor.release(ANCHOR_NAME, key, why="removed by the owner")
-        except trust_anchor.AnchorUnavailable:
-            pass                                       # nothing the ledger could rebuild it from
         except Exception as e:  # noqa: BLE001
             raise HostRefused("The removal could not be recorded in the action ledger (%s), "
                               "so nothing was changed." % type(e).__name__)
