@@ -46,3 +46,12 @@ def test_settings_offers_100_to_200_and_the_page_applies_the_saved_size(page):
 
 def test_the_app_suite_runs_the_zoom_test():
     assert "text_size.spec.ts" in (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+
+
+def test_a_calendar_drag_follows_the_pointer_at_any_text_size():
+    """Pointer moves come in screen pixels; at 200% one grid pixel is two of them.
+    Without the division an event dragged at 200% moved twice as far as the pointer."""
+    js = (ROOT / "static" / "calendar_views.js").read_text(encoding="utf-8")
+    assert "const z = el.currentCSSZoom || 1;" in js
+    assert "minutes = Math.trunc(dy / z / stepPx) * STEP_MIN;" in js
+    assert "shiftX = (hit.getBoundingClientRect().left - col0.getBoundingClientRect().left) / z;" in js

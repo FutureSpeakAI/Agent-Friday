@@ -323,6 +323,8 @@
         // A press on a control or on the prep card inside the event is that control's, never a drag.
         if (e.target && e.target.closest && e.target.closest('button, a, input, select, textarea, label, [data-no-drag]')) return;
         const el = e.currentTarget, y0 = e.clientY, x0 = e.clientX, pid = e.pointerId;
+        // Pointer moves are in screen pixels; inside a window scaled by Text size (CSS zoom) one grid pixel is z of them.
+        const z = el.currentCSSZoom || 1;
         // A drag is never a text selection (a selected title would start the browser's own drag and cancel ours).
         try { const sel = window.getSelection && window.getSelection(); if (sel && sel.removeAllRanges) sel.removeAllRanges(); } catch (_) { /* none */ }
         const col0 = el.closest('[data-cal-day]');
@@ -334,10 +336,10 @@
           if (m.buttons === 0) { end(true); return; }   // the release was lost (another window, alt-tab): abandon
           const dy = m.clientY - y0, dx = m.clientX - x0;
           const colW = col0 ? col0.getBoundingClientRect().width : Infinity;
-          if (!moving && Math.abs(dy) < stepPx && !(o.mode === 'week' && Math.abs(dx) >= colW / 2)) return;
+          if (!moving && Math.abs(dy / z) < stepPx && !(o.mode === 'week' && Math.abs(dx) >= colW / 2)) return;
           moving = true;
           el.classList.add('calv-dragging');
-          minutes = Math.trunc(dy / stepPx) * STEP_MIN;
+          minutes = Math.trunc(dy / z / stepPx) * STEP_MIN;
           days = 0;
           let shiftX = 0;
           if (o.mode === 'week' && col0) {
@@ -347,7 +349,7 @@
               .filter(n => n !== el && !el.contains(n)).map(n => n.closest && n.closest('[data-cal-day]')).find(Boolean);
             if (hit && hit !== col0 && hit.parentNode === col0.parentNode) {
               days = Math.round((parseDay(hit.getAttribute('data-cal-day')) - parseDay(col0.getAttribute('data-cal-day'))) / 86400000);
-              shiftX = hit.getBoundingClientRect().left - col0.getBoundingClientRect().left;
+              shiftX = (hit.getBoundingClientRect().left - col0.getBoundingClientRect().left) / z;
             }
           }
           el.style.transform = 'translate(' + shiftX + 'px,' + (minutes / 60 * o.hourPx) + 'px)';
