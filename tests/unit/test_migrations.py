@@ -29,11 +29,16 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("FRIDAY_HOME", str(h))
     (h / "settings.json").write_text(json.dumps({"agent_name": "Friday", "version": 3}), encoding="utf-8")
     (h / "notes.txt").write_text("before", encoding="utf-8")
-    asked = []
-    from agent_friday.services import safe_mode
-    monkeypatch.setattr(safe_mode, "set_next_start", lambda on: asked.append(on) or {})
-    h.asked = asked
     return h
+
+
+@pytest.fixture
+def asked(monkeypatch):
+    """What the runner asked of safe mode for the next start."""
+    out = []
+    from agent_friday.services import safe_mode
+    monkeypatch.setattr(safe_mode, "set_next_start", lambda on, reason=None: out.append((on, reason)) or {})
+    return out
 
 
 def _bump(home: Path, name: str) -> None:
@@ -88,7 +93,7 @@ def test_steps_run_in_order_once_each_backed_up_first(home, monkeypatch):
 
 
 @pytest.mark.parametrize("how", ["raises", "check"])
-def test_a_failed_step_puts_the_files_back_and_this_start_is_safe_mode(home, monkeypatch, how):
+def test_a_failed_step_puts_the_files_back_and_this_start_is_safe_mode(home, monkeypatch, how, asked):
     mg = _mg()
     monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg, fail_at=2 if how == "raises" else None,
                                                  bad_check_at=2 if how == "check" else None))
@@ -96,7 +101,7 @@ def test_a_failed_step_puts_the_files_back_and_this_start_is_safe_mode(home, mon
     assert r["ok"] is False and r["safe_mode"] is True and r["failed"] == 2
     assert (home / "notes.txt").read_text(encoding="utf-8") == "before"     # step 1's change undone too
     assert mg.current(home) == 0 and not (home / "schema.json").exists()
-    assert home.asked == []                          # this start only: the next start tries again
+    assert asked == [(True, "migration_failed")]     # safe mode until the owner leaves it
     assert [x["event"] for x in _receipts(home, "receipt-0-to-2-*.json")] == ["migration_failed"]
     assert not _siblings(home, ".migration-journal")
 
@@ -135,6 +140,43 @@ def test_a_stop_while_putting_files_back_is_finished_at_the_next_start(home, mon
     r = mg.run_pending(home)
     assert r["safe_mode"] is True and (home / "notes.txt").read_text(encoding="utf-8") == "before"
     assert mg.current(home) == 0 and not _siblings(home, ".migration-journal")
+
+
+def test_a_failed_migration_keeps_safe_mode_until_the_owner_presses_on_the_doctor_page(home, monkeypatch):
+    mg = _mg()
+    from agent_friday import cli
+    from agent_friday.services import safe_mode
+    monkeypatch.delenv("FRIDAY_SAFE_START", raising=False)
+    monkeypatch.setattr(safe_mode, "_failed_starts", lambda: 0)
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg, fail_at=2))
+    assert mg.run_pending(home)["safe_mode"] is True
+    assert safe_mode.marker_path().exists() and safe_mode.marker_reason() == "migration_failed"
+    safe_mode.reset_for_tests()
+    try:
+        st = safe_mode.state()
+        assert st["active"] is True and "Doctor page" in st["why"]
+        assert cli.cmd_safe_mode("off") == 2 and safe_mode.marker_path().exists()   # not from the CLI
+        safe_mode.set_next_start(True)                       # asking again keeps the reason
+        assert safe_mode.marker_reason() == "migration_failed"
+        monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg))
+        assert mg.run_pending(home)["ok"]                    # a later success does not leave it either
+        assert safe_mode.marker_path().exists()
+    finally:
+        safe_mode.reset_for_tests()
+
+
+@pytest.mark.parametrize("how", ["link", "cut_off"])
+def test_a_migration_that_cannot_run_keeps_safe_mode_too(home, monkeypatch, asked, how):
+    mg = _mg()
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg))
+    if how == "link":
+        monkeypatch.setattr(mg, "_links_in", lambda h, t: ["notes.txt"])
+    else:
+        mg._journal_path(home).write_text(json.dumps({"v": 1, "state": "running", "from": 0, "to": 2,
+                                                      "backup": str(home.parent / "gone"),
+                                                      "touches": ["notes.txt"], "copied": ["notes.txt"]}),
+                                          encoding="utf-8")
+    assert mg.run_pending(home)["safe_mode"] is True and asked == [(True, "migration_failed")]
 
 
 def test_a_newer_data_folder_is_never_touched(home):
