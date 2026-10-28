@@ -15190,7 +15190,8 @@ def _approved_card_allows(approval_id, tool_name, args):
     if _norm(payload.get("input")) != _norm(args):
         return False, "its details differ from what was approved"
     try:
-        _appr.mark_used(approval_id, f"tool:{tool_name}")
+        if not _appr.spend_once(approval_id, f"tool:{tool_name}"):
+            return False, "it has already been used"
     except Exception as e:
         return False, f"the approval could not be marked used ({e})"
     return True, ""
@@ -15209,7 +15210,11 @@ def _taint_card(ctx, decision, key):
         from agent_friday.services import approvals as _appr
         rec = _appr.find_for_subject("tool_action", subject, "tainted_action")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
-            _appr.mark_used(rec["approval_id"], f"tool:{name}")
+            # One decision, one action, even when two calls read the card at once.
+            if not _appr.spend_once(rec["approval_id"], f"tool:{name}"):
+                return _hooks.DENY(
+                    f"[ALREADY DONE] The approval for '{name}' with these details was just used "
+                    f"by another call. It was NOT executed again. Do not retry it.")
             ctx.meta["taint_card_approved"] = True
             ctx.meta["owner_decided"] = rec["approval_id"]
             return _hooks.ALLOW

@@ -643,6 +643,24 @@ def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
                   used_at=time.time(), used_detail=detail or {})
 
 
+def spend_once(approval_id: str, actor: str, detail: Optional[dict] = None) -> bool:
+    """Spend an approved, unspent card for the call about to run on it: True for exactly one
+    caller. The check and the write happen together under the store lock, against the stored
+    record. (Reading the card, then `mark_used`, let two calls that read it at once both run on
+    one decision.) A spend that does not read back from disk counts as not spent."""
+    with _LOCK:
+        recs = _read_store()
+        rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
+        if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
+            return False
+        now = time.time()
+        rec.update(consumed=True, consumed_at=now, used_by=actor, used_at=now,
+                   used_detail=detail or {})
+        _write_store(recs)
+        back = next((r for r in _read_store() if r.get("approval_id") == approval_id), None)
+        return bool(back and back.get("consumed") and back.get("used_by") == actor)
+
+
 def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
     """Claim an approved card for a single execution. True for exactly one caller.
 
