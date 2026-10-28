@@ -2211,6 +2211,16 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
             text = "The approved change did not happen: %s" % (
                 getattr(e, "user_message", "") or exception_text(e))
             ok = False
+        except BaseException:
+            # the thread is being torn down (SystemExit, KeyboardInterrupt): its decision still
+            # closes, failed, and whoever waits on the run is let go; then it goes on as before
+            _close_batch(decision_ref, None, False)
+            with _RUNS_LOCK:
+                run = _RUNS.get(approval_id or "")
+                if run is not None:
+                    run["receipt"] = {"status": "failed", "summary": "The approved change was interrupted."}
+            ev.set()
+            raise
         _close_batch(decision_ref, rec, ok)
         if approval_id:
             try:

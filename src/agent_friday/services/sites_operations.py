@@ -241,9 +241,21 @@ def _records(site, folder, pattern):
     return sorted(rows, key=lambda row: row.get("created_at", 0), reverse=True)
 
 
+#: Internal fields of an operation record that never leave in a public view (the kept decision is the
+#: ledger's to read; a caller never sees or hands it back).
+_PRIVATE_OPERATION_FIELDS = ("decision_ref",)
+
+
+def _public_operation(operation):
+    """An operation record as a public view shows it: without its internal fields."""
+    if not isinstance(operation, dict):
+        return operation
+    return {k: v for k, v in operation.items() if k not in _PRIVATE_OPERATION_FIELDS}
+
+
 def _overview(site):
     builds = _records(site, "builds", "build-*/build.json")
-    operations = _records(site, "operations", "op-*.json")
+    operations = [_public_operation(row) for row in _records(site, "operations", "op-*.json")]
     deployments = [row for row in operations if row["action"] == "publish"]
     last_verified = next((row for row in deployments if row.get("verified_at")), None)
     current = copy.deepcopy(last_verified)
@@ -604,10 +616,13 @@ def _close_reconciled(operation):
         status = str(operation.get("status") or "")
 
         def close():
-            from agent_friday.governance import action_gate
-            action_gate.close_persisted(ref, word != "failed", outcome=word,
-                                        verified=word == "completed_verified",
-                                        detail="site_reconciled_" + status[:30])
+            try:
+                from agent_friday.governance import action_gate
+                action_gate.close_persisted(ref, word != "failed", outcome=word,
+                                            verified=word == "completed_verified",
+                                            detail="site_reconciled_" + status[:30], expected_tool=KIND)
+            except Exception:  # noqa: BLE001 - a receipt never changes the reconcile's answer
+                pass
         return close
     except Exception:  # noqa: BLE001
         return None
@@ -626,6 +641,8 @@ def expire_decisions(now=None, max_age=DECISION_EXPIRE_S):
         return 0
     for path in paths:
         try:
+            # check and close under the store's lock: a reconcile racing this expiry either sees the
+            # decision gone from the record or has already closed it (the ledger check), never both
             with LOCK:
                 operation = _read(path)
                 ref = (operation or {}).get("decision_ref")
@@ -640,20 +657,39 @@ def expire_decisions(now=None, max_age=DECISION_EXPIRE_S):
                     _save_operation(operation)
                 except Exception:  # noqa: BLE001 - the ledger check below prevents a second outcome
                     pass
-            provider_built = status in _PROVIDER_READY
-            closed += bool(action_gate.close_persisted(
-                ref, provider_built, outcome="executed" if provider_built else "failed",
-                detail=("site_expired_" + (status or "unknown"))[:40]))
+                provider_built = status in _PROVIDER_READY
+                # nobody ever confirmed what became of it: the detail says so, and names the last status
+                closed += bool(action_gate.close_persisted(
+                    ref, provider_built, outcome="executed" if provider_built else "failed",
+                    detail=("outcome_never_confirmed_site_" + (status or "unknown"))[:60],
+                    expected_tool=KIND))
         except Exception:  # noqa: BLE001
             continue
     return closed
 
 
-def _expire_in_background():
+#: One expiry pass at a time: a pass already running makes a second request a no-op.
+_EXPIRY_RUNNING = threading.Lock()
+
+
+def _expire_once():
     try:
-        threading.Thread(target=expire_decisions, daemon=True, name="site-decision-expiry").start()
+        expire_decisions()
+    finally:
+        _EXPIRY_RUNNING.release()
+
+
+def _expire_in_background():
+    """Start an expiry pass in the background unless one is already running. True when one was
+    started. Never raises."""
+    if not _EXPIRY_RUNNING.acquire(blocking=False):
+        return False
+    try:
+        threading.Thread(target=_expire_once, daemon=True, name="site-decision-expiry").start()
+        return True
     except Exception:  # noqa: BLE001
-        pass
+        _EXPIRY_RUNNING.release()
+        return False
 
 
 def _close_decision(decision, operation):
@@ -737,7 +773,7 @@ def _execute(action, args, caller):
         if operation["status"] in {"awaiting_approval", "denied", "expired", "blocked", "refused", "failed"}:
             raise UserFacingValueError("This publication has not started. Inspect its review before checking the provider.")
         if operation["status"] == "applying":
-            return {"status": "ok", "operation": operation, "operation_id": operation["operation_id"]}
+            return {"status": "ok", "operation": _public_operation(operation), "operation_id": operation["operation_id"]}
         observed_revision = operation.get("record_revision", 0)
         connection = _connection(site, operation["connection"], allow_reconnected=True)
         # Read-back belongs to this fresh call; it never renews mutation authority.
@@ -779,7 +815,7 @@ def _execute(action, args, caller):
                 if close is not None:
                     close()
         _expire_in_background()
-    return {"status": "ok", "operation": operation, "operation_id": operation["operation_id"]}
+    return {"status": "ok", "operation": _public_operation(operation), "operation_id": operation["operation_id"]}
 
 
 def execute(action, args=None, context=None):

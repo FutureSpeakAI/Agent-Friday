@@ -541,7 +541,7 @@ def _close_decision(decision, status):
         from agent_friday.governance import action_gate
         # ledger-checked: the reconcile in the same run may already have closed the kept copy
         action_gate.close_persisted(decision, word != "failed", detail="domain_" + str(status),
-                                    outcome=word, verified=word == "completed_verified")
+                                    outcome=word, verified=word == "completed_verified", expected_tool=KIND)
     except Exception:  # noqa: BLE001
         pass
 
@@ -580,9 +580,12 @@ def _close_reconciled(op):
         op.pop("decision_ref", None)
 
         def close():
-            from agent_friday.governance import action_gate
-            action_gate.close_persisted(ref, True, outcome=word, verified=True,
-                                        detail="domain_reconciled_" + status[:30])
+            try:
+                from agent_friday.governance import action_gate
+                action_gate.close_persisted(ref, True, outcome=word, verified=True,
+                                            detail="domain_reconciled_" + status[:30], expected_tool=KIND)
+            except Exception:  # noqa: BLE001 - a receipt never changes the reconcile's answer
+                pass
         return close
     except Exception:  # noqa: BLE001
         return None
@@ -613,8 +616,10 @@ def expire_decisions(now=None, max_age=DECISION_EXPIRE_S):
                     _save_op(op)
                 except Exception:  # noqa: BLE001 - the ledger check prevents a second outcome
                     pass
+            # nobody ever confirmed what became of it: the detail says so, and names the last status
             closed += bool(action_gate.close_persisted(
-                ref, False, outcome="failed", detail=("domain_expired_" + (status or "unknown"))[:40]))
+                ref, False, outcome="failed",
+                detail=("outcome_never_confirmed_domain_" + (status or "unknown"))[:60], expected_tool=KIND))
         except Exception:  # noqa: BLE001
             continue
     return closed

@@ -1635,14 +1635,51 @@ def _has_terminal_outcome(action_id: str) -> bool:
     return False
 
 
+def _ledger_decision_matches(ref: dict, expected_tool: Optional[str]) -> bool:
+    """Is `ref` exactly a decision the ledger holds? The decision entry with
+    its action id must carry the same seq and hash, be outward, and name the
+    tool the caller expects (`expected_tool`, when given; the ref's own tool
+    must agree). A ref read back from a record is data, not proof: a forged
+    or swapped one (another action's id, a wrong hash, another kind) matches
+    nothing and closes nothing."""
+    from agent_friday.services import action_ledger
+    aid = str(ref.get("action_id") or "")
+    if not aid:
+        return False
+    if expected_tool is not None and str(ref.get("tool") or "") != str(expected_tool):
+        return False
+    # verified: only a line whose hash and signature hold; archive: a decision kept long enough to
+    # have been archived still counts
+    for e in action_ledger.entries(["decision"], newest_first=True, verified=True, archive=True,
+                                   where=lambda e: isinstance(e.get("rec"), dict)
+                                   and e["rec"].get("action_id") == aid):
+        rec = e.get("rec") or {}
+        if (e.get("seq") == ref.get("seq") and isinstance(e.get("hash"), str)
+                and e.get("hash") == ref.get("hash")
+                and rec.get("class") == OUTWARD
+                and str(rec.get("tool") or "") == str(ref.get("tool") or "")
+                and (expected_tool is None or rec.get("tool") == expected_tool)):
+            return True
+    return False
+
+
 def close_persisted(ref: Optional[dict], ok: bool = True, *, detail: str = "",
-                    verified: bool = False, outcome: Optional[str] = None) -> bool:
+                    verified: bool = False, outcome: Optional[str] = None,
+                    expected_tool: Optional[str] = None) -> bool:
     """`close_external` for a decision kept on a record (`portable_ref`) and
-    read back, possibly after a restart: the ledger is asked first, so a
-    decision that already has its terminal outcome never gets a second one.
-    True when an outcome was written. Never raises."""
+    read back, possibly after a restart. The ref is checked against the
+    ledger first (`_ledger_decision_matches`: the decision with its action id,
+    the same seq and hash, outward, and the `expected_tool` the caller names);
+    one that does not match is refused (logged, nothing written). Then the
+    ledger is asked whether the action already has its terminal outcome, so
+    it never gets a second one. True when an outcome was written. Never
+    raises."""
     try:
         if not (isinstance(ref, dict) and ref.get("action_id")) or ref.get("_closed"):
+            return False
+        if not _ledger_decision_matches(ref, expected_tool):
+            _log.warning("close_persisted refused a decision ref that matches no ledger decision "
+                         "(expected tool %s)", expected_tool or "any")
             return False
         if _has_terminal_outcome(str(ref["action_id"])):
             ref["_closed"] = True

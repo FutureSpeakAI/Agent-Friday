@@ -532,3 +532,261 @@ def test_the_audit_over_a_run_of_every_path_finds_nothing_open_or_unconfirmed(mo
     c = r["counts"]
     assert c["open"] == 0 and c["unconfirmed"] == 0 and c["duplicate"] == 0, r
     assert c["closed"] >= len(refs)
+
+
+# ── review fixes ────────────────────────────────────────────────────────────
+
+def _details(ref):
+    return [e["rec"].get("detail") for e in L.entries(["outcome"], newest_first=False)
+            if e["rec"].get("action_id") == ref["action_id"]]
+
+
+def _setting_store(mp, tmp_path):
+    from agent_friday.services import setting_proposals as sp
+    mp.setattr(sp, "_store", lambda: tmp_path / "setting_changes.json")
+    mp.setattr(sp, "_snapshot", lambda keys: {})
+    return sp
+
+
+def test_a_setting_tool_that_raises_on_the_yes_closes_failed_and_is_not_written_twice(monkeypatch, tmp_path):
+    """The re-run tool's exception never escapes hold(): the decision closes failed and hold()
+    answers SETTING_FAIL (never None), so the caller does not write the setting a second time."""
+    import agent_friday.services.agent as agent
+    sp = _setting_store(monkeypatch, tmp_path)
+    gate = _Gate(monkeypatch)
+    writes = []
+
+    def tool(inp):                       # the caller pattern: write only when hold() says None
+        held = sp.hold("probe_setting_tool", inp, old="off", new="on")
+        if held:
+            return held
+        writes.append(dict(inp))
+        raise RuntimeError("the settings file is locked")
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "probe_setting_tool", tool)
+    said = tool({"mode": "on"})
+    assert isinstance(said, str) and said.startswith("SETTING_FAIL")
+    assert len(writes) == 1                                # the re-run's attempt only, no second write
+    assert _words(gate.ref) == [G.FAILED]
+
+
+def test_hold_answers_setting_fail_when_its_handler_raises(monkeypatch, tmp_path):
+    import agent_friday.services.agent as agent
+    sp = _setting_store(monkeypatch, tmp_path)
+    gate = _Gate(monkeypatch)
+
+    def boom(inp):
+        raise ValueError("no such row")
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "probe_raise_tool", boom)
+    out = sp.hold("probe_raise_tool", {}, old="a", new="b")
+    assert out is not None and out.startswith("SETTING_FAIL") and "no such row" in out
+    assert _words(gate.ref) == [G.FAILED]
+
+    # only a non-Exception (the thread being torn down) is raised on, still closed failed
+    gate = _Gate(monkeypatch)
+
+    def leave(inp):
+        raise SystemExit(3)
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "probe_exit_tool", leave)
+    with pytest.raises(SystemExit):
+        sp.hold("probe_exit_tool", {}, old="a", new="b")
+    assert _words(gate.ref) == [G.FAILED]
+
+
+def test_a_podcast_tool_returns_the_inner_tool_reply_as_it_is(monkeypatch):
+    from agent_friday.services import podcast_tools as pt
+    from agent_friday.services import setting_proposals as sp
+    ok_reply = json.dumps({"status": "ok", "message": "The main host is Ava now.", "names": {"a": "Ava"}})
+    err_reply = json.dumps({"status": "error", "message": "a host's name needs letters"})
+    assert pt._held_reply(ok_reply) == ok_reply
+    assert pt._held_reply(err_reply) == err_reply
+    assert json.loads(pt._held_reply("SETTING_NEEDS_YES: card raised"))["status"] == "needs_yes"
+    assert json.loads(pt._held_reply("SETTING_FAIL: locked")) == {"status": "error", "message": "SETTING_FAIL: locked"}
+    assert json.loads(pt._held_reply("SETTING_UNCHANGED: same")) == {"status": "ok", "message": "SETTING_UNCHANGED: same"}
+
+    monkeypatch.setattr(pt.pe, "host_names", lambda: {k: {"name": "N", "default": "N", "own": ""} for k in ("a", "b")})
+    monkeypatch.setattr(pt.pe, "clean_host_name", lambda n: str(n or "").strip())
+    monkeypatch.setattr(pt.pe, "check_host_names", lambda *a: None)
+    monkeypatch.setattr(pt.pe, "set_host_names", lambda **kw: pytest.fail("written a second time"))
+    for inner in (ok_reply, err_reply):
+        monkeypatch.setattr(sp, "hold", lambda *a, _r=inner, **k: _r)
+        reply = pt._change_podcast_host_name({"host": "a", "name": "Ava"})
+        assert reply == inner                              # not wrapped in {"status": "ok", "message": ...}
+        assert json.loads(reply)["status"] == json.loads(inner)["status"]
+
+
+def test_close_persisted_refuses_a_ref_the_ledger_does_not_hold():
+    from agent_friday.services import domain_operations as dom
+    from agent_friday.services import sites_operations as so
+    ref = G.record_external(so.KIND, surface="approval_card", approval_id="ap-forge-1")
+    other = G.record_external(so.KIND, surface="approval_card", approval_id="ap-forge-2")
+    kept = G.portable_ref(ref)
+    forged = [
+        dict(kept, hash="0" * 64),                         # wrong hash
+        dict(kept, seq=int(kept["seq"]) + 1000),           # wrong seq
+        dict(kept, action_id=other["action_id"]),          # another action's id, this one's seq and hash
+        dict(kept, tool=dom.KIND),                         # the tool named on the ref swapped
+    ]
+    for f in forged:
+        assert G.close_persisted(f, True, expected_tool=so.KIND) is False, f
+        assert G.close_persisted(dict(f), True, expected_tool=dom.KIND) is False, f
+    assert G.close_persisted(dict(kept), True, expected_tool=dom.KIND) is False   # wrong kind expected
+    assert _words(ref) == [] and _words(other) == []
+    assert G.close_persisted(dict(kept), True, expected_tool=so.KIND) is True
+    assert _words(ref) == [G.EXECUTED] and _words(other) == []
+
+
+def _site_root(tmp_path, monkeypatch):
+    from agent_friday.services import sites_operations as so
+    root = tmp_path / "sites"
+    monkeypatch.setattr(so, "_root", lambda: root)
+    monkeypatch.setattr(so.sites_privacy, "require_generation", lambda *a, **k: None)
+    monkeypatch.setattr(so.sites_privacy, "require_operation", lambda *a, **k: None)
+    return so, root
+
+
+def test_expiry_says_the_outcome_was_never_confirmed(tmp_path, monkeypatch, _domain_store):
+    from agent_friday.services import domain_operations as dom
+    so, root = _site_root(tmp_path, monkeypatch)
+    site = G.record_external(so.KIND, surface="approval_card", approval_id="ap-site-never")
+    G.close_external(site, True, outcome=G.UNCONFIRMED, detail="site_provider_accepted")
+    _site_op(root, 5, "unknown", site)
+    domain = G.record_external(dom.KIND, surface="approval_card", approval_id="ap-dom-never")
+    dom._close_decision(domain, "unknown")
+    _domain_store["operations"]["dop-9"] = {"operation_id": "dop-9", "status": "unknown",
+                                            "plan": {"owner": {"privacy_generation": 1}},
+                                            "decision_ref": G.portable_ref(domain)}
+    later = time.time() + so.DECISION_EXPIRE_S + 60
+    assert so.expire_decisions(now=later) == 1
+    assert dom.expire_decisions(now=later) == 1
+    for ref in (site, domain):
+        assert _words(ref) == [G.UNCONFIRMED, G.FAILED]
+        assert _details(ref)[-1].startswith("outcome_never_confirmed"), _details(ref)
+
+
+def test_site_expiry_checks_and_closes_under_the_store_lock(tmp_path, monkeypatch):
+    import threading
+    so, root = _site_root(tmp_path, monkeypatch)
+    ref = G.record_external(so.KIND, surface="approval_card", approval_id="ap-site-lock")
+    G.close_external(ref, True, outcome=G.UNCONFIRMED, detail="site_provider_accepted")
+    _site_op(root, 6, "unknown", ref)
+    held, real = [], G.close_persisted
+
+    def spy(*a, **k):
+        probe = []
+
+        def try_lock():
+            got = so.LOCK.acquire(blocking=False)
+            probe.append(got)
+            if got:
+                so.LOCK.release()
+        t = threading.Thread(target=try_lock)
+        t.start()
+        t.join()
+        held.append(not probe[0])
+        return real(*a, **k)
+    monkeypatch.setattr(G, "close_persisted", spy)
+    assert so.expire_decisions(now=time.time() + so.DECISION_EXPIRE_S + 60) == 1
+    assert held == [True]
+    assert _words(ref) == [G.UNCONFIRMED, G.FAILED]
+
+
+def test_site_expiry_starts_one_pass_at_a_time(monkeypatch):
+    import threading
+    from agent_friday.services import sites_operations as so
+    started, release = [], threading.Event()
+    end = time.time() + 5
+    while so._EXPIRY_RUNNING.locked() and time.time() < end:  # a pass another test started
+        time.sleep(0.01)
+
+    def slow(*a, **k):
+        started.append(1)
+        release.wait(5)
+        return 0
+    monkeypatch.setattr(so, "expire_decisions", slow)
+    barrier = threading.Barrier(6)
+    results = []
+
+    def go():
+        barrier.wait()
+        results.append(so._expire_in_background())
+    threads = [threading.Thread(target=go) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results.count(True) == 1 and results.count(False) == 5
+    end = time.time() + 5
+    while not started and time.time() < end:
+        time.sleep(0.01)
+    assert so._expire_in_background() is False            # still running: a no-op
+    release.set()
+    end = time.time() + 5
+    while so._EXPIRY_RUNNING.locked() and time.time() < end:
+        time.sleep(0.01)
+    assert not so._EXPIRY_RUNNING.locked() and len(started) == 1
+
+
+def test_public_site_views_never_show_the_kept_decision(tmp_path, monkeypatch):
+    so, root = _site_root(tmp_path, monkeypatch)
+    ref = G.record_external(so.KIND, surface="approval_card", approval_id="ap-site-view")
+    path = _site_op(root, 7, "unknown", ref)
+    site = {"site_id": "site-" + "a" * 32, "revision": 1}
+    view = so._overview(site)
+    assert view["history"] and all("decision_ref" not in row for row in view["history"])
+    assert "decision_ref" not in (view["latest_deployment"] or {})
+    monkeypatch.setattr(so, "get_site", lambda sid: site)
+    monkeypatch.setattr(so, "validate_site_owner", lambda s, c=None: s)
+    args = {"site_id": site["site_id"], "operation_id": path.stem}
+    out = so._execute("operation", args, {"conversation_id": "c"})
+    assert out["operation"]["operation_id"] == path.stem and "decision_ref" not in out["operation"]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.update(status="applying", executor_instance=so._INSTANCE)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    out = so._execute("deployment_status", args, {"conversation_id": "c"})
+    assert out["operation"]["status"] == "applying" and "decision_ref" not in out["operation"]
+    # the record itself keeps it for the reconcile
+    assert json.loads(path.read_text(encoding="utf-8"))["decision_ref"]["action_id"] == ref["action_id"]
+
+
+def test_the_reconcile_closures_never_raise(monkeypatch):
+    from agent_friday.services import domain_operations as dom
+    from agent_friday.services import sites_operations as so
+
+    def boom(*a, **k):
+        raise RuntimeError("the ledger is unavailable")
+    monkeypatch.setattr(G, "close_persisted", boom)
+    ref = G.portable_ref(G.record_external(so.KIND, surface="approval_card", approval_id="ap-site-boom"))
+    so._close_reconciled({"status": "verified_live", "decision_ref": ref})()
+    ref = G.portable_ref(G.record_external(dom.KIND, surface="approval_card", approval_id="ap-dom-boom"))
+    dom._close_reconciled({"status": "provider_verified", "decision_ref": ref})()
+
+
+def test_an_interrupted_item_batch_closes_failed_and_is_raised(monkeypatch):
+    from agent_friday.services import item_actions as ia
+    for name in ("_post_back", "_tell_call", "_notify", "_tell_pages", "_tell_held"):
+        monkeypatch.setattr(ia, name, lambda *a, **k: None)
+
+    def execute(detail, aid):
+        raise SystemExit(0)
+    monkeypatch.setattr(ia, "_execute", execute)
+
+    class _Inline:                       # run the batch here, so its BaseException is seen
+        def __init__(self, target=None, **kw):
+            self.target = target
+
+        def start(self):
+            self.target()
+    import threading as _threading
+
+    class _Threading:                    # the module's view of threading only; the real one is untouched
+        Thread = _Inline
+
+        def __getattr__(self, name):
+            return getattr(_threading, name)
+    monkeypatch.setattr(ia, "threading", _Threading())
+    ref = G.record_external("item batch", surface="test", approval_id="ap-items-int")
+    with pytest.raises(SystemExit):
+        ia._start({"domain": "email", "conversation_id": ""}, "ap-items-int", ref)
+    assert _words(ref) == [G.FAILED]
+    assert _details(ref) == ["batch_failed"]                # closed by the batch, not by _start
+    assert ia.wait_for("ap-items-int", 1)["status"] == "failed"

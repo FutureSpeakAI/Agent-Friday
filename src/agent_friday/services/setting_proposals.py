@@ -242,6 +242,11 @@ def hold(tool: str, inp: dict, *, old: str, new: str, consequence: str = "", lab
             finally:
                 _APPROVED.reset(tok)
             ok = _changed(text)
+        except Exception as e:
+            # the tool's own failure closes the decision; it never escapes hold(), and the answer is never
+            # None (None would tell the caller to write the setting a second time)
+            action_gate.close_external(ref, False, detail="setting_not_changed")
+            return "SETTING_FAIL: %s could not be changed: %s: %s" % (label, type(e).__name__, str(e)[:300])
         except BaseException:
             action_gate.close_external(ref, False, detail="setting_not_changed")
             raise
