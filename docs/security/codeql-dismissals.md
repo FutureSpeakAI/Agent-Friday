@@ -486,6 +486,7 @@ Test: `tests/unit/test_codeql_beta_regexes.py` (50,000-character hostile input u
 | 1000 | py/clear-text-logging-sensitive-data | services/agent.py:14749 | FALSE_POSITIVE | Model id, `finish_reason` and tool names. |
 | 999 | py/clear-text-storage-sensitive-data | tests/unit/test_credential_self_shares.py:88 | TEST_ONLY | Test writes a fake `.aws/credentials` into a temporary home to prove it is withheld. |
 | 998 | py/clear-text-storage-sensitive-data | notifications_engine.py:139 | FALSE_POSITIVE | Notification queue and dismissal ledger, ordinary local app state (as 705). |
+| 1239 | py/clear-text-storage-sensitive-data | notifications_engine.py:143 | FALSE_POSITIVE | The same write as 998, now to a temporary file swapped in (BD-16 FT1 #398) so a full disk cannot empty the queue. |
 | 997, 996 | py/clear-text-storage-sensitive-data | services/conversations.py:312, :76 | FALSE_POSITIVE | The conversation store is the owner's own chat history in Friday's data folder, which is what the feature stores. |
 | 995 | py/clear-text-storage-sensitive-data | services/codebases.py:100 | FALSE_POSITIVE | The codebase record holds labels, providers and caps only; a guest key's secret goes to the credential store (`add_guest_key`). |
 
@@ -753,3 +754,7 @@ Nine of these (1039, 1040, 1041, 1042, 1044 and 1072 to 1075) share one source. 
 | 1236, 1235, 1234 | py/stack-trace-exposure | routes/goals.py:302, :281, :280 | FIX | The milestone run and restart results go through `public_result`; the goal check's unreadable-record reasons are `goal_evidence._Unreadable` (a `UserFacingRuntimeError`) and carry its `user_message`, never an exception's text. |
 | 1220 | py/stack-trace-exposure | routes/doctor.py:328 | FIX | `readable_export.ExportError` is a `UserFacingRuntimeError`; the export route answers it through `api_error(e, ..., 400, key="error")`. |
 | 1240 | py/polynomial-redos | services/code_worktree.py:506 | FIX | The shell is found word by word (`low.split()`), not by a pattern that retries from every position of a run of non-space text; heredoc closings are looked up in an index of lines. A test bounds both on hostile input. |
+| 1250 | py/weak-sensitive-data-hashing | services/friday_bundle.py:1654 | FALSE_POSITIVE | The value hashed is the governance key, 32 random bytes, not a password: SHA-256 is a fingerprint that tells the bundle's key from the one already in the keychain when a restore is rolled back. Nothing is stored or compared that a slow hash would protect. |
+| 1246, 1245, 1244, 1243 | py/path-injection | services/memory_dreaming.py:381-384 | FIX | Both writers of a day's dream note join the day under `DREAMS_DIR` through `paths.contained`. |
+| 1249, 1247 | py/stack-trace-exposure | routes/first_synthesis.py:79, routes/ai_history_import.py:63 | FIX | The service results go through `public_result`, which swaps any `exception_text` for an error id. |
+| 1248, 1220 | py/stack-trace-exposure | routes/doctor.py:348, :350 | FIX | `support_bundle.SupportError` (and `CloudFolder`) is a `UserFacingValueError`; the route answers both through `api_error`. |

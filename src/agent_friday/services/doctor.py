@@ -321,6 +321,13 @@ def _c_backup():
 
 def _c_disk():
     import shutil
+    try:
+        from agent_friday.services import disk_guard
+        if disk_guard.status()["state"] == "low":
+            # services/disk_guard: scheduled background work is waiting for space (NS-32.13-1).
+            return "degraded", "disk_full_background_paused"
+    except Exception:
+        pass
     free = shutil.disk_usage(str(_home() if _home().exists() else Path.home())).free
     gb = free / 1e9
     if gb < 2:
@@ -343,6 +350,30 @@ def _c_crashes():
     from agent_friday.services import crash_forensics
     n = crash_forensics.crash_count()
     return ("degraded", "crashes_recorded:%d" % n) if n else ("healthy", "none_recorded")
+
+
+def _c_recall():
+    # services/recall_health: a long-term memory store that could not be read in the last ten
+    # minutes (NS-32.5-1). Fixed codes only: the source names, never their contents.
+    from agent_friday.services import recall_health
+    s = recall_health.status()
+    if s["state"] == "degraded":
+        return "degraded", "recall_degraded:" + ",".join(s["sources"])
+    return "healthy", "ok"
+
+
+def _c_search_index():
+    # services/conversation_fts.health (NS-32.6-1): a damaged index is rebuilt from the
+    # transcripts, by itself when found and by the owner's press here.
+    from agent_friday.services import conversation_fts
+    state = conversation_fts.health()["state"]
+    if state == "ok":
+        return "healthy", "ok"
+    if state == "missing":
+        return "healthy", "not_built_yet"
+    if state == "repairing":
+        return "repairing", "conversation_search_index_rebuilding"
+    return "degraded", "conversation_search_index_" + state
 
 
 def _c_boot():
@@ -369,6 +400,8 @@ CHECKS = (
     ("connectors", "connector authentication", _c_connectors),
     ("backup", "backup", _c_backup),
     ("disk", "GPU and resource state", _c_disk),
+    ("recall", "memory and search indexes", _c_recall),
+    ("search_index", "memory and search indexes", _c_search_index),
     ("model_files", "model files and checksums", _c_models),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),

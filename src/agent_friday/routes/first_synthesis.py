@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from flask import Blueprint, g, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import public_result
 from agent_friday.services import first_action, first_synthesis
 
 first_synthesis_bp = Blueprint("first_synthesis", __name__)
@@ -76,7 +77,7 @@ def first_synthesis_mark():
     if v.action != "allow":
         return jsonify({"ok": False, "error": "held: %s" % v.reason}), 403
     out = first_synthesis.mark(item, answer, shown_text=str(b.get("observation") or "")[:400], by="owner:ui")
-    return jsonify(out), (200 if out.get("ok") else 400)
+    return jsonify(public_result(out, "Couldn't record that")), (200 if out.get("ok") else 400)
 
 
 #: Section 9.6 answers only the owner gives (services/onboarding_status).

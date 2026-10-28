@@ -2517,6 +2517,14 @@ def chat():
                 pass
             if _household_note["text"]:
                 tail = tail + "\n\n" + _household_note["text"] + "\n"
+            # Long-term memory that could not be read this turn (services/recall_health): the
+            # turn says so, and nothing is presented as remembered from it (NS-32.5-1). In the
+            # tail, after the memory blocks were built, so it covers this turn's own reads.
+            try:
+                from agent_friday.services import recall_health as _recall_health
+                tail = tail + _recall_health.context_note()
+            except Exception:
+                pass
             if voice_mode:
                 # Constant while voice mode is on, so it belongs to the head;
                 # at its end, not its start, so it never moves the prefix.
@@ -3922,6 +3930,12 @@ def chat_send():
             try:
                 from agent_friday.services import plans as _plans
                 prompt = prompt + _plans.context_block(_conversation_id)
+            except Exception:
+                pass
+            try:
+                # As in /api/chat: memory that could not be read is named (services/recall_health).
+                from agent_friday.services import recall_health as _recall_health
+                prompt = prompt + _recall_health.context_note()
             except Exception:
                 pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy
