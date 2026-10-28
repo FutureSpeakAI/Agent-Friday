@@ -243,6 +243,12 @@
 .fa-chart{width:100%;height:100%;display:block}
 .fa-legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:rgba(255,255,255,0.75);padding:4px 2px 0}
 .fa-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.fa-legend i.fa-swatch{width:26px;height:12px;border-radius:0;vertical-align:-2px}
+.fa-chart-as{margin-left:auto;min-height:24px;min-width:24px;padding:2px 10px;border-radius:6px;border:1px solid rgba(0,212,255,0.35);background:transparent;color:${ACCENT};font:600 11px Inter,system-ui,sans-serif;cursor:pointer}
+.fa-chart-table table{border-collapse:collapse;width:100%;font-size:12px}
+.fa-chart-table caption{text-align:left;color:rgba(255,255,255,0.7);padding:2px 0 6px}
+.fa-chart-table th,.fa-chart-table td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left}
+.fa-chart-table td.num{text-align:right;font-family:'JetBrains Mono',monospace}
 @media (max-width:390px){.fa-brand{letter-spacing:.14em}.fa-tools .fa-btn{padding:3px 7px;font-size:10.5px}}
 `;
   function ensureCss() {
@@ -323,11 +329,22 @@
     const spec = content || {};
     const W = Math.max(240, size.w || 480), H = Math.max(160, (size.h || 300) - 28);
     const r = useMemo(() => window.FridayChart ? window.FridayChart.renderSVG(spec, W, H) : { svg: '', legend: [], empty: true }, [content, W, H]);
+    // The same data as a table, for a screen reader or anyone who would rather read numbers (north star 33.1-12).
+    const [asTable, setAsTable] = useState(false);
+    const table = useMemo(() => asTable && window.FridayChart && window.FridayChart.tableHTML ? window.FridayChart.tableHTML(spec) : '', [content, asTable]);
     if (!window.FridayChart) return h('div', { className: 'fa-empty' }, 'The chart renderer did not load.');
     if (r.empty) return h('div', { className: 'fa-empty' }, 'Nothing to chart yet.');
+    const swatch = l => window.FridayChart.legendSwatch
+      ? h('i', { className: 'fa-swatch', dangerouslySetInnerHTML: { __html: window.FridayChart.legendSwatch(l) } })
+      : h('i', { style: { background: l.color } });
     return h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } },
-      h('div', { className: 'fa-chart', style: { flex: 1, minHeight: 0 }, dangerouslySetInnerHTML: { __html: r.svg } }),
-      r.legend.length ? h('div', { className: 'fa-legend' }, r.legend.map((l, i) => h('span', { key: i }, h('i', { style: { background: l.color } }), l.name))) : null);
+      asTable
+        ? h('div', { className: 'fa-chart-table', style: { flex: 1, minHeight: 0, overflow: 'auto' }, dangerouslySetInnerHTML: { __html: table } })
+        : h('div', { className: 'fa-chart', style: { flex: 1, minHeight: 0 }, dangerouslySetInnerHTML: { __html: r.svg } }),
+      h('div', { className: 'fa-legend' },
+        r.legend.map((l, i) => h('span', { key: i }, swatch(l), l.name)),
+        h('button', { type: 'button', className: 'fa-chart-as', 'aria-pressed': asTable, onClick: () => setAsTable(v => !v),
+          title: asTable ? 'Show the chart' : 'Show the data as a table' }, asTable ? 'Chart' : 'Table')));
   }
 
   function Diff({ diff }) {
