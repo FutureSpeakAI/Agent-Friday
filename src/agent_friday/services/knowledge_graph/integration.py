@@ -116,6 +116,19 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
         import logging
         logging.getLogger("friday.tombstones").warning(
             "knowledge graph: the fact tombstone check failed (fail open): %s: %s", type(e).__name__, e)
+    # A source the owner stopped using (services/forget_kinds.stop_using_source,
+    # NS-15.7-1) gives the graph nothing new: a meeting by its id, a research
+    # finding by the sites it came from (a page on a stopped site is dropped).
+    try:
+        from agent_friday.services import forget_kinds as _fk
+        if str(source_key or "").startswith("meeting:") and _fk.source_stopped(str(source_key)):
+            return None
+        if source_kind == "research":
+            sources = [s for s in (sources or []) if not _fk.site_stopped(str((s or {}).get("url") or ""))]
+    except Exception as e:
+        import logging
+        logging.getLogger("friday.forget_kinds").warning(
+            "knowledge graph: the stopped-source check failed (fail open): %s", type(e).__name__)
     research_sources = []
     if source_kind == "research":
         for s in sources or []:

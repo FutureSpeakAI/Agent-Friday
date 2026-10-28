@@ -253,9 +253,23 @@ def recall_purge(names, emails) -> Dict[str, Any]:
     """The recall indexes, then the graph and the day summaries made from them
     (in that order: the summaries are written again from the cleaned index)."""
     m = _matcher(names, emails)
-    not_removable = m.notes()
+    return purge_turns(m, _transcript_hits(m) if m else [])
+
+
+def purge_turns(m, transcript, index_match=None, retained_reason: str = "",
+                retained_what: str = "", by_id: bool = False) -> Dict[str, Any]:
+    """The recall-index purge forget-person runs, for any set of turns
+    (services/forget_kinds reuses it for a fact and a conversation): `m` is a
+    predicate on a turn's text (with ``notes()`` for what it cannot match and
+    a truth value for whether it can match at all), `transcript` the
+    (conversation id, message) pairs it covers. `index_match` is the predicate
+    run over conversation search's own rows (default `m`): a conversation's
+    forget passes one that matches nothing, so only its own message ids go.
+    `by_id` also deletes each transcript message id from the vector memory
+    whatever its text (a conversation's forget). The receipt row has the same
+    shape as forget-person's."""
+    not_removable = list(m.notes()) if hasattr(m, "notes") else []
     removed_ids, texts, days = set(), [], set()
-    transcript = _transcript_hits(m) if m else []
     t_ids = [str(msg.get("id")) for _c, msg in transcript if msg.get("id")]
     # Turns an earlier forget already took out: their days and graph turns
     # were handled then, so running forget again queues nothing twice.
@@ -295,13 +309,26 @@ def recall_purge(names, emails) -> Dict[str, Any]:
                 removed_ids |= gone
                 texts += [h["text"] for h in hits if str(h["id"]) in gone]
                 days |= {str(h.get("date") or "")[:10] for h in hits if str(h["id"]) in gone}
+            if by_id:
+                # The transcript's own ids (the vector memory stores a turn
+                # under its message id): each one, whatever its text.
+                for mid in t_ids:
+                    if mid in removed_ids or mid in left:
+                        continue
+                    try:
+                        if int(mem.delete(ids=[mid]) or 0):
+                            removed_ids.add(mid)
+                    except Exception as e:
+                        not_removable.append({"what": "conversation memory (vector recall)",
+                                              "reason": _scrubbed(e, "a turn could not be deleted")})
+                        break
 
     # 2. Conversation search; the transcript ids (and the vector memory's,
     #    which are the same message ids) are kept out of any rebuild.
     if m:
         try:
             from agent_friday.services import conversation_fts as fts
-            got = fts.forget_turns(m, mids=t_ids + vector_ids)
+            got = fts.forget_turns(m if index_match is None else index_match, mids=t_ids + vector_ids)
             # Counted once per turn across both indexes, and not at all while
             # the vector memory still holds it (listed as not removable above).
             removed_ids |= set(got["mids"]) - left
@@ -368,8 +395,8 @@ def recall_purge(names, emails) -> Dict[str, Any]:
 
     retained = []
     if transcript:
-        retained.append({"what": "messages in your conversation history", "count": len(transcript),
-                         "reason": _TRANSCRIPT_REASON})
+        retained.append({"what": retained_what or "messages in your conversation history",
+                         "count": len(transcript), "reason": retained_reason or _TRANSCRIPT_REASON})
     return {"removed": len(removed_ids), "kind": "conversation turns removed from recall and search",
             "not_removable": not_removable, "retained": retained, "also": [graph, summaries]}
 

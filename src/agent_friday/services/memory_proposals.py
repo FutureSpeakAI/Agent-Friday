@@ -452,8 +452,15 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
     owner's word. Each carries provenance: the meeting id, the transcript span
     it traces to and the model that read it. A candidate with no span is not
     stored, because a proposal that cannot be traced is not worth a review.
-    Returns how many were stored.
+    Returns how many were stored. A meeting the owner stopped using
+    (services/forget_kinds.stop_using_source) proposes nothing.
     """
+    try:
+        from agent_friday.services import forget_kinds as _fk
+        if _fk.source_stopped("meeting:%s" % meeting_id):
+            return 0
+    except Exception as e:                                  # noqa: BLE001
+        _log.warning("memory_proposals: the stopped-source check failed (fail open): %s", type(e).__name__)
     stored = 0
     conn = _connect()
     try:
