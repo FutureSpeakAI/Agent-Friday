@@ -1943,13 +1943,21 @@ def _task_context(task_id) -> dict:
 
 def _stop_capability(pid, task_id) -> str:
     """How this process can be stopped (NS-29.2-1 'stop capability'): an image or video job is
-    cancelled at once (its job flag, then the sampler); a task stops after its current step;
-    anything else is stopped by Stop everything. Read-only: it changes no stop path."""
+    cancelled at once (its job flag, then the sampler); a task Friday is running stops after its
+    current step; anything else stops with Stop everything (its cancel button only gives the
+    GPU back after a short wait, and the work itself carries on). Read-only: it changes no stop
+    path."""
     p = str(pid)
     if p.startswith(("image-", "video-")):
         return "cancel_now"
     if task_id:
-        return "after_this_step"
+        try:
+            import sys as _sys
+            agent = _sys.modules.get("agent_friday.services.agent")
+            if agent is not None and task_id in (getattr(agent, "TASKS", {}) or {}):
+                return "after_this_step"
+        except Exception:
+            pass
     return "stop_everything"
 
 
