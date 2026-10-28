@@ -93,8 +93,10 @@ def test_a_day_forward_across_a_clock_change_keeps_the_wall_clock_time():
 
 def test_undo_puts_each_event_back_at_its_old_time(world):
     state, calls = world
-    _org(events=["e1", "e2"], days=3)
-    ap.decide_with_outcome(_pending()[0]["approval_id"], "approve", decided_by="owner")
+    out = _org(events=["e1", "e2"], days=3)
+    cards = _pending()
+    assert cards, "no card for the move; the tool said: %s" % out
+    ap.decide_with_outcome(cards[0]["approval_id"], "approve", decided_by="owner")
     assert state["e1"]["start"] != EVENTS["e1"]["start"]
     rec = journal.latest(None)
     res = ia.undo(rec["receipt_id"])
