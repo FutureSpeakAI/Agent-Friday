@@ -607,12 +607,16 @@ def register_schedule(record) -> dict:
 
 #: The fields that decide WHAT a schedule runs and WHEN. A card raised for one of its runs is bound to
 #: them: a card about the job as it was is not an answer about the job as it is.
-_RUN_FIELDS = ("enabled", "trigger", "spec", "task", "tz")
+_RUN_FIELDS = ("enabled", "trigger", "spec", "task")
 
 
 def _run_basis(rec) -> dict:
     basis = {k: (rec or {}).get(k) for k in _RUN_FIELDS}
     basis["enabled"] = bool((rec or {}).get("enabled", True))
+    if (rec or {}).get("tz"):
+        # the timezone a job keeps is part of WHEN it runs; a record without one (made before
+        # NS-32.16-1, or a built-in) keeps its old fingerprint, so a card about it stays valid
+        basis["tz"] = rec["tz"]
     return basis
 
 
@@ -641,8 +645,8 @@ def update_schedule(sid, patch, *, by="owner") -> dict | None:
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
-                if k == "tz" and _zone(v) is None:
-                    continue              # only a real IANA timezone, never a guess
+                if k == "tz" and (_zone(v) is None or cur.get("source") == "builtin"):
+                    continue              # a real IANA timezone, and only on the owner's own jobs
                 if k in ("missed", "on_held"):
                     # "default" (or null) puts the job back on the owner's default choice.
                     if v in (None, "default"):
@@ -1302,7 +1306,7 @@ def _note_quiet_deferral(rec, now) -> None:
     sid = rec.get("id")
     if rec.get("quiet_deferred") or not sid:
         return
-    day = now.strftime("%Y-%m-%d")
+    day = _in_zone(rec, now).strftime("%Y-%m-%d")
     cause = _defer_cause(now)
     _patch_record(sid, quiet_deferred={"day": day, "at": now.timestamp(), "reason": cause})
     try:
@@ -1337,7 +1341,7 @@ def _late_run_due(rec, now) -> bool:
         return False
     cu = rec.get("catch_up")
     if cu:
-        if cu.get("date") != now.strftime("%Y-%m-%d"):
+        if cu.get("date") != _in_zone(rec, now).strftime("%Y-%m-%d"):
             return False
         return _catch_up_ready(rec)
     if rec.get("trigger") == "interval" and _cloud_cadence_holds(rec, now):
@@ -1448,6 +1452,7 @@ def _is_due(rec, now) -> bool:
 def _is_due_on_schedule(rec, now) -> bool:
     if not rec.get("enabled", True):
         return False
+    owner_now = now                       # the owner's clock: when they are at this computer
     now = _in_zone(rec, now)              # its own wall clock (NS-32.16-1)
     with _RUNNING_LOCK:
         if rec.get("id") in _RUNNING:
@@ -1513,7 +1518,7 @@ def _is_due_on_schedule(rec, now) -> bool:
         # Every condition below is a reason to WAIT, not to fail, and the day's
         # mark is only set when it actually runs -- so a day the user never steps
         # away simply does not produce one, and says so rather than pretending.
-        return _idle_window_ok(rec, spec, now)
+        return _idle_window_ok(rec, spec, owner_now)
     if trig == "daily":
         return (now.hour, now.minute) >= _spec_hm(spec)
     if trig == "weekly":
@@ -2417,7 +2422,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             _patch_record(sid, last_status="waiting", last_summary=summary,
                           retry_pending=False, retry_count=0,
                           not_before=_time.time() + CATCH_UP_POLL_SECONDS,
-                          catch_up={"date": now.strftime("%Y-%m-%d"),
+                          catch_up={"date": _in_zone(rec, now).strftime("%Y-%m-%d"),
                                     "reason": summary, "since": since})
             if not catch_up:
                 _notify_run(rec, "waiting", summary)
@@ -3079,7 +3084,7 @@ def _tick():
     for rec in recs:
         try:
             cu = rec.get("catch_up")
-            if cu and cu.get("date") != today:
+            if cu and cu.get("date") != _in_zone(rec, now).strftime("%Y-%m-%d"):
                 _record_missed(rec)
                 rec = dict(rec, catch_up=None)
             if _is_due(rec, now):
