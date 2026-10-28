@@ -331,6 +331,7 @@ def safe_mode_set():
     if not isinstance(body.get("next_start"), bool):
         return jsonify({"status": "error", "error": "next_start must be true or false."}), 400
     try:
+        after_upgrade = safe_mode.marker_reason() == safe_mode.MIGRATION_FAILED
         plan = safe_mode.set_next_start(body["next_start"])
         try:
             from agent_friday.services import action_ledger, policy_version
@@ -339,7 +340,8 @@ def safe_mode_set():
                 "action_id": policy_version.new_action_id(),
                 "policy_version": policy_version.current_id(),
                 "tool": "safe_mode:next_start", "class": "owner", "decision": "allow",
-                "surface": "doctor", "reason": "on" if body["next_start"] else "off"})
+                "surface": "doctor", "reason": ("on" if body["next_start"] else "off")
+                + (" (after a failed upgrade)" if after_upgrade else "")})
         except Exception:
             pass
         return jsonify({"status": "ok", **plan,
