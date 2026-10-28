@@ -15947,9 +15947,12 @@ def _save_mcp_servers(cfg: dict) -> dict:
         # Unreadable on disk: the servers running now are the ones that existed.
         mgr = _MCP_MANAGER
         old = {"servers": {n: {} for n in (getattr(mgr, "servers", None) or {})}} if mgr else None
+    from agent_friday.services import connector_isolation as _ci
     if old is not None:
-        from agent_friday.services import connector_isolation as _ci
         cfg = _ci.apply_default(cfg, old)
+    # Owner ruling 4: a save that takes a connector out of isolation writes a signed
+    # connector_run_unisolated entry first; if it cannot be written, nothing is saved.
+    _ci.record_turned_off(cfg, old)
     try:
         from agent_friday.services import connector_secrets as _cse
         cfg = _cse.encrypt_config(cfg)
