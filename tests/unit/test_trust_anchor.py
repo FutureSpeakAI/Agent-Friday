@@ -114,10 +114,42 @@ def test_a_ledger_changed_on_disk_means_no_carry_over(home, monkeypatch):
 
 
 def test_trust_from_before_a30_needs_the_ledger_too(home):
-    """A grandfather row in the file that the ledger never anchored (a copied-in file) trusts nothing."""
+    """A connector the ledger has released (its card was answered) is not trusted from the
+    file's row alone."""
     from agent_friday.governance import tool_manifests
     cfg = {"servers": {"bank": {"url": ORIGINAL, "enabled": True}}}
     tool_manifests.carry_over_at_boot(cfg)
     from agent_friday.governance import trust_anchor
     trust_anchor.release("tool_manifests", "bank", why="test")
     assert not tool_manifests.grandfathered("bank", cfg["servers"]["bank"])
+
+
+def test_a_lost_and_acknowledged_ledger_never_reruns_the_carry_over(home, monkeypatch):
+    """The ledger files deleted, the owner acknowledges the break (he must, to unhold outward
+    actions): the keychain still says the carry-over ran, so nothing configured now is trusted."""
+    from agent_friday.governance import mcp_hosts, tool_manifests, trust_anchor
+    cfg = {"servers": {"bank": {"url": ORIGINAL, "enabled": True}}}
+    tool_manifests.carry_over_at_boot(cfg)
+    mcp_hosts.carry_over_at_boot(cfg)
+    _wipe(home, "mcp_hosts.json", "mcp_hosts_history.jsonl", "tool_manifests.json",
+          "tool_manifests_history.jsonl")
+    monkeypatch.setattr(trust_anchor, "_read", lambda name: None)     # the ledger no longer has it
+    trust_anchor._CACHE.clear()
+    cfg["servers"]["evil"] = {"url": EVIL, "enabled": True}
+    assert tool_manifests.carry_over_at_boot(cfg) == 0 and mcp_hosts.carry_over_at_boot(cfg) == 0
+    assert not tool_manifests.grandfathered("evil", cfg["servers"]["evil"])
+    assert not mcp_hosts.allowed(EVIL)
+
+
+def test_a_removal_the_ledger_cannot_record_changes_nothing(home, monkeypatch):
+    from agent_friday.governance import mcp_hosts, trust_anchor
+    cfg = {"servers": {"notes": {"url": ORIGINAL, "enabled": True}}}
+    mcp_hosts.carry_over_at_boot(cfg)
+
+    def no_ledger(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(trust_anchor, "release", no_ledger)
+    with pytest.raises(mcp_hosts.HostRefused):
+        mcp_hosts.remove(ORIGINAL, made_by="owner:ui")
+    assert mcp_hosts.allowed(ORIGINAL)
+
