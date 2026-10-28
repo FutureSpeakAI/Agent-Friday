@@ -207,6 +207,122 @@ def test_off_the_record_nothing_is_consolidated(mem, monkeypatch):
     assert cm.pending() == []
 
 
+# ── review fixes ────────────────────────────────────────────────────────────
+
+def test_rebuilding_a_day_with_no_turns_left_clears_its_record(mem):
+    md.dream(DAY, memory=mem)
+    assert (md.DREAMS_DIR / f"{DAY}.md").exists() and (md.DREAMS_DIR / f"{DAY}.json").exists()
+    assert md.state()["total_dreams"] == 1
+    mem._collection.rows.clear()                      # the day's turns are gone (forgotten)
+    r = md.rebuild_day(DAY, memory=mem)
+    assert r["ok"] and r["turns_reviewed"] == 0 and r["cleared"] is True
+    assert md.state()["total_dreams"] == 0
+    assert not (md.DREAMS_DIR / f"{DAY}.md").exists()
+    assert not (md.DREAMS_DIR / f"{DAY}.json").exists()
+
+
+def test_an_unreadable_store_is_not_an_empty_day(mem):
+    md.dream(DAY, memory=mem)
+
+    class Down:
+        def available(self):
+            return True
+
+        def recent(self, n=20, roles=None):
+            raise RuntimeError("store down")
+
+    r = md.rebuild_day(DAY, memory=Down())
+    assert r["ok"] and r["cleared"] is False
+    assert md.state()["total_dreams"] == 1
+    assert (md.DREAMS_DIR / f"{DAY}.md").exists() and (md.DREAMS_DIR / f"{DAY}.json").exists()
+
+
+def test_a_refused_source_write_is_an_error_envelope_not_an_exception(mem, monkeypatch, caplog):
+    before = {k: (v[0], dict(v[1])) for k, v in mem._collection.rows.items()}
+    # A consolidation bug that reaches for a delete through the read-only view.
+    monkeypatch.setattr(md, "_pull_turns", lambda source, day: source.delete(["msg-a1"]))
+    with caplog.at_level("ERROR", logger="friday.dreaming"):
+        r = md.dream(DAY, memory=mem)
+        r2 = md.rebuild_day(DAY, memory=mem)
+    for res in (r, r2):
+        assert res["ok"] is False and res["reason"] == "source_deletion_refused"
+        assert "delete" in res["error"]
+    assert any(rec.levelname == "ERROR" for rec in caplog.records)
+    assert {k: (v[0], dict(v[1])) for k, v in mem._collection.rows.items()} == before
+    assert mem._collection.deleted == []
+
+
+def test_the_read_only_view_is_an_allowlist(mem):
+    view = md._ReadOnlySource(mem)
+    assert view.available() and view.recent(n=2)
+    assert isinstance(view.get_session(DAY), list)
+    for name in ("search", "find_ids", "stats"):
+        assert callable(getattr(view, name))
+    # Anything not on the list is refused, the collection included.
+    for name in ("_collection", "_inner", "frobnicate", "rebuild_index", "_set_supersession",
+                 "persist_dir"):
+        with pytest.raises(md.SourceDeletionRefused):
+            getattr(view, name)
+    with pytest.raises(md.SourceDeletionRefused):
+        view.recent = lambda *a, **k: []
+
+
+def test_the_migration_adds_only_the_missing_columns(tmp_path):
+    import sqlite3
+    conn = sqlite3.connect(str(md.DB_PATH))
+    conn.execute("CREATE TABLE dreams(dream_id TEXT PRIMARY KEY, ts REAL, day TEXT, "
+                 "turns_reviewed INTEGER, topics_json TEXT, consolidated_json TEXT, "
+                 "pruned INTEGER, summary TEXT, principal TEXT)")
+    conn.execute("INSERT INTO dreams(dream_id, ts, day, turns_reviewed, topics_json, "
+                 "consolidated_json, pruned, summary, principal) VALUES "
+                 "('d1', 1.0, '2026-09-01', 1, '[]', '[]', 0, 'old', NULL)")
+    conn.commit()
+    conn.close()
+    for _ in range(2):                                 # and again: nothing to add, no error
+        c = md._connect()
+        cols = [r[1] for r in c.execute("PRAGMA table_info(dreams)").fetchall()]
+        c.close()
+        assert cols.count("principal") == 1 and cols.count("meta_json") == 1
+    [row] = md.recent_dreams()
+    assert row["summary"] == "old" and row["principal"] == "owner"
+
+
+def test_a_day_skipped_off_the_record_is_consolidated_by_the_next_run(mem, monkeypatch):
+    from agent_friday.services import off_record
+    monkeypatch.setattr(off_record, "active", lambda settings=None: True)
+    assert md.dream(DAY, memory=mem)["reason"] == "off_record"
+    assert md.skipped_days() == [DAY], "only the date is kept"
+    assert not (md.DREAMS_DIR / f"{DAY}.md").exists()
+    monkeypatch.setattr(off_record, "active", lambda settings=None: False)
+    r = md.dream("2026-09-20", memory=mem)             # the next night, on the record
+    assert r["ok"] and r.get("caught_up") == [DAY]
+    assert md.skipped_days() == []
+    assert (md.DREAMS_DIR / f"{DAY}.md").exists()
+    assert md.recent_dreams()[0]["day"] == DAY
+
+
+def test_forgetting_a_person_reaches_the_dreams(mem):
+    from agent_friday.services import forget_registry as fr
+    mem.index("I prefer meeting Priya Shah on Monday mornings.", "user", session_id=DAY,
+              timestamp=f"{DAY}T17:00:00", msg_id="msg-p1")
+    res = md.dream(DAY, memory=mem)
+    assert any("Priya" in i["text"] for i in res["consolidated"])
+    assert "dreams" in fr.registered()
+
+    names = {"priya shah", "priya"}
+    assert md.people_find(names, set()) == 1
+    assert md.people_purge(names, set()) == 1
+    assert md.people_find(names, set()) == 0
+    [row] = md.recent_dreams()
+    assert not any("priya" in i["text"].lower() for i in row["consolidated"])
+    assert not any("priya" in t["topic"].lower() for t in row["topics"])
+    assert any("Harwich" in i["text"] for i in row["consolidated"]), "the rest of the day stays"
+    for ext in ("md", "json"):
+        text = (md.DREAMS_DIR / f"{DAY}.{ext}").read_text(encoding="utf-8")
+        assert "priya" not in text.lower(), ext
+        assert "Harwich" in text
+
+
 # ── the end-of-day summary ──────────────────────────────────────────────────
 
 def _summarise(monkeypatch, tmp_path, mem):

@@ -79,6 +79,9 @@ def _ensure_defaults() -> None:
     from agent_friday.services import meeting_capture as _meeting_capture
     register_store("meetings", _meeting_capture.people_find, _meeting_capture.people_purge)
     register_store("memory_proposals", _memory_proposals.people_find, _memory_proposals.people_purge)
+    # Overnight dreaming names people in its topics and facts: the db row, <day>.md and <day>.json.
+    from agent_friday.services import memory_dreaming as _memory_dreaming
+    register_store("dreams", _memory_dreaming.people_find, _memory_dreaming.people_purge)
 
 
 def _norm(s: str) -> str:

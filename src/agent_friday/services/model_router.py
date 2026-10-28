@@ -3431,9 +3431,13 @@ def _log_policy_failure():
 
 def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
                        vault_control=None, vault_fallback='redact', model='') -> str:
-    """The USER MODEL and LEARNED HEURISTICS blocks for the prompt head.
+    """The memory section of the prompt head: KINDS OF INFORMATION (the
+    standing instruction on how to speak about each kind, NS-3.4-1; always
+    first, gate-exempt), then CORE MEMORY, USER MODEL and LEARNED HEURISTICS.
 
-    Both are TIER_1 behavioural text (never raw PII), best-effort, and empty
+    The voice front digest keeps KINDS OF INFORMATION among its priority
+    sections (voice_context_digest.FRONT_PRIORITY_SECTIONS). USER MODEL and
+    LEARNED HEURISTICS are TIER_1 behavioural text (never raw PII), best-effort, and empty
     when their subsystem is off or has learned nothing. With a `freeze_key`
     (the conversation id) each block is the one this conversation started
     with: memory written mid-conversation reaches the next conversation, and
@@ -3449,13 +3453,15 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
     from agent_friday.services import knowledge_kinds as _kk
     # The memory section opens with how to speak about each kind of
     # information (NS-3.4-1): once per prompt, a Friday-authored constant with
-    # no user data, so it is gate-exempt like the core instructions.
+    # no user data, so it is gate-exempt like the core instructions. The gate
+    # matches blank-line paragraphs verbatim, so what is registered is exactly
+    # the paragraph emitted: header and instruction, one constant.
     try:
         from agent_friday.services.egress_gate import register_trusted_text as _rst
-        _rst(_kk.STANDING_INSTRUCTION)
+        _rst(_kk.KINDS_SECTION)
     except Exception:
         pass
-    out = "\n\n== KINDS OF INFORMATION ==\n" + _kk.STANDING_INSTRUCTION + "\n"
+    out = "\n\n" + _kk.KINDS_SECTION + "\n"
 
     gate_fn, gate_key = None, "ungated"
     if vault_control is not None:

@@ -19,16 +19,22 @@ raises to the caller.
 Consolidation rules (north star NS-15.9-1):
   * source pointers  every consolidated fact and topic lists the ids of the
                      stored turns it came from (``message_ids``), not just the day
-  * never deletes    the conversation store is read through a read-only view;
-                     a write or delete through it raises SourceDeletionRefused.
-                     The only row removed is this module's own derived row for
-                     the day being re-made
+  * never deletes    the conversation store is read through a read-only view
+                     (an allowlist of reads); anything else through it raises
+                     SourceDeletionRefused, which dream() turns into an error
+                     envelope and an ERROR log line. The only things removed are
+                     this module's own derived row and files for the day being
+                     re-made (all three when a rebuilt day has no turns left)
   * marked           each record says what made it (``made_by``) and whether a
                      model wrote it (``model_summary``); the md says so in words
   * principal scope  each record and item carries ``principal`` ("owner") and
                      reads filter by it
-  * sensitivity      off the record nothing is consolidated; a sentence in a
-                     special category (health, sexuality) is not mined
+  * sensitivity      off the record nothing is consolidated (the day is
+                     remembered, date only, and the next run catches it up); a
+                     sentence in a special category (health, sexuality) is not
+                     mined
+  * forget           a forgotten person leaves the dreams too: forget_registry
+                     store "dreams" (people_find / people_purge below)
   * rebuildable      ``rebuild_day(day)`` recomputes the day from stored turns;
                      running it again gives the same items
 """
@@ -101,20 +107,30 @@ class SourceDeletionRefused(RuntimeError):
 
 
 class _ReadOnlySource:
-    """The conversation store as consolidation sees it: reads pass through,
-    anything that would change or remove a stored turn raises."""
+    """The conversation store as consolidation sees it: the named reads pass
+    through, anything else raises (an allowlist, so a write method added to
+    the store later is refused without anyone remembering to list it here).
+    There is no passthrough to the underlying collection."""
 
-    _WRITES = frozenset({"delete", "supersede", "unsupersede", "update", "upsert",
-                         "index", "index_exchange", "reset", "clear", "_set_supersession"})
+    #: The reads consolidation may use. dream() itself calls only `available`
+    #: and `recent`; the rest are the store's other read-only queries.
+    _READS = frozenset({"available", "recent", "search", "get_session", "find_ids", "stats"})
+
+    __slots__ = ("__src",)
 
     def __init__(self, inner):
-        self._inner = inner
+        object.__setattr__(self, "_ReadOnlySource__src", inner)
 
     def __getattr__(self, name):
-        if name in _ReadOnlySource._WRITES:
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)          # copy/pickle probes, not store access
+        if name not in _ReadOnlySource._READS:
             raise SourceDeletionRefused(
-                f"consolidation never changes its sources (tried {name!r})")
-        return getattr(self._inner, name)
+                f"consolidation only reads its sources (tried {name!r})")
+        return getattr(object.__getattribute__(self, "_ReadOnlySource__src"), name)
+
+    def __setattr__(self, name, value):
+        raise SourceDeletionRefused(f"consolidation never changes its sources (set {name!r})")
 
 
 def _assert_derived(table: str) -> None:
@@ -179,17 +195,23 @@ def _connect() -> sqlite3.Connection:
             dream_id TEXT PRIMARY KEY, ts REAL, day TEXT, turns_reviewed INTEGER,
             topics_json TEXT, consolidated_json TEXT, pruned INTEGER, summary TEXT
         );
+        CREATE TABLE IF NOT EXISTS skipped_days(day TEXT PRIMARY KEY, ts REAL, reason TEXT);
         """
     )
     # Added for NS-15.9-1; a database from before them gains the columns here.
-    # A row without a principal predates it and is the owner's.
-    for col in ("principal TEXT", "meta_json TEXT"):
-        try:
-            conn.execute(f"ALTER TABLE dreams ADD COLUMN {col}")
-        except sqlite3.OperationalError:
-            pass                                # already there
+    # A row without a principal predates it and is the owner's. Only a column
+    # that is missing is added, so any other error (a locked database) is
+    # raised, not mistaken for "already there".
+    have = {r[1] for r in conn.execute("PRAGMA table_info(dreams)").fetchall()}
+    for name, decl in _ADDED_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE dreams ADD COLUMN {name} {decl}")
     conn.commit()
     return conn
+
+
+#: Columns added after the table's first version, as (name, type).
+_ADDED_COLUMNS = (("principal", "TEXT"), ("meta_json", "TEXT"))
 
 
 def _yesterday() -> str:
@@ -214,8 +236,24 @@ def dream(day: Optional[str] = None, *, memory=None, queue: bool = True,
     if not _DAY_RE.match(day):
         return {"ok": False, "error": "invalid day — expected YYYY-MM-DD"}
     if _off_record():
-        # Off the record nothing about the conversation is written (services/off_record).
+        # Off the record nothing about the conversation is written
+        # (services/off_record). The stored turns carry no per-turn off-record
+        # flag on this branch (an off-record turn is never stored at all), so
+        # the run is skipped as a whole and the DAY (a date, no content) is
+        # remembered: the next run that is not off the record consolidates it.
+        _remember_skipped(day, "off_record")
         return {"ok": True, "skipped": True, "reason": "off_record", "day": day}
+    res = _dream_day(day, memory=memory, queue=queue, rebuilt=rebuilt)
+    if res.get("ok"):
+        _forget_skipped(day)
+        caught = _catch_up(day, memory=memory)
+        if caught:
+            res["caught_up"] = caught
+    return res
+
+
+def _dream_day(day: str, *, memory=None, queue: bool = True,
+               rebuilt: bool = False) -> Dict[str, Any]:
     try:
         if memory is None:
             try:
@@ -230,9 +268,18 @@ def dream(day: Optional[str] = None, *, memory=None, queue: bool = True,
             _log.warning("dream(%s): recent()-window saturated at %d turns; some of "
                          "that day's turns may be unconsolidated.", day, _PULL_WINDOW)
         if not turns:
+            cleared = False
+            if rebuilt and not capped and _readable(source):
+                # A rebuild recomputes the day from the stored turns, and there
+                # are none now (forgotten or deleted): the day's derived record
+                # goes too. Not when the store could not be read: an outage is
+                # not an empty day.
+                _clear_day(day)
+                cleared = True
             return {"ok": True, "day": day, "turns_reviewed": 0,
                     "topics": [], "consolidated": [], "pruned": 0, "capped": capped,
                     "principal": PRINCIPAL, "source_message_ids": [],
+                    "rebuilt": bool(rebuilt), "cleared": cleared,
                     "summary": "Nothing to consolidate." if not capped else
                     "Nothing to consolidate (turn window saturated — may be incomplete)."}
 
@@ -269,10 +316,107 @@ def dream(day: Optional[str] = None, *, memory=None, queue: bool = True,
                 "pruned": pruned, "capped": capped, "summary": summary,
                 "principal": PRINCIPAL, "made_by": MADE_BY, "model_summary": False,
                 "source_message_ids": source_ids, "rebuilt": bool(rebuilt)}
-    except SourceDeletionRefused:
-        raise
+    except SourceDeletionRefused as e:
+        # A bug, not a condition: consolidation reached for a source write.
+        # Loud in the log, an envelope to the caller (this module never raises).
+        _log.error("dream(%s) refused: %s", day, e)
+        return {"ok": False, "day": day, "error": exception_text(e),
+                "reason": "source_deletion_refused"}
     except Exception as e:
         return {"ok": False, "day": day, "error": exception_text(e)}
+
+
+def _readable(source) -> bool:
+    """Could the conversation store be read just now?"""
+    if source is None:
+        return False
+    try:
+        av = getattr(source, "available", None)       # a stub may not have it
+        if callable(av) and not av():
+            return False
+        source.recent(n=1)
+        return True
+    except Exception:
+        return False
+
+
+def _clear_day(day: str, principal: str = PRINCIPAL) -> None:
+    """Remove the day's derived record: its row, <day>.md and <day>.json."""
+    with _LOCK:
+        _assert_derived(_DERIVED_TABLE)
+        conn = _connect()
+        try:
+            conn.execute("DELETE FROM dreams WHERE day=? AND COALESCE(principal, ?)=?",
+                         (day, PRINCIPAL, principal))
+            conn.commit()
+        finally:
+            conn.close()
+    for ext in ("md", "json"):
+        try:
+            (DREAMS_DIR / f"{day}.{ext}").unlink()
+        except FileNotFoundError:
+            pass
+
+
+# ── days skipped off the record ───────────────────────────────────────────────
+# Only the date and why are kept (no content), so a night that fell off the
+# record is consolidated by the next run that is not.
+_CATCH_UP_MAX = 14
+
+
+def _remember_skipped(day: str, reason: str) -> None:
+    try:
+        conn = _connect()
+        try:
+            conn.execute("INSERT OR REPLACE INTO skipped_days(day, ts, reason) VALUES(?,?,?)",
+                         (day, time.time(), reason))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        _log.warning("dream(%s): could not remember the skipped day: %s", day, e)
+
+
+def _forget_skipped(day: str) -> None:
+    try:
+        conn = _connect()
+        try:
+            conn.execute("DELETE FROM skipped_days WHERE day=?", (day,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def skipped_days() -> List[str]:
+    """Days a run skipped (off the record) and has not yet consolidated."""
+    try:
+        conn = _connect()
+        try:
+            return [r[0] for r in conn.execute(
+                "SELECT day FROM skipped_days ORDER BY day").fetchall()]
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
+def _catch_up(done_day: str, *, memory=None) -> List[str]:
+    """Consolidate the days skipped off the record (oldest first); each one
+    that succeeds leaves the list."""
+    caught = []
+    for d in skipped_days()[:_CATCH_UP_MAX]:
+        if d == done_day or not _DAY_RE.match(d):
+            _forget_skipped(d)
+            continue
+        if _off_record():
+            break
+        r = _dream_day(d, memory=memory, queue=True, rebuilt=False)
+        if r.get("ok"):
+            _forget_skipped(d)
+            caught.append(d)
+    return caught
 
 
 def rebuild_day(day: str, *, memory=None) -> Dict[str, Any]:
@@ -535,3 +679,111 @@ def _loads(s, default):
         return json.loads(s) if s else default
     except Exception:
         return default
+
+
+# ── forget a person (services/forget_registry) ────────────────────────────────
+# A dream names people in its topics and facts, in three places: the db row,
+# <day>.md and the <day>.json sidecar. Forgetting a person removes every item
+# that names them from all three (the rest of the day's record stays), and a
+# stray file that still names them after that is removed whole.
+
+def _person_patterns(names, emails) -> list:
+    wanted = {" ".join(str(x or "").split()).lower()
+              for x in set(names or ()) | set(emails or ())}
+    return [re.compile(r"\b" + r"\s+".join(re.escape(w) for w in n.split(" ")) + r"\b",
+                       re.IGNORECASE) for n in wanted if len(n) >= 3]
+
+
+def _hit(text, pats) -> bool:
+    return bool(text) and any(p.search(str(text)) for p in pats)
+
+
+def _scrub(topics, consolidated, pats):
+    """The topics and facts that do not name the person, and how many went."""
+    topics = list(topics or [])
+    consolidated = list(consolidated or [])
+    kept_t = [t for t in topics if not _hit((t or {}).get("topic"), pats)]
+    kept_c = [c for c in consolidated if not _hit((c or {}).get("text"), pats)]
+    return kept_t, kept_c, (len(topics) - len(kept_t)) + (len(consolidated) - len(kept_c))
+
+
+def _dream_files():
+    # Sidecars first: re-writing one re-writes its md, so an md that still
+    # names the person afterwards is a stray.
+    try:
+        return sorted(DREAMS_DIR.glob("*.json")) + sorted(DREAMS_DIR.glob("*.md"))
+    except Exception:
+        return []
+
+
+def _forget(names, emails, *, purge: bool) -> int:
+    pats = _person_patterns(names, emails)
+    if not pats:
+        return 0
+    days = set()
+    with _LOCK:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT dream_id, day, turns_reviewed, topics_json, consolidated_json, "
+                "pruned, summary, principal, meta_json FROM dreams").fetchall()
+            for did, day, tr, tj, cj, pr, _summ, pri, mj in rows:
+                topics, cons, removed = _scrub(_loads(tj, []), _loads(cj, []), pats)
+                if not removed:
+                    continue
+                days.add(day)
+                if not purge:
+                    continue
+                summary = _summarize(day, tr, topics, cons, pr)
+                conn.execute("UPDATE dreams SET topics_json=?, consolidated_json=?, summary=? "
+                             "WHERE dream_id=?",
+                             (json.dumps(topics), json.dumps(cons), summary, did))
+                meta = _loads(mj, {})
+                meta.setdefault("principal", _principal_of(pri))
+                _write_markdown(day, tr, topics, cons, pr, summary, meta)
+            conn.commit()
+        finally:
+            conn.close()
+    # Sidecars without a row, and any file that still names the person.
+    for p in _dream_files():
+        day = p.stem
+        if not _DAY_RE.match(day):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if not _hit(text, pats):
+            continue
+        days.add(day)
+        if not purge:
+            continue
+        if p.suffix == ".json":
+            rec = _loads(text, {})
+            if isinstance(rec, dict):
+                topics, cons, removed = _scrub(rec.get("topics"), rec.get("consolidated"), pats)
+                if removed:
+                    summary = _summarize(day, rec.get("turns_reviewed", 0), topics, cons,
+                                         rec.get("pruned", 0))
+                    meta = {k: v for k, v in rec.items()
+                            if k not in ("day", "turns_reviewed", "pruned", "summary",
+                                         "topics", "consolidated")}
+                    _write_markdown(day, rec.get("turns_reviewed", 0), topics, cons,
+                                    rec.get("pruned", 0), summary, meta)
+        try:
+            if p.exists() and _hit(p.read_text(encoding="utf-8"), pats):
+                p.unlink()                       # derived; the rest of it cannot be kept apart
+        except Exception:
+            pass
+    return len(days)
+
+
+def people_find(names, emails) -> int:
+    """forget-person: how many days' dreams name the person."""
+    return _forget(names, emails, purge=False)
+
+
+def people_purge(names, emails) -> int:
+    """forget-person: remove what names the person from every day's dream
+    (row, md, json); returns the number of days touched."""
+    return _forget(names, emails, purge=True)

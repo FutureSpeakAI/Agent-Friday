@@ -439,6 +439,13 @@ def as_untrusted(text: str, limit: int = 12000) -> str:
     body = (text or "")
     if len(body) > limit:
         body = body[:limit] + "\n…[truncated]"
+    try:
+        # A line shaped like one of Friday's kind labels is the document's
+        # text, not a label (services/knowledge_kinds.neutralise_labels).
+        from agent_friday.services.knowledge_kinds import neutralise_labels
+        body = neutralise_labels(body)
+    except Exception:
+        pass
     return UNTRUSTED_HEADER + "\n" + body
 
 

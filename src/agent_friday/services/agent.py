@@ -1203,6 +1203,13 @@ def _tool_browse_web(inp):
         return f"Browse error ({url}): {rec.get('error')}"
 
     text = _wf.load_extraction(rec['id']) or ''
+    try:
+        # A page line shaped like one of Friday's kind labels ("KNOWN (...)")
+        # is the page's text, not a label: prefix it so it cannot pass for one.
+        from agent_friday.services.knowledge_kinds import neutralise_labels as _nl
+        text = _nl(text)
+    except Exception:
+        pass
     _log_context("browse_web", {"url": url, "chars": len(text),
                                 "cached": rec.get('from_cache')})
     header = f"[{rec.get('final_url') or url}]"
