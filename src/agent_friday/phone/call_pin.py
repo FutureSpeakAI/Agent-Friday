@@ -9,8 +9,11 @@ no records at all.
   (routes/phone.py, the same desk-press guard as the other phone settings).
 * Only a salted, slow hash is kept, keyed with Friday's governance key, so a copy of
   the file alone does not give the PIN up to a quick search.
-* Each call gets three tries (phone/live_call.py); ten wrong PINs in a day lock the
-  PIN until it is set again on the PC.
+* The PIN is 6 to 10 digits. Each call gets three tries (phone/live_call.py); ten wrong
+  PINs since it was set lock it until it is set again on the PC (a right PIN does not
+  reset the count). Every wrong PIN is a ledger entry and a notice to the owner.
+* Until the PIN is said, nothing the caller says reaches the model (live_call): words
+  with a number in them are not even kept in the call's history.
 * Each change is a signed entry in the action ledger; no entry, no change.
 """
 from __future__ import annotations
@@ -28,10 +31,9 @@ from typing import Optional
 
 from agent_friday.user_errors import UserFacingValueError
 
-MIN_DIGITS, MAX_DIGITS = 4, 8
+MIN_DIGITS, MAX_DIGITS = 6, 10
 TRIES_PER_CALL = 3
-LOCK_AFTER = 10                # wrong PINs within LOCK_WINDOW_S lock it until set again
-LOCK_WINDOW_S = 24 * 3600
+LOCK_AFTER = 10                # wrong PINs since it was set lock it until set again at the PC
 _LOCK = threading.Lock()
 _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1, "dklen": 32}
 
@@ -89,7 +91,7 @@ def _ledger(what: str, **extra) -> None:
                          "decided_source": "desktop_press"}, **extra))
 
 
-# â”€â”€ what the settings page sees â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── what the settings page sees ──────────────────────────────────────────────
 
 def required() -> bool:
     """On unless the owner switched it off at the PC. An unreadable file keeps it on."""
@@ -101,10 +103,17 @@ def is_set() -> bool:
     return bool(d.get("hash") and d.get("salt"))
 
 
+def _wrong(d: dict) -> int:
+    try:
+        return max(0, int(d.get("wrong") or 0))
+    except (TypeError, ValueError):
+        return LOCK_AFTER                 # unreadable count: locked (unsure means closed)
+
+
 def locked() -> bool:
-    now = time.time()
-    fails = [t for t in (_read().get("fails") or []) if isinstance(t, (int, float))]
-    return len([t for t in fails if now - t < LOCK_WINDOW_S]) >= LOCK_AFTER
+    """Too many wrong PINs since it was set: locked until set again at the PC. A right
+    PIN does not reset the count, so slow guessing over days still runs out."""
+    return _wrong(_read()) >= LOCK_AFTER
 
 
 def status() -> dict:
@@ -112,7 +121,7 @@ def status() -> dict:
             "digits": "%d to %d" % (MIN_DIGITS, MAX_DIGITS)}
 
 
-# â”€â”€ changes (a press on this PC; routes/phone.py checks it) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── changes (a press on this PC; routes/phone.py checks it) ──────────────────
 
 def set_pin(pin: str) -> dict:
     pin = str(pin or "").strip()
@@ -125,7 +134,8 @@ def set_pin(pin: str) -> dict:
     with _LOCK:
         _ledger("set")
         d = _read()
-        d.update({"hash": digest, "salt": salt.hex(), "set_at": int(time.time()), "fails": []})
+        d.pop("fails", None)
+        d.update({"hash": digest, "salt": salt.hex(), "set_at": int(time.time()), "wrong": 0})
         d.setdefault("required", True)
         _write(d)
     return status()
@@ -144,13 +154,13 @@ def clear() -> dict:
     with _LOCK:
         _ledger("cleared")
         d = _read()
-        for k in ("hash", "salt", "set_at", "fails"):
+        for k in ("hash", "salt", "set_at", "fails", "wrong"):
             d.pop(k, None)
         _write(d)
     return status()
 
 
-# â”€â”€ on a call â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── on a call ────────────────────────────────────────────────────────────────
 
 def digits_in(text: str) -> Optional[str]:
     """The PIN-shaped digits a caller said ("4 7 2 9", "four seven two nine", "4729"),
@@ -165,23 +175,49 @@ def digits_in(text: str) -> Optional[str]:
     return got if MIN_DIGITS <= len(got) <= MAX_DIGITS else None
 
 
+def has_number(text: str) -> bool:
+    """Any digit or number word: words that may hold part of a PIN."""
+    return any(tok.isdigit() or tok in _WORDS for tok in _TOKEN.findall(str(text or "").lower()))
+
+
 def verify(spoken_digits: str) -> bool:
-    """True for the PIN. A wrong one is counted; a locked or unset PIN never matches."""
+    """True for the PIN. A wrong one is counted (and must be: if the count cannot be
+    written, the PIN is treated as locked), written in the action ledger and shown to
+    the owner. A locked or unset PIN never matches."""
     with _LOCK:
         d = _read()
-        if not (d.get("hash") and d.get("salt")) or locked():
+        if not (d.get("hash") and d.get("salt")) or _wrong(d) >= LOCK_AFTER:
             return False
         try:
             good = hmac.compare_digest(_hash(str(spoken_digits or ""), bytes.fromhex(d["salt"])),
                                        str(d["hash"]))
         except Exception:  # noqa: BLE001 - a check that cannot run does not match
             good = False
-        now = time.time()
-        fails = [t for t in (d.get("fails") or []) if isinstance(t, (int, float)) and now - t < LOCK_WINDOW_S]
-        d["fails"] = [] if good else fails + [now]
+        if good:
+            return True
+        d["wrong"] = _wrong(d) + 1
         try:
             _write(d)
         except OSError:
-            if not good:
-                return False
-        return good
+            d["wrong"] = LOCK_AFTER
+        count = d["wrong"]
+    _tell_owner(count)
+    return False
+
+
+def _tell_owner(count: int) -> None:
+    """A wrong call PIN is the owner's to know about: a ledger entry and a notice."""
+    try:
+        _ledger("wrong", count=int(count), decided_source="phone_call")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.push(title="A wrong call PIN was said",
+                body=("Someone calling from your cell's number said a wrong call PIN (%d so far). "
+                      "%s" % (count, "The PIN is now locked: set it again in Friday's phone settings "
+                              "on this computer." if count >= LOCK_AFTER else
+                              "If that was not you, someone may be using your number.")),
+                priority="high", source="phone", kind="warning")
+    except Exception:  # noqa: BLE001
+        pass

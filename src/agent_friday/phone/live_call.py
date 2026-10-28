@@ -190,10 +190,10 @@ def ticket_direction(ticket: str, call_sid: str = "") -> str:
     ttl = _OUTBOUND_TICKET_TTL_S if direction == "outbound" else _TICKET_TTL_S
     if not good or not (0 <= now - int(ts) <= ttl):
         return ""
-    if call_sid and sid and sid != call_sid:
+    if sid != str(call_sid or ""):        # bound to its own call (or approved card)
         return ""
     with _TICKET_LOCK:
-        for k in [k for k, t in _USED_TICKETS.items() if now - t > 2 * _TICKET_TTL_S]:
+        for k in [k for k, t in _USED_TICKETS.items() if now - t > 2 * _OUTBOUND_TICKET_TTL_S]:
             _USED_TICKETS.pop(k, None)
         if body in _USED_TICKETS:
             return ""
@@ -217,7 +217,7 @@ def outbound_twiml(cfg: dict, *, disclosure: str, opening: str, approval_id: str
     first, before the stream, so it cannot be skipped by a bridge failure."""
     say = ("<Say>%s</Say>" % escape(disclosure.strip())) if disclosure.strip() else ""
     try:
-        ticket = mint_ticket("outbound", "")
+        ticket = mint_ticket("outbound", approval_id)     # bound to the approved call
     except Exception:
         ticket = ""          # without one the call is unverified: no free/busy either
     return ("<Response>%s<Connect><Stream url=%s>"
@@ -296,8 +296,8 @@ def free_busy_text(days: int = FREE_BUSY_DAYS, now=None) -> str:
     zone = sch.zone_for(sch.scheduling_settings().get("timezone"))
     start = now or datetime.now(timezone.utc)
     got = sch.busy_across_accounts(start, start + timedelta(days=int(days)), zone)
-    if not got.get("checked"):
-        return ""
+    if not got.get("checked") or got.get("errors"):
+        return ""          # a calendar that could not be read: "free" would not be true
     parts = []
     for s, e in (got.get("busy") or [])[:60]:
         s, e = s.astimezone(zone), e.astimezone(zone)
@@ -467,8 +467,12 @@ class CallBridge:
     def _free_busy_for(self, history: list) -> str:
         """The owner's busy times, once the call has talked about times; read once
         per call and kept for five minutes. "" before that, or when unreadable."""
-        said = " ".join(str(h.get("text") or "") for h in (history or [])[-12:])
-        purpose = str((getattr(self, "params", None) or {}).get("opening") or "")
+        # What the other person said, and the call's purpose without Friday's own name
+        # (which is also a weekday): Friday's own lines do not count.
+        said = " ".join(str(h.get("text") or "") for h in (history or [])[-12:]
+                        if h.get("who") == "caller")
+        purpose = re.sub(r"\bfriday\b", " ", str((getattr(self, "params", None) or {}).get("opening") or ""),
+                         flags=re.I)
         if not _TIME_TALK.search(said + " " + purpose):
             return ""
         cached = getattr(self, "_busy_cache", None)
@@ -484,25 +488,31 @@ class CallBridge:
         return text
 
     def _pin_turn(self, text: str) -> bool:
-        """On a call from the owner's cell before the PIN: a PIN attempt is checked here
-        and answered by the bridge. The digits never reach the model or the history.
-        True when the utterance was a PIN attempt (handled)."""
+        """On a call from the owner's cell before the PIN, every turn is answered here by
+        the bridge, not the model; a PIN attempt is checked. The digits never reach the
+        model or the history. True when the turn was handled here."""
         if str((getattr(self, "params", None) or {}).get("direction") or "").lower() != "inbound":
             return False
         state = getattr(self, "pin_state", None)
         if state in ("verified", "not_required"):
             return False
+        # Before the PIN nothing the caller says reaches the model: a PIN said in a way
+        # this does not read as one ("four oh seven...", split over two breaths) would
+        # otherwise go to it. Words with a number in them are not kept either.
         from agent_friday.phone import call_pin
         digits = call_pin.digits_in(text)
-        if digits is None:
-            return False
-        if state in ("failed", "unset", ""):
-            # No more tries on this call (or no PIN to match): the number is not
-            # checked, and it is kept out of the model and the history all the same.
-            self.history.append({"who": "caller", "text": "[said a number]"})
-            reply = ("No call PIN is set up yet. You can set one in Friday's phone settings "
-                     "on your computer." if state == "unset" else
-                     "Your records stay closed on this call.")
+        if state in ("failed", "unset", "") or digits is None:
+            self.history.append({"who": "caller", "text": "[said a number]"
+                                 if call_pin.has_number(text) else text})
+            if state == "unset":
+                reply = ("No call PIN is set up yet, so I can't open anything of yours on this "
+                         "call. You can set one in Friday's phone settings on your computer.")
+            elif state == "failed":
+                reply = "Your records stay closed on this call."
+            elif call_pin.has_number(text):
+                reply = "Please say just your call PIN, digit by digit."
+            else:
+                reply = "Before I open anything of yours, please say your call PIN."
         elif call_pin.verify(digits):
             self.pin_state = "verified"
             self.history.append({"who": "caller", "text": "[said the call PIN]"})
@@ -575,8 +585,11 @@ class CallBridge:
             # "inbound" only with the single-use ticket this call's own TwiML carried;
             # otherwise the call is treated as one with someone else.
             claimed = str(self.params.get("direction") or "").lower()
+            # An inbound ticket is bound to its call's SID; an outbound one (minted before
+            # Twilio has a SID) to the approved card it places the call for.
+            bound = self.call_sid if claimed == "inbound" else str(self.params.get("approval_id") or "")
             if claimed in ("inbound", "outbound") \
-                    and ticket_direction(self.params.get("ticket") or "", self.call_sid) != claimed:
+                    and (not bound or ticket_direction(self.params.get("ticket") or "", bound) != claimed):
                 self.params["direction"] = "unverified"
             self.params.pop("ticket", None)
             # A call from the owner's cell starts with its records closed until the call
