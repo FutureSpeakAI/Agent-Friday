@@ -81,3 +81,32 @@ def test_another_caller_is_not_answered_by_a_kept_key(idem):
     mod.finish(scope, 200, b"{}", "application/json", False)
     mod = _restart(mod, tmp)
     assert mod.begin("retry-restart-0006", "user", "token-b", _fp(mod))[0] == "run"
+
+
+def test_nothing_on_disk_can_be_checked_against_a_guess_of_the_request(idem):
+    """The kept fingerprint is keyed with this install's secret: a plain digest of a guessed body
+    (a passphrase, an address) does not match anything in the file."""
+    mod, tmp = idem
+    body = b'{"passphrase": "synthetic-guessable"}'
+    _d, scope = mod.begin("retry-restart-0007", "user", "", _fp(mod, body))
+    mod.finish(scope, 200, b"{}", "application/json", False)
+    text = (tmp / "idempotency_keys.json").read_text(encoding="utf-8")
+    assert _fp(mod, body) not in text and _fp(mod, body)[:40] not in text
+
+
+def test_an_unreadable_file_is_set_aside_not_overwritten(idem):
+    mod, tmp = idem
+    (tmp / "idempotency_keys.json").write_text("{not json", encoding="utf-8")
+    mod = _restart(mod, tmp)
+    assert mod.begin("retry-restart-0008", "user", "", _fp(mod))[0] == "run"
+    assert (tmp / "idempotency_keys.json.unreadable").read_text(encoding="utf-8") == "{not json"
+
+
+def test_erase_forgets_every_kept_key(idem):
+    mod, tmp = idem
+    _d, scope = mod.begin("retry-restart-0009", "user", "", _fp(mod))
+    mod.finish(scope, 200, b"{}", "application/json", False)
+    mod.erase()
+    assert not (tmp / "idempotency_keys.json").exists()
+    mod = _restart(mod, tmp)
+    assert mod.begin("retry-restart-0009", "user", "", _fp(mod))[0] == "run"

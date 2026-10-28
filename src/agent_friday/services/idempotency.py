@@ -21,9 +21,11 @@ answered before route-level checks run: it changes nothing, and only the same ca
 same request can get it. A request without the header runs
 as before. Answers live in memory (bounded, 2,000 entries).
 
-A key outlives a restart (NS-31.1-4): beside the memory, a small file under the runtime folder
-keeps, for each key, only a digest of the caller-scoped key, the request's fingerprint (a digest),
-its state and when. Never an answer body. After a restart the same key for the same request is not
+A key outlives a restart (NS-31.1-4): beside the memory, a small file in Friday's folder
+(idempotency_keys.json) keeps, for each key, only keyed digests (HMAC with this install's own
+secret) of the caller-scoped key and of the request's fingerprint, its state and when. Never an
+answer body, and nothing a guess about a request's words could be checked against without that
+secret. After a restart the same key for the same request is not
 run again: it gets 409 ("already handled before Friday restarted; its answer was not kept"), or,
 when it was still running as Friday stopped, 409 saying it may have run. Losing the file only
 returns to the old behaviour.
@@ -67,51 +69,115 @@ MAX_DISK_ENTRIES = 5000
 def _path() -> Path:
     if _PATH_OVERRIDE is not None:
         return Path(_PATH_OVERRIDE)
-    from agent_friday.paths import runtime_dir
-    return Path(runtime_dir()) / "idempotency_keys.json"
+    from agent_friday.paths import friday_home
+    # In Friday's own folder (not the runtime folder, which can be moved elsewhere): erased with
+    # everything else, and listed on the privacy map with the receipts.
+    return Path(friday_home()) / "idempotency_keys.json"
+
+
+_SECRET: list = []
+_WRITE_LOCK = threading.Lock()
+
+
+def _secret() -> bytes:
+    """This install's own secret (core: the session secret, kept out of every export). Without it
+    a per-process one: keys then do not outlive a restart, which is only the old behaviour."""
+    if not _SECRET:
+        try:
+            from agent_friday.core import _load_or_create_secret
+            _SECRET.append(str(_load_or_create_secret()).encode("utf-8"))
+        except Exception:
+            import secrets as _s
+            _SECRET.append(_s.token_bytes(32))
+    return _SECRET[0]
+
+
+def _keyed(kind: str, value: str) -> str:
+    import hmac
+    return hmac.new(_secret(), ("idem|%s|%s" % (kind, value)).encode("utf-8"), hashlib.sha256).hexdigest()[:40]
 
 
 def _digest(scope: str) -> str:
-    return hashlib.sha256(("idem|" + scope).encode("utf-8")).hexdigest()[:40]
+    return _keyed("scope", scope)
 
 
 def _load_disk(now) -> None:
     if _DISK_LOADED[0]:
         return
     _DISK_LOADED[0] = True
+    path = _path()
     try:
-        data = json.loads(_path().read_text(encoding="utf-8"))
-        keys = data.get("keys") if isinstance(data, dict) else None
-        for h, v in (keys or {}).items():
-            if isinstance(v, dict) and now - float(v.get("at") or 0) <= TTL_S:
-                _DISK[str(h)] = {"fp": str(v.get("fp") or ""), "state": str(v.get("state") or "done"),
-                                 "at": float(v.get("at") or 0)}
+        raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        pass
+        return
     except Exception:
-        pass                              # unreadable: as before this file existed
-
-
-def _save_disk(now) -> None:
-    """Write the kept keys (atomically). A failure only loses what a restart would remember."""
+        # Busy or locked for a moment: try again on the next request, never overwrite what is there.
+        _DISK_LOADED[0] = False
+        return
     try:
-        for h in [h for h, v in _DISK.items() if now - v["at"] > TTL_S]:
-            _DISK.pop(h, None)
-        if len(_DISK) > MAX_DISK_ENTRIES:
-            for h, _v in sorted(_DISK.items(), key=lambda kv: kv[1]["at"])[:len(_DISK) - MAX_DISK_ENTRIES]:
-                _DISK.pop(h, None)
-        path = _path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps({"v": 1, "keys": _DISK}), encoding="utf-8")
-        os.replace(tmp, path)
+        data = json.loads(raw)
+        keys = data.get("keys") if isinstance(data, dict) else {}
     except Exception:
-        pass
+        keys = {}
+        try:                              # unreadable: set aside, never silently replaced
+            os.replace(path, path.with_name(path.name + ".unreadable"))
+        except Exception:
+            pass
+    for h, v in (keys or {}).items():
+        try:
+            at = float(v.get("at") or 0)
+            if now - at <= TTL_S:
+                _DISK[str(h)] = {"fp": str(v.get("fp") or ""), "state": str(v.get("state") or "done"), "at": at}
+        except Exception:
+            continue
 
 
-def _note(scope, fp, state, now) -> None:
-    _DISK[_digest(scope)] = {"fp": fp, "state": state, "at": now}
-    _save_disk(now)
+def _snapshot(now) -> str:
+    """The kept keys as the file's text (called under _LOCK; the write happens outside it)."""
+    for h in [h for h, v in _DISK.items() if now - v["at"] > TTL_S]:
+        _DISK.pop(h, None)
+    if len(_DISK) > MAX_DISK_ENTRIES:
+        done = sorted((kv for kv in _DISK.items() if kv[1]["state"] != "running"), key=lambda kv: kv[1]["at"])
+        for h, _v in done[:len(_DISK) - MAX_DISK_ENTRIES]:
+            _DISK.pop(h, None)
+    _SEQ[0] += 1
+    return (_SEQ[0], json.dumps({"v": 1, "keys": _DISK}))
+
+
+_SEQ = [0]
+_WRITTEN = [0]
+
+
+def _write(snap) -> None:
+    """Write the file atomically, outside the request lock. A failure only loses what a restart
+    would remember (the old behaviour). One server process owns the folder."""
+    if not snap:
+        return
+    seq, text = snap
+    with _WRITE_LOCK:
+        if seq <= _WRITTEN[0]:
+            return                        # a newer state was already written
+        _WRITTEN[0] = seq
+        try:
+            path = _path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
+
+def _save_disk(now):
+    try:
+        return _snapshot(now)
+    except Exception:
+        return None
+
+
+def _note(scope, fp, state, now):
+    _DISK[_digest(scope)] = {"fp": _keyed("fp", fp), "state": state, "at": now}
+    return _save_disk(now)
 
 
 def applies(method, path) -> bool:
@@ -153,9 +219,12 @@ def begin(key, principal, token, fp):
     ("replay", entry)    answer with the kept response
     ("running", None)    409: the first one is still running
     ("mismatch", None)   422: the key was used for a different request
-    ("stream", None)     409: already handled, and its answer was a stream"""
+    ("stream", None)     409: already handled, and its answer was a stream
+    ("handled", None)    409: already handled before a restart (its answer was not kept)
+    ("restarted", None)  409: it was still running when Friday stopped, so it may have run"""
     scope = _scope(str(key).strip(), principal, token)
     now = time.time()
+    text = None
     with _LOCK:
         _expire(now)
         _load_disk(now)
@@ -164,19 +233,22 @@ def begin(key, principal, token, fp):
             d = _DISK.get(_digest(scope))
             if d is not None and now - d["at"] <= TTL_S:
                 # Handled before a restart (or its answer has left memory): never run again.
-                if d["fp"] != fp:
+                if d["fp"] != _keyed("fp", fp):
                     return "mismatch", None
                 return ("restarted" if d["state"] == "running" else "handled"), None
             _SEEN[scope] = {"fp": fp, "state": "running", "at": now}
-            _note(scope, fp, "running", now)
-            return "run", scope
-        if e["fp"] != fp:
+            text = _note(scope, fp, "running", now)
+            out = ("run", scope)
+        elif e["fp"] != fp:
             return "mismatch", None
-        if e["state"] == "running":
+        elif e["state"] == "running":
             return "running", None
-        if e["state"] == "stream":
+        elif e["state"] == "stream":
             return "stream", None
-        return "replay", dict(e)
+        else:
+            return "replay", dict(e)
+    _write(text)
+    return out
 
 
 def finish(scope, status: int, body, mimetype: str, streamed: bool) -> None:
@@ -188,25 +260,39 @@ def finish(scope, status: int, body, mimetype: str, streamed: bool) -> None:
         if not (200 <= int(status) < 300):
             _SEEN.pop(scope, None)
             _DISK.pop(_digest(scope), None)
-            _save_disk(time.time())
-            return
-        if streamed or body is None or len(body) > MAX_BODY:
+            text = _save_disk(time.time())
+        elif streamed or body is None or len(body) > MAX_BODY:
             e.update(state="stream", at=time.time())
-            _note(scope, e["fp"], "stream", e["at"])
-            return
-        e.update(state="done", at=time.time(), status=int(status), body=bytes(body),
-                 mimetype=mimetype or "application/json")
-        _note(scope, e["fp"], "done", e["at"])
+            text = _note(scope, e["fp"], "stream", e["at"])
+        else:
+            e.update(state="done", at=time.time(), status=int(status), body=bytes(body),
+                     mimetype=mimetype or "application/json")
+            text = _note(scope, e["fp"], "done", e["at"])
+    _write(text)
 
 
 def forget(scope) -> None:
+    text = None
     with _LOCK:
         e = _SEEN.get(scope)
         if e is not None and e["state"] == "running":
             _SEEN.pop(scope, None)
             _DISK.pop(_digest(scope), None)
-            _save_disk(time.time())
+            text = _save_disk(time.time())
+    _write(text)
 
+
+def erase() -> None:
+    """Forget every kept key, in memory and on disk (the owner's erase)."""
+    with _LOCK:
+        _SEEN.clear()
+        _DISK.clear()
+        _DISK_LOADED[0] = True
+    with _WRITE_LOCK:
+        try:
+            _path().unlink()
+        except Exception:
+            pass
 
 def reset_for_tests() -> None:
     with _LOCK:
