@@ -77,6 +77,66 @@ def apply_default(new_cfg: dict, old_cfg: Optional[dict]) -> dict:
     return new_cfg
 
 
+# ── turning isolation off through settings (owner ruling 4, 2026-10-28) ─────────
+
+_ALREADY_RECORDED = threading.local()     # names whose entry a card press already wrote
+
+
+def _explicitly_off(spec) -> bool:
+    return (_is_command_server(spec) and "isolation" in spec
+            and str(spec.get("isolation")).strip().lower() in _OFF)
+
+
+def turned_off(new_cfg: dict, old_cfg: Optional[dict]) -> List[tuple]:
+    """Connector servers this save takes out of isolation: (name, new_spec, before).
+
+    Turned off means the new entry runs un-isolated and the old one did not say "off":
+    an isolated connector set to "off" (or its key removed), a connector from before
+    A25 set to "off", or a connector added with "off". Values that were already off,
+    and connectors from before A25 left as they are, are not changes."""
+    new_servers = (new_cfg or {}).get("servers")
+    if not isinstance(new_servers, dict):
+        return []
+    old_servers = (old_cfg or {}).get("servers") if isinstance(old_cfg, dict) else None
+    old_servers = old_servers if isinstance(old_servers, dict) else {}
+    out = []
+    for name, spec in new_servers.items():
+        if not _is_command_server(spec) or is_isolated(spec):
+            continue
+        old = old_servers.get(name)
+        if _explicitly_off(old):
+            continue
+        if _explicitly_off(spec) or is_isolated(old):
+            before = "isolated" if is_isolated(old) else ("new" if old is None else "unset")
+            out.append((str(name), spec, before))
+    return out
+
+
+def record_turned_off(new_cfg: dict, old_cfg: Optional[dict], source: str = "connector_settings") -> List[str]:
+    """Write one signed connector_run_unisolated entry in the action ledger for each
+    connector this save takes out of isolation. Raises when an entry cannot be written:
+    the caller saves nothing (no entry, no un-isolated connector)."""
+    skip = getattr(_ALREADY_RECORDED, "names", None) or set()
+    written = []
+    for name, spec, before in turned_off(new_cfg, old_cfg):
+        if name in skip:
+            continue
+        from agent_friday.governance import action_gate as _gate
+        try:
+            _gate._receipt({"tool": "connector_run_unisolated", "class": getattr(_gate, "OUTWARD", "outward"),
+                            "decision": "allow",
+                            "reason": "isolation turned off in this add-on's settings",
+                            "surface": source, "target": name[:80],
+                            "program": str(spec.get("command") or "")[:260],
+                            "isolation_before": before,
+                            "isolation_after": str(spec.get("isolation", ""))[:20]})
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError("isolation for %s was not turned off: the action ledger entry "
+                               "could not be written (%s)" % (name, e)) from e
+        written.append(name)
+    return written
+
+
 # ── the one-time offer for connectors added before A25 ───────────────────────
 
 def _record_file() -> Path:
@@ -470,7 +530,11 @@ def _on_runtime_decision(record: dict) -> None:
             spec["isolation"] = "off"
             spec["isolation_note"] = ("Run un-isolated by the owner's choice on this PC "
                                       "(its program cannot run in Windows' isolated mode).")
-            _agent._save_mcp_servers(cfg)
+            _ALREADY_RECORDED.names = {str(name)}   # this press wrote its entry above
+            try:
+                _agent._save_mcp_servers(cfg)
+            finally:
+                _ALREADY_RECORDED.names = set()
             changed = True
         except Exception as e:  # noqa: BLE001
             log.warning("un-isolated run for %s not applied: %s", name, e)
