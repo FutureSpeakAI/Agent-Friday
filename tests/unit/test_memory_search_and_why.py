@@ -516,8 +516,10 @@ def test_a_card_line_ref_is_keyed_and_its_journal_is_per_card():
     ref = cm.line_ref(line)
     # Not the plain hash of the words: a guess cannot be checked against the journal without the key.
     assert ref and ref != hashlib.sha256(line.lower().encode("utf-8")).hexdigest()[:16]
-    assert ref == cm.line_ref(line) and (cm._dir() / "line-ref.key").exists()
-    assert line.encode("utf-8") not in (cm._dir() / "line-ref.key").read_bytes()
+    assert ref == cm.line_ref(line) and cm._ref_key_path().exists()
+    assert line.encode("utf-8") not in cm._ref_key_path().read_bytes()
+    # The key is not kept among the card's files (everything there is the card and its text journal).
+    assert cm._ref_key_path().parent != cm._dir() and not (cm._dir() / "line-ref.key").exists()
     # The same words on the other card are another line, with another change record.
     cm.add("user", line, actor="owner")
     cm.add("friday", line, actor="friday")
@@ -525,6 +527,34 @@ def test_a_card_line_ref_is_keyed_and_its_journal_is_per_card():
     assert [r["target"] for r in cm.journal_for(line, target="friday")] == ["friday"]
     w = ms.why("card", "card:user:" + ref)
     assert w["ok"] and w["source"]["added_by"]["actor"] == "owner"
+
+
+def test_a_line_ref_key_left_beside_the_card_is_moved_out_and_kept():
+    import hmac, hashlib
+    from agent_friday.services import credential_store as cs
+    old_key = b"k" * 32
+    old = cm._dir() / "line-ref.key"
+    cs.write_secret(old, old_key, harden=False)
+    line = "Keeps a sailing boat called Wren."
+    expect = hmac.new(old_key, line.lower().encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+    assert cm.line_ref(line) == expect                  # the same key, so every old ref still matches
+    assert not old.exists() and cs.read_secret(cm._ref_key_path()) == old_key
+
+
+def test_an_unreadable_line_ref_key_beside_the_card_is_never_replaced(monkeypatch):
+    from agent_friday.services import credential_store as cs
+    old = cm._dir() / "line-ref.key"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_bytes(b"sealed elsewhere")
+    real = cs.read_secret
+
+    def _read(p):
+        if str(p) == str(old):
+            raise RuntimeError("cannot open")
+        return real(p)
+    monkeypatch.setattr(cs, "read_secret", _read)
+    assert cm.line_ref("Keeps a sailing boat called Wren.") == ""
+    assert old.read_bytes() == b"sealed elsewhere" and not cm._ref_key_path().exists()
 
 
 def test_deleting_a_kept_line_purges_the_change_record_whose_reason_quotes_it():
