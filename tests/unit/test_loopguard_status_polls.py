@@ -99,6 +99,45 @@ def test_a_heartbeat_age_or_a_timestamp_is_not_a_change():
     assert _run(calls) == 2
 
 
+def test_a_job_flapping_between_two_states_is_still_a_loop():
+    args = {"job_id": "j"}
+    calls = [("check_job_status", args, r) for r in ("queued", "running") * 4]
+    assert _run(calls) == 3              # queued, running, queued: nothing new twice
+
+
+@pytest.mark.parametrize("make", [
+    lambda i: json.dumps({"state": "running", "request_id": "r%d" % i}),
+    lambda i: "running, elapsed %ds" % (30 * i),
+    lambda i: "running, checked at epoch %d" % (1761300000 + i),
+    lambda i: {"state": "running", "uptime": 100 + i, "attempt": i},
+])
+def test_counters_and_ids_that_only_tick_are_not_a_change(make):
+    args = {"job_id": "j"}
+    assert _run([("check_job_status", args, make(i)) for i in range(5)]) == 2
+
+
+def test_a_result_long_enough_to_have_been_clipped_is_judged_as_before():
+    args = {"job_id": "j"}
+    calls = [("check_job_status", args, "x" * 1995 + str(i)) for i in range(5)]
+    assert _run(calls) == 2
+
+
+def test_a_cycle_through_a_status_poll_and_another_tool_is_caught_as_before():
+    calls = []
+    for i in range(10):
+        calls.append(("workflow_status", {"id": "w"}, "step %d" % i))
+        calls.append(("search_web", {"q": "q%d" % (i % 2)}, "the same three links"))
+    # The search alternates between two queries: the cycle check catches the
+    # pattern on its fourth pass, judged on the calls alone, as before the ruling.
+    assert _run(calls) == 7
+
+
+@pytest.mark.parametrize("name", ["set_status", "update_status", "post_status_update",
+                                  "wait_then_send", "create_commit_status"])
+def test_a_tool_that_changes_something_is_not_a_status_tool(name):
+    assert tb.is_status_tool(name) is False
+
+
 def test_a_changed_result_starts_the_count_again():
     args = {"job_id": "j"}
     calls = [("queue_status", args, r) for r in ("3 ahead", "2 ahead", "2 ahead", "1 ahead")]

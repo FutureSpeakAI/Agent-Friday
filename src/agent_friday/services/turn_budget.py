@@ -262,31 +262,55 @@ def loop_guard_enabled() -> bool:
 #: lets a repeated call through when its result changes, but only for status,
 #: poll and wait tools." Such a tool reports on something that moves by itself (a
 #: job, a queue, a workflow), so asking again with the same arguments is how it
-#: is used. A tool counts when a word of its name is one of these; nothing else
-#: is loosened, so a search, a read or a write repeated is judged exactly as
-#: before. A tool name split on any non-letter and on camelCase.
+#: is used. A tool counts when a word of its name is one of these, and its first
+#: and last words are not a verb that changes something (set_status,
+#: post_status_update and wait_then_send are writes, not polls). Nothing else is
+#: loosened: a search, a read or a write repeated is judged exactly as before.
 STATUS_TOOL_WORDS = frozenset({"status", "statuses", "poll", "polling", "wait", "waiting"})
+_WRITE_VERBS = frozenset({
+    "set", "update", "create", "post", "put", "patch", "mark", "add", "delete", "remove",
+    "send", "change", "write", "cancel", "submit", "approve", "clear", "reset", "start",
+    "stop", "run", "retry", "trigger", "enqueue", "publish", "edit", "save", "move"})
 
-#: What does not count as the result changing. A status reply that differs only
-#: in a clock reading, a "last seen 4m ago" age, an ISO timestamp, a request,
-#: trace or etag id, or a long hex or uuid id has not moved: a hung job keeps
-#: printing a fresh heartbeat age. Every substitution can only make two results
-#: compare EQUAL, so it can only keep the guard as strict as it was before the
-#: ruling, never looser.
+#: A result this long may have been clipped when it was written to the trace (the
+#: loops keep 2,000 characters), and a clipped result can look changed when only
+#: its cut moved. Such a call is judged as before.
+_CLIPPED_AT = 1990
+
+#: What does not count as the result changing: clock readings, ISO timestamps,
+#: epoch numbers, ages ("4m ago") and other durations ("elapsed 83s"), request,
+#: trace and etag ids (plain or JSON), uuids and long hex ids, and the values of
+#: JSON keys that only ever tick (elapsed, uptime, heartbeat and the like). A
+#: hung job keeps printing a fresh heartbeat. Every substitution can only make
+#: two results compare EQUAL, so it can only keep the guard as strict as it was
+#: before the ruling, never looser.
+_NOISE_KEYS = ("elapsed|elapsed_s|elapsed_ms|uptime|duration|age|attempt|attempts|retry|retries|"
+               "checked_at|last_checked|updated_at|heartbeat|last_heartbeat|timestamp|ts|now|"
+               "request_id|trace_id|correlation_id|etag|next_check|next_poll")
 _VOLATILE = [
+    re.compile(r"\"(?:%s)\"\s*:\s*(?:\"[^\"]*\"|-?[\d.eE+]+)" % _NOISE_KEYS, re.I),
     re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?", re.I),
     re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:am|pm)?\b", re.I),
-    re.compile(r"\b\d+(?:\.\d+)?\s*(?:ms|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)\s+ago\b", re.I),
-    re.compile(r"\b(?:request|req|trace|correlation|etag|e-tag)[ _-]?(?:id)?\s*[:=]\s*\S+", re.I),
+    re.compile(r"\b\d{10,13}\b"),
+    re.compile(r"\b\d+(?:\.\d+)?\s*(?:ms|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)\b(?:\s+ago\b)?", re.I),
+    re.compile(r"\b(?:request|req|trace|correlation|etag|e-tag)[ _-]?(?:id)?[\"']?\s*[:=]\s*[\"']?[^\s,\"'}]+", re.I),
     re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I),
     re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{12,}\b", re.I),
 ]
 
 
+def _name_words(name: Any) -> list:
+    raw = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", str(name or ""))
+    raw = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", raw)
+    return [w for w in re.split(r"[^a-z0-9]+", raw.lower()) if w]
+
+
 def is_status_tool(name: Any) -> bool:
-    """Is this a status, poll or wait tool, by a word of its name?"""
-    raw = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(name or ""))
-    return any(w in STATUS_TOOL_WORDS for w in re.split(r"[^a-z0-9]+", raw.lower()) if w)
+    """Is this a status, poll or wait tool, by the words of its name?"""
+    words = _name_words(name)
+    if not words or not any(w in STATUS_TOOL_WORDS for w in words):
+        return False
+    return words[0] not in _WRITE_VERBS and words[-1] not in _WRITE_VERBS
 
 
 def result_fingerprint(result: Any) -> str:
@@ -316,6 +340,11 @@ class LoopGuard:
     It also watches the SHAPE of the calls, so a model cycling through the same
     few tools with slightly different arguments each pass is caught even though
     no single call ever repeats. See `_cycling`.
+
+    A status, poll or wait tool is the one exception (owner ruling, decision 19):
+    given the turn's trace, it counts only the calls since its result last
+    showed something NEW. A result it has shown before (a job flapping between
+    "queued" and "running") is not new, so a flap is still a loop.
     """
 
     def __init__(self, repeat_limit: int = REPEAT_LIMIT_DEFAULT,
@@ -325,12 +354,21 @@ class LoopGuard:
         #: call finishes), read but never written. Only a status, poll or wait
         #: tool consults it; without it the guard behaves exactly as before.
         self._trace = trace
+        #: Status-tool results read so far: key -> fingerprints (None where the
+        #: result may have been clipped), and how far into the trace we have read.
+        self._polls: Dict[str, list] = {}
+        self._cursor = 0
+        self._trace_unreliable = False
         self._seen: Dict[str, int] = {}
         #: Tool names in call order, for the drifting-cycle check below.
         self._sequence: list = []
         #: The full (tool, args) key in the same order, so the cycle check can
         #: ask whether the model is covering NEW ground or circling old.
         self._keys: list = []
+        #: The same, except that a status call is tagged with how many distinct
+        #: results it had shown, so a poll whose result moves is new ground. Used
+        #: by the cycle check only when every call in the pattern is a status call.
+        self._stretch_keys: list = []
 
     @staticmethod
     def _key(name: str, args: Any) -> str:
@@ -347,46 +385,71 @@ class LoopGuard:
         n = before + 1
         self._seen[key] = n
         self._sequence.append(str(name or ""))
+        self._keys.append(key)
         polled = self._since_result_changed(name, key, before)
         if polled is None:
-            self._keys.append(key)
+            self._stretch_keys.append(key)
             if n >= self.repeat_limit:
                 return ("%s was called %d times with the same arguments"
                         % (str(name or "a tool"), n))
             return self._cycling()
         # A status, poll or wait tool whose earlier results are all in view: only
-        # the calls since its result last changed are repeats. Each change starts
-        # a new stretch, and the cycle check below sees each stretch as new ground.
-        streak, stretch = polled
-        self._keys.append("%s#%d" % (key, stretch))
+        # the calls since its result last showed something new are repeats.
+        streak, distinct = polled
+        self._stretch_keys.append("%s#%d" % (key, distinct))
         if streak + 1 >= self.repeat_limit:
-            return ("%s returned the same result %d times in a row"
+            return ("%s returned nothing new %d times in a row"
                     % (str(name or "a tool"), streak))
         return self._cycling()
 
+    def _read_trace(self) -> bool:
+        """Fold any new trace rows into the status-tool record. False when the
+        trace can no longer be trusted (it shrank, or a row could not be read)."""
+        if self._trace_unreliable:
+            return False
+        try:
+            rows = self._trace
+            if len(rows) < self._cursor:
+                self._trace_unreliable = True
+                return False
+            for r in list(rows[self._cursor:]):
+                if isinstance(r, dict) and is_status_tool(r.get("name")):
+                    res = r.get("result")
+                    clipped = isinstance(res, str) and len(res) >= _CLIPPED_AT
+                    self._polls.setdefault(self._key(r.get("name"), r.get("input")), []).append(
+                        None if clipped else result_fingerprint(res))
+            self._cursor = len(rows)
+            return True
+        except Exception:
+            self._trace_unreliable = True
+            return False
+
     def _since_result_changed(self, name: Any, key: str, before: int):
-        """For a status, poll or wait tool: (calls since its result last changed,
-        how many times it has changed), from the turn's trace. None, meaning
-        "judge it as before", for any other tool, when there is no trace, and
-        whenever the trace does not hold exactly one result for each earlier
-        identical call (a batch not yet run, a row written before the guard
-        looked, arguments recorded in another form)."""
+        """For a status, poll or wait tool: (calls since its result last showed
+        something new, how many distinct results it has shown), from the turn's
+        trace. None, meaning "judge it as before", for any other tool, when there
+        is no trace, when a result may have been clipped, and whenever the trace
+        does not hold exactly one result for each earlier identical call (a batch
+        not yet run, a row written before the guard looked, a resumed run,
+        arguments recorded in another form)."""
         if self._trace is None or not is_status_tool(name):
+            return None
+        if not self._read_trace():
             return None
         if before == 0:
             return 0, 0
-        try:
-            prior = [result_fingerprint(r.get("result")) for r in list(self._trace)
-                     if isinstance(r, dict) and self._key(r.get("name"), r.get("input")) == key]
-        except Exception:
+        prior = self._polls.get(key) or []
+        if len(prior) != before or any(fp is None for fp in prior):
             return None
-        if len(prior) != before:
-            return None
-        streak = 1
-        while streak < len(prior) and prior[-streak - 1] == prior[-1]:
-            streak += 1
-        changes = sum(1 for a, b in zip(prior, prior[1:]) if a != b)
-        return streak, changes
+        seen: set = set()
+        streak = 0
+        for fp in prior:
+            if fp in seen:
+                streak += 1
+            else:
+                seen.add(fp)
+                streak = 1
+        return streak, len(seen)
 
     # ── the same few tools, round and round, with the arguments drifting ────
     #
@@ -437,7 +500,12 @@ class LoopGuard:
             # covers no new ground, so the arguments decide: when the window's
             # calls are mostly ones already made, it is circling; when most are
             # new, it is working.
-            window = self._keys[-need:]
+            # A pattern made only of status calls is judged on what they
+            # returned (owner ruling, decision 19); any other pattern on its
+            # calls alone, exactly as before.
+            keys = (self._stretch_keys if all(is_status_tool(t) for t in pattern)
+                    else self._keys)
+            window = keys[-need:]
             if len(set(window)) > need // 2:
                 continue
             # A single tool repeated is the identical-call case's territory
