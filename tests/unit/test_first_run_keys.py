@@ -226,6 +226,25 @@ def test_a_governance_key_another_process_wrote_first_is_adopted(tmp_path, monke
 
 # ── the session secret and the local CA key ──────────────────────────────────
 
+def test_an_unusable_session_secret_is_replaced_once(tmp_path, monkeypatch):
+    import agent_friday.core as core
+    monkeypatch.delenv("FRIDAY_SECRET_KEY", raising=False)
+    monkeypatch.setattr(core, "friday_home", lambda: tmp_path)
+    (tmp_path / "secret_key").write_text("", encoding="utf-8")
+    first = core._load_or_create_secret()
+    assert len(first) >= 32
+    assert (tmp_path / "secret_key").read_text(encoding="utf-8").strip() == first
+    assert core._load_or_create_secret() == first
+
+
+def test_a_new_session_secret_is_written_once(tmp_path, monkeypatch):
+    import agent_friday.core as core
+    monkeypatch.delenv("FRIDAY_SECRET_KEY", raising=False)
+    monkeypatch.setattr(core, "friday_home", lambda: tmp_path)
+    a = core._load_or_create_secret()
+    assert core._load_or_create_secret() == a
+    assert [p.name for p in tmp_path.iterdir()] == ["secret_key"]
+
 def test_the_local_ca_private_key_is_hardened(tmp_path, monkeypatch):
     from agent_friday.services import credential_store as cs, local_ca
     hardened = []
