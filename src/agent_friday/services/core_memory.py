@@ -328,13 +328,24 @@ def _write_jsonl(p: Path, rows: List[Dict[str, Any]]) -> None:
     os.replace(tmp, p)
 
 
-def _purge_text(text: str) -> None:
+def _purge_text(text: str, events: bool = True) -> None:
     """Drop every journal and queue row that carries `text` (an owner delete),
     and every queued change aimed at that line (its `old` names part of it):
-    the line is gone, so a suggestion about it would only keep a copy."""
+    the line is gone, so a suggestion about it would only keep a copy.
+
+    With `events` (an owner delete or edit that is not itself a correction)
+    the card corrections whose claim holds the line go too
+    (services/corrections.purge_claim). A correction keeps its own history,
+    so its caller passes ``events=False``."""
     low = (text or "").lower()
     if not low:
         return
+    if events:
+        try:
+            from agent_friday.services import corrections
+            corrections.purge_claim(text, store="card")
+        except Exception:
+            pass
 
     def _about_it(r) -> bool:
         old = _clean(r.get("old") or "").lower()
@@ -552,6 +563,66 @@ def _new_event_id() -> str:
         return ""
 
 
+def _unlink_journal(eid: str) -> None:
+    """Strip ``correction_id`` (and the ``line_ref`` that goes with it) from
+    every journal row naming `eid`, under the card lock."""
+    if not eid:
+        return
+    with _LOCK:
+        rows = _read_jsonl(_journal_path())
+        hit = False
+        for r in rows:
+            if r.get("correction_id") == eid:
+                r.pop("correction_id", None)
+                r.pop("line_ref", None)
+                hit = True
+        if hit:
+            try:
+                _write_jsonl(_journal_path(), rows)
+            except Exception:
+                pass
+
+
+def _unlink_turns(eid: str, ids) -> None:
+    """Blank ``superseded_by`` on retired messages that point at `eid`,
+    keeping each one retired with its own reason."""
+    ids = [str(i) for i in (ids or []) if str(i)]
+    if not eid or not ids:
+        return
+    try:
+        from agent_friday.services import model_router
+        mem = model_router._get_conversation_memory()
+        if not mem or not getattr(mem, "_collection", None):
+            return
+        got = mem._collection.get(ids=ids, include=["metadatas"])
+        by_reason: Dict[str, list] = {}
+        for i, m in zip(got.get("ids") or [], got.get("metadatas") or []):
+            m = m or {}
+            if str(m.get("superseded_by") or "") == eid and str(m.get("superseded") or "") == "1":
+                by_reason.setdefault(str(m.get("superseded_reason") or ""), []).append(i)
+        for why, these in by_reason.items():
+            mem.supersede(these, why, superseded_by="")
+    except Exception:
+        pass
+
+
+def _unrecorded(eid: str, ids) -> None:
+    """The event could not be recorded: nothing may point at it."""
+    _unlink_journal(eid)
+    _unlink_turns(eid, ids)
+
+
+def unlink_correction(eid: str, msg_ids=None) -> None:
+    """The owner deleted correction `eid` (routes/core_memory): the card
+    journal stops citing it and its retired messages stop pointing at it.
+    The messages stay retired; only the link goes. Never raises."""
+    try:
+        _unlink_journal(str(eid or ""))
+        _unlink_turns(str(eid or ""), msg_ids)
+    except Exception:
+        pass
+
+
 def replace(target: str, old: str, text: str, *, actor: str = "friday",
             supersede: bool = True, reason: str = "") -> Dict[str, Any]:
     if target not in TARGETS:
@@ -585,7 +656,8 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
             row.update(correction_id=eid, line_ref=_line_ref(text))
         cid = _journal(row)
         if actor == "owner":
-            _purge_text(before)
+            # A correction keeps its own history; any other owner edit leaves no trace of the old line.
+            _purge_text(before, events=not corrected)
     out = {"ok": True, "change_id": cid, "usage": usage(target)}
     if corrected:
         tok = _EVENT.set(eid)
@@ -599,6 +671,10 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
                                           str(reason or "").strip() or CARD_CORRECTED)
             if got:
                 out["correction_id"] = got
+            else:
+                # The record failed: the journal row and the retired messages
+                # must not point at an event that does not exist.
+                _unrecorded(eid, ids)
     _changed(actor, "core memory line edited by the owner")
     return out
 
@@ -607,23 +683,31 @@ def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = Fa
            reason: str = "") -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
+    # A delete makes room or keeps something private; only a delete the owner
+    # marks as wrong retires the messages that said it, and only that delete
+    # is a correction event (a plain delete leaves no copy anywhere).
+    wrong = actor == "owner" and supersede
+    eid = ""
     with _LOCK:
         items = entries(target)
         i, miss = _match(items, old)
         if miss:
             return _err("NOT CHANGED: " + miss)
         before = items[i]
+        if wrong:
+            # The id is fixed before the journal row is written, so the row
+            # names it from the start (no later rewrite of the journal).
+            eid = _new_event_id()
         _write(target, items[:i] + items[i + 1:])
-        cid = _journal({"actor": actor, "op": "remove", "target": target,
-                        "before": None if actor == "owner" else before, "after": None})
+        row = {"actor": actor, "op": "remove", "target": target,
+               "before": None if actor == "owner" else before, "after": None}
+        if eid:
+            row["correction_id"] = eid
+        cid = _journal(row)
         if actor == "owner":
-            _purge_text(before)
+            _purge_text(before, events=not wrong)
     out = {"ok": True, "change_id": cid, "usage": usage(target)}
-    # A delete makes room or keeps something private; only a delete the owner
-    # marks as wrong retires the messages that said it, and only that delete
-    # is a correction event (a plain delete leaves no copy anywhere).
-    if actor == "owner" and supersede:
-        eid = _new_event_id()
+    if wrong:
         tok = _EVENT.set(eid)
         try:
             ids = _supersede_turns(before, CARD_WRONG)
@@ -635,14 +719,8 @@ def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = Fa
                                           str(reason or "").strip() or CARD_WRONG)
             if got:
                 out["correction_id"] = got
-                rows = _read_jsonl(_journal_path())
-                for r in rows:
-                    if r.get("id") == cid:
-                        r["correction_id"] = got
-                try:
-                    _write_jsonl(_journal_path(), rows)
-                except Exception:
-                    pass
+            else:
+                _unrecorded(eid, ids)
     _changed(actor, "core memory line deleted by the owner")
     return out
 

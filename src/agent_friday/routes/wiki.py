@@ -352,6 +352,9 @@ def wiki_correct():
                     pages.append((rel, detail))
             except Exception as e:
                 print(f"  [WIKI] Correct failed for {f}: {e}")
+    # KNOWN RISK (pre-existing, not changed in the M16 slice; filed separately):
+    # this rewrites EVERY top-level *.json in the Friday home that contains
+    # old_text (settings and other stores included), as a plain text replace.
     if FRIDAY_DIR.exists():
         for f in FRIDAY_DIR.glob('*.json'):
             try:

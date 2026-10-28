@@ -9,6 +9,8 @@ Agent Friday — Memory card API (services/core_memory)
   POST  /api/core-memory/review       {id, keep: bool}          keep or discard a queued suggestion
   GET   /api/memory/corrections       the owner's corrections, newest first (owner only, bounded)
   POST  /api/memory/corrections/<id>/test  {on, question?, expected?}  keep a correction as a test
+                                            (503 when the keystore is locked)
+  POST  /api/memory/corrections/<id>/delete                           delete one correction record
 
 Every write here is the owner's own, so it reaches every open conversation's
 next turn at once (services/prompt_freeze).
@@ -158,4 +160,27 @@ def correction_test_flag(cid):
             or len(x) > corrections.EXPECTED_MAX:
         return jsonify({"ok": False, "error": "the question or the answer is too long"}), 400
     res = corrections.set_test(cid, bool(d.get("on")), q, x)
-    return jsonify(res), (200 if res.get("ok") else 404)
+    if res.get("ok"):
+        return jsonify(res), 200
+    # A locked keystore is "try again when it opens" (503), never a 500.
+    return jsonify(res), (503 if res.get("locked") else 404)
+
+
+@core_memory_bp.route("/api/memory/corrections/<cid>/delete", methods=["POST"])
+@login_required
+def correction_delete(cid):
+    """The owner deletes one correction record. Its rows leave the log (an
+    atomic rewrite, not a tombstone), the card journal stops citing it and
+    the messages it retired stop pointing at it; they stay retired."""
+    bad = _owner_only()
+    if bad:
+        return bad
+    if not _CORR_ID.match(str(cid or "")):
+        return jsonify({"ok": False, "error": "which correction?"}), 400
+    ev = corrections.get(cid)
+    res = corrections.delete(cid)
+    if not res.get("ok"):
+        return jsonify(res), (404 if not ev else 500)
+    msgs = [a[4:] for a in ((ev or {}).get("affected") or []) if str(a).startswith("msg:")]
+    core_memory.unlink_correction(cid, msgs)
+    return jsonify(res), 200

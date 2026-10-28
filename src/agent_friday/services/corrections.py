@@ -11,13 +11,21 @@ event, not only applied as a text replace:
   action           ``corrected`` | ``marked_wrong`` | ``restored``
   claim            the old text (the owner's own data, SEALED)
   correction       the new text, or ``"removed"`` (SEALED)
-  reason           the owner's reason, or the standard one for the path
+  reason           the owner's reason, or the standard one for the path (SEALED)
   sources          ids of the prior items: ``card:user#3``, ``wiki:notes/a.md#Section``,
                    ``msg:<id>``, ``fact:<id>``, ``kg:<entity>``
   affected         ids of the items superseded or updated (and derived items re-queued)
   repair           what was done, as counts (``superseded_turns``, ``pages_changed``,
                    ``graph_reindex_queued`` ...)
   restores         for ``restored``: the ids of the events it undoes
+
+  Ids: a bare message id, a card line slot (``card:user#3``) and an event id
+  stay plain, so the links (``superseded_by``, the card journal's
+  ``correction_id``, Undo) work without the keystore. Every other id (a wiki
+  page path and its section heading, a Friday file name, a fact or a graph
+  entity, which can all name a person) is SEALED one by one inside the list;
+  ``events``/``get``/``for_item`` open them, so the why path still matches on
+  the plain id.
   history          SEALED list of the prior text each changed item held, so a
                    correction of a store with no history of its own (the wiki)
                    keeps the original in history
@@ -27,15 +35,27 @@ event, not only applied as a text replace:
 
 Storage: ``<Friday home>/corrections/corrections.jsonl``. Append only: a
 restore is a new ``restored`` event that names the one it undoes, and a test
-flag is a ``test_flag`` row; ``events()`` folds them. The only rewrite is a
-forget (``people_purge``): forgetting a person removes the rows that name them.
+flag is a ``test_flag`` row; ``events()`` folds them. The only rewrites remove
+rows, atomically under the lock: a forget (``people_purge``: forgetting a
+person removes the rows that name them), the owner deleting one record
+(``delete``) and the owner deleting a card line outright (``purge_claim``,
+from core_memory's ``_purge_text``). A delete physically removes the rows
+rather than appending a tombstone, because a tombstone would leave the sealed
+claim on disk after the owner asked for it to go.
 
 Sealing: the text fields go through ``credential_store.protect`` (the same
 ``enc:`` envelope memory_proposals uses), so the old claim never sits in a
 plain file beside the store it was corrected out of. A row whose text cannot
 be opened (the keystore is unavailable) reads as empty, never as plain text.
+Forget-person cannot read such a row either, so it reports "could not check"
+(``CorrectionsLocked``) instead of a count of 0.
 
 Leaf module: no Flask; ``record`` never raises to a caller.
+
+KNOWN RISK, not changed in this slice: ``/api/wiki/correct``
+(routes/wiki.py) replaces the old text in every top-level ``*.json`` in the
+Friday home as well as in the wiki, so one correction can rewrite settings
+or other stores' JSON wherever the same text appears. Filed separately.
 """
 from __future__ import annotations
 
@@ -103,6 +123,39 @@ def _open(text: Any) -> str:
         return cs.unprotect(base64.b64decode(text[len(_SEALED):])).decode("utf-8")
     except Exception:  # noqa: BLE001 - what cannot be opened is shown as nothing
         return ""
+
+
+def _try_open(text: Any) -> Optional[str]:
+    """For a search that must not miss: the plain value as is, a sealed
+    value opened, and None when a sealed value cannot be opened (the
+    keystore is locked): "could not check", never "no match"."""
+    if not isinstance(text, str):
+        return ""
+    if not text.startswith(_SEALED):
+        return text
+    try:
+        from agent_friday.services import credential_store as cs
+        return cs.unprotect(base64.b64decode(text[len(_SEALED):])).decode("utf-8")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+#: Ids that only link and name nobody: kept plain (see the module docstring).
+_PLAIN_ID = re.compile(r"^(?:msg:[A-Za-z0-9_.:\-]{1,190}|card:(?:user|friday)#\d{1,6}|corr-[0-9a-f]{12})$")
+
+
+def _seal_ids(values: Optional[Iterable[Any]]) -> List[str]:
+    return [v if _PLAIN_ID.match(v) else _seal(v) for v in _ids(values)]
+
+
+def _open_ids(values: Any) -> List[str]:
+    out: List[str] = []
+    for v in values if isinstance(values, list) else []:
+        s = v if isinstance(v, str) else ""
+        s = _open(s) if s.startswith(_SEALED) else s
+        if s:
+            out.append(s)
+    return out
 
 
 # ── the file ──────────────────────────────────────────────────────────────────
@@ -177,9 +230,9 @@ def record(store: str, action: str, *, claim: str = "", correction: str = "", re
             "store": store, "action": action,
             "claim": _seal(str(claim or "")[:TEXT_MAX]),
             "correction": _seal(str(correction or "")[:TEXT_MAX]),
-            "reason": str(reason or "")[:300],
-            "sources": _ids(sources), "affected": _ids(affected),
-            "repair": rep, "restores": _ids(restores),
+            "reason": _seal(str(reason or "")[:300]),
+            "sources": _seal_ids(sources), "affected": _seal_ids(affected),
+            "repair": rep, "restores": _seal_ids(restores),
             "history": _seal(json.dumps(history or [], ensure_ascii=False)[:20000]) if history else "",
             "regression_test": False,
         }
@@ -193,16 +246,23 @@ def record(store: str, action: str, *, claim: str = "", correction: str = "", re
 def set_test(event_id: str, on: bool, question: str = "", expected: str = "") -> Dict[str, Any]:
     """The owner ticks or unticks "keep this as a test" on one event. The
     golden is the owner's own question and expected answer; nothing is
-    generated. Appends a flag row; the event itself is not rewritten."""
+    generated. Appends a flag row; the event itself is not rewritten.
+
+    Never raises: a keystore that cannot seal the golden (locked) is
+    ``{ok: False, locked: True}`` and nothing is written."""
     eid = str(event_id or "")
     ev = next((r for r in _rows() if r.get("kind") == "event" and r.get("id") == eid), None)
     if not ev:
         return {"ok": False, "error": "that correction is not there"}
     q = " ".join(str(question or "").split())[:QUESTION_MAX]
     x = " ".join(str(expected or "").split())[:EXPECTED_MAX]
-    row = {"kind": "test_flag", "event_id": eid, "at": time.time(), "on": bool(on),
-           "golden": _seal(json.dumps({"question": q, "expected": x}, ensure_ascii=False))
-           if (on and (q or x)) else ""}
+    try:
+        golden = _seal(json.dumps({"question": q, "expected": x}, ensure_ascii=False)) \
+            if (on and (q or x)) else ""
+    except Exception:  # noqa: BLE001 - KeystoreLocked / no way to seal: say so, keep nothing
+        return {"ok": False, "locked": True,
+                "error": "the keystore that seals your test is not available, so nothing was kept"}
+    row = {"kind": "test_flag", "event_id": eid, "at": time.time(), "on": bool(on), "golden": golden}
     try:
         _append(row)
     except Exception as e:  # noqa: BLE001
@@ -221,6 +281,10 @@ def _fold(rows: List[Dict[str, Any]], open_text: bool) -> List[Dict[str, Any]]:
             if open_text:
                 ev["claim"] = _open(r.get("claim"))
                 ev["correction"] = _open(r.get("correction"))
+                ev["reason"] = _open(r.get("reason"))
+                ev["sources"] = _open_ids(r.get("sources"))
+                ev["affected"] = _open_ids(r.get("affected"))
+                ev["restores"] = _open_ids(r.get("restores"))
                 try:
                     ev["history"] = json.loads(_open(r.get("history")) or "[]")
                 except Exception:
@@ -229,6 +293,10 @@ def _fold(rows: List[Dict[str, Any]], open_text: bool) -> List[Dict[str, Any]]:
                 ev.pop("claim", None)
                 ev.pop("correction", None)
                 ev.pop("history", None)
+                ev.pop("reason", None)
+                # Only the plain link ids; a sealed one stays shut.
+                for k in ("sources", "affected", "restores"):
+                    ev[k] = [v for v in (r.get(k) or []) if isinstance(v, str) and v and not v.startswith(_SEALED)]
             ev["golden"] = None
             ev["restored_by"] = []
             events[ev["id"]] = ev
@@ -289,31 +357,138 @@ def _name_patterns(names) -> list:
             for n in wanted]
 
 
-def _names_row(r: Dict[str, Any], pats) -> bool:
-    hay = " ".join([_open(r.get("claim")), _open(r.get("correction")), _open(r.get("history")),
-                    _open(r.get("golden"))])
-    return any(p.search(hay) for p in pats)
+#: Every text field a row can carry; ids are searched too (a sealed wiki
+#: path or graph entity can be the person's name).
+_TEXT_FIELDS = ("claim", "correction", "reason", "history", "golden")
+_ID_FIELDS = ("sources", "affected", "restores")
+
+LOCKED_MESSAGE = ("could not check the corrections log: the keystore that seals it is not available, "
+                  "so some corrections were not looked at")
+
+
+class CorrectionsLocked(RuntimeError):
+    pass
+
+
+def _names_row(r: Dict[str, Any], pats) -> Optional[bool]:
+    """True when the row names someone in `pats`, False when it does not,
+    None when a sealed field could not be opened and nothing open matched
+    (unknown, never "does not name them")."""
+    parts: List[str] = []
+    locked = False
+    vals = [r.get(k) for k in _TEXT_FIELDS]
+    for k in _ID_FIELDS:
+        v = r.get(k)
+        vals.extend(v if isinstance(v, list) else [])
+    for v in vals:
+        got = _try_open(v)
+        if got is None:
+            locked = True
+        elif got:
+            parts.append(got)
+    hay = " ".join(parts)
+    if any(p.search(hay) for p in pats):
+        return True
+    return None if locked else False
+
+
+def _people_scan(rows, pats):
+    """(event ids that name them, flag rows that name them, rows that could not be checked)."""
+    gone, flags, locked = set(), set(), 0
+    for n, r in enumerate(rows):
+        hit = _names_row(r, pats)
+        if hit is None:
+            locked += 1
+        elif hit and r.get("kind") == "event":
+            gone.add(r.get("id"))
+        elif hit and r.get("kind") == "test_flag":
+            flags.add(n)
+    return gone, flags, locked
 
 
 def people_find(names, emails) -> int:
+    """forget-person: how many rows name the person. Raises CorrectionsLocked
+    (the registry reports it as could-not-check) when some row is sealed and
+    cannot be opened."""
     pats = _name_patterns(set(names or ()) | set(emails or ()))
     if not pats:
         return 0
-    return sum(1 for r in _rows() if _names_row(r, pats))
+    rows = _rows()
+    gone, flags, locked = _people_scan(rows, pats)
+    if locked:
+        raise CorrectionsLocked(LOCKED_MESSAGE)
+    return sum(1 for n, r in enumerate(rows)
+               if (r.get("kind") == "event" and r.get("id") in gone) or n in flags)
 
 
 def people_purge(names, emails) -> int:
     """Forgetting a person removes every correction row that names them (and
-    the flag rows of those events)."""
+    the flag rows of those events). What could be opened is purged; if some
+    row could not be checked, CorrectionsLocked is raised after the purge."""
     pats = _name_patterns(set(names or ()) | set(emails or ()))
     if not pats:
         return 0
     with _LOCK:
         rows = _rows()
-        gone = {r.get("id") for r in rows if r.get("kind") == "event" and _names_row(r, pats)}
-        keep = [r for r in rows
+        gone, flags, locked = _people_scan(rows, pats)
+        keep = [r for n, r in enumerate(rows)
                 if not (r.get("kind") == "event" and r.get("id") in gone)
-                and not (r.get("kind") == "test_flag" and (r.get("event_id") in gone or _names_row(r, pats)))]
+                and not (r.get("kind") == "test_flag" and (r.get("event_id") in gone or n in flags))]
         if len(keep) != len(rows):
             _rewrite(keep)
+    if locked:
+        raise CorrectionsLocked(LOCKED_MESSAGE)
+    return len(rows) - len(keep)
+
+
+# ── the owner deleting records ────────────────────────────────────────────────
+def _drop_events(pred) -> int:
+    """Remove every event for which pred(row) holds, with its flag rows, by an
+    atomic rewrite under the lock. Returns the rows removed."""
+    with _LOCK:
+        rows = _rows()
+        gone = {r.get("id") for r in rows if r.get("kind") == "event" and pred(r)}
+        if not gone:
+            return 0
+        keep = [r for r in rows
+                if not (r.get("kind") == "event" and r.get("id") in gone)
+                and not (r.get("kind") == "test_flag" and r.get("event_id") in gone)]
+        _rewrite(keep)
         return len(rows) - len(keep)
+
+
+def delete(event_id: str) -> Dict[str, Any]:
+    """The owner deletes one correction record: its event row and its test
+    flags are removed from the file (not tombstoned: the sealed claim goes).
+    A ``restored`` event that undid it stays as its own record. Never raises."""
+    eid = str(event_id or "")
+    if not eid:
+        return {"ok": False, "error": "that correction is not there"}
+    try:
+        n = _drop_events(lambda r: r.get("id") == eid)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:120]}
+    if not n:
+        return {"ok": False, "error": "that correction is not there"}
+    return {"ok": True, "id": eid, "removed": n}
+
+
+def purge_claim(text: str, store: str = "card") -> int:
+    """The owner deleted a line outright (core_memory._purge_text): every
+    `store` event whose claim holds that line goes too, so the line leaves no
+    trace. A claim that cannot be opened (keystore locked) is left alone.
+    Never raises."""
+    low = " ".join(str(text or "").split()).lower()
+    if not low:
+        return 0
+
+    def _claims_it(r) -> bool:
+        if r.get("store") != store:
+            return False
+        claim = " ".join(_open(r.get("claim")).split()).lower()
+        return bool(claim) and low in claim
+    try:
+        return _drop_events(_claims_it)
+    except Exception as e:  # noqa: BLE001
+        print(f"  [CORRECTIONS] purge failed (non-fatal): {e}")
+        return 0

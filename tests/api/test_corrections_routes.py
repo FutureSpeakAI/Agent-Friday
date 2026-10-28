@@ -119,6 +119,49 @@ def test_the_corrections_routes_are_owner_only(scoped):
     assert co.get(eid)["regression_test"] is False
 
 
+def test_keep_as_a_test_with_a_locked_keystore_is_503_not_500(scoped, monkeypatch):
+    from agent_friday.services import credential_store as cs
+    from agent_friday.services.keystore import KeystoreLocked
+    eid = co.record("card", "corrected", claim="Dentist is Dr Okafor.", correction="Dentist is Dr Adeyemi.")
+
+    def _locked(_data):
+        raise KeystoreLocked("locked")
+    monkeypatch.setattr(cs, "protect", _locked)
+    r = scoped.post(f"/api/memory/corrections/{eid}/test",
+                    json={"on": True, "question": "Who is my dentist?", "expected": "Dr Adeyemi"})
+    assert r.status_code == 503 and r.get_json()["locked"] is True
+    assert co.get(eid)["regression_test"] is False, "nothing was kept"
+
+
+def test_the_owner_can_delete_a_correction_record(scoped, monkeypatch):
+    unlinked = []
+    monkeypatch.setattr(cm, "unlink_correction", lambda eid, msgs=None: unlinked.append((eid, list(msgs or []))))
+    eid = co.record("card", "marked_wrong", claim="Allergic to peanuts.", correction=co.REMOVED,
+                    sources=["card:user#0", "msg:m-1"], affected=["card:user#0", "msg:m-1"])
+    other = co.record("card", "corrected", claim="Dentist is Dr Okafor.", correction="Dentist is Dr Adeyemi.")
+    assert scoped.post("/api/memory/corrections/nope/delete").status_code == 400
+    assert scoped.post("/api/memory/corrections/corr-000000000000/delete").status_code == 404
+    scoped.principal[0] = "observer"
+    assert scoped.post(f"/api/memory/corrections/{eid}/delete").status_code == 403
+    assert co.get(eid), "an observer deletes nothing"
+    scoped.principal[0] = "user"
+    r = scoped.post(f"/api/memory/corrections/{eid}/delete")
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert [c["id"] for c in scoped.get("/api/memory/corrections").get_json()["corrections"]] == [other]
+    assert unlinked == [(eid, ["m-1"])], "the card journal and the retired messages stop pointing at it"
+
+
+def test_deleting_a_record_unlinks_the_card_journal(scoped, monkeypatch):
+    monkeypatch.setattr(cm, "_supersede_turns", lambda line, why: [])   # no conversation store here
+    cm.add("user", "Dentist is Dr Okafor at Riverside.", actor="owner")
+    eid = cm.owner_set("user", 0, "Dentist is Dr Adeyemi at Harbour.")["correction_id"]
+    assert "[correction:" in cm.render_prompt()
+    assert scoped.post(f"/api/memory/corrections/{eid}/delete").status_code == 200
+    journal = cm._journal_path().read_text(encoding="utf-8")
+    assert eid not in journal and "line_ref" not in journal
+    assert "[correction:" not in cm.render_prompt(), "a deleted record is no longer cited"
+
+
 def test_both_ui_files_have_the_corrections_list():
     root = Path(__file__).resolve().parents[2]
     panels = []
@@ -127,5 +170,6 @@ def test_both_ui_files_have_the_corrections_list():
         panel = text.split("function MemoryCardPanel(", 1)[1].split("// End memory card panel", 1)[0]
         assert "/api/memory/corrections" in panel and "data-memory-corrections" in panel, f
         assert "Keep as a test" in panel and "/test'" in panel and "undo_ids" in panel, f
+        assert "Delete this record" in panel and "/delete'" in panel and "data-memory-correction-delete" in panel, f
         panels.append(panel)
     assert panels[0] == panels[1], "the shared panel is identical in both UI files"

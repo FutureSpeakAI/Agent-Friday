@@ -21607,6 +21607,15 @@ function MemoryCardPanel({s, save}) {
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
+  const delCorr = id => {
+    if (!window.confirm('Delete this record of your correction? The correction itself stays as you made it; only this record of it goes.')) return;
+    setBusy('x' + id); setMsg('');
+    apiFetch('/api/memory/corrections/' + encodeURIComponent(id) + '/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
+      .then(r => r.json())
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); if (testFor && testFor.id === id) setTestFor(null); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
   const noteRetired = d => {
     const n = (d && d.superseded_turns) || 0;
     setRetired(n > 0 ? {n: n, ids: d.superseded_ids || []} : null);
@@ -21699,7 +21708,9 @@ function MemoryCardPanel({s, save}) {
               c.action !== 'restored' && (c.regression_test
                 ? btn('Kept as a test', () => setTest(c.id, false), 'test-off', {'aria-pressed': true, title: 'Stop keeping this as a test'})
                 : btn('Keep as a test', () => setTestFor({id: c.id, q: '', x: ''}), 'test-on',
-                    {'aria-pressed': false, title: 'Remember this as a test: ' + fridayName() + ' can be checked later against your own question and answer.'})))))));
+                    {'aria-pressed': false, title: 'Remember this as a test: ' + fridayName() + ' can be checked later against your own question and answer.'})),
+              btn('Delete this record', () => delCorr(c.id), 'delete-corr',
+                {'data-memory-correction-delete': c.id, title: 'Remove this record, with the old text it keeps, from your history. It does not undo the correction.'}))))));
 }
 // End memory card panel
 

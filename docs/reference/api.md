@@ -1160,7 +1160,10 @@ Both notes, Friday's recent changes (last 20) and the "Waiting for your review" 
 The owner's corrections (`services/corrections`), newest first, at most 100: store, action, the old claim and the correction (shortened), reason, what was repaired, and `undo_ids` where the card can put the retired messages back (`POST /api/core-memory/restore-messages`). Owner principal only (403 otherwise).
 
 ### `POST /api/memory/corrections/<id>/test`
-`{on: bool, question?, expected?}`: keep a correction as a regression test with the owner's own question and expected answer. Owner principal only.
+`{on: bool, question?, expected?}`: keep a correction as a regression test with the owner's own question and expected answer. Owner principal only. 503 `{locked: true}` when the keystore that seals the answer is locked.
+
+### `POST /api/memory/corrections/<id>/delete`
+The owner deletes one correction record: its rows are removed from the log (an atomic rewrite, not a tombstone), the card's change journal stops citing it and the messages it retired stop pointing at it (they stay retired). Owner principal only; 400 for a malformed id, 404 when it is not there.
 
 ---
 
