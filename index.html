@@ -20556,6 +20556,39 @@ function kgNodeHue(entity, communityIndex = 0) {
 function kgEdgeOpacity(count, focused, mode) {
   return focused ? Math.max(.07, .24 * Math.sqrt(180 / Math.max(180, count))) : Math.max(.015, .16 * Math.pow(4500 / Math.max(4500, count), .85));
 }
+// The knowledge graph as a list (north star 33.1-12: a text alternative for the 3D graph). The
+// same notes and links the galaxy draws, most connected first, each opening its page; read by a
+// screen reader, used from the keyboard, and there with 3D rendering off. Built only when opened.
+function KgAsList({ kg, stats, onOpen }) {
+  const h = React.createElement;
+  const [open, setOpen] = useState(false);
+  const rows = React.useMemo(() => {
+    if (!open || !kg || !Array.isArray(kg.entities)) return [];
+    const byId = {}, links = {};
+    kg.entities.forEach(e => { byId[e.id] = e; links[e.id] = []; });
+    (kg.relationships || []).forEach(r => {
+      if (links[r.source] && byId[r.target]) links[r.source].push(byId[r.target]);
+      if (links[r.target] && byId[r.source]) links[r.target].push(byId[r.source]);
+    });
+    return kg.entities.map(e => ({ e, n: links[e.id].length, with: links[e.id] }))
+      .sort((a, b) => b.n - a.n || String(a.e.title || '').localeCompare(String(b.e.title || ''))).slice(0, 200);
+  }, [open, kg, stats]);
+  const total = stats ? stats.nodes : (kg && kg.entities ? kg.entities.length : 0);
+  return h('details', { className: 'kw-as-list', 'data-kg-list': '', onToggle: e => setOpen(e.currentTarget.open),
+      style: { margin: '6px 0', fontSize: 12, color: '#c7d2e2' } },
+    h('summary', { style: { cursor: 'pointer', minHeight: 24 } },
+      'The graph as a list' + (stats ? ' (' + stats.nodes + ' notes, ' + stats.edges + ' links, ' + stats.comms + ' groups)' : '')),
+    open && h('div', null,
+      rows.length === 0 ? h('p', { style: { margin: '4px 0', color: '#8fa8c8' } }, total ? 'The list fills once the galaxy has loaded its notes (the grouped view shows groups, not notes).' : 'No notes yet.')
+        : total > rows.length && h('p', { style: { margin: '4px 0', color: '#8fa8c8' } },
+        'The ' + rows.length + ' most connected of ' + total + ' notes. Search above finds any of them.'),
+      h('ul', { style: { margin: 0, paddingLeft: 18, maxHeight: 320, overflow: 'auto' } },
+        rows.map(({ e, n, with: w }) => h('li', { key: e.id, style: { margin: '3px 0' } },
+          h('button', { type: 'button', className: 'ws-tab-link', onClick: () => onOpen && onOpen(e),
+              style: { minHeight: 24 } }, e.title || e.id),
+          ' \u2014 ' + (n ? 'linked to ' + w.slice(0, 5).map(x => x.title || x.id).join(', ') + (n > 5 ? ' and ' + (n - 5) + ' more' : '')
+                          : 'no links yet'))))));
+}
 function KnowledgeGraphWS(props) {
   const P = props || {};
   const embedded = !!P.embedded;
@@ -23071,9 +23104,15 @@ function KnowledgeGraphWS(props) {
       color: '#667',
       fontSize: 11
     }
-  }, h.section)))), /*#__PURE__*/React.createElement("div", {
+  }, h.section)))), /*#__PURE__*/React.createElement(KgAsList, {
+    kg: kgRef.current,
+    stats: stats,
+    onOpen: openWikiPage
+  }), /*#__PURE__*/React.createElement("div", {
     ref: mountRef,
     className: "kw-scene",
+    role: "group",
+    "aria-label": (stats ? 'Knowledge graph: ' + stats.nodes + ' notes and ' + stats.edges + ' links, drawn in 3D. The same, as a list: "The graph as a list" above.' : 'Knowledge graph'),
     style: {
       flex: 1,
       minHeight: 0,
