@@ -292,6 +292,13 @@ def purge_library_documents(doc_ids) -> dict:
                 cm._client.get_or_create_collection("knowledge-graph").delete(ids=ids)
         except Exception:
             pass
+    try:
+        # BD-16: a kept damaged graph file may hold the purged documents' words and cannot be
+        # scrubbed record by record, so it goes too.
+        from agent_friday.services import memory_store_repair as _msr
+        _msr.drop_kept_copies(store.base, why="library purge")
+    except Exception:
+        pass
     return out
 
 

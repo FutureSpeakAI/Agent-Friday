@@ -237,10 +237,9 @@
       if (i === 2) td.className = String(v);
       tr.appendChild(td);
     });
-    const REPAIRS = { vector_memory: ['/api/doctor/repair/vector-memory', 'Rebuild conversation memory'],
-                      knowledge_graph: ['/api/doctor/repair/knowledge-graph', 'Rebuild the knowledge graph'] };
+    const REPAIRS = { knowledge_graph: ['/api/doctor/repair/knowledge-graph', 'Rebuild the knowledge graph'] };
     if (REPAIRS[c.id] && c.state === 'degraded') {
-      // BD-16: rebuilt from your conversations / your wiki; damaged graph files are kept.
+      // BD-16: the page layer is rebuilt from your wiki; damaged graph files are kept.
       const td = document.createElement('td');
       const b = document.createElement('button'); b.type = 'button'; b.textContent = REPAIRS[c.id][1];
       const note = document.createElement('span');
