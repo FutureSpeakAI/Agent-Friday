@@ -24,7 +24,8 @@ name: clean-machine
 #
 # On a version tag installer.yml calls this workflow with the setup program its
 # build job made, and its release job waits for the evidence; a beta tag is
-# exempt from §34 (amendment A19) and only records. By hand, or on a pull
+# exempt from §34 (amendment A19) and only records. A release candidate is
+# not a beta and must pass. By hand, or on a pull
 # request that touches this matrix, it builds its own setup program first.
 
 on:
