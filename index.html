@@ -61195,6 +61195,46 @@ function ForgetThisControls({text, factId, onDone, disabled}) {
     dialog,
     note && E('span', {role:'status', key:'note', style:{fontSize:11, lineHeight:1.5, color:'rgba(255,255,255,0.55)', flexBasis:'100%'}}, note));
 }
+function StoppedSourcesPanel() {
+  // The sites and meetings the owner stopped (GET /api/memory/stopped-sources: their names are
+  // sealed at rest and opened for the owner here), each with Use again
+  // (POST /api/memory/stopped-sources/<id>/unstop, a press in Friday's page). Using one again
+  // lets Friday learn from it from now on; it does not bring back what was removed.
+  const E = React.createElement;
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [ask, setAsk] = useState('');
+  const load = useCallback(() => {
+    fridayMemoryJSON('/api/memory/stopped-sources')
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the stopped sources.'); setList(d.sources || []); })
+      .catch(e => { setList([]); setMsg(e.message || 'Could not read the stopped sources.'); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const again = s => {
+    setBusy(s.id); setMsg('');
+    fridayMemoryPost('/api/memory/stopped-sources/' + encodeURIComponent(s.id) + '/unstop', {confirm: true})
+      .then(d => { if (!d.ok) throw new Error(d.error || 'That did not work.'); setMsg(d.note || 'It can be used again.'); setAsk(''); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'12px 0 4px'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)', display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'};
+  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key}, label);
+  if (!list || (list.length === 0 && !msg)) return null;
+  return E('div', {'data-stopped-sources': '1'},
+    E('div', {style: head}, 'Stopped sources'),
+    E('div', {style: dim}, 'Sites and meetings you told ' + fridayName() + ' to stop using. She may still open a stopped site when you ask, but nothing read there is remembered or suggested. Use again lets her learn from it from now on; what was removed when you stopped it does not come back.'),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'var(--st-warn)', marginTop:6}}, msg),
+    list.map(s => E('div', {key: s.id, 'data-stopped-source': s.id, style: row},
+      E('div', {style:{flex:'1 1 200px', fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}},
+        s.label + (s.named && s.day ? ' · stopped ' + s.day : '')),
+      ask === s.id
+        ? [E('span', {key:'q', style: dim}, 'Use it again? What was removed does not come back.'),
+           btn('Yes, use it again', () => again(s), 'yes'), btn('Cancel', () => setAsk(''), 'no')]
+        : btn('Use again', () => setAsk(s.id), 'again'))));
+}
 // End forget controls
 
 function MemoryCardPanel({s, save}) {
@@ -61295,6 +61335,7 @@ function MemoryCardPanel({s, save}) {
         E('div', {style:{flex:'1 1 200px', fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, f.text),
         btn('Delete', () => delFact(f), 'fdel'),
         E(ForgetThisControls, {key: 'forget', text: f.text, factId: f.fact_id, onDone: forgotten, disabled: !!busy}))),
+      E(StoppedSourcesPanel, null),
       (rep.pending || []).length > 0 && E('div', {style: head}, 'Waiting for your review'),
       (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card; Discard drops them.'),
       (rep.pending || []).slice(0, 30).map(p => E('div', {key: p.id, style: row},
@@ -61340,12 +61381,16 @@ function ConversationSearchPanel() {
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
-  const forgetConv = h => {
+  const [wipe, setWipe] = useState(false);
+  const forgetConv = (h, transcript) => {
     // Stop using the whole conversation in memory (POST /api/memory/forget-conversation):
-    // it stays in History; Friday no longer recalls, searches or summarises it.
+    // it stays in History; Friday no longer recalls, searches or summarises it. With the
+    // separate "Also delete the transcript" box and its own confirm, the transcript is deleted too.
     setBusy('c' + h.conversation_id); setMsg('');
-    fridayMemoryPost('/api/memory/forget-conversation', {conversation_id: h.conversation_id, confirm: true})
-      .then(d => { if (!d.ok) throw new Error(d.error || 'That did not work.'); setMsg(fridayForgetSummary(d)); setAsk(''); run(); })
+    fridayMemoryPost('/api/memory/forget-conversation', transcript
+        ? {conversation_id: h.conversation_id, confirm: true, delete_transcript: true, confirm_transcript: true}
+        : {conversation_id: h.conversation_id, confirm: true})
+      .then(d => { if (!d.ok) throw new Error(d.error || 'That did not work.'); setMsg(fridayForgetSummary(d)); setAsk(''); setWipe(false); run(); })
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
@@ -61369,9 +61414,17 @@ function ConversationSearchPanel() {
              btn('Yes, delete it', () => del(h), 'yes'), btn('Keep it', () => setAsk(''), 'no')]
           : ask === 'c' + h.message_id
           ? [E('span', {key:'q', style: dim}, 'Stop using this whole conversation in memory? It stays in History; ' + fridayName() + ' no longer recalls, searches or summarises it.'),
-             btn('Yes, forget it', () => forgetConv(h), 'cyes'), btn('Keep using it', () => setAsk(''), 'cno')]
+             E('label', {key:'wipe', 'data-forget-transcript': '1', style: Object.assign({}, dim, {display:'flex', gap:6, alignItems:'center', flexBasis:'100%', cursor:'pointer'})},
+               E('input', {type:'checkbox', checked: wipe, onChange: () => setWipe(!wipe), 'aria-label': "Also delete the transcript (can't be undone)"}),
+               "Also delete the transcript (can't be undone)"),
+             btn(wipe ? 'Next…' : 'Yes, forget it', () => (wipe ? setAsk('t' + h.message_id) : forgetConv(h, false)), 'cyes'),
+             btn('Keep using it', () => { setAsk(''); setWipe(false); }, 'cno')]
+          : ask === 't' + h.message_id
+          ? [E('span', {key:'q', role:'alert', 'data-forget-transcript-confirm': '1', style: Object.assign({}, dim, {color:'var(--st-warn)'})}, 'Delete this conversation’s transcript too? Every message in it is removed from History and from every index, and this cannot be undone. Signed receipts of what ' + fridayName() + ' did in it are kept.'),
+             btn('Yes, delete the transcript too', () => forgetConv(h, true), 'tyes'),
+             btn('Go back', () => setAsk('c' + h.message_id), 'tno')]
           : [btn('Delete…', () => setAsk(h.message_id), 'del'),
-             btn('Forget this conversation…', () => setAsk('c' + h.message_id), 'conv')]))));
+             btn('Forget this conversation…', () => { setWipe(false); setAsk('c' + h.message_id); }, 'conv')]))));
 }
 // End conversation search panel
 

@@ -503,12 +503,24 @@ def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
             continue
         if _quotes_library(content):       # an answer drawn from the Library enters the graph only through the Library source
             continue
+        # A reply that read web pages carries their sites (registered domains,
+        # services/web_provenance); its facts carry them too, so stopping the
+        # site removes them, and a reply from a stopped site is not learned.
+        web = []
+        if t.get("web_sources"):
+            from agent_friday.services import web_provenance as _wp
+            web = _wp.clean(t.get("web_sources"))
+            if _wp.stopped(web, fail_closed=True):       # an unreadable record holds it back
+                continue
         sens = _classify_free_text(content)
         tid = t.get("turn_id") or hashlib.sha1(content.encode()).hexdigest()[:10]
+        prov = {"conversations": [str(tid)], "sensitivity": sens}
+        if web:
+            prov["web_sources"] = web
         out.append({
             "id": f"conv:{tid}", "text": content[:CHUNK_SIZE],
             "sensitivity": sens, "source_path": f"conversation:{tid}",
-            "provenance": {"conversations": [str(tid)], "sensitivity": sens},
+            "provenance": prov,
         })
     return out
 

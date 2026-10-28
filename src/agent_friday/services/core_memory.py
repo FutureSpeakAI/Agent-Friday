@@ -46,7 +46,7 @@ import unicodedata
 import uuid
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from agent_friday.paths import friday_home
 
@@ -584,7 +584,8 @@ def resolve_line(target: str, old: str):
 
 
 def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
-          reason: str = "", owner: bool = False, restated: bool = False) -> Dict[str, Any]:
+          reason: str = "", owner: bool = False, restated: bool = False,
+          web_sources: Iterable[str] = ()) -> Dict[str, Any]:
     """File a change for the owner to approve. Duplicates are not queued twice.
 
     A replace or remove stores the WHOLE line it changes, resolved now, so the
@@ -637,6 +638,11 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
                "reason": str(reason or "")[:300]}
         if deleted_before:
             row["deleted_before"] = True
+        # The sites the suggestion was read from (registered domains only,
+        # services/web_provenance), so stopping a site removes it.
+        web = [str(d)[:253] for d in (web_sources or ()) if str(d or "").strip()][:12]
+        if web:
+            row["web_sources"] = web
         rows = (rows + [row])[-PENDING_KEEP:]
         try:
             _write_jsonl(_pending_path(), rows)
@@ -647,6 +653,18 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
 
 def pending() -> List[Dict[str, Any]]:
     return list(reversed(_read_jsonl(_pending_path())))
+
+
+def drop_pending(pred, apply: bool = True) -> List[Dict[str, Any]]:
+    """Queued suggestions `pred(row)` accepts leave the review queue (a
+    stopped site's, services/forget_kinds). Returns the rows dropped (or that
+    would be, with ``apply=False``); the caller tombstones their text first."""
+    with _LOCK:
+        rows = _read_jsonl(_pending_path())
+        gone = [r for r in rows if pred(r)]
+        if apply and gone:
+            _write_jsonl(_pending_path(), [r for r in rows if not pred(r)])
+    return gone
 
 
 def decide(pending_id: str, approve: bool) -> Dict[str, Any]:

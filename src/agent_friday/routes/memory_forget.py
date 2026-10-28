@@ -3,10 +3,15 @@ Agent Friday — forget a fact, a conversation or a source; show where something
 
   POST  /api/memory/forget-fact           {text | fact_id | proposal_id, turn_ids?: [message id], confirm: true}
                                           only the turns the owner ticked leave recall
-  POST  /api/memory/forget-conversation   {conversation_id, confirm: true}       a press in Friday's page
+  POST  /api/memory/forget-conversation   {conversation_id, confirm: true,       a press in Friday's page
+                                           delete_transcript?: true, confirm_transcript: true}
+                                          the transcript is deleted only with BOTH of the last two
   POST  /api/memory/stop-using-source     {source, confirm: true}                a press in Friday's page
                                           library:<id> | meeting:<id> | web:<domain> | sender:<address>
   GET   /api/memory/show-everywhere?q=    read-only: where a statement, person or source appears
+  GET   /api/memory/stopped-sources       the sources the owner stopped (sealed labels opened for the owner)
+  POST  /api/memory/stopped-sources/<id>/unstop   {confirm: true}             a press in Friday's page
+                                          use it again; what was removed does not come back
 
 services/forget_kinds does the work and explains what each removes and what it
 keeps. Every route is the owner's alone: signed in (login_required) and the
@@ -33,7 +38,10 @@ _log = logging.getLogger("friday.memory_forget")
 OWNER_PRINCIPALS = frozenset({"user"})
 
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_CONV_ID = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+#: A conversation id as Friday writes it: lower case, no trailing dot or
+#: space. Windows folds case and drops trailing dots and spaces in a folder
+#: name, so "CONV-MAIN" or "conv-main." would name Main's folder.
+_CONV_ID = re.compile(r"^[a-z0-9](?:[a-z0-9_.-]{0,78}[a-z0-9_-])?$")
 _TURN_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 
@@ -91,16 +99,27 @@ def forget_fact():
 @login_required
 def forget_conversation():
     d = _body()
-    cid = str(d.get("conversation_id") or "").strip()
-    if not _CONV_ID.match(cid):
+    cid = d.get("conversation_id") if isinstance(d.get("conversation_id"), str) else ""
+    if not _CONV_ID.fullmatch(cid):
         return _bad("say which conversation")
     if not _confirmed(d):
         return _bad("forgetting needs the owner's confirmation")
+    wipe = d.get("delete_transcript", False)
+    if wipe not in (True, False, None):
+        return _bad("delete_transcript is true or false")
+    # Deleting the transcript cannot be undone: it has its own confirm, apart
+    # from the forget's (owner ruling 9).
+    if wipe is True and d.get("confirm_transcript") is not True:
+        return _bad("deleting the transcript needs its own confirmation")
     held = _press()
     if held:
         return held
-    out = forget_kinds.forget_conversation(cid)
-    _log.info("forget-conversation requested (ok=%s)", bool(out.get("ok")))
+    if wipe is True:
+        out = forget_kinds.forget_conversation(cid, delete_transcript=True)
+    else:
+        out = forget_kinds.forget_conversation(cid)
+    _log.info("forget-conversation requested (ok=%s, transcript %s)", bool(out.get("ok")),
+              "deleted" if out.get("transcript_deleted") else "kept")
     return jsonify(public_result(out, "Couldn't forget that conversation")), (200 if out.get("ok") else 404)
 
 
@@ -149,6 +168,27 @@ def stop_using_source():
     out = forget_kinds.stop_using_source(source)
     _log.info("stop-using-source requested (%s)", kind or "unknown")
     return jsonify(public_result(out, "Couldn't stop using that source"))
+
+
+@memory_forget_bp.route("/api/memory/stopped-sources", methods=["GET"])
+@login_required
+def stopped_sources():
+    return jsonify(public_result(forget_kinds.list_stopped(), "Couldn't read the stopped sources"))
+
+
+@memory_forget_bp.route("/api/memory/stopped-sources/<entry_id>/unstop", methods=["POST"])
+@login_required
+def unstop_source(entry_id):
+    if not _ID.match(str(entry_id or "")):
+        return _bad("no such stopped source", 404)
+    if not _confirmed(_body()):
+        return _bad("using a source again needs the owner's confirmation")
+    held = _press()
+    if held:
+        return held
+    out = forget_kinds.unstop(entry_id)
+    _log.info("unstop requested (ok=%s)", bool(out.get("ok")))
+    return jsonify(public_result(out, "Couldn't use that source again")), (200 if out.get("ok") else 404)
 
 
 @memory_forget_bp.route("/api/memory/show-everywhere", methods=["GET"])

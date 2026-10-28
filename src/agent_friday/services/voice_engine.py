@@ -3318,6 +3318,14 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
             _library_turn = False
         if friday_msg:
             friday_msg['library'] = _library_turn
+            # The sites the spoken answer read (registered domains only; none off the record).
+            try:
+                from agent_friday.services import web_provenance as _wp
+                _web = [] if off_record else _wp.turn_sources(None, _cid)
+            except Exception:
+                _web = []
+            if _web:
+                friday_msg['web_sources'] = _web
         for _m in (user_msg, friday_msg):
             if not _m:
                 continue
@@ -3327,6 +3335,8 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
                              library=bool(_m.get('library')))
                 if _m.get('receipts'):
                     _meta['receipts'] = _m['receipts']
+                if _m.get('web_sources'):
+                    _meta['web_sources'] = _m['web_sources']
                 _conv.append(_cid, {"id": _m['id'], "role": _m['role'],
                                     "text": _m['text'], "pinned": False,
                                     "meta": _meta}, settings=settings)
@@ -3380,7 +3390,7 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
                       (user_msg or {}).get('id'), (friday_msg or {}).get('id'), _library_turn),
                 # A spoken turn may be someone other than the owner (a paired
                 # phone, a room): the memory review never saves from it silently.
-                kwargs={"owner": False},
+                kwargs={"owner": False, "web_sources": (friday_msg or {}).get('web_sources') or []},
                 daemon=True,
             ).start()
         except Exception as _ve:

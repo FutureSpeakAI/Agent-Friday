@@ -1170,7 +1170,21 @@ def _tool_search_web(inp):
             pass
     if out.get('detail'):
         paras.append(f"[note: {out['detail']}]")
+    # Every result's site, not only those the reply cites: the model read each
+    # snippet (services/web_provenance says why, and what it costs).
+    _note_web_read(r.get('url') for r in results)
     return '\n\n'.join(paras)[:100_000]
+
+
+def _note_web_read(urls):
+    """The sites this turn read, as registered domains only, for its reply's
+    provenance (services/web_provenance: a stopped site is then fully
+    stopped). Nothing is noted off the record. Never fails the tool."""
+    try:
+        from agent_friday.services import web_provenance as _wp
+        _wp.note(list(urls or []), _CURRENT_CONVERSATION.get())
+    except Exception:
+        pass
 
 
 def _tool_browse_web(inp):
@@ -1204,6 +1218,7 @@ def _tool_browse_web(inp):
     text = _wf.load_extraction(rec['id']) or ''
     _log_context("browse_web", {"url": url, "chars": len(text),
                                 "cached": rec.get('from_cache')})
+    _note_web_read([rec.get('final_url') or url])
     header = f"[{rec.get('final_url') or url}]"
     if rec.get('redirect_chain'):
         header += f"\n[followed {len(rec['redirect_chain'])} redirect(s), each safety-checked]"
@@ -3002,6 +3017,7 @@ def _tool_search_news(inp):
                                         "story as if it were new."
                                         % (" matching %r" % query if query else "", len(matched)))})
         return f"No current news stories matched {query!r}." if query else "No news stories available right now."
+    _note_web_read(h.get('url') for h in hits)
     return json.dumps({'query': query, 'hits': hits}, default=str)[:100_000]
 
 

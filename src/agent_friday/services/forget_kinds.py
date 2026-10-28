@@ -27,15 +27,19 @@ with why; counts only, never the content).
     turns go (forget_derived.purge_turns); with no ids it takes none and the
     receipt says so. The transcript keeps the turns (the owner's words).
 
-``forget_conversation(conversation_id)``
+``forget_conversation(conversation_id, delete_transcript=False)``
     Stop using one conversation: every one of its turns leaves recall and
     search and joins the durable forgotten-turn list (so no rebuild brings
     them back), the day summaries made from them are removed and queued to be
     written again (memory_derived), and the graph retracts what those turns
-    supported. The transcript itself follows the conversation store's policy:
-    it is kept in History, and removing it is the owner's existing clear or
-    per-message delete. Lines and facts learned from it carry no link back to
-    it, so the receipt lists them as not removable by conversation.
+    supported. The transcript is kept in History unless the owner also chose
+    ``delete_transcript`` (owner ruling 9, 2026-10-28: a second, separate
+    confirm): then conversations.delete removes the transcript, its record
+    and its files, and every message from every index through the paths a
+    per-message delete takes; the receipt lists the messages as removed
+    (counts only). Signed action receipts that mention it are kept. Lines and
+    facts learned from it carry no link back to it, so the receipt lists them
+    as not removable by conversation.
 
 ``stop_using_source(source)``
     ``library:<doc id>``   the Library's own forget (tombstone, purge, cited
@@ -47,17 +51,30 @@ with why; counts only, never the content).
                            stopped meeting from then on, failing closed); the
                            meeting's own record stays in Meetings.
     ``web:<domain>``       graph facts whose only recorded sources are pages
-                           on that site (setup research); a URL or a bare
-                           domain is read as its site. A public suffix alone
-                           (co.uk, github.io) is refused: it is no one site.
+                           on that site (setup research), and everything read
+                           there in chat (owner ruling 10; services/
+                           web_provenance records each reply's sites): those
+                           replies leave recall and search (durable forgotten
+                           list), the graph facts, memory-card suggestions and
+                           memory suggestions carrying the site are removed
+                           (tombstoned first), and from then on nothing read
+                           there is remembered or proposed (Friday still opens
+                           the site when asked). A URL or a bare domain is
+                           read as its site. A public suffix alone (co.uk,
+                           github.io) is refused: it is no one site.
     ``sender:<address>``   what the triage learned about the sender is
                            removed; mail content is not linked to its sender
                            in memory on this build, so that row says
                            "not supported yet".
     A meeting or a site is also recorded as stopped (``stopped-sources.json``
     beside the tombstones: keyed hashes under the tombstone key and a date,
-    never the id or the domain), so a later meeting proposal or research fact
-    from it is not taken in.
+    never the id or the domain in the clear), so a later meeting proposal or
+    research fact from it is not taken in. Each entry also carries a random
+    id and a display label SEALED with the credential store
+    (credential_store.protect), so the owner can see what they stopped and
+    use it again (``list_stopped``, ``unstop``); a label that cannot be
+    sealed or opened shows as "a stopped site from <day>". Using a source
+    again does not bring back what was removed.
 
 ``show_everywhere(query)``
     Read-only: where a statement, a person (forget_person.find) or a source
@@ -66,8 +83,9 @@ with why; counts only, never the content).
     look before they forget.
 
 Every operation is the owner's own explicit action (routes/memory_forget is
-owner-only); none of them deletes a transcript, a meeting record, a Library
-file or an audit log.
+owner-only); none of them deletes a meeting record, a Library file or an
+audit log, and only forget_conversation with ``delete_transcript`` (its own
+confirm) deletes a transcript.
 """
 from __future__ import annotations
 
@@ -114,7 +132,7 @@ _TRANSCRIPT_REASON = ("your own conversation history, in your words: Friday does
                       "or replayed to the model as conversation context")
 _CONVERSATION_REASON = ("the conversation itself stays in History, in your words. Its messages are no longer "
                         "recalled, searched, summarised or replayed to the model; to remove the transcript too, "
-                        "clear the conversation or delete its messages in History")
+                        "choose Also delete the transcript, or clear the conversation in History")
 _DERIVED_REASON = ("memory-card lines and saved facts carry no link to the conversation they were learned "
                    "from, so they cannot be found by it; use Forget this on the line or fact")
 
@@ -377,8 +395,60 @@ def _read_stopped() -> List[Dict[str, Any]]:
     return [r for r in rows if isinstance(r, dict) and isinstance(r.get("h"), str)]
 
 
+_SEALED_LABEL = "sealed:"
+_STOP_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _seal_label(ident: str) -> str:
+    """The source as the owner named it, sealed with the credential store
+    (the keystore Friday's own secrets use), or "" when it cannot be sealed:
+    a stopped source's name is never written in the clear."""
+    try:
+        import base64
+        from agent_friday.services import credential_store as cs
+        blob, _method = cs.protect(str(ident).encode("utf-8"))
+        if cs.looks_protected(blob) is None:
+            return ""
+        return _SEALED_LABEL + base64.b64encode(blob).decode("ascii")
+    except Exception as e:
+        _log.info("forget_kinds: a stopped source's label could not be sealed (%s)", type(e).__name__)
+        return ""
+
+
+def _open_label(label: Any) -> str:
+    if not isinstance(label, str) or not label.startswith(_SEALED_LABEL):
+        return ""
+    try:
+        import base64
+        from agent_friday.services import credential_store as cs
+        return cs.unprotect(base64.b64decode(label[len(_SEALED_LABEL):])).decode("utf-8")
+    except Exception:
+        return ""
+
+
+def _entry_id(r: Dict[str, Any]) -> str:
+    """An entry's id: its own random id, or (an entry written before ids)
+    the start of its keyed hash."""
+    rid = r.get("id")
+    return rid if isinstance(rid, str) and _STOP_ID.match(rid) else "h" + str(r.get("h") or "")[:15]
+
+
+def _write_stopped(rows: List[Dict[str, Any]]) -> None:
+    p = _stopped_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".%s.tmp" % secrets.token_hex(4))
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps({"version": 1, "entries": rows}, indent=0))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
+    _forget_stop_cache()
+
+
 def record_stopped(ident: str) -> Dict[str, Any]:
-    """Record a source as stopped. {"ok"} or {"ok": False, "error"}. Never raises."""
+    """Record a source as stopped: its keyed hash, the day, a random id and
+    its sealed label (``k`` is one letter for its kind: w a site, m a
+    meeting). {"ok"} or {"ok": False, "error"}. Never raises."""
     try:
         with _LOCK:
             rows = _read_stopped()
@@ -388,19 +458,104 @@ def record_stopped(ident: str) -> Dict[str, Any]:
             h = _digest(key, ident)
             if any(r.get("h") == h for r in rows):
                 return {"ok": True, "added": False}
-            rows.append({"h": h, "day": time.strftime("%Y-%m-%d")})
-            p = _stopped_path()
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_name(p.name + ".%s.tmp" % secrets.token_hex(4))
-            with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-                f.write(json.dumps({"version": 1, "entries": rows}, indent=0))
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, p)
+            row = {"h": h, "day": time.strftime("%Y-%m-%d"), "id": secrets.token_hex(8),
+                   "k": "w" if str(ident).startswith("web:") else "m" if str(ident).startswith("meeting:") else "s"}
+            label = _seal_label(ident)
+            if label:
+                row["label"] = label
+            rows.append(row)
+            _write_stopped(rows)
         return {"ok": True, "added": True}
     except Exception as e:
         _log.warning("forget_kinds: a stopped source could not be recorded: %s", type(e).__name__)
         return {"ok": False, "error": "the record could not be saved (%s)" % type(e).__name__}
+
+
+_KIND_WORDS = {"w": "site", "m": "meeting"}
+
+
+def list_stopped() -> Dict[str, Any]:
+    """The sources the owner stopped, for the owner: {"ok", "sources":
+    [{id, kind, label, day}]}. The label is the opened sealed name (a site's
+    domain, "meeting <id>"), or "a stopped site from <day>" when it cannot be
+    opened. Read-only."""
+    try:
+        rows = _read_stopped() if _stopped_path().exists() else []
+    except Exception as e:
+        return {"ok": False, "error": _scrubbed(e, "the stopped sources could not be read")}
+    out = []
+    for r in rows:
+        kind = _KIND_WORDS.get(str(r.get("k") or ""), "source")
+        day = str(r.get("day") or "")[:10]
+        name = _open_label(r.get("label"))
+        if name.startswith("web:"):
+            name = name[4:]
+        elif name.startswith("meeting:"):
+            name = "meeting " + name[8:]
+        out.append({"id": _entry_id(r), "kind": kind, "day": day, "named": bool(name),
+                    "label": name or ("a stopped %s from %s" % (kind, day or "an earlier day"))})
+    return {"ok": True, "sources": out}
+
+
+def unstop(entry_id: str) -> Dict[str, Any]:
+    """Use a stopped source again: its entry leaves the record, so it may be
+    read and learned from from now on. Nothing it lost comes back."""
+    eid = str(entry_id or "")
+    if not _STOP_ID.match(eid):
+        return {"ok": False, "error": "no such stopped source"}
+    try:
+        with _LOCK:
+            rows = _read_stopped() if _stopped_path().exists() else []
+            keep = [r for r in rows if _entry_id(r) != eid]
+            if len(keep) == len(rows):
+                return {"ok": False, "error": "no such stopped source"}
+            _write_stopped(keep)
+    except Exception as e:
+        _log.warning("forget_kinds: a stopped source could not be removed: %s", type(e).__name__)
+        return {"ok": False, "error": "the record could not be saved (%s)" % type(e).__name__}
+    _log.info("unstop: one stopped source can be used again")
+    return {"ok": True, "unstopped": 1, "note": UNSTOP_NOTE}
+
+
+UNSTOP_NOTE = ("It can be used again from now on. What was removed when you stopped it does not come back: "
+               "Friday learns from it again only from what it reads there next.")
+
+
+#: The stopped hashes and the key, kept while the record file (and the key
+#: file) are unchanged: every reply that read the web asks, per domain.
+_STOP_CACHE: Dict[str, Any] = {"sig": None, "hashes": frozenset(), "key": None}
+_STOP_CACHE_LOCK = threading.Lock()
+
+
+def _file_sig(p: Path):
+    try:
+        st = p.stat()
+    except FileNotFoundError:
+        return None
+    return (str(p), st.st_mtime_ns, st.st_size)
+
+
+def _stopped_state() -> Tuple[frozenset, Optional[bytes]]:
+    """(stopped hashes, key) from the record, cached on the record's and the
+    key file's mtime and size. Raises when the record cannot be read."""
+    from agent_friday.services import tombstones as t
+    sig = (_file_sig(_stopped_path()), _file_sig(t._key_path()))
+    if sig[0] is None:
+        return frozenset(), None
+    with _STOP_CACHE_LOCK:
+        if _STOP_CACHE["sig"] == sig:
+            return _STOP_CACHE["hashes"], _STOP_CACHE["key"]
+    hashes = frozenset(r["h"] for r in _read_stopped())
+    key = _key(create=False) if hashes else None
+    if not hashes or key is not None:          # a missing key is asked again next time
+        with _STOP_CACHE_LOCK:
+            _STOP_CACHE.update(sig=sig, hashes=hashes, key=key)
+    return hashes, key
+
+
+def _forget_stop_cache() -> None:
+    with _STOP_CACHE_LOCK:
+        _STOP_CACHE.update(sig=None, hashes=frozenset(), key=None)
 
 
 def source_stopped(ident: str, *, fail_closed: bool = False) -> bool:
@@ -409,30 +564,28 @@ def source_stopped(ident: str, *, fail_closed: bool = False) -> bool:
     key is missing) answers False, logged (fail open: a proposal or graph fact
     from a source never stopped is not lost), or True with ``fail_closed``
     (meeting_archive: a stopped meeting's documents are never shown for want
-    of the record)."""
+    of the record; the learning paths through web_provenance.stopped)."""
     try:
-        if not _stopped_path().exists():
+        hashes, key = _stopped_state()
+        if not hashes:
             return False
-        rows = _read_stopped()
-        if not rows:
-            return False
-        key = _key(create=False)
         if key is None:
             return bool(fail_closed)
-        return _digest(key, str(ident)) in {r["h"] for r in rows}
+        return _digest(key, str(ident)) in hashes
     except Exception as e:
         _log.warning("forget_kinds: the stopped-source check failed (%s): %s",
                      "fail closed" if fail_closed else "fail open", type(e).__name__)
         return bool(fail_closed)
 
 
-def site_stopped(url_or_host: str) -> bool:
-    """Whether a page's site (or a parent domain of it) was stopped."""
+def site_stopped(url_or_host: str, *, fail_closed: bool = False) -> bool:
+    """Whether a page's site (or a parent domain of it) was stopped.
+    ``fail_closed``: a record that cannot be read answers True."""
     host = _host(url_or_host) if "/" in str(url_or_host or "") else str(url_or_host or "").lower().strip(".")
     host = host[4:] if host.startswith("www.") else host
     parts = [p for p in host.split(".") if p]
     for i in range(0, max(0, len(parts) - 1)):
-        if source_stopped("web:" + ".".join(parts[i:])):
+        if source_stopped("web:" + ".".join(parts[i:]), fail_closed=fail_closed):
             return True
     return False
 
@@ -638,16 +791,61 @@ def forget_fact(text: str = "", *, fact_id: str = "", proposal_id: str = "",
 
 
 # ── forget a conversation ────────────────────────────────────────────────────
-def forget_conversation(conversation_id: str) -> Dict[str, Any]:
-    """Stop using one conversation in memory. Returns a receipt."""
-    from agent_friday.services import conversations as cv
-    cid = str(conversation_id or "").strip()[:80]
+_RECEIPTS_REASON = ("signed records of what Friday did; they are kept unchanged so the chain of receipts stays "
+                    "verifiable")
+
+
+def _receipts_row(cid: str) -> Dict[str, Any]:
+    """Signed action receipts that mention the conversation: kept, counted."""
     try:
-        conv = cv.load(cid) if cid else None
+        from agent_friday.services import action_journal as aj
+        from agent_friday.services.forget_derived import _lines_naming
+        n = _lines_naming(aj._path(), lambda s: cid in str(s or ""))
+    except Exception:
+        n = 0
+    return _row("action_receipts", 0, "signed action receipts", (),
+                [{"what": "signed action receipts that mention this conversation", "count": n,
+                  "reason": _RECEIPTS_REASON}] if n else ())
+
+
+def _delete_transcript(cid: str) -> Dict[str, Any]:
+    """The transcript, its record and its files, through conversations.delete
+    (every message leaves every index the way a per-message delete does)."""
+    from agent_friday.services import conversations as cv
+    try:
+        out = cv.delete(cid)
+    except Exception as e:
+        return _failed("transcript", "messages deleted from History", e, "the conversation's transcript")
+    if not out.get("ok"):
+        nr = [{"what": "the conversation's transcript", "reason": str(out.get("error") or "not deleted")}]
+        if out.get("leftovers"):
+            # Part way: its indexes and some files are gone, its record is
+            # kept so running it again finishes.
+            nr[0]["count"] = int(out["leftovers"])
+        return _row("transcript", 0, "messages deleted from History", nr)
+    nr = [{"what": "some of its index entries",
+           "reason": "an index could not be updated; the transcript itself is deleted"}] if out.get("index_errors") else []
+    kind = "messages deleted from History (the transcript, its record and its files)"
+    if cid == cv.MAIN_ID:
+        kind = "messages deleted from History (Main is emptied; the conversation itself stays)"
+    return _row("transcript", int(out.get("messages") or 0), kind, nr)
+
+
+def forget_conversation(conversation_id: str, *, delete_transcript: bool = False) -> Dict[str, Any]:
+    """Stop using one conversation in memory, and with `delete_transcript`
+    delete its transcript too (the owner's separate confirm, owner ruling 9).
+    Returns a receipt."""
+    from agent_friday.services import conversations as cv
+    cid = str(conversation_id or "")
+    try:
+        conv = cv.load(cid) if cid and len(cid) <= 80 else None
     except Exception:
         conv = None
-    if not conv:
+    # Only the exact id: Windows opens "CONV-MAIN" or "conv-main." as Main's
+    # folder, whose record says "conv-main" (conversations.delete checks too).
+    if not conv or conv.get("id") != cid:
         return {"ok": False, "error": "no such conversation"}
+    delete_transcript = delete_transcript is True
     msgs = [m for m in cv._stored_messages(cid)
             if isinstance(m, dict) and m.get("id") and isinstance(m.get("text"), str) and m["text"].strip()]
     transcript = [(cid, m) for m in msgs]
@@ -658,13 +856,33 @@ def forget_conversation(conversation_id: str) -> Dict[str, Any]:
                                 retained_what="messages in this conversation", retained_reason=_CONVERSATION_REASON)
         except Exception as e:
             rows = [_failed("conversation_recall", "conversation turns", e, "conversation recall")]
+        deleted, gone = None, False
+        if delete_transcript:
+            deleted = _delete_transcript(cid)
+            gone = not any("transcript" in str(x.get("what") or "") for x in deleted["not_removable"])
+            if gone:
+                # The transcript is gone: the recall row no longer keeps it.
+                for r in rows:
+                    if r["store"] == "conversation_recall":
+                        r["retained"] = []
+            rows.append(deleted)
     rows.append(_row("learned_from_it", 0, "memory-card lines and saved facts learned from it",
                      [{"what": "lines and facts Friday may have learned from this conversation",
                        "reason": _DERIVED_REASON}] if msgs else ()))
-    _log.info("forget-conversation: %d turns", len(msgs))
-    return {"ok": True, "kind": "conversation", "stores": rows,
-            "note": ("This conversation is no longer recalled, searched, summarised or used for Friday's memory. "
-                     "It stays in History; what you say in it from now on is remembered as usual.")}
+    rows.append(_receipts_row(cid))
+    _log.info("forget-conversation: %d turns, transcript %s", len(msgs),
+              "kept" if deleted is None else "deleted" if gone else "not deleted")
+    if gone:
+        note = ("This conversation is no longer recalled, searched, summarised or used for Friday's memory, and "
+                "its transcript is deleted from History; that cannot be undone. Signed receipts of what Friday "
+                "did in it are kept.")
+    elif deleted is not None:
+        note = ("This conversation is no longer recalled, searched, summarised or used for Friday's memory, but "
+                "its transcript could not be deleted; see below. Running it again retries.")
+    else:
+        note = ("This conversation is no longer recalled, searched, summarised or used for Friday's memory. "
+                "It stays in History; what you say in it from now on is remembered as usual.")
+    return {"ok": True, "kind": "conversation", "stores": rows, "transcript_deleted": gone, "note": note}
 
 
 # ── stop using a source ──────────────────────────────────────────────────────
@@ -851,17 +1069,143 @@ def _stop_meeting(mid: str) -> List[Dict[str, Any]]:
     return rows
 
 
+#: Provenance that means the owner's own material also holds an entity (a
+#: wiki page, a Library document, a cognitive note): stopping a site does not
+#: delete such an entity, it says so.
+_OWN_PROVENANCE = ("wiki_pages", "docs", "cognitive_keys")
+_SITE_TURNS_REASON = ("your own conversation history: Friday does not rewrite it (you can delete any message from "
+                      "History). These replies are no longer recalled, searched, summarised or replayed to the model")
+
+
+def _site_matcher(domain: str):
+    from agent_friday.services import web_provenance as wp
+    return lambda ws: wp.on_site(ws, domain)
+
+
+def _site_turns(on) -> Tuple[List[Tuple[str, Dict[str, Any]]], List[Dict[str, Any]]]:
+    """(transcript replies whose recorded sites ``on`` accepts, vector rows
+    carrying them that no transcript message holds)."""
+    from agent_friday.services import conversations as cv
+    found: List[Tuple[str, Dict[str, Any]]] = []
+    if cv._root().exists():
+        for conv in cv.list_all(include_archived=True):
+            cid = conv.get("id")
+            if not cid:
+                continue
+            for msg in cv._stored_messages(cid):
+                if not isinstance(msg, dict) or not msg.get("id"):
+                    continue
+                ws = (msg.get("meta") or {}).get("web_sources") or msg.get("web_sources")
+                if ws and on(ws):
+                    found.append((str(cid), msg))
+    extra: List[Dict[str, Any]] = []
+    try:
+        from agent_friday.services.forget_derived import _memory
+        mem, _why = _memory()
+        rows = mem.with_web_sources(on) if mem is not None else None
+        ids = {str(m.get("id")) for _c, m in found}
+        extra = [r for r in (rows or []) if str(r.get("id")) not in ids]
+    except Exception as e:
+        _log.warning("stop-site: the vector memory was not checked for the site: %s", type(e).__name__)
+    return found, extra
+
+
+def _stop_site_turns(on) -> List[Dict[str, Any]]:
+    found, extra = _site_turns(on)
+    # A vector row with no transcript message is taken by its id, with the
+    # same receipt (its "message" is the stored text, dated by the row).
+    transcript = found + [("", {"id": r["id"], "text": r.get("text") or "", "ts": None}) for r in extra]
+    if not transcript:
+        return [_row("conversation_recall", 0, "replies that used pages from this site, removed from recall and "
+                                               "search")]
+    m = _ConversationTexts([str(msg.get("text") or "") for _c, msg in transcript], present=True)
+    rows = _turns_purge(m, transcript, index_match=lambda _t: False, by_id=True,
+                        retained_what="replies that used pages from this site", retained_reason=_SITE_TURNS_REASON)
+    for r in rows:
+        if r["store"] == "conversation_recall":
+            r["kind"] = "replies that used pages from this site, removed from recall and search"
+            r["retained"] = ([{"what": "replies that used pages from this site", "count": len(found),
+                               "reason": _SITE_TURNS_REASON}] if found else [])
+    try:
+        from agent_friday.services import memory_review
+        memory_review.forget_web_source(on)
+    except Exception:
+        pass
+    return rows
+
+
+def _stop_site_suggestions(on) -> List[Dict[str, Any]]:
+    """Memory-card suggestions and memory suggestions read from the site:
+    each text recorded as refused first, then removed."""
+    from agent_friday.services import core_memory
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    rows, failed = [], []
+
+    def _tomb(kind: str, text: str) -> None:
+        try:
+            ok = bool(tombstones.add(kind, text).get("ok"))
+        except Exception:
+            ok = False
+        if not ok and kind not in failed:
+            failed.append(kind)
+    try:
+        pend = core_memory.drop_pending(lambda r: bool(r.get("web_sources")) and on(r.get("web_sources")),
+                                        apply=False)
+        for r in pend:
+            if (r.get("text") or "").strip():
+                _tomb("card_line", r["text"])
+        n = len(core_memory.drop_pending(lambda r: bool(r.get("web_sources")) and on(r.get("web_sources"))))
+        rows.append(_row("memory_card_pending", n, "memory card suggestions read from this site"))
+    except Exception as e:
+        rows.append(_failed("memory_card_pending", "memory card suggestions read from this site", e,
+                            "the memory card's review queue"))
+    try:
+        texts = mp.purge_web_source(on, apply=False)
+        for t in texts:
+            if (t or "").strip():
+                _tomb("proposal", t)
+        n = len(mp.purge_web_source(on))
+        rows.append(_row("memory_proposals", n, "memory suggestions read from this site (any status)"))
+    except Exception as e:
+        rows.append(_failed("memory_proposals", "memory suggestions read from this site", e, "memory suggestions"))
+    if failed:
+        rows.append(_row("tombstones", 0, "records that stop Friday suggesting them again",
+                         [{"what": "the record that stops Friday suggesting them again (%s)" % ", ".join(failed),
+                           "reason": "it could not be saved, so a later pass may suggest them again; running stop "
+                                     "again retries"}]))
+    return rows
+
+
+def _site_entities(domain: str, entities) -> Tuple[List[str], int]:
+    """(ids of graph entities to delete, how many are also held by the owner's
+    own material and kept). Deleted: a research fact whose only recorded
+    sources are pages on the site, and an entity learned in chat from a reply
+    that read the site."""
+    on = _site_matcher(domain)
+    doomed, mixed = [], 0
+    for e in entities:
+        prov = e.get("provenance") or {}
+        urls = [s.get("url") for s in (prov.get("sources") or []) if isinstance(s, dict)]
+        hosts = [_host(u) for u in urls if u]
+        if hosts and all(_on_site(h, domain) for h in hosts):
+            doomed.append(e.get("id"))
+        elif prov.get("web_sources") and on(prov.get("web_sources")):
+            if any(prov.get(k) for k in _OWN_PROVENANCE):
+                mixed += 1
+            else:
+                doomed.append(e.get("id"))
+    return doomed, mixed
+
+
 def _stop_site(domain: str) -> List[Dict[str, Any]]:
+    from agent_friday.services import web_provenance as wp
     from agent_friday.services.knowledge_graph import integration
     rows = [_stop_row("web:" + domain)]
+    on = _site_matcher(domain)
     try:
         store = _kg_store()
-        doomed = []
-        for e in store.load("entities"):
-            urls = [s.get("url") for s in ((e.get("provenance") or {}).get("sources") or []) if isinstance(s, dict)]
-            hosts = [_host(u) for u in urls if u]
-            if hosts and all(_on_site(h, domain) for h in hosts):
-                doomed.append(e.get("id"))
+        doomed, mixed = _site_entities(domain, store.load("entities"))
         n, nr = 0, []
         for eid in doomed:
             out = integration.owner_delete_entity(eid, store=store)
@@ -869,13 +1213,25 @@ def _stop_site(domain: str) -> List[Dict[str, Any]]:
                 n += int(out.get("entities") or 0)
             else:
                 nr.append({"what": "a knowledge-graph fact", "reason": str(out.get("warning") or "not deleted")})
-        rows.append(_row("kg_facts", n, "knowledge-graph facts learned only from this site", nr))
+        if mixed:
+            nr.append({"what": "knowledge-graph entries also learned from your own notes or Library", "count": mixed,
+                       "reason": "they are kept because your own material holds them too; use Delete on one in the "
+                                 "graph to remove it"})
+        rows.append(_row("kg_facts", n, "knowledge-graph facts learned from this site (research, or read in chat)",
+                         nr))
     except Exception as e:
         rows.append(_failed("kg_facts", "knowledge-graph facts learned from this site", e, "the knowledge graph"))
-    rows.append(_row("conversation_recall", 0, "conversation turns",
-                     [{"what": "conversation turns that used pages from this site",
-                       "reason": "not supported yet: turns are not linked to the web pages behind them, so they "
-                                 "cannot be found by site; forget the fact or the conversation instead"}]))
+    try:
+        rows += _stop_site_turns(on)
+    except Exception as e:
+        rows.append(_failed("conversation_recall", "replies that used pages from this site", e,
+                            "conversation recall"))
+    rows += _stop_site_suggestions(on)
+    if wp.registered_domain(domain) and wp.registered_domain(domain) != domain:
+        rows.append(_row("chat_reads", 0, "what Friday read on this site in chat", [
+            {"what": "replies that read other pages of %s" % "its parent site",
+             "reason": "chat records each reply's sites by their registered domain, so a part of a site cannot be "
+                       "told apart there; stop the whole site to stop what was read in chat"}]))
     return rows
 
 
@@ -921,8 +1277,11 @@ _SOURCE_NOTES = {
     "meeting": ("The meeting's suggestions, the facts and card lines it gave, its knowledge-graph facts and its "
                 "searchable copies in the Library are removed, and nothing new is taken from it. The meeting's "
                 "own record stays in Meetings."),
-    "web": ("Knowledge-graph facts learned only from this site during research are removed, and research "
-            "findings from it are not taken in again. Conversations that used its pages are not changed."),
+    "web": ("Replies that used pages from this site are no longer recalled or searched (History keeps them), and "
+            "the knowledge-graph facts, memory card suggestions and memory suggestions learned from what Friday "
+            "read there are removed. From now on Friday may still open the site when you ask, but nothing read "
+            "there is remembered or suggested, and research findings from it are not taken in. Use it again from "
+            "Stopped sources if you change your mind; that does not bring back what was removed."),
     "sender": ("What the mail triage learned about this sender is removed. Nothing else is changed: mail is not "
                "linked to its sender in Friday's memory on this build."),
 }
@@ -1077,15 +1436,41 @@ def _source_report(kind: str, value: str) -> List[Dict[str, Any]]:
             out.append(_unchecked("kg_facts", "knowledge-graph facts from this meeting", e))
         out.append(_where("stopped_sources", int(source_stopped(origin)), "already stopped"))
     elif kind == "web":
+        on = _site_matcher(value)
         try:
-            n = 0
-            for e in _kg_store().load("entities"):
-                hosts = [_host(s.get("url")) for s in ((e.get("provenance") or {}).get("sources") or [])
-                         if isinstance(s, dict) and s.get("url")]
-                n += int(bool(hosts) and all(_on_site(h, value) for h in hosts))
-            out.append(_where("kg_facts", n, "knowledge-graph facts learned only from this site"))
+            doomed, _mixed = _site_entities(value, _kg_store().load("entities"))
+            out.append(_where("kg_facts", len(doomed), "knowledge-graph facts learned from this site"))
         except Exception as e:
             out.append(_unchecked("kg_facts", "knowledge-graph facts learned from this site", e))
+        try:
+            found, extra = _site_turns(on)
+            per: Dict[str, int] = {}
+            for c, _m in found:
+                per[c] = per.get(c, 0) + 1
+            titles = {}
+            try:
+                from agent_friday.services import conversations as cv
+                titles = {c: str((cv.load(c) or {}).get("title") or "")[:80] for c in per}
+            except Exception:
+                pass
+            out.append(_where("conversation_turns", len(found) + len(extra),
+                              "replies that used pages from this site (still recalled and searched)",
+                              [{"conversation_id": c, "title": titles.get(c, ""), "messages": n}
+                               for c, n in sorted(per.items(), key=lambda kv: -kv[1])]))
+        except Exception as e:
+            out.append(_unchecked("conversation_turns", "replies that used pages from this site", e))
+        try:
+            from agent_friday.services import core_memory
+            from agent_friday.services import memory_proposals as mp
+            pend = core_memory.drop_pending(lambda r: bool(r.get("web_sources")) and on(r.get("web_sources")),
+                                            apply=False)
+            out.append(_where("memory_card_pending", len(pend), "memory card suggestions read from this site"))
+            rows = _ro(mp.DB_PATH, "SELECT provenance FROM proposed_facts WHERE provenance IS NOT NULL") or []
+            out.append(_where("memory_proposals", sum(1 for (p,) in rows if mp.web_sources_in(p)
+                                                      and on(mp.web_sources_in(p))),
+                              "memory suggestions read from this site"))
+        except Exception as e:
+            out.append(_unchecked("memory_proposals", "memory suggestions read from this site", e))
         out.append(_where("stopped_sources", int(source_stopped("web:" + value)), "already stopped"))
     elif kind == "sender":
         try:

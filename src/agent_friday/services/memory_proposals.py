@@ -64,6 +64,7 @@ import re
 import sqlite3
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_friday.core import FRIDAY_DIR
@@ -412,12 +413,16 @@ def propose(day: Optional[str] = None, *, memory=None,
             for f in facts:
                 if _already_proposed(conn, f["text"]) or _refused_before(f["text"]):
                     continue
+                web, blocked = web_sources_of(f.get("evidence") or "", turns)
+                if blocked:
+                    continue              # read on a site the owner stopped: never proposed
                 conn.execute(
                     "INSERT INTO proposed_facts (fact_id, ts, day, category, "
-                    "text, evidence, confidence, model, status) "
-                    "VALUES (?,?,?,?,?,?,?,?,'pending')",
+                    "text, evidence, confidence, model, status, provenance) "
+                    "VALUES (?,?,?,?,?,?,?,?,'pending',?)",
                     (uuid.uuid4().hex[:16], time.time(), day, f["category"],
-                     f["text"], f["evidence"], f["confidence"], s["model"]))
+                     f["text"], f["evidence"], f["confidence"], s["model"],
+                     json.dumps({"web_sources": web}) if web else None))
                 stored += 1
             conn.commit()
         finally:
@@ -693,6 +698,57 @@ def _meeting_id_of(provenance) -> str:
         return str((json.loads(provenance) or {}).get("meeting_id") or "")
     except (TypeError, ValueError, AttributeError):
         return ""
+
+
+# ── Proposals read from the web carry their sites ────────────────────────────
+def web_sources_of(evidence: str, turns: List[Dict[str, Any]]) -> tuple:
+    """(domains, blocked) for a proposal: the registered domains recorded on
+    the replies its evidence is quoted from (services/web_provenance), and
+    whether any of them is a site the owner stopped. Fails closed: when the
+    stopped-sites record cannot be read, a proposal read from the web is
+    blocked (one that read no web page never is)."""
+    web: List[str] = []
+    try:
+        from agent_friday.services import web_provenance as wp
+        ev = " ".join(str(evidence or "").lower().split())
+        if len(ev) < 6:
+            return [], False
+        for t in turns or []:
+            ws = wp.clean(t.get("web_sources") or [])
+            if ws and ev in " ".join(str(t.get("text") or "").lower().split()):
+                web += [d for d in ws if d not in web]
+        return web, bool(web and wp.stopped(web, fail_closed=True))
+    except Exception:                                       # noqa: BLE001
+        return web, bool(web)
+
+
+def web_sources_in(provenance) -> List[str]:
+    try:
+        v = (json.loads(provenance) or {}).get("web_sources") or []
+        return [str(d) for d in v if isinstance(d, str)] if isinstance(v, list) else []
+    except (TypeError, ValueError, AttributeError):
+        return []
+
+
+def purge_web_source(on_site, apply: bool = True) -> List[str]:
+    """Delete every proposal (any status) whose recorded sites ``on_site``
+    accepts. Returns their texts (opened). The caller reads them first with
+    ``apply=False`` and records them refused BEFORE the delete
+    (forget_kinds._stop_site), so no pass meanwhile proposes them again."""
+    if not Path(DB_PATH).exists():
+        return []
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT fact_id, text, provenance FROM proposed_facts "
+                            "WHERE provenance IS NOT NULL AND provenance != ''").fetchall()
+        doomed = [(fid, _open(t)) for fid, t, p in rows if web_sources_in(p) and on_site(web_sources_in(p))]
+        if apply:
+            for fid, _t in doomed:
+                conn.execute("DELETE FROM proposed_facts WHERE fact_id=?", (fid,))
+            conn.commit()
+        return [t for _f, t in doomed]
+    finally:
+        conn.close()
 
 
 def purge_meeting(meeting_id: Optional[str] = None) -> int:
