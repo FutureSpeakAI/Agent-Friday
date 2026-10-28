@@ -1148,7 +1148,7 @@ Raise the screen-only card that starts the held list fresh (**Start the list fre
 Both notes, Friday's recent changes (last 20) and the "Waiting for your review" queue.
 
 ### `POST /api/core-memory/add` · `/edit` · `/delete`
-`{target, text}` · `{target, index, text}` · `{target, index}`.
+`{target, text}` · `{target, index, text, expect?}` · `{target, index, expect?}`. With `expect` (the line's text as shown), a line at `index` that no longer reads `expect` is refused with 409 ("that line changed since you last looked; reload and try again"). The card's read, edit, delete and review answer the owner's own principal only (403 otherwise).
 
 ### `POST /api/core-memory/undo`
 `{change_id}`: undo one of Friday's changes ("What Friday changed").

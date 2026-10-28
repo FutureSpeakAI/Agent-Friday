@@ -15,9 +15,18 @@ over as a file they keep:
 Each item is ``kind``, ``text``, ``when``, ``source`` (where it came from, in
 the same words the search panel uses) and ``status`` (``current``,
 ``superseded``, ``pending`` or ``inferred``), with ``status_reason`` when there
-is one. ``to_json()`` and ``to_markdown()`` write the file's text (Markdown
-grouped by kind); the route streams it as an attachment and nothing is written
-to disk on this PC.
+is one. An item's text is cut at ``ITEM_TEXT_MAX`` characters (it then ends in
+"…", carries ``text_cut`` and the export's notes say so).
+
+``build()`` gathers the whole export in memory (bounded by ``EXPORT_MAX`` and
+``ITEM_TEXT_MAX``); ``to_json()`` and ``to_markdown()`` then write the file's
+text from it a piece at a time (Markdown grouped by kind), and the route sends
+those pieces as an attachment. Nothing is written to disk on this PC.
+
+Conversation turns are read exactly as conversation search indexes them
+(conversation_fts._indexable: turns only, never off-record ones) with any
+recalled-memory span removed (memory_fence.strip), so the whole-memory export
+never carries more than a search could find.
 
 Two things never reach an export:
 
@@ -42,6 +51,8 @@ from agent_friday.services import memory_search as ms
 
 #: The most items one export carries (the whole memory can be large; the file stays a size a person can open).
 EXPORT_MAX = 5000
+#: The most characters of one item's text an export carries; longer text is cut, ends in "…" and says so.
+ITEM_TEXT_MAX = 20000
 FORMATS = ("json", "md")
 
 #: Heading for each kind in the Markdown file, in the order the search panel lists them.
@@ -94,6 +105,29 @@ def _stored_messages(cid: str) -> List[Dict[str, Any]]:
     return [m for m in cv.messages(cid) if m.get("id") not in held]
 
 
+def _indexable(m: Dict[str, Any]) -> bool:
+    """The turns conversation search indexes (conversation_fts._indexable); fail closed if it is missing."""
+    try:
+        from agent_friday.services import conversation_fts
+        return bool(conversation_fts._indexable(m))
+    except Exception:
+        meta = m.get("meta") or {}
+        return (isinstance(m.get("text"), str) and bool(m["text"].strip()) and bool(m.get("id"))
+                and not m.get("off_record") and not meta.get("off_record")
+                and meta.get("kind") in (None, "turn"))
+
+
+def _unfenced(text: Any) -> str:
+    """The text with recalled-memory spans removed (memory_fence.strip), as conversation search indexes it."""
+    text = text if isinstance(text, str) else ""
+    try:
+        from agent_friday.services import memory_fence
+        out = memory_fence.strip(text)
+        return out if isinstance(out, str) else ""
+    except Exception:
+        return text
+
+
 def _all_conversations(lo, hi, include_superseded, budget, notes) -> List[Dict[str, Any]]:
     from agent_friday.services import conversations as cv
     out: List[Dict[str, Any]] = []
@@ -112,8 +146,13 @@ def _all_conversations(lo, hi, include_superseded, budget, notes) -> List[Dict[s
         except Exception:
             continue
         for m in msgs:
-            text, role = m.get("text"), m.get("role")
-            if not isinstance(text, str) or not text.strip() or role not in ("user", "assistant", "friday"):
+            role = m.get("role")
+            # Exactly what conversation search indexes (conversation_fts): a turn, not off-record, with
+            # any recalled-memory span cut out, so an export never carries more than a search could find.
+            if not _indexable(m) or role not in ("user", "assistant", "friday"):
+                continue
+            text = _unfenced(m.get("text"))
+            if not text.strip():
                 continue
             try:
                 ts = float(m.get("ts")) if m.get("ts") else None
@@ -318,13 +357,24 @@ def build(query: str = "", kinds=None, since: Optional[str] = None, until: Optio
         notes.append(f"This export holds the first {EXPORT_MAX} items; there are more.")
     from agent_friday.services import pasted_secrets
     clean = []
+    cut = 0
     for r in kept:
         row = {"kind": r.get("kind"), "text": r.get("text") or "", "when": r.get("when") or "",
                "source": r.get("source") or "", "status": r.get("status") or "current"}
         if r.get("status_reason"):
             row["status_reason"] = r["status_reason"]
         # Keys and passwords are withheld in every string, whatever store the item came from.
-        clean.append(pasted_secrets.scrub(row))
+        row = pasted_secrets.scrub(row)
+        # One very long item (a pasted document in a turn) does not swell the file: its text is cut.
+        text = row.get("text") or ""
+        if isinstance(text, str) and len(text) > ITEM_TEXT_MAX:
+            row["text"] = text[:ITEM_TEXT_MAX].rstrip() + "…"
+            row["text_cut"] = True
+            cut += 1
+        clean.append(row)
+    if cut:
+        notes.append(f"{cut} item{'s were' if cut != 1 else ' was'} longer than {ITEM_TEXT_MAX:,} characters "
+                     "and cut short (marked …).")
     return {"ok": True, "query": pasted_secrets.scrub(q), "kinds": list(ks),
             "include_superseded": bool(include_superseded), "items": clean, "count": len(clean),
             "truncated": truncated, "notes": notes,

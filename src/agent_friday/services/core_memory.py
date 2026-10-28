@@ -587,27 +587,43 @@ def remove(target: str, old: str, *, actor: str = "friday") -> Dict[str, Any]:
     return {"ok": True, "change_id": cid, "usage": usage(target)}
 
 
-def owner_set(target: str, index: int, text: str) -> Dict[str, Any]:
-    """The owner's edit of line `index` (0-based) from the panel."""
+#: What an owner edit or delete answers when the line at `index` is no longer the line the owner saw.
+LINE_CHANGED = "that line changed since you last looked; reload and try again"
+
+
+def _owner_line(target: str, index: Any, expect: Optional[str]):
+    """(items, index, None) for the owner's line, or (None, None, error result). With `expect` (the
+    line's text as the owner saw it), a line that is not that text is refused (`changed`), so a card
+    that moved between reading and writing never has the wrong line changed. Call under _LOCK."""
     items = entries(target) if target in TARGETS else []
     try:
         index = int(index)
     except (TypeError, ValueError):
-        return _err("index must be a number")
+        return None, None, _err("index must be a number")
     if not 0 <= index < len(items):
-        return _err("that line is no longer there; reload the panel")
-    return replace(target, items[index], text, actor="owner")
+        return None, None, _err("that line is no longer there; reload the panel")
+    if expect is not None and _clean(expect) != items[index]:
+        return None, None, {**_err(LINE_CHANGED), "changed": True}
+    return items, index, None
 
 
-def owner_delete(target: str, index: int) -> Dict[str, Any]:
-    items = entries(target) if target in TARGETS else []
-    try:
-        index = int(index)
-    except (TypeError, ValueError):
-        return _err("index must be a number")
-    if not 0 <= index < len(items):
-        return _err("that line is no longer there; reload the panel")
-    return remove(target, items[index], actor="owner")
+def owner_set(target: str, index: int, text: str, expect: Optional[str] = None) -> Dict[str, Any]:
+    """The owner's edit of line `index` (0-based) from the panel; with `expect`, only if that line still
+    reads `expect`."""
+    with _LOCK:
+        items, index, bad = _owner_line(target, index, expect)
+        if bad:
+            return bad
+        return replace(target, items[index], text, actor="owner")
+
+
+def owner_delete(target: str, index: int, expect: Optional[str] = None) -> Dict[str, Any]:
+    """The owner's delete of line `index`; with `expect`, only if that line still reads `expect`."""
+    with _LOCK:
+        items, index, bad = _owner_line(target, index, expect)
+        if bad:
+            return bad
+        return remove(target, items[index], actor="owner")
 
 
 # ── what Friday changed, and undoing it ───────────────────────────────────────

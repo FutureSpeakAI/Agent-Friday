@@ -251,6 +251,87 @@ def test_this_sessions_off_record_turns_are_not_exported(monkeypatch):
     assert "An off the record word about Wren." not in _texts(exp)
 
 
+def test_the_whole_memory_export_reads_turns_exactly_as_search_indexes_them(monkeypatch):
+    # Review finding: the export read more than search (non-turn records, flagged off-record turns,
+    # recalled-memory spans). It now uses conversation_fts._indexable and memory_fence.strip.
+    cv.create("Boats")
+    now = time.time()
+    msgs = [
+        {"id": "m1", "role": "user", "ts": now, "text": "Wren is kept at Harwich.", "meta": {"kind": "turn"}},
+        {"id": "m2", "role": "assistant", "ts": now, "meta": {"kind": "turn"},
+         "text": "Noted. <recalled-memory source=\"memory_card\">Sails with Grace Hopper.</recalled-memory>"},
+        {"id": "m3", "role": "assistant", "ts": now, "text": "A tool result about Wren.", "meta": {"kind": "tool"}},
+        {"id": "m4", "role": "user", "ts": now, "text": "Off the record about Wren.", "off_record": True,
+         "meta": {"kind": "turn"}},
+        {"id": "m5", "role": "user", "ts": now, "text": "Flagged off record about Wren.",
+         "meta": {"kind": "turn", "off_record": True}},
+        {"id": "", "role": "user", "ts": now, "text": "A turn with no id.", "meta": {"kind": "turn"}},
+        {"id": "m7", "role": "assistant", "ts": now, "meta": {"kind": "turn"},
+         "text": "<recalled-memory source=\"conversations\">Only recalled text.</recalled-memory>"},
+    ]
+    for m in msgs:
+        assert fts._indexable(m) == (m["id"] in ("m1", "m2", "m7")), m["id"]
+    monkeypatch.setattr(me, "_stored_messages", lambda cid: [dict(m) for m in msgs])
+    exp = me.build("", kinds=["conversation"])
+    assert exp["ok"], exp
+    texts = _texts(exp)
+    assert texts.count("Wren is kept at Harwich.") == 1 and "Noted." in texts, texts
+    blob = json.dumps(exp)
+    for gone in ("Grace Hopper", "recalled-memory", "A tool result", "Off the record", "Flagged off record",
+                 "no id", "Only recalled text"):
+        assert gone not in blob, gone
+
+
+def test_one_very_long_item_is_cut_with_an_ellipsis_and_a_note(monkeypatch):
+    long_text = "Wren " + "x" * (me.ITEM_TEXT_MAX + 5000)
+    monkeypatch.setattr(um, "all_facts", lambda limit=2000: [
+        {"fact_id": "f1", "ts": time.time(), "category": "bio", "text": long_text, "confidence": 0.9,
+         "source": "manual"},
+        {"fact_id": "f2", "ts": time.time(), "category": "bio", "text": "Owns a boat called Wren.",
+         "confidence": 0.9, "source": "manual"}])
+    for exp in (me.build("", kinds=["fact"]), me.build("")):
+        assert exp["ok"], exp
+        cut = next(r for r in exp["items"] if r["text"].startswith("Wren x"))
+        assert cut["text"].endswith("…") and len(cut["text"]) <= me.ITEM_TEXT_MAX + 1, len(cut["text"])
+        assert cut.get("text_cut") is True
+        short = next(r for r in exp["items"] if r["text"] == "Owns a boat called Wren.")
+        assert "text_cut" not in short
+        assert any("20,000 characters" in n for n in exp["notes"]), exp["notes"]
+        assert len("".join(me.to_json(exp))) < me.ITEM_TEXT_MAX + 5000
+        md = "".join(me.to_markdown(exp))
+        assert "20,000 characters" in md and "x" * (me.ITEM_TEXT_MAX + 1) not in md
+
+
+# ── the card's owner edit and delete refuse a line that moved ────────────────
+
+def test_an_owner_edit_or_delete_with_expect_refuses_a_line_that_changed():
+    cm.add("user", "Prefers tea.", actor="owner")
+    cm.add("user", "Keeps a boat called Wren.", actor="owner")
+    # The panel read "Keeps a boat called Wren." at index 1; then the card moved under it.
+    cm.remove("user", "Prefers tea.", actor="friday")
+    cm.add("user", "Walks to work on Mondays.", actor="friday")
+    assert cm.entries("user") == ["Keeps a boat called Wren.", "Walks to work on Mondays."]
+    for res in (cm.owner_delete("user", 1, expect="Keeps a boat called Wren."),
+                cm.owner_set("user", 1, "Keeps a dinghy called Wren.", expect="Keeps a boat called Wren.")):
+        assert res["ok"] is False and res.get("changed") is True, res
+        assert "changed" in res["error"] and "reload" in res["error"], res
+    assert cm.entries("user") == ["Keeps a boat called Wren.", "Walks to work on Mondays."]
+    # The line that still reads as expected is changed, and only it.
+    assert cm.owner_set("user", 0, "Keeps a dinghy called Wren.", expect="Keeps a boat called Wren.")["ok"]
+    assert cm.owner_delete("user", 1, expect="Walks to work on Mondays.")["ok"]
+    assert cm.entries("user") == ["Keeps a dinghy called Wren."]
+
+
+def test_an_owner_edit_or_delete_without_expect_behaves_as_before():
+    cm.add("user", "Prefers tea.", actor="owner")
+    cm.add("user", "Keeps a boat called Wren.", actor="owner")
+    assert cm.owner_set("user", 0, "Prefers green tea.")["ok"]
+    assert cm.owner_delete("user", 1)["ok"]
+    assert cm.entries("user") == ["Prefers green tea."]
+    assert cm.owner_delete("user", 5)["ok"] is False
+    assert "changed" not in cm.owner_delete("user", 5)
+
+
 # ── the files ─────────────────────────────────────────────────────────────────
 
 def test_json_and_markdown_files():

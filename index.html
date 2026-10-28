@@ -61260,7 +61260,8 @@ function MemorySearchPanel() {
       .catch(e => { setBusy(''); setMsg(e.message || 'That did not work.'); });
   };
   const okTrue = d => !!d.ok;
-  // A card line is changed by its place on the card, read fresh, so the line changed is the line shown.
+  // A card line is changed by its place on the card, read fresh, so the line changed is the line shown;
+  // its text goes too (expect), and the server refuses (409) if that place now holds another line.
   const cardLine = h => apiFetch('/api/core-memory').then(r => r.json()).then(d => {
     const t = (h.source && h.source.card) || 'user';
     const i = ((((d.card || {})[t] || {}).entries) || []).indexOf(h.text);
@@ -61268,9 +61269,9 @@ function MemorySearchPanel() {
     return {target: t, index: i};
   });
   const editCard = (h, text) => act('e' + h.id, () => cardLine(h).then(at =>
-    apiFetch('/api/core-memory/edit', json({target: at.target, index: at.index, text: text}))), okTrue, 'Changed on the memory card.');
+    apiFetch('/api/core-memory/edit', json({target: at.target, index: at.index, text: text, expect: h.text}))), okTrue, 'Changed on the memory card.');
   const deleteCard = h => act('d' + h.id, () => cardLine(h).then(at =>
-    apiFetch('/api/core-memory/delete', json({target: at.target, index: at.index}))), okTrue, 'Deleted from the memory card.');
+    apiFetch('/api/core-memory/delete', json({target: at.target, index: at.index, expect: h.text}))), okTrue, 'Deleted from the memory card.');
   const review = (h, keep) => act('r' + h.id, () => apiFetch('/api/core-memory/review', json({id: h.id, keep: keep})), okTrue,
     keep ? 'Kept. It is on the memory card now.' : 'Discarded.');
   const deleteTurn = h => act('d' + h.id, () => apiFetch('/api/conversations/' + encodeURIComponent(h.source.conversation_id)

@@ -62,9 +62,15 @@ def _card():
     cm.add("user", "Sails Wren with Ada Lovelace on Sundays.", actor="owner")
 
 
+def _page():
+    """The headers Friday's own page sends through apiFetch: its session token."""
+    import agent_friday.core as core
+    return {"X-Friday-Token": core._current_api_token()}
+
+
 def test_json_export_is_an_attachment_with_the_search_results(client):
     _card()
-    r = client.get("/api/memory/export?q=Wren&kinds=card&format=json")
+    r = client.get("/api/memory/export?q=Wren&kinds=card&format=json", headers=_page())
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     cd = r.headers.get("Content-Disposition", "")
     assert cd.startswith("attachment;") and re.search(r'filename="friday-memory-[\d-]+\.json"', cd), cd
@@ -80,7 +86,7 @@ def test_json_export_is_an_attachment_with_the_search_results(client):
 def test_markdown_export_is_grouped_by_kind(client):
     _card()
     cm.queue("user", "add", text="Wren needs new sails before spring.", source="dream:2026-09-03")
-    r = client.get("/api/memory/export?format=md")
+    r = client.get("/api/memory/export?format=md", headers=_page())
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     assert r.headers["Content-Disposition"].startswith("attachment;")
     assert r.headers["Content-Disposition"].rstrip('"').endswith(".md")
@@ -98,10 +104,10 @@ def test_the_export_leaves_out_forgotten_people_and_keys(client, monkeypatch):
     monkeypatch.setattr(ms, "_forgotten_names", lambda: {"Ada Lovelace"})
     for fmt in ("json", "md"):
         for qs in ("", "&q=Wren", "&q=marina"):
-            body = client.get("/api/memory/export?format=" + fmt + qs).get_data(as_text=True)
+            body = client.get("/api/memory/export?format=" + fmt + qs, headers=_page()).get_data(as_text=True)
             assert "Lovelace" not in body, (fmt, qs)
             assert KEY not in body and "sk-ant-" not in body, (fmt, qs)
-    doc = json.loads(client.get("/api/memory/export?format=json&kinds=card").get_data(as_text=True))
+    doc = json.loads(client.get("/api/memory/export?format=json&kinds=card", headers=_page()).get_data(as_text=True))
     assert "Keeps a sailing boat called Wren." in [i["text"] for i in doc["items"]]
 
 
@@ -110,13 +116,13 @@ def test_the_export_is_bounded(client, monkeypatch):
                  "Plays the cello badly."):
         cm.add("user", line, actor="owner")
     monkeypatch.setattr(me, "EXPORT_MAX", 2)
-    doc = json.loads(client.get("/api/memory/export?format=json&kinds=card").get_data(as_text=True))
+    doc = json.loads(client.get("/api/memory/export?format=json&kinds=card", headers=_page()).get_data(as_text=True))
     assert doc["count"] == 2 and len(doc["items"]) == 2 and doc["truncated"] is True
 
 
 def test_nothing_is_written_to_disk_by_an_export(client, monkeypatch, tmp_path):
     _card()
-    client.get("/api/memory/export?format=json")            # the stores' own first-open files, once
+    client.get("/api/memory/export?format=json", headers=_page())            # the stores' own first-open files, once
     before = sorted(str(p) for p in tmp_path.rglob("*"))
     writes = []
     real_open = builtins.open
@@ -134,7 +140,7 @@ def test_nothing_is_written_to_disk_by_an_export(client, monkeypatch, tmp_path):
     for name in ("NamedTemporaryFile", "TemporaryFile", "mkstemp", "SpooledTemporaryFile"):
         monkeypatch.setattr(tempfile, name, refuse)
     for fmt in ("json", "md"):
-        r = client.get("/api/memory/export?format=" + fmt)
+        r = client.get("/api/memory/export?format=" + fmt, headers=_page())
         assert r.status_code == 200
         assert r.is_streamed, "the export is streamed from memory"
         r.get_data()
@@ -148,7 +154,7 @@ def test_nothing_is_written_to_disk_by_an_export(client, monkeypatch, tmp_path):
     "format=pdf", "q=" + "x" * 201, "kinds=card,nope", "since=yesterday", "until=2026-02-30",
 ])
 def test_export_parameters_are_bounded(client, qs):
-    r = client.get("/api/memory/export?" + qs)
+    r = client.get("/api/memory/export?" + qs, headers=_page())
     assert r.status_code == 400, (qs, r.status_code)
     assert r.get_json()["ok"] is False
 
@@ -180,6 +186,126 @@ def test_only_the_owners_own_principal_exports(app, principal):
         r = routes.memory_export_route.__wrapped__()
     resp = r[0] if isinstance(r, tuple) else r
     assert (r[1] if isinstance(r, tuple) else resp.status_code) == 403
+
+
+# ── only Friday's own page can make the export (review finding: cross-site navigation) ──
+
+#: What a browser sends when another site's page navigates the top-level window (or a link is
+#: followed) to the export: no session token, and fetch metadata a page's script cannot forge.
+CROSS_SITE_NAVIGATE = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document",
+                       "Sec-Fetch-User": "?1", "Referer": "https://evil.example/"}
+
+
+@pytest.mark.parametrize("headers", [
+    CROSS_SITE_NAVIGATE,
+    {"Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"},
+    {"Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"},
+    {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"},
+    {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image"},
+    {"Sec-Fetch-Site": "same-origin"},
+    dict(CROSS_SITE_NAVIGATE, **{"X-Friday-Token": "not-the-token"}),
+    {},
+])
+def test_a_request_not_from_fridays_page_gets_no_export(client, headers):
+    _card()
+    for qs in ("format=json", "format=md", "format=json&q=Wren"):
+        r = client.get("/api/memory/export?" + qs, headers=headers)
+        assert r.status_code == 403, (headers, qs, r.status_code)
+        assert "attachment" not in r.headers.get("Content-Disposition", ""), headers
+        assert "Wren" not in r.get_data(as_text=True), headers
+
+
+def test_fridays_page_gets_the_export(client):
+    _card()
+    # apiFetch: the page's session token, on a same-origin script fetch.
+    r = client.get("/api/memory/export?format=json", headers=dict(_page(), **{
+        "Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"}))
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    assert r.headers["Content-Disposition"].startswith("attachment;")
+    assert "Keeps a sailing boat called Wren." in r.get_data(as_text=True)
+    # A same-origin script fetch whose token just rotated is still the page's own (fetch metadata).
+    r = client.get("/api/memory/export?format=md", headers={"Sec-Fetch-Site": "same-origin",
+                                                             "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"})
+    assert r.status_code == 200 and "Wren" in r.get_data(as_text=True)
+
+
+def test_the_panel_downloads_the_export_through_apifetch_not_a_link():
+    body = _panel("ui_parts/app.html")
+    i = body.index("'/api/memory/export?format='")
+    assert body[max(0, i - 40):i].rstrip().endswith("apiFetch("), "the export is fetched with apiFetch"
+    assert "r.blob()" in body and "URL.createObjectURL(b)" in body
+    assert "href: '/api/memory/export" not in body and 'href="/api/memory/export' not in body
+    assert "window.location" not in body and "window.open(" not in body
+
+
+# ── the memory card's edit and delete refuse a line that moved (review finding: index race) ──
+
+def _seen_then_moved():
+    """The panel read "Keeps a sailing boat called Wren." at index 1; then the card moved under it."""
+    cm.add("user", "Prefers tea to coffee.", actor="owner")
+    cm.add("user", "Keeps a sailing boat called Wren.", actor="owner")
+    cm.remove("user", "Prefers tea to coffee.", actor="friday")
+    cm.add("user", "Walks to work on Mondays.", actor="friday")
+    assert cm.entries("user") == ["Keeps a sailing boat called Wren.", "Walks to work on Mondays."]
+
+
+@pytest.mark.parametrize("path, extra", [("edit", {"text": "Keeps a dinghy called Wren."}), ("delete", {})])
+def test_a_card_edit_or_delete_of_a_line_that_moved_is_refused_with_409(client, path, extra):
+    _seen_then_moved()
+    r = client.post("/api/core-memory/" + path,
+                    json=dict({"target": "user", "index": 1, "expect": "Keeps a sailing boat called Wren."}, **extra))
+    assert r.status_code == 409, r.get_data(as_text=True)[:300]
+    d = r.get_json()
+    assert d["ok"] is False and "changed" in d["error"] and "reload" in d["error"], d
+    assert cm.entries("user") == ["Keeps a sailing boat called Wren.", "Walks to work on Mondays."]
+    # The same request naming the line where it now is goes through, and changes only that line.
+    r = client.post("/api/core-memory/" + path,
+                    json=dict({"target": "user", "index": 0, "expect": "Keeps a sailing boat called Wren."}, **extra))
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_data(as_text=True)[:300]
+    assert "Walks to work on Mondays." in cm.entries("user")
+    assert "Keeps a sailing boat called Wren." not in cm.entries("user")
+
+
+def test_a_card_edit_or_delete_without_expect_behaves_as_before(client):
+    _seen_then_moved()
+    r = client.post("/api/core-memory/edit", json={"target": "user", "index": 1, "text": "Walks to work daily."})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    r = client.post("/api/core-memory/delete", json={"target": "user", "index": 0})
+    assert r.status_code == 200 and r.get_json()["ok"]
+    assert cm.entries("user") == ["Walks to work daily."]
+
+
+def test_the_panel_sends_the_line_it_shows_with_each_card_edit_and_delete():
+    for f in ("index.html", "ui_parts/app.html"):
+        body = _panel(f)
+        assert "json({target: at.target, index: at.index, text: text, expect: h.text})" in body, f
+        assert "json({target: at.target, index: at.index, expect: h.text})" in body, f
+
+
+# ── the memory card's routes are the owner's only (review finding: consistency) ──
+
+@pytest.mark.parametrize("principal", ["observer", "paired_phone", "remote"])
+@pytest.mark.parametrize("view, method, body", [
+    ("get_core_memory", "GET", None),
+    ("edit_line", "POST", {"target": "user", "index": 0, "text": "Keeps a dinghy called Wren."}),
+    ("delete_line", "POST", {"target": "user", "index": 0}),
+    ("review_suggestion", "POST", {"id": "x", "keep": True}),
+])
+def test_only_the_owners_own_principal_reads_or_changes_the_card(app, principal, view, method, body):
+    from flask import g
+    from agent_friday.routes import core_memory as routes
+    _card()
+    q = cm.queue("user", "add", text="Wren needs new sails before spring.", source="dream:2026-09-03")
+    if body and "id" in body:
+        body = dict(body, id=q["id"])
+    before = (cm.entries("user"), [p.get("id") for p in cm.pending()])
+    with app.test_request_context("/api/core-memory", method=method, json=body):
+        g.friday_principal = principal
+        r = getattr(routes, view).__wrapped__()
+    resp = r[0] if isinstance(r, tuple) else r
+    assert (r[1] if isinstance(r, tuple) else resp.status_code) == 403, (view, principal)
+    assert "Wren" not in resp.get_data(as_text=True)
+    assert (cm.entries("user"), [p.get("id") for p in cm.pending()]) == before
 
 
 # ── the panel ─────────────────────────────────────────────────────────────────
