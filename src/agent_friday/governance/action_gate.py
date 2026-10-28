@@ -40,7 +40,7 @@ import threading
 import time
 import uuid
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -1058,7 +1058,9 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
          "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
          "uses_left": int(max_uses), "created_by": created_by, "note": note[:200],
-         "created_at": time.time()}
+         "created_at": time.time(),
+         # the governing policy version it was issued under (NS-30.19-1)
+         "policy_version": _policy_version_id()}
     with _LOCK:
         gs = [x for x in _read_grants() if x.get("expires_at", 0) > time.time()]
         gs.append(g)
@@ -1102,8 +1104,11 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
             if (g.get("scope") in scopes and tool_name in (g.get("tools") or [])
                     and g.get("expires_at", 0) > now and int(g.get("uses_left") or 0) > 0):
                 g["uses_left"] = int(g["uses_left"]) - 1
+                # the policy version this use was made under (NS-30.19-1); the
+                # decision receipt that names the grant carries it too
+                g["last_used_policy_version"] = _policy_version_id()
                 _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
-                return dict(g)
+                return dict(g, used_policy_version=g["last_used_policy_version"])
     return None
 
 
@@ -1123,16 +1128,215 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
 #: target, or hash of the arguments (a hash of a short message can be guessed).
 _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
                             "grant", "task_id", "tainted", "chosen_by",
-                            "plan_version")
+                            "plan_version", "action_id", "policy_version", "envelope")
 
 
-def _receipt(entry: dict) -> dict:
+def _policy_version_id() -> Optional[str]:
+    """The governing policy version now (services/policy_version). Records
+    only: nothing here reads it to decide. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        return _pv.current_id()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@dataclass(frozen=True)
+class ActionEnvelope:
+    """The single action envelope (NS-36.3-1, BD-11a): built once per decision
+    on the gate path (`authorize`; `_receipt` builds it for any other decision
+    receipt) and carried to the receipts. Ids, labels and hashes only.
+
+    action_id          ``act_`` + 20 hex: the action every receipt names
+    principal          who the action is for (action_ledger.PRINCIPAL)
+    tool               the tool or executor action
+    args_hash          SHA-256 of the canonical arguments (None when there are none)
+    idempotency_key    ``idk_`` + 24 hex: the same request (same tool, arguments
+                       and turn or task) gets the same key; a caller-supplied
+                       ``idempotency_key`` in the session context is hashed in
+                       instead. Never the arguments themselves.
+    verification_plan  what checks the decision and what record it must leave
+    policy_version     the governing policy version (services/policy_version)
+    claws_state        {"hash", "status"}: the cLaws as this action found them
+    created_at         unix seconds
+    """
+    action_id: str
+    principal: str
+    tool: str
+    args_hash: Optional[str]
+    idempotency_key: Optional[str]
+    verification_plan: dict
+    policy_version: Optional[str]
+    claws_state: dict
+    created_at: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+ENVELOPE_FIELDS = tuple(f.name for f in fields(ActionEnvelope))
+
+
+def _verification_plan(klass, decision, via=None) -> dict:
+    """Labels: the checks the decision passes and the record it must leave."""
+    checks = ["signed_receipt"]
+    if klass == OUTWARD:
+        checks += ["claws_pin", "outward_hold"]
+    if decision == "card":
+        checks.append("approval_card")
+    elif decision == "confirm":
+        checks.append("chat_confirmation")
+    expects = klass in (OUTWARD, OBSERVE) and decision not in ("deny", None)
+    return {"checks": checks, "outcome": "outcome_receipt" if expects else "none",
+            "via": str(via)[:40] if via else None}
+
+
+def _idempotency_key(tool, args_hash, ctx, principal) -> Optional[str]:
+    c = ctx if isinstance(ctx, dict) else {}
+    supplied = str(c.get("idempotency_key") or "").strip()
+    if supplied:
+        basis = "client|%s|%s" % (principal, supplied)
+    elif args_hash:
+        scope = next((str(c[k]) for k in ("turn_id", "task_id", "run_id", "schedule_id",
+                                          "session_id") if c.get(k)), "") or (_turn_id() or "")
+        basis = "derived|%s|%s|%s|%s" % (principal, tool, args_hash, scope)
+    else:
+        return None
+    return "idk_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+
+
+def _current_pv() -> Optional[dict]:
+    """The governing policy version now ({"id", "parts"}), or None when the
+    module cannot be used. Read once per decision and passed along. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        v = _pv.current()
+        return v if isinstance(v, dict) and v.get("id") else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _given_pv(pv: Any) -> Optional[dict]:
+    return pv if isinstance(pv, dict) and pv.get("id") else None
+
+
+#: The policy version `authorize` read for the decision it is recording, so
+#: `_receipt` does not read it again (set only around that one call).
+_DECISION_PV: ContextVar = ContextVar("friday_decision_policy_version", default=None)
+
+
+def build_envelope(tool, *, args_hash: Optional[str] = None, ctx: Optional[dict] = None,
+                   klass=None, decision=None, via=None, action_id: Optional[str] = None,
+                   key: Optional[bytes] = None, pv: Optional[dict] = None) -> ActionEnvelope:
+    """The envelope for one action; records only. `pv`: the policy version
+    the caller already read (else it is read here)."""
+    from agent_friday.services import policy_version as _pv
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    pvd = _given_pv(pv) or _current_pv()
+    principal = str((ctx or {}).get("principal") or _principal)[:40]
+    aid = action_id if _pv.valid_action_id(action_id) else _pv.new_action_id()
+    tool = str(tool or "")[:120]
+    return ActionEnvelope(
+        action_id=aid, principal=principal, tool=tool,
+        args_hash=str(args_hash) if args_hash else None,
+        idempotency_key=_idempotency_key(tool, args_hash, ctx, principal),
+        verification_plan=_verification_plan(klass, decision, via),
+        policy_version=(pvd or {}).get("id"), claws_state=_pv.claws_state(key, pv=pvd),
+        created_at=time.time())
+
+
+def _envelope_of(entry: dict, key: Optional[bytes], pv: Optional[dict] = None) -> dict:
+    """The envelope a receipt carries: the one the gate built (`authorize`
+    puts it in the entry), else one built now, with the cLaws status read
+    under the signing key and the policy version as of this receipt (`pv`)."""
+    from agent_friday.services import policy_version as _pv
+    pvd = _given_pv(pv) or _current_pv()
+    env = entry.get("envelope") if isinstance(entry.get("envelope"), dict) else None
+    if env is None or not _pv.valid_action_id(env.get("action_id")):
+        env = build_envelope(entry.get("tool"), args_hash=entry.get("args_hash"),
+                             klass=entry.get("class"), decision=entry.get("decision"),
+                             via=entry.get("via"), action_id=entry.get("action_id"),
+                             key=key, pv=pvd).to_dict()
+    else:
+        env = {k: env.get(k) for k in ENVELOPE_FIELDS}
+        env["claws_state"] = _pv.claws_state(key, pv=pvd)
+    env["policy_version"] = (pvd or {}).get("id") or env.get("policy_version")
+    return env
+
+
+#: The policy version a receipt names when the version could not be read.
+PV_UNAVAILABLE = "pv_unavailable"
+_LOCAL_ACTION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{3,79}")
+
+
+def _fallback_envelope(entry: dict) -> dict:
+    """The envelope when the policy version module cannot be used: the
+    action id the entry already names (else a local ``act_`` id) and
+    PV_UNAVAILABLE. Still recorded; never holds a decision. Never raises."""
+    given = entry.get("envelope") if isinstance(entry.get("envelope"), dict) else {}
+    aid = next((a for a in (given.get("action_id"), entry.get("action_id"))
+                if isinstance(a, str) and _LOCAL_ACTION_ID.fullmatch(a)), None)
+    try:
+        plan = _verification_plan(entry.get("class"), entry.get("decision"), entry.get("via"))
+    except Exception:  # noqa: BLE001
+        plan = {"checks": ["signed_receipt"], "outcome": "none", "via": None}
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    idk = given.get("idempotency_key")
+    ah = entry.get("args_hash")
+    return {"action_id": aid or "act_" + uuid.uuid4().hex[:20],
+            "principal": str(given.get("principal") or _principal)[:40],
+            "tool": str(entry.get("tool") or "")[:120],
+            "args_hash": str(ah) if ah else None,
+            "idempotency_key": idk if isinstance(idk, str) else None,
+            "verification_plan": plan, "policy_version": PV_UNAVAILABLE,
+            "claws_state": {"hash": None, "status": "unavailable"},
+            "created_at": time.time()}
+
+
+def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
     """Sign and append; returns the ledger entry. Raises on failure, so the
-    caller can hold the action."""
+    caller can hold the action.
+
+    Every decision receipt carries its action envelope (`envelope`, and its
+    `action_id` and `policy_version` at the top), and the policy version it
+    names is on record in the ledger first (policy_version.ensure_recorded).
+    The ledger refuses a receipt without an action id.
+
+    `pv`: the policy version the caller already read for this decision
+    (`authorize` passes it through _DECISION_PV); else it is read once here.
+    The envelope never holds a decision: if it cannot be built, a fallback
+    with a local action id and PV_UNAVAILABLE is recorded instead."""
+    key = _governance_key()
+    pvd = _given_pv(pv) or _given_pv(_DECISION_PV.get()) or _current_pv()
+    try:
+        env = _envelope_of(entry, key, pvd)
+        if not (isinstance(env, dict) and isinstance(env.get("action_id"), str)):
+            raise ValueError("no action id")
+    except Exception as e:  # noqa: BLE001 - the envelope records; it never holds
+        _log.warning("action envelope fell back: %s", type(e).__name__)
+        env = _fallback_envelope(entry)
+    if not env.get("policy_version"):
+        env["policy_version"] = PV_UNAVAILABLE
+    entry = dict(entry, envelope=env, action_id=env["action_id"],
+                 policy_version=env["policy_version"])
+    if pvd is not None and env["policy_version"] == pvd["id"]:
+        try:
+            from agent_friday.services import policy_version as _pvm
+            _pvm.ensure_recorded(pvd)
+        except Exception:  # noqa: BLE001 - recording the version never holds a decision
+            pass
     try:
         from agent_friday.services import off_record as _off
         if _off.active():
             entry = {k: entry.get(k) for k in _OFF_RECORD_RECEIPT_KEYS if k in entry}
+            # no hash of the arguments off the record (a short message can be guessed)
+            entry["envelope"] = dict(env, args_hash=None, idempotency_key=None)
             entry["off_record"] = True
     except ImportError:
         pass
@@ -1146,7 +1350,7 @@ def _receipt(entry: dict) -> dict:
     except ImportError:
         pass
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
-    entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()
+    entry["hmac"] = _hmac.new(key, canonical, hashlib.sha256).hexdigest()
     # One store for what Friday did (services/action_ledger.py): the decision
     # is an entry in the hash-chained ledger, written to disk (fsync) before
     # the action runs. The entry keeps its own HMAC as well, so a decision can
@@ -1173,13 +1377,25 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
     fixed code, never free text, and is left out off the record. Never raises."""
     try:
         from agent_friday.services import action_ledger
+        from agent_friday.services import policy_version as _pv
         try:
             from agent_friday.services import off_record as _off
             if _off.active():
                 detail = ""
         except Exception:
             pass
+        # The action this outcome belongs to: the one its decision names. An
+        # outcome with no decision to name (a call that ran on an approved
+        # card before the checkpoint) gets an action id of its own, marked so.
+        aid = (decision or {}).get("action_id")
+        minted = not _pv.valid_action_id(aid)
+        if minted:
+            aid = _pv.new_action_id()
         action_ledger.try_append("outcome", {
+            "action_id": aid,
+            **({"action_id_origin": "outcome"} if minted else {}),
+            "policy_version": _policy_version_id(),
+            "decision_policy_version": (decision or {}).get("policy_version"),
             "tool": tool, "status": status if status in OUTCOMES else "error",
             "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
             "approval": approval or (decision or {}).get("approval"),
@@ -1308,13 +1524,30 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
+        _args_hash = hashlib.sha256(json.dumps(args or {}, sort_keys=True,
+                                               default=str).encode()).hexdigest()
+        # The single action envelope (NS-36.3-1), built once here and carried
+        # to the decision receipt and, through LAST_RECEIPT, to the outcome.
+        # Records only: nothing reads it to decide. The policy version is read
+        # once and passed on to the receipt.
+        _pvd = _current_pv()
+        try:
+            _env = build_envelope(tool_name, args_hash=_args_hash, ctx=ctx, klass=v.klass,
+                                  decision=v.action, via=via or None, pv=_pvd).to_dict()
+        except Exception as e:  # noqa: BLE001 - _receipt builds one instead
+            _log.warning("action envelope not built here: %s", type(e).__name__)
+            _env = None
+        # (through a context variable, not an argument: callers and tests
+        # replace _receipt with one-argument callables)
+        _pv_token = _DECISION_PV.set(_pvd)
+        try:
+            _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
                   # "tool_call": the governance hook of _execute_tool, whose
                   # call writes an outcome (services/receipt_audit expects one)
                   "via": via or None,
-                  "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
-                                                         default=str).encode()).hexdigest(),
+                  "args_hash": _args_hash,
+                  **({"envelope": _env, "action_id": _env["action_id"]} if _env else {}),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
                                                      "background" if ctx.get("is_background_task") else "other"),
                   "grant": (v.grant or {}).get("grant_id"),
@@ -1325,9 +1558,15 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "chosen_by": _chosen_by(ctx),
                   "plan_version": _plan_version(),
                   "turn_id": _turn_id()})
+        finally:
+            _DECISION_PV.reset(_pv_token)
         _out = _out if isinstance(_out, dict) else {}
+        _orec = _out.get("rec") if isinstance(_out.get("rec"), dict) else {}
         LAST_RECEIPT.set({"seq": _out.get("seq"), "hash": _out.get("hash"), "tool": tool_name,
-                          "class": v.klass, "decision": v.action})
+                          "class": v.klass, "decision": v.action,
+                          "action_id": _orec.get("action_id") or (_env or {}).get("action_id"),
+                          "policy_version": _orec.get("policy_version")
+                          or (_env or {}).get("policy_version")})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":

@@ -85,7 +85,8 @@ def homes(tmp_path, monkeypatch):
         p.write_text(text, encoding="utf-8")
     (a / "security" / "keystore.json").write_text(json.dumps({"wrap": "none", "v": 1}))
     if action_ledger is not None:
-        action_ledger.append("decision", {"tool": "probe_send", "decision": "allow"}, durable=True)
+        action_ledger.append("decision", {"tool": "probe_send", "decision": "allow",
+                                          "action_id": "act_bundle_probe"}, durable=True)
         action_ledger.append("activity", {"kind": "tool_call", "tool": "probe"})
     return a, b, key
 

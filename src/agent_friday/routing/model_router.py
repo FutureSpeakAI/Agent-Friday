@@ -309,6 +309,14 @@ class ModelRouter:
         result["vault_access"] = vault_access
         result["refuse"] = refuse
         result["warning"] = warning
+        # The governing policy version this route was decided under
+        # (services/policy_version, NS-30.19-1). Every route leaves through
+        # here. Records only: nothing reads it to choose a model.
+        try:
+            from agent_friday.services import policy_version as _pv
+            result["policy_version"] = _pv.current_id()
+        except Exception:  # noqa: BLE001
+            result["policy_version"] = None
         return result
 
     def _chosen_seat(self, ctx=None):

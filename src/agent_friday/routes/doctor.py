@@ -120,8 +120,11 @@ def safe_mode_set():
     try:
         plan = safe_mode.set_next_start(body["next_start"])
         try:
-            from agent_friday.services import action_ledger
+            from agent_friday.services import action_ledger, policy_version
+            # a receipt names its action (BD-11a): the ledger refuses one without
             action_ledger.try_append("decision", {
+                "action_id": policy_version.new_action_id(),
+                "policy_version": policy_version.current_id(),
                 "tool": "safe_mode:next_start", "class": "owner", "decision": "allow",
                 "surface": "doctor", "reason": "on" if body["next_start"] else "off"})
         except Exception:
