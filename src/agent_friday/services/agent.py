@@ -5153,7 +5153,9 @@ def _draft_email_send(inp, gs):
             "from": (appr.get("payload") or {}).get("from_email"),
             "note": ("The user PRE-APPROVED sending to these recipients (grant %s), so no "
                      "card was raised. The message goes out after a %d-second undo window; "
-                     "say it is going out under their pre-approval, not that it was sent."
+                     "say it is going out under their pre-approval, not that it was sent. Do "
+                     "not call this tool again for the same message: a repeat is not covered "
+                     "by the pre-approval and would ask the user on a card."
                      % (result.get("pre_approved"), gs.UNDO_SECONDS)),
         }, default=str)
     unattended = bool((_CURRENT_TOOL_CONTEXT.get() or {}).get("schedule_id")

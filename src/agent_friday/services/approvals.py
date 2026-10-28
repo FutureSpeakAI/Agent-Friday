@@ -714,10 +714,19 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     — was_first is True only the FIRST time this is observed."""
     if approval.get("status") != "approved" or approval.get("consumed"):
         return approval, False
-    # When it was burned: a crash after this and before mark_used is judged
-    # from this moment (services/card_recovery), never from the decision.
-    updated = _patch(approval["approval_id"], consumed=True, consumed_at=time.time())
-    return (updated or approval), True
+    # The check and the burn happen together under the store lock, against the stored record,
+    # not the caller's copy: two sends that both read the card before either burned it used to
+    # both see was_first=True and both go out. Only one of them wins now.
+    with _LOCK:
+        recs = _read_store()
+        rec = next((r for r in recs if r.get("approval_id") == approval.get("approval_id")), None)
+        if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
+            return (dict(rec) if rec else approval), False
+        # When it was burned: a crash after this and before mark_used is judged
+        # from this moment (services/card_recovery), never from the decision.
+        rec.update(consumed=True, consumed_at=time.time())
+        _write_store(recs)
+        return dict(rec), True
 
 
 def gate_action(*, kind: str, subject_type: str, subject_id: str, title: str,

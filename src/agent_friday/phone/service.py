@@ -296,8 +296,15 @@ def _send_sms_now(to: str, body: str, *, detail: str, secret: bool = False) -> d
 def text_owner(body: str, *, reason: str = "alert") -> dict:
     """Text the verified owner cell. Passes the checkpoint and the egress gate."""
     owner = config.verified_owner_cell()
-    checkpoint("sms", owner)
-    return _send_sms_now(owner, _gate_text(body), detail=reason)
+    # The hourly and daily caps count sends in the ledger, and a send is written there only once
+    # Twilio answers. Two texts at once both read the count before either was written and both
+    # went past the cap; one at a time, the second sees the first.
+    with _OWNER_TEXT_LOCK:
+        checkpoint("sms", owner)
+        return _send_sms_now(owner, _gate_text(body), detail=reason)
+
+
+_OWNER_TEXT_LOCK = threading.Lock()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

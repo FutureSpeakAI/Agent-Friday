@@ -60,6 +60,8 @@ import hashlib
 import json
 import logging
 import re
+import threading as _threading
+import time as _time
 from email import policy as _email_policy
 from email.message import EmailMessage
 from agent_friday.user_errors import UserFacingError, log_failure
@@ -328,12 +330,54 @@ def _withheld_reason() -> str:
         return ""
 
 
-def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
-                 account_id: str | None = None,
-                 requested_by: str = "friday", html: str | None = None,
-                 thread_id: str | None = None, in_reply_to: str | None = None,
-                 references: str | None = None, attachments=None,
-                 send_at: str | None = None) -> dict:
+#: One request at a time: the "is there already a card for this message" check and the record it
+#: creates happen together, so two identical requests at once make one card (or one pre-approved
+#: send), not two.
+_REQUEST_LOCK = _threading.RLock()
+
+#: An identical message (same recipients, subject, text) that went out under a pre-approval this
+#: recently is not sent again by that pre-approval: a repeat is a retry far more often than an
+#: intent, and a retry after an unclear failure must not put a second copy in someone's inbox. The
+#: repeat asks on a card instead, which says why.
+REPEAT_WINDOW_S = 6 * 3600
+
+
+def _recent_pre_approved_copy(fingerprint: str, now: float | None = None) -> dict | None:
+    """The newest record of this exact message already spent under a pre-approval within
+    REPEAT_WINDOW_S (sent, maybe sent, or taken back), or None."""
+    from agent_friday.services import approvals as _ap
+    now = _time.time() if now is None else now
+    for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):
+        if (rec.get("payload") or {}).get("fingerprint") != fingerprint:
+            continue
+        if not rec.get("pre_approved") or not rec.get("consumed"):
+            continue
+        if now - float(rec.get("created_at") or 0) <= REPEAT_WINDOW_S:
+            return rec
+    return None
+
+
+def _repeat_words(rec: dict, now: float | None = None) -> str:
+    now = _time.time() if now is None else now
+    mins = max(1, int(round((now - float(rec.get("created_at") or now)) / 60)))
+    ago = ("%d minute%s ago" % (mins, "" if mins == 1 else "s")) if mins < 120 \
+        else ("%d hours ago" % (mins // 60))
+    return ("an identical message was already sent to them under it %s (or tried: check Sent), "
+            "so sending it again is yours to decide" % ago)
+
+
+def request_send(**kw) -> dict:
+    """See _request_send. Serialised by _REQUEST_LOCK (one card per message, even at once)."""
+    with _REQUEST_LOCK:
+        return _request_send(**kw)
+
+
+def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
+                  account_id: str | None = None,
+                  requested_by: str = "friday", html: str | None = None,
+                  thread_id: str | None = None, in_reply_to: str | None = None,
+                  references: str | None = None, attachments=None,
+                  send_at: str | None = None) -> dict:
     """Ask to send. Returns the approval card; sends nothing.
 
     This is the only way to start a send, and it never delivers.
@@ -418,6 +462,13 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
         if not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
             withheld = ("this message has private details and was written on a cloud model, "
                         "so you see it first")
+    # The same message already went (or may have) under a pre-approval a short while ago: a
+    # retry is not covered by it. It asks on this card, which says so.
+    repeat = None
+    if not sensitive and not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
+        repeat = _recent_pre_approved_copy(fp)
+        if repeat is not None:
+            withheld = _repeat_words(repeat)
     if withheld:
         # A reason that names its own subject ("This chat read an outside email, so your
         # pre-approval doesn't cover this send") stands as it is.
@@ -455,7 +506,7 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     # for the exact message, so a grant revoked a moment ago is not used. The
     # record is created approved by that grant: no card, but the same undo
     # window, burn-once send, outbox and a logged use.
-    grant = None if sensitive else _pre_approval(tos + ccs + _addresses(bcc or []))
+    grant = None if (sensitive or repeat is not None) else _pre_approval(tos + ccs + _addresses(bcc or []))
     if grant is not None:
         appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
         if appr.get("status") == "approved" and not appr.get("consumed"):
@@ -655,9 +706,27 @@ def send(approval_id: str) -> dict:
         sent = svc.users().messages().send(userId="me", body=send_body).execute()
     except Exception as e:
         _log.warning("send failed: %s", e)
-        _outbox_record(appr, ok=False, error=str(e)[:500])
-        _record_egress(payload, raw, "failed")
-        raise SendRefused("Gmail refused the message (error %s)." % log_failure(e, "Gmail send failed"),
+        # Only a refusal from Gmail (an HTTP 4xx) means it did not go. A timeout, a dropped
+        # connection or a server error may have come after Gmail accepted it: say so, record it
+        # as unconfirmed, and never invite a blind resend (a second copy in someone's inbox).
+        try:
+            from agent_friday.services import egress_gate as _eg
+            outcome = _eg.result_for_error(e)
+        except Exception:
+            outcome = "sent_unconfirmed"
+        unconfirmed = outcome != "failed"
+        _outbox_record(appr, ok=False, error=str(e)[:500], unconfirmed=unconfirmed)
+        _record_egress(payload, raw, outcome)
+        code = log_failure(e, "Gmail send failed")
+        if unconfirmed:
+            err = SendRefused(
+                "Gmail did not confirm the message (error %s). It may have been sent: check your "
+                "Sent folder before sending it again." % code,
+                detail="Gmail did not confirm the message, so it may have been sent; do not send "
+                       "it again without checking: %s" % str(e)[:300])
+            err.unconfirmed = True
+            raise err
+        raise SendRefused("Gmail refused the message (error %s)." % code,
                           detail="Gmail refused the message: %s" % str(e)[:300])
 
     _record_egress(payload, raw, "sent")
@@ -1168,7 +1237,8 @@ def _deliver(approval_id: str, to) -> None:
         _log.info("held message sent %s", result.get("message_id"))
     except SendRefused as e:
         # The owner pressed approve and reasonably believes the message went.
-        _notify("Email NOT sent", str(e), priority="high", kind="warning")
+        _notify("Email may have been sent" if getattr(e, "unconfirmed", False) else "Email NOT sent",
+                str(e), priority="high", kind="warning")
     except Exception as e:
         _log.warning("held send crashed: %s", e)
         _notify("Email NOT sent", "Something went wrong sending it: %s" % str(e)[:200],
@@ -1255,10 +1325,11 @@ def _outbox_path():
 
 
 def _outbox_record(appr: dict, *, ok: bool, message_id: str | None = None,
-                   error: str | None = None) -> None:
+                   error: str | None = None, unconfirmed: bool = False) -> None:
     import time
     payload = appr.get("payload") or {}
     row = {"at": time.time(), "ok": bool(ok),
+           **({"unconfirmed": True} if unconfirmed else {}),
            "approval_id": appr.get("approval_id"),
            "from": payload.get("from_email"),
            "to": payload.get("to"), "cc": payload.get("cc"),
