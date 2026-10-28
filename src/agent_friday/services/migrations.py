@@ -33,7 +33,11 @@ before Friday uses its data folder:
    cannot be put back, Friday does not start, and the journal names the copy.
 
 A folder from a newer Friday (schema above what this Friday knows) is never
-touched. Safe mode here lasts for this start only: the next start tries again.
+touched (safe mode for that start; the next start looks again). A migration
+that failed, was cut off unusably, or found a link in its way keeps Friday in
+safe mode until the owner leaves it with a press on the Doctor page
+(safe_mode.set_next_start with reason "migration_failed"); the next start still
+tries the migration again.
 """
 from __future__ import annotations
 
@@ -52,6 +56,7 @@ SCHEMA_FILE = "schema.json"
 JOURNAL_SUFFIX = ".migration-journal.json"
 LOCK_SUFFIX = ".migration.lock"
 BACKUP_INFIX = ".pre-migration-"
+MARKER_REASON = "migration_failed"      # safe_mode's marker: left only by a press on the PC
 KEEP_BACKUPS = 3
 
 
@@ -351,6 +356,15 @@ def run_pending(home: Optional[Path] = None) -> Optional[dict]:
             return _run_locked(home)
 
 
+def _keep_safe_mode() -> None:
+    """Safe mode from now until the owner leaves it with a press on the PC."""
+    try:
+        from agent_friday.services import safe_mode
+        safe_mode.set_next_start(True, reason=MARKER_REASON)
+    except Exception:  # noqa: BLE001 - this start is safe mode regardless (FRIDAY_SAFE_START)
+        pass
+
+
 def _fail(home: Path, jr: dict, number: int, name: str, err: str) -> dict:
     """Put the files back; journaled first so a stop here is finished next start."""
     jr.update(state="restoring", failed=number, error=err, step="restoring")
@@ -375,9 +389,10 @@ def _fail(home: Path, jr: dict, number: int, name: str, err: str) -> dict:
         _journal_path(home).unlink()     # the next start tries again from the restored folder
     except FileNotFoundError:
         pass
+    _keep_safe_mode()
     return {"ok": False, "safe_mode": True, "failed": number,
-            "why": "migration %d (%s) failed (%s); the files it touches were put back and this start "
-                   "is safe mode" % (number, name, err)}
+            "why": "migration %d (%s) failed (%s); the files it touches were put back, and Friday stays "
+                   "in safe mode until you leave it on the Doctor page" % (number, name, err)}
 
 
 def _run_locked(home: Path) -> dict:
@@ -403,6 +418,7 @@ def _run_locked(home: Path) -> dict:
         backup_ok = shape_ok and (not jr["copied"] or Path(jr.get("backup") or "").is_dir())
         print_ok = shape_ok and jr.get("fingerprint") == _fingerprint(home, jr["touches"])
         if jr.get("to") != want or not backup_ok or not print_ok:
+            _keep_safe_mode()
             return {"ok": False, "safe_mode": True,
                     "why": "a migration was cut off, and its saved copy is missing or its files changed "
                            "since; nothing was changed. The journal beside the data folder says what ran."}
@@ -410,6 +426,7 @@ def _run_locked(home: Path) -> dict:
     else:
         bad = _links_in(home, touches)
         if bad:
+            _keep_safe_mode()
             return {"ok": False, "safe_mode": True,
                     "why": "a file a migration would change is a link or a junction (%s); nothing was "
                            "changed" % ", ".join(bad)}

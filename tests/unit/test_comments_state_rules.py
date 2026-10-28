@@ -55,6 +55,7 @@ FILES = [
     "tests/unit/test_migrations.py",
     "tests/unit/test_diagnostic_start.py",
     "tests/api/test_diagnostic_route.py",
+    "tests/api/test_migration_safe_mode_route.py",
     "tests/api/test_authority_routes.py",
     "tests/api/test_bundle_routes.py",
     "tests/api/test_bundle_schedule_routes.py",
