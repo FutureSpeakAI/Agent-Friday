@@ -97,6 +97,7 @@ _TOP_CATEGORY = {
     "provenance": "receipts", "governance": "receipts", "actions": "receipts",
     "trash": "receipts", "trust": "receipts", "inbox_cleanup": "receipts",
     "conversations": "conversations",
+    "migrations": "receipts",            # upgrade receipts, the rebuild queue, the owner's list
 }
 _FILE_CATEGORY = {
     "user_model.db": "memory", "user_model.json": "memory", "wiki-pending.json": "memory",
@@ -104,7 +105,7 @@ _FILE_CATEGORY = {
     "personality.json": "memory", "SOUL.md": "memory", "agent-personality.txt": "memory",
     "trajectories.jsonl": "memory",
     "settings.json": "settings", "privacy_shield.json": "settings",
-    "mcp_servers.json": "settings",
+    "mcp_servers.json": "settings", "schema.json": "settings",
     "approvals.json": "receipts", "decisions.jsonl": "receipts", "gate_events.jsonl": "receipts",
     "costs.db": "receipts", "work_log.db": "receipts", "sent_mail.jsonl": "receipts",
     "chat_history.json": "conversations",
@@ -115,7 +116,7 @@ _FILE_CATEGORY = {
 #: (Windows folders are not case-sensitive).
 _EXCLUDED_TOPS = {"runtime", "local_voice", "models", "cache", "backups", "logs", "tmp",
                   "audio-cache", "vibe-code-logs", "tool-output", "browser-profile",
-                  "doctor", "safe_mode", "boot_guard", "restore", "tls", "local-address",
+                  "doctor", "diagnostics", "safe_mode", "boot_guard", "restore", "tls", "local-address",
                   "providers", "google_accounts", "mcp_oauth", "platforms", "signing",
                   "browser-sessions"}
 #: Exact paths (and folders) never carried, relative, POSIX, lower case.

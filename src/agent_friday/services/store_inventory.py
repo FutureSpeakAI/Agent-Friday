@@ -86,6 +86,8 @@ def _f(name, loc, fmt, version=_N, durable=True):
 STORES: tuple[Store, ...] = (
     # settings, persona, identity
     _f("settings", "settings.json", "json", _J),
+    _f("data_schema", "schema.json", "json", ("json", ("schema",))),
+    _f("upgrade_records", "migrations/", "json folder"),
     _f("config_yaml", "config.yaml", "yaml", _X),
     _f("setup_complete_marker", ".setup_complete", "marker"),
     _f("soul", "SOUL.md", "markdown"),
@@ -305,6 +307,7 @@ STORES: tuple[Store, ...] = (
     _f("vibe_code_logs", "vibe-code-logs/", "logs", _N, False),
     _f("payload_trace", "payload_trace.jsonl", "log", _N, False),
     _f("doctor_reports", "doctor/", "reports on this PC", _N, False),
+    _f("diagnostic_reports", "diagnostics/", "reports on this PC", _N, False),
     _f("safe_mode", "safe_mode/", "this run state", _N, False),
     _f("boot_guard", "boot_guard/", "this run state", _N, False),
     _f("restore_state", "restore/", "this run state", _N, False),
