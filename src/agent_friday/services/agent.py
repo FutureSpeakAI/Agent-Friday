@@ -10086,6 +10086,12 @@ CLAUDE_TOOL_HANDLERS.update({
 # Ring 1 WRITE  — local state mutation, always allowed
 # Ring 2 NETWORK — external calls, agent spawn; requires authenticated session
 # Ring 3 FULL   — OS-level control (mouse, keyboard, screen); requires CC permission
+#: The only tools a turn may use on a call with someone other than the owner (a call
+#: Friday placed): reading the owner's calendar to arrange a time. Every other tool,
+#: including every ring-0 read of the owner's files, notes, library, memory and mail,
+#: is refused there. An allowlist: a read tool added later stays closed by default.
+OTHER_PARTY_CALL_TOOLS = frozenset({"query_calendar", "find_calendar_events", "check_plan_travel"})
+
 TOOL_RINGS: dict[str, int] = {
     "list_crew": 0,
     "ask_crew": 2,
@@ -13115,6 +13121,14 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
         allowed = False
         reason = _scope_denial
         policy = "cLaw:SubagentScope"
+    elif ctx.get("call_party") == "other" and tool_name not in OTHER_PARTY_CALL_TOOLS:
+        # On a call with someone who is not the owner (a call Friday placed), only
+        # the owner's calendar may be read, to arrange a time. Their files, notes,
+        # library, memory and mail stay closed to the other person (NS-34.17-2).
+        allowed = False
+        reason = ("on a call with someone else, Friday reads only your calendar; "
+                  "your files, notes and other records stay closed")
+        policy = "cLaw:OtherPartyCall"
     elif ctx.get("origin") == "phone" and ring > 0:
         # A turn started by a text or call is not the owner at the machine:
         # caller ID can be forged and the words are whatever the sender typed.

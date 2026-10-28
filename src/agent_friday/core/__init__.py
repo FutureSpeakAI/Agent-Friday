@@ -5018,7 +5018,8 @@ def check_auth():
             pass
         if not _obs.verify(_obs_token):
             return jsonify({"error": "observer credential not recognised"}), 401
-        if not _obs.is_read_allowed(request.method, request.path):
+        _rule = getattr(getattr(request, "url_rule", None), "rule", None)
+        if not _obs.is_read_allowed(request.method, request.path, _rule):
             return jsonify({"error": "observer credential is read-only: this route is not available to it",
                             "principal": "observer"}), 403
         return None

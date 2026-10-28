@@ -302,8 +302,15 @@ class CallBridge:
         from agent_friday.services.agent_identity import named
         msgs[0]["content"] = named(CALL_NOTE) + "\n\n" + msgs[0]["content"]
         last = history[-1]["text"] if history else ""
+        ctx = {"origin": "phone", "authenticated": False}
+        if str((self.params or {}).get("direction") or "").lower() != "inbound":
+            # A call Friday placed (or one whose direction is unknown): the other
+            # person is not the owner. Only the owner's calendar may be read, to
+            # arrange a time; files, notes, the library and memory stay closed
+            # (agent._governance_check, NS-34.17-2).
+            ctx["call_party"] = "other"
         reply, _ = _generate_agent(
-            msgs, session_ctx={"origin": "phone", "authenticated": False},
+            msgs, session_ctx=ctx,
             system_builder=lambda provider: _gated_system_prompt(provider, keywords=last),
             workspace="chat", max_tokens=400)
         return reply or ""
