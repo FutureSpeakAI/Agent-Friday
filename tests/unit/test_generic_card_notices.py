@@ -53,7 +53,7 @@ CASES = [
     ("tool_confirm", "Create task %s" % SECRET_TASK,
      {"tool": "create_task", "input": {"title": SECRET_TASK}}, "A task change is waiting for you"),
     ("external_message", "Send email to %s" % SECRET_ADDR,
-     {"handler": "gmail_send", "to": [SECRET_ADDR]}, "An email is waiting for you"),
+     {"handler": "gmail_send", "to": [SECRET_ADDR]}, "An email to send is waiting for you"),
 ]
 
 
@@ -111,6 +111,62 @@ def test_a_text_offering_a_card_says_what_kind_not_its_title(phone_home, fake_tw
                               payload={"handler": "gmail_send"}, force_gate=True)
     assert service.offer_pending_approvals() == 1
     body = fake_twilio.sent_bodies()[-1]
-    assert SECRET_ADDR not in body and "An email is waiting for you" in body
+    assert SECRET_ADDR not in body and "An email to send is waiting for you" in body
     for p in phone_home.rglob("sms_approvals.json"):
         assert SECRET_ADDR not in p.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("kind,payload,words", [
+    ("governed_action", {"handler": "item_batch", "domain": "email"}, "A change to your mail is waiting for you"),
+    ("governed_action", {"handler": "item_batch", "domain": "calendar_undo"}, "A calendar change is waiting for you"),
+    ("domain_change", {"domain": "mail.example.test"}, "An action is waiting for you"),
+    ("tool_confirm", {"tool": "run_command"}, "A command to run is waiting for you"),
+    ("governed_action", {"handler": "meeting_calendar"}, "A calendar change is waiting for you"),
+])
+def test_the_kind_comes_from_what_the_card_does_not_from_a_name_in_it(kind, payload, words):
+    assert approvals.notice_title({"kind": kind, "payload": payload, "title": "Synthetic"}) == words
+
+
+def test_an_expired_card_notice_is_scrubbed_too(store):
+    ne = store
+    rec = _card("tool_confirm", "Create task %s" % SECRET_TASK,
+                {"tool": "create_task", "input": {"title": SECRET_TASK}})
+    items = ne._load()
+    for n in items:
+        if n.get("dedupe_key") == "approval:%s" % rec["approval_id"]:
+            n["title"] = "Approval needed: " + SECRET_TASK
+    ne._save(items)
+    assert approvals.expire_matching(lambda r: r.get("approval_id") == rec["approval_id"],
+                                     by="synthetic switch-off") == 1
+    assert SECRET_TASK not in ne.NOTIF_FILE.read_text(encoding="utf-8")
+
+
+def test_notices_stored_before_generic_titles_are_rewritten_by_the_sweep(store):
+    ne = store
+    waiting = _card("tainted_action", 'Create calendar event “%s”' % SECRET_EVENT,
+                    {"tool": "create_calendar_event", "input": {"summary": SECRET_EVENT}})
+    items = ne._load()
+    for n in items:
+        if n.get("dedupe_key") == "approval:%s" % waiting["approval_id"]:
+            n.update(title="Approval needed: " + SECRET_EVENT, body=SECRET_EVENT)
+    items.append({"id": "old-decided", "title": "Approval needed: " + SECRET_TASK, "body": SECRET_TASK,
+                  "dismissed": True, "read": True, "dedupe_key": "approval:appr_gone000001",
+                  "kind": "approval_pending", "source": "approvals", "meta": {"detail": SECRET_TASK}})
+    items.append({"id": "old-expired", "title": "An approval expired before you saw it: " + SECRET_TASK,
+                  "body": "", "dismissed": False, "dedupe_key": "approval-expired:appr_gone000002",
+                  "kind": "approval_expired_held", "source": "approvals", "meta": {}})
+    ne._save(items)
+    approvals.expire_stale()
+    text = ne.NOTIF_FILE.read_text(encoding="utf-8")
+    assert SECRET_EVENT not in text and SECRET_TASK not in text
+    still = [n for n in json.loads(text)["items"] if n.get("dedupe_key") == "approval:%s" % waiting["approval_id"]]
+    assert still and still[0]["title"] == "A calendar change is waiting for you" and not still[0]["dismissed"]
+
+
+def test_the_unfinished_actions_notice_names_kinds_not_titles(store, monkeypatch):
+    from agent_friday.services import card_recovery
+    got = _pushed(monkeypatch)
+    card_recovery._announce([{"approval_id": "appr_x00000001", "kind": "tool_confirm",
+                              "title": "Create task %s" % SECRET_TASK,
+                              "payload": {"tool": "create_task"}}])
+    assert got and SECRET_TASK not in json.dumps(got) and "a task change" in got[-1]["body"]
