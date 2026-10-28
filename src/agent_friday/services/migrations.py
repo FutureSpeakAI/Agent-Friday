@@ -384,16 +384,19 @@ def run_pending(home: Optional[Path] = None) -> Optional[dict]:
 
 
 def _keep_safe_mode() -> None:
-    """Safe mode from now until the owner leaves it with a press on the PC."""
+    """Safe mode from now until the owner leaves it with a press on the PC.
+    The marker is written under friday_home(), the folder run_pending works on
+    at start."""
     try:
         from agent_friday.services import safe_mode
         safe_mode.set_next_start(True, reason=MARKER_REASON)
-    except Exception:  # noqa: BLE001 - this start is safe mode regardless (FRIDAY_SAFE_START)
-        pass
+    except Exception as e:  # noqa: BLE001 - this start is safe mode regardless (FRIDAY_SAFE_START)
+        print("  Migrations: could not keep safe mode for later starts (%s)" % type(e).__name__)
 
 
 def _fail(home: Path, jr: dict, number: int, name: str, err: str) -> dict:
     """Put the files back; journaled first so a stop here is finished next start."""
+    _keep_safe_mode()                    # first: a stop below still leaves Friday in safe mode
     jr.update(state="restoring", failed=number, error=err, step="restoring")
     _journal(home, jr)
     try:
@@ -422,7 +425,6 @@ def _fail(home: Path, jr: dict, number: int, name: str, err: str) -> dict:
                 "again." % (number, name, err),
                 "Restart Friday to try again. If it keeps failing, make a Friday Bundle and run friday "
                 "diagnose. Leave safe mode on the Doctor page when it has run.")
-    _keep_safe_mode()
     return {"ok": False, "safe_mode": True, "failed": number,
             "why": "migration %d (%s) failed (%s); the files it touches were put back, and Friday stays "
                    "in safe mode until you leave it on the Doctor page" % (number, name, err)}

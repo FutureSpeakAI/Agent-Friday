@@ -165,6 +165,32 @@ def test_a_failed_migration_keeps_safe_mode_until_the_owner_presses_on_the_docto
         safe_mode.reset_for_tests()
 
 
+def test_a_torn_safe_mode_marker_is_read_as_the_stricter_one(home, monkeypatch):
+    _mg()
+    from agent_friday import cli
+    from agent_friday.services import safe_mode
+    p = safe_mode.marker_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{"chosen_at": 17', encoding="utf-8")              # cut off mid-write
+    assert safe_mode.marker_reason() == "migration_failed"
+    assert cli.cmd_safe_mode("off") == 2 and p.exists()
+    safe_mode.set_next_start(True)                                   # rewritten whole, reason kept
+    assert json.loads(p.read_text(encoding="utf-8"))["reason"] == "migration_failed"
+    assert not list(p.parent.glob("*.partial-*"))
+
+
+def test_safe_mode_is_kept_before_the_files_are_put_back(home, monkeypatch):
+    mg = _mg()
+    order = []
+    from agent_friday.services import safe_mode
+    monkeypatch.setattr(safe_mode, "set_next_start", lambda on, reason=None: order.append("marker") or {})
+    real = mg._put_back
+    monkeypatch.setattr(mg, "_put_back", lambda *a, **k: order.append("put_back") or real(*a, **k))
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg, fail_at=2))
+    mg.run_pending(home)
+    assert order[:2] == ["marker", "put_back"]
+
+
 @pytest.mark.parametrize("how", ["link", "cut_off"])
 def test_a_migration_that_cannot_run_keeps_safe_mode_too(home, monkeypatch, asked, how):
     mg = _mg()
