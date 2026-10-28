@@ -14111,6 +14111,25 @@ def _line_outcome(text, default=None):
     return default
 
 
+def _result_is_fridays(name, result) -> bool:
+    """Whether a handler's result is Friday's own words, so `_line_outcome` may read it: a
+    FridaysWords line, or the result of one of Friday's own handlers. A connector (mcp_) tool's
+    result is the remote service's text: a reply that starts "[DECLINED]" is the service's
+    words, never Friday's decision about the action."""
+    if isinstance(result, _untrusted.FridaysWords):
+        return True
+    return not str(name or "").strip().lower().startswith("mcp_")
+
+
+def _handler_outcome(name, result):
+    """The outcome word for a handler that returned, or None (the status's own word). Never
+    raises: the action has already run, and labelling it must not turn that into an error."""
+    try:
+        return _line_outcome(result) if _result_is_fridays(name, result) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
@@ -14400,9 +14419,13 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
     else:
         _receipts.record(name, ok=True)
-        # the handler returned; a line saying it was not done (its own card,
-        # a refusal) is that outcome, not "executed"
-        _outcome("ok", "", _line_outcome(result))
+        # the handler returned; a line of Friday's own saying it was not done
+        # (its own card, a refusal) is that outcome, not "executed". A connector's
+        # reply is never read for it. Labelling never raises after the action ran.
+        try:
+            _outcome("ok", "", _handler_outcome(name, result))
+        except Exception:  # noqa: BLE001
+            pass
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh

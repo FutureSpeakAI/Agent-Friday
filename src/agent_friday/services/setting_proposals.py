@@ -262,6 +262,9 @@ def _on_decision(record: dict) -> None:
         ok = not text.upper().startswith(("SWITCH_FAIL", "LAYOUT_FAIL", "DAY_FAIL", "SETTING_FAIL")) and "error" not in text[:40].lower()
     except Exception as e:
         text = "%s: %s" % (type(e).__name__, e)
+    # the change's own result closes the decision authorize_external wrote (BD-11a)
+    action_gate.close_external((v.detail or {}).get("decision_ref"), ok,
+                               detail="setting_changed" if ok else "setting_not_changed")
     try:
         ap.mark_used(aid, "setting_proposals", {"ok": ok, "summary": text[:300]})
     except Exception:

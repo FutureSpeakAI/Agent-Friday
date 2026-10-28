@@ -1381,6 +1381,10 @@ OUTCOME_STATUSES = ("ok", "error", "refused", "held")
 #   waiting             a card for it is already open, or everything is stopped
 #   failed              it was tried and did not work, or the check itself failed
 #   completed_verified  it ran and the service confirmed it (an id came back)
+#   unconfirmed         nobody knows yet: the request that carried it out
+#                       answered, but its executor never said what became of it
+#                       (settle_request_externals), or a send the gateway could
+#                       not confirm. Not terminal: a later outcome may close it.
 
 EXECUTED = "executed"
 APPROVAL_REQUIRED = "approval_required"
@@ -1389,7 +1393,9 @@ FORBIDDEN = "forbidden"
 WAITING = "waiting"
 FAILED = "failed"
 COMPLETED_VERIFIED = "completed_verified"
-OUTCOMES = (EXECUTED, APPROVAL_REQUIRED, DENIED, FORBIDDEN, WAITING, FAILED, COMPLETED_VERIFIED)
+UNCONFIRMED = "unconfirmed"
+OUTCOMES = (EXECUTED, APPROVAL_REQUIRED, DENIED, FORBIDDEN, WAITING, FAILED, COMPLETED_VERIFIED,
+            UNCONFIRMED)
 #: After one of these nothing more happens to the action: its terminal receipt.
 TERMINAL_OUTCOMES = frozenset({EXECUTED, FAILED, COMPLETED_VERIFIED, DENIED, FORBIDDEN})
 #: An outcome entry's status as an outcome word.
@@ -1507,7 +1513,10 @@ def close_external(ref: Optional[dict], ok: bool = True, *, detail: str = "",
     `ok` executed, else failed; `verified` (the service confirmed it, an id
     came back) completed_verified; `outcome` names another word. Once per
     decision; anything but a decision it returned is ignored. True when an
-    outcome was written. Never raises."""
+    outcome was written. Never raises.
+
+    `outcome=UNCONFIRMED` is not terminal: it is written at most once and the
+    decision stays open for the real outcome."""
     try:
         r = ref
         # a decision the ledger did not keep (no action id) has nothing to close
@@ -1516,18 +1525,81 @@ def close_external(ref: Optional[dict], ok: bool = True, *, detail: str = "",
             return False
         oc = outcome if outcome in OUTCOMES else (
             COMPLETED_VERIFIED if ok and verified else EXECUTED if ok else FAILED)
+        if oc == UNCONFIRMED and r.get("_unconfirmed"):
+            return False
         record_outcome(str(r.get("tool") or ""), r, "ok" if ok else "error",
                        approval=r.get("approval"), detail=detail, outcome=oc)
-        r["_closed"] = True
+        if oc in TERMINAL_OUTCOMES:
+            r["_closed"] = True
+        else:
+            r["_unconfirmed"] = oc == UNCONFIRMED or bool(r.get("_unconfirmed"))
         return True
     except Exception:  # noqa: BLE001
         return False
 
 
+def answer_outcome(resp) -> Optional[str]:
+    """The outcome word a route's own answer gives for the change it made
+    itself (the route is the executor, and builds its answer from the change's
+    result): failed for an error status or an error body, unconfirmed for a
+    partial or streamed answer, else executed. None when it cannot be read."""
+    try:
+        if resp.status_code >= 400:
+            return FAILED
+        if resp.is_streamed or resp.direct_passthrough or not resp.is_json:
+            return UNCONFIRMED
+        body = resp.get_json(silent=True)
+        if not isinstance(body, dict):
+            return UNCONFIRMED
+        st = str(body.get("status") or "").lower()
+        if st in ("error", "conflict", "denied", "failed") or body.get("ok") is False:
+            return FAILED
+        if st in ("partial", "unsure", "pending", "queued") or resp.status_code == 202:
+            return UNCONFIRMED
+        return EXECUTED
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def close_on_answer(ref: Optional[dict], detail: str = "route_answer") -> Optional[dict]:
+    """For a route that carries out the change itself, inside this request:
+    close `ref` from the route's own answer (`answer_outcome`) as the answer
+    leaves. Outside a request this does nothing (the caller closes it).
+    Returns `ref`."""
+    if not isinstance(ref, dict):
+        return ref
+    try:
+        from flask import after_this_request, has_request_context
+        if not has_request_context():
+            return ref
+
+        @after_this_request
+        def _close(resp):
+            oc = answer_outcome(resp)
+            if oc is not None:
+                close_external(ref, oc in (EXECUTED, UNCONFIRMED), detail=detail, outcome=oc)
+            return resp
+    except Exception:  # noqa: BLE001
+        pass
+    return ref
+
+
+def defer_external(ref: Optional[dict]) -> Optional[dict]:
+    """Mark a decision as one its executor closes later, outside this request
+    (a scheduled publish closes when the publish finishes): the request's
+    settlement leaves it alone. Returns `ref`."""
+    if isinstance(ref, dict):
+        ref["_deferred"] = True
+    return ref
+
+
 def settle_request_externals(ok: bool, detail: str = "") -> int:
     """At the end of a request: every decision `record_external` wrote in it
-    that its executor did not close gets its outcome from the answer (`ok`:
-    the request answered without an error). Returns how many. Never raises."""
+    that its executor neither closed nor deferred is marked `unconfirmed` (not
+    terminal), with a fixed code saying how the request ended (`ok`: it answered
+    without an error). The request's answer is not evidence of what became of
+    the action, so settlement never writes executed or failed. Returns how
+    many. Never raises."""
     try:
         from flask import g, has_request_context
         if not has_request_context():
@@ -1538,8 +1610,9 @@ def settle_request_externals(ok: bool, detail: str = "") -> int:
         return 0
     n = 0
     for r in refs:
-        if isinstance(r, dict) and not r.get("_closed"):
-            n += bool(close_external(r, ok, detail=detail or ("request_ok" if ok else "request_failed")))
+        if isinstance(r, dict) and not r.get("_closed") and not r.get("_deferred"):
+            n += bool(close_external(r, ok, outcome=UNCONFIRMED,
+                                     detail=detail or ("request_ok" if ok else "request_error")))
     return n
 
 
@@ -1963,7 +2036,9 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
 
     Returns the decision as an outcome names it; the executor writes the
     action's terminal outcome with `close_external` (inside a request, one it
-    leaves open is settled from the answer: settle_request_externals).
+    leaves open is marked unconfirmed: settle_request_externals). The
+    decision receipt carries no outcome word: nothing has run yet, and what
+    became of the action is its outcome receipt's to say.
     """
     import agent_friday.core as _core_gs
     if _core_gs.GLOBAL_STOP.is_set():
@@ -1982,7 +2057,7 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
         out = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
                         "surface": surface,
                         "reason": "approved card" if approval_id else surface,
-                        "approval": approval_id, "target": target, "outcome": EXECUTED})
+                        "approval": approval_id, "target": target})
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
     return _external_ref(out, action, approval_id)

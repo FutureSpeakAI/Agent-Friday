@@ -217,7 +217,8 @@ def test_every_channel_send_has_a_receipt_and_the_gateway_reply_is_gated(monkeyp
     assert a.send("123456789", "again")["ok"] is False and sent == ["hello"]
     src = open(__import__("agent_friday.services.channels.discord_bridge", fromlist=["x"]).__file__,
                encoding="utf-8").read()
-    assert "prepare_outbound(" in src and "await message.channel.send(reply" not in src
+    assert "prepare_outbound_ref(" in src and "await message.channel.send(reply" not in src
+    assert "report_outbound(" in src                  # the gateway's answer closes the decision
 
 
 

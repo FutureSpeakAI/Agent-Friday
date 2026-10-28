@@ -17,6 +17,10 @@ decision:
               and its card, when named, is still open)
   handed_off  it waited for the owner and the owner's card has since been
               decided: carrying it out is a new action with its own receipts
+  unconfirmed no terminal outcome, and a later receipt says nobody knows what
+              became of it (the request that ran it answered but its executor
+              never said; a send the gateway could not confirm). Neither open
+              nor closed; listed so it can be checked by hand.
   in_flight   no terminal outcome yet, inside the grace period
   open        no terminal outcome after the grace period
 
@@ -25,14 +29,20 @@ and across actions:
   duplicate_key  one idempotency key (the same request) executed by more than
                  one action
   false_done     a task marked done whose outward actions did not all end
-                 executed or completed_verified
+                 executed or completed_verified (an unconfirmed one is not done)
 
 Read-only. Counts, action ids, tool names and task ids only: never a record's
 arguments, reason text or target.
+
+The default audit (no `now`, no `tasks`) is cached on the ledger's head (its
+seq and hash, and the live file's size and mtime) for a few seconds, so the
+Ledger line, the Doctor check and the route share one scan.
 """
 from __future__ import annotations
 
+import copy
 import sys
+import threading
 import time
 from typing import Any, Dict, Iterable, Optional
 
@@ -40,6 +50,32 @@ from typing import Any, Dict, Iterable, Optional
 WINDOW_S = 30 * 86400.0
 #: How long a decision may wait for its terminal outcome before it counts as open.
 GRACE_S = 3600.0
+#: How long a cached audit stands while the ledger's head has not moved (cards
+#: are decided and grace periods run out without a ledger write).
+CACHE_TTL_S = 15.0
+
+_CACHE_LOCK = threading.Lock()
+_CACHE: Dict[tuple, tuple] = {}         # key -> (time computed, result)
+
+
+def _head_key() -> Optional[tuple]:
+    """The ledger's head as a cache key, or None when it cannot be read."""
+    try:
+        from agent_friday.services import action_ledger as L
+        head = L._read_head() or {}
+        try:
+            st = L.live_path().stat()
+            live = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            live = (None, None)
+        return (str(L.ledger_dir()), head.get("seq"), head.get("hash")) + live
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def reset_cache() -> None:
+    with _CACHE_LOCK:
+        _CACHE.clear()
 #: Task statuses that say the task is done.
 DONE_STATUSES = frozenset({"complete", "completed", "done", "completed_verified"})
 
@@ -107,7 +143,34 @@ def audit(window: float = WINDOW_S, *, now: Optional[float] = None,
 
     `tasks`: task records ({task_id or id, status}) to check for false done;
     by default the task index and the agent's live table. Only signed ledger
-    entries are read. Never raises on a record it cannot read."""
+    entries are read. Never raises on a record it cannot read.
+
+    With neither `now` nor `tasks` given, a result computed in the last
+    CACHE_TTL_S seconds over the same ledger head is returned (a copy)."""
+    if now is not None or tasks is not None:
+        return _audit(window, now=now, tasks=tasks, include_archive=include_archive,
+                      grace_s=grace_s, limit=limit)
+    head = _head_key()
+    key = None if head is None else head + (float(window), bool(include_archive), float(grace_s), int(limit))
+    t = time.time()
+    if key is not None:
+        with _CACHE_LOCK:
+            hit = _CACHE.get(key)
+        if hit and t - hit[0] < CACHE_TTL_S:
+            return copy.deepcopy(hit[1])
+    res = _audit(window, now=t, tasks=None, include_archive=include_archive,
+                 grace_s=grace_s, limit=limit)
+    if key is not None:
+        with _CACHE_LOCK:
+            for k in [k for k in _CACHE if k[:len(head)] != head]:
+                del _CACHE[k]               # one ledger head at a time: the newest
+            _CACHE[key] = (t, copy.deepcopy(res))
+    return res
+
+
+def _audit(window: float, *, now: Optional[float], tasks: Optional[Iterable[dict]],
+           include_archive: bool, grace_s: float, limit: int) -> dict:
+    """`audit` without the cache: one scan of the ledger."""
     from agent_friday.governance import action_gate as G
     from agent_friday.services import action_ledger as L
     now = time.time() if now is None else float(now)
@@ -137,8 +200,10 @@ def audit(window: float = WINDOW_S, *, now: Optional[float] = None,
             loose.append(out)
 
     cards: dict = {}
-    counts = {k: 0 for k in ("closed", "duplicate", "waiting", "handed_off", "in_flight", "open")}
-    found: Dict[str, list] = {"open": [], "duplicate": [], "duplicate_key": [], "false_done": []}
+    counts = {k: 0 for k in ("closed", "duplicate", "waiting", "handed_off", "unconfirmed",
+                             "in_flight", "open")}
+    found: Dict[str, list] = {"open": [], "duplicate": [], "unconfirmed": [], "duplicate_key": [],
+                              "false_done": []}
     state_of: Dict[str, tuple] = {}      # action_id -> (state, terminal word)
     executed_by_key: Dict[str, set] = {}
     used_loose: set = set()
@@ -160,6 +225,9 @@ def audit(window: float = WINDOW_S, *, now: Optional[float] = None,
             state, word = "duplicate", terms[-1]
         elif terms:
             state, word = "closed", terms[0]
+        elif G.UNCONFIRMED in waits:
+            # nobody said what became of it: not open (something was written), not closed
+            state, word = "unconfirmed", G.UNCONFIRMED
         elif rec.get("decision") == "deny":
             word = rec.get("outcome") if rec.get("outcome") in G.TERMINAL_OUTCOMES else \
                 G.verdict_outcome("deny", str(rec.get("class") or ""), str(rec.get("reason") or ""))
@@ -180,6 +248,8 @@ def audit(window: float = WINDOW_S, *, now: Optional[float] = None,
             found["open"].append(item)
         elif state == "duplicate":
             found["duplicate"].append(dict(item, terminal=len(terms)))
+        elif state == "unconfirmed":
+            found["unconfirmed"].append(item)
         if word in (G.EXECUTED, G.COMPLETED_VERIFIED):
             key = _idem_key(rec)
             if key:
@@ -223,6 +293,7 @@ def audit(window: float = WINDOW_S, *, now: Optional[float] = None,
                        or found["false_done"]),
             "counts": summary,
             "open": found["open"][:limit], "duplicate": found["duplicate"][:limit],
+            "unconfirmed": found["unconfirmed"][:limit],
             "duplicate_key": found["duplicate_key"][:limit],
             "false_done": found["false_done"][:limit],
             "window_days": round(float(window) / 86400.0, 2)}
@@ -236,8 +307,9 @@ def doctor_check() -> tuple:
         c = audit()["counts"]
     except Exception as e:  # noqa: BLE001
         return "unverified", "outward_audit_unavailable:" + type(e).__name__
-    code = "open:%d,duplicate:%d,duplicate_key:%d,false_done:%d,closed:%d,waiting:%d" % (
-        c["open"], c["duplicate"], c["duplicate_key"], c["false_done"], c["closed"], c["waiting"])
+    code = "open:%d,duplicate:%d,duplicate_key:%d,false_done:%d,closed:%d,waiting:%d,unconfirmed:%d" % (
+        c["open"], c["duplicate"], c["duplicate_key"], c["false_done"], c["closed"], c["waiting"],
+        c.get("unconfirmed", 0))
     if c["open"] or c["duplicate"] or c["duplicate_key"] or c["false_done"]:
         return "unverified", code
     return "healthy", code

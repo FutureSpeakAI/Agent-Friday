@@ -181,6 +181,7 @@
       p.className = problems ? 'bad' : 'ok';
       p.textContent = 'Outward actions, last ' + d.audit.window_days + ' days: ' + (c.decisions || 0) + ' decided, '
         + (c.closed || 0) + ' with their final receipt, ' + (c.waiting || 0) + ' waiting for you, '
+        + (c.unconfirmed || 0) + ' unconfirmed (nobody said whether it happened), '
         + (c.open || 0) + ' with no final receipt, ' + (c.duplicate || 0) + ' with more than one, '
         + (c.duplicate_key || 0) + ' run twice, ' + (c.false_done || 0) + ' task(s) marked done too early.';
     });

@@ -441,6 +441,7 @@ def _on_decision(record):
     if not approvals.claim_for_execution(record["approval_id"]):
         return
     attempted = False
+    decision = None
     try:
         accounts.require_recording()
         with _execution_locks(op["plan"]):
@@ -474,7 +475,7 @@ def _on_decision(record):
                    for item in accounts.read()["operations"].values()):
                 raise UserFacingValueError("Another change for this domain is unresolved. Inspect and reconcile it before approving another change; nothing was replayed.")
             from agent_friday.governance import action_gate
-            action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=plan["domain"])
+            decision = action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=plan["domain"])
             op.update(status="applying", attempted_at=time.time())
             _save_op(op)
             sites_privacy.require_operation(plan["owner"]["privacy_generation"], plan.get("privacy_boot"))
@@ -504,11 +505,34 @@ def _on_decision(record):
     finally:
         with accounts.LOCK:
             result = _operation(op["operation_id"])
+        # the reconcile's own word closes the decision (BD-11a)
+        _close_decision(decision, result.get("status"))
         try:
             sites_privacy.require_generation(result["plan"]["owner"]["privacy_generation"])
         except ValueError:
             return
         approvals.mark_used(record["approval_id"], KIND, detail={"operation_id": op["operation_id"], "status": result["status"]})
+
+
+#: An operation's status after the attempt, as an outcome word (governance/action_gate.OUTCOMES).
+_STATUS_OUTCOME = {"provider_verified": "completed_verified", "renewal_observed": "completed_verified",
+                   "provider_accepted": "executed", "unknown": "unconfirmed", "refused": "failed"}
+
+
+def _close_decision(decision, status):
+    """Close the checkpoint's decision for an attempted change from the operation's status:
+    verified by the provider -> completed_verified; accepted, not yet read back -> executed;
+    unknown -> unconfirmed (it may have happened); refused before anything was sent -> failed.
+    Never raises."""
+    word = _STATUS_OUTCOME.get(str(status or ""))
+    if decision is None or not word:
+        return
+    try:
+        from agent_friday.governance import action_gate
+        action_gate.close_external(decision, word != "failed", detail="domain_" + str(status),
+                                   outcome=word, verified=word == "completed_verified")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def register():
