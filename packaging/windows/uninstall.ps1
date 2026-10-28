@@ -682,6 +682,11 @@ if ($removeData) {
                 $jf = Join-Path (Split-Path -Parent $FridayDir) ((Split-Path -Leaf $FridayDir) + $tail)
                 if (Test-Path -LiteralPath $jf) { Remove-Item -LiteralPath $jf -Force -ErrorAction SilentlyContinue }
             }
+            # A migration journal cut off mid-write leaves .migration-journal.json.partial-<hex>.
+            $mjLeaf = (Split-Path -Leaf $FridayDir) + '.migration-journal.json.partial-'
+            Get-ChildItem -LiteralPath (Split-Path -Parent $FridayDir) -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name.StartsWith($mjLeaf) } |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
             Remove-FridayCredentials
         } `
         -Verify {
