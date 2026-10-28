@@ -1663,7 +1663,8 @@ def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body
     creds = credentials_for(account_id)
     if not creds:
         return _no_task_credentials(account_id)
-    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id, adopt=adopt)
+    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id,
+                                   **({"adopt": True} if adopt else {}))
     ok = "error" not in result
     cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
                    success=ok, error=None if ok else result.get("error"))
@@ -1732,7 +1733,8 @@ def create_task(account_id: str, title: str, tasklist_id: str = "@default",
         body["notes"] = notes
     if due:
         body["due"] = due
-    out = _one_task_write(account_id, tasklist_id or "@default", None, body, adopt=bool(idempotency_key))
+    out = _one_task_write(account_id, tasklist_id or "@default", None, body,
+                          **({"adopt": True} if idempotency_key else {}))
     if idempotency_key and out.get("id") and not out.get("error"):
         with _RECENT_LOCK:
             _RECENT_CREATES[idempotency_key] = (account_id, tasklist_id or "@default", out["id"], _time.time())

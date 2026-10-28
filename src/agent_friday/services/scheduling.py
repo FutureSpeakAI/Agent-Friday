@@ -416,6 +416,13 @@ def _series_events(svc, series_id) -> list:
             return items
 
 
+def _co_series(idempotency_key: str) -> str:
+    """Twelve characters naming a hold series, derived from the request's idempotency key (F3):
+    a digest of it, so no part of the key itself is used."""
+    from agent_friday.services import connector_outcome as _co
+    return _co.event_id(idempotency_key, "hold-series")[2:14]
+
+
 class _Unconfirmed(Exception):
     """Google answered a create without naming the event it made."""
 
@@ -446,7 +453,7 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None,
         # With an idempotency key (F3) the series is the key's, so a repeated call names the same
         # series and the same holds (each hold's event id comes from the key and its times).
         series = (_check_series(series_id) if series_id else
-                  ("hs" + idempotency_key[:12]) if idempotency_key else "hs" + uuid.uuid4().hex[:12])
+                  ("hs" + _co_series(idempotency_key)) if idempotency_key else "hs" + uuid.uuid4().hex[:12])
         gated, gerr = cw._gate_calendar_field(str(title or "meeting").strip(), "title")
         if gerr or not gated:
             raise SchedulingError("the hold title was refused: %s"
