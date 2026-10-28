@@ -164,12 +164,15 @@ def test_an_outbound_call_marks_the_other_party_and_carries_none_of_the_owners_c
     monkeypatch.setattr(manager, "_gated_system_prompt",
                         lambda provider, keywords="": "OWNER CONTEXT: wiki and memory")
     bridge = lc.CallBridge.__new__(lc.CallBridge)
+    # An inbound call here has had its call PIN said (tests/api/test_call_pin_and_free_busy.py
+    # covers the call before it); "" and "unverified" are calls not proven either way.
+    bridge.pin_state = "verified"
     for direction, expect_other in (("outbound", True), ("inbound", False), ("", True),
                                     ("unverified", True)):
         bridge.params = {"direction": direction} if direction else {}
         lc.CallBridge._default_agent(bridge, [{"who": "caller", "text": "hello"}])
         ctx, prompt = seen[-1]
-        assert (ctx.get("call_party") == "other") is expect_other, direction
+        assert (ctx.get("call_party") in ("other", "unverified")) is expect_other, direction
         if expect_other:
             assert "OWNER CONTEXT" not in prompt, "the owner's context went into a call with someone else"
 

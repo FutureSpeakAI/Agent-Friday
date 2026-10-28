@@ -10090,9 +10090,14 @@ CLAUDE_TOOL_HANDLERS.update({
 #: placed): none. The owner's files, notes, library, memory, mail and calendar (event
 #: titles, people and places, not only free/busy) all stay closed to the other person;
 #: anything needing them goes to the owner through the call's [[ASK_OWNER]] card. An
-#: allowlist, so a read tool added later stays closed by default (engineering call;
-#: DECISIONS-FOR-STEPHEN: free/busy only could be opened later).
+#: allowlist, so a read tool added later stays closed by default. The owner's busy
+#: times (owner ruling 7) reach such a call through the call's own prompt
+#: (phone/live_call.FREE_BUSY_NOTE), times only, not through a calendar tool.
 OTHER_PARTY_CALL_TOOLS: frozenset = frozenset()
+#: Tools per call party. "other": a call Friday placed. "unverified": a call whose
+#: direction is not proven, or a call from the owner's cell before the spoken call
+#: PIN (owner ruling 8). Any other party value gets nothing.
+CALL_PARTY_TOOLS: dict = {"other": OTHER_PARTY_CALL_TOOLS, "unverified": frozenset()}
 
 TOOL_RINGS: dict[str, int] = {
     "list_crew": 0,
@@ -13123,12 +13128,16 @@ def _governance_check(tool_name: str, args: dict, session_ctx: dict | None = Non
         allowed = False
         reason = _scope_denial
         policy = "cLaw:SubagentScope"
-    elif ctx.get("call_party") == "other" and tool_name not in OTHER_PARTY_CALL_TOOLS:
-        # On a call with someone who is not the owner (a call Friday placed), the
-        # owner's records stay closed to the other person (NS-34.17-2).
+    elif ctx.get("call_party") and tool_name not in CALL_PARTY_TOOLS.get(ctx.get("call_party"), frozenset()):
+        # On a call with someone who is not the owner (a call Friday placed), or one
+        # not yet proven to be the owner (no call PIN said), the owner's records stay
+        # closed (NS-34.17-2; owner ruling 8).
         allowed = False
-        reason = ("on a call with someone else, Friday opens none of your records; "
-                  "anything that needs them is asked of you")
+        if ctx.get("call_party") == "other":
+            reason = ("on a call with someone else, Friday opens none of your records; "
+                      "anything that needs them is asked of you")
+        else:
+            reason = "on a call not yet proven to be you, Friday opens none of your records"
         policy = "cLaw:OtherPartyCall"
     elif ctx.get("origin") == "phone" and ring > 0:
         # A turn started by a text or call is not the owner at the machine:

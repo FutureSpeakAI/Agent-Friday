@@ -123,4 +123,4 @@ def test_a_phone_turn_in_a_call_is_read_only(phone_home, monkeypatch):
     bridge._default_agent([{"who": "caller", "text": "hello"}])
     # A call whose direction is not verified is treated as a call with someone else
     # (tests/api/test_principal_isolation.py): no owner records on the line.
-    assert seen["session_ctx"] == {"origin": "phone", "authenticated": False, "call_party": "other"}
+    assert seen["session_ctx"] == {"origin": "phone", "authenticated": False, "call_party": "unverified"}

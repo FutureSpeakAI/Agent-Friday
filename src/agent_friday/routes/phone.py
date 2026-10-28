@@ -1,4 +1,4 @@
-"""routes/phone.py — Settings → Connections → Phone, on Friday's main app.
+"""routes/phone.py â€” Settings â†’ Connections â†’ Phone, on Friday's main app.
 
 These routes configure the phone; none of them is a Twilio webhook. Webhooks
 are served by the separate ingress app (agent_friday/phone/ingress.py) on its
@@ -99,6 +99,57 @@ def phone_secret_set():
     ingress = service.apply_enabled_state()
     return jsonify(public_result({"ok": True, "protection": method, "ingress": ingress,
                     "status": config.secret_status(str(body.get("name")))}, "Couldn't save the phone secret"))
+
+
+@phone_bp.route("/api/phone/call-pin", methods=["GET"])
+@login_required
+def phone_call_pin_status():
+    """Whether calls from the owner's cell need the spoken PIN, and whether one is set.
+    Never the PIN or its hash."""
+    bad = _guard(write=False)
+    if bad:
+        return bad
+    from agent_friday.phone import call_pin
+    return jsonify({"ok": True, **call_pin.status()})
+
+
+@phone_bp.route("/api/phone/call-pin", methods=["POST"])
+@login_required
+def phone_call_pin_set():
+    """Set the call PIN ({"pin": "..."}) or switch the requirement ({"required": bool}),
+    by a press in Settings on this PC (owner ruling 8)."""
+    bad = _guard()
+    if bad:
+        return bad
+    from agent_friday.phone import call_pin
+    body = request.get_json(silent=True) or {}
+    try:
+        if "pin" in body:
+            out = call_pin.set_pin(str(body.get("pin") or ""))
+        elif isinstance(body.get("required"), bool):
+            out = call_pin.set_required(body["required"])
+        else:
+            return jsonify({"ok": False, "error": "send a pin or required"}), 400
+    except call_pin.PinError as e:
+        return _refused(e)
+    except Exception as e:  # noqa: BLE001 - the ledger entry or the file could not be written
+        return _refused(e, 500)
+    return jsonify({"ok": True, **out})
+
+
+@phone_bp.route("/api/phone/call-pin", methods=["DELETE"])
+@login_required
+def phone_call_pin_clear():
+    """Remove the call PIN. With the requirement on, calls from the owner's cell then
+    read no records until a new PIN is set."""
+    bad = _guard(write=False) or _press_needed()
+    if bad:
+        return bad
+    from agent_friday.phone import call_pin
+    try:
+        return jsonify({"ok": True, **call_pin.clear()})
+    except Exception as e:  # noqa: BLE001
+        return _refused(e, 500)
 
 
 @phone_bp.route("/api/phone/secret/<name>", methods=["DELETE"])
