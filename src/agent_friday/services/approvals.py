@@ -1038,6 +1038,7 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
             if r.get("status") in ("approved", "auto_approved") and not r.get("used_by") \
                     and not r.get("consumed"):
                 r["status"] = "expired"
+                r["withdrawn"] = True
                 r["decided_at"] = time.time()
                 r["decided_by"] = by
                 r["decision_note"] = note
@@ -1046,6 +1047,8 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
             _write_store(recs)
     for rec in withdrawn:
         _feed("card_resolved", rec)
+        # what waited on it is told now (a task closes with its typed blocker), not at the next sweep
+        _fire_hook(rec)
     return len(withdrawn)
 
 
