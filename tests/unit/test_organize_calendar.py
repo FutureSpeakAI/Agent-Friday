@@ -147,6 +147,12 @@ def test_a_hold_left_by_another_test_in_this_worker_does_not_stop_the_card(reque
     # process and a restore or ledger hold can be left behind. Any of them makes the gate refuse the
     # card, and the undo test then failed with an IndexError (no card) on most branches.
     monkeypatch.setattr(ag, "outward_hold", lambda: "safe mode (left by an earlier test in this worker)")
-    request.getfixturevalue("world")
-    out = _org(events=["e1"], days=1)
-    assert len(_pending()) == 1, "a hold left by another test refused the card: %r" % (out,)
+    from agent_friday.services import global_stop
+    global_stop._flag().set()               # Stop everything left on by another test
+    try:
+        request.getfixturevalue("world")
+        out = _org(events=["e1"], days=1)
+        assert len(_pending()) == 1, "state left by another test refused the card: %r" % (out,)
+    finally:
+        global_stop._reset_for_tests()
+
