@@ -67,7 +67,8 @@
   <h2 id="restore-h">After a restore</h2>
   <p id="restore-why" role="status"></p>
   <ul id="restore-left"></ul>
-  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC. Resume waits until this PC holds Friday's governance key and every channel that is switched on is connected again or switched off.</p>
+  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC. Resume waits until this PC holds Friday's governance key and every channel and the phone line, where switched on, is connected again or switched off.</p>
+  <button id="restore-check" type="button">Check again</button>
   <button id="resume" type="button">Resume outward actions</button>
   <p id="restore-note" role="status"></p>
 </section>
@@ -537,6 +538,7 @@
       $('resume').disabled = (d.blockers || []).length > 0;
     });
   }
+  $('restore-check').addEventListener('click', () => restoreState());
   $('resume').addEventListener('click', () => {
     api('/api/restore/resume', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
       text($('restore-note'), ok ? 'Friday may act again on this PC.' : (d.error || 'Not resumed.'));

@@ -79,8 +79,13 @@ from agent_friday.governance import action_gate  # noqa: E402
 why = action_gate.outward_hold() or ""
 check("outward_held_after_restore", "restored" in why, why)
 from agent_friday.services import friday_bundle  # noqa: E402
-check("resume_works", friday_bundle.resume_after_restore("ci") and not action_gate.outward_hold(),
-      action_gate.outward_hold() or "")
+try:
+    _resumed = friday_bundle.resume_after_restore("ci")
+except friday_bundle.BundleError as _e:
+    _resumed, _why = False, str(_e)
+else:
+    _why = action_gate.outward_hold() or ""
+check("resume_works", _resumed and not action_gate.outward_hold(), _why)
 
 from agent_friday.services import doctor  # noqa: E402
 blob = json.dumps(doctor.build())
