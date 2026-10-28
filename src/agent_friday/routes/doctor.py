@@ -77,6 +77,23 @@ def doctor_report():
         return api_error(e, "The Doctor report could not be made.")
 
 
+@doctor_bp.route("/api/doctor/reliability", methods=["GET"])
+@login_required
+def doctor_reliability():
+    """Connector change success rates and crash-free runs, measured on this
+    PC (services/reliability_metrics). Counts only; this PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "On this PC only."}), 403
+    try:
+        from agent_friday.services import reliability_metrics
+        resp = jsonify({"status": "ok", **reliability_metrics.metrics()})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "Reliability could not be measured.")
+
+
 @doctor_bp.route("/api/doctor/reports", methods=["GET"])
 @login_required
 def doctor_reports():

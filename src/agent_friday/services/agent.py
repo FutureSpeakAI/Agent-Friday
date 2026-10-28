@@ -14366,6 +14366,11 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, detail=_nd)
         _outcome("error", _nd)
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
+    elif _tool_call_status(result) == "error":
+        # The handler returned rather than raised, with an error result: the
+        # call did not succeed, and its receipt says so (a content-free reason).
+        _receipts.record(name, ok=False, detail="error result")
+        _outcome("error", "error_result")
     else:
         _receipts.record(name, ok=True)
         _outcome("ok", "")
