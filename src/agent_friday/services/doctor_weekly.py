@@ -269,6 +269,7 @@ def _render(rep: dict, partly_off_record: bool) -> str:
     r.pop("known_issues", None)
     r.pop("safety_metrics", None)
     r.pop("after_upgrade", None)              # local follow-ups, not part of what was agreed
+    r.pop("repairs", None)
     r["content"] = "none: versions, checks, error signatures, drift and performance only"
     if partly_off_record:
         r["errors"] = {}
