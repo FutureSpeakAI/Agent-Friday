@@ -13080,7 +13080,7 @@ function fridayNextCorner(p, w, h) {
   const at = corners.findIndex(c => Math.abs(c.x - (cur.x || 0)) < 24 && Math.abs(c.y - (cur.y || 0)) < 24);
   return corners[(at + 1) % corners.length];
 }
-window.fridayNextCorner = fridayNextCorner;
+if (typeof window !== 'undefined') window.fridayNextCorner = fridayNextCorner;
 function SnapMenu({
   id, windowTitle, workspaceId, maxed, onToggle,
   anchor,
