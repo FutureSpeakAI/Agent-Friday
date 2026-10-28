@@ -261,3 +261,31 @@ def test_two_texts_to_the_owner_at_once_cannot_pass_the_cap(phone_home, fake_twi
     first.join(10)
     second.join(10)
     assert len(fake_twilio.sent_bodies()) == 1, "two texts went past a cap of one"
+
+
+# ── any card spent by a call that runs on it ────────────────────────────────
+
+def test_one_approved_card_lets_one_call_through_even_when_two_read_it_at_once(mail, monkeypatch):
+    """action_gate.authorize_external read the card, then marked it used: a second caller holding
+    the same unspent copy was let through too."""
+    from agent_friday.governance import action_gate as ag8
+    monkeypatch.setattr(ag8, "verify_claws", lambda: (True, ""), raising=False)
+    monkeypatch.setattr(ag8, "outward_hold", lambda: "", raising=False)
+    monkeypatch.setattr(ag8, "_receipt", lambda *a, **k: None, raising=False)
+    detail = {"what": "synthetic outward change"}
+    v = ag8.authorize_external("synthetic_action", detail, requested_by="synthetic")
+    assert v.action == "card"
+    card = [a for a in approvals.list_approvals(status="pending") if a.get("kind") == "governed_action"][0]
+    approvals.decide(card["approval_id"], "approve")
+    stale = approvals.get_approval(card["approval_id"])          # both callers read this copy
+    monkeypatch.setattr(approvals, "find_for_subject", lambda *a, **k: dict(stale))
+    first = ag8.authorize_external("synthetic_action", detail, requested_by="synthetic")
+    second = ag8.authorize_external("synthetic_action", detail, requested_by="synthetic")
+    assert [first.action, second.action].count("allow") == 1, (first, second)
+
+
+def test_spend_once_is_true_for_exactly_one_caller(mail):
+    aid = _approved()
+    assert approvals.spend_once(aid, "first") is True
+    assert approvals.spend_once(aid, "second") is False
+    assert approvals.get_approval(aid)["used_by"] == "first"
