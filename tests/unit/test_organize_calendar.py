@@ -27,6 +27,10 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
     monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
+    # This file tests the calendar card, not the gate's holds: a hold another test left in this
+    # xdist worker (safe mode is decided once per process; a restore or ledger hold; a revoke)
+    # must not refuse the card here. The gate's own tests cover the holds.
+    monkeypatch.setattr(ag, "outward_hold", lambda: None)
     monkeypatch.setattr(journal, "_path", lambda: tmp_path / "receipts.jsonl")
     journal.reset()
     state = {k: dict(v) for k, v in EVENTS.items()}
@@ -53,7 +57,15 @@ def world(tmp_path, monkeypatch):
 
 
 def _org(**kw):
-    return agent._tool_organize_calendar(dict({"action": "shift"}, **kw))
+    out = agent._tool_organize_calendar(dict({"action": "shift"}, **kw))
+    _org.last = out                     # the tool's own answer, for a failure message
+    return out
+
+
+def _first_card():
+    cards = _pending()
+    assert cards, "no card was raised; the tool said: %r" % (getattr(_org, "last", None),)
+    return cards[0]
 
 
 def _pending():
@@ -79,7 +91,7 @@ def test_one_event_still_waits_for_a_card_because_it_reaches_google(world):
 def test_the_yes_moves_each_event_by_the_same_amount_keeping_its_length(world):
     state, calls = world
     _org(events=["e1", "e3"], days=1, minutes=-30)
-    ap.decide_with_outcome(_pending()[0]["approval_id"], "approve", decided_by="owner")
+    ap.decide_with_outcome(_first_card()["approval_id"], "approve", decided_by="owner")
     assert state["e1"]["start"].startswith("2026-10-07T13:30:00") and state["e1"]["end"].startswith("2026-10-07T14:30:00")
     assert state["e3"]["start"].startswith("2026-10-08T08:30:00") and state["e3"]["end"].startswith("2026-10-08T08:45:00")
     assert {c[0] for c in calls} == {"e1", "e3"}
@@ -94,7 +106,7 @@ def test_a_day_forward_across_a_clock_change_keeps_the_wall_clock_time():
 def test_undo_puts_each_event_back_at_its_old_time(world):
     state, calls = world
     _org(events=["e1", "e2"], days=3)
-    ap.decide_with_outcome(_pending()[0]["approval_id"], "approve", decided_by="owner")
+    ap.decide_with_outcome(_first_card()["approval_id"], "approve", decided_by="owner")
     assert state["e1"]["start"] != EVENTS["e1"]["start"]
     rec = journal.latest(None)
     res = ia.undo(rec["receipt_id"])
@@ -140,3 +152,13 @@ def test_the_gate_classifies_it_outward_and_the_tool_is_registered_everywhere():
     assert "organize_calendar" in taint.TOOL_ROLES
     assert "organize_calendar" in voice_engine._VOICE_SHARED_TOOLS
     assert "organize_calendar" in {t["name"] for t in agent.CLAUDE_TOOLS}
+
+
+def test_a_hold_left_by_another_test_in_this_worker_does_not_stop_the_card(request, monkeypatch):
+    # Under xdist one worker runs many files with one test home; safe mode's decision is cached per
+    # process and a restore or ledger hold can be left behind. Any of them makes the gate refuse the
+    # card, and the undo test then failed with an IndexError (no card) on most branches.
+    monkeypatch.setattr(ag, "outward_hold", lambda: "safe mode (left by an earlier test in this worker)")
+    request.getfixturevalue("world")
+    out = _org(events=["e1"], days=1)
+    assert len(_pending()) == 1, "a hold left by another test refused the card: %r" % (out,)
