@@ -78,14 +78,18 @@ def _failed_starts() -> int:
 
 
 def _decide() -> dict:
+    try:
+        upgrade = marker_path().exists() and marker_reason() == MIGRATION_FAILED
+    except OSError:
+        upgrade = False
+    if upgrade:
+        return {"active": True, "how": "marker",
+                "why": "an upgrade step failed; Friday stays in safe mode until you leave it "
+                       "on the Doctor page"}
     if os.environ.get("FRIDAY_SAFE_START", "").strip().lower() in ("1", "true", "yes", "on"):
         return {"active": True, "why": "started in safe mode", "how": "start"}
     try:
         if marker_path().exists():
-            if marker_reason() == MIGRATION_FAILED:
-                return {"active": True, "how": "marker",
-                        "why": "an upgrade step failed; Friday stays in safe mode until you leave it "
-                               "on the Doctor page"}
             return {"active": True, "why": "safe mode was chosen for the next start",
                     "how": "marker"}
     except OSError:
@@ -122,11 +126,16 @@ def refusal(part: str) -> Optional[str]:
 
 
 def marker_reason() -> Optional[str]:
-    """Why the marker was written (None when chosen by the owner, or absent)."""
+    """Why the marker was written (None when chosen by the owner, or absent).
+    A marker that is there but cannot be read counts as written for a failed
+    upgrade: the stricter reading, so it is never lifted without the press."""
+    p = marker_path()
     try:
-        d = json.loads(marker_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return None
+    except (OSError, ValueError):
+        return MIGRATION_FAILED if p.exists() else None
     r = d.get("reason") if isinstance(d, dict) else None
     return r if isinstance(r, str) else None
 
@@ -141,7 +150,9 @@ def set_next_start(on: bool, reason: Optional[str] = None) -> dict:
     if on:
         p.parent.mkdir(parents=True, exist_ok=True)
         keep = reason or (MIGRATION_FAILED if marker_reason() == MIGRATION_FAILED else None)
-        p.write_text(json.dumps({"chosen_at": time.time(), "reason": keep}), encoding="utf-8")
+        tmp = p.with_name(p.name + ".partial-%d" % os.getpid())
+        tmp.write_text(json.dumps({"chosen_at": time.time(), "reason": keep}), encoding="utf-8")
+        os.replace(tmp, p)                # whole or not at all: its reason is never torn off
     else:
         try:
             p.unlink()

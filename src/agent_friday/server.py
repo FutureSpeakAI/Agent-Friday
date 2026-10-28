@@ -47,6 +47,11 @@ if __name__ == '__main__':
     except Exception as _mr_err:
         _mr = {"ok": False, "safe_mode": True,
                "why": "the migration check failed (%s)" % type(_mr_err).__name__}
+        try:                             # a check that cannot run is a failed upgrade too
+            from agent_friday.services import safe_mode as _sm_mig
+            _sm_mig.set_next_start(True, reason=_sm_mig.MIGRATION_FAILED)
+        except Exception:
+            pass
     if _mr:
         print("  Migrations: %s" % (("schema %s -> %s" % (_mr.get("from"), _mr.get("to")))
                                    if _mr.get("ok") else _mr.get("why")))
@@ -527,9 +532,11 @@ if not _TESTING:
             # leaves it, so one good safe start does not slip back out
             _safe.set_next_start(True)
         print("  SAFE MODE (%s): extensions and the cloud are off, schedules are "
-              "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
-              "Leave it there or with `friday safe-mode off`, then restart."
-              % _safe.state().get("why"))
+              "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. %s"
+              % (_safe.state().get("why"),
+                 "Leave it there with a press, then restart."
+                 if _safe.marker_reason() == _safe.MIGRATION_FAILED
+                 else "Leave it there or with `friday safe-mode off`, then restart."))
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
