@@ -59410,6 +59410,62 @@ function ClawsRepinPanel() {
 // file permissions only. This panel wraps it with the vault passphrase through
 // /api/security/keystore/wrap, which answers only this page on this PC and
 // needs the passphrase typed. Nothing changes it on its own.
+// Every stored credential (BD-06, NS-23.3-4/-5): what it is for, where it came from and when,
+// last changed and used, how it is protected; where to replace it, and Remove (a press on this
+// PC; revoked at the provider where the provider allows it). /api/security/credentials.
+function CredentialsPanel() {
+  const [rows, setRows] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState('');
+  const load = useCallback(() => {
+    apiFetch('/api/security/credentials').then(r => r.json()).then(d => setRows(d && d.ok ? d.credentials || [] : [])).catch(() => setRows([]));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) : 'never';
+  const remove = row => {
+    if (!window.confirm('Remove ' + row.kind + ' (' + row['for'] + ')?\n\n' + (row.remove && row.remove.note || ''))) return;
+    setBusy(row.name);
+    setMsg('');
+    apiFetch('/api/security/credentials/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: row.name })
+    }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+      setMsg(d && d.message || (ok ? 'Removed.' : 'Nothing changed.'));
+      load();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(''));
+  };
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
+  if (!rows) return /*#__PURE__*/React.createElement("div", { style: muted }, "Reading the stored credentials\u2026");
+  return /*#__PURE__*/React.createElement("div", {
+    "data-testid": "credential-list",
+    style: { marginTop: 12 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 12, color: '#fff', marginBottom: 6 }
+  }, "Stored credentials"), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "Friday holds no credentials."), rows.map(row => /*#__PURE__*/React.createElement("div", {
+    key: row.name,
+    style: { borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 0' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 8, alignItems: 'center' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.85)' }
+  }, row.kind, ": ", row['for']), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: { fontSize: 11 },
+    disabled: !!busy,
+    onClick: () => remove(row)
+  }, busy === row.name ? 'Removing\u2026' : 'Remove')), /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "Came from: ", row.came_from, row.first_set ? ' (' + when(row.first_set) + ')' : '', ". Last changed ", when(row.last_changed), ", last used ", when(row.last_used), ". ", row.protection, "."), row.replace_in && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "To replace it: ", row.replace_in, "."))), msg && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 11, color: '#cfefff', marginTop: 8 }
+  }, msg));
+}
 function KeystoreWrapPanel() {
   const [st, setSt] = useState(null);
   const [pw, setPw] = useState('');
@@ -60269,7 +60325,7 @@ function SettingsTabPrivacy({
     title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"
-  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null)), React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null), /*#__PURE__*/React.createElement(CredentialsPanel, null)), React.createElement(StSection, {
     title: "Agent workspaces"
   }, window.FridayAgentWorkspacePermission && React.createElement(window.FridayAgentWorkspacePermission, {apiFetch})), /*#__PURE__*/React.createElement(StSection, {
     title: "Computer control"
