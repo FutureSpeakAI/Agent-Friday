@@ -194,6 +194,14 @@ def _raise_card(domain: str, action: str, detail: dict, *, title: str, body: str
     if v.action == "deny":
         raise Refused("Friday's governance check held this: %s" % v.reason)
     card = _find_card(name, detail) or {}
+    if v.action == "card" and not card.get("approval_id"):
+        # The gate holds without a card while everything is stopped (and could in any other
+        # case it waits): never tell the owner a card is waiting when none exists (BD-13).
+        if "stopped" in (v.reason or ""):
+            raise Refused("everything is stopped (the owner pressed Stop), so nothing was proposed "
+                          "and nothing changed; it can be asked again after they resume on "
+                          "Friday's page")
+        raise Refused("nothing was proposed: no card was made (%s)" % (v.reason or "the gate held it"))
     if v.action == "allow":
         # An approved, unused card for exactly this change already existed and
         # the check just used it: run it now.
