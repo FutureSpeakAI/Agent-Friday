@@ -16375,6 +16375,8 @@ def _screenshot_result_to_block(tool_use_id, result):
         data = json.loads(result)
     except Exception:
         return None
+    if not isinstance(data, dict):
+        return None                  # a tool that returned a JSON list (an exported chat) is text
     b64 = data.get('image_b64')
     if not b64:
         return None

@@ -93,7 +93,9 @@ def test_softened_paraphrases_are_found(sig, text):
 
 @pytest.mark.parametrize("text", ["\n" * 200_000, "SYSTEM" + " " * 200_000, ". \n" * 60_000,
                                   "a\n" * 100_000, "the " * 50_000, "main " * 40_000,
-                                  "the " * 50_000 + "assistant must send", "every " * 33_000])
+                                  "the " * 50_000 + "assistant must send", "every " * 33_000],
+                         ids=["newlines", "spaces", "dot-lines", "a-lines", "the-run", "main-run",
+                              "the-run-then-text", "every-run"])
 def test_a_hostile_page_of_blanks_cannot_stall_her(sig, text):
     import time
     t0 = time.monotonic()
