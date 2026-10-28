@@ -1101,15 +1101,11 @@ def import_skill(src, name=None) -> dict:
     try:
         # 1) zip -> extract to temp, then treat as a folder
         if src.is_file() and src.suffix.lower() == ".zip":
-            tmp = Path(tempfile.mkdtemp(prefix="skillimp_"))
-            with zipfile.ZipFile(src) as zf:
-                zf.extractall(tmp)
-            folder = _locate_skill_folder(tmp)
-            if folder is None:
-                raise ValueError("zip contains no SKILL.md")
-            skill = _skill_from_manifest(
-                folder, _find_manifest(folder).read_text(encoding="utf-8", errors="replace"),
-                default_source="imported")
+            # A skill is text: only its manifest is read, straight from the archive.
+            # Nothing else in the zip (scripts, binaries, links) is ever written to
+            # disk, and the manifest's size is bounded (NS-36.7-5).
+            folder_name, text = _zip_manifest(src)
+            skill = _skill_from_manifest(Path(folder_name), text, default_source="imported")
 
         # 2) legacy single-file YAML
         elif src.is_file() and src.suffix.lower() in (".yaml", ".yml"):
@@ -1144,6 +1140,43 @@ def import_skill(src, name=None) -> dict:
     finally:
         if tmp and tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+#: Bounds on an imported skill archive: how many entries are looked at, and how big
+#: the one manifest read from it may be.
+_ZIP_MAX_ENTRIES = 2000
+_MANIFEST_MAX_BYTES = 256 * 1024
+
+
+def _zip_manifest(src: Path) -> tuple:
+    """(folder name, manifest text) from a skill archive, reading ONLY the manifest:
+    the shallowest SKILL.md. Raises ValueError for an archive that has none, too many
+    entries, an encrypted or oversized manifest."""
+    with zipfile.ZipFile(src) as zf:
+        infos = zf.infolist()
+        if len(infos) > _ZIP_MAX_ENTRIES:
+            raise ValueError("the skill archive has too many entries")
+        cands = []
+        for info in infos:
+            parts = [p for p in info.filename.replace("\\", "/").split("/") if p]
+            if not parts or info.is_dir() or parts[-1] not in _MANIFEST_NAMES:
+                continue
+            if any(p in ("..", ".") for p in parts):
+                continue
+            cands.append((len(parts), info, parts))
+        if not cands:
+            raise ValueError("zip contains no SKILL.md")
+        _depth, info, parts = sorted(cands, key=lambda c: (c[0], c[1].filename))[0]
+        if info.flag_bits & 0x1:
+            raise ValueError("the skill's manifest is encrypted")
+        if info.file_size > _MANIFEST_MAX_BYTES:
+            raise ValueError("the skill's manifest is too large")
+        with zf.open(info) as f:
+            data = f.read(_MANIFEST_MAX_BYTES + 1)
+        if len(data) > _MANIFEST_MAX_BYTES:
+            raise ValueError("the skill's manifest is too large")
+    folder_name = parts[-2] if len(parts) > 1 else src.stem
+    return folder_name, data.decode("utf-8", errors="replace")
 
 
 def _locate_skill_folder(root: Path) -> Optional[Path]:
