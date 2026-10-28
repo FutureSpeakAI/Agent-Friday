@@ -24,9 +24,10 @@ from typing import Tuple
 _REENCODE = {"JPEG", "MPO", "PNG", "WEBP", "TIFF", "BMP", "GIF"}
 #: `Image.info` keys that carry metadata rather than pixels.
 _META_KEYS = ("exif", "xmp", "XML:com.adobe.xmp", "comment", "photoshop", "icc_profile")
-#: JPEG marker segments that carry metadata: APP1 (EXIF, XMP), APP2 (ICC, MPF),
-#: APP12-APP15 (Ducky, IPTC/Photoshop, Adobe extras) and COM.
-_JPEG_META_MARKERS = {0xE1, 0xE2, 0xEC, 0xED, 0xEE, 0xEF, 0xFE}
+#: The only application segments a JPEG keeps on the byte-level path: APP0
+#: (JFIF) and APP14 (Adobe colour transform, which CMYK decoding needs). Every
+#: other APPn (EXIF, XMP, ICC, MPF, IPTC, maker notes, JUMBF/C2PA) and COM goes.
+_JPEG_KEEP_APP = {0xE0, 0xEE}
 
 
 def _has_metadata(im) -> bool:
@@ -40,35 +41,65 @@ def _has_metadata(im) -> bool:
     return bool(getattr(im, "text", None))     # PNG tEXt/iTXt/zTXt chunks
 
 
+def _drop_segment(marker: int) -> bool:
+    return marker == 0xFE or (0xE0 <= marker <= 0xEF and marker not in _JPEG_KEEP_APP)
+
+
+def _scan_end(data: bytes, i: int) -> int:
+    """Index of the first marker after the entropy-coded data starting at `i`
+    (stuffed FF00 and restart markers are part of the data)."""
+    n = len(data)
+    while i + 1 < n:
+        if data[i] == 0xFF:
+            nxt = data[i + 1]
+            if nxt == 0x00 or 0xD0 <= nxt <= 0xD7 or nxt == 0xFF:
+                i += 2 if nxt != 0xFF else 1
+                continue
+            return i
+        i += 1
+    return n
+
+
 def strip_jpeg_segments(data: bytes) -> bytes | None:
-    """`data` with its metadata segments removed, read marker by marker, or
-    None when it is not a JPEG this can walk. Pure."""
+    """The first picture of a JPEG with every metadata segment removed and
+    nothing after its end-of-image marker (a second picture, a motion clip,
+    maker trailers), or None when it is not a JPEG this can walk. A file cut
+    short ends where the data does. Pure."""
     if len(data) < 4 or data[:2] != b"\xff\xd8":
         return None
     out = bytearray(b"\xff\xd8")
     i = 2
     n = len(data)
-    while i + 4 <= n:
-        if data[i] != 0xFF:
-            return None
+    while i < n:
+        if i + 1 >= n or data[i] != 0xFF:
+            return None if not out[2:] else bytes(out)
         marker = data[i + 1]
-        if marker == 0xFF:              # fill byte
+        if marker == 0xFF:                      # fill byte
             i += 1
             continue
-        if marker == 0xDA:              # start of scan: the rest is image data
-            out += data[i:]
+        if marker == 0xD9:                      # end of image: stop, drop any trailer
+            out += b"\xff\xd9"
             return bytes(out)
-        if 0xD0 <= marker <= 0xD7 or marker == 0x01:
+        if marker == 0xD8 or 0xD0 <= marker <= 0xD7 or marker == 0x01:
+            if marker == 0xD8:
+                return None                     # a second start before an end: not walkable
             out += data[i:i + 2]
             i += 2
             continue
+        if i + 4 > n:
+            return bytes(out)
         seg_len = (data[i + 2] << 8) | data[i + 3]
-        if seg_len < 2 or i + 2 + seg_len > n:
+        if seg_len < 2:
             return None
-        if marker not in _JPEG_META_MARKERS:
-            out += data[i:i + 2 + seg_len]
-        i += 2 + seg_len
-    return None
+        seg_end = min(i + 2 + seg_len, n)
+        if not _drop_segment(marker):
+            out += data[i:seg_end]
+        i = seg_end
+        if marker == 0xDA:                      # start of scan: copy its coded data
+            j = _scan_end(data, i)
+            out += data[i:j]
+            i = j
+    return bytes(out)
 
 
 def strip_metadata(data: bytes) -> Tuple[bytes, str]:
