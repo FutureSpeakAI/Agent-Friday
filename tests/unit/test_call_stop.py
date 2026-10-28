@@ -60,12 +60,17 @@ class NoVAD:
         return None
 
 
-def _bridge(heard, *, direction="inbound", agent=None):
+def _bridge(heard, *, direction="inbound", agent=None, token=None):
     eng = Engine(heard)
     b = L.CallBridge(FakeWS(), engine=eng, vad=NoVAD(), threaded=True,
                      agent=agent or (lambda h: "Sure."))
+    params = {"direction": direction}
+    if direction == "inbound":
+        # The token the ingress put in the owner's call (connect_twiml); getattr keeps the
+        # old code (which has none) failing on behaviour, not on a missing name.
+        params["owner"] = token if token is not None else getattr(L, "_owner_token", lambda: "")()
     b.handle({"event": "start", "start": {"streamSid": "MZ1", "callSid": "CA77",
-                                          "customParameters": {"direction": direction}}})
+                                          "customParameters": params}})
     return b, eng
 
 
@@ -84,8 +89,9 @@ def test_a_stop_said_on_the_owners_call_halts_within_a_second_while_the_turn_is_
         return "late"
     b, eng = _bridge(["summarise my day", "Friday, stop everything"], agent=stuck)
     before = len(_decisions())
+    first = threading.Thread(target=b.on_utterance, args=(b"x",), daemon=True)
     try:
-        threading.Thread(target=b.on_utterance, args=(b"x",), daemon=True).start()
+        first.start()
         assert started.wait(5), "the first turn never started"
         t0 = time.monotonic()
         threading.Thread(target=b.on_utterance, args=(b"y",), daemon=True).start()
@@ -98,7 +104,7 @@ def test_a_stop_said_on_the_owners_call_halts_within_a_second_while_the_turn_is_
         assert [d for d in new if d.get("tool") == "stop_ack"][0]["surface"] == "phone_call"
     finally:
         release.set()
-    time.sleep(0.05)
+        first.join(5)
     assert "late" not in eng.said, "the stuck turn spoke after the stop"
 
 
@@ -128,3 +134,29 @@ def test_one_stopped_per_stop_on_the_call(phone_home, gs):
     b.on_utterance(b"x")
     b.on_utterance(b"y")
     assert eng.said.count("Stopped.") == 1
+
+
+
+def test_a_forged_or_reused_owner_mark_cannot_stop_her(phone_home, gs):
+    b, _ = _bridge(["Friday stop"], token="made-up")
+    b.on_utterance(b"x")
+    assert not gs.active(), "a stream that only said it was inbound stopped everything"
+    tok = L._owner_token()
+    first, _ = _bridge(["hello"], token=tok)
+    again, _ = _bridge(["Friday stop"], token=tok)      # the same token, a second stream
+    again.on_utterance(b"x")
+    assert first.owner_on_the_line() and not again.owner_on_the_line() and not gs.active()
+
+
+def test_after_the_stop_nothing_else_is_said_even_after_resume(phone_home, gs):
+    b, eng = _bridge(["stop everything", "what's next"])
+    b.on_utterance(b"x")
+    gs.resume(by="owner", source="button")
+    b.on_utterance(b"y")
+    b.say("I have to end the call here. Goodbye.")
+    assert eng.said == ["Stopped."]
+
+
+def test_the_owner_call_carries_a_one_time_token():
+    tw = L.connect_twiml({"public_base_url": "https://phone.example.test"}, "CA1")
+    assert 'name="owner"' in tw and 'name="direction" value="inbound"' in tw
