@@ -194,6 +194,12 @@ def doctor_stores():
     try:
         from agent_friday.services import store_inventory
         inv = store_inventory.public(store_inventory.cached(doctor._home()))
+        try:                             # what each store declares (services/store_policy, §11.7-3)
+            from agent_friday.services import store_policy
+            pol = store_policy.all_policies()
+            inv["policies"] = {r["store"]: pol[r["store"]] for r in inv.get("stores") or [] if r["store"] in pol}
+        except Exception:  # noqa: BLE001 - the list never fails for its declarations
+            inv["policies"] = {}
         resp = jsonify({"status": "ok", **inv})
         resp.headers["Cache-Control"] = "no-store"
         return resp
