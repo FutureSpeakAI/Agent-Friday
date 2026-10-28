@@ -266,6 +266,7 @@ def _render(rep: dict, partly_off_record: bool) -> str:
     # what the owner agreed to (A23), and store sizes were not part of it
     r.pop("stores", None)
     r.pop("after_upgrade", None)              # local follow-ups, not part of what was agreed
+    r.pop("repairs", None)
     r["content"] = "none: versions, checks, error signatures, drift and performance only"
     if partly_off_record:
         r["errors"] = {}
