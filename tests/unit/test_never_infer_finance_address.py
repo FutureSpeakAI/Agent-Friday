@@ -180,6 +180,63 @@ def test_ordinary_lines_are_not_mistaken_for_finances_or_an_address(text):
     assert sc.special_category(text) is None
 
 
+def _bare(n: int, suffix: str = "") -> str:
+    """A bare amount with no currency sign ("85,000", "90k")."""
+    return format(n, ",") + suffix
+
+
+@pytest.mark.parametrize("text", [
+    "We owe " + _bare(12000) + " on the car.",
+    "Earns " + _bare(85000) + ".",
+    "Salary is " + str(85000) + ".",
+    "He makes " + _bare(90, "k") + ".",
+    "Takes home " + _bare(3200) + " a month.",
+    "Is paid " + _bare(50000) + " a year.",
+    "Has " + _bare(20, "k") + " in savings.",
+    "Rent is " + str(900) + " a month.",
+    "Pays " + _bare(1400) + " a month on the mortgage.",
+])
+def test_bare_amounts_after_a_money_verb_are_finances(text):
+    assert sc.special_category(text) == "finances"
+
+
+@pytest.mark.parametrize("text", [
+    "My postcode is SW" + str(1) + "A " + str(1) + "AA.",
+    "My zip is " + str(90000 + 210) + ".",
+    "Our zip code: " + str(90000 + 210) + ".",
+    "Address: " + _street("Elm", "Street") + ".",
+])
+def test_a_possessive_postcode_or_an_address_label_is_a_home_address(text):
+    assert sc.special_category(text) == "home_address"
+
+
+@pytest.mark.parametrize("text", [
+    "Building a student loan app.", "Uses the home loan calculator API.",
+    "Sort code field validation.", "Fix the iban parser bug.", "Credit report endpoint is slow.",
+    "Universal credit API integration.", "Debt collector pattern in code.",
+    "We saved " + _usd(300) + " on hosting.",
+    "We invested " + _usd(50) + "k in the marketing campaign.",
+    "Office address: " + _street("Main", "Street") + ".",
+    "Makes " + _bare(2000) + " commits a day.", "The repo has " + _bare(10, "k") + " stars.",
+    "My postcode lookup is broken.",
+])
+def test_product_and_code_talk_is_not_finances_or_an_address(text):
+    assert sc.special_category(text) is None
+
+
+@pytest.mark.parametrize("text", [
+    "Has student loans.", "Took out a car loan.", "My student loan is nearly paid off.",
+    "Has a bad credit report.", "My sort code is on the card.",
+    "Sort code is " + str(10) + "-" + str(20) + "-" + str(30) + ".",
+    "Is on universal credit.", "Applied for universal credit.",
+    "Debt collectors keep calling him.",
+    "Saved up " + _gbp(5) + "k.", "Saved " + _gbp(3000) + " for a deposit.",
+    "Invested " + _gbp(10) + "k in index funds.",
+])
+def test_person_framed_loans_credit_and_benefits_are_still_finances(text):
+    assert sc.special_category(text) == "finances"
+
+
 def test_loggable_withholds_both_families():
     assert sc.loggable("Earns " + _gbp(45) + "k a year.") == "[withheld: it touches finances]"
     said = "Lives at " + _street() + "."

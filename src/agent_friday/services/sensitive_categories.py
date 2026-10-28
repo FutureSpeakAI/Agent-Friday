@@ -165,6 +165,20 @@ _POSS = "(?:my|his|her|their|your|our)"
 _MONEY = ("(?:[$£€¥]\\s?\\d[\\d,.]*(?:\\s?(?:k|m|bn|million|thousand|grand))?"
           "|\\d[\\d,.]*(?:\\s?(?:k|m|million|thousand))?\\s?(?:dollars|pounds|quid|euros|usd|gbp|eur|grand)"
           "|\\d[\\d,.]*\\s?k(?=\\s+(?:a|per|an)\\s+(?:year|month|annum)))")
+#: Not money: a count of something ("10k users", "2,000 commits").
+_NOT_MONEY_UNIT = ("(?!\\s?(?:points?|xp|stars?|followers?|views?|users?|requests?|commits?|lines?|"
+                   "downloads?|subscribers?|karma|records?|rows?|items?|steps?|words?|tokens?|"
+                   "calls?|visits?|hits?|tests?|files?|%|percent|ms|mb|gb|kb|miles?|calories?)\\b)")
+#: A bare amount with no currency, only after a money verb ("earns 85,000",
+#: "makes 90k", "salary is 85000"): comma groups, a k, or four or more digits.
+_BARE = ("(?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?\\s?k\\b|\\d{4,}(?:\\.\\d+)?)"
+         + _NOT_MONEY_UNIT)
+#: A small number made money by its period ("900 a month", "30 an hour").
+_PER_PERIOD = "(?:a|per|an|each|every)\\s(?:year|month|week|hour|annum)\\b"
+_AMT = "(?:" + _MONEY + "|" + _BARE + "|\\d+(?:\\.\\d+)?(?=\\s" + _PER_PERIOD + "))"
+#: What a loan, a debt or a mortgage payment goes on.
+_OWED_ON = ("(?:mortgage|rent|loans?|car loan|student loans?|debts?|credit cards?|car finance|"
+            "overdraft)")
 #: A street address: a house number, one to three name words, a street word.
 _STREET = ("\\d{1,5}[a-z]?(?:\\s?[-/]\\s?\\d{1,5}[a-z]?)?,?\\s+(?:[a-z][\\w'.-]*\\s+){1,3}?"
            "(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|close|way|crescent|cres|terrace|"
@@ -338,43 +352,74 @@ SPECIAL_CATEGORIES = {
         "bank balance|bank accounts?|bank details|savings|pension|net worth|"
         "tax (?:bill|return|debt|code|arrears)|overdraft|student loans?|finances|"
         "financial (?:situation|trouble|troubles|problems|difficulties|state|position)|"
-        "inheritance|rent arrears)",
-        "(?:salary|income|wages?|earnings|pay) (?:of|is|was|is about|is around|around|about)\\s*"
-        + _MONEY,
+        "inheritance|rent arrears|sort code|iban|routing number|universal credit|"
+        "credit (?:report|file)|(?:payday|personal|student|car|bank|home) loans?)",
+        "(?:salary|income|wages?|earnings|pay|rent) (?:of|is|was|is about|is around|around|about|"
+        "costs?)\\s*(?:about |around |over |under |roughly |nearly |almost )?" + _AMT,
         "(?:earns?|earning|earned|takes? home|took home|is paid|gets paid|got paid|was paid|"
-        "are paid|inherited|borrowed|lent|saved|on a salary of) "
+        "are paid|inherited|borrowed|lent|on a salary of|salary of) "
         "(?:about |around |over |under |roughly |nearly |almost |just over |just under |"
-        "more than |less than )?" + _MONEY,
-        "(?:earns?|earning|earned|takes? home|took home|on a salary of|salary of) "
-        "(?:about |around |over |under |roughly |nearly |almost )?\\d[\\d,.]*\\s?k",
-        "(?:makes?|making|made) (?:about |around |over |under |roughly |nearly |almost )?" + _MONEY
-        + " (?:a|per|an) (?:year|month|week|hour|annum)",
-        "(?:has|have|had|with|got|carries|carrying|carry|over|nearly|almost|about) " + _MONEY
-        + " (?:in|of) (?:savings|debt|credit card debt|student loans?)",
+        "more than |less than )?" + _AMT,
+        "(?:makes?|making|made) (?:about |around |over |under |roughly |nearly |almost )?"
+        "(?:" + _MONEY + "|\\d+(?:\\.\\d+)?\\s?k\\b" + _NOT_MONEY_UNIT + "|"
+        "(?:" + _BARE + "|\\d+(?:\\.\\d+)?)(?=\\s" + _PER_PERIOD + "))",
+        "(?:has|have|had|with|got|carries|carrying|carry|over|nearly|almost|about) "
+        "(?:" + _MONEY + "|" + _BARE + ")"
+        " (?:in|of) (?:savings|debt|credit card debt|student loans?)",
+        "(?:pays?|paying|paid) (?:about |around |over |under |roughly |nearly |almost )?" + _AMT
+        + " (?:" + _PER_PERIOD + " )?(?:on|for|towards?|into) "
+        "(?:the |a |an |his |her |their |my |our |your )?" + _OWED_ON,
         "(?:owes?|owed|owing) (?:\\w+ ){0,2}(?:money|" + _MONEY + ")",
+        # Any figure owed, in the same sentence ("we owe 12,000 on the car").
+        "owe[sd]?\\b[^.;!?]{0,30}?\\d",
         "earns? (?:a (?:good |decent |modest )?(?:living|salary|wage)|six figures|seven figures|"
         "minimum wage|good money|a fortune|a lot)",
         "(?:six|seven)[- ]figure (?:salary|income)", "on minimum wage",
         "owes? (?:the bank|the irs|hmrc|tax|taxes|back taxes|rent|child support|alimony)",
         "owed (?:in )?(?:tax|taxes|back taxes)", "back taxes",
         "(?:is|am|are|was|were|been|deep|deeply|heavily|badly|still|got|getting|went|go) in debt",
-        "(?:credit card|student|medical|gambling|personal|tax) debts?", "debt collect\\w*",
+        "(?:credit card|student|medical|gambling|personal|tax) debts?",
+        # A debt collector after a person, not "the debt collector pattern".
+        "debt collectors? (?:are |is |were |was |keep |kept |keeps )?(?:chasing|calling|"
+        "phoning|ringing|contacting|after|at the door|threatening)",
+        "(?:chased|called|phoned|contacted|hounded|harassed|pursued) by (?:a |the )?debt collect\\w*",
+        "(?:sent|passed|handed|went|gone) to (?:a |the )?debt collect\\w*",
         "debt (?:relief|management plan|consolidation)", "debts? of " + _MONEY,
         "paying off (?:the |a |my |his |her |their |our )?(?:debts?|loans?|mortgage|credit cards?)",
-        "credit score", "credit report", "bad credit",
+        "credit score", "bad credit",
+        # A person's credit report, not "the credit report endpoint".
+        "(?:has|have|had|got|with) (?:a |an )?(?:bad |poor |good |clean |negative |damaged )?"
+        "credit (?:report|file)",
         "(?:poor|good|excellent|bad) credit (?:rating|history)",
         "mortgage (?:of|on|payments?|arrears|repayments?)",
         "(?:has|have|had|got|took out|taking out|paying|pays|paid off|pay off|paying off) "
         "(?:a |the |their |his |her |my |our )?mortgage",
         "remortgag\\w*", "mortgage[- ]free",
         "(?:took|takes?|taking|taken) out (?:a |another )?loan",
-        "(?:payday|personal|student|car|bank|home) loans?", "loan of " + _MONEY,
+        # A person's loan, not "a student loan app" or "the home loan calculator".
+        "(?:has|have|had|got|took out|taking out|takes out|take out|paying off|pays off|paid off|"
+        "pay off|repaying|repays|repaid|applied for|applying for|applies for|still has|owes on) "
+        "(?:(?:a|an|another|the|some|two|three|several|his|her|their|my|our|your) )?"
+        "(?:payday|personal|student|car|bank|home) loans?",
+        "loan of " + _MONEY,
         "(?:bank|savings|checking|current|joint|brokerage) account (?:number|details|balance)",
-        "account (?:number|no) (?:is|:)\\s*\\d+", "sort code", "routing number", "iban",
+        "account (?:number|no) (?:is|:)\\s*\\d+", "routing number",
+        # A sort code or IBAN given, not "sort code field validation" or "iban parser".
+        "sort code\\s*(?:is|:)\\s*\\d+", "iban\\s*(?:is|:)\\s*[a-z]{2}\\d{2}\\w*",
         "(?:credit|debit) card (?:number|details)",
         "invest(?:s|ed|ing)? (?:heavily |mostly )?in (?:stocks|shares|crypto\\w*|bitcoin|property|"
         "real estate|index funds|etfs?|bonds|the stock market)",
-        "invested " + _MONEY, "(?:stock|investment|share) portfolio",
+        # Their own money invested, not "we invested $50k in the marketing campaign".
+        "invested " + _MONEY + " (?:of (?:his|her|their|my|our|your) own|(?:in|into) (?:stocks|shares|"
+        "crypto\\w*|bitcoin|property|real estate|index funds|etfs?|bonds|the stock market|"
+        "(?:his|her|their|my|our|your) (?:pension|isa|401k|retirement|portfolio|savings)))",
+        # Saved for a person's purpose, not "we saved $300 on hosting".
+        "saved up " + _MONEY,
+        "saved (?:about |around |over |nearly |almost )?" + _MONEY + " (?:for|towards?|into|in) "
+        "(?:a |an |the |his |her |their |my |our |your )?(?:house|home|deposit|retirement|pension|"
+        "savings|wedding|rainy day|emergency fund|isa|401k|holiday|vacation|kids?|children|"
+        "university|college|nest egg)",
+        "(?:stock|investment|share) portfolio",
         "(?:owns?|holds?|bought|sold) (?:\\w+ )?shares in",
         "net worth", "(?:is|are|was|became|become) (?:a )?(?:millionaire|billionaire)",
         "bankruptcy", "bankruptcies",
@@ -383,7 +428,10 @@ SPECIAL_CATEGORIES = {
         "disability benefits?|housing benefit|unemployment benefits?)",
         "claim(?:s|ed|ing)? (?:universal credit|welfare|jobseeker'?s allowance|housing benefit|"
         "unemployment|child benefit|disability benefits?)",
-        "universal credit", "food stamps", "housing benefit", "child benefit",
+        # A person on it, not "Universal credit API integration".
+        "(?:has|have|had|gets?|getting|got|receives?|receiving|received|applied for|applying for|"
+        "applies for|took out|lives on|living on) universal credit",
+        "food stamps", "housing benefit", "child benefit",
         "welfare (?:payments?|benefits?|cheques?|checks?|recipients?)",
         "tax (?:bill|debt|arrears|owed|demand)",
     ),
@@ -393,6 +441,12 @@ SPECIAL_CATEGORIES = {
     "home_address": (
         _HOME_FRAME + _HOME_GAP + _HOME_TARGET,
         _STREET + ",?\\s+is\\s+(?:my|his|her|their|our|your)\\s+(?:home|house|flat|place|address)",
+        # A person's own postcode or ZIP given ("my postcode is ...", "our zip code: ...").
+        _POSS + "\\s+(?:home\\s+)?(?:post\\s?code|postal\\s+code|zip(?:\\s?code)?)\\s*(?:is\\s*|:\\s*|=\\s*)?"
+        "(?:[a-z]{1,2}\\d[a-z\\d]?\\s?\\d[a-z]{2}|\\d{5}(?:-\\d{4})?)",
+        # "Address: 14 Elm Street", but not a work, office or business address.
+        "(?<!work )(?<!office )(?<!business )(?<!company )(?<!shipping )(?<!delivery )"
+        "(?<!billing )(?<!venue )(?<!store )(?<!shop )address\\s*:\\s*" + _STREET,
     ),
 }
 
