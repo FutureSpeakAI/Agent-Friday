@@ -33,6 +33,8 @@ _LOCK = threading.Lock()
 _ALLOWED_FIELDS = {
     # services/first_action: the owner skipped the first governed action (A27): how, nothing else.
     "first_action_skipped": {"how"},
+    # services/disk_guard: background work paused for a full disk, and resumed (no paths).
+    "disk_full": {"free_mib", "state"},
     "model_invocation": {
         "model", "provider", "seat", "duration_ms",
         "tokens_in", "tokens_out", "orb_id", "task_id", "workspace",

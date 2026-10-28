@@ -2988,6 +2988,15 @@ def _uses_gpu(rec) -> bool:
     return not kind.startswith(("file", "cleanup", "prune", "publish"))
 
 
+def _disk_holds(rec) -> bool:
+    """services/disk_guard.holds, never raising: a check that cannot run holds nothing."""
+    try:
+        from agent_friday.services import disk_guard
+        return bool(disk_guard.holds(rec))
+    except Exception:
+        return False
+
+
 def _tick():
     now = _now_central()
     try:                       # quiet hours or Focus Assist just ended: held approvals pop open and get texted
@@ -3017,6 +3026,11 @@ def _tick():
     today = now.strftime("%Y-%m-%d")
     for rec in recs:
         try:
+            if _disk_holds(rec):
+                # A full disk (services/disk_guard, NS-32.13-1): checked before anything else, so a
+                # held job writes nothing (no missed or late-run rows, no deferral notices) and is
+                # left unmarked; it is judged again on the first tick after space is back.
+                continue
             cu = rec.get("catch_up")
             if cu and cu.get("date") != today:
                 _record_missed(rec)
@@ -3031,7 +3045,10 @@ def _tick():
         except Exception as e:
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
     _reclaim_expired_lease()
-    _away_drain_tick()
+    if not _disk_holds({"id": "away_drain"}):
+        # The away-time drain runs queued background work: it waits for space too. Meeting
+        # retention runs on: it only removes what the owner chose to stop keeping.
+        _away_drain_tick()
     _meeting_retention_tick()
 
 
