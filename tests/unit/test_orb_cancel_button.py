@@ -20,14 +20,24 @@ def test_the_process_panel_has_a_cancel_button_that_does_what_the_throw_does(rel
     s = (ROOT / rel).read_text(encoding="utf-8")
     panel = s[s.index("function ProcessOrbThread("):]
     panel = panel[:panel.index("\n}\n")]
-    assert "running&&typeof FridayOrbHands!=='undefined'&&rtEl('button',{type:'button',className:'thread-cancel'" in panel
+    assert "cancellable&&typeof FridayOrbHands!=='undefined'&&rtEl('button',{type:'button',className:'thread-cancel'" in panel
+    assert "const cancellable = /^(running|queued)$/.test(status);" in panel, "only a task that is running or queued"
+    # An orb behind Friday just now (or opened another way) is cancelled by id all the same.
+    assert "FridayOrbHands.cancelOrb({id:orb.id,task_id:taskId,label:orb.label,status})" in panel
+    # Undo in the note puts the button back.
+    assert "if(d.id===orb.id&&d.state==='undone')setCancelling(false);" in panel
     assert "'aria-label':cancelling?'Cancelling this task; undo it from the note':'Cancel this task'" in panel
     assert "FridayOrbHands.act('cancel',[orb.id],'button')" in panel
     assert "onMouseDown:e=>e.stopPropagation(),onClick:cancelTask" in panel, "pressing it never starts a panel drag"
     assert "minHeight:24,minWidth:24" in panel
 
 
-def test_the_throw_and_the_button_share_one_cancel():
-    s = (ROOT / "index.html").read_text(encoding="utf-8")
+@pytest.mark.parametrize("rel", ["index.html", "ui_parts/styles_and_scene.html"])
+def test_the_throw_and_the_button_share_one_cancel(rel):
+    s = (ROOT / rel).read_text(encoding="utf-8")
+    assert "cancelOrb: o => cancel(Object.assign({}, find(o.id) || {}, o))" in s
+    assert "said(o, 'undone');" in s and "said(o, 'pending');" in s
+    # A task no longer running is never DELETEd by a cancel (that removed a finished task's record).
+    assert "if (r.status === 409) return fetch(" not in s
     assert "else if (op === 'cancel') r = cancel(o);" in s
     assert "note('undo:' + o.id, Name(o) + ' will stop.', { undo: () => undo(o), ms: UNDO_MS });" in s
