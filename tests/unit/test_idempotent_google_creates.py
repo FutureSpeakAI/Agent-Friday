@@ -144,6 +144,19 @@ def test_a_new_turn_is_a_new_request(google):
     assert len(cal.store) == 2
 
 
+def test_a_workflow_step_retried_in_a_new_turn_is_still_one_event(google):
+    """A step retried after a timeout runs as a new task and turn of the same workflow run."""
+    cal, _, box = google
+    for turn in ("task-step-try-1", "task-step-try-2"):
+        box["turn"] = turn
+        tok = agent._CURRENT_TOOL_CONTEXT.set({"run_id": "run-synthetic-1", "task_id": turn})
+        try:
+            agent._tool_create_calendar_event(dict(EVENT))
+        finally:
+            agent._CURRENT_TOOL_CONTEXT.reset(tok)
+    assert len(cal.store) == 1, "a retried workflow step made a second event"
+
+
 def test_without_a_turn_or_task_no_id_is_chosen(google):
     cal, _, box = google
     box["turn"] = None

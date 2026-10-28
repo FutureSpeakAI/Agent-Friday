@@ -181,22 +181,29 @@ def settle(result: Any) -> Any:
 
 def idem_key(tool: str, args: Any) -> Optional[str]:
     """The idempotency key of a create (F3, NS-34.11-2): the same tool with the same arguments in
-    the same turn (or, with no turn, the same background task or run) is one create, however many
+    the same workflow run, else turn, else background task is one create, however many
     times the model sends it: a retry after an unconfirmed reply never makes a second item. A new
     turn is a new request. None outside a turn or a task (an owner's own page)."""
     import hashlib
     import json
     scope = None
     try:
-        from agent_friday.services import turn_plan
-        scope = turn_plan.current_turn_id()
+        # A workflow run first: a step retried after a timeout runs as a new task (and turn),
+        # and is still the same create.
+        from agent_friday.services import agent as _ag
+        scope = (_ag._CURRENT_TOOL_CONTEXT.get() or {}).get("run_id")
     except Exception:
         scope = None
     if not scope:
         try:
+            from agent_friday.services import turn_plan
+            scope = turn_plan.current_turn_id()
+        except Exception:
+            scope = None
+    if not scope:
+        try:
             from agent_friday.services import agent as _ag
-            ctx = _ag._CURRENT_TOOL_CONTEXT.get() or {}
-            scope = ctx.get("run_id") or ctx.get("task_id")
+            scope = (_ag._CURRENT_TOOL_CONTEXT.get() or {}).get("task_id")
         except Exception:
             scope = None
     if not scope:
