@@ -20,7 +20,8 @@ def test_the_graph_has_a_list_beside_it_and_a_name(rel):
     comp = s[s.index("function KgAsList({ kg, stats, onOpen })"):]
     comp = comp[:comp.index("\n}\n")]
     assert "'The graph as a list'" in comp
-    assert "if (links[r.source] && byId[r.target]) links[r.source].push(byId[r.target]);" in comp
+    assert "if (links[r.source] && byId[r.target]) links[r.source].add(byId[r.target]);" in comp
+    assert "flexShrink: 0" in comp and "maxHeight: 'min(320px, 33vh)'" in comp, "the galaxy keeps its room"
     assert ".sort((a, b) => b.n - a.n" in comp and "onClick: () => onOpen && onOpen(e)" in comp
     graph = s[s.index("function KnowledgeGraphWS("):]
     assert ("React.createElement(KgAsList, {\n    kg: kgRef.current,\n    stats: stats,\n    onOpen: openWikiPage" in graph

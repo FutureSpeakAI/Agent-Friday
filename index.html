@@ -20565,26 +20565,30 @@ function KgAsList({ kg, stats, onOpen }) {
   const rows = React.useMemo(() => {
     if (!open || !kg || !Array.isArray(kg.entities)) return [];
     const byId = {}, links = {};
-    kg.entities.forEach(e => { byId[e.id] = e; links[e.id] = []; });
+    kg.entities.forEach(e => { byId[e.id] = e; links[e.id] = new Set(); });
+    // Each neighbour once: a pair linked both ways, or twice, is one link; a self-link is none.
     (kg.relationships || []).forEach(r => {
-      if (links[r.source] && byId[r.target]) links[r.source].push(byId[r.target]);
-      if (links[r.target] && byId[r.source]) links[r.target].push(byId[r.source]);
+      if (r.source === r.target) return;
+      if (links[r.source] && byId[r.target]) links[r.source].add(byId[r.target]);
+      if (links[r.target] && byId[r.source]) links[r.target].add(byId[r.source]);
     });
-    return kg.entities.map(e => ({ e, n: links[e.id].length, with: links[e.id] }))
+    return kg.entities.map(e => { const w = Array.from(links[e.id]); return { e, n: w.length, with: w }; })
       .sort((a, b) => b.n - a.n || String(a.e.title || '').localeCompare(String(b.e.title || ''))).slice(0, 200);
   }, [open, kg, stats]);
   const total = stats ? stats.nodes : (kg && kg.entities ? kg.entities.length : 0);
   return h('details', { className: 'kw-as-list', 'data-kg-list': '', onToggle: e => setOpen(e.currentTarget.open),
-      style: { margin: '6px 0', fontSize: 12, color: '#c7d2e2' } },
+      style: { margin: '6px 0', fontSize: 12, color: '#c7d2e2', flexShrink: 0 } },
     h('summary', { style: { cursor: 'pointer', minHeight: 24 } },
       'The graph as a list' + (stats ? ' (' + stats.nodes + ' notes, ' + stats.edges + ' links, ' + stats.comms + ' groups)' : '')),
     open && h('div', null,
       rows.length === 0 ? h('p', { style: { margin: '4px 0', color: '#8fa8c8' } }, total ? 'The list fills once the galaxy has loaded its notes (the grouped view shows groups, not notes).' : 'No notes yet.')
         : total > rows.length && h('p', { style: { margin: '4px 0', color: '#8fa8c8' } },
-        'The ' + rows.length + ' most connected of ' + total + ' notes. Search above finds any of them.'),
-      h('ul', { style: { margin: 0, paddingLeft: 18, maxHeight: 320, overflow: 'auto' } },
+        'The ' + rows.length + ' most connected of ' + total + ' notes. Search finds any of them.'),
+      // At most a third of the window: the galaxy below keeps most of the room.
+      h('ul', { style: { margin: 0, paddingLeft: 18, maxHeight: 'min(320px, 33vh)', overflow: 'auto' } },
         rows.map(({ e, n, with: w }) => h('li', { key: e.id, style: { margin: '3px 0' } },
-          h('button', { type: 'button', className: 'ws-tab-link', onClick: () => onOpen && onOpen(e),
+          e.type === 'soul' ? h('strong', null, e.title || e.id)        // no page of its own to open
+            : h('button', { type: 'button', className: 'ws-tab-link', onClick: () => onOpen && onOpen(e),
               style: { minHeight: 24 } }, e.title || e.id),
           ' \u2014 ' + (n ? 'linked to ' + w.slice(0, 5).map(x => x.title || x.id).join(', ') + (n > 5 ? ' and ' + (n - 5) + ' more' : '')
                           : 'no links yet'))))));
