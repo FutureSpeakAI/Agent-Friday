@@ -395,6 +395,17 @@ def _tombstone(text: str) -> bool:
         return False
 
 
+def _tombstone_discard(text: str) -> bool:
+    """Tombstone a discarded suggestion and list it for the owner (a sealed
+    label); False when the tombstone could not be recorded."""
+    try:
+        from agent_friday.services import tombstones
+        return bool(tombstones.add_discard("card_line", text).get("ok"))
+    except Exception as e:
+        _tomb_warn("write", e)
+        return False
+
+
 #: Said in the result when the owner's delete ran but its tombstone did not.
 _NOT_TOMBSTONED = {"tombstoned": False,
                    "warning": ("the line is gone, but the record that stops Friday writing it again "
@@ -695,8 +706,10 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
     if not approve and row.get("op") in ("add", "replace") and (row.get("text") or "").strip():
         # Discarding a suggested line is the owner's no, as rejecting a
         # proposal is: the line is tombstoned so the nightly pass (or the
-        # review pass) does not suggest it again. The owner can still type it.
-        if not _tombstone(row.get("text") or ""):
+        # review pass) does not suggest it again. The owner can still type it,
+        # and it is listed (sealed label) under "Discarded suggestions", where
+        # "Allow again" lifts it (services/tombstones.add_discard).
+        if not _tombstone_discard(row.get("text") or ""):
             res = {**res, "tombstoned": False,
                    "warning": ("the suggestion is discarded, but the record that stops Friday "
                                "suggesting it again could not be saved")}

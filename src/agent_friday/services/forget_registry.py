@@ -108,6 +108,7 @@ KINDS = {
     "laya_personal": "items Laya learned from",
     "meetings": "meeting records",
     "memory_proposals": "memory suggestions",
+    "tombstone_labels": "labels of discarded suggestions",
 }
 
 
@@ -403,6 +404,10 @@ def _ensure_defaults() -> None:
     from agent_friday.services import meeting_capture as _meeting_capture
     register_store("meetings", _meeting_capture.people_find, _meeting_capture.people_purge)
     register_store("memory_proposals", _memory_proposals.people_find, _memory_proposals.people_purge)
+    # A discarded suggestion is listed for the owner by a sealed label (services/tombstones): a label that
+    # names the person goes; its keyed hash, which names nobody, stays and keeps the suggestion blocked.
+    from agent_friday.services import tombstones as _tombstones
+    register_store("tombstone_labels", _tombstones.labels_find, _tombstones.labels_purge)
     # What was derived from the owner's conversations (NS-15.7-2): the recall indexes (vector memory and
     # conversation search), the day summaries and the graph's conversation-sourced nodes made from them,
     # the memory card and its review queue; the transcript and action receipts are listed as kept.
