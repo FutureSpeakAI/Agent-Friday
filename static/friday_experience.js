@@ -636,18 +636,21 @@
       // What an upgrade or a restore could not sort out (services/upgrade_review.py):
       // a Home card until the owner marks each item sorted on the Doctor page.
       if (view !== 'day' || !visible || p.enabled === false) return undefined;
-      let stopped = false;
-      const load = () => {
-        if (document.hidden) return;
-        api('/api/doctor/after-upgrade', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(d => {
-          if (stopped) return;
-          const items = d && d.status === 'ok' && Array.isArray(d.items) ? d.items : [];
-          setLeftovers(items.filter(x => x && typeof x.said === 'string').slice(0, 5));
+      let stopped = false, timer = null;
+      const stop = () => { clearInterval(timer); window.removeEventListener('focus', load); window.removeEventListener('friday:home-refresh', load); };
+      function load() {
+        if (document.hidden || stopped) return;
+        api('/api/doctor/after-upgrade', { cache: 'no-store' }).then(r => {
+          if (r.status === 401 || r.status === 403) { stopped = true; stop(); setLeftovers([]); return null; }  // not on this PC: never shown
+          return r.ok ? r.json() : null;            // any other failure keeps what is shown
+        }).then(d => {
+          if (stopped || !d || d.status !== 'ok' || !Array.isArray(d.items)) return;
+          setLeftovers(d.items.filter(x => x && typeof x.said === 'string'));
         }).catch(() => {});
-      };
-      load(); const timer = setInterval(load, 60000);
+      }
+      load(); timer = setInterval(load, 60000);
       window.addEventListener('focus', load); window.addEventListener('friday:home-refresh', load);
-      return () => { stopped = true; clearInterval(timer); window.removeEventListener('focus', load); window.removeEventListener('friday:home-refresh', load); };
+      return () => { stopped = true; stop(); };
     }, [view, visible, p.enabled]);
     useEffect(() => {
       if (view !== 'day' || !visible || p.enabled === false) return undefined;
@@ -845,8 +848,9 @@
         h(OnboardingChecks, { api }),
         leftovers.length > 0 && h('section', { className: 'fx-leftovers', 'aria-labelledby': 'fx-leftovers-h' },
           h('h2', { id: 'fx-leftovers-h' }, 'After an upgrade or a restore'),
-          h('ul', null, leftovers.map(it => h('li', { key: it.id }, it.said + (it.todo ? ' ' + it.todo : '')))),
-          h('a', { className: 'fx-action-secondary', href: '/doctor#afterupgrade', target: '_blank', rel: 'noopener' }, 'Open the Doctor to sort these out')),
+          h('ul', null, leftovers.slice(0, 5).map(it => h('li', { key: it.id }, it.said + (typeof it.todo === 'string' && it.todo ? ' ' + it.todo : '')))),
+          leftovers.length > 5 && h('p', { className: 'fx-meta' }, 'And ' + (leftovers.length - 5) + ' more on the Doctor page.'),
+          h('a', { className: 'fx-action-secondary', href: '/doctor#afterupgrade' }, 'Open the Doctor to sort these out')),
         h(HomeCards, { api, active: visible && p.enabled !== false, onNavigate: openWorkspace, onView: go, workspaces, clock: homeClock, draftCache: homeCardEditor, privacyContext: homeCardPrivacy, mutationContext: homeCardMutation }),
         !p.chatOpen && h('form',{className:'fx-day-composer',onSubmit:prepare},
           h('textarea',{value:homePrompt,onChange:e=>setHomePrompt(e.target.value),placeholder:'Ask, make, or pick up where you left off…','aria-label':'Ask '+agentName,rows:3,disabled:preparing}),

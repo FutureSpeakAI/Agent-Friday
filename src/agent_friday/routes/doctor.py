@@ -333,6 +333,14 @@ def safe_mode_set():
     try:
         after_upgrade = safe_mode.marker_reason() == safe_mode.MIGRATION_FAILED
         plan = safe_mode.set_next_start(body["next_start"])
+        if after_upgrade and not body["next_start"]:
+            try:                         # the owner has seen it and left safe mode: sorted
+                from agent_friday.services import upgrade_review
+                for it in upgrade_review.listing():
+                    if it["code"] in ("migration_failed", "migration_cut_off", "migration_link"):
+                        upgrade_review.resolve(it["id"])
+            except Exception:  # noqa: BLE001
+                pass
         try:
             from agent_friday.services import action_ledger, policy_version
             # a receipt names its action (BD-11a): the ledger refuses one without

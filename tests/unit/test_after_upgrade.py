@@ -166,7 +166,26 @@ def test_a_failed_migration_is_listed_for_the_owner_and_cleared_when_it_runs(hom
     assert [(i["code"], i["store"]) for i in items] == [("migration_failed", "migration-1")]
     assert "safe mode" in items[0]["said"] and items[0]["todo"]
     state["fail"] = False
-    assert mg.run_pending(home)["ok"] and ur.listing(home) == []
+    assert mg.run_pending(home)["ok"] and ur.listing(home) == []        # no marker held (set_next_start faked)
+
+
+def test_a_failed_upgrade_item_stays_while_safe_mode_is_held_for_it(home, monkeypatch):
+    mg, ur = _mod("migrations"), _mod("upgrade_review")
+    from agent_friday.services import safe_mode
+    (home / "notes.txt").write_text("before", encoding="utf-8")
+    state = {"fail": True}
+
+    def apply(h):
+        if state["fail"]:
+            raise OSError("disk went away")
+    monkeypatch.setattr(mg, "MIGRATIONS", [mg.Migration(1, "one", ("notes.txt",), apply, lambda h: True)])
+    try:
+        mg.run_pending(home)
+        state["fail"] = False
+        assert mg.run_pending(home)["ok"]
+        assert [i["code"] for i in ur.listing(home)] == ["migration_failed"]   # Home still says why
+    finally:
+        safe_mode.set_next_start(False)
 
 
 def test_an_upgrade_that_finds_a_link_in_the_way_says_so(home, monkeypatch):

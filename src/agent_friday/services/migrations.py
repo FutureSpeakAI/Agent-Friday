@@ -95,9 +95,13 @@ def _m1_apply(home: Path) -> None:
 
 
 def _settle_failed(home: Path) -> None:
-    """A migration that failed before and has now run is sorted."""
+    """A migration that failed before and has now run is sorted, unless Friday
+    is still held in safe mode for it: then the item stays until the owner's
+    press leaves safe mode (routes/doctor.py), so Home keeps saying why."""
     try:
-        from agent_friday.services import upgrade_review
+        from agent_friday.services import safe_mode, upgrade_review
+        if safe_mode.marker_reason() == safe_mode.MIGRATION_FAILED:
+            return
         for it in upgrade_review.listing(home):
             if it["code"] == "migration_failed":
                 upgrade_review.resolve(it["id"], home)

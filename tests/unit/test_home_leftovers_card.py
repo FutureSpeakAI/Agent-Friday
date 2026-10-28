@@ -30,7 +30,14 @@ def test_items_are_plain_text_and_the_way_to_sort_them_is_the_doctor_page():
     blk = _block()
     assert "it.said" in blk and "it.todo" in blk
     assert "dangerouslySetInnerHTML" not in blk and "innerHTML" not in blk
-    assert "href: '/doctor#afterupgrade'" in blk
+    assert "href: '/doctor#afterupgrade'" in blk and "more on the Doctor page" in blk
+
+
+def test_a_page_not_on_this_pc_stops_asking():
+    _block()
+    src = JS.read_text(encoding="utf-8")
+    i = src.index("api('/api/doctor/after-upgrade'")
+    assert "r.status === 401 || r.status === 403" in src[i:i + 400] and "stop();" in src[i:i + 400]
 
 
 def test_the_card_comes_before_the_other_home_cards():
