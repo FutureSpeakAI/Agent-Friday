@@ -1574,6 +1574,14 @@ def chat():
         # Source Production Mode — when true, Friday cites every factual claim
         # inline. Falls back to the persisted settings toggle so the preference
         # survives across turns even if the client omits the flag.
+        # Off the record and the private-memory generation at the turn's very start,
+        # for the shadow decision heads: a reading of this turn is written only if
+        # the turn began on the record and the generation has not moved since.
+        try:
+            from agent_friday.services import citation_heads as _cite_head_start
+            _cite_start = _cite_head_start.turn_start()
+        except Exception:
+            _cite_start = (True, None)
         settings_early = _load_settings()
         _pilot = _start_pilot(message, settings_early)
         cite_sources = bool(data.get('cite_sources',
@@ -1809,13 +1817,6 @@ def chat():
                     _record('gemini', 'error', f'cloud vision failed: {ve}')
 
         settings = _load_settings()
-        # The private-memory generation at the turn's start: a shadow reading of
-        # this turn is written only if it is unchanged when the reading is taken.
-        try:
-            from agent_friday.services import off_record as _off_turn
-            _turn_gen = int(_off_turn.generation())
-        except Exception:
-            _turn_gen = None
         personality = _load_agent_personality()
 
         # ── Demo mode ── no provider configured → return a labelled canned reply so
@@ -3227,7 +3228,7 @@ def chat():
         if not settings.get('off_record'):
             try:
                 from agent_friday.services import citation_heads as _cite_head
-                _cite_head.shadow_reply(reply, tool_trace, surface=chat, gen=_turn_gen)
+                _cite_head.shadow_reply(reply, tool_trace, surface="chat", start=_cite_start)
             except Exception:
                 pass
 
@@ -3681,6 +3682,14 @@ def chat_send():
         if not message.strip():
             return jsonify({"status": "error", "message": "Empty message"}), 400
 
+        # Off the record and the private-memory generation at the turn's very start,
+        # for the shadow decision heads: a reading of this turn is written only if
+        # the turn began on the record and the generation has not moved since.
+        try:
+            from agent_friday.services import citation_heads as _cite_head_start
+            _cite_start = _cite_head_start.turn_start()
+        except Exception:
+            _cite_start = (True, None)
         _pilot = _start_pilot(message, _load_settings())
 
         # Vision capture (Gemini, designer role). Accept either `screenshot`
@@ -3771,13 +3780,6 @@ def chat_send():
         # exactly the seam /api/chat's own _prep_for(provider) (chat.py:748)
         # was written to close. Mirrors that pattern here.
         settings = _load_settings()
-        # The private-memory generation at the turn's start: a shadow reading of
-        # this turn is written only if it is unchanged when the reading is taken.
-        try:
-            from agent_friday.services import off_record as _off_turn
-            _turn_gen = int(_off_turn.generation())
-        except Exception:
-            _turn_gen = None
         _session_id = _current_session_id()
         _send_sources = []
 
@@ -4084,7 +4086,7 @@ def chat_send():
         if not settings.get('off_record'):
             try:
                 from agent_friday.services import citation_heads as _cite_head
-                _cite_head.shadow_reply(reply, tool_trace, surface=chat, gen=_turn_gen)
+                _cite_head.shadow_reply(reply, tool_trace, surface="chat_send", start=_cite_start)
             except Exception:
                 pass
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)

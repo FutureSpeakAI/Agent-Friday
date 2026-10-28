@@ -14,7 +14,8 @@ says what the sentence says.
 
 It ships in SHADOW. The reply is shown, saved and spoken exactly as before; the
 reading is taken afterwards on this module's own worker and leaves one Laya
-receipt with labels, scores and counts, never a word. In act mode (a later
+receipt: the reply's weakest label, its lowest score, and counts (footnotes
+cited, scored, not addressed, unsure, supported). Never a word. In act mode (a later
 phase, Stephen's press only) it could only ANNOTATE a footnote as "not
 supported by the cited source"; it can never delete a citation or a claim.
 
@@ -46,13 +47,19 @@ _log = logging.getLogger("friday.citation_heads")
 
 HEAD = "evidence.supports"
 MAX_PAIRS = 8
+MAX_WINDOWS = 3
+MAX_REPLY = 50_000
 CLIP_CLAIM, CLIP_PASSAGE = 300, 700
 _MODE_TTL = 3.0
 
 WEB_RE = re.compile(r"\[web:(https?://[^\]\s]+)\]")
 LIB_RE = re.compile(r"\[lib:(\d+)#(\d+)\]")
-_ANY_TOKEN = re.compile(r"\[(?:unverified-)?(?:web|lib|wiki|news|memory):[^\]]*\]")
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+_ANY_TOKEN = re.compile(r"\[(?:unverified-)?(?:web|lib|wiki|news|memory):[^\]\n]{0,2048}\]")
+#: A sentence ends at . ! ? followed by space, or at a line break (a list item).
+_SENTENCE_END = re.compile(r"(?<=[.!?])[ \t]+|\n+")
+#: Footnotes the writer put after the full stop belong to the sentence before.
+_LEADING_CITES = re.compile(r"^(?:\s*\[(?:unverified-)?(?:web|lib|wiki|news|memory):[^\]\n]{0,2048}\])+")
+_URL_CHAR = re.compile(r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]")
 _EVIDENCE = re.compile(r"<evidence-(\w+) label=\"([^\"]*)\"[^>]*>\n(.*?)\n</evidence-\1>", re.S)
 
 _mode_cache: Dict[str, tuple] = {}
@@ -112,14 +119,44 @@ def _generation() -> Optional[int]:
         return None
 
 
+def turn_start() -> Tuple[bool, Optional[int]]:
+    """(off the record, private-memory generation) at a turn's very start. The
+    chat route takes this before anything slow (vision) so a turn sent off the
+    record is never read, even if the owner comes back on before it ends."""
+    return _off_record(), _generation()
+
+
 # --------------------------------------------------------------------------
 #  claims and the passages they cite, from the reply and this turn's trace
 # --------------------------------------------------------------------------
 
+def _find_url(text: str, url: str) -> int:
+    """Where the exact URL appears in text (not a longer URL that starts with
+    it, nor one that ends with it), or -1."""
+    start = 0
+    while True:
+        i = text.find(url, start)
+        if i < 0:
+            return -1
+        j = i + len(url)
+        before = text[i - 1] if i > 0 else " "
+        rest = text[j:j + 2] + "  "
+        starts_clean = (not _URL_CHAR.match(before)) or before in "(['\""
+        # The URL ends where a non-URL character follows, or a closing mark
+        # followed by a space or the end ("…/hours)." or "…/hours, next").
+        closing = ".,;:!?)]'\""
+        ends_clean = (not _URL_CHAR.match(rest[0])) or (
+            rest[0] in closing and (rest[1].isspace() or rest[1] in closing))
+        if starts_clean and ends_clean:
+            return i
+        start = i + 1
+
+
 def _web_passage(url: str, tool_trace) -> Optional[str]:
     """What this turn's tools returned for a URL: the result of a call whose
-    input was that URL, else the text right after the URL in a result that
-    listed it (a search result's snippet). None when nothing returned it."""
+    input was that URL, else the block of a result that lists it (search_web
+    writes each hit as a numbered block: title, snippet, then the URL). None
+    when nothing this turn returned it."""
     url = _strip_url(url)
     listed = None
     for row in tool_trace or []:
@@ -132,10 +169,22 @@ def _web_passage(url: str, tool_trace) -> Optional[str]:
         if isinstance(inp, dict) and _strip_url(str(inp.get("url") or "")) == url:
             return res
         if listed is None:
-            i = res.find(url)
+            i = _find_url(res, url)
             if i >= 0:
-                listed = res[i + len(url):i + len(url) + CLIP_PASSAGE * 2]
+                a = res.rfind("\n\n", 0, i)
+                b = res.find("\n\n", i)
+                listed = res[(a + 2 if a >= 0 else 0):(b if b >= 0 else len(res))]
     return listed
+
+
+def _windows(passage: str) -> List[str]:
+    """A long passage as up to MAX_WINDOWS overlapping pieces, so a claim drawn
+    from the middle of a page is scored against the part that says it."""
+    text = " ".join(str(passage or "").split())
+    if len(text) <= CLIP_PASSAGE:
+        return [text] if text else []
+    step = max(1, (len(text) - CLIP_PASSAGE) // (MAX_WINDOWS - 1))
+    return [text[i:i + CLIP_PASSAGE] for i in range(0, step * MAX_WINDOWS, step)][:MAX_WINDOWS]
 
 
 def _lib_passages(tool_trace) -> Dict[str, str]:
@@ -165,21 +214,29 @@ def pairs(reply: str, tool_trace) -> List[Tuple[str, str, str]]:
     is the sentence that carries the footnote, with every footnote taken out.
     A footnote the trace cannot back (no passage) is left out: provenance
     already marks those."""
-    if not reply or ("[web:" not in reply and "[lib:" not in reply):
+    if not reply or len(reply) > MAX_REPLY or ("[web:" not in reply and "[lib:" not in reply):
         return []
+    # Sentences, with footnotes written after a full stop moved back onto the
+    # sentence they follow ("...on Sundays. [web:A] Next..." cites "on Sundays").
+    sentences: List[str] = []
+    for part in _SENTENCE_END.split(reply):
+        m = _LEADING_CITES.match(part)
+        if m and m.end() and sentences:
+            sentences[-1] += m.group(0)
+            part = part[m.end():]
+        if part.strip():
+            sentences.append(part)
     lib = None
     out: List[Tuple[str, str, str]] = []
     seen: set = set()
-    for sentence in _SENTENCE_END.split(reply):
-        cites = [("web", m.group(1)) for m in WEB_RE.finditer(sentence)]
-        cites += [("lib", "lib:%s#%s" % (m.group(1), m.group(2))) for m in LIB_RE.finditer(sentence)]
-        if not cites:
-            continue
-        claim = _clip(_ANY_TOKEN.sub("", sentence), CLIP_CLAIM)
-        if len(claim) < 12:
-            continue
-        for kind, ref in cites:
-            if (claim, ref) in seen:
+    for sentence in sentences:
+        cites = [("web", m.group(1), m.end()) for m in WEB_RE.finditer(sentence)]
+        cites += [("lib", "lib:%s#%s" % (m.group(1), m.group(2)), m.end()) for m in LIB_RE.finditer(sentence)]
+        for kind, ref, end in cites:
+            # The claim is the sentence up to its footnote, footnotes taken out;
+            # a long one keeps its end, next to the footnote.
+            claim = " ".join(_ANY_TOKEN.sub("", sentence[:end]).split())[-CLIP_CLAIM:]
+            if len(claim) < 12 or (claim, ref) in seen:
                 continue
             seen.add((claim, ref))
             if kind == "web":
@@ -188,12 +245,19 @@ def pairs(reply: str, tool_trace) -> List[Tuple[str, str, str]]:
                 if lib is None:
                     lib = _lib_passages(tool_trace)
                 passage = lib.get(ref)
-            passage = _clip(passage, CLIP_PASSAGE)
+            passage = _clip(passage, CLIP_PASSAGE * MAX_WINDOWS)
             if passage:
                 out.append((kind, claim, passage))
             if len(out) >= MAX_PAIRS:
                 return out
     return out
+
+
+def count_cites(reply: str) -> int:
+    """How many [web:] and [lib:] footnotes the reply carries, backed or not."""
+    if not reply or len(reply) > MAX_REPLY:
+        return 0
+    return len(WEB_RE.findall(reply)) + len(LIB_RE.findall(reply))
 
 
 # --------------------------------------------------------------------------
@@ -207,13 +271,16 @@ def score(claim: str, passage: str, *, shadow: bool = True) -> Optional[float]:
     eff = _decision()
     if not eff or eff.get("scorer") != "series_one":
         return None
+    windows = _windows(passage)
+    if not windows:
+        return None
     try:
         from agent_friday.services import evidence_heads
-        got = evidence_heads._series_one(claim, [passage], eff.get("calibration") or {}, shadow=shadow)
+        got = evidence_heads._series_one(claim, windows, eff.get("calibration") or {}, shadow=shadow)
     except Exception as e:  # noqa: BLE001
         _log.debug("citation scorer failed: %s", e)
         return None
-    return float(got[0]) if got else None
+    return max(float(x) for x in got) if got else None
 
 
 def label(p: float) -> str:
@@ -284,17 +351,32 @@ def _first_time(key: str) -> bool:
         return True
 
 
+def _turn_id():
+    try:
+        from agent_friday import core
+        return getattr(core._TURN_LOCAL, "turn_id", None)
+    except Exception:
+        return None
+
+
 def shadow_reply(reply: str, tool_trace: Sequence[dict], *, surface: str = "chat",
+                 start: Optional[Tuple[bool, Optional[int]]] = None,
                  gen: Optional[int] = None) -> bool:
     """Called by the chat route AFTER the reply is final (provenance and Library
     footnotes checked). Queues one reading; changes nothing. False when the head
-    is off, the owner is off the record, the private-memory generation changed
-    since ``gen`` (the turn's start), this reply was already read, or no
-    footnote has a passage this turn returned.
+    is off, the turn began off the record (``start``, from ``turn_start()``),
+    the owner is off the record now, the private-memory generation changed
+    since the turn began, this turn's reply was already read, or no footnote
+    has a passage this turn returned.
 
     The claims and passages are extracted and clipped here, on the caller's
     thread, so the queued job holds no reference to the live trace. The receipt
     is written only if the owner is still on the record in the same generation."""
+    if start is not None:
+        if start[0]:
+            return False
+        if gen is None:
+            gen = start[1]
     if mode() == "off" or _off_record():
         return False
     now_gen = _generation()
@@ -303,7 +385,9 @@ def shadow_reply(reply: str, tool_trace: Sequence[dict], *, surface: str = "chat
     found = pairs(reply, tool_trace)
     if not found:
         return False
-    if not _first_time(hashlib.sha256(str(reply).encode("utf-8", "replace")).hexdigest()[:16]):
+    cited = count_cites(reply)
+    tid = _turn_id() or "t%d" % int(time.time() // 60)
+    if not _first_time("%s:%s" % (tid, hashlib.sha256(str(reply).encode("utf-8", "replace")).hexdigest()[:16])):
         return False
 
     def job():
@@ -319,7 +403,8 @@ def shadow_reply(reply: str, tool_trace: Sequence[dict], *, surface: str = "chat
             kinds.append(kind)
         from agent_friday.services import laya
         r = laya.ask({"text": "", "surface": "background",
-                      "opts": {"scores": scores, "kinds": kinds, "origin": surface, "log": False}},
+                      "opts": {"scores": scores, "kinds": kinds, "cited": cited, "origin": surface,
+                               "log": False}},
                      {HEAD: {"type": "choice", "preset": HEAD}}, "shadow.%s" % HEAD, budget_ms=500)
         if not _off_record() and _generation() == now_gen:
             laya.persist_receipt(r.get("receipt_id"))
@@ -338,8 +423,8 @@ def drain(timeout: float = 5.0) -> bool:
 
 def preset(ctx, spec: dict) -> dict:
     """laya.ask preset "evidence.supports": one label for the reply, the weakest
-    of its footnotes (does_not_address before unsure before supports), with
-    every footnote's own label and score in native. Never a word of text."""
+    of its footnotes (does_not_address before unsure before supports), the
+    lowest score, and counts in why. Never a word of text."""
     got = ctx.opts.get("scores")
     if not (isinstance(got, list) and got and all(isinstance(x, (int, float)) for x in got)):
         return {"answer": {"value": None, "p": None, "set": None, "abstain": True}, "layer": "degraded",
@@ -354,6 +439,6 @@ def preset(ctx, spec: dict) -> dict:
             "layer": "t1", "verdict": None,
             "native": [{"kind": k, "p": float(p), "label": lab}
                        for k, p, lab in zip(kinds or ["?"] * len(got), got, labels)],
-            "why": "%d footnote(s): %d not addressed, %d unsure, %d supported; %s" % (
-                len(got), labels.count("does_not_address"), labels.count("unsure"),
-                labels.count("supports"), eff.get("tag") or "untagged")}
+            "why": "%d of %s footnote(s) scored: %d not addressed, %d unsure, %d supported; %s" % (
+                len(got), ctx.opts.get("cited", "?"), labels.count("does_not_address"),
+                labels.count("unsure"), labels.count("supports"), eff.get("tag") or "untagged")}
