@@ -95,3 +95,23 @@ def test_the_owners_own_saves_outside_a_turn_are_each_made(gcw):
     mod.save_contact(name="Sam Synthetic", email="sam@example.test")
     mod.save_contact(name="Sam Synthetic", email="sam@example.test")
     assert len(made) == 2
+
+
+def test_a_workflow_step_retried_as_a_new_task_is_still_one_create(gcw):
+    from agent_friday.services import agent
+    mod, made, _box = gcw
+    for task in ("task-step-try-1", "task-step-try-2"):
+        tok = agent._CURRENT_TOOL_CONTEXT.set({"task_id": task, "run_id": "run-synthetic-1"})
+        try:
+            mod.save_contact(name="Sam Synthetic", email="sam@example.test")
+        finally:
+            agent._CURRENT_TOOL_CONTEXT.reset(tok)
+    assert len(made) == 1
+
+
+def test_a_save_that_never_reached_google_can_be_retried(gcw, in_task):
+    mod, made, box = gcw
+    box["boom"] = ConnectionRefusedError("could not connect")
+    assert mod.save_contact(name="Sam Synthetic", email="sam@example.test")["ok"] is False
+    box["boom"] = None
+    assert mod.save_contact(name="Sam Synthetic", email="sam@example.test")["ok"] is True
