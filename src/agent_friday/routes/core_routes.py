@@ -2447,15 +2447,18 @@ def analyze_file():
 
             # 2 ── cloud, only where the mode permits it, and never silently.
             mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
+            from agent_friday.services.image_egress import strip_metadata
+            _sent, _meta = strip_metadata(content)
             response = _cloud_client().models.generate_content(
                 model='gemini-2.5-flash',
                 contents=[
-                    types.Part.from_bytes(data=content, mime_type=mime),
+                    types.Part.from_bytes(data=_sent, mime_type=mime),
                     "You are Friday. Describe this image. If it looks like a job posting or resume, analyze it for key requirements and fit."
                 ]
             )
             _analyze_record('gemini', 'allow',
-                            'routing mode %s permits cloud vision' % mode, nbytes)
+                            'routing mode %s permits cloud vision; image metadata: %s'
+                            % (mode, _meta), len(_sent))
             _disclose("An image you uploaded")
             return jsonify({"filename": filename, "type": "image",
                             "analysis": response.text, "vision_events": events})

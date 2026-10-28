@@ -324,6 +324,46 @@ _PUBLIC_ORIGINS: dict = {}
 _OVERRIDE_PARAS: set = set()
 _OVERRIDE_MAX = 20000
 
+# Every origin that registered a paragraph ("" for one registered without an
+# origin), kept per registry. A paragraph a file grant registered is honoured
+# only while that grant is still live: revoked, expired or overruled by a deny
+# mark, the exemption ends at once, not at the next restart.
+_PARA_ORIGINS: dict = {}        # stripped text -> set of origins (_PUBLIC_PARAS)
+_OVERRIDE_ORIGINS: dict = {}    # stripped text -> set of origins (_OVERRIDE_PARAS)
+_GRANT_PREFIX = "user-grant:"
+
+
+def _grant_live(origin: str) -> bool:
+    """True while the file grant behind `origin` still covers what it
+    registered. Anything that cannot be checked is not live."""
+    try:
+        from agent_friday.services import file_grants as _fg
+        return bool(_fg.grant_is_live(origin[len(_GRANT_PREFIX):]))
+    except Exception:
+        return False
+
+
+def _live_origin(text: str, origins_by_text: dict):
+    """An origin under which `text` is still honoured ("" for an anonymous
+    registration), or None when every origin was a grant that is no longer
+    live. A paragraph with no recorded origins is honoured as before."""
+    origins = origins_by_text.get(text)
+    if not origins:
+        return _PUBLIC_ORIGINS.get(text, "")
+    grants = []
+    for o in sorted(origins):
+        if not o.startswith(_GRANT_PREFIX):
+            return o
+        grants.append(o)
+    for o in grants:
+        if _grant_live(o):
+            return o
+    return None
+
+
+def _note_origin(origins_by_text: dict, text: str, origin: str) -> None:
+    origins_by_text.setdefault(text, set()).add(str(origin or "")[:500])
+
 
 def register_override_text(text: str, origin: str = "", max_len: int = 2000) -> None:
     """Register a never-send-watchlist OVERRIDE for one paragraph's exact text.
@@ -345,8 +385,9 @@ def register_override_text(text: str, origin: str = "", max_len: int = 2000) -> 
     if not t or len(t) > max_len:
         return
     with _TRUSTED_LOCK:
-        if len(_OVERRIDE_PARAS) < _OVERRIDE_MAX:
+        if t in _OVERRIDE_PARAS or len(_OVERRIDE_PARAS) < _OVERRIDE_MAX:
             _OVERRIDE_PARAS.add(t)
+            _note_origin(_OVERRIDE_ORIGINS, t, origin)
             if origin:
                 _PUBLIC_ORIGINS[t] = str(origin)[:500]
 
@@ -403,7 +444,9 @@ def _never_send_covered_by_override(text: str) -> bool:
                 ps = p.strip()
                 if not ps:
                     continue
-                if _jg.never_send_hits(p) and ps not in _OVERRIDE_PARAS:
+                if _jg.never_send_hits(p) and not (
+                        ps in _OVERRIDE_PARAS
+                        and _live_origin(ps, _OVERRIDE_ORIGINS) is not None):
                     return False
         return True
     except Exception:
@@ -444,8 +487,9 @@ def register_public_text(text: str, origin: str = "", max_len: int = 2000) -> No
     if not t or len(t) > max_len:
         return
     with _TRUSTED_LOCK:
-        if len(_PUBLIC_PARAS) < _PUBLIC_MAX:
+        if t in _PUBLIC_PARAS or len(_PUBLIC_PARAS) < _PUBLIC_MAX:
             _PUBLIC_PARAS.add(t)
+            _note_origin(_PARA_ORIGINS, t, origin)
             if origin:
                 _PUBLIC_ORIGINS[t] = str(origin)[:500]
 
@@ -1396,8 +1440,9 @@ def _gate_text_span(text: str, provider: str, field: str,
         if _t_stripped in _TRUSTED_TEXTS:
             _log(provider, field, Tier.PUBLIC, "allow", "trusted-self-authored", log_path)
             return text
-        if _t_stripped in _PUBLIC_PARAS:
-            _origin = _PUBLIC_ORIGINS.get(_t_stripped, "")
+        _origin = (_live_origin(_t_stripped, _PARA_ORIGINS)
+                   if _t_stripped in _PUBLIC_PARAS else None)
+        if _origin is not None:
             _log(provider, field, Tier.PUBLIC, "allow", _origin_reason(_origin), log_path)
             return text
         if provider in _PROVIDER_ECHO.get(_t_stripped, ()):
@@ -1428,9 +1473,11 @@ def _gate_text_span(text: str, provider: str, field: str,
                 continue
             with _TRUSTED_LOCK:
                 _ps = p.strip()
-                _p_origin = _PUBLIC_ORIGINS.get(_ps, "")
+                _p_live = (_live_origin(_ps, _PARA_ORIGINS)
+                           if _ps in _PUBLIC_PARAS else None)
+                _p_origin = _p_live or ""
                 _p_echo = provider in _PROVIDER_ECHO.get(_ps, ())
-                _p_trusted = _ps in _TRUSTED_PARAS or _ps in _PUBLIC_PARAS or _p_echo
+                _p_trusted = _ps in _TRUSTED_PARAS or _p_live is not None or _p_echo
             if not _p_trusted and ((_released and _ps in _released) or _owner_released(_ps, provider)):
                 _p_trusted = True
                 _log(provider, field, Tier.PUBLIC, "allow", "owner-released: you said Send on its card", log_path)
@@ -1499,6 +1546,38 @@ def _gate_text_span(text: str, provider: str, field: str,
     return _redact_placeholder(tier)
 
 
+def _image_block_bytes(block: dict) -> int:
+    """Roughly how many bytes an image block carries (base64 payloads are
+    3/4 of their text length); 0 for a URL reference."""
+    try:
+        src = block.get("source") or {}
+        data = src.get("data") if isinstance(src, dict) else None
+        if not data:
+            iu = block.get("image_url")
+            data = iu.get("url") if isinstance(iu, dict) else iu
+        if isinstance(data, str):
+            if data.startswith("data:") and "," in data:
+                data = data.split(",", 1)[1]
+            return (len(data) * 3) // 4 if not data.startswith("http") else 0
+    except Exception:
+        pass
+    return 0
+
+
+def _note_image_block(block, provider: str, field: str,
+                      log_path: Path | None = None) -> None:
+    """An image block inside a cloud payload is a send this gate cannot
+    classify: it still gets its own UNCLASSIFIABLE ledger row. Never raises."""
+    if not (isinstance(block, dict) and block.get("type") in _IMAGE_PART_TYPES):
+        return
+    try:
+        record_binary_egress(provider, field, action="allow",
+                             reason="image block in a cloud payload; a text classifier cannot judge it",
+                             byte_len=_image_block_bytes(block), log_path=log_path)
+    except Exception:
+        pass
+
+
 def _gate_messages(messages: list, provider: str,
                    log_path: Path | None = None, model: str = "") -> list:
     """Gate a list of message dicts. Returns a new list; never mutates input.
@@ -1553,6 +1632,8 @@ def _gate_messages(messages: list, provider: str,
                             part, provider, f"message[{i}].content[{j}]", log_path,
                             model=model))
                     else:
+                        _note_image_block(part, provider,
+                                          f"message[{i}].content[{j}]", log_path)
                         new_parts.append(part)
                 out = {**out, "content": new_parts}
         # OpenAI-compatible wire shape's equivalent of a replayed tool_use
@@ -1701,6 +1782,7 @@ def _gate_tool_result(part: dict, provider: str, field: str,
                                       f"{field}.tool_result[{k}]"),
                 })
             else:
+                _note_image_block(block, provider, f"{field}.tool_result[{k}]", log_path)
                 new_inner.append(block)
         return {**part, "content": new_inner}
     return part

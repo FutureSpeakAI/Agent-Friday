@@ -17,19 +17,26 @@ from agent_friday.services import egress_gate as eg
 from agent_friday.services.egress_gate import _gate_text
 
 
+def _clear():
+    with eg._TRUSTED_LOCK:
+        eg._PUBLIC_PARAS.clear()
+        eg._PUBLIC_ORIGINS.clear()
+        eg._OVERRIDE_PARAS.clear()
+        eg._PROVIDER_ECHO.clear()
+        eg._PARA_ORIGINS.clear()
+        eg._OVERRIDE_ORIGINS.clear()
+
+
 @pytest.fixture(autouse=True)
-def _clean_registries():
-    with eg._TRUSTED_LOCK:
-        eg._PUBLIC_PARAS.clear()
-        eg._PUBLIC_ORIGINS.clear()
-        eg._OVERRIDE_PARAS.clear()
-        eg._PROVIDER_ECHO.clear()
+def _clean_registries(monkeypatch):
+    # These tests register grant-origin text directly, without a grant
+    # ledger; the grants they name count as live (a revoked grant is
+    # covered in test_egress_every_path.py).
+    from agent_friday.services import file_grants as fg
+    monkeypatch.setattr(fg, "grant_is_live", lambda gid: True)
+    _clear()
     yield
-    with eg._TRUSTED_LOCK:
-        eg._PUBLIC_PARAS.clear()
-        eg._PUBLIC_ORIGINS.clear()
-        eg._OVERRIDE_PARAS.clear()
-        eg._PROVIDER_ECHO.clear()
+    _clear()
 
 
 def _read_log(path: Path) -> list[dict]:
