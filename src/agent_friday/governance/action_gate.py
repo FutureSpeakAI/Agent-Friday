@@ -1071,16 +1071,18 @@ _GRANT_SIGNED = ("grant_id", "tools", "scope", "expires_at", "max_uses", "create
 _GRANTS_MARK = "grants.signed-v1"
 
 
-def _grant_sig(g: dict) -> str:
+def _grant_sig(g: dict, key: Optional[bytes] = None) -> str:
     body = json.dumps({k: g.get(k) for k in _GRANT_SIGNED}, sort_keys=True, default=str)
-    return _hmac.new(_governance_key(), b"agent-friday/grant/v1\0" + body.encode("utf-8"),
+    return _hmac.new(key or _governance_key(), b"agent-friday/grant/v1\0" + body.encode("utf-8"),
                      hashlib.sha256).hexdigest()
 
 
-def _grant_signed(g: dict) -> bool:
+def _grant_signed(g: dict, key: Optional[bytes] = None) -> bool:
+    # One operation reads the governance key once and passes it here: each read
+    # is a call into the OS keychain, and a list of grants must not be N of them.
     try:
         return isinstance(g, dict) and bool(g.get("sig")) and _hmac.compare_digest(
-            str(g.get("sig")), _grant_sig(g))
+            str(g.get("sig")), _grant_sig(g, key))
     except Exception:
         return False
 
@@ -1122,13 +1124,15 @@ def _migrate_grants_locked(gs: list) -> list:
     # nothing to sign (a fresh install): from then on nothing unsigned is ever signed.
     now = time.time()
     signed = []
+    key = None
     for g in gs:
         if isinstance(g, dict) and not g.get("sig") and isinstance(g.get("created_at"), (int, float)) \
                 and g["created_at"] <= now:
             g.setdefault("max_uses", int(g.get("uses_left") or 0))
             g["expires_at"] = min(float(g.get("expires_at") or 0), now + _MIGRATED_MAX_SECONDS)
             try:
-                g["sig"] = _grant_sig(g)
+                key = key or _governance_key()
+                g["sig"] = _grant_sig(g, key)
             except Exception:
                 return gs                # no key: nothing signed
             signed.append(str(g.get("grant_id")))
@@ -1174,10 +1178,11 @@ def _grant_events() -> dict:
     return out
 
 
-def _live_view(g: dict, events: Optional[dict] = None) -> Optional[dict]:
+def _live_view(g: dict, events: Optional[dict] = None,
+               key: Optional[bytes] = None) -> Optional[dict]:
     """The grant as it stands (uses left counted from the ledger), or None when it
     is unsigned, revoked, expired or used up."""
-    if not _grant_signed(g) or g.get("expires_at", 0) <= time.time():
+    if not _grant_signed(g, key) or g.get("expires_at", 0) <= time.time():
         return None
     try:
         events = events if events is not None else _grant_events()
@@ -1193,11 +1198,16 @@ def _live_view(g: dict, events: Optional[dict] = None) -> Optional[dict]:
     return dict(g, uses_left=left)
 
 
-def _read_grants() -> list:
-    """Every signed grant in the file (expired or not); see _live_view for use."""
+def _read_grants(key: Optional[bytes] = None) -> list:
+    """Every signed grant in the file (expired or not); see _live_view for use.
+    No governance key: no grant is signed, so the list is empty."""
     with _LOCK:
         gs = _migrate_grants_locked(_read_raw_grants())
-    return [g for g in gs if _grant_signed(g)]
+    try:
+        key = key or _governance_key()
+    except Exception:
+        return []
+    return [g for g in gs if _grant_signed(g, key)]
 
 
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
@@ -1215,9 +1225,10 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
          "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
          "max_uses": int(max_uses), "uses_left": int(max_uses), "created_by": created_by,
          "note": note[:200], "created_at": time.time()}
-    g["sig"] = _grant_sig(g)
+    key = _governance_key()
+    g["sig"] = _grant_sig(g, key)
     with _LOCK:
-        gs = [x for x in _read_grants() if x.get("expires_at", 0) > time.time()]
+        gs = [x for x in _read_grants(key) if x.get("expires_at", 0) > time.time()]
         gs.append(g)
         _write_grants(gs)
     return dict(g)
@@ -1249,7 +1260,11 @@ def all_grant_ids() -> list:
 def list_grants() -> list:
     """Live grants: signed, in time, not revoked, uses left (counted from the ledger)."""
     out = []
-    gs = _read_grants()
+    try:
+        key = _governance_key()
+    except Exception:
+        return out
+    gs = _read_grants(key)
     if not gs:
         return out
     try:
@@ -1257,7 +1272,7 @@ def list_grants() -> list:
     except Exception:
         return out
     for g in gs:
-        v = _live_view(g, events)
+        v = _live_view(g, events, key)
         if v is not None:
             out.append(v)
     return out
@@ -1307,8 +1322,12 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
             return None
     except Exception:
         return None
+    try:
+        key = _governance_key()
+    except Exception:
+        return None
     with _LOCK:
-        gs = [g for g in _read_grants()
+        gs = [g for g in _read_grants(key)
               if g.get("scope") in scopes and tool_name in (g.get("tools") or [])]
         if not gs:
             return None
@@ -1317,7 +1336,7 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
         except Exception:
             return None
         for g in gs:
-            live = _live_view(g, events)
+            live = _live_view(g, events, key)
             if live is None:
                 continue
             # The use is a durable ledger entry BEFORE anything runs: no entry, no use.

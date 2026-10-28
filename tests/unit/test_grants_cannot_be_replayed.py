@@ -193,3 +193,35 @@ def test_a_decided_card_cannot_be_decided_again_or_carried_out_twice(cards):
     ap.decide(rec2["approval_id"], "approve")
     assert ap.claim_for_execution(rec2["approval_id"]) is True
     assert ap.claim_for_execution(rec2["approval_id"]) is False, "an approved card ran twice"
+
+
+def _key_reads(monkeypatch):
+    import secrets
+    from agent_friday.governance import proof_of_integrity as poi
+    key = secrets.token_bytes(32)
+    reads = []
+    monkeypatch.setattr(poi, "get_governance_key", lambda: (reads.append(1), key)[1])
+    return reads
+
+
+def test_checking_grants_reads_the_governance_key_once_not_once_per_grant(grants_file, monkeypatch):
+    # Each read of the governance key is a call into the OS keychain: checking a
+    # list of grants costs about the same number of reads for one grant as for
+    # five (the action ledger's own reads vary by one), never one per grant.
+    reads = _key_reads(monkeypatch)
+    first = _grant(uses=4)
+    assert _use(first)                    # a first use carries one-time reads
+    reads.clear()
+    assert len(gate.list_grants()) == 1
+    list_one = len(reads)
+    reads.clear()
+    assert _use(first)
+    use_one = len(reads)
+    for _ in range(4):
+        _grant(uses=3)
+    reads.clear()
+    assert len(gate.list_grants()) == 5
+    assert len(reads) <= list_one + 1, "listing 5 grants read the key %d times, 1 grant %d" % (len(reads), list_one)
+    reads.clear()
+    assert _use(first)
+    assert len(reads) <= use_one + 1, "using a grant among 5 read the key %d times, among 1 %d" % (len(reads), use_one)
