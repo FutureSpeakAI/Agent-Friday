@@ -11,6 +11,8 @@ import { settle } from '../helpers/settle';
 const WORKSPACES = ['settings', 'calendar', 'messages', 'news', 'knowledge'];
 
 test('one top-level heading, a level-2 heading per window, no level-1 heading inside a window', async ({ page }) => {
+  // Past first run: its own screen ("Before anything else") is a page of its own, with its own h1.
+  await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
   await bootApp(page);
   for (const ws of WORKSPACES) {
     await page.evaluate(w => (window as any).fridayRunActions([{ type: 'navigate', workspace: w }]), ws);
