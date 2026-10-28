@@ -133,3 +133,12 @@ def test_the_report_lists_the_repairs_and_the_weekly_email_leaves_them_out(home,
     assert any(r["id"] == "rebuild_now" for r in rep["repairs"]["after_upgrade"])
     assert "Repairs offered (none needs a model)" in doctor.render_text(rep)
     assert "Repairs offered" not in doctor_weekly._render(rep, False)
+
+
+def test_the_doctor_page_links_each_repair_to_its_section():
+    _dr()
+    html = (ROOT / "static" / "doctor.html").read_text(encoding="utf-8")
+    i = html.index("Repairs offered (none needs a model)")
+    blk = html[i - 600:i + 900]
+    assert "rep.repairs" in blk and "a.href = r.where" in blk and "textContent = r.label" in blk
+    assert "innerHTML" not in blk
