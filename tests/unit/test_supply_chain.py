@@ -388,7 +388,7 @@ def test_the_release_build_writes_the_sbom_from_its_staged_wheelhouse_and_waits_
     assert "supply_chain.py sbom --wheels packaging\\windows\\staging\\wheelhouse" in build_run
     job = inst["jobs"]["supply-chain"]
     assert job["uses"] == "./.github/workflows/supply-chain.yml" and job["with"]["called"] is True
-    assert "contains(github.ref_name, '-')" in str(job["with"]["report_only"])
+    assert "contains(github.ref_name, '-beta.')" in str(job["with"]["report_only"])
     assert "supply-chain" in inst["jobs"]["release"]["needs"]
     publish = " ".join(s.get("run", "") for s in inst["jobs"]["release"]["steps"])
     assert "AgentFriday-Setup-*.sbom.cdx.json" in publish

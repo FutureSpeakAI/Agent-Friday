@@ -36,6 +36,8 @@ import zipfile
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
+from agent_friday.user_errors import UserFacingValueError
+
 SOURCES = {"chatgpt": "ChatGPT", "claude": "Claude"}
 #: The `via` of an imported message: where it was said (search and recall show it).
 IMPORTED_VIA = {k: "imported %s history" % v for k, v in SOURCES.items()}
@@ -67,7 +69,7 @@ def _parsed(data: bytes):
         raise ImportRefused(UNREADABLE)
 
 
-class ImportRefused(ValueError):
+class ImportRefused(UserFacingValueError):
     """The file cannot be read as that service's export. The message is for the owner."""
 
 
@@ -245,7 +247,7 @@ def preview(data: bytes) -> dict:
     try:
         source, convs = _parsed(data)
     except ImportRefused as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": e.user_message}
     finally:
         _ONE_AT_A_TIME.release()
     stamps = [c["created"] or c["updated"] for c in convs if c["created"] or c["updated"]]
@@ -267,7 +269,7 @@ def stage(data: bytes) -> dict:
     try:
         source, convs = _parsed(data)
     except ImportRefused as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": e.user_message}
     finally:
         _ONE_AT_A_TIME.release()
     from agent_friday.services.pasted_secrets import withhold

@@ -57,13 +57,41 @@ def test_the_release_build_calls_it_and_the_release_waits_for_it():
     assert job["uses"] == "./.github/workflows/clean-machine.yml"
     assert job["with"]["called"] is True and job["needs"] == "build"
     assert "clean-machine" in inst["jobs"]["release"]["needs"]
-    # A beta tag only records (A19); a public tag must pass.
+    # Only a beta tag records (A19); a public tag and a release candidate must pass.
     ro = str(job["with"]["report_only"])
-    assert "contains(github.ref_name, '-')" in ro
+    assert "contains(github.ref_name, '-beta.')" in ro
     assert "!startsWith(github.ref, 'refs/tags/v')" in ro and "||" in ro
     # The record ships with the release it proves (§34.3-8).
     rel = INSTALLER.read_text(encoding="utf-8").split("\n  release:", 1)[1]
     assert "name: clean-machine-evidence" in rel and "artifact/clean-machine-evidence.json" in rel
+
+
+def _report_only(expr: str, ref: str) -> bool:
+    """Evaluate a report_only expression of the form installer.yml uses:
+    `!startsWith(github.ref, 'X') || contains(github.ref_name, 'Y')`."""
+    import re
+    body = expr.strip()
+    assert body.startswith("${{") and body.endswith("}}"), expr
+    m = re.fullmatch(r"!startsWith\(github\.ref, '([^']*)'\) \|\| "
+                     r"contains\(github\.ref_name, '([^']*)'\)", body[3:-2].strip())
+    assert m, expr
+    name = ref.rsplit("/", 1)[-1]
+    return (not ref.startswith(m.group(1))) or (m.group(2) in name)
+
+
+@pytest.mark.parametrize("ref, records_only", [
+    ("refs/tags/v1.2.0-beta.3", True),
+    ("refs/tags/v1.0.0-rc.1", False),
+    ("refs/tags/v1.0.0", False),
+    ("refs/heads/main", True),
+])
+@pytest.mark.parametrize("gate", ["clean-machine", "supply-chain"])
+def test_only_a_beta_tag_records_without_failing(gate, ref, records_only):
+    # A19 exempts -beta.N only; a release candidate is not a beta, so the
+    # clean-machine and supply-chain gates fail it like a public release.
+    inst = yaml.safe_load(INSTALLER.read_text(encoding="utf-8"))
+    expr = str(inst["jobs"][gate]["with"]["report_only"])
+    assert _report_only(expr, ref) is records_only, (gate, ref, expr)
 
 
 def test_called_by_the_release_it_tests_the_release_build_not_its_own():

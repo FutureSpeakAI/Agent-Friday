@@ -349,13 +349,16 @@ def mark(item_id: str, answer: str, *, shown_text: str = "", by: str = "owner") 
         said = ""
         if answer == "remember":
             from agent_friday.services import core_memory
+            from agent_friday.user_errors import ExceptionText, exception_text
             try:
                 res = core_memory.add("user", it.get("remember_text") or "", actor="owner", dedupe=True)
             except Exception as e:
-                res = {"ok": False, "error": str(e)}
+                return {"ok": False, "error": exception_text(e, "It could not be remembered: %s")}
             if not (isinstance(res, dict) and res.get("ok")):
-                why = str((res or {}).get("error") or "the memory card refused it")[:160]
-                return {"ok": False, "error": "It could not be remembered: " + why}
+                err = (res or {}).get("error") if isinstance(res, dict) else None
+                said = "It could not be remembered: " + str(err or "the memory card refused it")[:160]
+                # Exception text stays marked, so the HTTP boundary swaps it for an error id.
+                return {"ok": False, "error": ExceptionText(said) if isinstance(err, ExceptionText) else said}
             said = ('Remembered on your memory card as "%s". You can change or delete it there.'
                     % it.get("remember_text"))
         elif answer == "forget":
