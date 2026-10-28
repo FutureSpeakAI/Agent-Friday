@@ -171,6 +171,7 @@ def test_an_unreadable_settings_file_is_left_exactly_as_it_is(home):
     from agent_friday import core
     broken = b'{"agent_name": "Friday", "theme": '            # cut off mid-write
     (home / "settings.json").write_bytes(broken)
+    core._invalidate_settings_cache()                          # an earlier read is cached for a moment
     served = core._load_settings_raw()                             # the degraded read Friday makes
     assert core._is_degraded_settings(served)
     rep = doctor.build()
