@@ -25,3 +25,14 @@ def test_no_blanket_min_size_rule_on_every_button():
     for page in ("index.html", "ui_parts/head.html"):
         css = (ROOT / page).read_text(encoding="utf-8")
         assert 'input[type="reset"] { min-width: 24px; min-height: 24px; }' not in css, page
+
+
+def test_the_controls_the_spec_measured_small_are_24():
+    """The first measurement found three: the AGENT FRIDAY name (19 px high),
+    "Fullscreen with chat" (22 px wide) and the "Show chat" edge pill (14 px wide)."""
+    for page in ("index.html", "ui_parts/head.html"):
+        css = (ROOT / page).read_text(encoding="utf-8")
+        assert "padding: 0; min-height: 24px; transition: text-shadow .2s; }" in css, page
+        assert "width: 24px; height: 76px; margin-top: -38px;" in css, page
+    assert "fontSize: 14,\n      minWidth: 24,\n      minHeight: 24\n    },\n    title: fsOn ?" in (ROOT / "index.html").read_text(encoding="utf-8")
+    assert "fontSize:14,minWidth:24,minHeight:24}}\n          title={fsOn?" in (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")

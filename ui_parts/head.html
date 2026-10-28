@@ -348,7 +348,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
         .fr-lockup-name { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
             color: var(--fr-cyan); text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); cursor: pointer;
-            user-select: none; background: none; border: 0; padding: 0; transition: text-shadow .2s; }
+            user-select: none; background: none; border: 0; padding: 0; min-height: 24px; transition: text-shadow .2s; }
         .fr-lockup-name:hover { text-shadow: 0 0 18px rgba(0,212,255,0.75); }
         .fr-lockup-name.fr-lockup-static { cursor: default; }
         .fr-lockup-tm { font-size: 0.5em; vertical-align: super; line-height: 0; margin-left: 1px; }
@@ -603,7 +603,7 @@ window.addEventListener('DOMContentLoaded',function(){
            until the pointer comes to it. A click brings the tray back. */
         .chat-edge-pill {
             position: fixed; top: 50%; right: 0; z-index: 66;
-            width: 14px; height: 76px; margin-top: -38px; padding: 0;
+            width: 24px; height: 76px; margin-top: -38px; padding: 0;
             display: flex; align-items: center; justify-content: center;
             background: rgba(10,14,26,0.82); color: var(--fr-cyan);
             border: 1px solid rgba(0,212,255,0.28); border-right: none;
@@ -612,7 +612,7 @@ window.addEventListener('DOMContentLoaded',function(){
             font-size: 13px; line-height: 1; opacity: 0.45;
             transition: opacity 0.2s ease, width 0.2s ease;
         }
-        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
+        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 30px; outline: none; }
         .chat-edge-pill.left { right: auto; left: 0; border-left: none;
             border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
         /* Snap layouts (unified-shell.md §11): the outline a release would

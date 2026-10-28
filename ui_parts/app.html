@@ -29898,7 +29898,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>)}
         {!shellChat&&(<button onClick={()=>layoutRef.current.toggleLayout()}
-          style={{background:'none',border:'none',color:fsOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
+          style={{background:'none',border:'none',color:fsOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14,minWidth:24,minHeight:24}}
           title={fsOn?'Back to the normal layout (Ctrl+Shift+F)':'Fullscreen with the chat beside it (Ctrl+Shift+F)'}
           aria-label={fsOn?'Leave fullscreen with chat':'Fullscreen with chat'} aria-pressed={!!fsOn} data-testid="fs-chat-toggle">⤢</button>)}
         {!shellTab&&!shellChat&&(<button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}

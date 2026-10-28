@@ -15,7 +15,7 @@ const json = (body: unknown) => ({ status: 200, contentType: 'application/json',
 const CONTROLS = 'button, [role="button"], [role="tab"], [role="switch"], [role="radio"], [role="checkbox"], '
   + '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], select, summary, '
   + 'input[type="button"], input[type="submit"], input[type="reset"]';
-const PAGES = ['/', '/w/settings', '/w/calendar', '/w/messages', '/w/tasks', '/w/knowledge'];
+const PAGES = ['/', '/w/settings', '/w/calendar', '/w/messages', '/w/media', '/w/knowledge'];
 
 async function small(page: Page, min: number): Promise<string[]> {
   return page.evaluate(([sel, m]) => {
