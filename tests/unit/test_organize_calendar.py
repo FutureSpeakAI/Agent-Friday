@@ -27,9 +27,12 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
     monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
-    # This file tests the calendar card, not the gate's holds: a hold another test left in this
-    # xdist worker (safe mode is decided once per process; a restore or ledger hold; a revoke)
-    # must not refuse the card here. The gate's own tests cover the holds.
+    # This file tests the calendar card, not the gate's holds or Stop: state another file's test
+    # left in this xdist worker's shared home (the safe-mode marker, a failed-start count, a
+    # restore hold) or in the process (Stop everything is a process-wide flag) must not refuse the
+    # card here. The gate's and Stop's own tests cover those.
+    from agent_friday.services import global_stop
+    global_stop._reset_for_tests()
     monkeypatch.setattr(ag, "outward_hold", lambda: None)
     monkeypatch.setattr(journal, "_path", lambda: tmp_path / "receipts.jsonl")
     journal.reset()
@@ -158,6 +161,12 @@ def test_a_hold_left_by_another_test_in_this_worker_does_not_stop_the_card(reque
     # process and a restore or ledger hold can be left behind. Any of them makes the gate refuse the
     # card, and the undo test then failed with an IndexError (no card) on most branches.
     monkeypatch.setattr(ag, "outward_hold", lambda: "safe mode (left by an earlier test in this worker)")
-    request.getfixturevalue("world")
-    out = _org(events=["e1"], days=1)
-    assert len(_pending()) == 1, "a hold left by another test refused the card: %r" % (out,)
+    from agent_friday.services import global_stop
+    global_stop._flag().set()               # Stop everything left on by another test
+    try:
+        request.getfixturevalue("world")
+        out = _org(events=["e1"], days=1)
+        assert len(_pending()) == 1, "state left by another test refused the card: %r" % (out,)
+    finally:
+        global_stop._reset_for_tests()
+
