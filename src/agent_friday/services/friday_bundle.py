@@ -1784,7 +1784,7 @@ def _mark_reindex(home: Path) -> None:
     d = home / "restore"
     d.mkdir(parents=True, exist_ok=True)
     (d / "needs_reindex.json").write_text(json.dumps({
-        "at": time.time(), "indexes": ["knowledge_graph", "conversation_memory", "library"]}),
+        "at": time.time(), "indexes": ["knowledge_graph", "conversation_search", "library"]}),
         encoding="utf-8")
 
 

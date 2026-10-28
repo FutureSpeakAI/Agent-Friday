@@ -508,6 +508,26 @@ def _versions() -> dict:
     return out
 
 
+def _after_upgrade() -> dict:
+    """Counts only (§37.3-9, §37.3-10): open items the owner should look at,
+    by code, and the index rebuilds still waiting. No sentences, no names."""
+    out: dict = {}
+    try:
+        from agent_friday.services import upgrade_review
+        out["unresolved"] = upgrade_review.counts()
+    except Exception as e:  # noqa: BLE001
+        out["unresolved"] = {"error": type(e).__name__}
+    try:
+        from agent_friday.services import derived_rebuild
+        st = derived_rebuild.state()
+        out["rebuilds_waiting"] = [w["index"] for w in st["waiting"]]
+        out["restore_rebuild_waiting"] = bool(st.get("restore_waiting"))
+        out["rebuilds_failed_last"] = sorted({r["index"] for r in st["results"] if not r.get("ok")})
+    except Exception as e:  # noqa: BLE001
+        out["rebuilds_waiting"] = {"error": type(e).__name__}
+    return out
+
+
 def _stores() -> dict:
     """Every store with its version, size and place in the data folder
     (services/store_inventory.py, §37.3-1). Store names and locations are
@@ -546,6 +566,7 @@ def build() -> dict:
     # so the general filter above, which could blank a store whose name holds
     # a short user name, is not needed for it
     report["stores"] = _stores()
+    report["after_upgrade"] = _after_upgrade()
     return report
 
 
@@ -578,6 +599,15 @@ def render_text(report: dict) -> str:
         lines += [""] + store_inventory.render_text(inv)
     elif isinstance(inv, dict) and inv.get("error"):
         lines += ["", "Stores: %s" % inv["error"]]
+    au = report.get("after_upgrade")
+    if isinstance(au, dict):
+        un = au.get("unresolved") if isinstance(au.get("unresolved"), dict) else {}
+        wait = au.get("rebuilds_waiting") if isinstance(au.get("rebuilds_waiting"), list) else []
+        lines += ["", "After upgrades and restores: %s open item(s)%s; rebuilds waiting: %s" % (
+            un.get("open", "unknown"),
+            (" (" + ", ".join("%s %s" % (k, v) for k, v in sorted((un.get("by_code") or {}).items())) + ")")
+            if un.get("by_code") else "",
+            ", ".join(wait) or "none")]
     return "\n".join(lines) + "\n"
 
 
