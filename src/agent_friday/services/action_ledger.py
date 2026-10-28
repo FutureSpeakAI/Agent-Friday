@@ -630,6 +630,17 @@ def _read_head() -> Optional[dict]:
 def _write_head(key: bytes, seq: int, h: str) -> None:
     p = head_path()
     tmp = p.with_name(p.name + f".{os.getpid()}.{threading.get_ident()}.tmp")
+    # The caller holds the ledger lock: any other head temp file is a killed
+    # writer's (NS-34.16-2), never a live one's. Cleared, so crashes do not pile up.
+    try:
+        for stale in p.parent.glob(p.name + ".*.tmp"):
+            if stale != tmp:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        pass
     try:
         tmp.write_text(json.dumps({"seq": seq, "hash": h, "kid": key_id(key),
                                    "sig": _head_sig(key, seq, h)}), encoding="utf-8")
@@ -2005,6 +2016,12 @@ def hold_reason() -> Optional[str]:
         first = next((p for p in r.get("problems", []) if not p.get("acknowledged")), {})
         if first.get("segment") == "key":
             return "the action ledger cannot be checked: the governance key is unavailable"
+        if "unfinished write" in str(first.get("reason") or ""):
+            # What a crash (or a kill) part-way through writing a receipt leaves: the
+            # cut-off bytes are kept under ledger/torn/, nothing earlier is touched.
+            return ("Friday stopped part-way through writing a receipt (record %s); the cut-off "
+                    "part is kept and nothing earlier changed. Open Activity to look at it "
+                    "before anything goes out" % (first.get("seq") or "at the end"))
         return ("the action ledger was changed on disk (%s, record %s: %s); "
                 "open Activity to review it" % (first.get("segment"), first.get("seq"),
                                                 first.get("reason")))
