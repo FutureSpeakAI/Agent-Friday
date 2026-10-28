@@ -15,7 +15,7 @@ def test_the_process_list_shows_the_new_fields(client):
         rows = {r["id"]: r for r in client.get("/api/processes").get_json()["processes"]}
         r = rows["p-api-1"]
         assert r.get("principal") == "owner" and r.get("receipt_id") == "decision:9"
-        assert r.get("cost_usd") == 0.02 and r.get("stop_capability") == "after_this_step"
+        assert r.get("cost_usd") == 0.02 and r.get("stop_capability") == "stop_everything"
     finally:
         with core.PROCESSES_LOCK:
             core.PROCESSES.pop("p-api-1", None)
