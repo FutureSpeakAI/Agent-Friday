@@ -140,3 +140,13 @@ def test_the_gate_classifies_it_outward_and_the_tool_is_registered_everywhere():
     assert "organize_calendar" in taint.TOOL_ROLES
     assert "organize_calendar" in voice_engine._VOICE_SHARED_TOOLS
     assert "organize_calendar" in {t["name"] for t in agent.CLAUDE_TOOLS}
+
+
+def test_a_hold_left_by_another_test_in_this_worker_does_not_stop_the_card(request, monkeypatch):
+    # Under xdist one worker runs many files with one test home; safe mode's decision is cached per
+    # process and a restore or ledger hold can be left behind. Any of them makes the gate refuse the
+    # card, and the undo test then failed with an IndexError (no card) on most branches.
+    monkeypatch.setattr(ag, "outward_hold", lambda: "safe mode (left by an earlier test in this worker)")
+    request.getfixturevalue("world")
+    out = _org(events=["e1"], days=1)
+    assert len(_pending()) == 1, "a hold left by another test refused the card: %r" % (out,)
