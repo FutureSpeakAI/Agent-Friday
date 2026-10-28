@@ -55,6 +55,14 @@ things of which kind were deleted on which day, and can answer "is THIS text
 tombstoned?", but cannot be read back into the text, and a short phrase cannot
 be confirmed by hashing guesses without the key.
 
+One exception, by the owner's ruling of 2026-10-28: a DISCARDED SUGGESTION (a
+card suggestion's Discard, a proposal's reject; ``add_discard``) is listed for
+the owner to undo (``list_discarded`` / ``undo_discard``), so its entry also
+carries an id and a short label SEALED with Friday's keystore
+(credential_store.protect); the file still holds no readable text. Without a
+keystore the label is not kept and the list shows "a discarded suggestion from
+<day>". Forget-person drops labels that name the person.
+
 The key is this module's own, not the governance key: that one may live in the
 OS keychain (a test run or a practice task must never touch it) and rotating
 it on a governance reset would silently unhook every tombstone. A key that
@@ -116,10 +124,12 @@ STORES = {
     "person": "names and aliases the owner typed (forgotten-people.json, by design)",
     "conversation_turn": "message ids only (forgotten-turns.json)",
     "library_document": "content hash and path (the Library's own tombstones table)",
-    "card_line": "a keyed hash and a date (tombstones.json)",
+    "card_line": ("a keyed hash and a date (tombstones.json); a discarded suggestion also keeps a "
+                  "short label sealed with Friday's keystore, shown only to you"),
     "kg_entity": "a keyed hash and a date (tombstones.json)",
     "user_fact": "a keyed hash and a date (tombstones.json)",
-    "proposal": "a keyed hash and a date (tombstones.json)",
+    "proposal": ("a keyed hash and a date (tombstones.json); a rejected suggestion also keeps a "
+                 "short label sealed with Friday's keystore, shown only to you"),
 }
 
 FILE = "tombstones.json"
@@ -556,6 +566,197 @@ def list_tombstones() -> Dict[str, Any]:
             res["key"] = "ok" if hashed else "none needed"
     except Exception:
         pass
+    return res
+
+
+# ── discarded suggestions: the owner's visible list ─────────────────────────
+# Owner ruling 2026-10-28: a suggestion the owner discarded (a card suggestion's
+# Discard, a proposal's reject) is blocked for good, and listed where the owner
+# can let it through again. A hash cannot be shown, so a discard tombstone also
+# carries a SHORT LABEL sealed with Friday's keystore (credential_store.protect,
+# as memory_proposals seals a meeting's rows): {kind, h, day, discard, id,
+# label}. The label is opened only for the owner's list; the file holds no
+# readable text. If sealing is not available the entry keeps no label (hashed
+# only) and the list says "a discarded suggestion from <day>". Undo removes the
+# tombstone; it does not put the suggestion back in the queue, it only lets a
+# later pass suggest it again. Forget-person drops labels that name the person
+# (forget_registry store "tombstone_labels"); the hash, which names nobody,
+# stays and keeps blocking.
+
+#: Kinds a discard is recorded under (a card suggestion; a proposal).
+DISCARD_KINDS = ("card_line", "proposal")
+#: Characters of the suggestion kept (sealed) as its label.
+LABEL_MAX = 160
+_SEALED = "enc:"
+_ID_RE = re.compile(r"^[0-9a-f]{8,32}$")
+
+
+def _seal_label(text: Any) -> Optional[str]:
+    """The label sealed with the keystore, or None when it cannot be sealed
+    (the entry is then hashed only). Never raises."""
+    s = " ".join(str(text or "").split())[:LABEL_MAX]
+    if not s:
+        return None
+    try:
+        import base64
+        from agent_friday.services import credential_store as cs
+        blob, _method = cs.protect(s.encode("utf-8"))
+        return _SEALED + base64.b64encode(blob).decode("ascii")
+    except Exception as e:                                   # noqa: BLE001
+        _log.warning("tombstones: a discard label could not be sealed (kept hashed only): %s",
+                     type(e).__name__)
+        return None
+
+
+def _open_label(sealed: Any) -> str:
+    """The label's text, or "" when there is none or it cannot be opened."""
+    if not isinstance(sealed, str) or not sealed.startswith(_SEALED):
+        return ""
+    try:
+        import base64
+        from agent_friday.services import credential_store as cs
+        return cs.unprotect(base64.b64decode(sealed[len(_SEALED):])).decode("utf-8")
+    except Exception:                                        # noqa: BLE001
+        return ""
+
+
+def add_discard(kind: str, text: Any) -> Dict[str, Any]:
+    """Tombstone a suggestion the owner discarded, as `add` does, and mark the
+    entry for the owner's list with an id and a sealed label. Returns `add`'s
+    result plus "id" (and "sealed": whether a label was kept). Never raises."""
+    if kind not in DISCARD_KINDS:
+        return {"ok": False, "error": "only a card suggestion or a proposal is discarded"}
+    r = add(kind, text)
+    if not r.get("ok"):
+        return r
+    try:
+        with _LOCK:
+            entries = _read(strict=True)
+            key = _key(create=False)
+            norm = _ident(kind, text)
+            if key is None or not norm:
+                return r
+            h = _digest(key, kind, norm)
+            label = _seal_label(text)
+            out, did = [], None
+            for e in entries:
+                if did is None and e.get("kind") == kind and e.get("h") == h:
+                    e = dict(e)
+                    e["discard"] = True
+                    if not (isinstance(e.get("id"), str) and _ID_RE.match(e["id"])):
+                        e["id"] = secrets.token_hex(8)
+                    if label:
+                        e["label"] = label
+                    else:
+                        e.pop("label", None)
+                    did = e["id"]
+                out.append(e)
+            if did:
+                _write(out)
+        return {**r, "id": did, "sealed": bool(label)}
+    except Exception as e:                                   # noqa: BLE001
+        # The tombstone itself is in place: the suggestion stays blocked, it is
+        # only missing from the owner's list.
+        _log.warning("tombstones: a discard could not be listed: %s", type(e).__name__)
+        return {**r, "listed": False}
+
+
+def list_discarded(limit: int = 200) -> builtins.list:
+    """The owner's list of discarded suggestions, newest first: [{"id", "kind",
+    "day", "label", "sealed"}]. The label is opened here, for the owner only;
+    with none (sealing unavailable, or purged by forget-person) or one that
+    cannot be opened, it reads "a discarded suggestion from <day>". Never
+    raises: an unreadable list is empty."""
+    try:
+        n = max(1, min(int(limit or 200), 500))
+    except (TypeError, ValueError):
+        n = 200
+    rows = []
+    try:
+        entries = _read()
+    except Exception:                                        # noqa: BLE001
+        entries = ()
+    for e in reversed(entries):
+        if not e.get("discard") or not isinstance(e.get("id"), str) or e.get("kind") not in DISCARD_KINDS:
+            continue
+        day = str(e.get("day") or "")[:10]
+        opened = _open_label(e.get("label"))
+        rows.append({"id": e["id"], "kind": e["kind"], "day": day or None,
+                     "label": opened or ("a discarded suggestion from %s" % (day or "an earlier day")),
+                     "sealed": bool(opened)})
+        if len(rows) >= n:
+            break
+    return rows
+
+
+def undo_discard(discard_id: Any) -> Dict[str, Any]:
+    """The owner's "Allow again": remove that discard's tombstone (and its
+    label). The suggestion is NOT put back in the queue; a later pass may now
+    suggest it again. Returns {"ok", "removed"}. Never raises."""
+    did = str(discard_id or "").strip().lower()
+    if not _ID_RE.match(did):
+        return {"ok": False, "error": "no such discarded suggestion"}
+    try:
+        with _LOCK:
+            entries = _read(strict=True)
+            keep = tuple(e for e in entries if not (e.get("discard") and e.get("id") == did))
+            if len(keep) == len(entries):
+                return {"ok": False, "error": "no such discarded suggestion", "removed": 0}
+            _write(keep)
+        return {"ok": True, "removed": len(entries) - len(keep)}
+    except Exception as e:                                   # noqa: BLE001
+        _log.warning("tombstones: a discard could not be lifted: %s", type(e).__name__)
+        return {"ok": False, "error": "the discarded suggestion could not be allowed again (%s)"
+                                      % type(e).__name__}
+
+
+def _label_rows(names, emails):
+    """(ids of discard entries whose label names the person, how many labels
+    could not be opened). forget_registry.subject_matcher, as every free-text
+    forget store uses."""
+    from agent_friday.services import forget_registry as _fr
+    match = _fr.subject_matcher(names or (), emails or ())
+    if not match:
+        return [], 0
+    hits, locked = [], 0
+    for e in _read(strict=True):
+        if not e.get("label"):
+            continue
+        opened = _open_label(e.get("label"))
+        if not opened:
+            locked += 1
+            continue
+        if match(opened):
+            hits.append((e.get("kind"), e.get("h")))
+    return hits, locked
+
+
+def labels_find(names, emails) -> int:
+    """forget-person: how many discard labels name the person."""
+    hits, _locked = _label_rows(names, emails)
+    return len(hits)
+
+
+def labels_purge(names, emails) -> Dict[str, Any]:
+    """forget-person: drop every discard label that names the person. The
+    keyed hash stays (it names nobody) and keeps the suggestion blocked; the
+    owner's list then shows "a discarded suggestion from <day>"."""
+    with _LOCK:
+        hits, locked = _label_rows(names, emails)
+        gone = set(hits)
+        if gone:
+            out = []
+            for e in _read(strict=True):
+                if (e.get("kind"), e.get("h")) in gone and e.get("label"):
+                    e = dict(e)
+                    e.pop("label", None)
+                out.append(e)
+            _write(out)
+    res: Dict[str, Any] = {"removed": len(gone), "kind": "labels of discarded suggestions"}
+    if locked:
+        res["not_removable"] = [{"what": "%d sealed label%s" % (locked, "" if locked == 1 else "s"),
+                                 "reason": "the keystore that seals them is not available, so they could "
+                                           "not be checked"}]
     return res
 
 

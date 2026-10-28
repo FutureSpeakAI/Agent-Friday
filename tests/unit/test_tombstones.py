@@ -617,3 +617,135 @@ def test_every_owner_delete_says_when_its_tombstone_could_not_be_written(home):
     kg = integration.owner_delete_entity("a", store=store)
     assert not kg["ok"] and kg["tombstoned"] is False and kg["warning"]
     assert [e["id"] for e in store.load("entities")] == ["a"], "deleted with nothing to stop the rebuild"
+
+# ── owner ruling 2026-10-28: discarded suggestions, listed and undoable ──────
+DAY3 = "2026-10-22"
+
+
+def _discard_card_suggestion(home, said="I always run on Sundays.", day=DAY):
+    from agent_friday.services import core_memory as cm
+    from agent_friday.services import memory_dreaming as md
+    assert md.dream(day, memory=_Turns([said], day=day))["ok"]
+    [row] = [r for r in cm.pending() if _norm(r.get("text")) == _norm(said)]
+    d = cm.decide(row["id"], False)
+    assert d["ok"] and d["decided"] == "discarded" and "tombstoned" not in d, d
+    return row
+
+
+def test_a_discarded_card_suggestion_is_listed_blocked_and_can_be_allowed_again(home):
+    from agent_friday.services import core_memory as cm
+    from agent_friday.services import memory_dreaming as md
+    from agent_friday.services import tombstones
+    _discard_card_suggestion(home)
+
+    # Listed for the owner, with its label opened.
+    [item] = tombstones.list_discarded()
+    assert item["kind"] == "card_line" and item["sealed"] is True
+    assert _norm(item["label"]) == "i always run on sundays"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", item["day"])
+
+    # Blocked: the nightly pass does not suggest it again.
+    assert md.dream(DAY2, memory=_Turns(["I always run on Sundays!"], day=DAY2))["ok"]
+    assert all(_norm(r.get("text")) != "i always run on sundays" for r in cm.pending())
+
+    # Allow again: the tombstone goes, nothing is put back in the queue ...
+    r = tombstones.undo_discard(item["id"])
+    assert r["ok"] and r["removed"] == 1
+    assert tombstones.list_discarded() == []
+    assert all(_norm(p.get("text")) != "i always run on sundays" for p in cm.pending())
+    assert not tombstones.is_tombstoned("card_line", "I always run on Sundays.")
+    # ... and a later pass may suggest it again.
+    assert md.dream(DAY3, memory=_Turns(["I always run on Sundays."], day=DAY3))["ok"]
+    assert any(_norm(p.get("text")) == "i always run on sundays" for p in cm.pending()), \
+        "a suggestion the owner allowed again was still held back"
+    assert tombstones.undo_discard(item["id"])["ok"] is False      # gone: a second undo finds nothing
+
+
+def test_a_rejected_proposal_is_listed_and_can_be_allowed_again(home):
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    assert _propose(DAY, "The user is training for a marathon.")["stored"] == 1
+    assert mp.reject([mp.pending()[0]["fact_id"]])["rejected"] == 1
+    [item] = tombstones.list_discarded()
+    assert item["kind"] == "proposal" and _norm(item["label"]) == "the user is training for a marathon"
+    assert _propose(DAY2, "The user is training for a marathon!")["stored"] == 0      # blocked
+    assert tombstones.undo_discard(item["id"])["ok"]
+    assert mp.pending() == [], "allowing it again does not restore the suggestion to the queue"
+    assert _propose(DAY3, "The user is training for a marathon.")["stored"] == 1      # suggested again
+
+
+def test_both_kinds_appear_in_one_list_newest_first(home):
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    _discard_card_suggestion(home)
+    assert _propose(DAY, "The user commits one build at a time.")["stored"] == 1
+    assert mp.reject([mp.pending()[0]["fact_id"]])["rejected"] == 1
+    kinds = [i["kind"] for i in tombstones.list_discarded()]
+    assert kinds == ["proposal", "card_line"]
+    # An owner's own card delete is a tombstone, but not a discarded suggestion.
+    from agent_friday.services import core_memory as cm
+    assert cm.add("user", "Keeps bees.", actor="owner")["ok"]
+    assert cm.owner_delete("user", 0)["ok"]
+    assert len(tombstones.list_discarded()) == 2
+
+
+def test_labels_are_sealed_at_rest(home):
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    _discard_card_suggestion(home)
+    assert _propose(DAY, "The user is training for a marathon.")["stored"] == 1
+    assert mp.reject([mp.pending()[0]["fact_id"]])["rejected"] == 1
+    raw = (home / "tombstones.json").read_bytes()
+    for word in ("Sundays", "sundays", "marathon", "training"):
+        assert word.encode("utf-8") not in raw, "a discard label is readable at rest"
+    rows = [r for r in json.loads(raw.decode("utf-8"))["entries"] if r.get("discard")]
+    assert len(rows) == 2
+    assert all(str(r.get("label") or "").startswith("enc:") for r in rows)
+    assert all(re.fullmatch(r"[0-9a-f]{16}", r["id"]) for r in rows)
+    # The counts-only view never shows a label.
+    assert "marathon" not in json.dumps(tombstones.list()).lower()
+
+
+def test_without_sealing_the_entry_is_hashed_only_and_listed_by_day(home, monkeypatch):
+    from agent_friday.services import credential_store
+    from agent_friday.services import tombstones
+
+    def no_keystore(data):
+        raise RuntimeError("no keystore")
+    monkeypatch.setattr(credential_store, "protect", no_keystore)
+    r = tombstones.add_discard("card_line", "Keeps a sourdough starter.")
+    assert r["ok"] and r["sealed"] is False
+    [item] = tombstones.list_discarded()
+    assert item["label"] == "a discarded suggestion from %s" % item["day"] and item["sealed"] is False
+    raw = (home / "tombstones.json").read_text(encoding="utf-8")
+    assert "sourdough" not in raw and '"label"' not in raw
+    assert tombstones.is_tombstoned("card_line", "Keeps a sourdough starter.")
+
+
+def test_forgetting_a_person_purges_labels_that_name_them(home):
+    from agent_friday.services import forget_registry as fr
+    from agent_friday.services import tombstones
+    assert tombstones.add_discard("card_line", "Dana Okafor runs the Thursday standup.")["ok"]
+    assert tombstones.add_discard("proposal", "The user prefers tea in the morning.")["ok"]
+    assert "tombstone_labels" in fr.registered()
+    find, purge = fr._STORES["tombstone_labels"]
+    assert find({"dana okafor"}, set()) == 1
+    out = purge({"dana okafor"}, set())
+    assert out["removed"] == 1
+    labels = [i["label"] for i in tombstones.list_discarded()]
+    assert not any("Dana" in x for x in labels)
+    assert any(x.startswith("a discarded suggestion from ") for x in labels)
+    assert any("prefers tea" in x for x in labels), "a label that does not name them was purged"
+    # The keyed hash names nobody and keeps blocking.
+    assert tombstones.is_tombstoned("card_line", "Dana Okafor runs the Thursday standup.")
+    assert find({"dana okafor"}, set()) == 0
+
+
+def test_undo_refuses_a_malformed_or_unknown_id(home):
+    from agent_friday.services import tombstones
+    assert tombstones.add_discard("card_line", "Keeps bees.")["ok"]
+    for bad in ("", "../x", "zz" * 8, "0" * 40, None):
+        assert tombstones.undo_discard(bad)["ok"] is False
+    assert tombstones.undo_discard("0123456789abcdef")["ok"] is False
+    assert len(tombstones.list_discarded()) == 1
+    assert tombstones.add_discard("kg_entity", "x")["ok"] is False

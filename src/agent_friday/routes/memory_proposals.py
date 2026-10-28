@@ -13,6 +13,8 @@ separate, real design decision left for later.
   POST /api/memory/proposals/approve    — promote reviewed facts to durable memory
   POST /api/memory/proposals/reject     — discard proposals
   GET  /api/memory/proposals/state      — counts + whether the seat is usable
+  GET  /api/memory/discarded            — discarded suggestions (owner only)
+  POST /api/memory/discarded/<id>/undo  — allow one again (owner only)
 """
 import traceback
 
@@ -75,6 +77,61 @@ def api_memory_proposals_reject():
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't reject the memory", shape="ok", key="reason")
+
+
+def _owner_only():
+    """The discarded-suggestion list opens sealed labels: the local owner's
+    principal ("user") only, as the other owner-only routes check it."""
+    try:
+        from flask import g
+        if (getattr(g, "friday_principal", "user") or "user") != "user":
+            return jsonify({"ok": False, "reason": "Discarded suggestions are only shown to the owner."}), 403
+    except Exception:
+        return jsonify({"ok": False, "reason": "Could not establish who is asking."}), 403
+    return None
+
+
+@memory_proposals_bp.route("/api/memory/discarded", methods=["GET"])
+@login_required
+def api_memory_discarded():
+    """Suggestions the owner discarded (a card suggestion's Discard, a proposal's
+    reject), newest first, each with its label opened for the owner."""
+    refused = _owner_only()
+    if refused:
+        return refused
+    try:
+        from agent_friday.services import tombstones
+        limit = request.args.get("limit", default=100, type=int) or 100
+        limit = max(1, min(limit, 200))
+        return jsonify({"ok": True, "discarded": tombstones.list_discarded(limit=limit),
+                        "note": "Allow again lets Friday suggest it again later; it does not put it "
+                                "back in the review queue."})
+    except Exception as e:
+        traceback.print_exc()
+        return api_error(e, "Couldn't load the discarded suggestions", shape="ok", key="reason")
+
+
+@memory_proposals_bp.route("/api/memory/discarded/<discard_id>/undo", methods=["POST"])
+@login_required
+def api_memory_discarded_undo(discard_id):
+    """Allow a discarded suggestion again: its tombstone is removed. Nothing is
+    restored to the queue; a later pass may suggest it again."""
+    refused = _owner_only()
+    if refused:
+        return refused
+    if len(discard_id or "") > 32:
+        return jsonify({"ok": False, "reason": "No such discarded suggestion."}), 404
+    try:
+        from agent_friday.services import tombstones
+        r = tombstones.undo_discard(discard_id)
+        if not r.get("ok"):
+            return jsonify({"ok": False, "reason": r.get("error") or "That did not work."}), \
+                (404 if "no such" in str(r.get("error") or "") else 500)
+        return jsonify({"ok": True, "removed": int(r.get("removed") or 0),
+                        "note": "Friday may suggest it again later. It was not put back in the queue."})
+    except Exception as e:
+        traceback.print_exc()
+        return api_error(e, "Couldn't allow the suggestion again", shape="ok", key="reason")
 
 
 @memory_proposals_bp.route("/api/memory/proposals/state", methods=["GET"])

@@ -318,8 +318,11 @@ def _connect() -> sqlite3.Connection:
 
 
 def _already_proposed(conn, text: str) -> bool:
+    # A rejected row does not count: the owner's no is its tombstone
+    # (_refused_before), which "Allow again" (tombstones.undo_discard) lifts;
+    # the kept row must not go on blocking what the owner allowed again.
     row = conn.execute(
-        "SELECT 1 FROM proposed_facts WHERE lower(text)=lower(?) LIMIT 1",
+        "SELECT 1 FROM proposed_facts WHERE lower(text)=lower(?) AND status != 'rejected' LIMIT 1",
         (text,)).fetchone()
     return bool(row)
 
@@ -595,7 +598,9 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
 
     Each rejected statement is tombstoned (services/tombstones: a keyed hash,
     never the text) so no later run proposes it again, even after the row is
-    blanked (a meeting's) or deleted (a forget)."""
+    blanked (a meeting's) or deleted (a forget). It is listed for the owner
+    under "Discarded suggestions" by a label sealed with the keystore, where
+    "Allow again" lifts the tombstone (tombstones.add_discard / undo_discard)."""
     ids = [str(i) for i in (fact_ids or []) if str(i).strip()]
     if not ids:
         return {"ok": True, "rejected": 0}
@@ -609,7 +614,9 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
         try:
             from agent_friday.services import tombstones
             for t in texts:
-                if (t or "").strip() and not tombstones.add("proposal", t).get("ok"):
+                # add_discard: the tombstone plus a sealed label for the owner's
+                # "Discarded suggestions" list, where it can be allowed again.
+                if (t or "").strip() and not tombstones.add_discard("proposal", t).get("ok"):
                     unmarked += 1
         except Exception as e:                              # noqa: BLE001
             _log.warning("memory_proposals: rejected suggestions could not be tombstoned: %s: %s",

@@ -61075,11 +61075,17 @@ function MemoryCardPanel({s, save}) {
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState(null);
   const [draft, setDraft] = useState({user: '', friday: ''});
+  const [disc, setDisc] = useState(null);
   const load = useCallback(() => {
     apiFetch('/api/core-memory')
       .then(r => r.json())
       .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
       .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+    // What the owner discarded stays blocked; listed here (owner only) so it can be allowed again.
+    apiFetch('/api/memory/discarded')
+      .then(r => r.json())
+      .then(d => setDisc(d && d.ok ? (d.discarded || []) : null))
+      .catch(() => setDisc(null));
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key, after) => {
@@ -61087,6 +61093,15 @@ function MemoryCardPanel({s, save}) {
     apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
       .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const allow = id => {
+    // Lifts the block only: nothing goes back in the queue; a later pass may suggest it again.
+    setBusy('ag' + id); setMsg('');
+    apiFetch('/api/memory/discarded/' + encodeURIComponent(id) + '/undo', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
+      .then(r => r.json())
+      .then(d => { setMsg(d.ok ? 'Allowed again. ' + fridayName() + ' may suggest it again later; it was not put back in the queue.' : (d.reason || 'That did not work.')); load(); })
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
@@ -61151,7 +61166,14 @@ function MemoryCardPanel({s, save}) {
         E('div', {style:{flex:1}},
           E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, chg(c)),
           E('div', {style: dim}, (c.target === 'friday' ? 'Working with you' : 'About you') + ' · ' + when(c.ts) + (c.undone ? ' · undone' : ''))),
-        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo')))));
+        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo'))),
+      (disc || []).length > 0 && E('div', {style: head}, 'Discarded suggestions'),
+      (disc || []).length > 0 && E('div', {style: dim}, 'What you discarded or rejected stays blocked: ' + fridayName() + ' will not suggest it again. Allow again lets her suggest it again later; it does not put it back in the queue.'),
+      (disc || []).slice(0, 50).map(x => E('div', {key: 'dx' + x.id, 'data-discarded': x.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+        E('div', {style:{flex:1}},
+          E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, x.label),
+          E('div', {style: dim}, (x.kind === 'proposal' ? 'A rejected suggestion' : 'A discarded card suggestion') + (x.day ? ' · ' + x.day : ''))),
+        btn('Allow again', () => allow(x.id), 'allow')))));
 }
 // End memory card panel
 
