@@ -115,7 +115,12 @@ _VAULT_DOC_MARKERS = (
     "vault\\legal\\", "vault\\finances\\", "vault\\family\\",
 )
 
-_NEVER_CACHE: dict[str, Any] = {"mtime": -1.0, "items": []}
+_NEVER_CACHE: dict[str, Any] = {"mtime": -1.0, "items": [], "broken": False}
+
+
+class NeverSendListUnreadable(RuntimeError):
+    """The owner's never-send list exists but could not be read. Every cloud send stops (the
+    gate turns this into a block) until it can be: an unreadable floor is never an empty one."""
 # Tokens injected in-memory for the duration of the probe battery. A separate
 # list rather than a poke at _NEVER_CACHE: the cache is mtime-driven, so a
 # planted token was silently discarded by the next disk reload — which made the
@@ -632,9 +637,12 @@ def never_send_tokens() -> list[str]:
                 if isinstance(raw, list):
                     items = [str(x).strip() for x in raw
                              if isinstance(x, (str, int, float)) and str(x).strip()]
-            _NEVER_CACHE.update({"mtime": mtime, "items": items})
-    except Exception:
-        pass
+            _NEVER_CACHE.update({"mtime": mtime, "items": items, "broken": False})
+    except Exception as e:
+        # The file is there but could not be read (corrupt, half-written, locked): the floor is
+        # unknown, which is not the same as empty (NS-34.6-7). never_send_hits stops every send.
+        _NEVER_CACHE["broken"] = True
+        _log.warning("the never-send list could not be read: %s", type(e).__name__)
     return list(_NEVER_CACHE["items"]) + _PROBE_EXTRA_NEVER
 
 
@@ -653,7 +661,12 @@ def never_send_hits(text: str) -> list[str]:
     # services/never_send_defaults) names a kind of number, matched by pattern; every
     # other entry is the owner's own words, matched as written.
     from agent_friday.services import never_send_defaults as _nsd
-    hits = [t for t in never_send_tokens()
+    tokens = never_send_tokens()
+    if _NEVER_CACHE.get("broken"):
+        raise NeverSendListUnreadable(
+            "Your never-send list (privacy_shield.json) could not be read, so nothing is sent to a "
+            "cloud model until it can be. Open Settings > Privacy & Data to check it.")
+    hits = [t for t in tokens
             if (_nsd.category_hit(t, text) if _nsd.is_category(t) else _token_pattern(t).search(text))]
     low = text.lower()
     hits += [m for m in _VAULT_DOC_MARKERS if m in low]

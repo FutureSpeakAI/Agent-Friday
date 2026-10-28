@@ -878,6 +878,17 @@ def record_address(channel: str, url: str, result: Any = "sent", *, content: Any
         return None
 
 
+def record_blocked(provider: str, reason: str, *, model: str = "", log_path: Path | None = None) -> None:
+    """A send stopped before the gate could seal it (its startup self-test failed): one call row,
+    result "blocked", so the egress ledger shows every send that was refused, not only the gated
+    ones (NS-34.6-7). Never raises."""
+    try:
+        tok = _open_call(provider, model, "blocked:" + str(reason or "")[:40])
+        _close_call(tok, None, result="blocked", log_path=log_path, note=str(reason or ""))
+    except Exception:
+        pass
+
+
 def record_service_send(channel: str, provider: str, *, destination: str = "", content: Any = None,
                         result: str = "sent", recipients: int | None = None, note: str = "",
                         part: str = "") -> dict | None:

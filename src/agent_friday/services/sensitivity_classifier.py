@@ -395,10 +395,11 @@ def _record_layer3_hold(text: str) -> None:
         from agent_friday.services.notifications import _notif_engine
         if _notif_engine:
             _notif_engine.push(
-                title="Held from the cloud: privacy check starting",
-                body=("Background work tried to send text to a cloud model while "
-                      "Friday's full privacy check was still starting, so it was held "
-                      "and nothing was sent. It will go through once the check is ready."),
+                title="Left out of a cloud send: privacy check starting",
+                body=("Background work sent text to a cloud model while Friday's full "
+                      "privacy check was still starting. The parts it could not check yet "
+                      "were left out and stayed on this PC; the rest was sent. Nothing is "
+                      "sent again later."),
                 priority="normal", source="privacy", kind="warning",
                 dedupe_key="layer3-hold")
     except Exception:
