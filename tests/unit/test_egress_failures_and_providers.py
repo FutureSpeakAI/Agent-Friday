@@ -30,27 +30,63 @@ def shield(monkeypatch):
     from agent_friday.services import judgment_gate as jg
     path = core.FRIDAY_DIR / "privacy_shield.json"
     before = path.read_bytes() if path.exists() else None
-    monkeypatch.setitem(jg._NEVER_CACHE, "mtime", -1.0)
+    jg._NEVER_CACHE.update({"mtime": -1.0, "items": []})
     yield path, jg
     if before is None:
         path.unlink(missing_ok=True)
     else:
         path.write_bytes(before)
-    jg._NEVER_CACHE.update({"mtime": -1.0, "broken": False})
+    jg._NEVER_CACHE.update({"mtime": -1.0, "items": [], "broken": False})
+
+
+def _unreadable(jg):
+    return getattr(jg, "NeverSendListUnreadable", None) or type("NeverRaised", (Exception,), {})
 
 
 def test_an_unreadable_never_send_list_stops_every_cloud_send(shield):
     path, jg = shield
     path.write_text("{not json", encoding="utf-8")
-    with pytest.raises(jg.NeverSendListUnreadable) as err:
+    try:
         jg.never_send_hits("what is the weather like today")
-    assert "could not be read" in str(err.value) and "nothing is sent" in str(err.value).lower()
+        raised = None
+    except Exception as e:  # noqa: BLE001
+        raised = e
+    assert raised is not None, "an unreadable list was read as an empty one"
+    assert "could not be read" in str(raised) and "nothing is sent" in str(raised).lower()
+
+
+def test_the_owner_is_told_the_list_could_not_be_read_not_that_their_text_matched(shield, monkeypatch):
+    path, jg = shield
+    path.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(eg, "is_unrestricted_cloud", lambda: True)
+    with pytest.raises(eg.NeverSendBlocked) as err:
+        eg.seal_outbound({"messages": [{"role": "user", "content": "what is the weather"}]}, "openrouter")
+    assert "could not be read" in str(err.value) and "matched" not in str(err.value)
+
+
+def test_the_gate_self_test_still_passes_and_notes_it(shield, monkeypatch):
+    path, jg = shield
+    path.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(eg, "_SELF_TEST_RESULT", None, raising=False)
+    # under recorded consent the self-test checks the gate ran and the floor can be applied,
+    # without a classifier model in the test
+    monkeypatch.setattr(eg, "is_unrestricted_cloud", lambda: True)
+    eg.startup_self_test()
+    assert eg.gate_operational(), "an unreadable list stops sends per call, not the whole gate until restart"
+    assert (eg._SELF_TEST_RESULT or {}).get("floor_unreadable")
+
+
+def test_a_research_commission_is_not_sent_to_the_cloud_while_the_list_is_unreadable(shield):
+    path, jg = shield
+    path.write_text("{not json", encoding="utf-8")
+    plan = jg.dry_run("what is the history of the printing press")
+    assert plan["cloud_allowed"] is False and "could not be read" in plan["reason"]
 
 
 def test_once_it_can_be_read_again_sends_go_on(shield):
     path, jg = shield
     path.write_text("{not json", encoding="utf-8")
-    with pytest.raises(jg.NeverSendListUnreadable):
+    with pytest.raises(_unreadable(jg)):
         jg.never_send_hits("hello")
     path.write_text(json.dumps({"never_send": ["SYNTHETIC-NEVER-TOKEN"]}), encoding="utf-8")
     assert jg.never_send_hits("hello") == []
@@ -66,6 +102,7 @@ def test_a_send_refused_by_a_failed_self_test_is_a_blocked_row(tmp_path, monkeyp
     monkeypatch.setattr(eg, "gate_operational", lambda: False)
     with pytest.raises(RuntimeError):
         smr._seal_or_block({"messages": [{"role": "user", "content": "hi"}]}, "openrouter", model="m")
+    assert log.exists(), "a refused send leaves a row in the egress ledger"
     rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines() if x.strip()]
     calls = [r for r in rows if r.get("kind") == "call"]
     assert calls and calls[-1]["result"] == "blocked" and calls[-1]["provider"] == "openrouter"
@@ -86,8 +123,8 @@ def test_background_work_is_told_what_was_sent_while_the_check_was_starting(monk
     sc._record_layer3_hold("synthetic text")
     assert pushed, "a hold outside a turn is never silent"
     body = pushed[-1]["body"]
-    assert "left out" in body and "the rest was sent" in body
-    assert "nothing was sent" not in body.lower(), "the redacted send did go out"
+    assert "kept on this PC" in body and "the rest went without it" in body
+    assert "nothing was sent" not in body.lower(), "a redacted send may have gone out"
 
 
 # ── the news query is gated ─────────────────────────────────────────────────
