@@ -201,7 +201,8 @@ def test_a_library_purge_during_the_rebuild_abandons_it(live):
 
     def during(self, *a, **k):
         out = real(self, *a, **k)
-        live.cm.note_rewrite()                 # the purge rewrites the store in use, in place
+        live.cm.note_rewrite()                 # a purge rewrites the store in use, in place
+        live.cm.end_rewrite()
         return out
     live.cm.ConversationMemory.rebuild_from_transcripts = during
     try:
@@ -210,6 +211,33 @@ def test_a_library_purge_during_the_rebuild_abandons_it(live):
         live.cm.ConversationMemory.rebuild_from_transcripts = real
     assert not out.get("ok"), "a store built from words a purge removed replaced the purged one"
     assert live.router._get_conversation_memory() is old
+
+
+def test_a_purge_still_running_stops_a_rebuild_from_starting(live):
+    old, keep, wrong = _two_turns(live)
+    live.cm.note_rewrite()
+    try:
+        out = live.msr.rebuild_vector("owner:test")
+    finally:
+        live.cm.end_rewrite()
+    assert not out.get("ok") and live.router._get_conversation_memory() is old
+
+
+def test_a_failure_after_the_switch_never_deletes_the_new_store(live, monkeypatch):
+    old, keep, wrong = _two_turns(live)
+    real = live.msr._receipt
+
+    def receipt(target, decision, by, **k):
+        if decision == "rebuilt":
+            raise OSError("the receipt disk is full")
+        return real(target, decision, by, **k)
+    monkeypatch.setattr(live.msr, "_receipt", receipt)
+    out = live.msr.rebuild_vector("owner:test")
+    assert out.get("ok"), out
+    new_dir = live.cm.live_dir()
+    assert new_dir != old.persist_dir and new_dir.is_dir(), "the store in use was deleted after the switch"
+    assert not live.cm.build_mark(new_dir).exists()
+    assert {keep, wrong} <= set(_meta(live.router._get_conversation_memory()))
 
 
 def test_turns_the_transcripts_no_longer_hold_are_kept(live):
@@ -236,6 +264,7 @@ def test_a_failed_rebuild_leaves_conversation_search_unchanged(live):
     def during(self, *a, **k):
         out = real(self, *a, **k)
         live.cm.note_rewrite()                 # makes the rebuild fail after the new store wrote
+        live.cm.end_rewrite()
         return out
     live.cm.ConversationMemory.rebuild_from_transcripts = during
     try:
@@ -296,4 +325,7 @@ def test_only_a_store_no_rebuild_is_using_is_stale(live):
     old = time.time() - cm.BUILD_MARK_TTL - 60
     os.utime(cm.build_mark(running), (old, old))
     cm._pointer().unlink()
+    assert [d.name for d in cm.stale_stores()] == [crashed.name], \
+        "a rebuild this process is still running was judged stale because it is slow"
+    cm.build_mark(running).write_text("failed", encoding="utf-8")   # it failed and could not delete
     assert {d.name for d in cm.stale_stores()} == {crashed.name, running.name}

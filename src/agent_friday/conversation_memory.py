@@ -1048,18 +1048,22 @@ def _building(d) -> bool:
     try:
         if not m.exists():
             return False
-        if time.time() - m.stat().st_mtime >= BUILD_MARK_TTL:
-            return False
         mark = m.read_text(encoding="utf-8").strip()
         if mark == "failed":
             return False                      # a rebuild that failed and could not delete it yet
         pid = int((mark or "0").split(":")[0])
     except (OSError, ValueError):
         return True
+    if pid == os.getpid():
+        return True                           # this process is building it, however long it takes
     try:
         import psutil
         return bool(pid) and psutil.pid_exists(pid)
     except Exception:
+        pass
+    try:
+        return time.time() - m.stat().st_mtime < BUILD_MARK_TTL
+    except OSError:
         return True
 
 
@@ -1068,6 +1072,9 @@ def drop_stale_stores() -> int:
     this process is retried at the next start). Never raises."""
     import shutil
     left = 0
+    inst = _instance
+    if inst is not None and Path(inst.persist_dir) != live_dir():
+        return 0                              # another Friday process switched stores; this one's is open
     try:
         stale = stale_stores()
     except OSError:
@@ -1100,19 +1107,31 @@ def _journal(mem, op, **kw):
             _JOURNAL["ops"].append((op, kw))
 
 
-#: Counts rewrites made to the store's rows in place (a Library purge). A rebuild that saw one
-#: start while it ran is abandoned: what it read may hold words the purge removed.
-_REWRITES = [0]
+#: Rewrites of the store's rows in place (a Library purge): [started, still running]. A rebuild
+#: that one started during, or that one is still running at, is abandoned: what it copied may
+#: hold words the purge removes.
+_REWRITES = [0, 0]
 
 
 def note_rewrite() -> None:
-    """Called before rewriting the live store's rows in place. Waits out a switch."""
+    """Called before rewriting the live store's rows in place (end_rewrite after). Waits out a
+    switch."""
     with SWAP_LOCK:
         _REWRITES[0] += 1
+        _REWRITES[1] += 1
+
+
+def end_rewrite() -> None:
+    with SWAP_LOCK:
+        _REWRITES[1] = max(0, _REWRITES[1] - 1)
 
 
 def rewrites() -> int:
     return _REWRITES[0]
+
+
+def rewrite_running() -> bool:
+    return _REWRITES[1] > 0
 
 
 def journal_start():
@@ -1155,6 +1174,8 @@ def _held(name, fn):
     object loses nothing)."""
     @functools.wraps(fn)
     def w(self, *a, **k):
+        if getattr(self, "_staging", False):
+            return fn(self, *a, **k)           # a rebuild's new store: nobody else writes to it
         with SWAP_LOCK:
             if getattr(self, "_closed", False) and not getattr(self, "_staging", False):
                 live = get_conversation_memory()

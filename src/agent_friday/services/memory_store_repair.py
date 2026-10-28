@@ -122,13 +122,13 @@ def _copy_collection(src, dst, *, vectors: bool) -> Dict[str, str]:
     """Copy every row of `src` into `dst` (with its vectors when they are in the same model's
     space). Returns {id: words}. Raises when a page cannot be read."""
     out: Dict[str, str] = {}
-    offset = 0
     inc = ["documents", "metadatas"] + (["embeddings"] if vectors else [])
-    while True:
-        got = src.get(include=inc, limit=500, offset=offset)
-        ids = list(got.get("ids") or [])
+    every = [str(i) for i in (src.get(include=[]).get("ids") or [])]
+    for start in range(0, len(every), 500):
+        got = src.get(ids=every[start:start + 500], include=inc)
+        ids = list(got.get("ids") or [])         # one deleted since it was listed is not here
         if not ids:
-            return out
+            continue
         docs = list(got.get("documents") or [None] * len(ids))
         metas = [dict(m or {}) for m in (got.get("metadatas") or [{}] * len(ids))]
         kw = {"ids": ids, "documents": [d or "" for d in docs], "metadatas": metas}
@@ -138,7 +138,7 @@ def _copy_collection(src, dst, *, vectors: bool) -> Dict[str, str]:
         dst.upsert(**kw)
         for i, d in zip(ids, docs):
             out[str(i)] = " ".join(str(d or "").split())
-        offset += len(ids)
+    return out
 
 
 def _same_space(old, new) -> bool:
@@ -166,7 +166,7 @@ def _seed(old, staging) -> tuple:
         try:
             _copy_collection(old._client.get_or_create_collection("knowledge-graph"),
                              staging._client.get_or_create_collection("knowledge-graph"),
-                             vectors=vectors)
+                             vectors=True)          # always kg_vectors' own; never re-embedded
         except Exception as e:  # noqa: BLE001
             _log.warning("the graph's entity vectors were not copied (%s); re-embedded", type(e).__name__)
             _embed_graph(staging)
@@ -210,6 +210,7 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
     say = progress or (lambda msg: None)
     staging = None
     new_dir = None
+    switched = False
     replayed = 0
     deleted_ids: set = set()
     deleted_words: set = set()
@@ -225,6 +226,8 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
         replayed += len(ops)
     try:
         _receipt("vector_memory", "rebuild_started", by)
+        if cm.rewrite_running():
+            raise RuntimeError("a Library purge is running")
         purges = cm.rewrites()
         cm.journal_start()                       # before anything of the old store is read
         try:
@@ -253,7 +256,7 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
                 break
             replay(ops)
         with cm.SWAP_LOCK:
-            if cm.rewrites() != purges:
+            if cm.rewrites() != purges or cm.rewrite_running():
                 raise RuntimeError("a Library purge ran while this was built")
             replay(cm.journal_take(stop=True))
             have = set(staging._collection.get(include=[]).get("ids") or [])
@@ -266,14 +269,16 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
                     staging._client.close()
             except Exception:
                 pass
+            cm.build_mark(new_dir).unlink(missing_ok=True)   # a finished store carries no mark
             cm.set_live_dir(new_dir)
+            switched = True                       # from here nothing deletes the new store
             cm.close_conversation_memory()
             if old is not None:
                 old._closed = True
             staging = None
-        cm.build_mark(new_dir).unlink(missing_ok=True)
-        left = cm.drop_stale_stores()
+        left = 0
         try:
+            left = cm.drop_stale_stores()
             from agent_friday.services import recall_health
             recall_health.note_ok("past_conversations")
         except Exception:
@@ -281,14 +286,21 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
         res = {"ok": True, "copied": len(seeded), "indexed": out.get("indexed", 0),
                "failed": out.get("failed", 0), "replayed": replayed,
                "from_transcripts_only": not readable, "old_copy_left": bool(left)}
-        _receipt("vector_memory", "rebuilt", by, copied=len(seeded), indexed=int(out.get("indexed") or 0),
-                 failed=int(out.get("failed") or 0), replayed=replayed,
-                 from_transcripts_only=(not readable) or None, old_copy_left=left or None)
+        try:
+            _receipt("vector_memory", "rebuilt", by, copied=len(seeded),
+                     indexed=int(out.get("indexed") or 0), failed=int(out.get("failed") or 0),
+                     replayed=replayed, from_transcripts_only=(not readable) or None,
+                     old_copy_left=left or None)
+        except Exception as e:  # noqa: BLE001
+            _log.error("the rebuild switched stores but its receipt was not written (%s)", type(e).__name__)
         LAST_VECTOR_REBUILD.clear()
         LAST_VECTOR_REBUILD.update(res)
         return res
     except Exception as e:  # noqa: BLE001
         cm.journal_take(stop=True)
+        if switched:                              # the new store is live: never undone here
+            _log.error("after the switch: %s", type(e).__name__)
+            return {"ok": True, "warning": type(e).__name__}
         if staging is not None:
             try:
                 if staging._client is not None:
