@@ -11,7 +11,8 @@ section that holds the press (an anchor), or "" for a step taken elsewhere.
 A repair can be limited to the check codes it fits (``codes``: prefixes), so
 a newer data folder is never told to retry an upgrade. A check that could not
 say anything (unverified) gets repairs only when the check itself failed. The
-Doctor report carries them, and its text lists each with where it is.
+Doctor report carries them, its text lists each with where it is, and the
+Doctor page links each to its section.
 
 A check with no repair listed says so ("no repair here"), so the owner is
 never left guessing whether one exists.
