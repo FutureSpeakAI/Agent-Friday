@@ -733,7 +733,9 @@ def handle_approval_reply(text: str, now: Optional[float] = None) -> Optional[st
     rec = ap.decide(match, decision, decided_by="owner:sms", note="decided by text reply")
     if not rec or (rec.get("status") not in ("approved", "denied")):
         return "That approval was no longer waiting. Nothing was changed."
-    return "%s: %s" % ("Approved" if decision == "approve" else "Denied", entry["title"])
+    # What kind of thing it was, never its title (owner ruling 5); a code kept from before carries
+    # an old title, which is not echoed.
+    return "%s: %s." % ("Approved" if decision == "approve" else "Denied", ap.notice_noun(card or rec))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

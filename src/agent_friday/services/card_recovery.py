@@ -146,14 +146,9 @@ def _announce(cards: List[Dict[str, Any]]) -> None:
     # Approvals, say exactly what they were.
     try:
         from agent_friday.services import approvals as _ap
-        kinds = [_ap.notice_category(c) for c in cards[:5]]
-        names = "; ".join(("a %s" % {"calendar": "calendar change", "task": "task change", "email": "email",
-                                     "text": "text message", "call": "phone call", "file": "file change",
-                                     "memory": "memory change", "web": "website task",
-                                     "connection": "connection", "seat": "device switch"}.get(k, "an action"))
-                          .replace("a an ", "an ").replace("a email", "an email") for k in kinds)
+        names = "; ".join(_ap.notice_noun(c) for c in cards[:5])
     except Exception:
-        names = "see Approvals"
+        names = "actions shown in Approvals"
     more = " and %d more" % (len(cards) - 5) if len(cards) > 5 else ""
     n = len(cards)
     body = ("Friday stopped while carrying out %s you approved: %s%s. Whether %s happened is not known, "

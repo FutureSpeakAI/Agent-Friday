@@ -204,7 +204,7 @@ def test_a_chat_no_denies_the_card(isolated, calls):
     assert not calls
 
 
-def test_the_tray_notice_names_only_the_tool(isolated, calls, monkeypatch):
+def test_the_tray_notice_names_only_the_kind_of_action(isolated, calls, monkeypatch):
     import agent_friday.notifications_engine as ne
     pushed = []
     monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw))
@@ -212,12 +212,12 @@ def test_the_tray_notice_names_only_the_tool(isolated, calls, monkeypatch):
     (notice,) = [p for p in pushed if p.get("kind") == "approval_pending"]
     shown = notice["title"] + " " + notice["body"]
     assert "private-words" not in shown, shown
-    assert "run_command" in notice["title"]
+    assert notice["title"] == "A command to run is waiting for you"     # owner ruling 5
     # The card itself keeps the full question for the screen.
     assert "private-words" in pending_cards()[0]["title"]
 
 
-def test_the_text_message_offer_names_only_the_tool(isolated, calls, monkeypatch):
+def test_the_text_message_offer_names_only_the_kind_of_action(isolated, calls, monkeypatch):
     from agent_friday.phone import config as phone_config
     from agent_friday.phone import service as phone_service
     sent = []
@@ -232,7 +232,7 @@ def test_the_text_message_offer_names_only_the_tool(isolated, calls, monkeypatch
     call(turn("run this"), command="Write-Output private-words")
     assert phone_service.offer_pending_approvals() == 1
     assert "private-words" not in sent[0], sent[0]
-    assert "run_command" in sent[0]
+    assert "A command to run is waiting for you" in sent[0]
 
 
 def test_a_yes_from_outside_the_owners_page_leaves_the_card_for_the_screen(isolated, calls):

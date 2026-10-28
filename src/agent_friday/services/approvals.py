@@ -141,70 +141,99 @@ PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff",
 
 #: What kind of thing a waiting card is, in words a notice may carry (owner ruling 5, 2026-10-28):
 #: never the card's own title, which can name an event, a task, a recipient, a file or a page.
-_NOTICE_WORDS = {
-    "calendar": "A calendar change is waiting for you",
-    "task": "A task change is waiting for you",
-    "email": "An email is waiting for you",
-    "text": "A text message is waiting for you",
-    "call": "A phone call is waiting for you",
-    "file": "A file change is waiting for you",
-    "memory": "A memory change is waiting for you",
-    "web": "A website task is waiting for you",
-    "connection": "A connection is waiting for you",
-    "seat": "A switch to another device is waiting for you",
+#: category -> (the noun phrase, used in "A calendar change is waiting for you" and elsewhere)
+NOTICE_NOUNS = {
+    "calendar": "a calendar change",
+    "task": "a task change",
+    "email": "an email to send",
+    "mail": "a change to your mail",
+    "text": "a text message",
+    "call": "a phone call",
+    "file": "a file change",
+    "memory": "a memory change",
+    "web": "a website task",
+    "post": "something to publish",
+    "spend": "a purchase",
+    "cloud": "a cloud request",
+    "connection": "a connection",
+    "command": "a command to run",
+    "seat": "a switch to another device",
 }
-_NOTICE_FALLBACK = "An action is waiting for you"
+_NOTICE_FALLBACK_NOUN = "an action"
 NOTICE_BODY = "Open Friday to see what it would do, and to approve or decline it."
+
+_CAL_TOOLS = ("book_slot", "hold_slots", "annotate_calendar_events", "organize_calendar")
+_MAIL_CHANGE_TOOLS = ("archive_email", "label_email", "organize_email", "trash_email", "mark_email",
+                      "unsubscribe_email")
+_MAIL_CHANGE_HANDLERS = ("mail_proposal", "mail_proposals", "inbox_cleanup")
+_CALL_TOOLS = ("call_by_phone", "phone_midcall", "place_call")
+_FILE_KINDS = ("file_grant_request", "file_grant_batch", "studio_file_change", "pdf_signature", "file",
+               "file_access_reset")
 
 
 def notice_category(rec: Dict[str, Any]) -> str:
-    """calendar, task, email, text, call, file, memory, web, connection, seat, or "" (anything else),
-    from the card's kind and the tool, domain or handler on its payload. Never from its words."""
+    """One of NOTICE_NOUNS' keys, or "" (anything else), from the card's kind and the tool or
+    handler on its payload (and an item batch's own domain). Never from the card's title."""
     rec = rec or {}
     p = rec.get("payload") or {}
     kind = str(rec.get("kind") or "")
     tool = str(p.get("tool") or "").lower()
-    domain = str(p.get("domain") or "").lower()
     handler = str(p.get("handler") or "").lower()
+    # `domain` is trusted only on an item batch (services/item_actions): elsewhere it can be a
+    # website's DNS name (mail.example.com), which says nothing about what the card does.
+    domain = str(p.get("domain") or "").lower() if handler == "item_batch" else ""
     if kind == "seat_handoff":
         return "seat"
-    if kind.startswith("web_task"):
+    if kind.startswith("web_task") or tool.startswith("web_task"):
         return "web"
     if kind == "connector_auth":
         return "connection"
-    if handler == "phone_sms":
+    if handler == "phone_sms" or tool in ("text_by_phone", "send_sms"):
         return "text"
-    if handler == "phone_call":
+    if handler == "phone_call" or tool in _CALL_TOOLS:
         return "call"
-    if handler == "gmail_send":
+    if handler == "gmail_send" or tool in ("send_email", "draft_email", "reply_email", "forward_email"):
         return "email"
-    if domain.startswith("calendar") or "calendar" in tool or tool in ("book_slot", "hold_slots") \
-            or kind == "meeting_calendar":
+    if domain in ("email", "email_undo") or handler in _MAIL_CHANGE_HANDLERS or tool in _MAIL_CHANGE_TOOLS:
+        return "mail"
+    if domain in ("calendar", "calendar_undo") or handler == "meeting_calendar" \
+            or tool.endswith("calendar_event") or tool.endswith("calendar_events") or tool in _CAL_TOOLS:
         return "calendar"
-    if domain.startswith("task") or tool.endswith("_task") or tool.endswith("_tasks") or "task_list" in tool:
+    if domain in ("tasks", "tasks_undo") or tool in ("create_task", "update_task", "delete_task",
+                                                      "complete_task", "move_task"):
         return "task"
-    if domain.startswith("email") or domain.startswith("mail") or "email" in tool or tool.startswith("gmail"):
-        return "email"
-    if "sms" in tool or tool.startswith("text_"):
-        return "text"
-    if domain.startswith("file") or "file" in tool or kind in ("file_grant_request", "studio_file_change"):
+    if domain in ("files",) or kind in _FILE_KINDS or tool in ("write_file", "edit_file", "delete_file",
+                                                               "move_file", "pdf_sign"):
         return "file"
+    if kind in ("publish_web", "media_publish") or handler in ("media_publish", "publish_web") \
+            or tool in ("publish_web", "post_to_social"):
+        return "post"
+    if handler in ("cloud_release", "cloud_spill") or kind in ("cloud_release", "cloud_spill"):
+        return "cloud"
+    if tool in ("run_command", "run_shell", "shell", "execute_command", "run_python", "run_script"):
+        return "command"
+    if (rec.get("policy_class") or "") == "spend":
+        return "spend"
     try:
         from agent_friday.services import notification_policy as _pol
         if _pol.is_memory_proposal(rec):
             return "memory"
     except Exception:
         pass
-    if "memory" in tool or "memory" in kind:
-        return "memory"
     return ""
+
+
+def notice_noun(rec: Dict[str, Any]) -> str:
+    """"a calendar change", "an email to send", ... or "an action"."""
+    return NOTICE_NOUNS.get(notice_category(rec), _NOTICE_FALLBACK_NOUN)
 
 
 def notice_title(rec: Dict[str, Any]) -> str:
     """The words a card's tray notice, text-message offer or expiry notice may carry: what KIND of
     thing is waiting ("A calendar change is waiting for you"), never the card's own title, which
     stays on the card in the app (owner ruling 5)."""
-    return _NOTICE_WORDS.get(notice_category(rec), _NOTICE_FALLBACK)
+    noun = notice_noun(rec)
+    return "%s%s is waiting for you" % (noun[:1].upper(), noun[1:])
 
 
 def notice_body(rec: Dict[str, Any]) -> str:
@@ -1185,8 +1214,7 @@ def _notify_expired_while_held(rec: Dict[str, Any]) -> None:
             title = "An off-the-record approval expired before you saw it"
             body = "It was waiting in your badge and its time ran out. Nothing was done."
         else:
-            title = "An approval expired before you saw it (%s)" % (
-                notice_title(rec)[:1].lower() + notice_title(rec)[1:]).replace(" is waiting for you", "")
+            title = "An approval expired before you saw it (%s)" % notice_noun(rec)
             body = ("It was waiting in your badge while quiet hours, the hourly limit or Focus Assist "
                     "held it back, and its time ran out. Nothing was done. Ask again if you still want it.")
         _ne.push(title=title, body=body, priority="medium", source="approvals",
@@ -1206,6 +1234,12 @@ def expire_stale() -> int:
     expired = _expire_due(now, notify=False)
     release_held(now)                 # then give the cards whose hold has ended their popup and text
     _announce_expired(expired)        # and only then the notices about the cards that ran out
+    try:
+        # Notices stored before generic titles lose the card's words (owner ruling 5).
+        import agent_friday.notifications_engine as _ne
+        _ne.scrub_card_notices()
+    except Exception as e:
+        _log.debug("card notice scrub skipped: %s", e)
     return len(expired)
 
 

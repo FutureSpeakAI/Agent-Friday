@@ -134,7 +134,8 @@ def test_an_approved_action_killed_mid_run_is_marked_unknown_and_never_run_again
     rec = approvals.get_approval(aid)
     assert rec["outcome"] == "unknown" and rec["consumed"] is True and not rec.get("used_at")
     assert approvals.claim_for_execution(aid) is False, "an action that may have happened ran again"
-    assert restart[-1]["kind"] == "approval_outcome_unknown" and "Send the invoice" in restart[-1]["body"]
+    assert restart[-1]["kind"] == "approval_outcome_unknown" and "an email to send" in restart[-1]["body"]
+    assert "Send the invoice" not in restart[-1]["body"], "the notice carried the card's title (ruling 5)"
     assert card_recovery.reconcile_at_boot(started_at=time.time() + 5, since=0) == []      # told once
 
 

@@ -492,8 +492,9 @@ def _card_title(rec: dict, level: str) -> str:
     if level == "minimal":
         return "Something needs you in %s" % name
     if level == "full" and rec.get("kind") in FULL_WORDS_KINDS:
-        from agent_friday.services import approvals as ap
-        return ap.notice_title(rec)
+        # Words the owner chose to post (Settings: full words), for kinds that carry nothing
+        # private (FULL_WORDS_KINDS): the card's own title, as before ruling 5.
+        return str(rec.get("title") or "")[:200]
     tool = _tool_name(rec)
     if tool:
         return "%s needs your yes for %s" % (name, tool)
@@ -790,7 +791,7 @@ def _bring_to_desk(item: dict, at: float) -> None:
         ap._patch(aid, phone_tick={"at": at, "words": words})
     except Exception:
         pass
-    _notify("TI1", aid, "Brought to your desk from Google Tasks: %s" % ap.notice_title(rec), words)
+    _notify("TI1", aid, "Brought to your desk from Google Tasks: %s" % ap.notice_noun(rec), words)
 
 
 def _decline(item: dict, at: float, why: str) -> bool:
@@ -803,7 +804,7 @@ def _decline(item: dict, at: float, why: str) -> bool:
     out, won = ap.decide_with_outcome(aid, "deny", decided_by=TICK_LABEL, note=note)
     if won:
         _append("declined", item_id=item["item_id"], approval_id=aid, why=why)
-        _notify("TI2", aid, "Declined from Google Tasks: %s" % ap.notice_title(rec),
+        _notify("TI2", aid, "Declined from Google Tasks: %s" % ap.notice_noun(rec),
                 note + " If that wasn't you, turn the phone list off in Settings and ask %s again." % _assistant(),
                 priority="medium")
     return bool(won)

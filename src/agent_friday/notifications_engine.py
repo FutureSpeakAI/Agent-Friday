@@ -560,6 +560,58 @@ def resolve_approval(approval_id: str) -> int:
 
 
 DECIDED_TITLE = "An approval was decided"
+EXPIRED_TITLE = "An approval expired before you saw it"
+
+
+def scrub_card_notices() -> int:
+    """One pass over stored notices about cards (run by the approvals sweep), for notices written
+    before generic titles (owner ruling 5): a waiting card's notice gets the generic words, a decided
+    or missing card's notice keeps none, and an old expiry notice loses the card's title. Writes only
+    when something changed. Returns how many notices changed."""
+    from agent_friday.services import approvals as _ap
+    with _LOCK:
+        ids = {str(n.get("dedupe_key"))[len("approval:"):] for n in _load()
+               if str(n.get("dedupe_key") or "").startswith("approval:")}
+    cards = {aid: _ap.get_approval(aid) for aid in ids}      # read outside this store's lock
+    changed = 0
+    with _LOCK:
+        items = _load()
+        for n in items:
+            key = str(n.get("dedupe_key") or "")
+            if key.startswith("approval-expired:"):
+                if n.get("title") != EXPIRED_TITLE and not str(n.get("title") or "").startswith(EXPIRED_TITLE + " ("):
+                    n["title"] = EXPIRED_TITLE
+                    changed += 1
+                continue
+            if not key.startswith("approval:"):
+                continue
+            aid = key[len("approval:"):]
+            rec = cards.get(aid)
+            if not rec and not n.get("dismissed"):
+                # A card this store cannot find: its notice is left waiting, with no card words.
+                if str(n.get("title") or "").startswith(("Approval needed:", "Friday needs your approval")):
+                    n["title"] = "An action is waiting for you"
+                    n["body"] = _ap.NOTICE_BODY
+                    n.pop("chat_message", None)
+                    changed += 1
+                continue
+            if n.get("dismissed") or rec.get("status") != "pending":
+                if not n.get("dismissed"):
+                    n.update(dismissed=True, read=True, resolved_at=_now_iso())
+                    changed += 1
+                if _scrub_decided(n, aid):
+                    changed += 1
+                continue
+            want = _ap.notice_title(rec)
+            if n.get("title") != want:
+                n["title"] = want
+                n["body"] = _ap.NOTICE_BODY if not str(n.get("body") or "").startswith("Open Friday to see") \
+                    else n.get("body")
+                n.pop("chat_message", None)
+                changed += 1
+        if changed:
+            _save(items)
+    return changed
 
 
 def _scrub_decided(n: dict, approval_id: str) -> bool:
