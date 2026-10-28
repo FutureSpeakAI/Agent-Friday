@@ -403,11 +403,14 @@ def _dock_list() -> str:
 def _read_outside_content() -> bool:
     """Whether the tool call running now belongs to a conversation that recently read outside content
     (services/taint). Outside a governed tool call (no ledger key set) there is nothing to judge: False.
-    A check that cannot run says True, so the change keeps its card."""
+    A check that cannot run says True, so the change keeps its card.
+    The window is the ledger's whole life (not the 30-minute memory window), and carried text written
+    from outside content (a task's working notes, a workflow's previous result) counts too."""
     try:
         from agent_friday.services import taint as _taint
         key = _taint.CURRENT_KEY.get()
-        return bool(key) and bool(_taint.recent_content(key))
+        return bool(key) and bool(_taint.recent_content(key, window=_taint.TTL_SECONDS,
+                                                        for_grants=True))
     except Exception:
         return True
 
