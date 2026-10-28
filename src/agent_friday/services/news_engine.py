@@ -2449,6 +2449,13 @@ def _generate_front_page(slot="morning"):
         p["news_value"] = news_seen.news_value(p)
         p["opinion"] = news_seen.is_opinion(p)
     pool = news_seen.rank(pool)
+    try:
+        # Shadow only: logs how the encoder head's blended order would differ.
+        # It reads the ranked pool and changes nothing in it.
+        from agent_friday.services import triage_heads
+        triage_heads.news_shadow(list(pool), [p["news_value"] for p in pool])
+    except Exception:
+        pass
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)

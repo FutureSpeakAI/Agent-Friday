@@ -511,6 +511,47 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
     return stored
 
 
+def propose_from_head(candidates: List[Dict[str, Any]], day: str,
+                      model: str = "laya-triage-head") -> int:
+    """Store sentences the local triage head (services/triage_heads, memory)
+    picked out of the owner's own turns as PENDING proposals.
+
+    Same table, same review, same confidence as a day review's guess
+    (``MODEL_CONFIDENCE``, under the 0.6 durability gate), stored the way
+    ``propose()`` stores a day's facts: nothing here reaches ``user_model``;
+    only ``approve()`` does, on the owner's word. The head only calls this when
+    its decision head is in act mode, which takes the owner's press
+    (services/decision_heads). Sentences already proposed are skipped. Returns
+    how many were stored.
+    """
+    stored = 0
+    conn = _connect()
+    try:
+        for c in (candidates or [])[:MAX_FACTS]:
+            text = str(c.get("text") or "").strip()[:400]
+            cat = str(c.get("category") or "").strip().lower()
+            if len(text) < 8:
+                continue
+            if cat not in _CATEGORIES:
+                cat = "preference"
+            if _already_proposed(conn, text):
+                continue
+            # No provenance column value: in this table a provenance means a meeting
+            # (approve() files it as "meeting:<id>", reject() blanks it). A head's row
+            # is a day proposal like propose()'s; the model column names the head.
+            conn.execute(
+                "INSERT INTO proposed_facts (fact_id, ts, day, category, "
+                "text, evidence, confidence, model, status) "
+                "VALUES (?,?,?,?,?,?,?,?,'pending')",
+                (uuid.uuid4().hex[:16], time.time(), str(day), cat,
+                 text, text, MODEL_CONFIDENCE, model))
+            stored += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return stored
+
+
 def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
     """Facts proposed and not yet decided. Nothing here is in memory."""
     conn = _connect()

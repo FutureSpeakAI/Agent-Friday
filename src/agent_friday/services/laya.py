@@ -155,6 +155,15 @@ def versions(profile_id: Optional[str] = None) -> Dict[str, str]:
             out["personal"] = laya_personal.version_id(profile_id)
         except Exception:
             pass
+    try:
+        # Decision heads (services/decision_heads): the version and override in
+        # force for each, from what warm() already loaded; never a file read here.
+        from agent_friday.services import decision_heads
+        heads = decision_heads.versions()
+        if heads:
+            out["heads"] = heads
+    except Exception:
+        pass
     return out
 
 
@@ -542,7 +551,10 @@ def _preset_triage(ctx: Ctx, spec: dict) -> dict:
     if not out:
         return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
                 "why": "the reading model or this head's prototypes are not ready"}
-    label, p = triage_heads.argmax(out[0])
+    # The head's decision head (services/decision_heads) supplies the abstain rule:
+    # a reading below its abstain threshold is "other" (or "none"), never a guess.
+    decide = getattr(triage_heads, "decide", None)
+    label, p = decide(head, out[0]) if callable(decide) else triage_heads.argmax(out[0])
     cal = _calibrated_triage(ctx, head, texts, ctx.opts.get("allowed"))
     return {"answer": _answer(label, p, (cal or {}).get("set")), "layer": "t1", "verdict": None, "native": out,
             "calibrated": cal, "why": "nearest prototype over the %s head's seeds" % head}
@@ -852,8 +864,9 @@ def warm() -> None:
     only; no model is loaded (laya_router.warm does that, separately)."""
     def run():
         try:
-            from agent_friday.services import laya_calibration, laya_router  # noqa: F401
+            from agent_friday.services import decision_heads, laya_calibration, laya_router  # noqa: F401
             laya_calibration.load_table()
+            decision_heads.warm()
             versions()
         except Exception as e:  # noqa: BLE001
             _log.debug("laya warm skipped: %s", e)

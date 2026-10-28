@@ -1,0 +1,206 @@
+{
+ "id": "triage-eval-news-v1",
+ "note": "Synthetic headlines. Labels: hard, analysis, service, promo. Incumbent: news_seen.news_value.",
+ "items": [
+  {
+   "title": "Parliament votes to extend emergency powers after a tense session",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Magnitude six quake damages bridges in the northern province",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Regulators fine the airline over safety violations",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Court blocks the new zoning law for the third time",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Inflation slows for a second month, the statistics office says",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Three people injured as a train derails near the border",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Mayor declares a state of emergency as the river overflows",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Minister resigns following the audit report",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Storm leaves a quarter million homes without power",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "Prosecutors file charges against two executives",
+   "source": "example.com",
+   "label": "hard"
+  },
+  {
+   "title": "What the tariff fight means for the next decade of trade",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "Why young voters are drifting away from both parties",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "The hidden costs of cheap shipping, explained",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "Inside the labs trying to rebuild the electric grid",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "A profile of the coach who rebuilt a losing program",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "Opinion: schools should start later in the morning",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "How a small town became a hub for chip design",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "The case against another round of stimulus",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "Looking back: what the last recession taught economists",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "Commentary: the quiet crisis in rural hospitals",
+   "source": "example.com",
+   "label": "analysis"
+  },
+  {
+   "title": "Seven ways to lower your heating bill before the cold arrives",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "Traffic alert: lane closures on the main highway this weekend",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "A beginner's guide to composting at home",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "Free flu shots offered at local clinics next week",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "How to renew your passport online in five steps",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "Weekend weather: sunshine returns by Saturday afternoon",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "What to pack for a long flight with kids",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "Your checklist for winterizing the house",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "Where to see the fall colors this year",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "Easy slow cooker meals for busy weeknights",
+   "source": "example.com",
+   "label": "service"
+  },
+  {
+   "title": "Sponsored: the mattress that changed how we sleep",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Register now for our annual leadership summit",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Paid content: five gadgets worth your money",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Black Friday deals are live, shop the full list",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Partner post: why every team needs this app",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Sign up today and get three months free",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Giveaway: enter to win a weekend getaway",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Join our webinar on boosting your productivity",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Advertisement: luxury watches at unbeatable prices",
+   "source": "example.com",
+   "label": "promo"
+  },
+  {
+   "title": "Limited offer: premium membership at half price",
+   "source": "example.com",
+   "label": "promo"
+  }
+ ]
+}
