@@ -16837,7 +16837,9 @@ def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
     try:
-        return _call_claude_agent_run(*args, **kwargs)
+        out = _call_claude_agent_run(*args, **kwargs)
+        _shadow_loop_head(out, "agent.claude", resumed=len(kwargs.get("resumed_tool_trace") or []))
+        return out
     finally:
         _LOOP_PROVIDER.reset(_tok)
 
@@ -17709,10 +17711,25 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
     _oai_agentic_loop_run."""
     _tok = _LOOP_PROVIDER.set("local" if kw.get("seat") == "local" else provider)
     try:
-        return _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
-                                     model=model, **kw)
+        out = _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
+                                    model=model, **kw)
+        _shadow_loop_head(out, "agent.local" if kw.get("seat") == "local" else "agent.oai")
+        return out
     finally:
         _LOOP_PROVIDER.reset(_tok)
+
+
+def _shadow_loop_head(result, surface: str, resumed: int = 0) -> None:
+    """After a tool loop has returned: hand its trace to the loop no-progress head
+    (services/loop_heads, DM5), which replays it on its own worker in shadow and
+    leaves one receipt. The turn is over; this never changes or delays it beyond
+    a cached mode read. Rows resumed from an earlier run are not counted again."""
+    try:
+        if isinstance(result, tuple) and len(result) >= 2 and isinstance(result[1], list):
+            from agent_friday.services import loop_heads
+            loop_heads.shadow_turn(result[1], surface=surface, resumed=resumed)
+    except Exception:
+        pass
 
 
 def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,

@@ -283,6 +283,24 @@ def _store(rec: dict, persist: bool) -> None:
         _enqueue_counted(lambda: _append(rec, p))
 
 
+def persist_receipt(receipt_id) -> bool:
+    """Write a receipt that an ``ask`` kept in memory only (``opts.log`` False)
+    to the append-only log, on the writer thread. Shadow heads ask without
+    logging, re-check that the owner is still on the record, then call this.
+    False when the receipt is no longer in the ring or the queue is full."""
+    with _lock:
+        rec = _ring.get(str(receipt_id or ""))
+        rec = dict(rec) if rec else None
+    if rec is None:
+        return False
+    try:
+        p = log_path()
+    except Exception:  # noqa: BLE001
+        return False
+    rec["dropped_writes"] = _dropped
+    return _enqueue_counted(lambda: _append(rec, p))
+
+
 def receipt(receipt_id: str) -> Optional[dict]:
     """A recent receipt by id (the ring holds the last RING of them)."""
     with _lock:
@@ -562,6 +580,38 @@ def _preset_triage(ctx: Ctx, spec: dict) -> dict:
 
 for _h in ("mail", "news", "notify", "memory"):
     PRESETS["triage.%s" % _h] = _preset_triage
+
+
+def _preset_evidence(ctx: Ctx, spec: dict) -> dict:
+    """The evidence heads (services/evidence_heads, DM4): shadow readings of
+    whether retrieved passages answer the question. Degraded when the module
+    or its scorer is not available; the caller's own path never waits on it."""
+    try:
+        from agent_friday.services import evidence_heads
+    except ImportError:
+        return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
+                "why": "the evidence heads are not part of this build"}
+    name = str(spec.get("preset") or spec.get("_name") or "")
+    fn = evidence_heads.preset_holds if name.endswith("holds") else evidence_heads.preset_sufficient
+    return fn(ctx, spec)
+
+
+PRESETS["evidence.holds"] = _preset_evidence
+PRESETS["evidence.sufficient"] = _preset_evidence
+
+
+def _preset_loop(ctx: Ctx, spec: dict) -> dict:
+    """The loop no-progress head (services/loop_heads, DM5): a replayed trace's
+    'would have stopped here', in shadow. Stop-only; it never says done."""
+    try:
+        from agent_friday.services import loop_heads
+    except ImportError:
+        return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
+                "why": "the loop head is not part of this build"}
+    return loop_heads.preset(ctx, spec)
+
+
+PRESETS["loop.no_progress"] = _preset_loop
 
 
 def _clamp_add_only(ans: dict, res: dict) -> bool:

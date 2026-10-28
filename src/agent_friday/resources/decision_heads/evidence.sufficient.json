@@ -1,0 +1,14 @@
+{
+  "id": "evidence.sufficient",
+  "version": 1,
+  "preset": "evidence.sufficient",
+  "question_type": "choice",
+  "labels": ["sufficient", "search_more", "unsure"],
+  "direction": "add_only",
+  "scorer": "series_one",
+  "thresholds": {"act": 0.99, "abstain": 0.32},
+  "budget_ms": 500,
+  "calibration": {"platt": [7.517279, -4.760621], "fitted_on": "ftv/decision_eval E1 2026-10-28_0151, a_rule"},
+  "mode_default": "shadow",
+  "about": "From the best passage's P(holds): below 0.32 search_more (on the bench 96% of such items were truly not answered, 77% on reworded twins); act 0.99 because no Series One threshold reached even 80% precision for sufficient (near misses score high), so sufficient is effectively never said; between, unsure. Add only: in act mode it could only add a retrieval step or an I-could-not-find line."
+}

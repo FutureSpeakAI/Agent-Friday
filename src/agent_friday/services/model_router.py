@@ -3052,6 +3052,14 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         # as a new exchange.
         from agent_friday.services import memory_fence as _mf
         _mf.remember(session_id, recalled)
+        try:
+            # Shadow only (services/evidence_heads, DM4): read, after the block is
+            # decided, whether these passages answer the message. It queues work on
+            # its own thread and changes nothing here; off the record it does nothing.
+            from agent_friday.services import evidence_heads as _ev
+            _ev.shadow_memory(message, recalled, surface="memory")
+        except Exception:
+            pass
         if not lines:
             return live_block
         return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
