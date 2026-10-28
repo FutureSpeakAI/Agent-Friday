@@ -102,6 +102,7 @@ def _ledger_path() -> Path:
 #: under the old key; Friday reports corruption and suspends every grant. That
 #: is the right reaction to a moved key, so the key must not be able to move.
 _SIGNING_KEY_CACHE: dict = {}
+_SIGNING_KEY_LOCK = threading.Lock()
 
 
 def _signing_key_path() -> Path:
@@ -111,39 +112,38 @@ def _signing_key_path() -> Path:
 def _secret_bytes() -> bytes:
     """The HMAC key for this ledger: persisted once, protected, never from env.
 
-    Stored through `credential_store`, so it lands under the vault key or DPAPI
-    when either is available rather than sitting in plaintext next to the file it
-    protects. Minted on first use -- callers that short-circuit on a nonexistent
-    ledger never create one.
+    Stored through `credential_store`, encrypted under Friday's keystore root
+    key, rather than sitting in plaintext next to the file it protects. Minted on
+    first use -- callers that short-circuit on a nonexistent ledger never create
+    one -- and minted once: two first uses at the same moment (two threads, or
+    two processes) end up with the same key, never one each.
     """
     cached = _SIGNING_KEY_CACHE.get("key")
     if cached:
         return cached
     from agent_friday.services import credential_store as _cs
-    path = _signing_key_path()
-    key = None
-    if path.exists():
-        try:
-            key = _cs.read_secret(path)
-        except Exception as e:
-            # A key we cannot read is NOT a reason to mint a new one: that would
-            # invalidate every existing line and look exactly like this
-            # incident. Fail loudly instead.
-            raise RuntimeError(
-                "the file-grants signing key exists but could not be read (%s). "
-                "Grants stay suspended rather than be re-signed under a new key."
-                % e)
-    if not key:
-        import secrets as _secrets
-        key = _secrets.token_bytes(32)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _cs.write_secret(path, key)
-        try:
-            _cs.harden_permissions(path)
-        except Exception:
-            pass
-    _SIGNING_KEY_CACHE["key"] = key
-    return key
+    with _SIGNING_KEY_LOCK:
+        cached = _SIGNING_KEY_CACHE.get("key")
+        if cached:
+            return cached
+        path = _signing_key_path()
+        key = None
+        if path.exists():
+            try:
+                key = _cs.read_secret(path)
+            except Exception as e:
+                # A key we cannot read is NOT a reason to mint a new one: that would
+                # invalidate every existing line and look exactly like this
+                # incident. Fail loudly instead.
+                raise RuntimeError(
+                    "the file-grants signing key exists but could not be read (%s). "
+                    "Grants stay suspended rather than be re-signed under a new key."
+                    % e)
+        if not key:
+            import secrets as _secrets
+            key = _cs.write_secret_once(path, _secrets.token_bytes(32))
+        _SIGNING_KEY_CACHE["key"] = key
+        return key
 
 
 def _iso_now() -> str:

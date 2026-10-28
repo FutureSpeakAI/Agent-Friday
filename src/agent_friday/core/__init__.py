@@ -210,18 +210,19 @@ def _load_or_create_secret():
         p = friday_home() / "secret_key"
         if p.exists():
             existing = p.read_text(encoding="utf-8").strip()
-            if existing:
+            if len(existing) >= 16:          # a short value is not a usable secret
                 return existing
         s = secrets.token_hex(32)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix('.tmp')
-        tmp.write_text(s, encoding="utf-8")
-        try:
-            os.chmod(tmp, 0o600)  # restrict BEFORE rename so it's never world-readable
-        except Exception:
-            pass
-        tmp.replace(p)  # atomic — no TOCTOU window
-        return s
+        # Created once, atomically, readable by this user only (the ACL on
+        # Windows, not just a mode bit); a second process starting at the same
+        # moment uses the first one's secret rather than logging everyone out.
+        from agent_friday.secure_file import create_exclusive
+        if create_exclusive(p, s.encode("utf-8")):
+            return s
+        theirs = p.read_text(encoding="utf-8").strip()
+        if len(theirs) >= 16:
+            return theirs
+        return secrets.token_hex(32)       # an unusable file: a per-process secret, never a short one
     except Exception:
         # Last resort: ephemeral per-process secret (logs everyone out on restart,
         # but never a guessable constant).

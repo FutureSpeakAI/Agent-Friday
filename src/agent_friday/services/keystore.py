@@ -123,9 +123,9 @@ def _write_file(doc: dict) -> None:
     file is fsynced before it replaces the real one - the same pattern the
     conversation store uses, for much smaller stakes.
     """
-    from agent_friday.services.credential_store import harden_permissions
+    from agent_friday.services.credential_store import _unique_tmp, harden_permissions
     KEYSTORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = KEYSTORE_PATH.with_name(KEYSTORE_PATH.name + ".tmp")
+    tmp = _unique_tmp(KEYSTORE_PATH)
     tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     try:
         with open(tmp, "rb") as fh:
@@ -232,7 +232,11 @@ def create(wrap: str = "none", passphrase: str = "") -> dict:
             })
         else:
             doc.update({"wrap": "none", "key": _b64(root)})
-        _write_file(doc)
+        # Created only if no other process made one in the meantime: two first
+        # uses at once must not leave each holding a different root key.
+        from agent_friday.services.credential_store import create_exclusive
+        if not create_exclusive(KEYSTORE_PATH, json.dumps(doc, indent=2).encode("utf-8")):
+            raise FileExistsError("a keystore already exists at %s" % KEYSTORE_PATH)
         global _CACHED_KEY
         _CACHED_KEY = root
         return describe()
@@ -251,8 +255,17 @@ def root_key(use_cache: bool = True) -> bytes:
             return _CACHED_KEY
         doc = _read_file()
         if doc is None:
-            create(wrap="none")
-            return _CACHED_KEY                      # set by create()
+            if KEYSTORE_PATH.exists():
+                raise RuntimeError("the keystore is present but cannot be read; "
+                                   "refusing to replace it with a new root key")
+            try:
+                create(wrap="none")
+                return _CACHED_KEY                  # set by create()
+            except FileExistsError:
+                # another process created it first: use its key, not a new one
+                doc = _read_file()
+                if doc is None:
+                    raise RuntimeError("the keystore another process created cannot be read")
         wrap = doc.get("wrap") or "none"
         if wrap == "none":
             key = _unb64(doc.get("key") or "")

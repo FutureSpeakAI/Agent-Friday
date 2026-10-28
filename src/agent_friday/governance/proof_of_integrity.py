@@ -1,4 +1,4 @@
-﻿"""
+"""
 Proof of Integrity — AI Bill of Integrity manifest.
 
 Generates and verifies a cryptographically signed manifest that attests
@@ -159,7 +159,10 @@ class IntegrityEngine:
             else:
                 self._signing_key = SigningKey.generate()
                 key_file.parent.mkdir(parents=True, exist_ok=True)
-                key_file.write_bytes(bytes(self._signing_key))
+                from agent_friday.secure_file import create_exclusive
+                if not create_exclusive(key_file, bytes(self._signing_key)):
+                    # another process created it first: use that key
+                    self._signing_key = SigningKey(key_file.read_bytes())
                 # docs/security/threat-model.md promises this key is "confined to
                 # ~/.friday/vault/ with 600 permissions as a fallback" --
                 # get_governance_key() below already does exactly this for
@@ -493,12 +496,23 @@ def get_governance_key() -> bytes:
         try:
             import keyring as _kr
             _kr.set_password(_KEYRING_SERVICE, _KEYRING_ACCOUNT, key.hex())
+            # Another process may have stored its own first: the keychain's
+            # value is the one in force, whoever wrote it.
+            try:
+                stored = _kr.get_password(_KEYRING_SERVICE, _KEYRING_ACCOUNT)
+                if stored and stored != key.hex():
+                    return bytes.fromhex(stored)
+            except Exception:
+                pass
         except Exception as _kr_err:
             _log.warning("keyring unavailable for governance key store: %s — falling back to file", _kr_err)
-            # keyring unavailable — fall back to file
+            # keyring unavailable — fall back to a file, created once and
+            # atomically, readable by this user only
             try:
-                _GOV_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-                _GOV_KEY_FILE.write_bytes(key)
+                from agent_friday.secure_file import create_exclusive
+                if not create_exclusive(_GOV_KEY_FILE, key):
+                    raw = _GOV_KEY_FILE.read_bytes()       # another process minted first
+                    return raw if len(raw) == 32 else bytes.fromhex(raw.decode().strip())
                 try:
                     import stat
                     _GOV_KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
