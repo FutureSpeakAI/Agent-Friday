@@ -49,13 +49,15 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+from agent_friday.user_errors import UserFacingValueError
+
 SUPPORT_VERSION = 1
 TAIL_BYTES = 2_000_000
 MAX_LINES_PER_LOG = 300
 FOLDER_NAME = "Friday Support"
 
 
-class SupportError(ValueError):
+class SupportError(UserFacingValueError):
     """Said plainly to the owner."""
 
 

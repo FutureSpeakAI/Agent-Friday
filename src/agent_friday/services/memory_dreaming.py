@@ -386,7 +386,8 @@ def _write_atomic(path: Path, text: str) -> None:
 
 def _write_markdown(day, n_turns, topics, consolidated, pruned, summary) -> None:
     try:
-        _write_atomic(DREAMS_DIR / f"{day}.md",
+        from agent_friday.paths import contained
+        _write_atomic(contained(DREAMS_DIR, f"{day}.md"),
                       _render_markdown(day, n_turns, topics, consolidated, pruned, summary))
     except Exception:
         pass
@@ -459,7 +460,9 @@ def forget_matching(match, keyword=None, apply: bool = True) -> Dict[str, Any]:
                 conn.close()
         for day, tr, keep_t, keep_f, pr, summary in redo:
             try:
-                _write_atomic(DREAMS_DIR / f"{day}.md", _render_markdown(day, tr, keep_t, keep_f, pr, summary))
+                from agent_friday.paths import contained
+                _write_atomic(contained(DREAMS_DIR, f"{day}.md"),
+                              _render_markdown(day, tr, keep_t, keep_f, pr, summary))
             except Exception as e:
                 out["not_removable"].append(failed(day, e))
     if DREAMS_DIR.exists():

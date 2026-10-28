@@ -367,9 +367,9 @@ def doctor_support_bundle():
         r = support_bundle.make(by="owner:ui", cloud_ok=body.get("cloud_ok") is True)
         return jsonify({"status": "ok", **r})
     except support_bundle.CloudFolder as e:
-        return jsonify({"status": "error", "code": "cloud_folder", "error": str(e)}), 409
+        return api_error(e, "The support bundle could not be made.", 409, key="error", code="cloud_folder")
     except support_bundle.SupportError as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
+        return api_error(e, "The support bundle could not be made.", 400, key="error")
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The support bundle could not be made.")
 

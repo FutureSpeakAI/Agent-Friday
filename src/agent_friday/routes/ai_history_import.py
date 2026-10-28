@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from flask import Blueprint, g, jsonify, request
 
 from agent_friday.core import login_required
+from agent_friday.routes._errors import public_result
 from agent_friday.services import ai_history_import as aih
 
 ai_history_import_bp = Blueprint("ai_history_import", __name__)
@@ -60,4 +61,4 @@ def ai_history_import():
     data = f.read(aih.MAX_FILE_BYTES + 1)
     preview = str(request.form.get("preview") or "").lower() in ("1", "true", "yes")
     out = aih.preview(data) if preview else aih.stage(data)
-    return jsonify(out), (200 if out.get("ok") else 400)
+    return jsonify(public_result(out, "Couldn't read that export")), (200 if out.get("ok") else 400)
