@@ -36,7 +36,8 @@ refused whoever writes it.
 A line Friday or a background pass would add or rewrite that states or
 implies a special category about anyone (health, sexuality, politics,
 religion, ethnicity, union membership, genetic or biometric data, criminal
-record, immigration: services/sensitive_categories) is dropped, neither
+record, immigration, finances, a home address: services/sensitive_categories)
+is dropped, neither
 written nor queued (NS-15.4-3). The owner's own edits are not filtered; a line
 resting on the owner's own words in the conversation waits for their Keep.
 
@@ -379,8 +380,9 @@ SPECIAL_REFUSAL = ("it would record {cat} about a person, which Friday never inf
 def _special(text: str, where: str, prefix: str = "NOT SAVED: ") -> Optional[Dict[str, Any]]:
     """The refusal for an INFERRED line that states or implies a special
     category (health, sexuality, politics, religion, ethnicity, union
-    membership, genetic or biometric data, criminal record, immigration;
-    services/sensitive_categories), counted with no text kept; else None.
+    membership, genetic or biometric data, criminal record, immigration,
+    finances, a home address; services/sensitive_categories), counted with no
+    text kept; else None.
     A check that cannot run refuses (fail closed, like dreaming and proposals)."""
     try:
         from agent_friday.services import sensitive_categories as _sc

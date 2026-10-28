@@ -15,16 +15,29 @@ and purpose (north star NS-15.4-3): health (diagnoses, conditions,
 medication, mental health, disability, pregnancy), sexual orientation and
 sex life, political opinions, religious or philosophical beliefs, racial or
 ethnic origin, trade-union membership, genetic or biometric data, criminal
-record, immigration status. Its health and sexuality families are setup's
+record, immigration status; and, by the owner's ruling of 2026-10-28,
+finances and a home address. Its health and sexuality families are setup's
 words less the ones that mostly mean something else in a memory line
 ("condition", "recovery", "patient", "disabled", "orientation", "trans",
 "medical", "cancer", "vaccine", "therapy", "dating partner" words), plus the
 specific terms setup did not need, in the framing that makes them about a
 person ("has cancer", "sees a therapist", "in recovery", "is disabled", "is
-Black"). Finances, family and address are NOT in it: a card line such as
-"Lives in Springfield" or "Has two kids" is ordinary memory, not a special
-category. A miss is worse than a false alarm: an inferred line that is
+Black"). A miss is worse than a false alarm: an inferred line that is
 dropped costs one memory, a kept one is the harm.
+
+Finances and home address are NOT setup's broad word lists ("bank", "tax",
+"lives in"), which would drop "the budget for the project", "a Python bank of
+tests", "the river bank" or "Lives in Leeds". The finances family needs a
+person or an amount of money tied to one: "my salary", "earns £40k", "owes
+the bank", "in debt", "credit score", "a mortgage of", "net worth",
+"bankruptcy", "on benefits", "tax bill", an account number or sort code. The
+home address family needs a home framing ("lives at", "my address is", "home
+is at", "Home:") AND a street address (a number and a street word), a
+postcode or ZIP, or a flat/house number in the same sentence. City-level
+residence ("Lives in Leeds") is not a home address and stays ordinary memory;
+an office or business address is not one either (no home framing, and the
+framing does not reach across "works at" / "office"). Family is still not a
+special category: "Has two kids" is ordinary memory.
 
 Deterministic keyword and regex families, no model call. A word is matched
 whole (``\\b``), so "Python" is not "politics" and "race condition" is not
@@ -146,6 +159,30 @@ _NOT_SPECIAL = frozenset({
 _CARER = "(?:therapist|psychologist|counsell?or|psychiatrist)"
 #: Small numbers in words, for "sentenced to two years", "sober for three months".
 _NUM = "(?:\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|many)"
+#: Whose: the owner or another person ("my salary", "their mortgage").
+_POSS = "(?:my|his|her|their|your|our)"
+#: An amount of money: a currency sign, a currency word, or "40k a year".
+_MONEY = ("(?:[$£€¥]\\s?\\d[\\d,.]*(?:\\s?(?:k|m|bn|million|thousand|grand))?"
+          "|\\d[\\d,.]*(?:\\s?(?:k|m|million|thousand))?\\s?(?:dollars|pounds|quid|euros|usd|gbp|eur|grand)"
+          "|\\d[\\d,.]*\\s?k(?=\\s+(?:a|per|an)\\s+(?:year|month|annum)))")
+#: A street address: a house number, one to three name words, a street word.
+_STREET = ("\\d{1,5}[a-z]?(?:\\s?[-/]\\s?\\d{1,5}[a-z]?)?,?\\s+(?:[a-z][\\w'.-]*\\s+){1,3}?"
+           "(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|close|way|crescent|cres|terrace|"
+           "place|pl|court|ct|boulevard|blvd|grove|gardens|gdns|mews|row|square|sq|parade|walk|"
+           "rise|hill|park)")
+#: What makes a place a home address: a street, a UK postcode (cased), a US
+#: ZIP, or a flat or house number.
+_HOME_TARGET = ("(?:" + _STREET + "|(?-i:[A-Z]{1,2}\\d[A-Z\\d]?\\s?\\d[A-Z]{2})|\\d{5}(?:-\\d{4})?"
+                "|(?:flat|apartment|apt|unit|house number|number|no\\.?)\\s?#?\\d+[a-z]?)")
+#: A home framing: where a person lives, their (home) address, "Home:".
+_HOME_FRAME = ("(?:(?:lives?|living|lived|resides?|residing|resided)\\s+(?:at|on|in)"
+               "|" + _POSS + "\\s+(?:home\\s+|house\\s+|postal\\s+|residential\\s+)?address"
+               "|(?:home|house|residential|postal)\\s+address"
+               "|(?:home|house|flat|apartment)\\s+is\\s+(?:at|on|in)|home\\s*:)")
+#: Up to 40 characters of the same sentence between framing and address,
+#: never across a workplace ("Lives in Leeds, works at 10 Park Row").
+_HOME_GAP = ("(?:(?!\\b(?:works?|working|worked|office|offices|business|company|hq|headquarters|"
+             "studio|shop|store)\\b)[^.;!?\\n]){0,40}?")
 
 SPECIAL_CATEGORIES = {
     "health": tuple(w for w in SENSITIVE_CATEGORIES["health"] if w not in _NOT_SPECIAL) + (
@@ -291,6 +328,71 @@ SPECIAL_CATEGORIES = {
         "green card", "asylum", "refugee\\w*", "undocumented", "deport\\w*",
         "residence permit", "residency permit", "work permit", "citizenship status",
         "illegal alien", "naturali[sz]ation",
+    ),
+    # Owner ruling 2026-10-28: about the owner or another person, never a
+    # project's budget, a bank of tests, a river bank or a module's price.
+    "finances": (
+        _POSS + " (?:annual |yearly |monthly |weekly |base |gross |net |take-home )?"
+        "(?:salary|salaries|income|wages?|pay ?checks?|paycheques?|pay ?slips?|earnings|"
+        "debts?|loans?|mortgage|credit score|credit rating|credit history|credit card debt|"
+        "bank balance|bank accounts?|bank details|savings|pension|net worth|"
+        "tax (?:bill|return|debt|code|arrears)|overdraft|student loans?|finances|"
+        "financial (?:situation|trouble|troubles|problems|difficulties|state|position)|"
+        "inheritance|rent arrears)",
+        "(?:salary|income|wages?|earnings|pay) (?:of|is|was|is about|is around|around|about)\\s*"
+        + _MONEY,
+        "(?:earns?|earning|earned|takes? home|took home|is paid|gets paid|got paid|was paid|"
+        "are paid|inherited|borrowed|lent|saved|on a salary of) "
+        "(?:about |around |over |under |roughly |nearly |almost |just over |just under |"
+        "more than |less than )?" + _MONEY,
+        "(?:earns?|earning|earned|takes? home|took home|on a salary of|salary of) "
+        "(?:about |around |over |under |roughly |nearly |almost )?\\d[\\d,.]*\\s?k",
+        "(?:makes?|making|made) (?:about |around |over |under |roughly |nearly |almost )?" + _MONEY
+        + " (?:a|per|an) (?:year|month|week|hour|annum)",
+        "(?:has|have|had|with|got|carries|carrying|carry|over|nearly|almost|about) " + _MONEY
+        + " (?:in|of) (?:savings|debt|credit card debt|student loans?)",
+        "(?:owes?|owed|owing) (?:\\w+ ){0,2}(?:money|" + _MONEY + ")",
+        "earns? (?:a (?:good |decent |modest )?(?:living|salary|wage)|six figures|seven figures|"
+        "minimum wage|good money|a fortune|a lot)",
+        "(?:six|seven)[- ]figure (?:salary|income)", "on minimum wage",
+        "owes? (?:the bank|the irs|hmrc|tax|taxes|back taxes|rent|child support|alimony)",
+        "owed (?:in )?(?:tax|taxes|back taxes)", "back taxes",
+        "(?:is|am|are|was|were|been|deep|deeply|heavily|badly|still|got|getting|went|go) in debt",
+        "(?:credit card|student|medical|gambling|personal|tax) debts?", "debt collect\\w*",
+        "debt (?:relief|management plan|consolidation)", "debts? of " + _MONEY,
+        "paying off (?:the |a |my |his |her |their |our )?(?:debts?|loans?|mortgage|credit cards?)",
+        "credit score", "credit report", "bad credit",
+        "(?:poor|good|excellent|bad) credit (?:rating|history)",
+        "mortgage (?:of|on|payments?|arrears|repayments?)",
+        "(?:has|have|had|got|took out|taking out|paying|pays|paid off|pay off|paying off) "
+        "(?:a |the |their |his |her |my |our )?mortgage",
+        "remortgag\\w*", "mortgage[- ]free",
+        "(?:took|takes?|taking|taken) out (?:a |another )?loan",
+        "(?:payday|personal|student|car|bank|home) loans?", "loan of " + _MONEY,
+        "(?:bank|savings|checking|current|joint|brokerage) account (?:number|details|balance)",
+        "account (?:number|no) (?:is|:)\\s*\\d+", "sort code", "routing number", "iban",
+        "(?:credit|debit) card (?:number|details)",
+        "invest(?:s|ed|ing)? (?:heavily |mostly )?in (?:stocks|shares|crypto\\w*|bitcoin|property|"
+        "real estate|index funds|etfs?|bonds|the stock market)",
+        "invested " + _MONEY, "(?:stock|investment|share) portfolio",
+        "(?:owns?|holds?|bought|sold) (?:\\w+ )?shares in",
+        "net worth", "(?:is|are|was|became|become) (?:a )?(?:millionaire|billionaire)",
+        "bankruptcy", "bankruptcies",
+        "(?:declared|filed for|filing for|went|gone|going|is|was|been) bankrupt",
+        "on (?:benefits|welfare|universal credit|food stamps|jobseeker'?s allowance|"
+        "disability benefits?|housing benefit|unemployment benefits?)",
+        "claim(?:s|ed|ing)? (?:universal credit|welfare|jobseeker'?s allowance|housing benefit|"
+        "unemployment|child benefit|disability benefits?)",
+        "universal credit", "food stamps", "housing benefit", "child benefit",
+        "welfare (?:payments?|benefits?|cheques?|checks?|recipients?)",
+        "tax (?:bill|debt|arrears|owed|demand)",
+    ),
+    # Owner ruling 2026-10-28: a home framing AND a street, postcode/ZIP or
+    # flat number in the same sentence. "Lives in Leeds" (city level) and an
+    # office address are not a home address.
+    "home_address": (
+        _HOME_FRAME + _HOME_GAP + _HOME_TARGET,
+        _STREET + ",?\\s+is\\s+(?:my|his|her|their|our|your)\\s+(?:home|house|flat|place|address)",
     ),
 }
 

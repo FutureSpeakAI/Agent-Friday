@@ -15,8 +15,8 @@ review queue for the owner's Keep. An approved card for exactly this call is
 the owner's OK. The background review never rewrites or removes.
 
 A special category (health, sexuality, politics, religion, ethnicity, union
-membership, genetic or biometric data, criminal record, immigration;
-services/sensitive_categories, NS-15.4-3) is Friday inferring unless it rests
+membership, genetic or biometric data, criminal record, immigration,
+finances, a home address; services/sensitive_categories, NS-15.4-3) is Friday inferring unless it rests
 on the owner's own words: then it never saves silently but waits for the
 owner's Keep (the explicit purpose); otherwise it is dropped, not queued. An
 approved card for exactly this call is the owner's OK and saves as asked.
