@@ -27,7 +27,6 @@ def ev(tmp_path, monkeypatch):
 def test_an_envelope_has_every_field_and_verifies(ev):
     e = ev.make("task.halt", source="task_journal", payload={"cause": "interrupted"},
                 related_ids={"task": "t1"})
-    d = e.__dict__ if hasattr(e, "__dict__") else {}
     for f in ("id", "type", "version", "principal_scope", "related_ids", "payload", "source",
               "created_at", "integrity"):
         assert hasattr(e, f), f
@@ -36,7 +35,6 @@ def test_an_envelope_has_every_field_and_verifies(ev):
     ev.persist(e)
     [back] = list(ev.replay())
     assert back["id"] == e.id and ev.verified(back)
-    assert d is not None
 
 
 def test_nobody_is_told_before_the_event_is_on_disk(ev):
@@ -102,6 +100,19 @@ def test_a_card_that_needs_the_owner_is_recorded_before_it_is_saved(tray, ev, mo
     assert e["type"].startswith("notification.") and e["related_ids"].get("approval") == "appr_1"
 
 
-def test_off_the_record_writes_no_event(tray, ev):
-    tray.push(title="x", body="y", kind="approval_pending", source="approvals", off_record=True)
+def test_off_the_record_writes_no_event_but_on_the_record_does(tray, ev):
+    tray.push(title="x", body="y", kind="approval_pending", source="approvals", off_record=True,
+              meta={"approval_id": "appr_off"})
     assert list(ev.replay(include_unverified=True)) == []
+    tray.push(title="x", body="y", kind="approval_pending", source="approvals",
+              meta={"approval_id": "appr_on"}, dedupe_key="approval:appr_on")
+    assert len(list(ev.replay())) == 1
+
+
+def test_a_record_that_fails_still_delivers_the_card(tray, ev, monkeypatch):
+    def broken(*a, **k):
+        raise ev.EventNotPersisted("disk full")
+    monkeypatch.setattr(ev, "persist", broken)
+    card = tray.push(title="Spending halted", body="", kind="approval_pending", source="approvals",
+                     meta={"approval_id": "appr_2"})
+    assert card.get("id") and card.get("event_id") is None

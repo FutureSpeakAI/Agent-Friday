@@ -403,7 +403,8 @@ def _stores() -> List[dict]:
          "holds": "When Friday raised something that needs you or a safety notice, and what kind: "
                   "ids and kinds only, never the words of the card.",
          "paths": ["events"], "enc": _PLAIN,
-         "ret": lambda: "Kept until it passes 20 MB; then the older half is replaced.",
+         "ret": lambda: "The newest 20 to 40 MB: past 20 MB the log becomes the older file and the "
+                        "older file before it is deleted.",
          "controls": [_EXPORT_ALL, _ERASE_ALL]},
         {"key": "goals", "name": "Goals",
          "holds": "Goals you set, their steps and the signed record of what was done.",

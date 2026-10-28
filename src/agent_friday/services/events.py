@@ -14,7 +14,13 @@ owner was told?" had no single answer.
   event. A torn last line (a crash mid-write) is skipped on replay; a line whose integrity
   does not verify is reported, never used.
 * Integrity is an HMAC over the envelope's canonical JSON with the governance key; with no key
-  the envelope says "unsigned" and replay treats it as unverified.
+  the envelope says "unsigned". Replay yields only envelopes that verify under the key it has
+  now: unsigned ones, and ones signed before a key reset, are kept on disk but returned only
+  with include_unverified.
+* Scope today (the first adopter): a NEW tray card that needs the owner, and a repeat of an
+  approval or safety card, are recorded before the card is saved. Other ways Friday reaches
+  the owner (the approvals live feed, phone texts, a run card updated in place) are not yet
+  routed through here.
 * Payloads carry ids, kinds and counts, not the owner's words (A20: content stays sealed where
   it lives; the event log points at it).
 * Off-the-record work writes no event.
@@ -74,12 +80,22 @@ def _canon(d: Dict[str, Any]) -> bytes:
     return json.dumps(d, sort_keys=True, separators=(",", ":"), default=str, ensure_ascii=False).encode("utf-8")
 
 
+_KEY_CACHE: Dict[str, Any] = {"key": None, "at": 0.0}
+
+
 def _key() -> Optional[bytes]:
+    """The governance key, read once per process (a missing key is asked for again after a
+    minute), so neither the tray lock nor a replay waits on the OS keychain per event."""
+    k, at = _KEY_CACHE["key"], _KEY_CACHE["at"]
+    if k is not None or (at and time.time() - at < 60):
+        return k
     try:
         from agent_friday.governance.action_gate import _governance_key
-        return _governance_key()
+        k = _governance_key()
     except Exception:
-        return None
+        k = None
+    _KEY_CACHE.update(key=k, at=time.time())
+    return k
 
 
 def _sign(body: Dict[str, Any]) -> str:

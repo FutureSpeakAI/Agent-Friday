@@ -319,6 +319,15 @@ def push(
                     continue
                 if approval:
                     return n                     # the same approval, already waiting
+                if safety and not off:
+                    try:                         # a safety repeat reaches the owner again: recorded first
+                        from agent_friday.services import events as _ev
+                        _ev.record_critical("notification.safety_repeat", source="notifications_engine",
+                                            payload={"kind": kind, "source": source, "priority": priority,
+                                                     "count": int(n.get("count") or 1) + 1},
+                                            related_ids={"notification": n.get("id"), "job": job})
+                    except Exception:
+                        pass
                 if safety and n.get("held"):
                     n["held"] = False            # a safety-critical repeat is never held
                 before = _rank_of(n)
@@ -408,8 +417,8 @@ def push(
         elif approval or safety or t == _pol.NEEDS_YOU:
             # NS-31.6-1 / 31.7-1: a critical event is recorded, in the one envelope, before the
             # owner is told. Ids and kinds only: the words stay in the card. If the record cannot
-            # be written the owner is still told (a safety notice must reach him); the card says
-            # it was not recorded.
+            # be written the owner is still told (a safety notice must reach him); event_id stays
+            # None and the failure is logged.
             try:
                 from agent_friday.services import events as _ev
                 rec = _ev.record_critical(
