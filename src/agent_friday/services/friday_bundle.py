@@ -1028,7 +1028,7 @@ def resume_after_restore(by: str = "owner:ui") -> bool:
     if not p.exists():
         return False
     from agent_friday.services import restore_reestablish
-    left = restore_reestablish.blockers()
+    left = restore_reestablish.blockers(deep=True)
     if left:
         raise NotReestablished(left)
     try:
