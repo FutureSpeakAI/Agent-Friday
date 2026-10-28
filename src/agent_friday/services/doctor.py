@@ -653,6 +653,18 @@ def _versions() -> dict:
     return out
 
 
+def _safety_metrics(checks: list) -> dict:
+    """The safety and privacy metrics held at zero (§35.7-1): counts only."""
+    try:
+        from agent_friday.services import safety_metrics
+        m = safety_metrics.metrics(checks)
+        return {"window_days": m["window_days"],
+                "metrics": [{k: x[k] for k in ("id", "value", "target", "unit", "state")} for x in m["metrics"]],
+                "attention": m["attention"], "unknown": m["unknown"]}
+    except Exception as e:  # noqa: BLE001
+        return {"error": "unavailable:" + type(e).__name__}
+
+
 def _known_issues() -> dict:
     """How many known issues this release lists, by section (§36.0-7)."""
     try:
@@ -696,6 +708,7 @@ def build() -> dict:
                          for s in STATES if any(c["state"] == s for c in report["checks"])}
     report["build_ms"] = round((time.perf_counter() - t0) * 1000, 1)
     report["known_issues"] = _known_issues()
+    report["safety_metrics"] = _safety_metrics(report["checks"])
     report = _clean(report, _private_markers())
     # rebuilt from Friday's own constants and numbers (store_inventory.public),
     # so the general filter above, which could blank a store whose name holds
@@ -727,6 +740,11 @@ def render_text(report: dict) -> str:
         d.get("settings_unknown_key_count"))]
     p = report.get("performance") or {}
     lines += ["", "Performance: " + json.dumps(p, sort_keys=True)]
+    sm = report.get("safety_metrics") or {}
+    if sm.get("metrics"):
+        lines += ["", "Safety metrics, last %s days (held at zero; self-tests and restores at 100%%): %s" % (
+            sm.get("window_days"), "; ".join("%s %s" % (x.get("id"), "unknown" if x.get("value") is None
+                                                         else x.get("value")) for x in sm["metrics"]))]
     ki = report.get("known_issues") or {}
     if ki.get("available"):
         lines += ["", "Known issues in this release: %s, listed on the Doctor page (%s)" % (

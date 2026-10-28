@@ -9,6 +9,7 @@
                                       attach by hand (A3: never sent by Friday)
   POST /api/doctor/support            make the support bundle (a zip in
                                       Documents, Friday Support; a press here)
+  GET  /api/doctor/safety-metrics    the safety metrics held at zero (this PC only)
   GET  /api/doctor/local-model        the local model's state and the repairs offered
   POST /api/doctor/local-model/repair a repair: restart, verify or runtime (a press here)
   GET  /api/doctor/known-issues       this release's known issues (KNOWN_ISSUES.md)
@@ -103,6 +104,22 @@ def doctor_report_file(rid, kind):
         return jsonify({"status": "error", "error": "No such report."}), 404
     resp = send_file(str(p), mimetype="application/json" if kind == "json" else "text/plain",
                      as_attachment=True, download_name=p.name)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@doctor_bp.route("/api/doctor/safety-metrics", methods=["GET"])
+@login_required
+def doctor_safety_metrics():
+    """The safety and privacy metrics held at zero (services/safety_metrics,
+    §35.7-1). Read-only; this PC only; never sent."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    from agent_friday.services import safety_metrics
+    checks = [doctor._check(cid, dom, fn) for cid, dom, fn in doctor.CHECKS
+              if cid in safety_metrics.SELF_TEST_CHECKS]
+    resp = jsonify({"status": "ok", **safety_metrics.metrics(checks)})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
