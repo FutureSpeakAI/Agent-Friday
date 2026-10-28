@@ -50,8 +50,11 @@ if __name__ == '__main__':
     if _mr:
         print("  Migrations: %s" % (("schema %s -> %s" % (_mr.get("from"), _mr.get("to")))
                                    if _mr.get("ok") else _mr.get("why")))
+        if _mr.get("stop"):
+            print("  Migrations: Friday is not starting on this data folder yet.")
+            raise SystemExit(3)
         if _mr.get("safe_mode"):
-            os.environ["FRIDAY_SAFE_START"] = "1"
+            os.environ["FRIDAY_SAFE_START"] = "1"           # this start only
             print("  Migrations: starting in safe mode.")
 
 # Native thread pools are sized when their library first loads, so the caps
@@ -1585,6 +1588,14 @@ if __name__ == '__main__':
         _ir.check_after_boot()
     except Exception as _ir_err:
         print(f"  Data integrity: check unavailable ({_ir_err})")
+    # Migration receipts were written to the data folder at the top of start;
+    # they go into the action ledger now, off the start path.
+    try:
+        import threading as _mig_th
+        from agent_friday.services import migrations as _mig_rc
+        _mig_th.Thread(target=_mig_rc.flush_receipts, name="migration-receipts", daemon=True).start()
+    except Exception as _mig_rc_err:
+        print(f"  Migration receipts: not ledgered yet ({_mig_rc_err})")
     # Deliberately after the boot-guard thread and before app.run(): the warm
     # waits on its own, so this only registers the intention.
     try:
