@@ -79,7 +79,11 @@ def _rules(client):
         yield r
 
 
-def test_the_observer_reaches_only_the_sealed_read_routes(client):
+def test_the_observer_reaches_only_the_sealed_read_routes(client, monkeypatch):
+    # The egress gate stands in as one that seals everything, so any route that
+    # serves the prompt raw (not through the gate) shows it.
+    from agent_friday.services import egress_gate as eg
+    monkeypatch.setattr(eg, "_gate_text", lambda text, provider, where: "[sealed]")
     tid = _task()
     hdr = _hdr(client)
     allowed = getattr(obs, "READ_ONLY_RULES", None)
