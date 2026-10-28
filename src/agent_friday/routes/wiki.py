@@ -324,13 +324,19 @@ def wiki_search():
 
 @wiki_bp.route('/api/wiki/correct', methods=['POST'])
 def wiki_correct():
-    """Replace old_text with new_text across every wiki file and ~/.friday JSONs."""
+    """Replace old_text with new_text across every wiki file and ~/.friday JSONs.
+
+    The owner's correction is recorded as one event (services/corrections):
+    the old claim, the correction, each page and section it changed, and the
+    lines as they read before, so the original stays in history (the wiki
+    keeps no page history of its own). Optional ``reason``."""
     data = request.get_json(force=True, silent=True) or {}
     old_text = data.get("old_text") or ""
     new_text = data.get("new_text") or ""
     if not old_text:
         return jsonify({"status": "error", "message": "old_text required"}), 400
     modified = []
+    pages = []
     if WIKI_DIR.exists():
         for f in WIKI_DIR.rglob('*'):
             if not f.is_file() or f.suffix not in ('.md', '.txt'):
@@ -339,9 +345,11 @@ def wiki_correct():
                 continue
             try:
                 # Read, replace and write under the wiki write lock.
-                rel = wiki_replace_in_page(f, old_text, new_text)
+                detail = {}
+                rel = wiki_replace_in_page(f, old_text, new_text, detail=detail)
                 if rel:
                     modified.append({"scope": "wiki", "path": rel})
+                    pages.append((rel, detail))
             except Exception as e:
                 print(f"  [WIKI] Correct failed for {f}: {e}")
     if FRIDAY_DIR.exists():
@@ -356,7 +364,40 @@ def wiki_correct():
                     modified.append({"scope": "friday", "path": f.name})
                 except Exception as e:
                     print(f"  [WIKI] Correct failed for {f}: {e}")
-    return jsonify({"status": "ok", "modified": modified, "count": len(modified)})
+    out = {"status": "ok", "modified": modified, "count": len(modified)}
+    if modified:
+        eid = _record_wiki_correction(old_text, new_text, pages, modified,
+                                      str(data.get("reason") or "")[:300])
+        if eid:
+            out["correction_id"] = eid
+    return jsonify(out)
+
+
+def _record_wiki_correction(old_text, new_text, pages, modified, reason):
+    """One correction event for the whole replace. Only the local owner's
+    request is recorded as the owner's correction. Never raises."""
+    try:
+        from flask import g
+        if (getattr(g, "friday_principal", "user") or "user") != "user":
+            return ""
+        from agent_friday.services import corrections
+        sources = [f"wiki:{rel}#{d.get('section') or ''}" for rel, d in pages]
+        affected = [f"{m['scope']}:{m['path']}" for m in modified]
+        history = [{"path": rel, "section": d.get("section") or "",
+                    "before": d.get("before_lines") or []} for rel, d in pages]
+        return corrections.record(
+            "wiki", "corrected", claim=old_text, correction=new_text if new_text else corrections.REMOVED,
+            reason=reason or "the owner corrected this in the wiki",
+            sources=sources, affected=affected, history=history,
+            repair={"pages_changed": len(pages),
+                    "occurrences_replaced": sum(int(d.get("count") or 0) for _r, d in pages),
+                    "friday_files_changed": len(modified) - len(pages),
+                    # A wiki write marks the knowledge graph for re-index
+                    # (services/wiki_engine.wiki_write_text), so its facts follow.
+                    "graph_reindex_queued": bool(pages)})
+    except Exception as e:  # noqa: BLE001 - the correction is applied even when its record fails
+        print(f"  [WIKI] correction not recorded (non-fatal): {e}")
+        return ""
 
 
 @wiki_bp.route('/api/wiki/setup-research', methods=['POST'])

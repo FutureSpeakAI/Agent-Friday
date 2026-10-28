@@ -79,6 +79,9 @@ def _ensure_defaults() -> None:
     from agent_friday.services import meeting_capture as _meeting_capture
     register_store("meetings", _meeting_capture.people_find, _meeting_capture.people_purge)
     register_store("memory_proposals", _memory_proposals.people_find, _memory_proposals.people_purge)
+    # The owner's corrections keep the old claim (sealed) in their own log (services/corrections).
+    from agent_friday.services import corrections as _corrections
+    register_store("corrections", _corrections.people_find, _corrections.people_purge)
 
 
 def _norm(s: str) -> str:

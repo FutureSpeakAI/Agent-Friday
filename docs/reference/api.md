@@ -1156,6 +1156,12 @@ Both notes, Friday's recent changes (last 20) and the "Waiting for your review" 
 ### `POST /api/core-memory/review`
 `{id, keep: bool}`: Keep or Discard a queued suggestion.
 
+### `GET /api/memory/corrections?n=`
+The owner's corrections (`services/corrections`), newest first, at most 100: store, action, the old claim and the correction (shortened), reason, what was repaired, and `undo_ids` where the card can put the retired messages back (`POST /api/core-memory/restore-messages`). Owner principal only (403 otherwise).
+
+### `POST /api/memory/corrections/<id>/test`
+`{on: bool, question?, expected?}`: keep a correction as a regression test with the owner's own question and expected answer. Owner principal only.
+
 ---
 
 ## Conversation search

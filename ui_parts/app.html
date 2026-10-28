@@ -21558,11 +21558,19 @@ function MemoryCardPanel({s, save}) {
   // Messages a correction stopped using as evidence (north star 34.9-4), so
   // the owner sees it happened and can put them back.
   const [retired, setRetired] = useState(null);
+  // The owner's corrections (services/corrections, north star 29.9-1 and 15.6-1):
+  // the old version stays in history, with what was repaired and an Undo where one exists.
+  const [corr, setCorr] = useState([]);
+  const [testFor, setTestFor] = useState(null);
   const load = useCallback(() => {
     apiFetch('/api/core-memory')
       .then(r => r.json())
       .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
       .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+    apiFetch('/api/memory/corrections?n=30')
+      .then(r => r.json())
+      .then(d => { if (d && d.ok) setCorr(d.corrections || []); })
+      .catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key, after) => {
@@ -21580,6 +21588,25 @@ function MemoryCardPanel({s, save}) {
   const btn = (label, onClick, key, extra) => E('button', Object.assign({className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, extra || {}), label);
   const from = src => (String(src || '').indexOf('dream') === 0 ? 'nightly dreaming'
     : src === 'review' ? 'the background review' : src === 'friday' ? fridayName() : 'an older note');
+  const STORE = {card: 'Memory card', conversation: 'Conversations', wiki: 'Wiki', fact: 'Facts', kg: 'Knowledge graph'};
+  const fixed = c => c.action === 'restored' ? 'Put back the messages a correction had retired'
+    : '“' + (c.claim || '') + '” → ' + ((c.action === 'marked_wrong' || c.correction === 'removed') ? 'removed as wrong' : '“' + (c.correction || '') + '”');
+  const repaired = r => {
+    const p = []; r = r || {};
+    if (r.superseded_turns) p.push(r.superseded_turns + (r.superseded_turns === 1 ? ' earlier message' : ' earlier messages') + ' no longer used as evidence');
+    if (r.restored_turns) p.push(r.restored_turns + (r.restored_turns === 1 ? ' message' : ' messages') + ' used again');
+    if (r.pages_changed) p.push(r.pages_changed + (r.pages_changed === 1 ? ' page' : ' pages') + ' changed');
+    if (r.graph_reindex_queued) p.push('knowledge graph re-index queued');
+    return p.join('; ');
+  };
+  const setTest = (id, on, q, x) => {
+    setBusy('t' + id); setMsg('');
+    apiFetch('/api/memory/corrections/' + encodeURIComponent(id) + '/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({on: on, question: q || '', expected: x || ''})})
+      .then(r => r.json())
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else setTestFor(null); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
   const noteRetired = d => {
     const n = (d && d.superseded_turns) || 0;
     setRetired(n > 0 ? {n: n, ids: d.superseded_ids || []} : null);
@@ -21651,7 +21678,28 @@ function MemoryCardPanel({s, save}) {
         E('div', {style:{flex:1}},
           E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, chg(c)),
           E('div', {style: dim}, (c.target === 'friday' ? 'Working with you' : 'About you') + ' · ' + when(c.ts) + (c.undone ? ' · undone' : ''))),
-        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo')))));
+        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo'))),
+      corr.length > 0 && E('div', {style: head, 'data-memory-corrections': corr.length}, 'Corrections'),
+      corr.length > 0 && E('div', {style: dim}, 'What you corrected, newest first. The old version stays here in your history; ' + fridayName() + ' no longer uses it as true.'),
+      corr.slice(0, 30).map(c => E('div', {key: c.id, style: row, 'data-memory-correction': c.id},
+        E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, fixed(c)),
+        E('div', {style: dim}, when(c.at) + ' · ' + (STORE[c.store] || c.store) + (c.reason ? ' · ' + c.reason : '')
+          + (repaired(c.repair) ? ' · ' + repaired(c.repair) : '') + ((c.restored_by || []).length ? ' · undone' : '')),
+        (testFor && testFor.id === c.id)
+          ? E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}},
+              E('input', {className:'input', 'aria-label':'A question to ask', placeholder:'A question to ask (optional)', style:{flex:'1 1 200px', fontSize:12}, value: testFor.q,
+                onChange: e => setTestFor(Object.assign({}, testFor, {q: e.target.value}))}),
+              E('input', {className:'input', 'aria-label':'The right answer', placeholder:'The right answer (optional)', style:{flex:'1 1 200px', fontSize:12}, value: testFor.x,
+                onChange: e => setTestFor(Object.assign({}, testFor, {x: e.target.value}))}),
+              btn('Keep as a test', () => setTest(c.id, true, testFor.q, testFor.x), 'save-test'),
+              btn('Cancel', () => setTestFor(null), 'cancel-test'))
+          : E('div', {style:{display:'flex', gap:6, marginTop:4}},
+              (c.undo_ids || []).length > 0 && btn('Undo', () => post('restore-messages', {ids: c.undo_ids}, 'r' + c.id), 'undo-corr',
+                {title: 'Use the earlier messages this correction retired again. The line stays as you left it.'}),
+              c.action !== 'restored' && (c.regression_test
+                ? btn('Kept as a test', () => setTest(c.id, false), 'test-off', {'aria-pressed': true, title: 'Stop keeping this as a test'})
+                : btn('Keep as a test', () => setTestFor({id: c.id, q: '', x: ''}), 'test-on',
+                    {'aria-pressed': false, title: 'Remember this as a test: ' + fridayName() + ' can be checked later against your own question and answer.'})))))));
 }
 // End memory card panel
 

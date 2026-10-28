@@ -495,6 +495,7 @@ class ConversationMemory:
                     "relevance": rel,
                     "superseded": is_superseded,
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                 })
                 if len(out) >= want:
                     break
@@ -630,6 +631,7 @@ class ConversationMemory:
                         "timestamp": meta.get("timestamp"),
                         "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                         "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                        "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                     })
                     if len(hits) >= limit:
                         break
@@ -700,6 +702,7 @@ class ConversationMemory:
                     # of what was said survives; only its authority is gone.
                     "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "")
             return rows
@@ -749,6 +752,7 @@ class ConversationMemory:
                     # of what was said survives; only its authority is gone.
                     "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
             return rows[:max(0, int(n))]
