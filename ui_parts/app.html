@@ -2248,6 +2248,22 @@ function useFridayOffRecord() {
   }, []);
   return on;
 }
+// What off the record does not cover (NS-15.8-3): services Friday is connected
+// to keep their own records. Read from what is connected now, when shown.
+const FRIDAY_OFF_RECORD_ELSEWHERE_TITLE = 'Off the record does not cover';
+function FridayOffRecordElsewhere() {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let live = true;
+    apiFetch('/api/off-record/external').then(r => r.json()).then(j => { if (live && j && j.ok) setD(j); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!d) return null;
+  return React.createElement('details', { 'data-off-record-elsewhere': 'true', style: { fontSize: 11, color: 'rgba(255,255,255,0.6)', padding: '0 12px 8px', lineHeight: 1.5 } },
+    React.createElement('summary', { style: { cursor: 'pointer' } }, d.short || FRIDAY_OFF_RECORD_ELSEWHERE_TITLE),
+    React.createElement('ul', { 'aria-label': FRIDAY_OFF_RECORD_ELSEWHERE_TITLE, style: { margin: '4px 0 0', paddingLeft: 16 } },
+      (d.lines || []).map((t, i) => React.createElement('li', { key: i }, t))));
+}
 function FridayChatInput({value,onChange,onSend,placeholder,disabled,inputRef,className,style,maxHeight,autoFocus}){
   const offRecord=useFridayOffRecord();if(offRecord)placeholder=FRIDAY_OFF_RECORD_TEXT;
   const own=useRef(null);const ref=inputRef||own;
@@ -20726,6 +20742,8 @@ function SettingsPrivacyMap() {
     E('div', { className: 'lk-words' }, (svc.remote || []).length ? (svc.remote.length + ' phone or remote channel' + (svc.remote.length === 1 ? '' : 's') + ' can reach ' + fridayName() + ' from outside this PC.') : 'No phone or remote channel can reach ' + fridayName() + ' from outside this PC.'),
     d.vault_access && E('div', { className: 'lk-words' }, d.vault_access.allowed_7_days == null ? 'I couldn’t read the private-data access log.' : 'In the last 7 days, private data was used by a model on this PC or allowed to the cloud ' + d.vault_access.allowed_7_days + ' time' + (d.vault_access.allowed_7_days === 1 ? '' : 's') + ', and refused ' + d.vault_access.refused_7_days + ' time' + (d.vault_access.refused_7_days === 1 ? '' : 's') + '.'),
     d.off_record && E('p', { className: 'lk-words', role: 'note' }, E('strong', null, 'When you go off the record. '), d.off_record.words),
+    d.off_record && d.off_record.external && E('h4', { className: 'pm-h' }, 'Off the record does not cover'),
+    d.off_record && d.off_record.external && E('ul', { className: 'lk-sub', 'aria-label': 'Off the record does not cover' }, (d.off_record.external.lines || []).map((t, i) => E('li', { key: i }, t))),
     E('div', null, d.export && ctl(d.export), d.erase && ctl(d.erase)),
     E('p', { className: 'pm-limit', role: 'note' }, E('strong', null, 'The honest limit. '), d.honest_limit),
     E('div', { role: 'status', 'aria-live': 'polite', className: 'sc-msgline' }, msg),
@@ -20867,6 +20885,7 @@ function SettingsTabPrivacy({s,save}){
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
       <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
+      {fridayOffRecordFrom(s) && React.createElement(FridayOffRecordElsewhere, null)}
       <StToggle label="Artifact panel beside the chat" value={s.artifact_panel_enabled!==false} onChange={()=>save({artifact_panel_enabled:s.artifact_panel_enabled===false})} desc={"When " + fridayName() + " makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."}/>
       <StRow label="Keep the log for" desc="Older entries are deleted automatically.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
@@ -30350,6 +30369,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
         </div>
         {fridayOffRecordFrom(agentSettings)&&<div role="note" data-off-record-notice="true" style={{fontSize:11,color:'rgba(255,255,255,0.6)',padding:'0 12px 8px',lineHeight:1.5}}>{FRIDAY_OFF_RECORD_NOTICE}</div>}
+        {fridayOffRecordFrom(agentSettings) && React.createElement(FridayOffRecordElsewhere, null)}
         <div className="settings-toggle" role="button" tabIndex={0} title="Logging is changed in Settings, Privacy & Data, next to the log and its erase controls." onClick={()=>{window.__fridaySettingsTab='privacy';setSettingsOpen(false);toggle('settings');try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'privacy'}}))}catch(e){}}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click()}}}>
           <span className="settings-toggle-label">Log conversations</span>
           <span style={{fontSize:11,color:agentSettings.context_logging_enabled?'#00ff80':'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{(agentSettings.context_logging_enabled?'On':'Off')+' \u2192'}</span>
