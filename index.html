@@ -62570,8 +62570,8 @@ function GoogleAccountsPanel() {
           setLoading(false);
           return;
         }
-        // "Reconnect with sending" has just shown its own permission list; the others are shown here.
-        if (!mailbox && !window.confirm(permissionDiffText(df))) {
+        // Every new write permission is shown here before Google is asked.
+        if (!window.confirm(permissionDiffText(df))) {
           setLoading(false);
           return;
         }

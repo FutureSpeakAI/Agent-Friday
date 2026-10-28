@@ -166,6 +166,18 @@ def connect_google_account():
     # of GET /api/google/accounts/<id>/permission-diff for exactly these capabilities.
     caps = [c for c, on in (("send", include_send or include_modify), ("calendar", include_calendar_write),
                             ("tasks", include_tasks_write), ("contacts", include_contacts_write)) if on]
+    if not existing and login_hint:
+        # Named by its address rather than its id: still the same account (the callback files a
+        # grant under the address's id), so still its difference first.
+        existing = ga.get_account(ga._account_id(login_hint))
+        if existing:
+            account_id = existing.get("id") or account_id
+    if not existing and set(caps) - {"send"}:
+        # Calendar, task and contact changes are turned on from an account's own button only.
+        # (A new account's "let Friday send mail" box explains itself on the add form.)
+        return jsonify({"status": "error",
+                        "message": "Turn this on from the account's own button in Settings > "
+                                   "Google accounts, which shows what it adds first."}), 409
     if existing and caps:
         diff = ga.permission_diff(account_id, caps)
         if str(body.get("diff_id") or "") != diff["diff_id"]:

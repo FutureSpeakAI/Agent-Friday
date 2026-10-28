@@ -86,8 +86,18 @@ def test_google_is_not_asked_for_a_new_write_permission_without_its_difference(c
 
 
 def test_a_permission_already_held_is_not_shown_as_new(client):
-    _write([CAL_READ, CAL_EVENTS])
+    _write([CAL_READ, CAL_RW])
     assert _diff(client, ["calendar"])["adds"] == []
+    _write([CAL_READ, CAL_EVENTS])                 # Google is still asked for the wider one: shown
+    assert [a["scope"] for a in _diff(client, ["calendar"])["adds"]] == [CAL_RW]
+
+
+def test_naming_an_existing_account_by_its_address_still_needs_its_difference(client):
+    _write([CAL_READ, TASKS_READ], aid=ga._account_id("me@example.test"))
+    r = client.post("/api/google/accounts/connect", json={"email": "me@example.test", "include_send": True})
+    assert r.status_code == 409 and not ra._PENDING, "send was asked for an existing account unseen"
+    r = client.post("/api/google/accounts/connect", json={"label": "x", "include_calendar_write": True})
+    assert r.status_code == 409, "calendar changes were asked for without an account's own button"
 
 
 def test_each_capability_the_panel_offers_has_a_difference(client):

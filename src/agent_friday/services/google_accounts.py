@@ -154,9 +154,11 @@ CAPABILITY_SCOPES = {
 }
 _CAPABILITY_STILL = {
     "send": ("Sending, archive, trash, spam, mute and unsubscribe each wait for your yes on a card; "
-             "read/unread, star and labels change without one."),
-    "calendar": "Each change to your calendar still waits for your yes on a card.",
-    "tasks": "Each change to your Google Tasks still waits for your yes on a card.",
+             "saving drafts, read/unread, star and labels change without one."),
+    "calendar": ("Each change to your calendar still waits for your yes on a card (removing the "
+                 "tentative holds Friday itself placed does not)."),
+    "tasks": ("Each change to your Google Tasks still waits for your yes on a card; in a background "
+              "run, one card covers that run's task changes."),
     "contacts": "Each save to Google Contacts still waits for your yes on a card.",
 }
 
@@ -173,9 +175,9 @@ def permission_diff(account_id: str, capabilities) -> dict:
         raise ValueError("unknown capability: %s" % ", ".join(unknown or ["(none)"]))
     rec = get_account(account_id) or {}
     granted = set(rec.get("scopes") or [])
+    # Exactly what build_auth_flow will ask Google for (calendar asks for the full calendar
+    # permission even when calendar.events is already allowed: that is shown as added).
     asked = [s for c in caps for s in CAPABILITY_SCOPES[c]]
-    if "calendar" in caps and granted & set(CALENDAR_WRITE_SCOPES):
-        asked = [s for s in asked if s != CALENDAR_RW]           # calendar.events already allows it
     adds = [s for s in dict.fromkeys(asked) if s not in granted]
     try:
         from agent_friday.services import connector_contracts as _cc
