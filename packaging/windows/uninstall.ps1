@@ -252,7 +252,7 @@ function Get-FridaySiblingCopies {
     if (-not (Test-Path -LiteralPath $parent)) { return }
     foreach ($d in @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction SilentlyContinue)) {
         if ($d.Name.StartsWith($leaf + '.pre-restore-') -or $d.Name.StartsWith($leaf + '.friday-restore-') -or
-            $d.Name.StartsWith($leaf + '.restore-undone-')) {
+            $d.Name.StartsWith($leaf + '.restore-undone-') -or $d.Name.StartsWith($leaf + '.pre-migration-')) {
             Write-Output $d.FullName
         }
     }
@@ -678,7 +678,7 @@ if ($removeData) {
             foreach ($sib in @(Get-FridaySiblingCopies)) {
                 Remove-Item -LiteralPath $sib -Recurse -Force -ErrorAction SilentlyContinue
             }
-            foreach ($tail in @('.restore-journal.json', '.restore-journal.json.partial', '.restore.lock')) {
+            foreach ($tail in @('.restore-journal.json', '.restore-journal.json.partial', '.restore.lock', '.migration-journal.json', '.migration.lock')) {
                 $jf = Join-Path (Split-Path -Parent $FridayDir) ((Split-Path -Leaf $FridayDir) + $tail)
                 if (Test-Path -LiteralPath $jf) { Remove-Item -LiteralPath $jf -Force -ErrorAction SilentlyContinue }
             }
