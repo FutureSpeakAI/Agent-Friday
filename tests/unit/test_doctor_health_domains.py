@@ -39,7 +39,7 @@ def fakes(monkeypatch):
     monkeypatch.setattr(gpu_probe, "probe", lambda *a, **k: pytest.fail("the Doctor initialised CUDA"))
     monkeypatch.setattr(gpu_probe, "cublas_status", lambda env=None: f["cublas"])
     monkeypatch.setattr(local_voice, "deps_installed", lambda: f["voice"])
-    monkeypatch.setattr(office_engine, "binary_state", lambda: f["office"])
+    monkeypatch.setattr(office_engine, "binary_state", lambda: f["office"], raising=False)   # new with these checks
     monkeypatch.setattr(office_engine, "verify_binary",
                         lambda force=False: pytest.fail("the Doctor changed whether the engine may run"))
     monkeypatch.setattr(safe_mode, "active", lambda: f["safe"])
