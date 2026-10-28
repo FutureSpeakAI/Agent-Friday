@@ -1507,12 +1507,35 @@ def _gate_messages(messages: list, provider: str,
     seat's own text only for that same (provider, model) (_gate_tool_args)."""
     gated = []
     for i, msg in enumerate(messages):
+        if isinstance(msg, str):
+            # A bare string where a message dict belongs (a malformed payload,
+            # NS-34.6-8): gated like the content it is, never passed whole.
+            _g = _gate_text(msg, provider, f"message[{i}]", log_path)
+            gated.append(_g if (_g or not msg) else _MESSAGE_WITHHELD)
+            continue
         if not isinstance(msg, dict):
-            gated.append(msg)
+            if msg is None or isinstance(msg, (bool, int, float)):
+                gated.append(msg)          # carries no text
+            else:
+                # Any other shape (a list, a tuple, an object) could hold text the
+                # gate cannot read reliably: withheld, fail closed.
+                _log(provider, f"message[{i}]", Tier.SENSITIVE, "block",
+                     "malformed message (%s) withheld" % type(msg).__name__, log_path)
+                gated.append(_MESSAGE_WITHHELD)
             continue
         out = msg
         if "content" in msg:
             content = msg["content"]
+            if isinstance(content, dict):
+                # One content block where a list or a string belongs: its text is
+                # gated; a block with no text field the gate can read is withheld.
+                if isinstance(content.get("text"), str):
+                    out = {**out, "content": {**content, "text": _gate_text(
+                        content["text"], provider, f"message[{i}].content.text", log_path)}}
+                else:
+                    _log(provider, f"message[{i}].content", Tier.SENSITIVE, "block",
+                         "malformed content block withheld", log_path)
+                    out = {**out, "content": _MESSAGE_WITHHELD}
             if isinstance(content, str) and LOCAL_ONLY_MARK in content:
                 # A result the local model produced on this PC (a handoff the
                 # owner approved): it never leaves the device, under any consent.
@@ -1552,6 +1575,19 @@ def _gate_messages(messages: list, provider: str,
                         new_parts.append(_gate_tool_use(
                             part, provider, f"message[{i}].content[{j}]", log_path,
                             model=model))
+                    elif isinstance(part, str):
+                        # A bare string part (malformed): gated as text.
+                        _g = _gate_text(part, provider, f"message[{i}].content[{j}]", log_path)
+                        new_parts.append(_g if (_g or not part) else _MESSAGE_WITHHELD)
+                    elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                        # A part of a type the gate does not know that still carries
+                        # text (input_text, output_text, a typo'd "type"): its text is gated.
+                        new_parts.append({**part, "text": _gate_text(
+                            part["text"], provider, f"message[{i}].content[{j}].text", log_path)})
+                    elif isinstance(part, (list, tuple)):
+                        _log(provider, f"message[{i}].content[{j}]", Tier.SENSITIVE, "block",
+                             "malformed content part withheld", log_path)
+                        new_parts.append({"type": "text", "text": _MESSAGE_WITHHELD})
                     else:
                         new_parts.append(part)
                 out = {**out, "content": new_parts}
@@ -2456,6 +2492,13 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
             sealed["system"] = _blocks
 
     # Message history (Anthropic format: list of dicts)
+    # A tuple of messages is gated like a list; a bare string where the list
+    # belongs is gated as one message (NS-34.6-8: malformed, never ungated).
+    if "messages" in sealed and isinstance(sealed["messages"], tuple):
+        sealed["messages"] = list(sealed["messages"])
+    if "messages" in sealed and isinstance(sealed["messages"], str):
+        sealed["messages"] = _gate_messages([sealed["messages"]], provider, log_path,
+                                            model=str(model or sealed.get("model") or ""))[0]
     if "messages" in sealed and isinstance(sealed["messages"], list):
         # The seat a replayed public query is checked against: the caller's
         # model, else the model named in the payload itself.
