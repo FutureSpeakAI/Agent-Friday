@@ -300,7 +300,19 @@ def check(url: str) -> str:
     if lost:
         return ("the list of add-on server hosts was lost or changed outside Friday, so each "
                 "host needs your approval again (%s)" % display(key))
-    if _verified(raw.get(key), key):
+    row = raw.get(key)
+    if _verified(row, key):
+        if row.get("made_by") == CARRIED_OVER:
+            # Trusted at the first start: only while the action ledger still says so (an older
+            # copy of this file put back cannot bring back a host released since).
+            try:
+                from agent_friday.governance import trust_anchor
+                anchored = trust_anchor.carried(ANCHOR_NAME)
+            except Exception:
+                anchored = None
+            if not anchored or key not in anchored["items"]:
+                return ("%s was trusted when the host list was made, but the action ledger no "
+                        "longer says so; it needs your approval again" % display(key))
         return ""
     return "you have not allowed Friday to reach %s" % display(key)
 
@@ -349,16 +361,22 @@ def remove(url_or_key: str, *, made_by: str) -> bool:
             raise HostRefused("The host list could not be read, so nothing was changed.")
         if key.startswith("__") or key not in raw:
             return False
+        try:
+            # A host the ledger carried over is released there first, whoever made its row now,
+            # so a deleted list is never rebuilt with it. If that cannot be recorded, nothing
+            # changes.
+            from agent_friday.governance import trust_anchor
+            anchored = trust_anchor.carried(ANCHOR_NAME)
+            if anchored and key in anchored["items"]:
+                trust_anchor.release(ANCHOR_NAME, key, why="removed by the owner")
+        except trust_anchor.AnchorUnavailable:
+            pass                                       # nothing the ledger could rebuild it from
+        except Exception as e:  # noqa: BLE001
+            raise HostRefused("The removal could not be recorded in the action ledger (%s), "
+                              "so nothing was changed." % type(e).__name__)
         old = raw.pop(key)
         _write_raw(raw)
         _history({"event": "remove", "host": key, "previous": old, "by": made_by})
-        if (old or {}).get("made_by") == CARRIED_OVER:
-            # A carried host the owner took off is not rebuilt from the ledger later.
-            try:
-                from agent_friday.governance import trust_anchor
-                trust_anchor.release(ANCHOR_NAME, key, why="removed by the owner")
-            except Exception:
-                pass
     return True
 
 

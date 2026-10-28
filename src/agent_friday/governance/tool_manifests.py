@@ -347,10 +347,13 @@ def release_grandfather(server: str, *, why: str) -> None:
         if raw is None or not row or server not in (row.get("servers") or {}):
             return
         try:
+            # The ledger first: if the release cannot be recorded, nothing changes (a deleted
+            # list would otherwise be rebuilt with this connector still trusted).
             from agent_friday.governance import trust_anchor
             trust_anchor.release(ANCHOR_NAME, server, why=why)
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            raise ManifestRefused("the answer could not be recorded in the action ledger (%s); "
+                                  "nothing was changed" % type(e).__name__)
         row = dict(row, servers={k: v for k, v in row["servers"].items() if k != server})
         row.pop("sig", None)
         row["sig"] = _sign(row)
