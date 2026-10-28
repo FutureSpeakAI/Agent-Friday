@@ -66,7 +66,8 @@
 <section id="restore" aria-labelledby="restore-h" hidden>
   <h2 id="restore-h">After a restore</h2>
   <p id="restore-why" role="status"></p>
-  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC.</p>
+  <ul id="restore-left"></ul>
+  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC. Resume waits until this PC holds Friday's governance key and every channel that is switched on is connected again or switched off.</p>
   <button id="resume" type="button">Resume outward actions</button>
   <p id="restore-note" role="status"></p>
 </section>
@@ -380,6 +381,9 @@
     api('/api/restore/state').then(({ d }) => {
       $('restore').hidden = !d.held;
       text($('restore-why'), d.why || '');
+      const ul = $('restore-left'); ul.textContent = '';
+      (d.blockers || []).forEach(b => { const li = document.createElement('li'); li.textContent = b.said; ul.appendChild(li); });
+      $('resume').disabled = (d.blockers || []).length > 0;
     });
   }
   $('resume').addEventListener('click', () => {

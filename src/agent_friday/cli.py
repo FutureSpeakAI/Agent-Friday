@@ -2226,8 +2226,18 @@ def cmd_resume(args) -> int:
         print("Outward actions are not waiting on a restore.")
         return 0
     print(why + ".")
+    try:
+        from agent_friday.services import restore_reestablish
+        left = restore_reestablish.blockers()
+    except Exception as e:  # noqa: BLE001
+        left = [{"said": "What is still needed could not be checked (%s)." % type(e).__name__}]
+    for b in left:
+        print("  Still needed: " + b["said"])
     if getattr(args, "status", False):
         return 0
+    if left:
+        print("Not resumed: put these in place first.")
+        return 1
     if not getattr(args, "yes", False):
         if not sys.stdin or not sys.stdin.isatty():
             print("Not resumed: confirm with --yes, or run this in a terminal.")

@@ -304,7 +304,15 @@ def _press_here():
 def restore_state():
     from agent_friday.services import friday_bundle
     why = friday_bundle.restore_hold()
-    return jsonify({"status": "ok", "held": bool(why), "why": why})
+    left = []
+    if why:
+        try:
+            from agent_friday.services import restore_reestablish
+            left = restore_reestablish.blockers()
+        except Exception as e:  # noqa: BLE001
+            left = [{"code": "check_failed", "what": "restore",
+                     "said": "Friday could not check what is still needed (%s)." % type(e).__name__}]
+    return jsonify({"status": "ok", "held": bool(why), "why": why, "blockers": left})
 
 
 @doctor_bp.route("/api/restore/resume", methods=["POST"])
@@ -317,6 +325,9 @@ def restore_resume():
     try:
         done = friday_bundle.resume_after_restore("owner:ui")
         return jsonify({"status": "ok", "resumed": done})
+    except friday_bundle.NotReestablished as e:
+        return jsonify({"status": "error", "code": "not_reestablished", "error": str(e),
+                        "blockers": e.blockers}), 409
     except Exception as e:  # noqa: BLE001
         return api_error(e, "Outward actions could not be resumed.")
 
