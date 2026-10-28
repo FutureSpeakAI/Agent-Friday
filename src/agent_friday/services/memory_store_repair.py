@@ -118,7 +118,7 @@ class NeedsConfirm(RuntimeError):
 LAST_VECTOR_REBUILD: Dict[str, Any] = {}
 
 
-def _copy_collection(src, dst, *, vectors: bool) -> Dict[str, str]:
+def _copy_collection(src, dst, *, vectors: bool, require_vectors: bool = False) -> Dict[str, str]:
     """Copy every row of `src` into `dst` (with its vectors when they are in the same model's
     space). Returns {id: words}. Raises when a page cannot be read."""
     out: Dict[str, str] = {}
@@ -135,6 +135,8 @@ def _copy_collection(src, dst, *, vectors: bool) -> Dict[str, str]:
         embs = got.get("embeddings") if vectors else None
         if embs is not None and len(embs) == len(ids):
             kw["embeddings"] = [list(map(float, e)) for e in embs]
+        elif require_vectors:
+            raise ValueError("the rows' vectors could not be read")
         dst.upsert(**kw)
         for i, d in zip(ids, docs):
             out[str(i)] = " ".join(str(d or "").split())
@@ -166,7 +168,7 @@ def _seed(old, staging) -> tuple:
         try:
             _copy_collection(old._client.get_or_create_collection("knowledge-graph"),
                              staging._client.get_or_create_collection("knowledge-graph"),
-                             vectors=True)          # always kg_vectors' own; never re-embedded
+                             vectors=True, require_vectors=True)   # kg_vectors' own; never re-embedded
         except Exception as e:  # noqa: BLE001
             _log.warning("the graph's entity vectors were not copied (%s); re-embedded", type(e).__name__)
             _embed_graph(staging)
@@ -226,9 +228,9 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
         replayed += len(ops)
     try:
         _receipt("vector_memory", "rebuild_started", by)
+        purges = cm.rewrites()
         if cm.rewrite_running():
             raise RuntimeError("a Library purge is running")
-        purges = cm.rewrites()
         cm.journal_start()                       # before anything of the old store is read
         try:
             old = cm.get_conversation_memory()
@@ -269,13 +271,18 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
                     staging._client.close()
             except Exception:
                 pass
-            cm.build_mark(new_dir).unlink(missing_ok=True)   # a finished store carries no mark
+            # The mark stays until the pointer names the folder: an unmarked folder that is not
+            # live is stale, and a forget on another thread may be deleting stale folders now.
             cm.set_live_dir(new_dir)
             switched = True                       # from here nothing deletes the new store
-            cm.close_conversation_memory()
             if old is not None:
-                old._closed = True
+                old._closed = True                # before the close, so a write cannot land in it
             staging = None
+            cm.close_conversation_memory()
+        try:
+            cm.build_mark(new_dir).unlink(missing_ok=True)   # a finished store carries no mark
+        except OSError as e:
+            _log.warning("the new store's build mark was not removed (%s)", type(e).__name__)
         left = 0
         try:
             left = cm.drop_stale_stores()
@@ -300,7 +307,10 @@ def rebuild_vector(by: str, *, begun: bool = False, progress=None,
         cm.journal_take(stop=True)
         if switched:                              # the new store is live: never undone here
             _log.error("after the switch: %s", type(e).__name__)
-            return {"ok": True, "warning": type(e).__name__}
+            res = {"ok": True, "warning": type(e).__name__}
+            LAST_VECTOR_REBUILD.clear()
+            LAST_VECTOR_REBUILD.update(res)
+            return res
         if staging is not None:
             try:
                 if staging._client is not None:

@@ -223,6 +223,41 @@ def test_a_purge_still_running_stops_a_rebuild_from_starting(live):
     assert not out.get("ok") and live.router._get_conversation_memory() is old
 
 
+def test_a_purge_still_running_at_the_switch_abandons_the_rebuild(live):
+    old, keep, wrong = _two_turns(live)
+    real = live.cm.ConversationMemory.rebuild_from_transcripts
+
+    def during(self, *a, **k):
+        live.cm.note_rewrite()                 # a purge begins and has not finished at the switch
+        return real(self, *a, **k)
+    live.cm.ConversationMemory.rebuild_from_transcripts = during
+    try:
+        out = live.msr.rebuild_vector("owner:test")
+    finally:
+        live.cm.ConversationMemory.rebuild_from_transcripts = real
+        live.cm.end_rewrite()
+    assert not out.get("ok") and live.router._get_conversation_memory() is old
+
+
+def test_a_turn_deleted_while_it_is_copied_is_neither_kept_nor_missed(live):
+    old, keep, wrong = _two_turns(live)
+    old.index("Two years ago we bought Wren from a yard in Woodbridge.", "user", msg_id="m-pruned")
+    real_get = old._collection.get
+    state = {"listed": False}
+
+    def get(*a, **k):
+        out = real_get(*a, **k)
+        if k.get("include") == [] and not state["listed"]:
+            state["listed"] = True
+            old.delete(ids=[keep])             # deleted after the ids were listed, before the read
+        return out
+    old._collection.get = get
+    out = live.msr.rebuild_vector("owner:test")
+    assert out.get("ok"), out
+    meta = _meta(live.router._get_conversation_memory())
+    assert keep not in meta and "m-pruned" in meta and wrong in meta
+
+
 def test_a_failure_after_the_switch_never_deletes_the_new_store(live, monkeypatch):
     old, keep, wrong = _two_turns(live)
     real = live.msr._receipt

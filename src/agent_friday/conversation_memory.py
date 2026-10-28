@@ -1055,7 +1055,14 @@ def _building(d) -> bool:
     except (OSError, ValueError):
         return True
     if pid == os.getpid():
-        return True                           # this process is building it, however long it takes
+        # This process is building it, however long it takes -- unless the mark predates this
+        # process (an earlier one that had the same pid).
+        try:
+            import psutil
+            made = float((mark.split(":") + ["0"])[1] or 0)
+            return not made or made >= psutil.Process().create_time() - 5
+        except Exception:
+            return True
     try:
         import psutil
         return bool(pid) and psutil.pid_exists(pid)
