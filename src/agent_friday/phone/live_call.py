@@ -171,19 +171,22 @@ def mint_ticket(direction: str, call_sid: str) -> str:
     return body + "|" + sig
 
 
-def ticket_direction(ticket: str) -> str:
-    """The direction a good, fresh, unused ticket names; "" otherwise (spent here)."""
+def ticket_direction(ticket: str, call_sid: str = "") -> str:
+    """The direction a good, fresh, unused ticket for THIS call names; "" otherwise
+    (spent here)."""
     import hashlib as _h
     import hmac as _hm
     try:
         body, sig = str(ticket or "").rsplit("|", 1)
-        direction, _sid, ts, _nonce = body.split("|")
+        direction, sid, ts, _nonce = body.split("|")
         good = _hm.compare_digest(sig, _hm.new(_ticket_key(), body.encode("utf-8"),
                                                _h.sha256).hexdigest())
     except Exception:
         return ""
     now = time.time()
     if not good or not (0 <= now - int(ts) <= _TICKET_TTL_S):
+        return ""
+    if call_sid and sid and sid != call_sid:
         return ""
     with _TICKET_LOCK:
         for k in [k for k, t in _USED_TICKETS.items() if now - t > 2 * _TICKET_TTL_S]:
@@ -235,8 +238,8 @@ CALL_NOTE = (
 #: The whole system prompt on a call with someone other than the owner: who Friday is
 #: and how to behave, and nothing of the owner's notes, memory or files.
 OTHER_PARTY_SYSTEM = (
-    "You are Friday, an AI assistant, speaking on a phone call you placed on behalf of "
-    "the person you work for. The other person is not the person you work for. You know "
+    "You are Friday, an AI assistant, speaking on a phone call on behalf of the person "
+    "you work for. Treat the other person as someone else, not the person you work for. You know "
     "only what was said on this call and the purpose you were given for it. Do not "
     "guess at, or reveal, anything about the person you work for: their schedule, "
     "contacts, files, notes or plans. If the other person asks for something that needs "
@@ -436,7 +439,7 @@ class CallBridge:
             # "inbound" only with the single-use ticket this call's own TwiML carried;
             # otherwise the call is treated as one with someone else.
             if str(self.params.get("direction") or "").lower() == "inbound" \
-                    and ticket_direction(self.params.get("ticket") or "") != "inbound":
+                    and ticket_direction(self.params.get("ticket") or "", self.call_sid) != "inbound":
                 self.params["direction"] = "unverified"
             self.params.pop("ticket", None)
             opening = self.params.get("opening") or ""
