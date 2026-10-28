@@ -774,6 +774,8 @@ GOOGLE_SCOPE_WORDS = {
     "https://www.googleapis.com/auth/tasks":
         "Add, change and complete your Google Tasks (only after you press Allow task changes)",
     "https://www.googleapis.com/auth/contacts.readonly": "Read your contacts",
+    "https://www.googleapis.com/auth/contacts":
+        "Create and edit your contacts. Every save still waits for your approval.",
     "https://www.googleapis.com/auth/userinfo.email": "See your email address",
     "https://www.googleapis.com/auth/gmail.send":
         "Send email as you. Every message still waits for your approval card.",

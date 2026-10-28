@@ -176,6 +176,11 @@ def _google_items() -> list:
                        optional=True, key="include_send"))
     perms.append(_perm(copy.GOOGLE_SCOPE_WORDS[ga.GMAIL_MODIFY], scope=ga.GMAIL_MODIFY,
                        optional=True, key="include_modify"))
+    # The other permissions the connect flow can ask for (google_accounts.build_auth_flow),
+    # each only when ticked: the card lists everything Google's screen could show (NS-34.4-7).
+    for sc, key in ((ga.CALENDAR_RW, "include_calendar_write"), (ga.TASKS_RW, "include_tasks_write"),
+                    (ga.CONTACTS_RW, "include_contacts_write")):
+        perms.append(_perm(copy.GOOGLE_SCOPE_WORDS[sc], scope=sc, optional=True, key=key))
     try:
         summ = ga.accounts_summary()
     except Exception:
@@ -197,8 +202,9 @@ def _google_items() -> list:
         connect={"kind": "google_oauth", "endpoint": "/api/google/accounts/connect",
                  "multi_account": True,
                  "note": "Google's own consent screen opens in your browser and "
-                         "lists the same permissions. Sending and mailbox "
-                         "changes are asked for only if you tick them."},
+                         "lists the same permissions. Sending, mailbox changes "
+                         "and changes to your calendar, tasks and contacts are "
+                         "asked for only if you tick them."},
         status=status, detail=detail,
         docs_url="https://myaccount.google.com/permissions")]
 
