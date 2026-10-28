@@ -7,6 +7,10 @@
   GET  /api/doctor/reports/<id>.<json|txt>
                                       a saved report as a file to save and
                                       attach by hand (A3: never sent by Friday)
+  POST /api/doctor/support            make the support bundle (a zip in
+                                      Documents, Friday Support; a press here)
+  GET  /api/doctor/stores             every store Friday keeps: version, size,
+                                      location (read-only, this PC only)
   GET  /api/safe-mode                 is this run in safe mode, and the next?
   POST /api/safe-mode                 {"next_start": true|false}: start in safe
                                       mode next time, or leave it. A press on
@@ -80,6 +84,9 @@ def doctor_report():
 @doctor_bp.route("/api/doctor/reports", methods=["GET"])
 @login_required
 def doctor_reports():
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     try:
         return jsonify({"status": "ok", "reports": doctor.history()})
     except Exception as e:  # noqa: BLE001
@@ -89,6 +96,9 @@ def doctor_reports():
 @doctor_bp.route("/api/doctor/reports/<rid>.<kind>", methods=["GET"])
 @login_required
 def doctor_report_file(rid, kind):
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     p = doctor.saved(rid, kind)
     if p is None:
         return jsonify({"status": "error", "error": "No such report."}), 404
@@ -96,6 +106,24 @@ def doctor_report_file(rid, kind):
                      as_attachment=True, download_name=p.name)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@doctor_bp.route("/api/doctor/stores", methods=["GET"])
+@login_required
+def doctor_stores():
+    """Every store Friday keeps: version, size, location (§37.3-1). Read-only;
+    on this PC only, like the page that shows it."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    try:
+        from agent_friday.services import store_inventory
+        inv = store_inventory.public(store_inventory.cached(doctor._home()))
+        resp = jsonify({"status": "ok", **inv})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The list of stores could not be made.")
 
 
 @doctor_bp.route("/api/safe-mode", methods=["GET"])
@@ -299,7 +327,32 @@ def bundle_schedule_act(what):
     return jsonify({"status": "ok", "started": what})
 
 
-# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
+# ── The support bundle (services/support_bundle.py; A3) ─────────────────────
+
+@doctor_bp.route("/api/doctor/support", methods=["POST"])
+@login_required
+def doctor_support_bundle():
+    """Make the support bundle (services/support_bundle.py) in Documents,
+    Friday Support: the Doctor report, the store inventory and redacted log
+    excerpts, to attach by hand (A3: Friday never sends it). A press on
+    Friday's own page, on this PC."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Make it on Friday's own page, on this PC."}), 403
+    from agent_friday.services import support_bundle
+    body = request.get_json(silent=True) or {}
+    try:
+        r = support_bundle.make(by="owner:ui", cloud_ok=body.get("cloud_ok") is True)
+        return jsonify({"status": "ok", **r})
+    except support_bundle.CloudFolder as e:
+        return jsonify({"status": "error", "code": "cloud_folder", "error": str(e)}), 409
+    except support_bundle.SupportError as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The support bundle could not be made.")
+
+
+# ── The readable export (services/readable_export.py) ───────────────────────
 
 @doctor_bp.route("/api/export/readable", methods=["POST"])
 @login_required
@@ -330,6 +383,8 @@ def export_readable():
         return api_error(e, "The export could not be made.")
 
 
+# ── The first backup (services/first_backup.py) ─────────────────────────────
+
 @doctor_bp.route("/api/bundle/first-run", methods=["GET"])
 @login_required
 def first_backup_status():
@@ -355,6 +410,8 @@ def first_backup_answer():
     except Exception as e:  # noqa: BLE001
         return api_error(e, "That could not be saved.")
 
+
+# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
 
 @doctor_bp.route("/api/doctor/weekly", methods=["GET"])
 @login_required

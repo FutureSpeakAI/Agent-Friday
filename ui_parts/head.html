@@ -26,6 +26,29 @@ window.addEventListener('error',function(e){
   }
 },true);
 </script>
+<script id="friday-render-3d">
+// 3D rendering can be switched off entirely (north star 21.22-3; Settings >
+// Appearance > 3D rendering). Read before anything draws: with it off no WebGL
+// context is ever made, and every 3D view shows its flat form instead.
+// The answer is fixed for this page: the WebGL switch below is installed once,
+// so a change made in Settings takes effect when Friday next opens.
+(function(){
+  var off=false;try{off=localStorage.getItem('friday.render3d')==='off';}catch(_){}
+  window.fridayRender3dOff=function(){return off;};
+  window.fridaySyncRender3d=function(on){try{if(on===false)localStorage.setItem('friday.render3d','off');else if(on===true)localStorage.removeItem('friday.render3d');}catch(_){}};
+  if(!off)return;
+  document.documentElement.setAttribute('data-render3d','off');
+  var get=HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext=function(kind){
+    if(/^(webgl2?|experimental-webgl)$/i.test(String(kind||'')))return null;
+    return get.apply(this,arguments);
+  };
+})();
+</script>
+<style id="friday-render-3d-style">
+:root[data-render3d="off"] #friday-scene-canvas{display:none!important}
+:root[data-render3d="off"] body{background:#070b14}
+</style>
 <!-- UI libraries are vendored (static/vendor/, SRI-verified against the same
      pinned versions the old CDN tags carried) so the shell loads offline.
      Babel below is the sole remaining CDN script and only for fallback builds:

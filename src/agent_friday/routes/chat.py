@@ -474,6 +474,23 @@ _NO_REPLY_NOTE = "[No reply was given to this message: the turn did not complete
 #: A user row whose turn has not (yet) produced a reply.
 _UNANSWERED_STATUSES = ("received", "unanswered")
 
+#: Stands in for a turn forget-person took out of Friday's memory
+#: (services/forget_derived): the owner's history still shows it, the model
+#: does not read it again, and the roles still alternate. One text for every
+#: replay path (chat, voice, Crew): conversation_fts.FORGOTTEN_NOTE.
+from agent_friday.services.conversation_fts import FORGOTTEN_NOTE as _FORGOTTEN_NOTE  # noqa: E402
+
+
+def _forgotten_ids(rows):
+    """The ids among `rows` that forget-person took out (conversation_fts's
+    `forgotten` list). Empty when it cannot be read: the turn is replayed as
+    before rather than the chat failing."""
+    try:
+        from agent_friday.services import conversation_fts as _fts
+        return _fts.forgotten_ids([m.get('id') for m in rows if m.get('id')])
+    except Exception:
+        return set()
+
 
 def _conv_context(cid, limit=None, exclude_id=None):
     """This conversation's replayable turns — never another conversation's.
@@ -499,11 +516,17 @@ def _conv_context(cid, limit=None, exclude_id=None):
     # surfaces, not conversation, and are never replayed into model context.
     rows = [m for m in rows if m.get('role') not in ('system', 'system_report')
             and not (exclude_id and m.get('id') == exclude_id)]
+    gone = _forgotten_ids(rows)
     out = []
     for i, m in enumerate(rows):
         role = 'user' if m.get('role') == 'user' else 'assistant'
         text = m.get('text') or ''
-        if text:
+        forgotten = bool(text and gone and str(m.get('id')) in gone)
+        if forgotten:
+            # Forget-person took this turn out of Friday's memory: the owner
+            # still sees it, the model gets only the placeholder (no receipts).
+            out.append({"role": role, "content": _FORGOTTEN_NOTE})
+        elif text:
             if role == 'assistant' and (m.get('meta') or {}).get('library'):
                 # A reply that read the Library is recognised wherever history is replayed or summarised.
                 _library_cite.remember_library_reply(text)
@@ -515,12 +538,21 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 # as something Friday or the owner said (services/untrusted_input).
                 from agent_friday.services.untrusted_input import wrap as _data_envelope
                 text = _data_envelope(text)
+            if m.get('imported_from'):
+                # A turn brought in from another assistant's history (services/ai_history_import)
+                # is a record of what was said there: replayed as data, never as Friday's own
+                # words nor as the owner asking anything now.
+                from agent_friday.services.untrusted_input import wrap as _data_envelope
+                who = 'the owner' if role == 'user' else 'that assistant'
+                text = _data_envelope('From the owner\'s %s, %s said: %s'
+                                      % (m.get('via') or 'imported AI history', who, text))
             if (m.get('meta') or {}).get('local_only'):
                 # A result the local model produced on this PC: replayed with
                 # the mark the egress gate withholds from every cloud model.
                 from agent_friday.services.egress_gate import mark_local_only
                 text = mark_local_only(text)
             out.append({"role": role, "content": text})
+        if forgotten or text:
             nxt = rows[i + 1] if i + 1 < len(rows) else None
             if (role == 'user'
                     and (m.get('meta') or {}).get('status') in _UNANSWERED_STATUSES
@@ -1006,6 +1038,12 @@ def _cloud_turn_decision(route_mode, mode, confirmed, vault_access):
         return ""
     if vault_access:
         return "vault"
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked as _unpicked
+        if _unpicked():
+            return "confirm"          # A16a: no route picked, no cloud turn, even confirmed
+    except Exception:
+        pass
     if str(mode or "").strip().lower() == "local_only" and not confirmed:
         return "confirm"
     return "allow"
@@ -1487,6 +1525,22 @@ def _note_recall_turn(session_id, conversation_id):
         pass
 
 
+def _turn_learning_off():
+    """This turn's off-record state for everything that LEARNS from it
+    (services/off_record.excludes_learning, NS-15.8-2), read once at the
+    start of the turn. Cannot tell: off the record, nothing is learned.
+    /api/chat/stream runs chat() on a worker thread and takes its snapshot
+    at request time (_PILOT_OFF_RECORD): an off-record request stays off the
+    record even if the toggle changes before the worker reads settings."""
+    if _PILOT_OFF_RECORD.get():
+        return True
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.excludes_learning(_load_settings() or {}))
+    except Exception:
+        return True
+
+
 def _end_grant_turn(sess_ctx, session_id, conversation_id):
     """The turn is over, however it ended (an instant reply returns before
     the turn's context exists): a skill read in it stops counting as in use
@@ -1545,11 +1599,18 @@ def chat():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
+        # Off-record is read ONCE, here, and this snapshot decides every
+        # learning step of the turn (the user model, the household capture,
+        # epistemic scoring, skill capture, recall indexing): a toggle mid-turn
+        # cannot let half a turn be learned (NS-15.8-2).
+        _turn_off_record = _turn_learning_off()
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
+        # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
-            _um.observe_message(message, role='user', workspace=workspace)
+            _um.observe_message(message, role='user', workspace=workspace,
+                                off_record=_turn_off_record)
         except Exception:
             pass
         # An empty message with no image is unanswerable — refuse it cleanly
@@ -2191,6 +2252,10 @@ def chat():
                 "Please install Ollama or switch to local routing mode."
             )
             _offer_cloud_switch = bool(_route_info.get('offer_cloud_switch'))
+            if _cloud_intent.route_unpicked():
+                # A16a: the prompt is "choose where Friday thinks", not a
+                # one-button switch to the cloud.
+                _offer_cloud_switch = False
             _refuse_offer = None
             if _route_info.get('local_unavailable'):
                 _refuse_offer = _local_offer.build(
@@ -2549,6 +2614,9 @@ def chat():
             # outcome back into this chat when the owner approves the card
             # later -- possibly from the System workspace with no turn running.
             "conversation_id": _conv_id_from(data) or "",
+            # The turn's off-record snapshot, for the household capture in
+            # prepare_confirmation_ctx (NS-15.8-2).
+            "off_record_turn": _turn_off_record,
         }
         # Every metered call in a codebase chat is that codebase's spend, under
         # whose key it runs (salon spec §4.7): the meter reads both from here.
@@ -2740,7 +2808,9 @@ def chat():
                 _laya_tr = _ctr.decide(
                     message, data, settings=settings, local=_routed_local,
                     held=[str(t.get('name')) for t in _ag_tools_for_turn(workspace, _conversation_id)],
-                    off_record=bool(_off_laya.active()),
+                    # Not logged or learned from when the turn is off the
+                    # record for learning (its snapshot) or for storage.
+                    off_record=bool(_turn_off_record or _off_laya.active()),
                     conversation_id=_conversation_id)
             if _laya_tr is not None and _laya_tr.action == 'ask':
                 _ctr.record(_turn_id, _laya_tr, ran=None, outcome='asked')
@@ -3293,7 +3363,8 @@ def chat():
                           _route_info, locals().get('_conv_seat'))
 
         # ── Context log: append both turns unless off-record. ──
-        if not settings.get('off_record'):
+        # (The turn's snapshot from its start, like the learning steps below.)
+        if not _turn_off_record:
             _log_context("chat_user", {
                 "message": message,
                 "workspace": workspace,
@@ -3305,32 +3376,38 @@ def chat():
                 "tool_count": len(tool_trace or []),
             })
 
-        # Epistemic scoring — score this turn in background
-        try:
-            from agent_friday.epistemic_engine import get_epistemic_engine
-            threading.Thread(
-                target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
+        # Epistemic scoring — score this turn in background. It is Friday's
+        # introspection on the turn: an off-record turn is not scored (NS-15.8-2).
+        if not _turn_off_record:
+            try:
+                from agent_friday.epistemic_engine import get_epistemic_engine
+                threading.Thread(
+                    target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
 
         # Closed-loop learning — capture the turn trajectory + accumulate skill
         # metrics in the background. Feeds the nightly SkillOpt optimizer.
-        try:
-            import agent_friday.skill_capture as _skcap
-            threading.Thread(
-                target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
-                    _skcap.capture(m, r, tool_trace=tt, workspace=ws),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
+        # Off the record nothing is learned from the turn (NS-15.8-2), even
+        # when the owner lets the transcript be stored.
+        if not _turn_off_record:
+            try:
+                import agent_friday.skill_capture as _skcap
+                threading.Thread(
+                    target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
+                        _skcap.capture(m, r, tool_trace=tt, workspace=ws),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
 
         # Persistent conversation memory — index both turns into ChromaDB in the
         # background so future sessions can recall and cite this exchange. Skip
-        # when the user is off-record. Best-effort; never blocks the response.
-        if not settings.get('off_record'):
+        # when the user is off-record (the turn's snapshot from its start).
+        # Best-effort; never blocks the response.
+        if not _turn_off_record:
             try:
                 threading.Thread(
                     target=_index_chat_turn,
@@ -3651,11 +3728,15 @@ def chat_send():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
+        # Off-record read ONCE for the turn's learning steps (as /api/chat).
+        _turn_off_record = _turn_learning_off()
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
+        # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
-            _um.observe_message(message, role='user', workspace=workspace)
+            _um.observe_message(message, role='user', workspace=workspace,
+                                off_record=_turn_off_record)
         except Exception:
             pass
         include_vision = data.get('includeVision', False)
@@ -3900,13 +3981,18 @@ def chat_send():
 
         # Anthropic-format message history
         messages = []
-        for msg in CHAT_HISTORY[_history_start(CHAT_HISTORY):]:
+        _window = CHAT_HISTORY[_history_start(CHAT_HISTORY):]
+        # A turn forget-person took out is replayed only as a placeholder.
+        _gone = _forgotten_ids(_window)
+        for msg in _window:
             if msg.get('role') == 'system':
                 # B2/B5: transparency system lines are never model context.
                 continue
             role = 'user' if msg.get('role') == 'user' else 'assistant'
             text = msg.get('text', '')
-            if text:
+            if text and _gone and str(msg.get('id')) in _gone:
+                messages.append({"role": role, "content": _FORGOTTEN_NOTE})
+            elif text:
                 if role == 'assistant' and msg.get('library'):
                     _library_cite.remember_library_reply(text)
                 if role == 'assistant':
@@ -3928,6 +4014,7 @@ def chat_send():
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "conversation_id": _conversation_id,
+            "off_record_turn": _turn_off_record,        # household capture (NS-15.8-2)
         }
         # Every metered call in a codebase chat is that codebase's spend, under
         # whose key it runs (salon spec §4.7): the meter reads both from here.
@@ -4093,8 +4180,9 @@ def chat_send():
         _save_chat_history(CHAT_HISTORY)
 
         # Persistent conversation memory + emotional arc — index this exchange in
-        # the background (skip when off-record). Best-effort; never blocks.
-        if not settings.get('off_record'):
+        # the background (skip when off-record: the turn's snapshot from its
+        # start, NS-15.8-2). Best-effort; never blocks.
+        if not _turn_off_record:
             try:
                 threading.Thread(
                     target=_index_chat_turn,

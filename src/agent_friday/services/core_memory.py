@@ -33,6 +33,13 @@ second file. The files are plain text the owner can open and edit by hand.
 Text that reads as instructions to the assistant, or as a credential, is
 refused whoever writes it.
 
+A line Friday or a background pass would add or rewrite that states or
+implies a special category about anyone (health, sexuality, politics,
+religion, ethnicity, union membership, genetic or biometric data, criminal
+record, immigration: services/sensitive_categories) is dropped, neither
+written nor queued (NS-15.4-3). The owner's own edits are not filtered; a line
+resting on the owner's own words in the conversation waits for their Keep.
+
 Leaf module: no Flask, never raises to a caller (returns envelopes).
 """
 from __future__ import annotations
@@ -433,16 +440,60 @@ def _err(msg: str) -> Dict[str, Any]:
     return {"ok": False, "error": msg}
 
 
+#: Why an inferred line touching a special category is not kept (NS-15.4-3).
+SPECIAL_REFUSAL = ("it would record {cat} about a person, which Friday never infers or keeps "
+                   "on her own; only the owner's own words, kept by the owner, can put it on the card")
+
+
+def _special(text: str, where: str, prefix: str = "NOT SAVED: ") -> Optional[Dict[str, Any]]:
+    """The refusal for an INFERRED line that states or implies a special
+    category (health, sexuality, politics, religion, ethnicity, union
+    membership, genetic or biometric data, criminal record, immigration;
+    services/sensitive_categories), counted with no text kept; else None.
+    A check that cannot run refuses (fail closed, like dreaming and proposals)."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        cat = _sc.special_category(text)
+    except Exception:
+        cat = "special_category"
+    if not cat:
+        return None
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        _sc.note_dropped(where, cat)
+    except Exception:
+        pass
+    return {**_err(prefix + SPECIAL_REFUSAL.format(cat=cat.replace("_", " "))),
+            "sensitive": cat}
+
+
+def _confirmed_source(source: str) -> bool:
+    """A queued row whose source means the owner entered or approved it."""
+    try:
+        from agent_friday.services.user_model import is_confirmed_source
+        return is_confirmed_source(source)
+    except Exception:
+        return False
+
+
 def add(target: str, text: str, *, actor: str = "friday",
-        dedupe: Optional[bool] = None) -> Dict[str, Any]:
+        dedupe: Optional[bool] = None, owner_ok: bool = False) -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
-    typing it themselves (`dedupe` overrides, e.g. an approved suggestion)."""
+    typing it themselves (`dedupe` overrides, e.g. an approved suggestion).
+
+    A line any writer but the owner adds is refused when it touches a special
+    category (NS-15.4-3), unless `owner_ok`: the owner approved exactly this
+    call (core_memory_tools, the gate's owner decision)."""
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    if actor != "owner" and not owner_ok:
+        hit = _special(text, f"core_memory.{actor}.add")
+        if hit:
+            return hit
     with _LOCK:
         items = entries(target)
         if any(e.lower() == text.lower() for e in items):
@@ -465,13 +516,17 @@ def add(target: str, text: str, *, actor: str = "friday",
 
 
 def replace(target: str, old: str, text: str, *, actor: str = "friday",
-            supersede: bool = True) -> Dict[str, Any]:
+            supersede: bool = True, owner_ok: bool = False) -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    if actor != "owner" and not owner_ok:
+        hit = _special(text, f"core_memory.{actor}.replace")
+        if hit:
+            return hit
     with _LOCK:
         items = entries(target)
         i, miss = _match(items, old)
@@ -601,15 +656,26 @@ def resolve_line(target: str, old: str):
 
 
 def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
-          reason: str = "") -> Dict[str, Any]:
+          reason: str = "", owner_stated: bool = False) -> Dict[str, Any]:
     """File a change for the owner to approve. Duplicates are not queued twice.
 
     A replace or remove stores the WHOLE line it changes, resolved now, so the
     card shows the owner exactly which line it is and Keep changes that line
-    and no other (`decide` matches it exactly)."""
+    and no other (`decide` matches it exactly).
+
+    An inferred add or replace (a dream, a review, a model's guess) that
+    touches a special category is dropped, not queued (NS-15.4-3). It is
+    queued only when it rests on the owner's own words (`owner_stated`, set by
+    core_memory_tools after its own-words check) or its source says the owner
+    entered or approved it (user_model.CONFIRMED_SOURCES)."""
     if target not in TARGETS or op not in ("add", "replace", "remove"):
         return _err("bad target or op")
     text, old = _clean(text), _clean(old)
+    if op in ("add", "replace") and not owner_stated and not _confirmed_source(source):
+        hit = _special(text, "queue." + (str(source).split(":", 1)[0] or "unknown")[:20],
+                       prefix="NOT QUEUED: ")
+        if hit:
+            return hit
     if op in ("replace", "remove"):
         line, miss = resolve_line(target, old)
         if miss:
@@ -688,6 +754,62 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
     return {**res, "ok": True, "decided": "approved" if approve else "discarded"}
 
 
+# ── forget-person (services/forget_derived, NS-15.7-2) ───────────────────────
+def forget_matching(match, apply: bool = True) -> Dict[str, Any]:
+    """Lines on the card, queued suggestions and journal rows whose text
+    `match` accepts. Forgetting a person is the owner's own action, so the
+    lines go at once (no review card), as an owner delete does: no copy is
+    left in the journal or the queue. With `apply=False` only counts.
+    Returns {"lines", "pending", "journal", "not_removable"}.
+
+    Lines are removed by position (the card is written once per file, without
+    the lines that name them), so two identical lines, or a line that is part
+    of another, both go; a file that cannot be written is listed in
+    "not_removable" and its lines are not counted.
+
+    The one-time move of the old user-model facts runs FIRST: run after the
+    purge, it would copy a line naming the person back onto the card or into
+    the queue (the facts themselves go through forget_derived's user_model
+    store as well)."""
+    ensure_migrated()
+    out: Dict[str, Any] = {"lines": 0, "pending": 0, "journal": 0, "not_removable": []}
+
+    def _names(r) -> bool:
+        return any(match(str(r.get(k) or "")) for k in ("text", "old", "before", "after", "reason"))
+    changed = False
+    with _LOCK:
+        for key, p in (("pending", _pending_path()), ("journal", _journal_path())):
+            rows = _read_jsonl(p)
+            keep = [r for r in rows if not _names(r)]
+            out[key] = len(rows) - len(keep)
+            if apply and len(keep) != len(rows):
+                _write_jsonl(p, keep)
+        for t in TARGETS:
+            items = entries(t)
+            gone = [e for e in items if match(e)]
+            if not gone:
+                continue
+            if not apply:
+                out["lines"] += len(gone)
+                continue
+            try:
+                _write(t, [e for e in items if not match(e)])
+            except Exception as e:
+                out["not_removable"].append({
+                    "what": "%d line(s) on the memory card (%s)" % (len(gone), t), "count": len(gone),
+                    "reason": "the card could not be written (%s); running forget again retries"
+                              % type(e).__name__})
+                continue
+            out["lines"] += len(gone)
+            changed = True
+            _journal({"actor": "owner", "op": "remove", "target": t, "before": None, "after": None})
+            for line in dict.fromkeys(gone):
+                _purge_text(line)
+    if changed:
+        _changed("owner", "core memory lines deleted by the owner (forget a person)")
+    return out
+
+
 # ── one-time move of the old fact list ────────────────────────────────────────
 _MIGRATION_CHECKED: Dict[str, bool] = {}
 
@@ -718,18 +840,31 @@ def migrate_user_model_facts() -> Dict[str, Any]:
         facts = user_model._recent_facts(200)
     except Exception:
         facts = []
+
+    def _owner_source(src: str) -> bool:
+        # Exactly the confirmed sources (user_model.is_confirmed_source: "manual"
+        # itself, not "manual_x"), less "setup" and "user_stated": this move
+        # never put those on the card and does not start now, so it only
+        # tightens. They go to the review queue as before.
+        try:
+            from agent_friday.services import user_model as _um
+            return _um.is_confirmed_source(src) and src not in ("setup", "user_stated")
+        except Exception:
+            return False
+
     for f in facts:
         text, src = _clean(f.get("text")), str(f.get("source") or "")
         if not text:
             continue
-        if src.startswith(("manual", "proposed:", "meeting:")):
+        owner = _owner_source(src)
+        if owner:
             r = add("user", text, actor="owner", dedupe=True)
             if r.get("ok") and not r.get("unchanged"):
                 moved += 1
                 continue
         r = queue("user", "add", text=text, source=src or "older note",
                   reason="Saved before the memory card existed; never reviewed by you."
-                  if not src.startswith(("manual", "proposed:", "meeting:")) else
+                  if not owner else
                   "You saved this earlier, but the card was full.")
         if r.get("ok") and not r.get("unchanged"):
             queued += 1

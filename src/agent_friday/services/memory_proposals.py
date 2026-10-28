@@ -379,16 +379,23 @@ def propose(day: Optional[str] = None, *, memory=None,
     took_ms = int((time.time() - t0) * 1000)
 
     facts = _parse_facts(raw)
+    # NS-15.4-3: what the model proposes is inference. A fact (or its quoted
+    # evidence) that touches a special category is dropped before anything is
+    # stored or returned; only a count by category is kept.
+    proposed = len(facts)
+    facts, dropped = _drop_special(facts, "proposals.day")
 
     # A barren run is NOT a success. The regex extractor's whole failure was
-    # looking like one 215 turns at a time.
-    barren = bool(turns) and not facts
+    # looking like one 215 turns at a time. (Facts dropped as special
+    # categories were proposed: the run was not barren, and its raw response,
+    # which holds them, is not logged.)
+    barren = bool(turns) and not proposed
     if barren:
         _log.warning(
             "memory proposal for %s read %d turns and proposed NOTHING. That "
             "is a result worth looking at, not a green tick. Model=%s, "
             "raw response began: %r",
-            day, len(turns), s["model"], (raw or "")[:200])
+            day, len(turns), s["model"], _loggable_raw(raw, 200))
 
     stored = 0
     if store and facts:
@@ -417,9 +424,41 @@ def propose(day: Optional[str] = None, *, memory=None,
                    f"{len(facts)} fact(s), {stored} new and awaiting your "
                    f"review. None are in memory yet.")
 
-    return {"ok": True, "day": day, "seat": s, "turns_reviewed": len(turns),
-            "facts": facts, "stored": stored, "barren": barren,
-            "capped": capped, "took_ms": took_ms, "summary": summary}
+    out = {"ok": True, "day": day, "seat": s, "turns_reviewed": len(turns),
+           "facts": facts, "stored": stored, "barren": barren,
+           "capped": capped, "took_ms": took_ms, "summary": summary}
+    if dropped:
+        out["dropped_sensitive"] = dropped           # a count; the text was not kept
+    return out
+
+
+def _loggable_raw(raw: Any, limit: int) -> str:
+    """The start of the model's raw response for a log line, or a placeholder
+    when it touches a special category (NS-15.4-3): the log would keep what
+    the filter dropped. Cannot check: withheld."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        return _sc.loggable(raw, limit)
+    except Exception:
+        return "[withheld: could not check it for special categories]"
+
+
+def _drop_special(facts: List[Dict[str, Any]], where: str):
+    """(facts that touch no special category, how many were dropped).
+    services/sensitive_categories; the dropped text is not kept or logged."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+    except Exception:
+        return [], len(facts)                    # cannot check: propose nothing
+    kept, dropped = [], 0
+    for f in facts:
+        cat = _sc.first_special(f.get("text"), f.get("evidence"))
+        if cat:
+            _sc.note_dropped(where, cat)
+            dropped += 1
+            continue
+        kept.append(f)
+    return kept, dropped
 
 
 #: What a meeting may propose. A decision is not one of the day-review
@@ -447,6 +486,11 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
             cat = str(c.get("category") or "").strip().lower()
             span = c.get("span") if isinstance(c.get("span"), dict) else None
             if len(text) < 4 or cat not in MEETING_CATEGORIES or not span:
+                continue
+            # A meeting's people are other people: a candidate about anyone's
+            # health, sexuality, politics, religion ... is not proposed (NS-15.4-3).
+            if _drop_special([{"text": text, "evidence": str(c.get("evidence") or "")}],
+                             "proposals.meeting")[1]:
                 continue
             if _already_proposed(conn, text) or _already_from_meeting(conn, str(meeting_id), text):
                 continue
@@ -674,11 +718,14 @@ class SuggestionsLocked(RuntimeError):
     pass
 
 
-def _name_rows(conn, names) -> tuple:
-    wanted = [n for n in {" ".join(str(x or "").split()).lower() for x in (names or [])} if len(n) >= 3]
-    if not wanted:
+def _name_rows(conn, names, emails=()) -> tuple:
+    # The free-text rule every forget store shares (forget_registry.subject_matcher):
+    # a one-word name matches case-sensitively, so forgetting "Will Hartley"
+    # never takes a suggestion that says "I will".
+    from agent_friday.services import forget_registry as _fr
+    match = _fr.subject_matcher(names or (), emails or ())
+    if not match:
         return [], 0
-    pats = [re.compile(r"\b" + r"\s+".join(re.escape(w) for w in n.split(" ")) + r"\b", re.IGNORECASE) for n in wanted]
     out, locked = [], 0
     for fid, text, evidence in conn.execute("SELECT fact_id, text, evidence FROM proposed_facts").fetchall():
         opened = _open(text)
@@ -686,7 +733,7 @@ def _name_rows(conn, names) -> tuple:
             locked += 1                      # sealed and not openable: unknown, never "does not name them"
             continue
         hay = "%s %s" % (opened, _open(evidence))
-        if any(p.search(hay) for p in pats):
+        if match(hay):
             out.append(fid)
     return out, locked
 
@@ -703,7 +750,7 @@ def people_find(names, emails) -> int:
     """forget-person: how many proposals name the person (any status)."""
     conn = _connect()
     try:
-        ids, locked = _name_rows(conn, set(names or ()) | set(emails or ()))
+        ids, locked = _name_rows(conn, set(names or ()), set(emails or ()))
         if locked:
             raise SuggestionsLocked(LOCKED_MESSAGE)
         return len(ids)
@@ -714,7 +761,7 @@ def people_find(names, emails) -> int:
 def people_purge(names, emails) -> int:
     conn = _connect()
     try:
-        ids, locked = _name_rows(conn, set(names or ()) | set(emails or ()))
+        ids, locked = _name_rows(conn, set(names or ()), set(emails or ()))
         for fid in ids:
             conn.execute("DELETE FROM proposed_facts WHERE fact_id=?", (fid,))
         conn.commit()

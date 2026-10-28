@@ -176,6 +176,10 @@ def _google_items() -> list:
                        optional=True, key="include_send"))
     perms.append(_perm(copy.GOOGLE_SCOPE_WORDS[ga.GMAIL_MODIFY], scope=ga.GMAIL_MODIFY,
                        optional=True, key="include_modify"))
+    # Every scope build_auth_flow can ask for is on the card (§34.4-7), so the
+    # card and Google's consent screen list the same things.
+    perms.append(_perm(copy.GOOGLE_SCOPE_WORDS[ga.CONTACTS_RW], scope=ga.CONTACTS_RW,
+                       optional=True, key="include_contacts_write"))
     try:
         summ = ga.accounts_summary()
     except Exception:
@@ -197,8 +201,9 @@ def _google_items() -> list:
         connect={"kind": "google_oauth", "endpoint": "/api/google/accounts/connect",
                  "multi_account": True,
                  "note": "Google's own consent screen opens in your browser and "
-                         "lists the same permissions. Sending and mailbox "
-                         "changes are asked for only if you tick them."},
+                         "lists the same permissions. Sending, mailbox "
+                         "changes and saving contacts are asked for only if "
+                         "you tick them."},
         status=status, detail=detail,
         docs_url="https://myaccount.google.com/permissions")]
 
@@ -253,9 +258,9 @@ _CONNECTOR_GROUP = {"github": "developer", "slack": "messaging",
                     "higgsfield": "tools"}
 
 _CONNECTOR_PERMS = {
-    "github": ("Whatever your personal access token grants. Friday asks for "
-               "two scopes: repo (read and write code, issues and pull "
-               "requests) and read:org (read your organisations).",),
+    "github": ("Whatever your fine-grained personal access token grants, on "
+               "the repositories you choose when you make it. Friday asks "
+               "GitHub for nothing more: it uses only that token.",),
     "slack": ("The bot scopes you give your Slack app, typically: read "
               "channels and history, search messages, post messages.",
               "Posts still wait for your approval card."),

@@ -536,18 +536,36 @@ def view() -> dict:
 
 # ── Transitions ──────────────────────────────────────────────────────────────
 
-def begin(routing_mode: str = "", vault_passphrase: str = "") -> dict:
+def begin(routing_mode: str = "", vault_passphrase: str = "", *, screen: bool = False) -> dict:
     """The consent screens are done. Store the passphrase now (never in the
-    state file) and open the chat."""
+    state file) and open the chat.
+
+    `screen` is True only for the consent page's own verified click
+    (screen_click.screen_session); only then is its route recorded as the
+    person's pick (A16a)."""
     from agent_friday.services.setup_complete import ROUTING_MODES, store_vault_passphrase
     with _LOCK:
         st = load_state()
+        # Only the consent screen's own first finish records its route as a
+        # pick (A16a); calling begin again (a reload, a script) cannot.
+        first_finish = not st.get("consent_done") and not st.get("completed")
         if vault_passphrase:
             store_vault_passphrase(vault_passphrase)
         if routing_mode in ROUTING_MODES:
             st["routing_mode"] = routing_mode
         st["consent_done"] = True
         save_state(st)
+    # North-star A16a: the route the person picked on the consent screen is
+    # their pick from now on (until then Friday is local-only). It is recorded
+    # as a routing choice, not as cloud consent ("consent_screen" is not one of
+    # privacy/cloud_consent.ROUTING_CONSENT_VIAS); the privacy answer later in
+    # the chat may change it.
+    if routing_mode in ROUTING_MODES and first_finish:
+        try:
+            from agent_friday.services.setup_complete import save_routing_answer
+            save_routing_answer(routing_mode, via="consent_screen" if screen else "unverified")
+        except Exception as e:
+            _log.warning("the consent screen's route was not recorded: %s", type(e).__name__)
     return view()
 
 
@@ -1516,6 +1534,32 @@ def _complete(st: dict) -> None:
     complete_setup(_completion_payload(st), routing_via="posture")
     st["completed"] = True
     st["stage"] = "done"
+    _propose_first_action()
+
+
+#: Tests that are about the first action set this to [True].
+FIRST_ACTION_IN_TESTS = [False]
+
+
+def _propose_first_action() -> None:
+    """A27: at the end of setup Friday proposes one low-stakes action (services/first_action). A
+    card that waits for the owner's press; on its own thread, so it can never hold up setup. Inert
+    under FRIDAY_TESTING unless a test asks for it (a stray card would change other tests' counts)."""
+    try:
+        from agent_friday import core as _core
+        if getattr(_core, "_TESTING", False) and not FIRST_ACTION_IN_TESTS[0]:
+            return
+    except Exception:
+        pass
+
+    def run():
+        try:
+            from agent_friday.services import first_action
+            first_action.propose(requested_by="setup")
+        except Exception:  # noqa: BLE001 - setup is finished either way
+            pass
+    import threading
+    threading.Thread(target=run, name="first-action-proposal", daemon=True).start()
 
 
 def skip_all() -> dict:

@@ -158,6 +158,10 @@ def _no_creds(account_id: str, label: str | None = None) -> dict:
     if ga.last_problem(account_id) == 'unreachable':
         return {'kind': 'unavailable',
                 'error': 'Could not reach Google to check %s yet; try again in a moment.' % who}
+    if ga.last_problem(account_id) == 'route_not_chosen':
+        # North-star A16a: held until a route is chosen, not a broken account.
+        from agent_friday.services.cloud_intent import ROUTE_NOT_CHOSEN_WEB_TEXT
+        return {'kind': 'unavailable', 'error': ROUTE_NOT_CHOSEN_WEB_TEXT}
     return {'kind': 'auth', 'error': '%s needs reconnecting.' % who}
 
 

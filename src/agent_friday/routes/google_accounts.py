@@ -222,7 +222,12 @@ def connect_google_account():
                                      and (x["scope"] != ga.GMAIL_MODIFY or include_modify)]
                                     + [{"scope": sc, "what": ga._SCOPE_PLAIN.get(sc, sc), "new": True}
                                        for sc, on in ((ga.CALENDAR_RW, include_calendar_write),
-                                                      (ga.TASKS_RW, include_tasks_write)) if on],
+                                                      (ga.TASKS_RW, include_tasks_write)) if on]
+                                  # The preview lists contacts-write too when it is asked
+                                  # for, so it matches Google's screen (§34.4-7).
+                                  + ([{"scope": ga.CONTACTS_RW, "what": ga._SCOPE_PLAIN[ga.CONTACTS_RW],
+                                       "new": ga.CONTACTS_RW not in set((existing or {}).get("scopes") or [])}]
+                                     if include_contacts_write else []),
                 "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (

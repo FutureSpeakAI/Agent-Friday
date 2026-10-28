@@ -26,6 +26,29 @@ window.addEventListener('error',function(e){
   }
 },true);
 </script>
+<script id="friday-render-3d">
+// 3D rendering can be switched off entirely (north star 21.22-3; Settings >
+// Appearance > 3D rendering). Read before anything draws: with it off no WebGL
+// context is ever made, and every 3D view shows its flat form instead.
+// The answer is fixed for this page: the WebGL switch below is installed once,
+// so a change made in Settings takes effect when Friday next opens.
+(function(){
+  var off=false;try{off=localStorage.getItem('friday.render3d')==='off';}catch(_){}
+  window.fridayRender3dOff=function(){return off;};
+  window.fridaySyncRender3d=function(on){try{if(on===false)localStorage.setItem('friday.render3d','off');else if(on===true)localStorage.removeItem('friday.render3d');}catch(_){}};
+  if(!off)return;
+  document.documentElement.setAttribute('data-render3d','off');
+  var get=HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext=function(kind){
+    if(/^(webgl2?|experimental-webgl)$/i.test(String(kind||'')))return null;
+    return get.apply(this,arguments);
+  };
+})();
+</script>
+<style id="friday-render-3d-style">
+:root[data-render3d="off"] #friday-scene-canvas{display:none!important}
+:root[data-render3d="off"] body{background:#070b14}
+</style>
 <!-- UI libraries are vendored (static/vendor/, SRI-verified against the same
      pinned versions the old CDN tags carried) so the shell loads offline.
      Babel below is the sole remaining CDN script and only for fallback builds:
@@ -11314,7 +11337,10 @@ window.addEventListener('DOMContentLoaded',function(){
         // A workspace in its own tab (/w/<id>), or an undocked chat
         // (?chrome=chat), has no room around it: the scene, its GPU context
         // and its render loop are never started. The orb mode is the scene.
-        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat') window.onload = init;
+        // With 3D rendering switched off (Settings > Appearance) the scene is never
+        // started either: no GPU context, no render loop.
+        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat'
+            && !(window.fridayRender3dOff && window.fridayRender3dOff())) window.onload = init;
     </script>
 
 <script>
@@ -15946,6 +15972,14 @@ function ChatSurface(props) {
      the owner's own message. Nothing is sent until one is clicked, nothing is
      preselected, and the card is single-use. */
   const chooseLocalFallback = (msg, id) => {
+    /* North-star A16a: before a route is picked the only choice opens
+       Settings > Models, where local, cloud and both are offered. */
+    if (id === 'choose_route') {
+      window.__fridaySettingsTab = 'intelligence';
+      try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'intelligence' } })); } catch (_) {}
+      if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'settings' });
+      return;
+    }
     const src = msg.source_text || '';
     if (!src) return;
     setChatMsgs(p => p.map(x => x === msg ? { ...x, local_fallback: null } : x));
@@ -20641,7 +20675,7 @@ function KnowledgeGraphWS(props) {
   };
   useEffect(() => {
     const mount = mountRef.current;
-    if (!mount || typeof THREE === 'undefined') return;
+    if (!mount || typeof THREE === 'undefined' || (window.fridayRender3dOff && window.fridayRender3dOff())) return;
     const S = kgRef.current;
     let disposed = false;
 
@@ -23270,6 +23304,8 @@ function kwSlug(title) {
   return String(title || '').trim().toLowerCase().replace(/[^a-z0-9 _-]+/g, '').trim().split(/\s+/).join('-').slice(0, 80);
 }
 function kwLoadView() {
+  // 3D off (Settings > Appearance): the pages are the whole view.
+  if (window.fridayRender3dOff && window.fridayRender3dOff()) return 'pages';
   try {
     const v = localStorage.getItem('friday_kw_view');
     if (KW_VIEWS.some(x => x.id === v)) return v;
@@ -23334,6 +23370,7 @@ function KnowledgeWS() {
   const pageRef = useRef(page);
   pageRef.current = page;
   const setView = useCallback(v => {
+    if (window.fridayRender3dOff && window.fridayRender3dOff()) v = 'pages';   // 3D off: the pages are the view
     setViewRaw(v);
     kwSaveView(v);
   }, []);
@@ -23432,7 +23469,7 @@ function KnowledgeWS() {
   // What its own tab (↗) opens on: the keys useNavTarget below reads.
   useTabState('knowledge', () => ({ view, query: q, path: page || '', node: sel && sel.type !== 'page' && sel.type !== 'soul' ? sel.id : '' }));
   useNavTarget('knowledge', t => {
-    if (t.view && KW_VIEWS.some(x => x.id === t.view)) setView(t.view);
+    if (t.view && KW_VIEWS.some(x => x.id === t.view) && (t.view === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff()))) setView(t.view);
     if (t.query) setQ(String(t.query));else if (t.path || t.page) setQ('');
     if (t.path) openPage(String(t.path), {
       view: t.view
@@ -23649,7 +23686,7 @@ function KnowledgeWS() {
     className: 'kw-views',
     role: 'tablist',
     'aria-label': 'View'
-  }, KW_VIEWS.map(v => h('button', {
+  }, KW_VIEWS.filter(v => v.id === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff())).map(v => h('button', {
     key: v.id,
     role: 'tab',
     'aria-selected': view === v.id,
@@ -23707,7 +23744,7 @@ function KnowledgeWS() {
     className: 'kw-sp'
   }), !page && !sel && !section && h('span', {
     className: 'kw-dim kw-hint'
-  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && h('button', {
+  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && !(window.fridayRender3dOff && window.fridayRender3dOff()) && h('button', {
     className: 'kw-btn',
     onClick: showInGraph,
     title: 'Show this page in the galaxy'
@@ -42961,7 +42998,7 @@ function RelationshipPanel({ onImported }) {
       const d = await r.json();
       if (d.status === 'ok') {
         const x = d.result;
-        setMsg('LinkedIn: ' + x.created + ' added, ' + x.updated + ' updated' + (x.skipped_count ? ', ' + x.skipped_count + ' rows skipped' : '') + (x.skipped_forgotten ? ', ' + x.skipped_forgotten + ' forgotten people left out' : '') + '.');
+        setMsg('LinkedIn: ' + x.staged + ' people staged for your review below; nothing is saved until you accept' + (x.already_decided ? ', ' + x.already_decided + ' already answered' : '') + (x.skipped_count ? ', ' + x.skipped_count + ' rows skipped' : '') + (x.skipped_forgotten ? ', ' + x.skipped_forgotten + ' forgotten people left out' : '') + '.');
         if (onImported) onImported();
       } else setMsg(d.message || 'Import failed.');
     } catch (err) { setMsg('Import failed.'); }
@@ -43011,11 +43048,146 @@ function RelationshipPanel({ onImported }) {
       " ",
       e("button", { className: "btn", style: small, onClick: () => setConsent(null) }, "Cancel")),
     msg && e("div", { style: { fontSize: 11, color: '#00d4ff', marginTop: 4 } }, msg),
+    e(StagedImportReview, { source: 'linkedin_csv', refresh: msg, onDone: onImported }),
     follow.length > 0 && e("div", { style: { marginTop: 8 } },
       e("div", { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, "Follow-ups"),
       follow.slice(0, 8).map(f => e("div", { key: f.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, fontSize: 11, padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' } },
         e("span", null, e("b", null, f.person), f.note ? " — " + f.note : "", e("span", { style: { color: '#999' } }, " · due " + String(f.due || '').slice(0, 10))),
         e("button", { className: "btn", style: { fontSize: 10 }, onClick: () => done(f.id) }, "Done")))));
+}
+// ── Imported items waiting for your answer (services/import_staging) ──
+// Nothing an import brings in is saved until you accept it here. Accepting is a press in
+// Friday's window on this PC (routes/import_staging.py); Reject keeps it from being proposed again.
+function StagedImportReview({ source, refresh, onDone }) {
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/import-staging?status=open&source=' + encodeURIComponent(source)).then(r => r.json()).then(setD).catch(() => setD(null));
+  }, [source]);
+  useEffect(() => {
+    load();
+  }, [load, refresh]);
+  const answer = (body, done) => {
+    setBusy(true);
+    setMsg('');
+    apiFetch('/api/import-staging/review', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }).then(r => r.json()).then(x => {
+      setMsg(x.ok ? done(x) : x.error || 'Nothing changed.');
+      load();
+      if (x.ok && onDone) onDone();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const items = d && d.items || [];
+  if (!items.length) return msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null;
+  const small = {
+    fontSize: 10
+  };
+  return E('div', {
+    'data-testid': 'import-staging-review',
+    style: {
+      marginTop: 8,
+      padding: 8,
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 6
+    }
+  }, E('div', {
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginBottom: 6,
+      lineHeight: 1.5
+    }
+  }, items.length + (d.more ? '+' : '') + ' imported ' + (items.length === 1 ? 'item waits' : 'items wait') + ' for your answer. Nothing is saved until you accept it.'), E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginBottom: 6
+    }
+  }, E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'accept',
+      all: true
+    }, x => 'Saved ' + x.done + (x.failed ? '; ' + x.failed + ' could not be saved and still wait' : '') + '.')
+  }, 'Accept all ' + ((d.counts || {}).proposed + (d.counts || {}).deferred || items.length)), E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'reject',
+      all: true
+    }, x => 'Left out ' + x.done + '.')
+  }, 'Reject all')), E('ul', {
+    style: {
+      listStyle: 'none',
+      padding: 0,
+      margin: 0,
+      maxHeight: 220,
+      overflowY: 'auto'
+    }
+  }, items.slice(0, 200).map(it => E('li', {
+    key: it.id,
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: 6,
+      fontSize: 11,
+      padding: '2px 0'
+    }
+  }, E('span', null, it.label + (it.status === 'deferred' ? ' (later)' : '') + (it.error ? ' (' + it.error + ')' : '')), E('span', null, E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'accept'
+    }, () => 'Saved.')
+  }, 'Accept'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'reject'
+    }, () => 'Left out.')
+  }, 'Reject'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'defer'
+    }, () => 'Kept for later.')
+  }, 'Later'))))), msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null);
 }
 function PersonTimelineCard({ name }) {
   const e = React.createElement;
@@ -43306,6 +43478,19 @@ function ContactsWS() {
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#999', lineHeight: 1.5 }
       }, forgetReceipt.note),
+      Array.isArray(forgetReceipt.stores) && forgetReceipt.stores.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 11, color: '#bbb', marginTop: 6, lineHeight: 1.5 }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: { fontWeight: 600, color: '#ddd', marginBottom: 2 }
+      }, "Deletion receipt"),
+        forgetReceipt.stores.map((s, i) => /*#__PURE__*/React.createElement("div", { key: s.store || i },
+          (s.removed || 0) + " " + (s.kind || s.store) + " removed",
+          (s.not_removable || []).map((x, j) => /*#__PURE__*/React.createElement("div", {
+            key: 'n' + j, style: { color: '#ff6b6b', paddingLeft: 10 }
+          }, "Not removable: " + x.what + " (" + x.reason + ")")),
+          (s.retained || []).map((x, j) => /*#__PURE__*/React.createElement("div", {
+            key: 'r' + j, style: { color: '#f59e0b', paddingLeft: 10 }
+          }, "Kept: " + (x.count != null ? x.count + " " : "") + x.what + " (" + x.reason + ")"))))),
       forgetReceipt.remaining_sources && forgetReceipt.remaining_sources.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#f59e0b', marginTop: 6, lineHeight: 1.5 }
       }, "Still mentioned in your own notes: ",
@@ -46127,7 +46312,7 @@ function ContentAnalyticsTab() {
   };
   const s = sum || {};
   const rate = s.engagement_rate != null ? (Number(s.engagement_rate) * 100).toFixed(1) + '%' : null;
-  const cards = [['Impressions · 7d', s.impressions_7d], ['Impressions · 30d', s.impressions_30d != null ? s.impressions_30d : s.impressions], ['Engagement rate', rate], ['ψ earned from content', s.psi_earned != null ? s.psi_earned : s.psi]];
+  const cards = [['Impressions · 7d', s.impressions_7d], ['Impressions · 30d', s.impressions_30d != null ? s.impressions_30d : s.impressions], ['Engagement rate', rate], ].concat(fridayHeldOn('federation') ? [['ψ earned from content', s.psi_earned_mpsi != null ? s.psi_earned_mpsi + ' mψ' : (s.psi_earned != null ? s.psi_earned : s.psi)]] : []);  // positrons are held with the federation (BD-00)
   const series = s.series && typeof s.series === 'object' ? s.series : {};
   const seriesKeys = Object.keys(series).filter(k => Array.isArray(series[k]) && series[k].length > 1);
   const top = s.top_posts || s.best_posts || [];
@@ -51399,7 +51584,8 @@ function SetupConnectionItem({
       const d = await post(c.endpoint, {
         label: label.trim(),
         include_send: !!opts.include_send,
-        include_modify: !!opts.include_modify
+        include_modify: !!opts.include_modify,
+        include_contacts_write: !!opts.include_contacts_write
       });
       openUrl(d.auth_url);
       setMsg({
@@ -57082,11 +57268,10 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const modes = d.routing_modes || [];
   // A16: nothing is pre-selected. With no mode picked, no button is pressed and
   // the card says what Friday does until the owner picks.
-  const actualLabel = ((modes.filter(m => m.id === d.routing_mode)[0]) || {}).label || d.routing_mode || 'the starting setting';
   const notPicked = !mode && E('div', {
     'data-route-not-picked': '1',
     style: { fontSize: 11.5, color: '#f59e0b', fontFamily: 'var(--st-font)', marginTop: 8, lineHeight: 1.5 },
-  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' uses its starting setting, ' + actualLabel + '.');
+  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' works only on this computer and sends nothing to the cloud, even with a key entered.');
   const modeButtonRow = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
     modes.map(m => {
       const on = mode === m.id;
@@ -57129,7 +57314,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     : x.state === 'cloud' ? 'cloud'
     : x.state === 'cold' ? 'not loaded' : x.state === 'refused' ? 'unavailable' : x.state || '';
   const postureTxt = [
-    !mode ? 'Route not chosen yet (starting setting: ' + actualLabel + ')' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
+    !mode ? 'Route not chosen yet: only this computer until you choose' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');
@@ -59708,6 +59893,110 @@ function CalDeleteConfirm({ e, onDone }) {
 // ── Privacy & Data > Locks: how things are locked on this PC, in plain words ──
 // Read from /api/locks (services/locks.py): every line comes from the store that
 // decides it, and a line Friday cannot read says so. The honest limit is always shown.
+// ── Privacy & Data > Bring your AI history in (services/ai_history_import) ──
+// A ChatGPT or Claude data export, read on this PC only. A preview first; then each
+// conversation waits in import staging until the owner accepts it (StagedImportReview).
+function SettingsAiHistoryImport() {
+  const E = React.createElement;
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [prev, setPrev] = useState(null);
+  const [file, setFile] = useState(null);
+  const fileRef = useRef(null);
+  const send = (f, previewOnly) => {
+    setBusy(true);
+    setMsg('');
+    const fd = new FormData();
+    fd.append('file', f);
+    if (previewOnly) fd.append('preview', '1');
+    apiFetch('/api/import/ai-history', {
+      method: 'POST',
+      body: fd
+    }).then(r => r.json()).then(x => {
+      if (!x.ok) {
+        setPrev(null);
+        setFile(null);
+        setMsg(x.error || 'The file could not be read.');
+        return;
+      }
+      if (x.preview) {
+        setPrev(x);
+        setFile(f);
+        return;
+      }
+      setPrev(null);
+      setFile(null);
+      setMsg(x.service + ': ' + x.staged + ' conversation' + (x.staged === 1 ? '' : 's') + ' staged for your review below' + (x.already_decided ? ', ' + x.already_decided + ' already answered' : '') + '. Nothing is saved until you accept it.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  return E(StSection, {
+    title: 'Bring your AI history in',
+    desc: 'Your ChatGPT or Claude data export, read on this PC only: no model reads it and nothing is sent anywhere. You see what it holds first, and each conversation is saved only when you accept it.'
+  }, E('input', {
+    ref: fileRef,
+    type: 'file',
+    accept: '.json,.zip,application/json,application/zip',
+    style: {
+      display: 'none'
+    },
+    onChange: ev => {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (f) send(f, true);
+    }
+  }), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'ai-history-choose',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => fileRef.current && fileRef.current.click()
+  }, busy ? 'Reading…' : 'Choose an export (conversations.json or .zip)'), prev ? E('div', {
+    'data-testid': 'ai-history-preview',
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginTop: 6,
+      lineHeight: 1.5
+    }
+  }, prev.service + ' export: ' + prev.conversations + ' conversation' + (prev.conversations === 1 ? '' : 's') + ', ' + prev.messages + ' messages' + (prev.first ? ', ' + prev.first + ' to ' + prev.last : '') + (prev.cut ? ' (' + prev.cut + ' long ones will be cut)' : '') + '. Nothing has been saved.', E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 6
+    }
+  }, E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy || !file,
+    onClick: () => send(file, false)
+  }, 'Stage them for my review'), E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => {
+      setPrev(null);
+      setFile(null);
+    }
+  }, 'Cancel'))) : null, msg ? E('div', {
+    role: 'status',
+    className: 'sc-msgline'
+  }, msg) : null, E(StagedImportReview, {
+    source: 'chatgpt',
+    refresh: msg
+  }), E(StagedImportReview, {
+    source: 'claude',
+    refresh: msg
+  }));
+}
 function SettingsLocks() {
   const [d, setD] = useState(null);
   const [msg, setMsg] = useState('');
@@ -59991,7 +60280,7 @@ function SettingsTabPrivacy({
     }).then(r => r.json()).then(d => setEraseMsg(d.status === 'ok' ? '✓ ' + (d.message || 'Erased.') : '✗ ' + (d.message || 'Failed'))).catch(() => setEraseMsg('✗ Could not reach the server.'));
   };
   const armed = vaultStatus && vaultStatus.encryption === 'AES-256-GCM';
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(SettingsPrivacyMap, null), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(SettingsAiHistoryImport, null), /*#__PURE__*/React.createElement(SettingsPrivacyMap, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Vault"
   }, vaultStatus && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -66450,7 +66739,47 @@ function SettingsTabAppearance({
         detail: v
       }));
     }
-  }, v.charAt(0).toUpperCase() + v.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
+  }, v.charAt(0).toUpperCase() + v.slice(1))))), /*#__PURE__*/React.createElement(StRow, {
+    label: "3D rendering",
+    desc: "Off turns every 3D view off: the scene behind the desktop, the knowledge galaxy and the 3D views of files, records and the Library. Lists and pages stay; views that are only 3D (the Library's shelves, Files in 3D) and head and hand tracking are off with it. Nothing is drawn on the graphics card. Takes effect when " + fridayName() + " next opens."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "3D rendering",
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, ['on', 'off'].map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-render3d-choice": v,
+    "aria-checked": (s.render_3d === false ? 'off' : 'on') === v,
+    className: 'settings-btn' + ((s.render_3d === false ? 'off' : 'on') === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 16px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        render_3d: v === 'on'
+      });
+      window.fridaySyncRender3d && window.fridaySyncRender3d(v === 'on');
+    }
+  }, v === 'on' ? 'On' : 'Off'))), (s.render_3d === false) !== !!(window.fridayRender3dOff && window.fridayRender3dOff()) && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      padding: '6px 12px',
+      marginTop: 6,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => window.location.reload()
+  }, "Reload now"))), /*#__PURE__*/React.createElement(StSection, {
     title: "Knowledge graph"
   }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
     s: s,
@@ -72537,6 +72866,11 @@ function App() {
   // Held features first: the dock, the palette and every workspace below
   // read the switch through fridayHeldOn during this same render.
   fridaySetHeldFeatures(agentSettings.held_features);
+  // 3D rendering (Settings > Appearance): the saved choice is mirrored where the
+  // next page load reads it before anything draws.
+  React.useEffect(() => {
+    if (window.fridaySyncRender3d) window.fridaySyncRender3d(agentSettings.render_3d);
+  }, [agentSettings.render_3d]);
   const dockShape = React.useMemo(
     () => dockArrangement(agentSettings.dock_custom, showAllWorkspaces),
     [agentSettings.dock_custom, showAllWorkspaces, agentSettings.held_features]);

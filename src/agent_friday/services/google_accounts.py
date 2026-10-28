@@ -110,9 +110,10 @@ GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
 
 # Creating and editing the owner's Google Contacts. Like send, it is asked for
-# only from an explicit "Allow saving to Google Contacts" in the Contacts
-# workspace, never on an ordinary connect or reconnect; every save still
-# waits for the owner's decision (services/google_contacts_write.py).
+# only when the owner opts in: "Allow saving to Google Contacts" in the
+# Contacts workspace, or the unticked-by-default tick on the Google card in
+# Settings > Connections; never on an ordinary connect or reconnect. Every save
+# still waits for the owner's decision (services/google_contacts_write.py).
 CONTACTS_RW = "https://www.googleapis.com/auth/contacts"
 
 # What the Reconnect-with-sending consent asks for, in plain words, shown in
@@ -122,7 +123,7 @@ _SCOPE_PLAIN = {
     GMAIL_SEND: "Send email on your behalf. Each message still waits for your approval card.",
     GMAIL_MODIFY: "Change your mailbox: labels, archive, star, read/unread, and saving drafts. Never permanent delete.",
     CALENDAR_READ: "See your calendar",
-    CALENDAR_RW: "Add, change and delete calendar events. Each change still follows your approval rules.",
+    CALENDAR_RW: "See, edit, share and delete your calendars and their events",
     DRIVE_READ: "Read Drive files",
     DOCS_READ: "Read Docs",
     SHEETS_READ: "Read Sheets",
@@ -694,7 +695,16 @@ def credentials_for(account_id: str):
 
     Refresh failures are isolated per account: the account is marked
     'needs_reauth' and None is returned; other accounts are untouched.
+
+    North-star A16a: before the owner chooses where Friday thinks, no Google
+    connector is used. None is returned and the stored status is left exactly
+    as it was (this is not a fault of the account).
     """
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("connector", "google"):
+        if isinstance(account_id, str):
+            _LAST_PROBLEM[account_id] = "route_not_chosen"
+        return None
     _migrate_legacy_if_needed()
     try:
         creds = _raw_credentials(account_id)
@@ -1796,6 +1806,10 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
     """
     # Bundled client first-resort, the user's own always winning -- see
     # services/google_oauth_client.active_client for why that order matters.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("connector", "google sign-in")       # A16a
+    if _held:
+        raise UserFacingRuntimeError(_held)
     from agent_friday.services import google_oauth_client as goc
     cfg, _src, _kind = goc.active_client(discover=_google_client_config)
     if not cfg:
