@@ -637,8 +637,8 @@ def send(approval_id: str) -> dict:
     # once whatever held it is fixed.
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external("gmail:send", surface="mail", approval_id=approval_id,
-                              target=_fingerprint_target(payload))
+        decision_ref = _gate.record_external("gmail:send", surface="mail", approval_id=approval_id,
+                                             target=_fingerprint_target(payload))
     except _gate.Held as e:
         raise SendRefused("held by the action checkpoint (error %s). Nothing was sent."
                           % log_failure(e, "Mail send held by the action checkpoint"),
@@ -646,6 +646,8 @@ def send(approval_id: str) -> dict:
 
     _burned, was_first = _ap._consume(appr)
     if not was_first:
+        _gate.close_external(decision_ref, False, detail="approval_in_use",
+                             outcome=_gate.FORBIDDEN)
         raise SendRefused("that approval is already being used to send. "
                           "Nothing was sent twice.")
 
@@ -654,6 +656,7 @@ def send(approval_id: str) -> dict:
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
         sent = svc.users().messages().send(userId="me", body=send_body).execute()
     except Exception as e:
+        _gate.close_external(decision_ref, False, detail="provider_refused")
         _log.warning("send failed: %s", e)
         _outbox_record(appr, ok=False, error=str(e)[:500])
         _record_egress(payload, raw, "failed")
@@ -661,6 +664,8 @@ def send(approval_id: str) -> dict:
                           detail="Gmail refused the message: %s" % str(e)[:300])
 
     _record_egress(payload, raw, "sent")
+    # Gmail's message id is the service's confirmation that it was sent
+    _gate.close_external(decision_ref, True, detail="sent", verified=bool((sent or {}).get("id")))
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),
                                               "thread_id": sent.get("threadId")})
     _outbox_record(appr, ok=True, message_id=sent.get("id"))

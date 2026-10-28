@@ -4989,6 +4989,39 @@ def _answer_correlation(resp):
     return resp
 
 
+@app.after_request
+def _settle_external_actions(resp):
+    """Every outward decision this request wrote outside a tool call
+    (action_gate.record_external) and its executor did not close gets its
+    terminal outcome from the answer: executed when it answered without an
+    error, else failed (BD-11a, NS-36.3-12). Records only."""
+    try:
+        from flask import g as _g
+        if getattr(_g, "_friday_externals", None):
+            ok = resp.status_code < 400
+            if ok and resp.is_json and not (resp.is_streamed or resp.direct_passthrough):
+                body = resp.get_json(silent=True)
+                if isinstance(body, dict) and (body.get("status") == "error" or body.get("ok") is False):
+                    ok = False
+            from agent_friday.governance import action_gate as _ag
+            _ag.settle_request_externals(ok)
+    except Exception:  # noqa: BLE001 - a receipt never changes the answer
+        pass
+    return resp
+
+
+@app.teardown_request
+def _settle_external_actions_on_error(exc=None):
+    """A request that ended in an exception: what it decided and left open failed."""
+    try:
+        from flask import g as _g
+        if getattr(_g, "_friday_externals", None):
+            from agent_friday.governance import action_gate as _ag
+            _ag.settle_request_externals(False, "request_exception" if exc else "request_failed")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @app.teardown_request
 def _end_correlation(_exc=None):
     try:

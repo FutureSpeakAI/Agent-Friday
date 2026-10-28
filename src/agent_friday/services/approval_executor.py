@@ -206,8 +206,8 @@ def _decide(record: dict) -> None:
     # fails the action does NOT run.
     try:
         from agent_friday.governance import action_gate as _gate
-        _gate.record_external(tool, surface="approval_card", approval_id=aid,
-                              target=str(args.get("path") or args.get("title") or ""))
+        decision_ref = _gate.record_external(tool, surface="approval_card", approval_id=aid,
+                                             target=str(args.get("path") or args.get("title") or ""))
     except Exception as e:
         _ap.mark_used(aid, "approval_executor",
                       detail={"ok": False, "error": "held: %s" % e})
@@ -216,9 +216,13 @@ def _decide(record: dict) -> None:
         _log.error("approval %s held at the checkpoint: %s", aid, e)
         return
 
+    # The call's outcome receipt closes the decision just written (the governance
+    # hook links it when the card checks out); anything that stops the call before
+    # that hook is closed below.
     ctx = {"authenticated": True, "approved_card": aid,
            "surface": "approval_card", "confirm_bypass": True,
-           "conversation_id": payload.get("conversation_id") or ""}
+           "conversation_id": payload.get("conversation_id") or "",
+           "approved_card_decision": decision_ref}
     started = time.time()
     try:
         # An approved search card (privacy/public_query): exactly the strings
@@ -244,6 +248,8 @@ def _decide(record: dict) -> None:
         _reraise = None
 
     took = int((time.time() - started) * 1000)
+    # a no-op when the call's own outcome closed it
+    _gate.close_external(decision_ref, ok, detail="approval_executor")
     _ap.mark_used(aid, "approval_executor",
                   detail={"ok": ok, "took_ms": took,
                           "result": str(result)[:800]})

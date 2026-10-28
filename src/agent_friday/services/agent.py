@@ -14070,14 +14070,45 @@ def _outcome_recorder(name, decision, ctx):
         wanted = False                    # the decision itself says nothing ran
     done = []
 
-    def _write(status, detail=""):
+    def _write(status, detail="", outcome=None):
         if done or not wanted:
             return
         done.append(status)
         t0 = ctx.meta.get("t_start")
         _g.record_outcome(name, decision, status, approval=approval,
-                          duration_ms=((_time.time() - t0) * 1000.0) if t0 else None, detail=detail)
+                          duration_ms=((_time.time() - t0) * 1000.0) if t0 else None, detail=detail,
+                          outcome=outcome)
     return _write
+
+
+#: Friday's own lines about a call, by what they mean for the action (the
+#: outcome vocabulary, governance/action_gate.OUTCOMES). Prefixes as in
+#: completion_receipts.FAILURE_SENTINELS.
+_OUTCOME_DENIED_PREFIXES = ("[DECLINED]", "[CONFIRMATION DENIED]")
+_OUTCOME_ASKED_PREFIXES = ("[APPROVAL CARD RAISED]", "[CONFIRMATION REQUIRED]",
+                           "[CONFIRMATION ESCALATED]", "[CONFIRMATION UNRESOLVED]",
+                           "[CONFIRMATION ON THE CARD]")
+
+
+def _line_outcome(text, default=None):
+    """The outcome word for a refusal line or a handler's result: denied (the
+    owner said no), approval_required (it waits for the owner), failed (any
+    other line that says it was not done), else `default`."""
+    from agent_friday.governance import action_gate as _g
+    if not isinstance(text, str):
+        return default
+    s = text.lstrip()
+    if s.startswith(_OUTCOME_DENIED_PREFIXES):
+        return _g.DENIED
+    if s.startswith(_OUTCOME_ASKED_PREFIXES):
+        return _g.APPROVAL_REQUIRED
+    try:
+        from agent_friday.services.completion_receipts import FAILURE_SENTINELS as _fs
+        if s.startswith(_fs):
+            return default if default in (_g.FORBIDDEN,) else _g.FAILED
+    except Exception:  # noqa: BLE001
+        pass
+    return default
 
 
 @_web_task_scope
@@ -14236,7 +14267,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         return _own(_crew_denial)
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-        _outcome("held", "pre_hook")              # a later check held what the checkpoint allowed
+        # a later check held what the checkpoint allowed (or asked the owner)
+        _outcome("held", "pre_hook", _line_outcome(verdict.reason, "forbidden"))
         return _own(verdict.reason)
 
     # Say what is about to happen BEFORE it happens, and only once it will
@@ -14368,7 +14400,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
     else:
         _receipts.record(name, ok=True)
-        _outcome("ok", "")
+        # the handler returned; a line saying it was not done (its own card,
+        # a refusal) is that outcome, not "executed"
+        _outcome("ok", "", _line_outcome(result))
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
@@ -15057,6 +15091,12 @@ def _hook_governance(ctx):
         if _ok:
             ctx.meta["approved_card"] = _card_id
             ctx.meta["owner_decided"] = _card_id
+            # the executor's own decision receipt for this card (record_external),
+            # so this call's outcome closes that action (BD-11a)
+            _dref = (ctx.session_ctx or {}).get("approved_card_decision")
+            if (isinstance(_dref, dict) and _dref.get("approval") == _card_id
+                    and _dref.get("tool") == ctx.tool_name):
+                ctx.meta["decision_receipt"] = _dref
             return _hooks.ALLOW
         return _hooks.DENY(
             f"[NOT RUN] '{ctx.tool_name}' was offered as an approved action but "
@@ -15361,8 +15401,10 @@ def _run_card_claim(ctx, rec):
         from agent_friday.governance import action_gate as _gate
         inp = ctx.input or {}
         try:
-            _gate.record_external(ctx.tool_name, surface="approval_card", approval_id=aid,
-                                  target=str(inp.get("title") or inp.get("task_id") or ""))
+            # this call's outcome closes the decision written here (BD-11a)
+            ctx.meta["decision_receipt"] = _gate.record_external(
+                ctx.tool_name, surface="approval_card", approval_id=aid,
+                target=str(inp.get("title") or inp.get("task_id") or ""))
         except Exception as e:
             _appr.mark_used(aid, f"tool:{ctx.tool_name}",
                             detail={"ok": False, "error": "held: %s" % e})

@@ -835,7 +835,8 @@ def _on_decision(record: dict) -> None:
     url = _this_pc_url(bundle.slug) if adapter == "this_pc" else ""
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external(KIND, surface="approval_card", approval_id=aid, target=url or bundle.slug)
+        decision = _gate.record_external(KIND, surface="approval_card", approval_id=aid,
+                                         target=url or bundle.slug)
     except Exception as e:
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": "held: %s" % e})
         _post_back(record, 'I could not publish "%s": %s. Nothing was published.' % (title, e))
@@ -847,11 +848,13 @@ def _on_decision(record: dict) -> None:
             from agent_friday.services import publish_hosting as _ph
             url = _ph.publish_remote(adapter, bundle)
     except Exception as e:
+        _gate.close_external(decision, False, detail="publish_failed")
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": str(e)})
         _record_egress(adapter, label, bundle, "failed")
         _post_back(record, 'Publishing "%s" via %s failed: %s. Nothing is up.' % (title, label, e))
         return
     _record_egress(adapter, label, bundle, "sent", url)
+    _gate.close_external(decision, True, detail="published")
     with _LOCK:
         items = [i for i in _read_index() if i.get("slug") != bundle.slug]
         items.append({"slug": bundle.slug, "title": bundle.title, "kind": bundle.kind,
