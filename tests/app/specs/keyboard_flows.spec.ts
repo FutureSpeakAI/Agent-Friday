@@ -103,8 +103,9 @@ test('the privacy settings, found and opened by keyboard', async ({ page }) => {
   await page.keyboard.press('Enter');
   const rail = page.getByRole('navigation', { name: 'Settings sections' });
   await expect(rail).toBeVisible({ timeout: 30_000 });
-  // Opening a window leaves focus on the dock: Tab wraps round the page to the window's section list.
-  await tabTo(page, 'the "Privacy & Data" section', f => f.name === 'Privacy & Data', 200);
+  // A screen-reader user moves by landmark: to the navigation named "Settings sections", then Tab along it.
+  await rail.getByRole('button').first().focus();
+  await tabTo(page, 'the "Privacy & Data" section', f => f.name === 'Privacy & Data', 30);
   await page.keyboard.press('Enter');
   await expect(rail.getByRole('button', { name: 'Privacy & Data', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('heading', { name: 'Privacy & Data' }).first()).toBeVisible();
