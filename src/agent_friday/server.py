@@ -1629,6 +1629,13 @@ if __name__ == '__main__':
         _mig_th.Thread(target=_mig_rc.flush_receipts, name="migration-receipts", daemon=True).start()
     except Exception as _mig_rc_err:
         print(f"  Migration receipts: not ledgered yet ({_mig_rc_err})")
+    # Indexes an upgrade or a restore asked to be rebuilt (services/derived_rebuild):
+    # a little after the start, one at a time, never in safe mode.
+    try:
+        from agent_friday.services import derived_rebuild as _drb
+        _drb.start_after_boot()
+    except Exception as _drb_err:
+        print(f"  Index rebuilds: not started ({_drb_err})")
     # Deliberately after the boot-guard thread and before app.run(): the warm
     # waits on its own, so this only registers the intention.
     try:

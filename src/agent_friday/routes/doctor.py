@@ -20,6 +20,12 @@
   POST /api/doctor/diagnostic         {"next_start": true|false}: make the next
                                       start a diagnostic start (one start only).
                                       A press on Friday's own page only.
+  GET  /api/doctor/after-upgrade      what an upgrade or restore could not sort
+                                      out, and the index rebuilds waiting or done
+  POST /api/doctor/after-upgrade/<id>/sorted
+                                      the owner marks one item sorted (a press)
+  POST /api/doctor/rebuild            {"index": name}: rebuild one derived index
+                                      now (a press; runs in the background)
   GET  /api/safe-mode                 is this run in safe mode, and the next?
   POST /api/safe-mode                 {"next_start": true|false}: start in safe
                                       mode next time, or leave it. A press on
@@ -237,6 +243,72 @@ def doctor_diagnostic_next():
         return jsonify({"status": "ok", "next_start": on})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The next start could not be set to a diagnostic start.")
+
+
+@doctor_bp.route("/api/doctor/after-upgrade", methods=["GET"])
+@login_required
+def doctor_after_upgrade():
+    """§37.3-9, §37.3-10. Read-only; this PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    try:
+        from agent_friday.services import derived_rebuild, upgrade_review
+        resp = jsonify({"status": "ok", "items": upgrade_review.listing(),
+                        "rebuild": derived_rebuild.state()})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The list could not be read.")
+
+
+@doctor_bp.route("/api/doctor/after-upgrade/<iid>/sorted", methods=["POST"])
+@login_required
+def doctor_after_upgrade_sorted(iid):
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Choose this on Friday's own page, on this PC."}), 403
+    from agent_friday.services import upgrade_review
+    it = upgrade_review.resolve(str(iid)[:40])
+    if it is None:
+        return jsonify({"status": "error", "error": "No such open item."}), 404
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("decision", {
+            "tool": "upgrade_review:sorted", "class": "owner", "decision": "allow",
+            "surface": "doctor", "reason": it["code"]})
+    except Exception:
+        pass
+    return jsonify({"status": "ok", "item": it})
+
+
+@doctor_bp.route("/api/doctor/rebuild", methods=["POST"])
+@login_required
+def doctor_rebuild():
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Choose this on Friday's own page, on this PC."}), 403
+    from agent_friday.services import derived_rebuild
+    body = request.get_json(silent=True) or {}
+    ix = body.get("index")
+    if not isinstance(ix, str) or ix not in derived_rebuild.INDEXES:
+        return jsonify({"status": "error", "error": "Unknown index."}), 400
+    if safe_mode.active():
+        return jsonify({"status": "error", "code": "safe_mode",
+                        "error": "Rebuilds wait for a normal start; leave safe mode first."}), 409
+    if derived_rebuild.busy():
+        return jsonify({"status": "busy", "error": "A rebuild is running; try again when it is done."}), 409
+    derived_rebuild.request([ix], "asked on the Doctor page")
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("decision", {
+            "tool": "derived_rebuild:" + ix, "class": "owner", "decision": "allow",
+            "surface": "doctor", "reason": "rebuild now"})
+    except Exception:
+        pass
+    _threading.Thread(target=derived_rebuild.run_pending, kwargs={"only": ix},
+                      name="derived-rebuild-now", daemon=True).start()
+    return jsonify({"status": "ok", "started": ix})
 
 
 @doctor_bp.route("/api/safe-mode", methods=["GET"])

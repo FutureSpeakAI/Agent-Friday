@@ -63,6 +63,7 @@ class Migration:
     apply: Callable[[Path], None]
     check: Callable[[Path], bool]
     describe: str = ""
+    rebuilds: tuple = ()          # derived indexes made from what it changes (services/derived_rebuild)
 
 
 # ── the migrations ──────────────────────────────────────────────────────────
@@ -80,7 +81,33 @@ def _m1_apply(home: Path) -> None:
     except Exception as e:  # noqa: BLE001
         cur["stores"] = {}
         cur["stores_unreadable"] = type(e).__name__
+        _unresolved(home, "inventory_unreadable", "store_inventory",
+                    "The upgrade could not read the list of Friday's stores (%s), so their versions were "
+                    "not recorded." % type(e).__name__,
+                    "Run the checks on this page; if the store list shows an error, make a Friday Bundle "
+                    "before the next update.")
     _write_json(home / SCHEMA_FILE, cur)
+
+
+def _settle_failed(home: Path) -> None:
+    """A migration that failed before and has now run is sorted."""
+    try:
+        from agent_friday.services import upgrade_review
+        for it in upgrade_review.listing(home):
+            if it["code"] == "migration_failed":
+                upgrade_review.resolve(it["id"], home)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _unresolved(home: Path, code: str, store: str, said: str, todo: str) -> None:
+    """Something the owner should look at (services/upgrade_review). Never
+    stops a migration."""
+    try:
+        from agent_friday.services import upgrade_review
+        upgrade_review.add(code, store, said, todo, source="upgrade", home=home)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _m1_check(home: Path) -> bool:
@@ -375,6 +402,10 @@ def _fail(home: Path, jr: dict, number: int, name: str, err: str) -> dict:
         _journal_path(home).unlink()     # the next start tries again from the restored folder
     except FileNotFoundError:
         pass
+    _unresolved(home, "migration_failed", "migration-%d" % number,
+                "Friday's upgrade step %d (%s) could not finish (%s). Its files were put back and Friday "
+                "started in safe mode; the next start tries again." % (number, name, err),
+                "Restart Friday. If this stays, make a Friday Bundle and run friday diagnose.")
     return {"ok": False, "safe_mode": True, "failed": number,
             "why": "migration %d (%s) failed (%s); the files it touches were put back and this start "
                    "is safe mode" % (number, name, err)}
@@ -403,6 +434,11 @@ def _run_locked(home: Path) -> dict:
         backup_ok = shape_ok and (not jr["copied"] or Path(jr.get("backup") or "").is_dir())
         print_ok = shape_ok and jr.get("fingerprint") == _fingerprint(home, jr["touches"])
         if jr.get("to") != want or not backup_ok or not print_ok:
+            _unresolved(home, "migration_cut_off", "migration-%s" % jr.get("to"),
+                        "An upgrade was cut off part way, and its saved copy is missing or its files "
+                        "changed since, so Friday left them as they are and started in safe mode.",
+                        "Make a Friday Bundle, then run friday diagnose; the journal beside the data "
+                        "folder says what ran.")
             return {"ok": False, "safe_mode": True,
                     "why": "a migration was cut off, and its saved copy is missing or its files changed "
                            "since; nothing was changed. The journal beside the data folder says what ran."}
@@ -410,6 +446,11 @@ def _run_locked(home: Path) -> dict:
     else:
         bad = _links_in(home, touches)
         if bad:
+            _unresolved(home, "migration_link", "migration-%d" % want,
+                        "A file an upgrade would change is a link or a junction, so the upgrade did not "
+                        "run and Friday started in safe mode.",
+                        "Replace the link in Friday's data folder with the real file or folder, then "
+                        "restart Friday.")
             return {"ok": False, "safe_mode": True,
                     "why": "a file a migration would change is a link or a junction (%s); nothing was "
                            "changed" % ", ".join(bad)}
@@ -446,6 +487,14 @@ def _run_locked(home: Path) -> dict:
            "backup": Path(jr["backup"]).name if jr.get("backup") else None,
            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     _receipt(home, rec)                                                       # step 5
+    rebuilds = sorted({ix for m in MIGRATIONS if jr["from"] < m.number <= want for ix in m.rebuilds})
+    if rebuilds:
+        try:
+            from agent_friday.services import derived_rebuild
+            derived_rebuild.request(rebuilds, "the upgrade to schema %d" % want, home)
+        except Exception:  # noqa: BLE001 - the rebuild is asked again by hand from the Doctor page
+            pass
+    _settle_failed(home)
     try:
         _journal_path(home).unlink()
     except FileNotFoundError:

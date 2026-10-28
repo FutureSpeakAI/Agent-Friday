@@ -49,6 +49,15 @@
   <pre id="diag-out" hidden></pre>
 </section>
 
+<section id="afterupgrade" aria-labelledby="au-h">
+  <h2 id="au-h">After an upgrade or a restore</h2>
+  <p class="muted">Things an upgrade or a restore could not sort out on its own, with what to do, and the search indexes Friday rebuilds from your data afterwards. An item stays here until you mark it sorted.</p>
+  <p id="au-state" role="status">Checking...</p>
+  <ul id="au-items"></ul>
+  <ul id="au-rebuilds"></ul>
+  <p id="au-note" role="status"></p>
+</section>
+
 <section id="capabilities" aria-labelledby="caps-h">
   <h2 id="caps-h">What Friday can do right now</h2>
   <p>Read live. <strong>Off</strong> means a setting, a choice of yours or this PC keeps something off: nothing is wrong. <strong>Needs attention</strong> means something is wrong, with what to do.</p>
@@ -227,6 +236,39 @@
       text($('diag-out'), d.text || '');
       $('diag-out').hidden = false;
     }).catch(() => text($('diag-state'), 'The diagnostic report could not be read.'));
+  }
+
+  function afterUpgrade() {
+    api('/api/doctor/after-upgrade').then(({ d }) => {
+      if (!d || d.status !== 'ok') { text($('au-state'), 'The list could not be read.'); return; }
+      const items = d.items || [];
+      const rb = d.rebuild || {};
+      const waiting = (rb.waiting || []).map(w => w.label);
+      text($('au-state'), (items.length ? items.length + ' thing(s) to look at.' : 'Nothing to look at.')
+           + (waiting.length ? ' Waiting to be rebuilt: ' + waiting.join(', ') + '.' : '')
+           + (rb.restore_waiting ? ' A restore asked for the indexes to be rebuilt.' : ''));
+      const ul = $('au-items'); ul.textContent = '';
+      items.forEach(it => {
+        const li = document.createElement('li');
+        const p = document.createElement('span');
+        p.textContent = it.said + (it.todo ? ' ' + it.todo : '') + (it.count > 1 ? ' (' + it.count + ' times)' : '');
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Mark as sorted';
+        b.addEventListener('click', () => api('/api/doctor/after-upgrade/' + encodeURIComponent(it.id) + '/sorted', { method: 'POST', body: '{}' })
+          .then(({ ok, d: r }) => { text($('au-note'), ok ? 'Marked as sorted.' : (r.error || 'That did not work.')); afterUpgrade(); }));
+        li.appendChild(p); li.appendChild(document.createTextNode(' ')); li.appendChild(b); ul.appendChild(li);
+      });
+      const rl = $('au-rebuilds'); rl.textContent = '';
+      Object.keys(rb.indexes || {}).forEach(ix => {
+        const last = (rb.results || []).find(r => r.index === ix);
+        const li = document.createElement('li');
+        const s = document.createElement('span');
+        s.textContent = rb.indexes[ix] + ': ' + (last ? (last.ok ? 'rebuilt' : 'rebuild failed (' + (last.error || '') + ')') + ' ' + new Date(last.at * 1000).toLocaleString() : 'not rebuilt by an upgrade or restore');
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Rebuild now';
+        b.addEventListener('click', () => api('/api/doctor/rebuild', { method: 'POST', body: JSON.stringify({ index: ix }) })
+          .then(({ ok, d: r }) => { text($('au-note'), ok ? 'Rebuilding ' + rb.indexes[ix] + ' in the background.' : (r.error || 'That did not work.')); }));
+        li.appendChild(s); li.appendChild(document.createTextNode(' ')); li.appendChild(b); rl.appendChild(li);
+      });
+    }).catch(() => text($('au-state'), 'The list could not be read.'));
   }
 
   function diagNext(on) {
@@ -626,7 +668,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); diagState(); history(); stores(); knownIssues(); localModel(); safetyMetrics();
+  safeState(); diagState(); afterUpgrade(); history(); stores(); knownIssues(); localModel(); safetyMetrics();
 })();
 </script>
 </body>
