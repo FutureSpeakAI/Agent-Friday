@@ -236,7 +236,7 @@ def _register_desktop(monkeypatch, enabled_tools):
     # This connector's tools have reviewed manifests (BD-07, A30); these tests are about the
     # desktop allowlist and ring, not the manifest rule (test_tool_manifests covers that).
     from agent_friday.governance import tool_manifests
-    monkeypatch.setattr(tool_manifests, "check", lambda server, tool: (True, ""))
+    monkeypatch.setattr(tool_manifests, "check", lambda server, tool, spec=None: (True, ""))
     tools = [{"name": n, "inputSchema": {"type": "object", "properties": {}}}
              for n in ("State-Tool", "Click-Tool", "Type-Tool", "Powershell-Tool",
                        "Launch-Tool", "Wait-Tool")]

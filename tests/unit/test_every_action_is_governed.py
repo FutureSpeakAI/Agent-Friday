@@ -70,7 +70,7 @@ def _register_fake_connector(monkeypatch):
     before = set(agent.CLAUDE_TOOL_HANDLERS)
     # Its tools have reviewed manifests (BD-07, A30): this test is about the checkpoint.
     from agent_friday.governance import tool_manifests
-    monkeypatch.setattr(tool_manifests, "check", lambda server, tool: (True, ""))
+    monkeypatch.setattr(tool_manifests, "check", lambda server, tool, spec=None: (True, ""))
     agent._mcp_register_server_tools("fakebank", [
         {"name": "send_money", "description": "Send money",
          "inputSchema": {"type": "object", "properties": {"recipient": {"type": "string"},
