@@ -62,7 +62,7 @@
    "strength": "REQUIRED",
    "requirement": "Installer tests gate",
    "status": "pass",
-   "evidence": "installer.yml fresh-install job (packaging/windows/tests/verify-clean-install.ps1) on a fresh Windows VM; release job needs it. Unit guards tests/unit/test_installer_inno.py, test_installer_build_guard.py. Same job definitions ran green in installer run 39882247495 (dispatch, 4a4dee190); not yet run on a release tag from main, and PR #254 did not run installer.yml.",
+   "evidence": "The installer tests gate the release on main: .github/workflows/installer.yml's release job needs fresh-install and upgrade (packaging/windows/tests/verify-clean-install.ps1), pinned by tests/unit/test_installer_inno.py and tests/unit/test_installer_build_guard.py; CI: tests run 40076304478 on main df2872452. The installer jobs themselves last ran green off main (installer run 39882247495, dispatch on 4a4dee190); not yet on a release tag.",
    "checked": "2026-10-28, against main df2872452"
   },
   {
@@ -156,7 +156,7 @@
    "strength": "MUST NOT",
    "requirement": "Security suites not skipped when earlier general tests fail; report independently",
    "status": "pass",
-   "evidence": "tests.yml: 'Run security + egress boundary suites' has if: ${{ !cancelled() }}, so it runs and reports as its own step even when 'Run unit + API suites' fails. CI: tests run 40076304478 on main df2872452. Note: no unit test pins that condition, so a later edit removing it would not be caught.",
+   "evidence": ".github/workflows/tests.yml: 'Run security + egress boundary suites' has if: ${{ !cancelled() }}, so it runs and reports as its own step even when 'Run unit + API suites' fails; pinned by tests/unit/test_acceptance_evidence.py::test_the_security_suites_run_and_report_even_when_unit_tests_fail. CI: tests run 40076304478 on main df2872452.",
    "checked": "2026-10-28, against main df2872452"
   },
   {
@@ -254,9 +254,10 @@
    "id": "NS-34.4-4",
    "strength": "MUST",
    "requirement": "First-run: setup without a model",
-   "status": "pass",
-   "evidence": "verify-clean-install.ps1 installs with /ModelsCloud=1 and no keys; checks no models dir, zero-keys, setup-chat, setup-later completes setup. Proven on PR #254 run (clean-machine 40010711661; script byte-identical on main, main's installer.yml fresh-install job), not yet on a release tag. Also first_run_setup.spec.ts, tests run 40076304478 on main df2872452.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "open",
+   "evidence": "",
+   "checked": "2026-10-28, against main df2872452",
+   "missing": "The installer check that sets up with no model (packaging/windows/tests/verify-clean-install.ps1) has never run against main's code: its only green run was a clean-machine run on PR #254, which did not merge. The first-run app spec does not cover setup without a model."
   },
   {
    "id": "NS-34.4-5",
@@ -302,9 +303,10 @@
    "id": "NS-34.4-10",
    "strength": "MUST",
    "requirement": "First-run: uninstall",
-   "status": "pass",
-   "evidence": "verify-clean-install.ps1 'uninstall' check: install folder, shortcuts and Apps entry gone, ~/.friday kept byte for byte, then reinstall; proven on PR #254 (clean-machine run 40010711661, legs windows-2022/2025 ran verify-clean-install.ps1, which is byte-identical on main and is main's installer.yml fresh-install job), not yet on a release tag.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "open",
+   "evidence": "",
+   "checked": "2026-10-28, against main df2872452",
+   "missing": "The uninstall check (packaging/windows/tests/verify-clean-install.ps1) has never run against main's code: its only green run was a clean-machine run on PR #254, which did not merge, and installer.yml has never run on main or a release tag."
   },
   {
    "id": "NS-34.5-1",
@@ -389,7 +391,7 @@
    "strength": "MUST",
    "requirement": "Constitution drift holds outward actions",
    "status": "pass",
-   "evidence": "action_gate.verify_claws pin check: tests/unit/test_every_action_is_governed.py::test_it_fails_closed tampers claws.pin.json and asserts a background outward action is held ('cLaws'), reads still work (test_reads_keep_working_when_the_cLaws_check_fails). CI: tests run 40076304478 on main df2872452.",
+   "evidence": "src/agent_friday/governance/action_gate.py verify_claws pin check: tests/unit/test_every_action_is_governed.py::test_it_fails_closed tampers the cLaws pin file and asserts a background outward action is held ('cLaws'), reads still work (test_reads_keep_working_when_the_cLaws_check_fails). CI: tests run 40076304478 on main df2872452.",
    "checked": "2026-10-28, against main df2872452"
   },
   {
@@ -680,7 +682,7 @@
    "strength": "MUST",
    "requirement": "Goal tests: evidence-first completion, receipt-first evaluation, manual completion labeling",
    "status": "pass",
-   "evidence": "services/goals.py/goal_state.py: met_verified only from the goal's own checks, owner marking gives met_unverified ('marked met without automatic proof'), manual confirmations write a milestone_manual_confirmed receipt. Tests: tests/unit/test_goal_checks_on_receipts.py, test_goal_states_and_blockers.py, test_goal_verification_repair.py. CI: tests run 40076304478 on main df2872452.",
+   "evidence": "src/agent_friday/services/goal_state.py: met_verified only from the goal's own checks, owner marking gives met_unverified ('marked met without automatic proof'), manual confirmations write a milestone_manual_confirmed receipt. Tests: tests/unit/test_goal_checks_on_receipts.py, tests/unit/test_goal_states_and_blockers.py, tests/unit/test_goal_verification_repair.py. CI: tests run 40076304478 on main df2872452.",
    "checked": "2026-10-28, against main df2872452"
   },
   {
