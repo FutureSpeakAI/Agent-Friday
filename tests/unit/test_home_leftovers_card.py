@@ -23,7 +23,7 @@ def test_home_shows_the_card_only_when_something_is_open():
     assert "After an upgrade or a restore" in blk
     src = JS.read_text(encoding="utf-8")
     assert "const [leftovers, setLeftovers] = useState([]);" in src
-    assert re.search(r"setLeftovers\(items\.filter\(", src)
+    assert re.search(r"setLeftovers\(d\.items\.filter\(", src)
 
 
 def test_items_are_plain_text_and_the_way_to_sort_them_is_the_doctor_page():
