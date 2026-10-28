@@ -226,6 +226,12 @@ def mark_tool_pending(task_id, tool_name, tool_use_id=None) -> None:
 
 
 def clear_tool_pending(task_id) -> None:
+    """The tool RETURNED. Its marker is not dropped here: the tool's result reaches the disk only
+    with the round's checkpoint (``checkpoint`` writes ``pending_tool: None``), and a crash before
+    that left a transcript with no trace of the call, so a resume asked the model again and it
+    re-issued the same outward call (NS-33.6-2 c). The marker is kept, marked finished, and the
+    tool joins ``round_done`` (every tool that finished since the last checkpoint), so the resume
+    path knows a tool ran whose result was not saved. Never raises."""
     if not task_id or not enabled():
         return
     try:
@@ -233,10 +239,38 @@ def clear_tool_pending(task_id) -> None:
             blob = _journal().read_blob(task_id, BLOB)
             if not blob or not blob.get("pending_tool"):
                 return
-            blob["pending_tool"] = None
+            pt = dict(blob["pending_tool"])
+            if not pt.get("finished"):
+                done = list(blob.get("round_done") or [])
+                done.append(pt.get("name") or "?")
+                blob["round_done"] = done[-50:]
+            pt["finished"] = True
+            blob["pending_tool"] = pt
             _journal().write_blob(task_id, BLOB, blob)
     except Exception:
         pass
+
+
+def _unsaved_effects(blob: Dict[str, Any]) -> Tuple[List[str], str]:
+    """(tools that are not replay-safe and finished since the last checkpoint, the one in flight
+    if it is not replay-safe or "")."""
+    done = [n for n in (blob.get("round_done") or []) if n and not replay_safe(n)]
+    pt = blob.get("pending_tool") or {}
+    running = ""
+    if pt and not pt.get("finished") and not replay_safe(pt.get("name") or ""):
+        running = pt.get("name") or "?"
+    return list(dict.fromkeys(done)), running
+
+
+def _unsaved_words(done: List[str], running: str) -> str:
+    parts = []
+    if done:
+        parts.append("%s finished, but %s result was not saved before the process stopped"
+                     % (", ".join("'%s'" % n for n in done), "its" if len(done) == 1 else "their"))
+    if running:
+        parts.append("'%s' was running when the process stopped, and nothing on disk can say "
+                     "whether it finished" % running)
+    return "; ".join(parts)
 
 
 def read(task_id) -> Optional[Dict[str, Any]]:
@@ -372,14 +406,17 @@ def _checkpoint_resumability(task_id) -> Dict[str, Any]:
         return {**out, "resumable": False,
                 "reason": f"checkpoint format v{blob.get('version')} is not v{VERSION}"}
     if blob.get("first_step"):
-        pt = blob.get("pending_tool") or {}
-        name = pt.get("name") or ""
-        if pt and not replay_safe(name):
+        done, running = _unsaved_effects(blob)
+        if done or running:
+            if running and not done:
+                why = (f"'{running}' was running when the process stopped, and no "
+                       f"transcript was saved to resume from. Whether it took effect "
+                       f"is not known. Check before starting the task again.")
+            else:
+                why = (_unsaved_words(done, running) + ", and no transcript was saved to resume "
+                       "from. It may have taken effect. Check before starting the task again.")
             return {**out, "resumable": False, "may_have_acted": True,
-                    "announced": bool(blob.get("announced_at")),
-                    "reason": (f"'{name}' was running when the process stopped, and no "
-                               f"transcript was saved to resume from. Whether it took effect "
-                               f"is not known. Check before starting the task again.")}
+                    "announced": bool(blob.get("announced_at")), "reason": why}
         return {**out, "resumable": False, "reason": "no checkpoint was written"}
     # Which loop wrote this. Only the Anthropic one can be re-entered today,
     # and resuming an OpenAI-shaped transcript through _call_claude_agent
@@ -403,17 +440,24 @@ def _checkpoint_resumability(task_id) -> Dict[str, Any]:
                 "reason": "the saved transcript has a tool call with no result - "
                           "it would be rejected by the API"}
     pt = blob.get("pending_tool")
-    if pt:
+    done, running = _unsaved_effects(blob)
+    if running and not done:
+        out["needs_confirmation"] = True
+        out["reason"] = (
+            f"'{running}' was running when the process stopped, and nothing on "
+            f"disk can say whether it finished. Resuming re-runs it. If it "
+            f"had already taken effect, it will take effect twice.")
+    elif done:
+        # A tool that changes things finished after the last save: the saved transcript does not
+        # show it, so a resume would ask for it again and it would take effect twice.
+        out["needs_confirmation"] = True
+        out["reason"] = (_unsaved_words(done, running) + ". Resuming would run "
+                         + ("it" if len(done) + bool(running) == 1 else "them")
+                         + " again, so anything that already took effect would take effect twice.")
+    elif pt:
         name = pt.get("name") or "?"
-        if replay_safe(name):
-            out["reason"] = (f"'{name}' was running when the process stopped. "
-                             f"It only reads, so re-running it changes nothing.")
-        else:
-            out["needs_confirmation"] = True
-            out["reason"] = (
-                f"'{name}' was running when the process stopped, and nothing on "
-                f"disk can say whether it finished. Resuming re-runs it. If it "
-                f"had already taken effect, it will take effect twice.")
+        out["reason"] = (f"'{name}' {'had finished, unsaved,' if pt.get('finished') else 'was running'} "
+                         f"when the process stopped. It only reads, so re-running it changes nothing.")
     else:
         out["reason"] = (f"{out['iteration']} step(s) of work are saved and will "
                          f"not be redone.")
