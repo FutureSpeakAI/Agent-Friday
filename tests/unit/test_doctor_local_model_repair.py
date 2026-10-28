@@ -173,5 +173,5 @@ def test_no_repair_asks_a_model():
     src = open(lr.__file__, encoding="utf-8").read()
     imported = set(re.findall(r"from agent_friday\.services import ([a-z_]+)", src)) | \
         set(re.findall(r"import agent_friday\.services\.([a-z_]+)", src))
-    assert imported <= {"safe_mode", "capability_state", "residency_arbiter", "model_download",
+    assert imported <= {"safe_mode", "capability_state", "residency_arbiter", "model_download", "local_seats",
                         "model_store", "action_ledger"}, imported
