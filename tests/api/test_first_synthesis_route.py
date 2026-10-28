@@ -70,3 +70,19 @@ def test_skipping_the_goal_is_the_owners_press(client):
         else:
             p.write_text(before, encoding="utf-8")
 
+
+
+def test_a_memory_card_that_raises_shows_an_error_id_not_its_exception(client, monkeypatch):
+    _with_an_item(monkeypatch)
+    from agent_friday.services import core_memory
+
+    def boom(*a, **k):
+        raise RuntimeError("zz-internal-detail at a private path")
+    monkeypatch.setattr(core_memory, "add", boom)
+    item = next(i for i in _briefing(client)["items"] if i["kind"] == "follow_up")
+    r = client.post("/api/first-synthesis/mark", headers=desk_headers(),
+                    json={"id": item["id"], "mark": "remember", "observation": item["observation"]})
+    assert r.status_code == 400
+    d = r.get_json()
+    assert "zz-internal-detail" not in r.get_data(as_text=True)
+    assert d["error_id"] and d["error_id"] in d["error"]
