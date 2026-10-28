@@ -1308,11 +1308,13 @@ def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> st
         if changed:
             shown = ", ".join(changed[:8]) + (" and %d more" % (len(changed) - 8) if len(changed) > 8 else "")
             # First in the result, so a cut that keeps the head (voice, compaction) keeps it too.
+            # this notice always wins over a key of that name already in the result
             gated = dict({"privacy_gate": (
                 "The privacy gate withheld %d part(s) of this result because they were classified "
                 "sensitive; they stayed on this device: %s. Tell the owner which items (which message "
                 "or field) were withheld and why; they can be read on a local seat. Do not guess what "
-                "the withheld parts said." % (len(changed), shown))}, **gated)
+                "the withheld parts said." % (len(changed), shown))},
+                         **{k: v for k, v in gated.items() if k != "privacy_gate"})
             if mail is not None:
                 # Money paragraphs: the owner is shown exactly that text and asked (no silent hold).
                 try:
@@ -1727,9 +1729,12 @@ def _tool_label(name) -> str:
     if s.startswith("mcp_"):
         return s
     agent = _sys.modules.get("agent_friday.services.agent")
-    known = getattr(agent, "CLAUDE_TOOL_HANDLERS", None) if agent is not None else None
-    if isinstance(known, dict) and s not in known:
-        return "unregistered"
+    if agent is not None:
+        # a known tool: one with a handler, or one in the ring map (voice-only tools have no
+        # text-chat handler but are Friday's own)
+        known = set(getattr(agent, "CLAUDE_TOOL_HANDLERS", {}) or {}) | set(getattr(agent, "TOOL_RINGS", {}) or {})
+        if known and s not in known:
+            return "unregistered"
     return s
 
 

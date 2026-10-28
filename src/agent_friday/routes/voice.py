@@ -1271,7 +1271,7 @@ def _gate_voice_tool_result(result: str, fname: str) -> str:
                   "withholding rather than sending ungated", fname, _ie)
         return _GATE_UNREACHABLE_TOOL
     try:
-        gated = _eg._gate_text(result, "google-gemini", f"live.tool.{fname}")
+        gated = _eg._gate_text(result, "google-gemini", "live.tool.%s" % _eg._tool_label(fname))
         if result and not gated:
             gated = _eg._TOOL_RESULT_WITHHELD
         return gated
