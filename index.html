@@ -53273,13 +53273,15 @@ function StToggle({
   value,
   onChange,
   desc,
-  disabled
+  disabled,
+  walkSkip
 }) {
   return /*#__PURE__*/React.createElement("button", {
     type: "button",
     role: "switch",
     "aria-checked": !!value,
     disabled: !!disabled,
+    "data-walk-skip": walkSkip || undefined,
     className: "st-switch",
     onClick: onChange,
     style: {
@@ -61304,7 +61306,10 @@ function MemorySearchPanel() {
   };
   const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
   const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
-  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, label);
+  // Every control here filters, explains or acts on a search result; none is a setting. The settings walk
+  // (tests/app/specs/settings_walk.spec.ts) lists a control marked data-walk-skip and leaves it.
+  const SKIP = 'search filter, not a setting';
+  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label, 'data-walk-skip': SKIP}, label);
   const sure = (h, question, yes) => [E('span', {key:'q', style: dim}, question),
     btn('Yes, delete it', yes, 'yes'), btn('Keep it', () => setAsk(''), 'no')];
   const actions = h => {
@@ -61351,13 +61356,13 @@ function MemorySearchPanel() {
   return E('div', null,
     E('div', {style: dim}, 'Search everything ' + fridayName() + ' keeps about you: past conversations, the memory card, suggestions waiting for your review, facts and Library titles. Each result says where it came from. Why do you know this? shows the original words, what corrected them, and which replies used them lately. Nothing here leaves this PC.'),
     E('div', {style:{display:'flex', gap:6, marginTop:6}},
-      E('input', {className:'input', 'aria-label':'Search what ' + fridayName() + ' remembers', placeholder:'Search what ' + fridayName() + ' remembers', maxLength: 200,
+      E('input', {className:'input', 'data-walk-skip': SKIP, 'aria-label':'Search what ' + fridayName() + ' remembers', placeholder:'Search what ' + fridayName() + ' remembers', maxLength: 200,
         style:{flex:1, fontSize:12}, value: q, onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter') run(); }}),
       btn('Search', () => run(), 'go')),
     E('div', {role:'group', 'aria-label':'Kinds of memory', style:{display:'flex', gap:10, flexWrap:'wrap', marginTop:6}},
       KINDS.map(k => E('label', {key: k[0], style:{fontSize:11, color:'rgba(255,255,255,0.7)', display:'flex', gap:4, alignItems:'center'}},
-        E('input', {type:'checkbox', checked: kinds.indexOf(k[0]) >= 0, disabled: !!busy, onChange: () => flip(k[0])}), k[1]))),
-    E(StToggle, {label:'Show corrected', value: corrected, disabled: !!busy,
+        E('input', {type:'checkbox', 'data-walk-skip': SKIP, checked: kinds.indexOf(k[0]) >= 0, disabled: !!busy, onChange: () => flip(k[0])}), k[1]))),
+    E(StToggle, {label:'Show corrected', value: corrected, disabled: !!busy, walkSkip: SKIP,
       onChange: () => { const v = !corrected; setCorrected(v); if (rep) run({corrected: v}); },
       desc:'Off, things that were corrected stay hidden. On, they show, with what corrected them.'}),
     E('div', {'data-memory-export': '1', style:{display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginTop:6}},
@@ -61371,7 +61376,7 @@ function MemorySearchPanel() {
     rep && rep.results.map(h => E('div', {key: h.kind + h.id, 'data-memory-result': h.kind, style: Object.assign({}, row, {marginTop:6})},
       (edit && edit.key === h.kind + ':' + h.id)
         ? E('div', {style:{display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'}},
-            E('input', {className:'input', 'aria-label':'Edit this line', style:{flex:'1 1 240px', fontSize:12}, value: edit.text,
+            E('input', {className:'input', 'data-walk-skip': SKIP, 'aria-label':'Edit this line', style:{flex:'1 1 240px', fontSize:12}, value: edit.text,
               onChange: e => setEdit({key: edit.key, text: e.target.value})}),
             btn('Save', () => editCard(h, edit.text), 'save'),
             btn('Cancel', () => setEdit(null), 'cancel'))

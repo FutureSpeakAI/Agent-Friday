@@ -347,7 +347,14 @@ def test_json_and_markdown_files():
         assert heading in md, heading
     assert md.index("## Conversations") < md.index("## Memory card") < md.index("## Facts")
     assert "- Keeps a sailing boat called Wren." in md
-    empty = me.build("nothing at all matches this", kinds=["card"])
+    # A query no stored line can match. The search matches each term inside words (services/memory_search
+    # _score), so ordinary words are not safe here: "nothing at all matches this" found the card line
+    # "Keeps a sailing boat called Wren." through "all" in "called". The export is the search's results,
+    # so the search itself is checked to find nothing first.
+    nothing = "zanzibar quokka"
+    assert ms.search(nothing, kinds=["card"], limit=ms.LIMIT_MAX)["results"] == []
+    empty = me.build(nothing, kinds=["card"])
+    assert empty["ok"] and empty["count"] == 0, empty
     assert json.loads("".join(me.to_json(empty)))["items"] == []
     assert me.filename("md").endswith(".md") and me.filename("json").endswith(".json")
 
