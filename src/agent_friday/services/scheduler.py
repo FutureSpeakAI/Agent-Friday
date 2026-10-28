@@ -280,6 +280,53 @@ _RUNNING_LOCK = threading.Lock()
 
 #: The zone schedules run in when the owner has not said theirs.
 DEFAULT_ZONE = "America/Chicago"
+#: How a schedule meets a daylight-saving change (NS-32.16-1), stored on every schedule so it is
+#: explicit, not implied: it keeps its wall-clock time in its timezone; a time that does not exist
+#: (spring forward) runs at the first real moment after the gap; a time that happens twice (fall
+#: back) runs once, at the first of the two (services/schedule_math).
+DST_WALL_CLOCK = "wall_clock"
+DST_POLICIES = (DST_WALL_CLOCK,)
+DST_TEXT = {DST_WALL_CLOCK: ("Keeps its local time across daylight-saving changes. A time skipped when "
+                             "clocks go forward runs just after the gap; a time that happens twice when "
+                             "clocks go back runs once, the first time.")}
+
+
+def _zone(name):
+    """A ZoneInfo for an IANA name, or None when it is not one."""
+    if not name or not isinstance(name, str):
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
+def owner_zone_name() -> str:
+    """The owner's own timezone (Settings > timezone, asked during first run), else DEFAULT_ZONE."""
+    try:
+        name = str((_load_settings() or {}).get("timezone") or "").strip()
+    except Exception:
+        name = ""
+    return name if _zone(name) is not None else DEFAULT_ZONE
+
+
+def schedule_zone_name(rec) -> str:
+    """The timezone a schedule keeps: its own stored `tz` when it has one, else the owner's (a
+    built-in routine follows the owner's timezone)."""
+    tz = (rec or {}).get("tz")
+    return tz if _zone(tz) is not None else owner_zone_name()
+
+
+def _in_zone(rec, now):
+    """`now` as the wall clock of the schedule's own timezone."""
+    z = _zone(schedule_zone_name(rec))
+    if z is None or now is None:
+        return now
+    try:
+        return now.astimezone(z) if now.tzinfo is not None else now
+    except Exception:
+        return now
 
 
 def _now_central():
@@ -439,7 +486,12 @@ def schedule_view(rec) -> dict:
         except Exception:
             model = ""
     out = {"status": status, "status_reason": reason, "model": model,
-           "model_pinned": bool(pins)}
+           "model_pinned": bool(pins),
+           # when it runs is read in this timezone, and how it meets a clock change (NS-32.16-1)
+           "timezone": schedule_zone_name(rec),
+           "timezone_follows_yours": not _zone((rec or {}).get("tz")),
+           "dst": (rec or {}).get("dst") or DST_WALL_CLOCK,
+           "dst_text": DST_TEXT.get((rec or {}).get("dst") or DST_WALL_CLOCK, DST_TEXT[DST_WALL_CLOCK])}
     if (rec or {}).get("source") != "builtin":
         policy = _missed_policy(rec)
         # The owner's default as it is now (Settings > General > Scheduled jobs), so a job card can
@@ -533,6 +585,11 @@ def _normalize_record(rec, *, source="user"):
         # A new job's emails are saved as drafts unless it is made to send (services/email_jobs).
         if isinstance(rec.get("email_send"), bool):
             out["email_send"] = rec["email_send"]
+        # The timezone it keeps, stored with it (NS-32.16-1): the one asked for, else the owner's now.
+        out["tz"] = rec.get("tz") if _zone(rec.get("tz")) is not None else owner_zone_name()
+    elif _zone(rec.get("tz")) is not None:
+        out["tz"] = rec["tz"]
+    out["dst"] = rec.get("dst") if rec.get("dst") in DST_POLICIES else DST_WALL_CLOCK
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
               "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
@@ -550,7 +607,7 @@ def register_schedule(record) -> dict:
 
 #: The fields that decide WHAT a schedule runs and WHEN. A card raised for one of its runs is bound to
 #: them: a card about the job as it was is not an answer about the job as it is.
-_RUN_FIELDS = ("enabled", "trigger", "spec", "task")
+_RUN_FIELDS = ("enabled", "trigger", "spec", "task", "tz")
 
 
 def _run_basis(rec) -> dict:
@@ -580,10 +637,12 @@ def update_schedule(sid, patch, *, by="owner") -> dict | None:
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held", "email_send"}
+                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held", "email_send", "tz"}
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
+                if k == "tz" and _zone(v) is None:
+                    continue              # only a real IANA timezone, never a guess
                 if k in ("missed", "on_held"):
                     # "default" (or null) puts the job back on the owner's default choice.
                     if v in (None, "default"):
@@ -1389,6 +1448,7 @@ def _is_due(rec, now) -> bool:
 def _is_due_on_schedule(rec, now) -> bool:
     if not rec.get("enabled", True):
         return False
+    now = _in_zone(rec, now)              # its own wall clock (NS-32.16-1)
     with _RUNNING_LOCK:
         if rec.get("id") in _RUNNING:
             return False
@@ -1467,6 +1527,7 @@ def _next_run_ts(rec, now):
     """Best-effort epoch of the next fire (for the UI). None when disabled."""
     if not rec.get("enabled", True):
         return None
+    now = _in_zone(rec, now)
     if rec.get("retry_pending"):
         return rec.get("not_before")
     trig = rec.get("trigger")
@@ -2196,7 +2257,7 @@ def _run_mark(rec, now, started) -> dict:
     job keeps its cadence, also when that late run is retried or waits for the seat. A one-time job
     switches itself off as it fires."""
     late_day = _late_slot_day(rec)
-    slot_day = late_day or now.strftime("%Y-%m-%d")
+    slot_day = late_day or _in_zone(rec, now).strftime("%Y-%m-%d")
     mark = dict(last_run_ts=started, last_run_date=slot_day, started_at=started, quiet_deferred=None,
                 slot_day=late_day, slot_cause=_late_cause(rec) if late_day else None)
     if rec.get("trigger") == "once":
