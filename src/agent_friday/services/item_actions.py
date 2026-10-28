@@ -1898,9 +1898,7 @@ def run_calendar(ops: list[dict], *, approval_id: str | None = None, conversatio
     cw = _cw()
     items, undo_rows = [], []
     for o in ops:
-        from agent_friday.services import change_receipts as _cr
-        # the event's title is kept sealed, not readable in the receipt (release-lead call 2026-10-24)
-        it = dict({"op": "shift", "id": o["id"], "ok": False}, **_cr._ts(_cr.seal_title(o.get("title"))))
+        it = {"op": "shift", "id": o["id"], "ok": False}
         try:
             res = cw.update_event(o["id"], start=o["new_start"], end=o["new_end"], account_id=o.get("account") or None,
                                   calendar_id=o.get("calendar") or "primary")
@@ -1912,6 +1910,11 @@ def run_calendar(ops: list[dict], *, approval_id: str | None = None, conversatio
         except Exception as e:
             it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
         items.append(it)
+    # Each event's title is kept sealed, not readable in the receipt (release-lead call 2026-10-24).
+    # Sealed after the moves: the owner's change happens first, then its record is written.
+    from agent_friday.services import change_receipts as _cr
+    for it, o in zip(items, ops):
+        it.update(_cr._ts(_cr.seal_title(o.get("title"))))
     ok, n = sum(1 for i in items if i["ok"]), len(items)
     doing = _calendar_words_untitled(ops)
     summary = ("Done: %s." % doing) if ok == n else "%d of %d done (%s)." % (ok, n, doing)
