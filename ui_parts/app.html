@@ -1718,6 +1718,19 @@ function FridayLockup({size=15,onClick,href,title}){
 // served, authoritative UI); this mirror calls through to it. Raw browser
 // fridayToast() is not used anywhere: it is a modal the app cannot style, queue or
 // dismiss, and it blocks the tab until clicked.
+// Said to a screen reader, not drawn (north star 33.3-6: what matters is heard as well as seen). The page keeps two
+// live regions; a message is set into one after clearing it, so the same words twice are said twice.
+function fridayAnnounce(msg, opts) {
+  try {
+    var text = fridayTM(msg == null ? '' : String(msg)).trim();
+    if (!text || typeof document === 'undefined') return;
+    var el = document.getElementById(opts && opts.assertive ? 'fr-announce-assertive' : 'fr-announce-polite');
+    if (!el) return;
+    el.textContent = '';
+    setTimeout(function () { el.textContent = text; }, 60);
+  } catch (e) { /* never in the way */ }
+}
+if (typeof window !== 'undefined') window.fridayAnnounce = fridayAnnounce;
 function fridayToast(msg, opts) {
   try {
     var text = fridayTM(msg == null ? '' : String(msg));
@@ -26547,9 +26560,14 @@ function ApprovalPopups() {
   const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
-    const fresh = items.some(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const freshItems = items.filter(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const fresh = freshItems.length > 0;
     seen.current = new Set(items.filter(a => !fridayApprovalQuiet(a.approval_id)).map(a => a.approval_id));
     if (fresh) setLater(false);
+    // Heard as well as seen: a screen reader says what has just started waiting for you (north star 33.3-6).
+    if (fresh) fridayAnnounce(freshItems.length === 1
+      ? fridayName() + ' is waiting for your approval: ' + (freshItems[0].title || 'a request') + '.'
+      : freshItems.length + ' requests are waiting for your approval: ' + freshItems.slice(0, 3).map(a => a.title || 'a request').join('; ') + (freshItems.length > 3 ? '; and more' : '') + '.');
   }, [items]);
   // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
   // unfold to the card it is waiting on, the same card, and outline it.
