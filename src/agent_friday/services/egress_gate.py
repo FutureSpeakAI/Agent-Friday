@@ -2464,10 +2464,17 @@ def _seal_outbound_inner(payload, provider, log_path, pii_lookup, model):
 
 def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     """seal_outbound's scrub and gate steps (§5.5), on its copy of the payload."""
-    if isinstance(sealed.get("messages"), tuple):
-        sealed["messages"] = list(sealed["messages"])     # scrubbed and gated like a list (NS-34.6-8)
+    _m = sealed.get("messages")
+    if isinstance(_m, tuple):
+        sealed["messages"] = list(_m)     # scrubbed and gated like a list (NS-34.6-8)
+    elif isinstance(_m, dict):
+        sealed["messages"] = [_m]         # one message where the list belongs
+    elif _m is not None and not isinstance(_m, (list, str, bytes)) and hasattr(_m, "__iter__"):
+        sealed["messages"] = list(_m)     # a generator or other iterable of messages
     try:
-        for key in ("system", "messages", "prompt", "context"):
+        # `input` (an OpenAI Responses-style payload) and `contents` (Gemini's shape): no
+        # caller builds them today; scrubbed and gated all the same, before anything does.
+        for key in ("system", "messages", "prompt", "context", "input", "contents"):
             if key in sealed and not _unrestricted:
                 sealed[key] = _scrub_all(sealed[key], _lk)
     except Exception as e:
@@ -2490,6 +2497,13 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
         _sys = sealed["system"]
         if isinstance(_sys, str):
             sealed["system"] = _gate_text(_sys, provider, "system", log_path)
+        elif isinstance(_sys, dict):
+            # One block where a string or a list belongs (NS-34.6-8).
+            if isinstance(_sys.get("text"), str):
+                sealed["system"] = {**_sys, "text": _gate_loose_text(_sys["text"], provider, "system.text", log_path)}
+            else:
+                _log(provider, "system", Tier.SENSITIVE, "block", "malformed system block withheld", log_path)
+                sealed["system"] = _MESSAGE_WITHHELD
         elif isinstance(_sys, list):
             _blocks = []
             for _k, _b in enumerate(_sys):
@@ -2497,6 +2511,11 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
                     _blocks.append({**_b, "text": _gate_text(
                         _b.get("text", ""), provider, f"system[{_k}].text",
                         log_path)})
+                elif isinstance(_b, str):
+                    _blocks.append(_gate_loose_text(_b, provider, f"system[{_k}]", log_path))
+                elif isinstance(_b, dict) and isinstance(_b.get("text"), str):
+                    _blocks.append({**_b, "text": _gate_loose_text(
+                        _b["text"], provider, f"system[{_k}].text", log_path)})
                 else:
                     _blocks.append(_b)
             sealed["system"] = _blocks
@@ -2529,6 +2548,18 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     # untouched whenever `prompt` was the payload's only content.
     if "prompt" in sealed and isinstance(sealed["prompt"], str):
         sealed["prompt"] = _gate_text(sealed["prompt"], provider, "prompt", log_path)
+    elif "prompt" in sealed and isinstance(sealed["prompt"], (list, tuple, dict)):
+        # A list of prompts (completion APIs take one), or a structured prompt: every
+        # string in it is gated, its shape kept (NS-34.6-8).
+        sealed["prompt"] = _gate_json_value(sealed["prompt"], provider, "prompt", log_path)
+
+    # Other providers' message fields (see the scrub above): every string in them is
+    # gated, the shape kept.
+    for _key in ("input", "contents"):
+        if _key in sealed and isinstance(sealed[_key], str):
+            sealed[_key] = _gate_loose_text(sealed[_key], provider, _key, log_path)
+        elif _key in sealed and isinstance(sealed[_key], (list, tuple, dict)):
+            sealed[_key] = _gate_json_value(sealed[_key], provider, _key, log_path)
 
     # Federation task context (compute_client.py — the only caller today):
     # an arbitrary structured dict of task data, gated the same way a JSON

@@ -68,3 +68,21 @@ def test_a_local_only_result_in_an_odd_shape_is_withheld_under_any_consent():
 def test_a_withheld_content_block_says_so():
     out = _gate_messages([{"role": "user", "content": {"type": "text", "text": SECRET}}], "anthropic")
     assert out[0]["content"]["text"].startswith("[EGRESS-GATE")
+
+
+@pytest.mark.parametrize("payload", [
+    {"system": {"type": "text", "text": SECRET}},
+    {"system": {"parts": [SECRET]}},
+    {"system": [SECRET]},
+    {"system": [{"type": "input_text", "text": SECRET}]},
+    {"messages": {"role": "user", "content": SECRET}},
+    {"messages": iter([{"role": "user", "content": SECRET}])},
+    {"prompt": [SECRET]},
+    {"input": SECRET},
+    {"input": [{"role": "user", "content": SECRET}]},
+    {"contents": [{"role": "user", "parts": [{"text": SECRET}]}]},
+], ids=["system-dict", "system-dict-no-text", "system-str-block", "system-unknown-block", "messages-dict",
+        "messages-generator", "prompt-list", "input-str", "input-list", "gemini-contents"])
+def test_other_odd_shapes_are_gated_too(payload):
+    out = seal_outbound(dict(payload, model="claude-x"), "anthropic")
+    assert not _leaks({k: v for k, v in out.items() if k != "model"}), out
