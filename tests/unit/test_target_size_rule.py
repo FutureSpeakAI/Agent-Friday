@@ -1,4 +1,4 @@
-﻿"""Target size (WCAG 2.2 AA 2.5.8; north star NS-33.1-13).
+"""Target size (WCAG 2.2 AA 2.5.8; north star NS-33.1-13).
 
 Every control a person presses is at least 24 by 24 CSS pixels.
 tests/app/specs/target_size.spec.ts measures the drawn controls on the
