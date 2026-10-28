@@ -1918,10 +1918,58 @@ def turn_liveness(turn_id, now=None):
     }
 
 
+#: BD-16 / NS-29.2-1: which goal (and milestone) a task belongs to, so the process registry can
+#: show a process's ancestry. Set by services/goals when it starts a milestone's task.
+TASK_ANCESTRY: dict = {}
+_ANCESTRY_LOCK = threading.Lock()
+_ANCESTRY_MAX = 2000
+
+
+def note_task_ancestry(task_id, *, goal_id, milestone_id=None) -> None:
+    """Record that `task_id` runs for `goal_id` (and `milestone_id`). Never raises."""
+    if not task_id or not goal_id:
+        return
+    with _ANCESTRY_LOCK:
+        if len(TASK_ANCESTRY) >= _ANCESTRY_MAX:
+            for k in list(TASK_ANCESTRY)[: _ANCESTRY_MAX // 4]:
+                TASK_ANCESTRY.pop(k, None)
+        TASK_ANCESTRY[str(task_id)] = {"goal_id": str(goal_id),
+                                       "milestone_id": str(milestone_id) if milestone_id else None}
+    with PROCESSES_LOCK:
+        for p in PROCESSES.values():
+            if p.get("task_id") == task_id and not p.get("goal_id"):
+                p["goal_id"], p["milestone_id"] = str(goal_id), (str(milestone_id) if milestone_id else None)
+                p["principal"] = p.get("principal") if p.get("principal") not in (None, "owner") else "goal"
+
+
+def _ancestry(task_id) -> dict:
+    if not task_id:
+        return {}
+    with _ANCESTRY_LOCK:
+        return dict(TASK_ANCESTRY.get(str(task_id)) or {})
+
+
+def _principal_for(pid, goal_id, principal):
+    """Who the process works for (NS-29.2-1): the owner's own request, a goal, or a schedule."""
+    if principal:
+        return str(principal)[:40]
+    if goal_id:
+        return "goal"
+    if str(pid).startswith("sched-"):
+        return "schedule"
+    return "owner"
+
+
 def process_register(pid, *, name="Task", label=None, category="default",
                      icon="⚡", steps=None, model=None, color=None,
-                     task_id=None, eta_s=None, step_total=None):
+                     task_id=None, eta_s=None, step_total=None,
+                     goal_id=None, principal=None, stoppable=True, stop_note=None):
     """Register a new process for the holographic orb display.
+
+    BD-16 / NS-29.2-1 (one process registry): `goal_id` (else the goal the task belongs to,
+    note_task_ancestry), `principal` (who it works for: owner, goal, schedule; derived when
+    not given), `stoppable` and `stop_note` (a process that cannot be stopped safely says why;
+    the cancel route refuses it). `process_update` adds `cost_usd` and `receipt`.
 
     `color` (optional int, e.g. 0x22c55e) overrides the category/local orb color
     in the 3-D scene — used for the green vault-access orb.
@@ -1947,9 +1995,19 @@ def process_register(pid, *, name="Task", label=None, category="default",
                 task_id = _job.id
     except Exception:
         pass
+    _anc = _ancestry(task_id)
+    goal_id = goal_id or _anc.get("goal_id")
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
             "id": pid,
+            # NS-29.2-1: ancestry, principal, cost, receipt link, stop capability.
+            "goal_id": goal_id,
+            "milestone_id": _anc.get("milestone_id") if _anc.get("goal_id") == goal_id else None,
+            "principal": _principal_for(pid, goal_id, principal),
+            "cost_usd": 0.0,
+            "receipt_id": None,
+            "stoppable": bool(stoppable),
+            "stop_note": (str(stop_note)[:200] if stop_note else None),
             "name": name,
             "label": label or name,
             "category": category,
@@ -2021,7 +2079,8 @@ def _current_trace_id():
 
 def process_update(pid, *, status=None, progress=None, label=None,
                    step=None, steps=None, task_id=None, result=None,
-                   step_n=None, step_total=None):
+                   step_n=None, step_total=None, cost_usd=None, receipt=None,
+                   stoppable=None, stop_note=None):
     """Update an existing process entry.
 
     `result` attaches the process's final output (e.g. a local model's reply)
@@ -2050,6 +2109,22 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["steps"] = steps
         if task_id is not None:
             p["task_id"] = task_id
+            if not p.get("goal_id"):
+                _anc = _ancestry(task_id)
+                if _anc.get("goal_id"):
+                    p["goal_id"], p["milestone_id"] = _anc["goal_id"], _anc.get("milestone_id")
+                    if p.get("principal") in (None, "owner"):
+                        p["principal"] = "goal"
+        if cost_usd is not None:
+            try:
+                p["cost_usd"] = round(float(p.get("cost_usd") or 0.0) + max(0.0, float(cost_usd)), 6)
+            except (TypeError, ValueError):
+                pass
+        if receipt is not None:
+            p["receipt_id"] = str(receipt)[:120]
+        if stoppable is not None:
+            p["stoppable"] = bool(stoppable)
+            p["stop_note"] = (str(stop_note)[:200] if stop_note else None) if not stoppable else None
         if result is not None:
             p["result"] = str(result)[:4000]
         p["updated"] = _time.time()

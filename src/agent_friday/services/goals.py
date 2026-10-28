@@ -1141,6 +1141,13 @@ def _default_executor(goal: Dict[str, Any], milestone: Dict[str, Any], *,
     # the task runs, the next start finds the task through this record and
     # follows the task's own honest-resume verdict (see reconcile_on_boot).
     _note_run(goal.get("goal_id"), milestone.get("milestone_id"), task_id=tid)
+    try:
+        # NS-29.2-1: the task's processes show which goal and milestone they work for.
+        from agent_friday import core as _core
+        _core.note_task_ancestry(tid, goal_id=goal.get("goal_id"),
+                                 milestone_id=milestone.get("milestone_id"))
+    except Exception:
+        pass
     timeout = int(goal.get("milestone_timeout_seconds") or DEFAULT_MILESTONE_TIMEOUT_SECONDS)
     return _await_task(tid, milestone, timeout)
 

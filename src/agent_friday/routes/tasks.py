@@ -903,6 +903,10 @@ def cancel_process(pid):
         proc = dict(PROCESSES.get(pid) or {})
     if not proc:
         return jsonify({"ok": False, "error": "no such process"}), 404
+    if proc.get("stoppable") is False:
+        # NS-29.2-1: a process that cannot be stopped safely says so, and why.
+        return jsonify({"ok": False, "stopped": [],
+                        "error": proc.get("stop_note") or "This cannot be stopped safely part-way."}), 409
 
     # 1. The job flag, FIRST and unconditionally.
     #
