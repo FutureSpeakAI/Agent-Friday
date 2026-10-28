@@ -636,8 +636,10 @@ def set_label(account_id: str, label: str) -> dict | None:
 
 def remove_account(account_id: str) -> bool:
     """Revoke the grant at Google (best-effort), delete the encrypted token, and
-    drop the index entry. Audited."""
-    return remove_account_detail(account_id) is not None
+    drop the index entry. Audited. False when there is no such account, or its token
+    could not be deleted (it then stays listed)."""
+    out = remove_account_detail(account_id)
+    return bool(out and out.get("removed"))
 
 
 def remove_account_detail(account_id: str):
@@ -652,21 +654,38 @@ def remove_account_detail(account_id: str):
             return None
         # Best-effort remote revocation before we delete the local token.
         revoked = _revoke_remote(account_id)
+        token_deleted = legacy_deleted = True
         try:
             _token_path(account_id).unlink(missing_ok=True)
         except Exception:
-            pass
+            token_deleted = False
+        if not token_deleted:
+            # The account stays listed (and its Remove button with it) while its token is
+            # still on this PC: removing it from the list would hide a token left behind.
+            cs.audit_event(_AUDIT_CATEGORY, "disconnect", account_id=account_id,
+                           remote_revoked=revoked, token_deleted=False, success=False)
+            return {"removed": None, "revoked_at_google": bool(revoked), "last_account": False,
+                    "token_deleted": False, "legacy_deleted": True}
         index["accounts"] = [r for r in accounts if r.get("id") != account_id]
         _save_index(index)
         last = not index["accounts"]
         if last:
+            # Nothing of Google's sign-in is left behind with the last account: the record of
+            # which services answered, and the plaintext token the older single-account
+            # connect page wrote (calendar_engine.GOOGLE_TOKEN_PATH).
             try:
                 _SERVICE_STATE_FILE.unlink(missing_ok=True)
             except Exception:
                 pass
+            try:
+                from agent_friday.services.calendar_engine import GOOGLE_TOKEN_PATH as _legacy
+                _legacy.unlink(missing_ok=True)
+            except Exception:
+                legacy_deleted = False
     cs.audit_event(_AUDIT_CATEGORY, "disconnect", account_id=account_id,
-                   remote_revoked=revoked, success=True)
-    return {"removed": account_id, "revoked_at_google": bool(revoked), "last_account": last}
+                   remote_revoked=revoked, legacy_deleted=legacy_deleted, success=True)
+    return {"removed": account_id, "revoked_at_google": bool(revoked), "last_account": last,
+            "token_deleted": True, "legacy_deleted": legacy_deleted}
 
 
 def _revoke_remote(account_id: str) -> bool:

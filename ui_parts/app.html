@@ -22824,7 +22824,7 @@ function GoogleAccountsPanel(){
   const reconnectWithSending=(acc)=>apiFetch('/api/google/accounts/mailbox-scopes?account='+encodeURIComponent(acc.id)).then(r=>r.json()).then(d=>setMailboxAsk({account:acc,scopes:d.scopes||[]})).catch(()=>setMsg('Could not load the permission list.'));
   const removeAccount=async(id,email)=>{
     if(!window.confirm('Remove '+email+'? This revokes access.'))return;
-    try{const r=await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});const d=await r.json().catch(()=>({}));setAccounts(a=>a.filter(x=>x.id!==id));setMsg(d.message||'Removed.');}
+    try{const r=await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});const d=await r.json().catch(()=>({}));if(!r.ok){setMsg(d.message||'Error.');return;}setAccounts(a=>a.filter(x=>x.id!==id));setMsg(d.message||'Removed.');}
     catch(e){setMsg('Error.');}
   };
   const toggleSvc=async(id,svc,current)=>{

@@ -62588,6 +62588,10 @@ function GoogleAccountsPanel() {
         method: 'POST'
       });
       const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.message || 'Error.');
+        return;
+      }
       setAccounts(a => a.filter(x => x.id !== id));
       setMsg(d.message || 'Removed.');
     } catch (e) {

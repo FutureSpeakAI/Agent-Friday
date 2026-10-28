@@ -4,8 +4,8 @@ A connector's contract says, per operation Friday can perform through it: the to
 the service, whether it only reads or changes something at the provider, the provider
 permission (OAuth scope) it needs (`scopes` lists the permissions any one of which lets it
 run, or the ones it needs for the kind of file it reads), and its action class at Friday's
-checkpoint (governance/action_gate). GET /api/google/accounts/contract serves it (no screen reads
-it yet); answer_card, which carries out cards the operations below raised, is not an operation of
+checkpoint (governance/action_gate). GET /api/google/accounts/contract serves it, and the Google card in Settings shows it
+(google_card); answer_card, which carries out cards the operations below raised, is not an operation of
 its own;
 tests/unit/test_google_connector_contract.py fails when the code and the declaration drift
 apart (a Google tool with no declaration, a change declared as a read, an action class the
@@ -152,10 +152,12 @@ GOOGLE_SERVICE_SUMMARY: Dict[str, str] = {
 #: NS-23.1-3. How fast Friday calls Google, and what it does when Google says slow down.
 GOOGLE_RATE_LIMITS: Dict[str, Any] = {
     "gmail_retry": {"tries": 4, "first_delay_s": 0.8, "max_delay_s": 8.0, "batch_size": 50,
-                    "on": "Gmail reads and saving a draft, on a busy or rate-limit answer (429, "
-                          "5xx, rateLimitExceeded, userRateLimitExceeded): waits longer each time "
-                          "(or as Google asks), then says it could not. A draft save retried after "
-                          "Google failed to answer can, rarely, leave two drafts"},
+                    "on": "Gmail reads, saving a draft and mailbox changes (read/unread, star, labels, "
+                          "archive, trash, spam), on a busy or rate-limit answer (429, 5xx, "
+                          "rateLimitExceeded, userRateLimitExceeded): waits longer each time (or as "
+                          "Google asks), then says it could not. A draft save retried after Google "
+                          "failed to answer can, rarely, leave two drafts; a mailbox change made "
+                          "twice ends the same"},
     "other_services": ("Calendar, Drive, Docs, Sheets, Tasks and Contacts are not retried: a busy "
                        "answer is reported as busy and nothing is tried again, so a change is never "
                        "made twice"),
@@ -191,7 +193,8 @@ GOOGLE_API_CLIENTS: Dict[str, str] = {"gmail": "v1", "calendar": "v3", "drive": 
 GOOGLE_RECEIVES: List[str] = [
     "for a read: what is asked for (a search, a date range, a file or message id)",
     "for a change: the change itself (an event's details, a task's text, an email you approved)",
-    "the sign-in token with every call; never your other accounts' tokens or any other key",
+    "the sign-in token with every call; never your other accounts' tokens",
+    "when signing in or refreshing the token: Friday's own app id and secret for Google sign-in",
 ]
 
 #: NS-23.1-4. What Friday keeps on this PC from the Google connector, and for how long.
@@ -203,8 +206,19 @@ GOOGLE_RETENTION: List[Dict[str, str]] = [
      "module": "services/google_accounts.py"},
     {"what": "which Google services answered recently", "where": "google_accounts/service_state.json",
      "kept": "until replaced (shown as current for 10 minutes)", "module": "services/google_accounts.py"},
-    {"what": "a copy of the recent mail list and calendar prep", "where": "gmail/, messages/, calendar/",
+    {"what": "a copy of the recent mail list and calendar prep",
+     "where": "gmail/, gmail-cache.json, messages/, calendar/",
      "kept": "until the next sync replaces it, or you delete it in Settings > Privacy",
+     "module": "services/calendar_engine.py"},
+    {"what": "people you write to and meet with (from mail and calendar headers)",
+     "where": "relationships/", "kept": "encrypted, until you delete it in Settings > Privacy",
+     "module": "services/relationship_memory.py"},
+    {"what": "the phone list in Google Tasks: what Friday posted and what it saw ticked",
+     "where": "tasks_inbox/", "kept": "a signed record, kept; items are tidied from the list after 7 days",
+     "module": "services/tasks_inbox.py"},
+    {"what": "a sign-in file from the older single-account connect page", "where": "google_token.json",
+     "kept": "written in plain text by that page; moved into the encrypted store the first time "
+             "Friday finds it with no account connected, and deleted when the last account is removed",
      "module": "services/calendar_engine.py"},
     {"what": "emails waiting to be sent (scheduled or held) and their attachments",
      "where": "mail_outbox/", "kept": "until sent or cancelled", "module": "services/gmail_send.py"},
@@ -224,10 +238,13 @@ GOOGLE_REVOCATION: Dict[str, Any] = {
         "you can also revoke Friday at myaccount.google.com > Security > Third-party access)",
         "deletes the encrypted token from this PC",
         "drops the account from Friday's list; with the last account gone, the record of which "
-        "Google services answered goes too",
+        "Google services answered and the older sign-in file go too",
+        "YouTube publishing that uses the same Google sign-in stops working too",
     ],
     "keeps": "the receipts, the action ledger and the egress log (they are the record of what was "
-             "done); cached copies are replaced at the next sync",
+             "done); the people list (relationships/) and the phone-list record (tasks_inbox/) until "
+             "you delete them in Settings > Privacy; cached mail and calendar copies until the next "
+             "sync replaces them",
     "if_google_revokes": ("a call that finds access revoked does nothing, says so (\"[NOT DONE]\") and "
                           "marks the account \"Reconnect needed\""),
 }
@@ -271,14 +288,16 @@ def google_card() -> List[Dict[str, Any]]:
             "Asked for when you connect (reading): " + ", ".join(connect),
             "Asked for only by their own buttons (changing): " + ", ".join(change)]},
         {"heading": "Runs without a card", "lines": [
-            "Only these changes: " + ", ".join(no_card) + "; and in Gmail, read/unread, star and "
-            "labels. Everything else that changes something at Google waits for your yes."]},
+            "Only these changes: " + ", ".join(no_card) + "; in Gmail, read/unread, star and labels; "
+            "and, once you turn on the phone list, Friday posting, editing and removing items in its "
+            "own list in Google Tasks (up to %d posts a day). Everything else that changes something "
+            "at Google waits for your yes." % GOOGLE_RATE_LIMITS["friday_caps"]["tasks_inbox_posts_per_day"]]},
         {"heading": "What Google receives", "lines": list(GOOGLE_RECEIVES) + [
             "Friday talks to: " + ", ".join(d["host"] for d in GOOGLE_DESTINATIONS)]},
         {"heading": "Kept on this PC", "lines": ["%s (%s)" % (r["what"], r["kept"]) for r in GOOGLE_RETENTION]},
         {"heading": "Limits", "lines": [
-            "Gmail reads and draft saves: tried up to %d times when Google is busy, waiting longer "
-            "each time" % rl["gmail_retry"]["tries"], rl["other_services"], rl["sending"]] + list(GOOGLE_LIMITATIONS)},
+            "Gmail reads, draft saves and mailbox changes: tried up to %d times when Google is busy, "
+            "waiting longer each time" % rl["gmail_retry"]["tries"], rl["other_services"], rl["sending"]] + list(GOOGLE_LIMITATIONS)},
         {"heading": "Removing it", "lines": [GOOGLE_REVOCATION["how"]] + list(GOOGLE_REVOCATION["does"])
             + ["Kept after removal: " + GOOGLE_REVOCATION["keeps"],
                "If Google revokes access: " + GOOGLE_REVOCATION["if_google_revokes"]]},

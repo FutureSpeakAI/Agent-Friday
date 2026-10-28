@@ -66,8 +66,10 @@ def test_what_is_said_about_retries_is_true():
     from agent_friday.services import gmail_send
     assert "gmail_api.execute" not in inspect.getsource(gmail_send.send)
     assert "gmail_api.execute" in inspect.getsource(gmail_send.save_draft)
-    assert "draft" in _part("rate_limits")["gmail_retry"]["on"]
-    for mod in ("calendar_write.py", "google_contacts_write.py"):
+    on = _part("rate_limits")["gmail_retry"]["on"]
+    assert "draft" in on and "mailbox changes" in on
+    assert "gmail_api.execute" in (SRC / "services" / "gmail_mailbox.py").read_text(encoding="utf-8")
+    for mod in ("calendar_write.py", "google_contacts_write.py", "scheduling.py", "tasks_inbox.py"):
         assert "gmail_api" not in (SRC / "services" / mod).read_text(encoding="utf-8"), mod
 
 
@@ -108,9 +110,16 @@ def test_every_google_api_client_built_is_declared():
 
 
 def test_what_is_kept_names_modules_that_exist():
-    for r in _part("retention"):
+    kept = _part("retention")
+    for r in kept:
         assert (SRC / r["module"]).exists(), r
         assert r["what"] and r["kept"] and r["where"]
+    where = " ".join(r["where"] for r in kept)
+    for stem in ("google_accounts/tokens", "relationships/", "tasks_inbox/", "google_token.json",
+                 "gmail-cache.json", "mail_outbox/"):
+        assert stem in where, "kept on this PC but not declared: %s" % stem
+    eng = (SRC / "services" / "calendar_engine.py").read_text(encoding="utf-8")
+    assert "google_token.json" in eng      # the older connect page still writes it: declared
 
 
 def test_the_kept_and_limit_numbers_are_the_codes():
@@ -156,6 +165,31 @@ def test_removing_the_last_account_leaves_nothing_behind_and_says_if_google_did_
     assert not tok.exists() and not state.exists(), "Google data was left after the last account went"
 
 
+def test_the_older_plaintext_sign_in_file_goes_with_the_last_account(client, one_account, monkeypatch,
+                                                                    tmp_path):
+    ga, _tok, _state = one_account
+    from agent_friday.services import calendar_engine
+    legacy = tmp_path / "google_token.json"
+    legacy.write_text('{"refresh_token": "synthetic"}', encoding="utf-8")   # pragma: allowlist secret
+    monkeypatch.setattr(calendar_engine, "GOOGLE_TOKEN_PATH", legacy)
+    monkeypatch.setattr(ga, "_revoke_remote", lambda aid: True)
+    assert client.post("/api/google/accounts/acct0001/remove").status_code == 200
+    assert not legacy.exists(), "a plaintext Google sign-in file was left after the last account"
+
+
+def test_a_token_that_cannot_be_deleted_keeps_the_account_listed(client, one_account, monkeypatch):
+    ga, tok, _state = one_account
+    monkeypatch.setattr(ga, "_revoke_remote", lambda aid: False)
+
+    class Stuck:
+        def unlink(self, missing_ok=False):
+            raise PermissionError("in use")
+    monkeypatch.setattr(ga, "_token_path", lambda aid: Stuck())
+    r = client.post("/api/google/accounts/acct0001/remove")
+    assert r.status_code >= 400 and "still listed" in (r.get_json() or {}).get("message", "")
+    assert any(a["id"] == "acct0001" for a in ga._load_index()["accounts"])
+
+
 def test_a_confirmed_revoke_is_said_too(client, one_account, monkeypatch):
     ga, _tok, _state = one_account
     monkeypatch.setattr(ga, "_revoke_remote", lambda aid: True)
@@ -182,6 +216,7 @@ def test_the_card_states_everything_the_owner_needs():
     no_card = next(s for s in card if s["heading"] == "Runs without a card")["lines"][0]
     for tool in _contract()["changes_without_a_card"]:
         assert tool in no_card
+    assert "Google Tasks" in no_card, "the phone list's own changes run without a card and must say so"
     perms = " ".join(next(s for s in card if s["heading"] == "Permissions")["lines"])
     assert "reading" in perms and "changing" in perms
 
@@ -192,4 +227,5 @@ def test_the_settings_panel_shows_the_card_and_the_removal_answer(page):
     assert "GoogleConnectorCard" in text and "/api/google/accounts/contract" in text, \
         "the connector card is not on the Google settings panel"
     i = text.find("removeAccount")
-    assert "d.message" in text[i:i + 700], "the panel does not say whether Google confirmed the revoke"
+    assert "d.message" in text[i:i + 800], "the panel does not say whether Google confirmed the revoke"
+    assert "r.ok" in text[i:i + 800], "the panel drops an account the server did not remove"
