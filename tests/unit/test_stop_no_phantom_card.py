@@ -34,3 +34,16 @@ def test_a_card_verdict_with_no_card_on_file_is_refused(monkeypatch):
         assert "no card" in str(e).lower() or "nothing was proposed" in str(e).lower(), str(e)
         return
     raise AssertionError("a card the gate did not make was reported as pending: %r" % (out,))
+
+
+def test_under_stop_an_old_card_for_the_same_change_is_not_offered_again(monkeypatch):
+    monkeypatch.setattr(ag, "authorize_external",
+                        lambda *a, **k: ag.Verdict("card", ag.OUTWARD,
+                                                   "held: everything is stopped (the owner pressed Stop)"))
+    monkeypatch.setattr(ia, "_find_card", lambda name, detail: {"approval_id": "appr_old", "status": "expired"})
+    try:
+        out = ia._raise_card("calendar", "shift", {"lines": []}, title="Move 1 event", body="move")
+    except ia.Refused as e:
+        assert "stopped" in str(e).lower(), str(e)
+        return
+    raise AssertionError("an expired card was offered as waiting while everything is stopped: %r" % (out,))
