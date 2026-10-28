@@ -59,3 +59,29 @@ def test_a_grant_created_and_revoked_is_recorded(ev, monkeypatch, tmp_path):
     assert "grant.created" in types and "grant.revoked" in types
     [c] = [e for e in ev.replay() if e["type"] == "grant.created"]
     assert c["related_ids"]["grant"] == g["grant_id"] and c["payload"]["tools"] == ["send_email"]
+
+
+def test_a_second_stop_is_not_recorded_again_and_a_failed_record_never_holds_stop(ev, monkeypatch):
+    from agent_friday.services import global_stop
+    monkeypatch.setattr(global_stop, "_walk_lanes", lambda gen: {})
+    global_stop._reset_for_tests()
+    try:
+        global_stop.stop(by="owner", source="button")
+        global_stop.stop(by="owner", source="button")
+        assert _types(ev).count("safety.stop") == 1
+
+        def broken(*a, **k):
+            raise ev.EventNotPersisted("disk full")
+        monkeypatch.setattr(ev, "persist", broken)
+        global_stop.resume(by="owner", source="button")
+        assert not global_stop.active(), "a failed event record held the resume"
+        out = global_stop.stop(by="owner", source="button")
+        assert out.get("stopped") and global_stop.active(), "a failed event record held the stop"
+    finally:
+        global_stop._reset_for_tests()
+
+
+def test_a_card_raised_off_the_record_leaves_no_event_when_it_resolves(ev):
+    from agent_friday.services import approvals as ap
+    ap._feed("card_resolved", {"approval_id": "appr_off", "status": "expired", "off_record": True})
+    assert "approval.resolved" not in _types(ev)
