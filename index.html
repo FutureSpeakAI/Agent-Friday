@@ -15902,7 +15902,7 @@ function HeardFix({ m, onFix }) {
         onChange: e => setDraft(e.target.value),
         onKeyDown: e => {
           if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
-          else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+          else if (e.key === 'Enter' && !e.shiftKey && !fridayIsComposing(e)) { e.preventDefault(); send(); }
         } }),
       h('button', { type: 'submit', className: 'btn', style: btn }, 'Send the correction'),
       h('button', { type: 'button', className: 'btn', style: btn, onClick: () => setEditing(false) }, 'Cancel'));

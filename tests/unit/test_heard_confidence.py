@@ -124,3 +124,20 @@ def test_the_chat_shows_it_and_offers_a_correction(rel):
             or "{m.role==='user'&&m.via==='voice'&&<HeardFix m={m} onFix={t=>fixHeard(m,t)}/>}" in s)
     assert ("confidence: typeof m.confidence === 'number' ? m.confidence : null" in s
             or "confidence:typeof m.confidence==='number'?m.confidence:null" in s)
+
+
+def test_the_ears_a_real_call_uses_report_it():
+    """A local call's ear is CpuWhisperEar (in process) or WorkerEar (the CUDA worker, a child process)."""
+    from agent_friday.services import voice_workers as vw
+    from agent_friday.voice import worker as wk
+    cpu = vw.CpuWhisperEar.__new__(vw.CpuWhisperEar)
+    cpu._asr = NS(transcribe=lambda pcm: "hello", last_confidence=0.8)
+    assert cpu.transcribe(b"\x00\x00") == "hello" and getattr(cpu, "last_confidence", "absent") == 0.8
+    gpu = vw.WorkerEar(NS(transcribe_heard=lambda pcm: ("hello", 0.7), transcribe=lambda pcm: "hello"))
+    assert gpu.transcribe(b"\x00\x00") == "hello" and getattr(gpu, "last_confidence", "absent") == 0.7
+    src = (ROOT / "src" / "agent_friday" / "voice" / "worker.py").read_text(encoding="utf-8")
+    assert '"confidence": getattr(engine, "last_confidence", None),' in src, "the worker sends it with the words"
+    pytest.importorskip("numpy")
+    child = wk._WhisperCuda.__new__(wk._WhisperCuda)
+    child._m = NS(transcribe=lambda audio, **k: (iter([NS(text=" hi", avg_logprob=math.log(0.5), no_speech_prob=0.0)]), None))
+    assert child.transcribe(b"\x00\x00") == "hi" and getattr(child, "last_confidence", "absent") == 0.5

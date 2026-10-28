@@ -441,7 +441,7 @@ class VoiceSession:
             if utt:
                 text, ms = self._final_transcript(utt)
                 if text:
-                    self.run_turn(text, audio_ms=ms)
+                    self.run_turn(text, audio_ms=ms, confidence=self.last_heard_confidence)
             self.done.set()
 
     # ── ear ──────────────────────────────────────────────────────────────
@@ -457,8 +457,9 @@ class VoiceSession:
         else:
             out = self.ear.transcribe(pcm)
         # How sure the ear was, when it says (NS-22.2-6): kept per utterance, partials included.
-        conf = getattr(self.ear, "last_confidence", None)
-        self._heard_confs.append(conf if isinstance(conf, (int, float)) else None)
+        if (out or "").strip():
+            conf = getattr(self.ear, "last_confidence", None)
+            self._heard_confs.append(conf if isinstance(conf, (int, float)) else None)
         return out
 
     # ── talk-over ────────────────────────────────────────────────────────

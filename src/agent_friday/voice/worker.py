@@ -324,6 +324,9 @@ class _WhisperCuda:
         audio = np.frombuffer(pcm, dtype=np.int16).astype("float32") / 32768.0
         segments, _info = self._m.transcribe(audio, language=None, beam_size=1,
                                              vad_filter=False)
+        segments = list(segments)
+        from agent_friday.services.local_voice import heard_confidence
+        self.last_confidence = heard_confidence(segments)
         return "".join(seg.text for seg in segments).strip()
 
 
@@ -494,6 +497,8 @@ def serve(engine, inp, out) -> int:
                 t0 = time.perf_counter()
                 text = engine.transcribe(pcm)
                 send_json(out, {"text": text, "job": job,
+                                # How sure the ear was (north star 22.2-6); None from an engine that does not say.
+                                "confidence": getattr(engine, "last_confidence", None),
                                 "ms": int((time.perf_counter() - t0) * 1000)})
             elif op == "quit":
                 send_json(out, {"bye": True, "job": job})

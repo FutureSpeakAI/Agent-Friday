@@ -649,6 +649,7 @@ class WhisperASR:
         return "".join(seg.text for seg in segments).strip()
 
     def transcribe(self, pcm16_16k: bytes) -> str:
+        self.last_confidence = None
         if not pcm16_16k:
             return ""
         self.load()
