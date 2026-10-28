@@ -56,7 +56,7 @@ _LOADED = [False]
 #: "sms", "telegram", "discord": the words arrived from the owner's verified cell or an
 #: allowlisted chat (BD-13); resume never comes from these (it is a press on Friday's own page).
 SOURCES = ("button", "keyboard", "typed", "voice", "tool", "tray", "sms", "telegram", "discord",
-           "test", "other")
+           "phone_call", "test", "other")
 
 REFUSAL = ("[NOT RUN] Everything is stopped: the owner pressed Stop. Nothing new runs until "
            "they press Resume on Friday's own screen.")
@@ -214,7 +214,7 @@ def claim_ack(surface: str, target: str) -> Optional[str]:
     raw transport, since every other send is held while stopped."""
     surface = _norm_source(surface)
     target = str(target or "")
-    if not target or surface not in ("sms", "telegram", "discord"):
+    if not target or surface not in ("sms", "telegram", "discord", "phone_call"):
         return None
     with _LOCK:
         if not active():
