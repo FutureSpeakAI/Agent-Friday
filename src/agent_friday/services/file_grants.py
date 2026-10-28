@@ -946,6 +946,18 @@ _GRANT_SPAN_MAX_LEN = 50_000
 #: The gate asks `grant_is_live` before honouring one of those paragraphs.
 _GRANT_SPAN_PATHS: dict = {}
 _GRANT_SPAN_LOCK = threading.Lock()
+#: grant id -> (ledger rev, valid until, live). The answer holds until the
+#: ledger changes or the next scope grant expires, whichever comes first.
+_LIVE_CACHE: dict = {}
+
+
+def _next_expiry(state, now: float) -> float:
+    soonest = float("inf")
+    for g in state.grants.values():
+        exp = g.get("expires_ts")
+        if exp and exp > now:
+            soonest = min(soonest, float(exp))
+    return soonest
 
 
 def grant_is_live(grant_id: str) -> bool:
@@ -960,11 +972,21 @@ def grant_is_live(grant_id: str) -> bool:
     if not paths:
         return False
     try:
+        state = _load_state()
+        now = time.time()
+        with _GRANT_SPAN_LOCK:
+            hit = _LIVE_CACHE.get(grant_id)
+        if hit is not None and hit[0] == state.rev and now < hit[1] and hit[3] == len(paths):
+            return hit[2]
+        live = True
         for p in paths:
             res = check_grant(Path(p))
             if res.state != "active" or res.grant_id != grant_id:
-                return False
-        return True
+                live = False
+                break
+        with _GRANT_SPAN_LOCK:
+            _LIVE_CACHE[grant_id] = (state.rev, _next_expiry(state, now), live, len(paths))
+        return live
     except Exception:
         return False
 

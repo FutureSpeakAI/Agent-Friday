@@ -18,13 +18,7 @@ from agent_friday.services.egress_gate import _gate_text
 
 
 def _clear():
-    with eg._TRUSTED_LOCK:
-        eg._PUBLIC_PARAS.clear()
-        eg._PUBLIC_ORIGINS.clear()
-        eg._OVERRIDE_PARAS.clear()
-        eg._PROVIDER_ECHO.clear()
-        eg._PARA_ORIGINS.clear()
-        eg._OVERRIDE_ORIGINS.clear()
+    eg._reset_registries_for_tests()
 
 
 @pytest.fixture(autouse=True)

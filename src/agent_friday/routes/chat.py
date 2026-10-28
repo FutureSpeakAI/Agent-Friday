@@ -1787,6 +1787,7 @@ def chat():
                     gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
                     from agent_friday.services.image_egress import strip_metadata
                     img_bytes, _img_meta = strip_metadata(base64.b64decode(screenshot_b64))
+                    _img_len = len(img_bytes)
                     vision_resp = gclient.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=[
