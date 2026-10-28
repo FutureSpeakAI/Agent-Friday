@@ -54,19 +54,66 @@ def _lib_trace():
 def test_a_web_footnote_pairs_its_sentence_with_what_the_tool_returned(ch):
     reply = "The library is closed on Sundays [web:%s]. Ask me anything else." % URL
     got = ch.pairs(reply, TRACE)
-    assert got == [("web", "The library is closed on Sundays .", TRACE[0]["result"])]
+    assert got == [("web", "The library is closed on Sundays", TRACE[0]["result"])]
 
 
 def test_a_library_footnote_pairs_with_its_fenced_passage(ch):
     reply = "The deposit is due when you sign [lib:12#345]."
     got = ch.pairs(reply, _lib_trace())
-    assert got == [("lib", "The deposit is due when you sign .", "The deposit is 2,000 and is due on signing.")]
+    assert got == [("lib", "The deposit is due when you sign", "The deposit is 2,000 and is due on signing.")]
+
+
+SEARCH = [{"name": "search_web", "input": {"query": "library hours"}, "result": (
+    "Results for library hours\n\n"
+    "1. Saltmarsh Library: hours\n   Closed on Sundays; open late on Thursdays.\n   https://example.org/x\n\n"
+    "2. Saltmarsh Library: events\n   Story time on Saturdays at 10.\n   https://example.org/x2")}]
+
+
+def test_a_search_hit_is_paired_with_its_own_block_not_the_next_one(ch):
+    got = ch.pairs("The library is closed on Sundays [web:https://example.org/x].", SEARCH)
+    assert len(got) == 1 and "Closed on Sundays" in got[0][2] and "Story time" not in got[0][2]
+    got = ch.pairs("Story time is on Saturdays [web:https://example.org/x2].", SEARCH)
+    assert len(got) == 1 and "Story time" in got[0][2] and "Closed on Sundays" not in got[0][2]
+
+
+def test_a_footnote_after_the_full_stop_belongs_to_the_sentence_before(ch):
+    reply = "The library is closed on Sundays. [web:%s] It has a cafe on the ground floor." % URL
+    assert [c for _, c, _ in ch.pairs(reply, TRACE)] == ["The library is closed on Sundays."]
+
+
+def test_list_items_are_separate_claims(ch):
+    reply = "- Closed on Sundays all year [web:%s]\n- Free parking for visitors nearby" % URL
+    assert [c for _, c, _ in ch.pairs(reply, TRACE)] == ["- Closed on Sundays all year"]
+
+
+def test_a_long_page_is_scored_on_its_best_window(ch, monkeypatch):
+    from agent_friday.services import evidence_heads
+    _heads(monkeypatch)
+    seen = []
+
+    def fake(claim, windows, cal, shadow=False):
+        seen.append(list(windows))
+        return [0.8 if "SUNDAYS" in w else 0.1 for w in windows]
+    monkeypatch.setattr(evidence_heads, "_series_one", fake)
+    page = ("filler words here. " * 60) + "CLOSED ON SUNDAYS. " + ("more filler text. " * 40)
+    assert ch.score("Closed on Sundays", page) == 0.8
+    assert 1 < len(seen[0]) <= ch.MAX_WINDOWS
+
+
+def test_a_turn_that_began_off_the_record_is_never_read(ch, monkeypatch):
+    _heads(monkeypatch)
+    ch._scorer_override = lambda claim, passage: 0.5
+    reply = "The library is closed on Sundays [web:%s]." % URL
+    assert ch.shadow_reply(reply, TRACE, start=(True, 1)) is False
+    assert ch.shadow_reply(reply, TRACE, start=(False, 0)) is False     # the generation moved since
+    assert ch.shadow_reply(reply, TRACE, start=(False, 1)) is True
 
 
 def test_a_footnote_with_no_passage_this_turn_is_left_to_provenance(ch):
     assert ch.pairs("Closed on Sundays [web:https://elsewhere.example/x].", TRACE) == []
     assert ch.pairs("Closed on Sundays [unverified-web:%s]." % URL, TRACE) == []
     assert ch.pairs("No footnotes here at all.", TRACE) == []
+    assert ch.pairs("Closed on Sundays [web:%s2]." % URL, TRACE) == []      # a longer URL is not this one
 
 
 @pytest.mark.parametrize("p,label", [(0.95, "supports"), (0.5, "unsure"), (0.1, "does_not_address")])
@@ -138,6 +185,8 @@ def test_the_chat_route_hands_the_final_reply_to_the_head_on_both_paths():
     from agent_friday.routes import chat
     src = Path(chat.__file__).read_text(encoding="utf-8")
     assert src.count("_cite_head.shadow_reply(reply, tool_trace") == 2
-    # after the Library footnotes are checked, so it reads the reply that is shown
-    for i in [n for n in range(len(src)) if src.startswith("_cite_head.shadow_reply(", n)]:
-        assert src.rfind("_library_cite.finish(", 0, i) > src.rfind("_mark_unverified_citations(reply", 0, i)
+    assert src.count("_cite_head_start.turn_start()") == 2
+    # each one after its own path's Library footnote check, so it reads the reply that is shown
+    calls = [n for n in range(len(src)) if src.startswith("_cite_head.shadow_reply(", n)]
+    finishes = [n for n in range(len(src)) if src.startswith("_library_cite.finish(", n)]
+    assert len(finishes) == 2 and finishes[0] < calls[0] < finishes[1] < calls[1]
