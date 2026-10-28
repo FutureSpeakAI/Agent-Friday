@@ -16,10 +16,11 @@ test.setTimeout(30 * 60_000);
 
 const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
-// Roles a person operates. A line of the aria snapshot for one of these with no quoted name has no name.
+// Roles a person operates. A line of the aria snapshot for one of these with no quoted name has no name, whether
+// or not a value follows it (`- textbox: what was typed` is a field with no name).
 const OPERABLE = ['button', 'link', 'textbox', 'searchbox', 'checkbox', 'radio', 'switch', 'combobox', 'slider',
   'spinbutton', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'treeitem'];
-const UNNAMED = new RegExp(`^\\s*- (${OPERABLE.join('|')}|img)(?:\\s*\\[[^\\]]*\\])*\\s*:?\\s*$`);
+const UNNAMED = new RegExp(`^\\s*- (${OPERABLE.join('|')}|img)(?:\\s*\\[[^\\]]*\\])*(?:\\s*:.*)?\\s*$`);
 
 type Finding = { workspace: string; role: string; line: string };
 
