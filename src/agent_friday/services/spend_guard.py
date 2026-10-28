@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime
@@ -63,6 +64,7 @@ _log = logging.getLogger("friday.spend_guard")
 
 HALT_LOG = FRIDAY_DIR / "spend_halts.jsonl"
 _LOCK = threading.Lock()
+_ID_WORD = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")   # a schedule or task id, nothing longer
 _NOTIFIED: Dict[str, str] = {}      # dedupe key -> stamp
 
 PERIODS = ("daily", "monthly")
@@ -227,6 +229,16 @@ def _record_halt(t: Dict[str, Any], provider: str, desc: str, attr: Dict[str, An
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     except Exception as e:
         _log.warning("could not write spend halt ledger: %s", e)
+    # the one record of what Friday did (services/action_ledger): numbers and
+    # ids only, never what was paused
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("spend_halt", {
+            "period": t["period"], "spend": t["spend"], "limit": t["limit"], "provider": provider,
+            **{k: str(attr[k])[:80] for k in ("schedule_id", "task_id")
+               if isinstance(attr.get(k), str) and _ID_WORD.fullmatch(str(attr[k])[:80])}})
+    except Exception:
+        pass
     p = t["period"]
     # One notification per distinct halted THING per period, so a 3am
     # scheduled job's halt is its own line in the morning, not lost behind

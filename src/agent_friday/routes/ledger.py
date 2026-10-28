@@ -65,6 +65,10 @@ KIND_LABELS = {
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
     "authority": "Action authority revoked or restored",
+    "spend_halt": "Paused by your spending cap",
+    "gate_event": "Checkpoint settings changed",
+    "file_grant": "File access granted, denied or revoked",
+    "setting_change": "A setting changed (with Undo)",
 }
 
 _LAST_FULL = [0.0]
