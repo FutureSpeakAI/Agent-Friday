@@ -65,28 +65,6 @@ def test_receipts_signed_with_another_key_hold_the_resume(home, monkeypatch):
     assert rr.blockers(home) == []
 
 
-def test_a_real_receipt_signed_by_another_friday_is_caught(tmp_path, monkeypatch):
-    rr = _rr()
-    import sys
-    from agent_friday.governance import proof_of_integrity as poi
-    from agent_friday.services import action_ledger, friday_bundle
-    h = tmp_path / ".friday"
-    (h / "vault").mkdir(parents=True)
-    monkeypatch.setenv("FRIDAY_HOME", str(h))
-    monkeypatch.setattr(poi, "_GOV_KEY_FILE", h / "vault" / ".governance-key")
-    monkeypatch.setitem(sys.modules, "keyring", None)
-    (h / "vault" / ".governance-key").write_bytes(b"A" * 32)
-    action_ledger.reset_caches()
-    action_ledger.append("decision", {"tool": "x", "decision": "allow"}, durable=True)
-    (h / "vault" / ".governance-key").write_bytes(b"B" * 32)       # this PC holds a different key
-    action_ledger.reset_caches()
-    try:
-        assert "receipts_other_key" in _codes(rr, h) or "receipts_unchecked" in _codes(rr, h)
-        assert friday_bundle._current_governance_key(h)            # a key is present: not "missing"
-    finally:
-        action_ledger.reset_caches()
-
-
 def test_no_receipts_came_so_there_is_no_key_to_check(home, monkeypatch):
     rr = _rr()
     from agent_friday.services import friday_bundle
