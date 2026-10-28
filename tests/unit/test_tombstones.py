@@ -741,6 +741,128 @@ def test_forgetting_a_person_purges_labels_that_name_them(home):
     assert find({"dana okafor"}, set()) == 0
 
 
+def _status_of(fact_id):
+    from agent_friday.services import memory_proposals as mp
+    conn = mp._connect()
+    try:
+        row = conn.execute("SELECT status, text, provenance FROM proposed_facts WHERE fact_id=?",
+                           (fact_id,)).fetchone()
+    finally:
+        conn.close()
+    return row
+
+
+def _entries(home):
+    return json.loads((home / "tombstones.json").read_text(encoding="utf-8"))["entries"]
+
+
+def test_a_rejected_row_still_blocks_its_exact_text_until_allowed_again(home):
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    said = "The user bakes bread on Saturdays."
+    assert _propose(DAY, said)["stored"] == 1
+    fid = mp.pending()[0]["fact_id"]
+    assert mp.reject([fid])["rejected"] == 1
+    [item] = tombstones.list_discarded()
+    # Even with the tombstone list lost, the rejected row itself holds the exact text back.
+    saved = (home / "tombstones.json").read_text(encoding="utf-8")
+    (home / "tombstones.json").write_text(json.dumps({"version": 1, "entries": []}), encoding="utf-8")
+    tombstones._reset_for_tests()
+    assert _propose(DAY2, said)["stored"] == 0, "a rejected row stopped blocking its text"
+    (home / "tombstones.json").write_text(saved, encoding="utf-8")
+    tombstones._reset_for_tests()
+    # Allow again marks the row, and the same words may be suggested again.
+    r = tombstones.undo_discard(item["id"])
+    assert r["ok"] and r["allowed_again"] == 1, r
+    assert _status_of(fid)[0] == "allowed_again"
+    assert _propose(DAY3, said)["stored"] == 1
+
+
+def _meeting_suggestion(text, meeting_id="meet-1"):
+    from agent_friday.services import memory_proposals as mp
+    span = {"i": 0, "t": 1.0}
+    assert mp.propose_from_meeting([{"category": "project", "text": text, "span": span}],
+                                   meeting_id, DAY, "gemma4:12b") == 1
+    [row] = [p for p in mp.pending() if (p.get("provenance") or {}).get("meeting_id") == meeting_id]
+    return row["fact_id"]
+
+
+def test_a_rejected_meeting_suggestion_keeps_no_label_and_can_be_allowed_again(home):
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    said = "Project Larch ships in the spring."
+    fid = _meeting_suggestion(said)
+    assert mp.reject([fid])["rejected"] == 1
+    [item] = tombstones.list_discarded()
+    assert item["label"] == "a discarded meeting suggestion from %s" % item["day"], item
+    assert item["sealed"] is False
+    raw = (home / "tombstones.json").read_text(encoding="utf-8")
+    assert '"label"' not in raw and "Larch" not in raw
+    status, text, prov = _status_of(fid)
+    assert status == "rejected" and text == ""
+    assert re.fullmatch(r"[0-9a-f]{32}", json.loads(prov)["tomb"])          # a keyed hash, no words
+    assert tombstones.is_tombstoned("proposal", said)
+    r = tombstones.undo_discard(item["id"])
+    assert r["ok"] and r["allowed_again"] == 1, r
+    assert _status_of(fid)[0] == "allowed_again"
+    assert not tombstones.is_tombstoned("proposal", said)
+
+
+def test_deleting_a_meeting_drops_its_discard_labels_and_keeps_the_block(home):
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    said = "Project Larch ships in the spring."
+    fid = _meeting_suggestion(said)
+    assert mp.reject([fid])["rejected"] == 1
+    # A label from before meeting suggestions stopped keeping one.
+    entries = _entries(home)
+    for e in entries:
+        if e.get("discard"):
+            e["label"] = tombstones._seal_label(said)
+            e.pop("src", None)
+    (home / "tombstones.json").write_text(json.dumps({"version": 1, "entries": entries}), encoding="utf-8")
+    tombstones._reset_for_tests()
+    assert "Larch" in tombstones.list_discarded()[0]["label"]
+    assert mp.purge_meeting("meet-1") == 1
+    [item] = tombstones.list_discarded()
+    assert item["label"] == "a discarded meeting suggestion from %s" % item["day"]
+    assert not any(e.get("label") for e in _entries(home))
+    assert tombstones.is_tombstoned("proposal", said), "deleting the meeting lifted the owner's no"
+
+
+def test_an_owner_delete_tombstone_is_never_turned_into_a_discard(home):
+    from agent_friday.services import core_memory as cm
+    from agent_friday.services import tombstones
+    assert cm.add("user", "Keeps bees.", actor="owner")["ok"]
+    assert cm.owner_delete("user", 0)["ok"]
+    before = _entries(home)
+    r = tombstones.add_discard("card_line", "Keeps bees.")
+    assert r["ok"] and r["id"] is None and r["listed"] is False, r
+    assert _entries(home) == before, "the owner's delete tombstone was changed"
+    assert tombstones.list_discarded() == []
+    assert tombstones.is_tombstoned("card_line", "Keeps bees.")
+
+
+def test_the_same_text_discarded_as_a_card_line_and_a_proposal_is_one_row_and_allowed_again_together(home):
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import tombstones
+    said = "I always run on Sundays."
+    assert _propose(DAY, said)["stored"] == 1
+    fid = mp.pending()[0]["fact_id"]
+    assert mp.reject([fid])["rejected"] == 1
+    # The card's Discard of the same words (core_memory.decide calls this; a
+    # real card suggestion of them is already held back by the proposal's no).
+    assert tombstones.add_discard("card_line", said)["id"]
+    [item] = tombstones.list_discarded()
+    assert sorted(item["kinds"]) == ["card_line", "proposal"], item
+    assert _norm(item["label"]) == "i always run on sundays"
+    r = tombstones.undo_discard(item["id"])
+    assert r["ok"] and r["removed"] == 2 and r["allowed_again"] == 1, r
+    assert tombstones.list_discarded() == []
+    assert not tombstones.is_tombstoned(tombstones.STATEMENT_KINDS, said)
+    assert _status_of(fid)[0] == "allowed_again"
+
+
 def test_undo_refuses_a_malformed_or_unknown_id(home):
     from agent_friday.services import tombstones
     assert tombstones.add_discard("card_line", "Keeps bees.")["ok"]
