@@ -624,30 +624,56 @@ def classify_command(cmd: str) -> tuple:
 
 
 #: Arguments that take a read-only command to another machine or online.
-_REMOTE_FLAGS = frozenset({"-computername", "-cn", "-cimsession", "-session", "-online",
-                           "-pssession", "/s", "-uri"})
+#: PowerShell accepts any unambiguous prefix of a parameter name, so these are
+#: matched by prefix (at least two letters after the dash).
+_REMOTE_FLAGS = ("-computername", "-cn", "-cimsession", "-session", "-online",
+                 "-pssession", "-uri", "-credential")
+#: Quote characters PowerShell honours, and the dashes it reads as "-".
+_QUOTES = "'\"‘’‚‛“”„‟`"
+_DASHES = {"–": "-", "—": "-", "―": "-"}
+#: A path to another machine anywhere in an argument: at its start, after a
+#: comma, an "=", a provider "::" or a "-Param:" prefix (either slash, any mix).
+_NETWORK_PATH = re.compile(r"(?:^|[,=]|::|^-[\w-]+:)[\\/]{2}")
 #: What may follow `git branch` / `git tag` / `git remote` and still only list.
 _GIT_LIST_FLAGS = {
     "branch": {"-l", "--list", "-v", "-vv", "-a", "--all", "-r", "--remotes",
-               "--show-current", "--merged", "--no-merged", "--contains", "--no-contains"},
-    "tag": {"-l", "--list", "-n", "--contains", "--no-contains", "--merged", "--no-merged"},
+               "--show-current", "--merged", "--no-merged", "--contains", "--no-contains",
+               "--sort", "--format", "--color", "--no-color", "--column", "--no-column",
+               "--points-at", "--abbrev", "--no-abbrev"},
+    "tag": {"-l", "--list", "-n", "--contains", "--no-contains", "--merged", "--no-merged",
+            "--sort", "--format", "--points-at", "--column", "--no-column", "--color"},
     "remote": {"-v", "--verbose"},
 }
-#: git options that write a file, run a program or change configuration.
+#: git options that write a file or run a program.
 _GIT_WRITE_OPTIONS = ("--output", "--ext-diff", "--textconv", "--exec", "--upload-pack",
-                      "--receive-pack", "--config-env", "--git-dir", "--work-tree")
+                      "--receive-pack", "--config-env", "--show-signature")
+
+
+def _normal_token(a: str) -> str:
+    """An argument as PowerShell will see it, for these checks: quotes gone,
+    typographic dashes made plain, lower case."""
+    s = "".join(_DASHES.get(ch, ch) for ch in a if ch not in _QUOTES)
+    return s.lower()
 
 
 def _argument_reach(head: str, args: list) -> str:
     """Why the arguments of an allowlisted command make it reach further than
     reading this machine, or "" when they do not."""
     for a in args:
-        low = a.lower().strip("'\"")
-        if low.startswith(("\\\\", "//")) or "\\\\?\\" in low or "\\\\.\\" in low:
+        low = _normal_token(a)
+        if low == "--%":
+            return "stop-parsing hands the rest to the program unread"
+        if _NETWORK_PATH.search(low) or "\\\\?\\" in low or "\\\\.\\" in low:
             return "it names another machine or a device path"
-        flag = low.split(":", 1)[0]
-        if flag in _REMOTE_FLAGS:
-            return "it asks another machine or goes online (%s)" % flag
+        if "::" in low:
+            return "a provider path can name another store or machine"
+        if low.startswith("-") and len(low) >= 3:
+            flag = low.split(":", 1)[0]
+            hit = next((r for r in _REMOTE_FLAGS if r.startswith(flag)), None)
+            if hit and len(flag) >= 3:
+                return "it asks another machine or goes online (%s)" % hit
+        if low == "/s":
+            return "it asks another machine (/s)"
         if "$" in low and not re.fullmatch(r"\$env:[a-z_][a-z0-9_]*(?:[\\/][^$]*)?", low):
             return "a variable can hold anything"
         if low.startswith("@"):
@@ -657,16 +683,19 @@ def _argument_reach(head: str, args: list) -> str:
     if not args or args[0].lower() not in _GIT_READ:
         return "a git command that is not read-only"
     sub = args[0].lower()
-    rest = [a.lower() for a in args[1:]]
-    for a in rest:
-        if a == "-c" or a.startswith(_GIT_WRITE_OPTIONS):
-            return "a git option that writes, runs a program or changes configuration"
+    raw_rest = [_DASHES.get(a[:1], a[:1]) + a[1:] for a in args[1:]]
+    rest = [a.lower() for a in raw_rest]
+    for a, raw in zip(rest, raw_rest):
+        if a.startswith(_GIT_WRITE_OPTIONS):
+            return "a git option that writes a file or runs a program"
+        if a.startswith(("--format", "--pretty")) and "%G" in raw:
+            return "a signature placeholder runs the signing program"
     if sub in _GIT_LIST_FLAGS:
         allowed = _GIT_LIST_FLAGS[sub]
         lists = any(a in ("-l", "--list") for a in rest)
         for a in rest:
             if a.startswith("-"):
-                if a.split("=", 1)[0] not in allowed:
+                if a.split("=", 1)[0] not in allowed and not (sub == "tag" and re.fullmatch(r"-n\d+", a)):
                     return "git %s %s can change the repository" % (sub, a)
             elif not (lists or sub == "branch" and any(
                     f in rest for f in ("--contains", "--no-contains", "--merged", "--no-merged"))):
@@ -675,10 +704,12 @@ def _argument_reach(head: str, args: list) -> str:
     return ""
 
 
-#: git subcommands that can run a program the repository's own configuration
-#: names (a diff driver, a text converter, a file-system monitor).
-_GIT_RUNS_CONFIGURED = {"status", "diff", "log", "show", "blame"}
-#: The options each of those takes to keep diff drivers and text converters off.
+#: Global options for every read-only git stage: no pager, no opportunistic
+#: index write (and so no index hook), no file-system monitor, no transport of
+#: any kind (a partial clone's lazy fetch), no signature program, no external diff.
+_GIT_READ_ONLY_GLOBALS = ("--no-pager --no-optional-locks -c core.fsmonitor=false "
+                          "-c protocol.allow=never -c log.showSignature=false -c diff.external=")
+#: The options a subcommand takes to keep diff drivers and text converters off.
 _GIT_NO_DRIVERS = {"diff": " --no-ext-diff --no-textconv", "log": " --no-ext-diff --no-textconv",
                    "show": " --no-ext-diff --no-textconv", "blame": " --no-textconv"}
 
@@ -690,13 +721,13 @@ def harden_read_only_git(cmd: str) -> str:
     out = []
     for stage in (cmd or "").split("|"):
         m = re.match(r"(\s*)git(\s+)(\S+)(.*)$", stage, re.S | re.I)
-        if not m or m.group(3).lower() not in _GIT_RUNS_CONFIGURED:
+        if not m or m.group(3).lower() not in _GIT_READ:
             out.append(stage)
             continue
         sub = m.group(3)
         extra = _GIT_NO_DRIVERS.get(sub.lower(), "")
-        out.append("%sgit -c core.fsmonitor=false -c diff.external=%s%s%s%s" % (
-            m.group(1), m.group(2), sub, extra, m.group(4)))
+        out.append("%sgit %s%s%s%s%s" % (
+            m.group(1), _GIT_READ_ONLY_GLOBALS, m.group(2), sub, extra, m.group(4)))
     return "|".join(out)
 
 

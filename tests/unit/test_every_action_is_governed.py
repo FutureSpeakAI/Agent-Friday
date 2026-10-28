@@ -158,7 +158,14 @@ def _handler_names():
 #: Calls through a name bound to a tool handler (an alias, a registry lookup
 #: kept in a variable, getattr of a `_tool_*` name), each reviewed: (file,
 #: enclosing function) -> why it is not a way around the checkpoint.
-REVIEWED_INDIRECT: dict = {}
+REVIEWED_INDIRECT: dict = {
+    ("services/setting_proposals.py", "_on_decision"):
+        "runs only after the owner approved the setting card (claim_for_execution, "
+        "authorize_external), and only a tool the gate classes internal",
+    ("services/setting_proposals.py", "tool"):
+        "the settings tool's own route to one internal settings tool (switch_model, "
+        "set_workspace_layout, show_my_day and the like), checked internal before it runs",
+}
 
 
 def _handler_ref(node, handler_names) -> bool:

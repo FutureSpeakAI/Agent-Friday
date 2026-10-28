@@ -38,7 +38,23 @@ REACHES_OUT = [
     "git diff --output=out.patch",
     "git diff --ext-diff",
     "git -c core.fsmonitor=calc.exe status",
-    "git log -c core.pager=calc",
+    # the same, written the ways PowerShell also reads them
+    r"Get-Content -Path:\\host\share\x",
+    r"Get-Content -LiteralPath:'\\host\share\x'",
+    r"Get-Content a.txt,\\host\share\x",
+    r"gci FileSystem::\\host\share",
+    "Get-Content '\\'\\host\\share\\x",
+    "Get-Content \u2018\\\\host\\share\\x\u2019",
+    r"Get-Content /\host\share\x",
+    "Get-Process -Comp srv01",
+    "Get-Service -Computer srv01",
+    "Get-Help Get-Item -On",
+    "Get-Process \u2013ComputerName srv01",
+    "gci --% %USERPROFILE%",
+    r"git blame --contents=\\host\s\f a.py",
+    "git log --show-signature",
+    "git log --format=%G?",
+    "git log --pretty=format:%GS",
 ]
 
 STILL_READ_ONLY = [
@@ -56,6 +72,15 @@ STILL_READ_ONLY = [
     "gci $env:USERPROFILE",
     r"gci $env:TEMP\logs",
     "Get-Content notes.txt | Select-String -Pattern 'needle'",
+    "git log -C --stat",
+    "git diff -M -C --name-only",
+    "git rev-parse --git-dir",
+    "git tag --sort=-creatordate",
+    "git tag -n5",
+    "git branch --sort=-committerdate --no-color",
+    "git log --format=%gd",
+    "Get-ChildItem -Recurse -Depth 2",
+    "Select-String -Pattern 'x' -Path *.py -Context 1",
 ]
 
 
@@ -72,23 +97,35 @@ def test_plain_reads_stay_read_only(cmd):
 
 
 class TestReadOnlyGitRunsNoConfiguredProgram:
-    def test_status_and_diff_are_told_to_skip_configured_programs(self):
-        out = G.harden_read_only_git("git status")
-        assert out.startswith("git -c core.fsmonitor=false -c diff.external= status")
+    GLOBALS = ("--no-pager", "--no-optional-locks", "-c core.fsmonitor=false",
+               "-c protocol.allow=never", "-c log.showSignature=false", "-c diff.external=")
+
+    def test_every_read_only_git_stage_gets_the_safe_globals(self):
+        for cmd in ("git status", "git branch -a", "git rev-parse HEAD", "git ls-files"):
+            out = G.harden_read_only_git(cmd)
+            head, _, tail = out.partition(cmd.split(" ", 1)[1].split(" ")[0])
+            assert all(g in head for g in self.GLOBALS), out
+            assert out.endswith(cmd[len("git "):]), out
+
+    def test_diff_drivers_and_text_converters_are_off(self):
         out = G.harden_read_only_git("git diff HEAD~1")
         assert "--no-ext-diff" in out and "--no-textconv" in out and out.endswith("HEAD~1")
-
-    def test_blame_takes_only_the_option_it_knows(self):
         out = G.harden_read_only_git("git blame a.py")
         assert "--no-textconv" in out and "--no-ext-diff" not in out
 
     def test_every_git_stage_in_a_pipeline(self):
         out = G.harden_read_only_git("git log --oneline | Select-String fix")
-        assert out.startswith("git -c core.fsmonitor=false") and out.endswith("| Select-String fix")
+        assert out.startswith("git --no-pager") and out.endswith("| Select-String fix")
 
     def test_other_commands_are_untouched(self):
-        for cmd in ("Get-ChildItem C:/Users", "git branch -a", "git rev-parse HEAD"):
+        for cmd in ("Get-ChildItem C:/Users", "Get-Content a.txt | Select-String git"):
             assert G.harden_read_only_git(cmd) == cmd
+
+    def test_the_read_only_sandbox_finds_no_repository_above_it(self, tmp_path):
+        from agent_friday.services import code_sandbox
+        env = code_sandbox._shell_env(tmp_path / "scratch", read_only=True)
+        assert env["GIT_CEILING_DIRECTORIES"] == str(tmp_path)
+        assert env["GIT_NO_LAZY_FETCH"] == "1"
 
     def test_the_run_path_hardens_what_it_runs_read_only(self, monkeypatch):
         """The command the sandbox receives is the hardened one."""
@@ -102,3 +139,21 @@ class TestReadOnlyGitRunsNoConfiguredProgram:
         agent._tool_run_command({"command": "git status"})
         assert seen.get("read_only") is True
         assert "core.fsmonitor=false" in seen.get("cmd", "")
+
+
+def test_a_setting_card_runs_only_an_internal_settings_tool(monkeypatch):
+    """A setting card whose payload names a tool that acts outside Friday
+    does not run it, even after the owner's yes."""
+    from agent_friday.services import agent, setting_proposals as sp
+    from agent_friday.services import approvals as ap, item_actions
+    ran = []
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "draft_email", lambda inp: ran.append(inp) or "sent")
+    monkeypatch.setattr(ap, "claim_for_execution", lambda aid: True)
+    monkeypatch.setattr(ap, "mark_used", lambda *a, **k: None)
+    monkeypatch.setattr(item_actions, "_post_back", lambda *a, **k: None)
+    monkeypatch.setattr(G, "authorize_external",
+                        lambda *a, **k: type("V", (), {"action": "allow", "reason": ""})())
+    sp._on_decision({"status": "approved", "approval_id": "a1", "payload": {
+        "handler": sp.HANDLER, "path": "settings.x", "tool": "draft_email",
+        "input": {"to": "someone@example.invalid", "send": True}}})
+    assert ran == []
