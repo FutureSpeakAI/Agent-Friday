@@ -9,13 +9,18 @@ What it holds, by category (each can be left out):
 * vault: the sealed vault folder, the keystore, Friday's own signing key for
   file grants and traces, and the vault passphrase (so the vault opens on the
   new machine);
-* settings: settings and privacy-shield settings, the MCP server list;
+* settings: settings and privacy-shield settings, the MCP server list, and the
+  data folder's schema number (schema.json), which is carried and restored
+  with whatever is chosen, so a restored folder never looks older than its
+  stores (services/migrations.py);
 * skills: the owner's and learned skills with their signed ledgers;
 * workspaces: built workspaces, codebases, Workspace Studio;
 * receipts: the action ledger, task journals, setup record, reasoning
   traces, provenance, governance records, approvals, the organize-undo store,
-  learning records, costs; and the governance key that signs them, so every
-  signature still checks on the new machine;
+  learning records, costs, the upgrade records (migrations/: receipts, the
+  index rebuild queue, the owner's list of what an upgrade left open); and the
+  governance key that signs them, so every signature still checks on the new
+  machine;
 * conversations;
 * other: anything else in the data folder that is not excluded below.
 
@@ -28,7 +33,8 @@ connectors are re-connected after a restore, §27.2), files only this machine
 can open (DPAPI blobs), this device's identity and grants (attestation key, TLS
 and local-address keys, the web session secret, desktop-control grants),
 downloads and caches (models, runtime, voice environments: fetched again),
-logs, and process files.
+logs, this PC's Doctor and diagnostic reports (a diagnostic start chosen here
+must not start one on the restored PC), and process files.
 
 A restore with --replace moves the WHOLE current folder aside (never deleted),
 including the categories a restore with --only leaves out.
@@ -148,6 +154,8 @@ _KEY_FILES = {"privacy/ledger_signing.key": "vault"}
 
 
 _FILE_CATEGORY_LOWER = {k.lower(): v for k, v in _FILE_CATEGORY.items()}
+#: Carried and restored whatever categories are chosen (see the docstring).
+SCHEMA_FILE = "schema.json"
 
 
 def documents_dir() -> Path:
@@ -213,7 +221,7 @@ def plan(home: Path, categories: Iterable[str] = CATEGORIES) -> dict:
             top = rel.parts[0]
             excluded[top] = excluded.get(top, 0) + 1
             continue
-        if cat not in want:
+        if cat not in want and str(rel).lower() != SCHEMA_FILE:
             left_out[cat] = left_out.get(cat, 0) + 1
             continue
         files.append((rel, cat))
@@ -1108,7 +1116,7 @@ def _restore_locked(path: Path, passphrase: str, *, home: Path, only, replace: b
 
     def sink(rel: str):
         cat = category_of(PurePosixPath(rel))
-        if cat is None or (chosen is not None and cat not in chosen):
+        if cat is None or (chosen is not None and cat not in chosen and rel.lower() != SCHEMA_FILE):
             return None
         dst = stage.joinpath(*PurePosixPath(rel).parts)
         try:

@@ -152,9 +152,28 @@ def _fold_restore_marker(home: Optional[Path]) -> None:
     d = _read(m, {})
     idx = d.get("indexes")
     request(idx if isinstance(idx, list) and idx else list(INDEXES), "a restore", home)
+    _settle_carried_upgrade_items(home, d.get("at"))
     try:
         m.unlink()
     except OSError:
+        pass
+
+
+def _settle_carried_upgrade_items(home: Optional[Path], restored_at) -> None:
+    """Items about an upgrade on the PC the bundle was made on (a failed, cut-off
+    or blocked migration) say nothing true about this folder: they are sorted.
+    Anything recorded after the restore stays."""
+    try:
+        at = float(restored_at)
+    except (TypeError, ValueError):
+        return
+    try:
+        from agent_friday.services import upgrade_review
+        for it in upgrade_review.listing(home):
+            if it["code"] in ("migration_failed", "migration_cut_off", "migration_link") \
+                    and float(it.get("last_at") or 0) < at:
+                upgrade_review.resolve(it["id"], home)
+    except Exception:  # noqa: BLE001
         pass
 
 
