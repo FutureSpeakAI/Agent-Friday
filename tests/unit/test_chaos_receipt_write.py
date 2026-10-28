@@ -134,3 +134,20 @@ def test_a_kill_while_the_head_is_replaced_leaves_no_temporary_file_behind(home)
     assert out["before"] == {"hold": None, "ok": True}
     assert out["after_ok"] is True and out["hold_after"] is None
     assert [f for f in out["files"] if f.endswith(".tmp")] == [], out["files"]
+
+
+def test_a_cut_that_removed_receipts_is_never_called_a_crash(home):
+    """A cut that ends mid-line and also took whole receipts away looks like a crash at
+    the end of the file, but the head is ahead of the file: that is a change on disk."""
+    r = _run("""
+        import json
+        L.append("probe", {"n": 3}, durable=True)
+        live = L.live_path()
+        lines = live.read_bytes().split(b"\\n")
+        # keep two whole receipts and half of the third: the third and the fourth are gone
+        live.write_bytes(b"\\n".join(lines[:2]) + b"\\n" + lines[2][: len(lines[2]) // 2])
+        L.reset_caches()
+        print(json.dumps({"hold": L.hold_reason()}))
+    """, home, expect=0)
+    hold = json.loads(r.stdout.strip().splitlines()[-1])["hold"] or ""
+    assert hold and "part-way through writing a receipt" not in hold, hold

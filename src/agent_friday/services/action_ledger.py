@@ -2003,6 +2003,20 @@ def _legacy_present() -> list[Path]:
         return []
 
 
+def _crash_shaped(p: dict) -> bool:
+    """A problem a crash part-way through a receipt leaves: an unfinished last line of the
+    live file, or the signed note that it was set aside. Nothing else (a cut that removed
+    records also shows the head ahead of the file, a separate problem)."""
+    return ((p.get("reason") == "an unfinished write" and p.get("segment") == LIVE_NAME)
+            or (p.get("segment") == "entry" and "unfinished write was set aside" in str(p.get("reason"))))
+
+
+def _only_a_crash(report: dict) -> bool:
+    """Every break the owner has not looked at yet is crash-shaped (so the crash sentence is true)."""
+    open_ = [p for p in report.get("problems", []) if not p.get("acknowledged")]
+    return bool(open_) and all(_crash_shaped(p) for p in open_)
+
+
 def hold_reason() -> Optional[str]:
     """A sentence when an outward action must wait for the owner to look at
     the ledger; None while it is intact (or every break is acknowledged). A
@@ -2016,7 +2030,7 @@ def hold_reason() -> Optional[str]:
         first = next((p for p in r.get("problems", []) if not p.get("acknowledged")), {})
         if first.get("segment") == "key":
             return "the action ledger cannot be checked: the governance key is unavailable"
-        if "unfinished write" in str(first.get("reason") or ""):
+        if _only_a_crash(r):
             # What a crash (or a kill) part-way through writing a receipt leaves: the
             # cut-off bytes are kept under ledger/torn/, nothing earlier is touched.
             return ("Friday stopped part-way through writing a receipt (record %s); the cut-off "
