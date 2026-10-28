@@ -161,6 +161,17 @@ def connect_google_account():
         if existing:
             login_hint = login_hint or (existing.get("email") or "")
             label = label or (existing.get("label") or "")
+    # A new write permission for an account Friday already has is asked for only after its
+    # permission difference was shown (BD-06, NS-23.2-2): the caller sends back the diff_id
+    # of GET /api/google/accounts/<id>/permission-diff for exactly these capabilities.
+    caps = [c for c, on in (("send", include_send or include_modify), ("calendar", include_calendar_write),
+                            ("tasks", include_tasks_write), ("contacts", include_contacts_write)) if on]
+    if existing and caps:
+        diff = ga.permission_diff(account_id, caps)
+        if str(body.get("diff_id") or "") != diff["diff_id"]:
+            return jsonify({"status": "needs_review", "diff": diff,
+                            "message": "Show what this adds first (the permission difference), "
+                                       "then ask Google."}), 409
     try:
         _flow_kw = dict(include_send=include_send, include_modify=include_modify,
                         include_contacts_write=include_contacts_write)
@@ -342,6 +353,20 @@ def google_connector_contract():
     Read-only; holds no account data."""
     from agent_friday.services import connector_contracts as cc
     return jsonify({"status": "ok", "contract": cc.google_contract()})
+
+
+@google_accounts_bp.route("/api/google/accounts/<account_id>/permission-diff")
+def google_permission_diff(account_id):
+    """What turning on new write capabilities (?capability=calendar, repeatable or comma
+    separated: send, calendar, tasks, contacts) would add for this account, in plain words.
+    Read-only; starts nothing."""
+    if not ga.get_account(account_id):
+        return jsonify({"status": "error", "message": "account not found"}), 404
+    caps = [c.strip() for v in request.args.getlist("capability") for c in v.split(",") if c.strip()]
+    try:
+        return jsonify({"status": "ok", "diff": ga.permission_diff(account_id, caps)})
+    except ValueError as e:
+        return api_error(e, "Not a capability Friday can ask for", 400)
 
 
 @google_accounts_bp.route("/api/google/accounts/mailbox-scopes")

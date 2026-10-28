@@ -13560,7 +13560,7 @@ function RelationshipPanel({onImported}){
   const importFile=async f=>{if(!f)return;setBusy('import');setMsg('');try{const text=await f.text();const r=await fetch('/api/contacts/import/linkedin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:text})});const d=await r.json();
     if(d.status==='ok'){const x=d.result;setMsg('LinkedIn: '+x.created+' added, '+x.updated+' updated'+(x.skipped_count?', '+x.skipped_count+' rows skipped':'')+(x.skipped_forgotten?', '+x.skipped_forgotten+' forgotten people left out':'')+'.');if(onImported)onImported()}
     else setMsg(d.message||'Import failed.')}catch(err){setMsg('Import failed.')}setBusy('')};
-  const allowSaving=async a=>{setMsg('');try{const r=await fetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:a.id,email:a.email,include_contacts_write:true})});const d=await r.json();
+  const allowSaving=async a=>{setMsg('');try{const df=await fetchPermissionDiff(a.id,['contacts']);if(!df){setMsg('Could not load what this would add.');return;}if(!window.confirm(permissionDiffText(df)))return;const r=await fetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:a.id,email:a.email,include_contacts_write:true,diff_id:df.diff_id})});const d=await r.json();
     if(d.status==='ok'&&d.auth_url)setConsent({url:d.auth_url,brief:d.prebrief||'',email:a.email});else setMsg(d.message||'Could not start sign-in.')}catch(err){setMsg('Could not start sign-in.')}};
   const done=async id=>{try{await fetch('/api/relationships/follow-ups/'+encodeURIComponent(id)+'/done',{method:'POST'})}catch(err){}load()};
   const small={fontSize:11};const readOnly=accts.filter(a=>!a.can_save);
@@ -22768,6 +22768,19 @@ function TasksInboxPanel() {
     }, 'Off, and ' + fridayName() + '’s list was removed from Google Tasks.')
   }, 'Turn off and remove the list')), limit, status);
 }
+// The permission difference (BD-06, NS-23.2-2): shown before Google is asked for a new write
+// permission; the connect route refuses one without its diff_id.
+function permissionDiffText(df){
+  const adds=(df.adds||[]).map(a=>'+ '+a.what);
+  return 'This asks Google for:\n'+(adds.length?adds.join('\n'):'nothing new (already allowed)')
+    +((df.lets_friday||[]).length?'\n\nIt lets Friday: '+df.lets_friday.join(', ')+'.':'')
+    +'\n\n'+(df.still||[]).join(' ')+'\n\nEverything else stays as it is. Continue to Google?';
+}
+async function fetchPermissionDiff(accountId,caps){
+  const r=await apiFetch('/api/google/accounts/'+encodeURIComponent(accountId)+'/permission-diff?capability='+encodeURIComponent(caps.join(',')));
+  const d=await r.json();
+  return d&&d.diff||null;
+}
 function GoogleAccountsPanel(){
   const[accounts,setAccounts]=useState([]);
   const[msg,setMsg]=useState('');
@@ -22806,6 +22819,14 @@ function GoogleAccountsPanel(){
     setLoading(true);
     try{
       const body=o.account?{account_id:o.account.id,email:o.account.email,mailbox:!!o.mailbox,include_calendar_write:!!o.calendarWrite,include_tasks_write:!!o.tasksWrite}:{label};
+      const caps=o.account?[o.mailbox&&'send',o.calendarWrite&&'calendar',o.tasksWrite&&'tasks'].filter(Boolean):[];
+      if(caps.length){
+        const df=await fetchPermissionDiff(o.account.id,caps);
+        if(!df){setMsg('Could not load what this would add.');setLoading(false);return;}
+        // "Reconnect with sending" has just shown its own permission list; the others are shown here.
+        if(!o.mailbox&&!window.confirm(permissionDiffText(df))){setLoading(false);return;}
+        body.diff_id=df.diff_id;
+      }
       const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       if(d.status==='ok'&&d.auth_url){

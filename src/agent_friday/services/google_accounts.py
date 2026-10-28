@@ -144,6 +144,56 @@ def mailbox_scopes(granted=None) -> list:
             for sc in list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY]]
 
 
+#: The write capabilities an account can be given, each by its own button, and the
+#: permissions each one asks Google for (build_auth_flow's include_* flags).
+CAPABILITY_SCOPES = {
+    "send": (GMAIL_SEND, GMAIL_MODIFY),          # "Reconnect with sending": one consent for both
+    "calendar": (CALENDAR_RW,),
+    "tasks": (TASKS_RW,),
+    "contacts": (CONTACTS_RW,),
+}
+_CAPABILITY_STILL = {
+    "send": ("Sending, archive, trash, spam, mute and unsubscribe each wait for your yes on a card; "
+             "read/unread, star and labels change without one."),
+    "calendar": "Each change to your calendar still waits for your yes on a card.",
+    "tasks": "Each change to your Google Tasks still waits for your yes on a card.",
+    "contacts": "Each save to Google Contacts still waits for your yes on a card.",
+}
+
+
+def permission_diff(account_id: str, capabilities) -> dict:
+    """What turning on new write capabilities for an account changes (BD-06, NS-23.2-2): each
+    permission Google will be asked for that the account does not have yet, what it lets Friday
+    do, what stays as it is, and a `diff_id` the connect route requires, so a new write
+    permission is never asked for without this having been shown first."""
+    import hashlib as _h
+    caps = sorted({str(c) for c in (capabilities or [])})
+    unknown = [c for c in caps if c not in CAPABILITY_SCOPES]
+    if unknown or not caps:
+        raise ValueError("unknown capability: %s" % ", ".join(unknown or ["(none)"]))
+    rec = get_account(account_id) or {}
+    granted = set(rec.get("scopes") or [])
+    asked = [s for c in caps for s in CAPABILITY_SCOPES[c]]
+    if "calendar" in caps and granted & set(CALENDAR_WRITE_SCOPES):
+        asked = [s for s in asked if s != CALENDAR_RW]           # calendar.events already allows it
+    adds = [s for s in dict.fromkeys(asked) if s not in granted]
+    try:
+        from agent_friday.services import connector_contracts as _cc
+        lets = sorted({o["tool"].replace("_", " ") for o in _cc.GOOGLE_OPERATIONS
+                       if o["access"] == "write" and set(o["scopes"]) & set(adds)})
+    except Exception:  # noqa: BLE001
+        lets = []
+    body = "%s|%s|%s" % (account_id, ",".join(caps), ",".join(sorted(adds)))
+    return {
+        "account_id": account_id, "capabilities": caps,
+        "adds": [{"scope": s, "what": _SCOPE_PLAIN.get(s, s)} for s in adds],
+        "already": [{"scope": s, "what": _SCOPE_PLAIN.get(s, s)} for s in sorted(granted)],
+        "lets_friday": lets,
+        "still": [_CAPABILITY_STILL[c] for c in caps],
+        "diff_id": _h.sha256(body.encode("utf-8")).hexdigest()[:16],
+    }
+
+
 def change_permissions(rec: dict) -> dict:
     """Whether an account may change its calendar and its Google Tasks (granted, not requested)."""
     sc = set((rec or {}).get("scopes") or [])
