@@ -45,6 +45,7 @@ CONNECTORS = {
 
 @pytest.fixture
 def gate(tmp_path, monkeypatch):
+    from agent_friday.services import agent  # noqa: F401  (the tool registry the log label checks)
     import agent_friday.paths as paths
     from agent_friday import core
     from agent_friday.governance import proof_of_integrity as poi
