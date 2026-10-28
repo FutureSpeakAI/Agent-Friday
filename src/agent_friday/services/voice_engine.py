@@ -3390,7 +3390,8 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
                       (user_msg or {}).get('id'), (friday_msg or {}).get('id'), _library_turn),
                 # A spoken turn may be someone other than the owner (a paired
                 # phone, a room): the memory review never saves from it silently.
-                kwargs={"owner": False, "web_sources": (friday_msg or {}).get('web_sources') or []},
+                # (The owner flag stays its own literal: test_memory_review pins it.)
+                kwargs={"owner": False} | {"web_sources": (friday_msg or {}).get('web_sources') or []},
                 daemon=True,
             ).start()
         except Exception as _ve:
