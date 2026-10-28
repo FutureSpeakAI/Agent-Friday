@@ -184,7 +184,19 @@ def propose(requested_by: str = "user", ids: Optional[List[str]] = None) -> Dict
         return {"status": "error", "message": exception_text(e, "The approval gate is unavailable: %s")}
     act = getattr(v, "action", "deny")
     if act == "allow":
-        return apply(pid, approval_id=None)
+        # the tidy's own result closes the card's decision: anything moved -> executed
+        ref = action_gate.decision_ref_of(v)
+        try:
+            res = apply(pid, approval_id=None)
+        except BaseException:
+            action_gate.close_external(ref, False, detail="tidy_error")
+            raise
+        moved = len((res or {}).get("moved") or [])
+        failed = len((res or {}).get("failed") or [])
+        ok = (res or {}).get("status") == "ok" and moved > 0
+        action_gate.close_external(ref, ok, detail="tidied" if ok and not failed else
+                                   "tidied_partly" if ok else "nothing_moved")
+        return res
     if act == "deny":
         return {"status": "denied", "message": getattr(v, "reason", "") or "Refused."}
     return {"status": "pending", "proposal": pid, "count": len(chosen), "message": "A card is asking you first.", "report": rep}

@@ -197,7 +197,7 @@ def _raise_card(domain: str, action: str, detail: dict, *, title: str, body: str
     if v.action == "allow":
         # An approved, unused card for exactly this change already existed and
         # the check just used it: run it now.
-        _start(detail, card.get("approval_id"))
+        _start(detail, card.get("approval_id"), action_gate.decision_ref_of(v))
         return {"status": "running", "approval_id": card.get("approval_id")}
     status = card.get("status") or "pending"
     out = {"status": "pending_approval" if status == "pending" else status,
@@ -2176,7 +2176,22 @@ def _execute(detail: dict, approval_id: str | None) -> dict:
     raise Refused("unknown batch")
 
 
-def _start(detail: dict, approval_id: str | None) -> threading.Event:
+def _close_batch(decision_ref, rec, ok: bool) -> None:
+    """The batch's own result closes the checkpoint's decision for it:
+    complete or partial -> executed, anything else -> failed. Never raises."""
+    try:
+        from agent_friday.governance import action_gate
+        status = str((rec or {}).get("status") or "")
+        action_gate.close_external(decision_ref, ok, detail=("batch_" + status)[:40] if status else
+                                   ("batch_done" if ok else "batch_failed"))
+    except Exception:  # noqa: BLE001 - a receipt never changes the batch
+        pass
+
+
+def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = None) -> threading.Event:
+    from agent_friday.governance import action_gate
+    # the batch runs on its own thread: its result closes the decision, not a request
+    action_gate.defer_external(decision_ref)
     ev = threading.Event()
     with _RUNS_LOCK:
         _RUNS[approval_id or ""] = {"event": ev, "receipt": None}
@@ -2196,6 +2211,7 @@ def _start(detail: dict, approval_id: str | None) -> threading.Event:
             text = "The approved change did not happen: %s" % (
                 getattr(e, "user_message", "") or exception_text(e))
             ok = False
+        _close_batch(decision_ref, rec, ok)
         if approval_id:
             try:
                 ap.mark_used(approval_id, "item_actions",
@@ -2216,7 +2232,11 @@ def _start(detail: dict, approval_id: str | None) -> threading.Event:
                 run["receipt"] = rec or {"status": "failed", "summary": text}
         ev.set()
 
-    threading.Thread(target=work, name="item-batch", daemon=True).start()
+    try:
+        threading.Thread(target=work, name="item-batch", daemon=True).start()
+    except BaseException:
+        action_gate.close_external(decision_ref, False, detail="batch_not_started")
+        raise
     return ev
 
 
@@ -2264,7 +2284,7 @@ def _on_decision(record: dict) -> None:
                    "You approved it, but Friday's governance check held it: %s. Nothing changed." % v.reason,
                    aid)
         return
-    _start(detail, aid)
+    _start(detail, aid, action_gate.decision_ref_of(v))
 
 
 def wait_for(approval_id: str, timeout: float) -> dict | None:

@@ -92,9 +92,31 @@ def receive_job():
 
     import threading
     job_id = data.get("job_id")
-    t = threading.Thread(target=prov.execute_job, args=(data,), daemon=True)
-    t.start()
+    # The job runs after this answer: its own result closes the decision
+    # (run_job_closing), so the request's settlement leaves it alone.
+    ref = action_gate.defer_external(action_gate.decision_ref_of(verdict))
+    t = threading.Thread(target=run_job_closing, args=(data, ref), daemon=True)
+    try:
+        t.start()
+    except BaseException:
+        action_gate.close_external(ref, False, detail="job_not_started")
+        raise
     return jsonify({"ok": True, "job_id": job_id, "status": "ACCEPTED"})
+
+
+def run_job_closing(data, ref):
+    """Run an approved federated job and close the checkpoint's decision from
+    the job's own result: COMPLETED -> executed, anything else -> failed (an
+    exception closes failed and is raised as before)."""
+    from agent_friday.governance import action_gate
+    try:
+        result = prov.execute_job(data)
+    except BaseException:
+        action_gate.close_external(ref, False, detail="job_error")
+        raise
+    ok = str((result or {}).get("status") or "").upper() == "COMPLETED"
+    action_gate.close_external(ref, ok, detail="job_completed" if ok else "job_failed")
+    return result
 
 
 @compute_bp.route("/api/federation/compute/status/<job_id>", methods=["GET"])

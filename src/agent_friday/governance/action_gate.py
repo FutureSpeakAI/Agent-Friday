@@ -1593,6 +1593,65 @@ def defer_external(ref: Optional[dict]) -> Optional[dict]:
     return ref
 
 
+def decision_ref_of(verdict: Any) -> Optional[dict]:
+    """The decision an allowing `authorize_external` verdict carries
+    (`detail['decision_ref']`), for its executor to close with the action's
+    own result. None for any other verdict. Never raises."""
+    try:
+        if getattr(verdict, "action", None) != "allow":
+            return None
+        ref = (getattr(verdict, "detail", None) or {}).get("decision_ref")
+        return ref if isinstance(ref, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+#: What of a decision a record keeps so a later reconcile can close it.
+_PORTABLE_KEYS = ("seq", "hash", "tool", "class", "decision", "action_id", "policy_version",
+                  "approval", "t", "_unconfirmed", "_closed")
+
+
+def portable_ref(ref: Optional[dict]) -> Optional[dict]:
+    """A decision as an operation record keeps it (JSON-safe), for an action
+    whose final state is known only later (a site publish the provider is
+    still building): `close_persisted` closes it from the reconcile. None when
+    there is nothing to keep. Never raises."""
+    try:
+        if not (isinstance(ref, dict) and ref.get("class") == OUTWARD and ref.get("action_id")):
+            return None
+        return {k: ref[k] for k in _PORTABLE_KEYS if k in ref}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _has_terminal_outcome(action_id: str) -> bool:
+    from agent_friday.services import action_ledger
+    for e in action_ledger.entries(["outcome"], newest_first=True,
+                                   where=lambda e: isinstance(e.get("rec"), dict)
+                                   and e["rec"].get("action_id") == action_id):
+        rec = e.get("rec") or {}
+        if rec.get("outcome") in TERMINAL_OUTCOMES or rec.get("terminal") is True:
+            return True
+    return False
+
+
+def close_persisted(ref: Optional[dict], ok: bool = True, *, detail: str = "",
+                    verified: bool = False, outcome: Optional[str] = None) -> bool:
+    """`close_external` for a decision kept on a record (`portable_ref`) and
+    read back, possibly after a restart: the ledger is asked first, so a
+    decision that already has its terminal outcome never gets a second one.
+    True when an outcome was written. Never raises."""
+    try:
+        if not (isinstance(ref, dict) and ref.get("action_id")) or ref.get("_closed"):
+            return False
+        if _has_terminal_outcome(str(ref["action_id"])):
+            ref["_closed"] = True
+            return False
+        return close_external(ref, ok, detail=detail, verified=verified, outcome=outcome)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def settle_request_externals(ok: bool, detail: str = "") -> int:
     """At the end of a request: every decision `record_external` wrote in it
     that its executor neither closed nor deferred is marked `unconfirmed` (not
@@ -2023,6 +2082,24 @@ class Held(RuntimeError):
     """An outward action the checkpoint would not let through."""
 
 
+def check_external() -> None:
+    """The checks `record_external` makes before its receipt (Stop is not
+    pressed, the cLaws are intact, no outward hold). Raises `Held`."""
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): held; the decision is not spent.
+        raise Held("everything is stopped (the owner pressed Stop); nothing was sent")
+    try:
+        ok, why = verify_claws()
+    except Exception as e:
+        raise Held(f"the cLaws integrity check could not run ({e})")
+    if not ok:
+        raise Held(f"the cLaws integrity check failed ({why})")
+    hold = outward_hold()
+    if hold:
+        raise Held(hold)
+
+
 def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
                     target: str = "") -> dict:
     """The checkpoint's integrity check and signed receipt, for an executor
@@ -2040,19 +2117,7 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     decision receipt carries no outcome word: nothing has run yet, and what
     became of the action is its outcome receipt's to say.
     """
-    import agent_friday.core as _core_gs
-    if _core_gs.GLOBAL_STOP.is_set():
-        # Stop everything (services/global_stop): held; the decision is not spent.
-        raise Held("everything is stopped (the owner pressed Stop); nothing was sent")
-    try:
-        ok, why = verify_claws()
-    except Exception as e:
-        raise Held(f"the cLaws integrity check could not run ({e})")
-    if not ok:
-        raise Held(f"the cLaws integrity check failed ({why})")
-    hold = outward_hold()
-    if hold:
-        raise Held(hold)
+    check_external()
     try:
         out = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
                         "surface": surface,

@@ -379,7 +379,11 @@ def _reconcile(op, *, generation=None):
     elif op["status"] in {"applying", "unknown", "provider_accepted", "provider_verified"}:
         op["status"] = "unknown"
         op["message"] = "The reviewed state is not confirmed. Inspect the current provider state before preparing another change; nothing was replayed."
+    # the confirmed state closes the decision an earlier attempt left unconfirmed
+    close = _close_reconciled(op)
     _save_op(op, generation=generation)
+    if close is not None:
+        close()
     return _public(op)
 
 
@@ -477,6 +481,10 @@ def _on_decision(record):
             from agent_friday.governance import action_gate
             decision = action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=plan["domain"])
             op.update(status="applying", attempted_at=time.time())
+            # kept on the record before anything is sent, so a later reconcile can close it
+            kept = action_gate.portable_ref(decision)
+            if kept:
+                op["decision_ref"] = kept
             _save_op(op)
             sites_privacy.require_operation(plan["owner"]["privacy_generation"], plan.get("privacy_boot"))
             attempted = True
@@ -505,8 +513,10 @@ def _on_decision(record):
     finally:
         with accounts.LOCK:
             result = _operation(op["operation_id"])
-        # the reconcile's own word closes the decision (BD-11a)
+        # the reconcile's own word closes the decision (BD-11a); while it is still unknown the
+        # decision stays on the record for the next reconcile (or the expiry) to close
         _close_decision(decision, result.get("status"))
+        _drop_kept_decision(op["operation_id"], decision)
         try:
             sites_privacy.require_generation(result["plan"]["owner"]["privacy_generation"])
         except ValueError:
@@ -529,8 +539,91 @@ def _close_decision(decision, status):
         return
     try:
         from agent_friday.governance import action_gate
-        action_gate.close_external(decision, word != "failed", detail="domain_" + str(status),
-                                   outcome=word, verified=word == "completed_verified")
+        # ledger-checked: the reconcile in the same run may already have closed the kept copy
+        action_gate.close_persisted(decision, word != "failed", detail="domain_" + str(status),
+                                    outcome=word, verified=word == "completed_verified")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+#: How long a decision may wait on its record for the final state before it is closed on expiry.
+DECISION_EXPIRE_S = 7 * 86400.0
+
+#: A reconciled change's final state, as an outcome word.
+_RECONCILED_OUTCOME = {"provider_verified": "completed_verified", "renewal_observed": "completed_verified"}
+
+
+def _drop_kept_decision(operation_id, decision):
+    """Once the decision is closed, take it off the stored operation. Never raises."""
+    if not isinstance(decision, dict) or not decision.get("_closed"):
+        return
+    try:
+        with accounts.LOCK:
+            op = _operation(operation_id)
+            if "decision_ref" in op:
+                op.pop("decision_ref", None)
+                _save_op(op)
+    except Exception:  # noqa: BLE001 - the ledger check keeps a later close from writing twice
+        pass
+
+
+def _close_reconciled(op):
+    """After a reconcile changed `op` (before it is saved): when its final state is known, take
+    its kept decision off the record and return a function that closes it (call it after the
+    save). None when there is nothing to close yet. Never raises."""
+    try:
+        ref = op.get("decision_ref")
+        status = str(op.get("status") or "")
+        word = _RECONCILED_OUTCOME.get(status)
+        if not isinstance(ref, dict) or not word:
+            return None
+        op.pop("decision_ref", None)
+
+        def close():
+            from agent_friday.governance import action_gate
+            action_gate.close_persisted(ref, True, outcome=word, verified=True,
+                                        detail="domain_reconciled_" + status[:30])
+        return close
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def expire_decisions(now=None, max_age=DECISION_EXPIRE_S):
+    """Close every kept decision whose final state nobody found out within `max_age` as failed,
+    with the reason (the reviewed state was never confirmed). Returns how many were closed.
+    Never raises."""
+    from agent_friday.governance import action_gate
+    now = time.time() if now is None else float(now)
+    due = []
+    try:
+        with accounts.LOCK:
+            for oid, op in (accounts.read().get("operations") or {}).items():
+                ref = (op or {}).get("decision_ref")
+                if isinstance(ref, dict) and now - float(ref.get("t") or 0) >= max_age:
+                    due.append((oid, ref, str(op.get("status") or "")))
+    except Exception:  # noqa: BLE001
+        return 0
+    closed = 0
+    for oid, ref, status in due:
+        try:
+            with accounts.LOCK:
+                op = _operation(oid)
+                op.pop("decision_ref", None)
+                try:
+                    _save_op(op)
+                except Exception:  # noqa: BLE001 - the ledger check prevents a second outcome
+                    pass
+            closed += bool(action_gate.close_persisted(
+                ref, False, outcome="failed", detail=("domain_expired_" + (status or "unknown"))[:40]))
+        except Exception:  # noqa: BLE001
+            continue
+    return closed
+
+
+def _expire_in_background():
+    try:
+        import threading
+        threading.Thread(target=expire_decisions, daemon=True, name="domain-decision-expiry").start()
     except Exception:  # noqa: BLE001
         pass
 
@@ -541,6 +634,8 @@ def register():
         from agent_friday.services import approvals
         approvals.register_decision_hook(KIND, _on_decision)
         _REGISTERED = True
+        # decisions a change left waiting on its record whose final state nobody found out
+        _expire_in_background()
 
 
 def execute(action, args=None, context=None):

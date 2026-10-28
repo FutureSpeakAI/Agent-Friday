@@ -183,21 +183,25 @@ class ChannelAdapter:
             raise
         ok = bool(isinstance(res, dict) and res.get("ok"))
         unsure = bool(isinstance(res, dict) and res.get("unsure"))
-        self.report_outbound(decision, ok, unsure)
+        # the service's own id for the message is its confirmation
+        verified = ok and bool(isinstance(res, dict) and (res.get("message_id") or res.get("id")))
+        self.report_outbound(decision, ok, unsure, verified=verified)
         record_channel_send(self.name, chat_id, gated[:self.max_chars] if self.max_chars else gated,
                             ok, unsure)
         return res
 
     @staticmethod
-    def report_outbound(decision, ok: bool, unsure: bool = False) -> None:
-        """The send's outcome for its checkpoint decision: sent -> executed; not
+    def report_outbound(decision, ok: bool, unsure: bool = False, *, verified: bool = False) -> None:
+        """The send's outcome for its checkpoint decision: sent -> executed
+        (completed_verified when the service returned the message's id); not
         sent -> failed; a send the transport could not confirm either way ->
         unconfirmed (not terminal, and never counted as done)."""
         from agent_friday.governance import action_gate as _gate
         if unsure:
             _gate.close_external(decision, True, detail="unsure", outcome=_gate.UNCONFIRMED)
         else:
-            _gate.close_external(decision, ok, detail="sent" if ok else "not_sent")
+            _gate.close_external(decision, ok, detail="sent" if ok else "not_sent",
+                                 verified=bool(ok and verified))
 
     def prepare_outbound_ref(self, chat_id: str, text: str):
         """(text, decision) for an adapter that sends on its own (a gateway's
