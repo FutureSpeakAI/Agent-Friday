@@ -91,6 +91,29 @@ def test_a_stale_copy_of_an_approval_cannot_burn_it_a_second_time(mail):
     assert second is False, "two holders of the same unburned copy were both told they were first"
 
 
+def test_a_burn_that_did_not_reach_the_disk_does_not_count(mail, monkeypatch):
+    """The store logs a failed write and carries on; a burn that was never saved would let the
+    next sender win too, so it sends nothing."""
+    aid = _approved()
+    monkeypatch.setattr(approvals, "_write_store", lambda recs: None)
+    with pytest.raises(gs.SendRefused):
+        gs.send(aid)
+    assert SENT == []
+
+
+def test_a_send_that_never_left_is_not_called_unconfirmed(mail, monkeypatch):
+    aid = _approved()
+
+    def _no_client(*a, **k):
+        raise RuntimeError("discovery document unavailable")
+    import googleapiclient.discovery as _disc
+    monkeypatch.setattr(_disc, "build", _no_client, raising=False)
+    with pytest.raises(gs.SendRefused) as err:
+        gs.send(aid)
+    assert not getattr(err.value, "unconfirmed", False)
+    assert "may have been sent" not in str(err.value).lower()
+
+
 def test_two_mail_sends_of_one_approval_at_once_send_one_message(mail, monkeypatch):
     """The second sender arrives after the first read the card and before it burned it (the
     receipt is written in between): the window the old burn left open."""
@@ -208,6 +231,7 @@ def test_two_texts_to_the_owner_at_once_cannot_pass_the_cap(phone_home, fake_twi
     verify_owner(monkeypatch)
     config.update({"owner_sms_per_hour": 1})
     passed = threading.Event()
+    reached = threading.Event()
     real_cp = service.checkpoint
     real_req = fake_twilio.request
 
@@ -219,6 +243,7 @@ def test_two_texts_to_the_owner_at_once_cannot_pass_the_cap(phone_home, fake_twi
 
     def req(method, url, **kw):
         if threading.current_thread().name == "first" and url.endswith("/Messages.json"):
+            reached.set()
             passed.wait(2.0)             # the second text checks the cap meanwhile, unless serialised
         return real_req(method, url, **kw)
     monkeypatch.setattr(fake_twilio, "request", req)
@@ -231,8 +256,7 @@ def test_two_texts_to_the_owner_at_once_cannot_pass_the_cap(phone_home, fake_twi
     first = threading.Thread(target=text, name="first")
     second = threading.Thread(target=text, name="second")
     first.start()
-    import time
-    time.sleep(0.2)
+    assert reached.wait(10), "the first text never reached Twilio"
     second.start()
     first.join(10)
     second.join(10)

@@ -342,28 +342,88 @@ _REQUEST_LOCK = _threading.RLock()
 REPEAT_WINDOW_S = 6 * 3600
 
 
-def _recent_pre_approved_copy(fingerprint: str, now: float | None = None) -> dict | None:
-    """The newest record of this exact message already spent under a pre-approval within
-    REPEAT_WINDOW_S (sent, maybe sent, or taken back), or None."""
-    from agent_friday.services import approvals as _ap
-    now = _time.time() if now is None else now
-    for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):
-        if (rec.get("payload") or {}).get("fingerprint") != fingerprint:
-            continue
-        if not rec.get("pre_approved") or not rec.get("consumed"):
-            continue
-        if now - float(rec.get("created_at") or 0) <= REPEAT_WINDOW_S:
-            return rec
+def repeat_key(to, cc, bcc, subject, body) -> str:
+    """The same message for retry purposes: every recipient (lower-cased, in any order, to/cc/bcc
+    alike), the subject and the text with case and spacing folded. Looser than the fingerprint,
+    which must match the approved bytes exactly: a retry that reorders recipients or adds a
+    trailing newline is still a retry."""
+    rc = sorted({a.lower() for a in _addresses(to or []) + _addresses(cc or []) + _addresses(bcc or [])})
+    fold = lambda s: " ".join(str(s or "").split()).lower()  # noqa: E731
+    return hashlib.sha256(json.dumps([rc, fold(subject), fold(body)]).encode("utf-8")).hexdigest()
+
+
+def _record_key(rec: dict) -> str:
+    p = rec.get("payload") or {}
+    return p.get("repeat_key") or repeat_key(p.get("to"), p.get("cc"), p.get("bcc"),
+                                             p.get("subject"), p.get("body"))
+
+
+def _outbox_row(approval_id: str) -> dict | None:
+    for row in outbox(limit=500):
+        if row.get("approval_id") == approval_id:
+            return row
     return None
 
 
-def _repeat_words(rec: dict, now: float | None = None) -> str:
+def _repeat_outcome(rec: dict) -> str | None:
+    """What became of an earlier copy, for the words on the repeat's card, or None when it
+    plainly did not go and was not refused by the owner (Gmail said no), so a retry is safe."""
+    status = (rec.get("status") or "").lower()
+    if status == "denied":
+        return "you said no to an identical message"
+    if not rec.get("consumed"):
+        # approved and waiting out its undo window or its scheduled time
+        return "an identical message is already waiting to go to them" if status == "approved" else None
+    used = str(rec.get("used_by") or "")
+    if used == "gmail_send":
+        return "an identical message was sent to them"
+    if used == "gmail_send_cancelled":
+        return "you took back an identical message"
+    if used == "gmail_send_grant_revoked":
+        return "an identical message was taken back when the pre-approval was revoked"
+    if used == "gmail_send_missed":
+        return "an identical message was not sent (Friday was off when it was due)"
+    row = _outbox_row(rec.get("approval_id") or "")
+    if row is None:
+        return "an identical message is being sent to them right now"
+    if row.get("unconfirmed"):
+        return "an identical message may have reached them (Gmail did not confirm it)"
+    if row.get("ok"):
+        return "an identical message was sent to them"
+    return None                                   # Gmail refused it outright: nothing went
+
+
+def _recent_copy(key: str, now: float | None = None) -> tuple[dict, str] | None:
+    """The newest earlier copy of this message within REPEAT_WINDOW_S that a pre-approval must
+    not repeat on its own (sent, maybe sent, in flight, taken back, or refused by the owner;
+    by card or by pre-approval alike), with what became of it; or None."""
+    from agent_friday.services import approvals as _ap
     now = _time.time() if now is None else now
-    mins = max(1, int(round((now - float(rec.get("created_at") or now)) / 60)))
+    for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):
+        try:
+            if _record_key(rec) != key:
+                continue
+        except Exception:
+            continue
+        when = max(float(rec.get(k) or 0) for k in ("created_at", "decided_at", "consumed_at", "used_at"))
+        if now - when > REPEAT_WINDOW_S:
+            continue
+        what = _repeat_outcome(rec)
+        if what:
+            return rec, what
+    return None
+
+
+def _repeat_words(rec: dict, what: str, now: float | None = None) -> str:
+    now = _time.time() if now is None else now
+    when = max(float(rec.get(k) or 0) for k in ("created_at", "decided_at", "consumed_at", "used_at"))
+    mins = max(1, int(round((now - (when or now)) / 60)))
     ago = ("%d minute%s ago" % (mins, "" if mins == 1 else "s")) if mins < 120 \
         else ("%d hours ago" % (mins // 60))
-    return ("an identical message was already sent to them under it %s (or tried: check Sent), "
-            "so sending it again is yours to decide" % ago)
+    went = what.startswith(("an identical message was sent", "an identical message may have",
+                            "an identical message is being sent", "an identical message is already waiting"))
+    return ("%s %s, so this one waits for you: %s" % (
+        what, ago, "Send puts a second copy in their inbox" if went else "Send sends it"))
 
 
 def request_send(**kw) -> dict:
@@ -432,8 +492,11 @@ def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     fp = message_fingerprint(tos, subject, body, cc, bcc, extras or None)
     live = _live_card(fp)
     if live is not None:
+        # A held pre-approved message is not waiting on a card: say which it is.
         return {"status": live.get("status"), "approval": live,
-                "approval_id": live.get("approval_id")}
+                "approval_id": live.get("approval_id"),
+                **({"pre_approved": live["pre_approved"]}
+                   if live.get("pre_approved") and live.get("status") == "approved" else {})}
 
     ccs = _addresses(cc or [])
     notes = []
@@ -462,13 +525,15 @@ def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
         if not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
             withheld = ("this message has private details and was written on a cloud model, "
                         "so you see it first")
-    # The same message already went (or may have) under a pre-approval a short while ago: a
-    # retry is not covered by it. It asks on this card, which says so.
+    # The same message went (or may have, or is waiting to, or the owner took it back or said
+    # no) a short while ago: a repeat is not covered by a pre-approval. It asks on this card,
+    # which says what became of the earlier one and what Send would do.
+    rkey = repeat_key(tos, cc, bcc, subject, body)
     repeat = None
     if not sensitive and not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
-        repeat = _recent_pre_approved_copy(fp)
+        repeat = _recent_copy(rkey)
         if repeat is not None:
-            withheld = _repeat_words(repeat)
+            withheld = _repeat_words(*repeat)
     if withheld:
         # A reason that names its own subject ("This chat read an outside email, so your
         # pre-approval doesn't cover this send") stands as it is.
@@ -493,7 +558,7 @@ def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  # it knows a card is one of ours; without it, approving an
                  # unrelated external message would reach send().
                  "handler": "gmail_send",
-                 "fingerprint": fp, "to": tos,
+                 "fingerprint": fp, "repeat_key": rkey, "to": tos,
                  "cc": ccs, "bcc": _addresses(bcc or []),
                  "subject": str(subject or ""), "body": str(body or ""),
                  "account_id": account_id,
@@ -697,12 +762,14 @@ def send(approval_id: str) -> dict:
 
     _burned, was_first = _ap._consume(appr)
     if not was_first:
-        raise SendRefused("that approval is already being used to send. "
-                          "Nothing was sent twice.")
+        raise SendRefused("that approval is already being used to send (or could not be marked "
+                          "as used). Nothing was sent by this request.")
 
+    request_started = False
     try:
         from googleapiclient.discovery import build
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        request_started = True
         sent = svc.users().messages().send(userId="me", body=send_body).execute()
     except Exception as e:
         _log.warning("send failed: %s", e)
@@ -714,6 +781,15 @@ def send(approval_id: str) -> dict:
             outcome = _eg.result_for_error(e)
         except Exception:
             outcome = "sent_unconfirmed"
+        if not request_started:
+            outcome = "failed"           # the client was never built: nothing left this PC
+        else:
+            try:
+                from google.auth.exceptions import RefreshError
+                if isinstance(e, RefreshError):
+                    outcome = "failed"   # the sign-in refresh fails before the message is posted
+            except Exception:
+                pass
         unconfirmed = outcome != "failed"
         _outbox_record(appr, ok=False, error=str(e)[:500], unconfirmed=unconfirmed)
         _record_egress(payload, raw, outcome)

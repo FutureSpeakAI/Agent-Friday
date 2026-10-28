@@ -277,7 +277,19 @@ def _send_sms_now(to: str, body: str, *, detail: str, secret: bool = False) -> d
         # The log row is shown in the phone panel: it carries the error id,
         # and the provider's own text stays in the local log.
         error_id = log_failure(e, "Twilio send failed")
-        _record_egress("sms", to, _sms_kept(to, body, secret), _error_result(e))
+        outcome = _error_result(e)
+        _record_egress("sms", to, _sms_kept(to, body, secret), outcome)
+        if outcome == "sent_unconfirmed":
+            # A timeout or a dropped answer: Twilio may have taken it. Counted against the
+            # owner caps like a send, and never worded as a plain "not sent".
+            spool.ledger_add(channel="sms", direction="out", party=to, status="unconfirmed",
+                             detail="%s — may have been sent (error %s)" % (detail, error_id))
+            err = PhoneRefused("Twilio did not confirm the text (error %s). It may have been sent."
+                               % error_id,
+                               detail="Twilio did not confirm the text, so it may have been sent; "
+                                      "do not send it again without checking: %s" % str(e)[:200])
+            err.unconfirmed = True
+            raise err
         spool.ledger_add(channel="sms", direction="out", party=to, status="failed",
                          detail="%s — not sent (error %s)" % (detail, error_id))
         raise PhoneRefused("Twilio did not take the text (error %s)." % error_id,
@@ -304,7 +316,7 @@ def text_owner(body: str, *, reason: str = "alert") -> dict:
         return _send_sms_now(owner, _gate_text(body), detail=reason)
 
 
-_OWNER_TEXT_LOCK = threading.Lock()
+_OWNER_TEXT_LOCK = threading.RLock()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

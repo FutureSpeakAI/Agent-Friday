@@ -56,6 +56,7 @@ def _isolated(tmp_path, monkeypatch, friday_dir):
     SENT.clear()
     _Exec.boom = None
     monkeypatch.setattr(action_gate, "_gov_dir", lambda: tmp_path)
+    monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(gmail_send, "sendable_accounts",
                         lambda: [{"id": "acct_owner", "email": "owner@example.test", "label": "Owner"}])
     monkeypatch.setattr(gmail_send, "scope_granted", lambda account_id=None: True)
@@ -82,16 +83,19 @@ def _isolated(tmp_path, monkeypatch, friday_dir):
     outside_content.reset_cache()
 
 
-def _grant(client):
-    r = client.post("/api/governance/send-grants", json={"scope": "recipients", "recipients": [TEAM]})
+OTHER = "lead@example.test"
+
+
+def _grant(client, recipients=(TEAM,)):
+    r = client.post("/api/governance/send-grants", json={"scope": "recipients", "recipients": list(recipients)})
     assert r.status_code == 201, r.get_data(as_text=True)
     return r.get_json()["grant"]
 
 
-def _send():
+def _send(to=TEAM, body="Synthetic weekly status."):
     from agent_friday.services import agent
-    out = agent._execute_tool("draft_email", {"to": TEAM, "subject": "Weekly status",
-                                              "body": "Synthetic weekly status.", "send": True},
+    out = agent._execute_tool("draft_email", {"to": to, "subject": "Weekly status",
+                                              "body": body, "send": True},
                               session_ctx=dict(SCHEDULED))
     return json.loads(out)
 
@@ -148,3 +152,23 @@ def test_a_different_message_to_the_same_people_still_goes_under_it(client):
         "draft_email", {"to": TEAM, "subject": "Another subject", "body": "Other synthetic text.",
                         "send": True}, session_ctx=dict(SCHEDULED)))
     assert other.get("pre_approved"), other
+
+
+def test_a_retry_with_the_recipients_reordered_is_still_a_retry(client):
+    _grant(client, recipients=(TEAM, OTHER))
+    assert _send(to=TEAM + ", " + OTHER).get("pre_approved")
+    _deliver_due()
+    again = _send(to=OTHER + ", " + TEAM, body="Synthetic weekly status.\n")
+    assert not again.get("pre_approved"), "a reordered retry went out under the pre-approval again"
+    _deliver_due()
+    assert len(SENT) == 1
+
+
+def test_a_retry_while_the_first_is_still_in_its_undo_window_is_the_same_message(client):
+    g = _grant(client)
+    first = _send()
+    again = _send()
+    assert again["approval_id"] == first["approval_id"]
+    assert again.get("pre_approved") == g["grant_id"], "a held pre-approved message was described as waiting on a card"
+    _deliver_due()
+    assert len(SENT) == 1

@@ -726,6 +726,13 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
         # from this moment (services/card_recovery), never from the decision.
         rec.update(consumed=True, consumed_at=time.time())
         _write_store(recs)
+        # _write_store logs a failed write and carries on. A burn that never reached the disk
+        # would let the next sender win too, so it counts only once it reads back burned: if it
+        # does not, nothing is sent by this caller (fail closed; the owner can ask again).
+        back = next((r for r in _read_store() if r.get("approval_id") == rec.get("approval_id")), None)
+        if not back or not back.get("consumed"):
+            _log.error("an approval could not be marked used, so nothing was sent on it")
+            return dict(rec), False
         return dict(rec), True
 
 
