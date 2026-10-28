@@ -8180,9 +8180,12 @@ def chain_run_status(name, run_id=None):
                             'step': x['index']}
             elif x['status'] == 'pending':
                 x['status'] = 'skipped'
-                x['reason'] = ("an earlier step's approval card expired, so this step did not run"
-                               if (stop or {}).get('type') == 'approval_expired'
-                               else "you declined an earlier step's approval card")
+                x['reason'] = {
+                    'approval_expired': "an earlier step's approval card expired, so this step did not run",
+                    'approval_blocked': "a safety rule blocked an earlier step's approval card, so this step did not run",
+                    'approval_withdrawn': ("an earlier step's approval was taken back when you revoked Friday's "
+                                           "authority, so this step did not run"),
+                }.get((stop or {}).get('type'), "you declined an earlier step's approval card")
                 # the typed reason it never ran (NS-32.8-1): which step's card, and what became of it
                 x['blocked_by'] = dict(stop) if stop else None
     elif statuses & {'failed', 'error', 'timeout'}:

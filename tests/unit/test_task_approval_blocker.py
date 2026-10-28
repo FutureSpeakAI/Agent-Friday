@@ -72,13 +72,20 @@ def test_the_step_that_never_ran_says_which_card_stopped_it(task, monkeypatch):
     assert "expired" in steps[1]["reason"]
 
 
+def _store(monkeypatch, tmp_path):
+    from agent_friday.services import approvals
+    monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
+    monkeypatch.setattr(approvals, "FRIDAY_DIR", tmp_path)
+    monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
+    from agent_friday.services import dissent_gate as dg
+    monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
+
+
 def test_a_card_taken_back_closes_its_task_at_once(task, monkeypatch, tmp_path):
     """Revoking Friday's authority takes back approved, unused cards; what waited on them is told
     now, not at the next sweep."""
     from agent_friday.services import approvals
-    monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
-    from agent_friday.services import dissent_gate as dg
-    monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
+    _store(monkeypatch, tmp_path)
     fired = []
     monkeypatch.setattr(approvals, "_HOOKS", {"tainted_action": [lambda rec: fired.append(rec)]})
     rec = approvals.create_approval(kind="tainted_action", subject_type="tool_action",
@@ -90,3 +97,24 @@ def test_a_card_taken_back_closes_its_task_at_once(task, monkeypatch, tmp_path):
     assert [r["approval_id"] for r in fired] == [rec["approval_id"]], "the task was not told"
     assert fired[0]["status"] == "expired" and fired[0].get("withdrawn") is True
     assert approvals.claim_for_execution(rec["approval_id"]) is False, "a taken-back card ran"
+
+
+def test_taking_back_cards_does_not_rejudge_other_kinds_or_one_mid_action(monkeypatch, tmp_path):
+    """Other owners never mark their cards used: an old goal card that already acted must not be
+    re-judged as declined. And a card its runner already claimed is mid-action: not taken back."""
+    from agent_friday.services import approvals
+    _store(monkeypatch, tmp_path)
+    fired = []
+    monkeypatch.setattr(approvals, "_HOOKS", {"goal_milestone": [lambda rec: fired.append(rec)],
+                                              "tainted_action": [lambda rec: fired.append(rec)]})
+    goal = approvals.create_approval(kind="goal_milestone", subject_type="goal", subject_id="g1:m1",
+                                     title="Run the step", action_description="run it", force_gate=True)
+    approvals._patch(goal["approval_id"], status="approved")
+    busy = approvals.create_approval(kind="tainted_action", subject_type="tool_action", subject_id="taint:busy",
+                                     title="Send it", action_description="send it", force_gate=True,
+                                     payload={"tool": "send_email"})
+    approvals._patch(busy["approval_id"], status="approved")
+    assert approvals.claim_for_execution(busy["approval_id"]) is True
+    approvals.withdraw_unused_approved(by="authority", note="revoked")
+    assert fired == [], "a hook was told about a card it should not be"
+    assert approvals.get_approval(busy["approval_id"])["status"] == "approved", "a card mid-action was taken back"
