@@ -903,13 +903,14 @@ def _formula_findings(ftext: str, name: str, ref: str, names_lower: set, known: 
     # A formula that reads another workbook may use that workbook's names
     # ([1]!MyName): they are not this workbook's to define, so not judged.
     if not external and not {"LET", "LAMBDA"} & set(bases):
-        for token in dict.fromkeys(scan["names"]):
-            up = token.upper()
+        for defined_name in dict.fromkeys(scan["names"]):
+            up = defined_name.upper()
             if up in ("TRUE", "FALSE") or up.startswith("_XLPM.") or _CELL.fullmatch(up.replace("$", "")) \
-                    or _COL_ONLY.fullmatch(token) or up in known:
+                    or _COL_ONLY.fullmatch(defined_name) or up in known:
                 continue
+            short = defined_name[:60]
             out.append(_finding("names", "error", "%s!%s uses the name '%s', which the workbook does not define"
-                                % (name, ref, token[:60]), **where))
+                                % (name, ref, short), **where))
     return out
 
 
