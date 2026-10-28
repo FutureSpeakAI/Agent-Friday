@@ -2935,6 +2935,9 @@ window.addEventListener('DOMContentLoaded',function(){
             padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
             border:1px solid rgba(255,255,255,0.07);
         }
+        /* Read by a screen reader, not drawn (the page's one top-level heading, say). */
+        .fr-sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+            clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
@@ -3757,6 +3760,9 @@ window.addEventListener('DOMContentLoaded',function(){
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
+        <!-- The page's one top-level heading: a screen reader's heading list starts here, and each open window
+             is a level-2 heading under it (north star 33.1-6). -->
+        <h1 class="fr-sr-only">Agent Friday™</h1>
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
 
@@ -14950,7 +14956,9 @@ function FWin({
     ws: id,
     glyph: emoji
   }), /*#__PURE__*/React.createElement("span", {
-    className: "fwin-title-text"
+    className: "fwin-title-text",
+    role: "heading",
+    "aria-level": 2
   }, title), /*#__PURE__*/React.createElement(ConnectorDot, {
     wsId: id
   }), /*#__PURE__*/React.createElement(WsCustomizedMark, {
