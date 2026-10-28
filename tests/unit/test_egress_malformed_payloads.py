@@ -54,3 +54,17 @@ def test_a_local_model_still_gets_everything():
     assert _gate_messages is not None
     out = seal_outbound({"messages": [SECRET]}, "ollama")
     assert out["messages"] == [SECRET]
+
+def test_a_local_only_result_in_an_odd_shape_is_withheld_under_any_consent():
+    from agent_friday.services.egress_gate import LOCAL_ONLY_MARK, _LOCAL_ONLY_WITHHELD
+    marked = LOCAL_ONLY_MARK + "the summary of the weather"
+    out = _gate_messages([marked, {"role": "user", "content": {"type": "text", "text": marked}},
+                          {"role": "user", "content": [marked, {"type": "input_text", "text": marked}]}], "anthropic")
+    assert out[0] == _LOCAL_ONLY_WITHHELD
+    assert out[1]["content"]["text"] == _LOCAL_ONLY_WITHHELD
+    assert out[2]["content"] == [_LOCAL_ONLY_WITHHELD, {"type": "input_text", "text": _LOCAL_ONLY_WITHHELD}]
+
+
+def test_a_withheld_content_block_says_so():
+    out = _gate_messages([{"role": "user", "content": {"type": "text", "text": SECRET}}], "anthropic")
+    assert out[0]["content"]["text"].startswith("[EGRESS-GATE")
