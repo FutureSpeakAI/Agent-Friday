@@ -218,6 +218,7 @@ def _tell_owner(count: int) -> None:
                       "%s" % (count, "The PIN is now locked: set it again in Friday's phone settings "
                               "on this computer." if count >= LOCK_AFTER else
                               "If that was not you, someone may be using your number.")),
-                priority="high", source="phone", kind="warning")
+                priority="high", source="phone", kind="call_pin_wrong", emitter="CP1",
+                dedupe_key="call-pin-wrong")
     except Exception:  # noqa: BLE001
         pass
