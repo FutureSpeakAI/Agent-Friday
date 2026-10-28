@@ -10677,7 +10677,7 @@ function TaskRecordsCard(){
     <div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>Every background task writes a journal (what it did, decided, called and spent) that survives restarts. Records are kept until you delete them, or for the number of days you set here. 0 keeps everything.</div>
     <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
       <span style={{fontSize:11,color:'#ccc'}}>Keep records for</span>
-      <input type="number" min="0" step="1" value={ret?ret.retention_days:0} disabled={!ret||saving}
+      <input aria-label="Keep records for (days)" type="number" min="0" step="1" value={ret?ret.retention_days:0} disabled={!ret||saving}
         onChange={e=>setRet({...ret,retention_days:parseInt(e.target.value||'0',10)||0})}
         onBlur={e=>save(parseInt(e.target.value||'0',10)||0)}
         style={{width:70,fontSize:11,padding:'2px 6px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',color:'#fff',borderRadius:4}}/>
