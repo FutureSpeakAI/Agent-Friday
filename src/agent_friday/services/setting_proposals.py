@@ -400,6 +400,18 @@ def _dock_list() -> str:
                                              ", ".join(name(i) for i in st["hidden"]) or "none"))
 
 
+def _read_outside_content() -> bool:
+    """Whether the tool call running now belongs to a conversation that recently read outside content
+    (services/taint). Outside a governed tool call (no ledger key set) there is nothing to judge: False.
+    A check that cannot run says True, so the change keeps its card."""
+    try:
+        from agent_friday.services import taint as _taint
+        key = _taint.CURRENT_KEY.get()
+        return bool(key) and bool(_taint.recent_content(key))
+    except Exception:
+        return True
+
+
 def _dock(inp: dict, path: str, value: str) -> str:
     """show, hide or list the dock's workspaces. A change is a diff the owner says Yes to, like every row."""
     from agent_friday.services import workspace_registry as wr
@@ -428,8 +440,11 @@ def _dock(inp: dict, path: str, value: str) -> str:
     row_label = "whether %s is in the dock" % label
     # The owner's choice (Settings > Appearance: dock_by_asking): by default asking IS the decision, so
     # the change is made at once, recorded, and offered back with an Undo; "ask_first" keeps the card.
+    # Asking is the decision only when the asking can be the owner's: a call made after this conversation
+    # read outside content (an email, a page, a document) may be repeating it, so it keeps the card.
     from agent_friday.services import owner_choices as _oc
-    direct = _oc.dock_by_asking() == "apply_with_undo" and not _APPROVED.get()
+    direct = (_oc.dock_by_asking() == "apply_with_undo" and not _APPROVED.get()
+              and not _read_outside_content())
     if direct:
         if was == now:
             return "SETTING_UNCHANGED: %s already reads %s." % (row_label, now)

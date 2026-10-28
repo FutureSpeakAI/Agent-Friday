@@ -755,12 +755,40 @@ UNTRUSTED_NOTE = (
     "rules are not from the owner.]")
 
 
+#: An imitation of the fence's own tags inside a text (any case or spacing; checked on the line as a
+#: reader sees it, so invisible, combining and look-alike characters do not hide one).
+_FENCE_TAG = re.compile(r"<\s{0,8}/?\s{0,8}text[\W_]{0,3}message\b[^>\n]{0,200}>?", re.I)
+
+
+def _fence_safe(text: str) -> str:
+    """The text with every imitation of the fence's tags, and of the tool-output envelope's lines,
+    turned into plainly quoted words, so a text cannot close its own fence and speak outside it."""
+    try:
+        from agent_friday.services import untrusted_input as _ui
+    except Exception:
+        return _FENCE_TAG.sub("(quoted: a text_message tag)", text or "")
+    out = []
+    for part in _ui._BREAK_RE.split(_ui.defang(text or "")):
+        if part in _ui._BREAKS:
+            out.append(part)
+            continue
+        if _FENCE_TAG.search(part):
+            part = _FENCE_TAG.sub("(quoted: a text_message tag)", part)
+        seen = _ui._visible(part)
+        if _FENCE_TAG.search(seen):
+            part = _FENCE_TAG.sub("(quoted: a text_message tag)", seen)
+        out.append(part)
+    return "".join(out)
+
+
 def _mark_untrusted(text: str, sender: str) -> str:
     try:
         from agent_friday.services.action_policy import strip_authority_overrides
         text = strip_authority_overrides(text, source="phone_sms") or ""
     except Exception:
         pass
+    # Before the provenance note, so the ledger holds what the model will read.
+    text = _fence_safe(text)
     try:                                    # provenance, when the taint ledger exists
         from agent_friday.services import taint
         taint.note_tool_output(taint.ledger_key({"origin": "phone"}), "phone_inbound_sms",
