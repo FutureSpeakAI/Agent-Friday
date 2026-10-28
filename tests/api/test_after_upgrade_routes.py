@@ -73,3 +73,17 @@ def test_the_presses_are_refused_from_another_machine_and_in_safe_mode(client, m
     monkeypatch.setattr(safe_mode, "active", lambda: True)
     r = client.post("/api/doctor/rebuild", json={"index": "library"}, headers=_press())
     assert r.status_code == 409 and r.get_json()["code"] == "safe_mode"
+
+
+def test_leaving_safe_mode_after_a_failed_upgrade_sorts_its_item(client):
+    _exists()
+    from agent_friday.services import safe_mode, upgrade_review
+    it = upgrade_review.add("migration_failed", "migration-1", "An upgrade step failed.", "Restart Friday.")
+    safe_mode.set_next_start(True, reason="migration_failed")
+    try:
+        r = client.post("/api/safe-mode", json={"next_start": False}, headers=_press())
+        assert r.status_code == 200
+        assert not any(x["id"] == it["id"] for x in upgrade_review.listing())
+    finally:
+        safe_mode.set_next_start(False)
+        upgrade_review.resolve(it["id"])
