@@ -651,8 +651,10 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
                 title = ap.notice_title(rec)[:120]
                 line = title
             else:
-                title = _gate_text((rec.get("title") or "an action")[:120])
-                line = "Friday needs your approval: %s" % title
+                # Owner ruling 5: a waiting card's notice says what kind of thing waits,
+                # never the card's own title (it can name an event, a task, a person).
+                title = ap.waiting_notice_title(rec)[:120]
+                line = title
             body = ("%s\nReply YES %s to approve or NO %s to "
                     "deny. Details are in the app." % (line, code, code))
             try:
@@ -664,8 +666,7 @@ def offer_pending_approvals(now: Optional[float] = None) -> int:
                 break
             st["codes"][aid] = {"salt": salt, "hash": _hash_code(code, salt),
                                 "expires": rec.get("expires_at") or (now + 86400),
-                                "title": (title if rec.get("kind") in ap.PRIVATE_DETAIL_KINDS
-                                          else (rec.get("title") or "")[:120])}
+                                "title": title}
             sent += 1
         for aid in list(st["codes"]):                 # decided elsewhere, or expired
             if aid not in live_ids or now > st["codes"][aid]["expires"]:

@@ -1360,7 +1360,9 @@ def _notify_pending(record: Dict[str, Any]) -> None:
         # kept or skipped by its own approval; the card is still an approval.
         if _pol.is_memory_proposal(record):
             meta["group"] = _pol.MEMORY_GROUP
-            meta["detail"] = (record.get("action_description") or "")[:300]
+            # Owner ruling 5: what Friday proposes to remember is not kept in the notice;
+            # the tray reads it from the waiting card when it is shown
+            # (notifications_engine.groups).
     except Exception:
         pass
     # Owner ruling 5: the notice (kept in notifications.json, and shown by anything that
