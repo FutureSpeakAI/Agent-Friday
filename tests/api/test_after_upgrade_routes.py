@@ -86,4 +86,5 @@ def test_leaving_safe_mode_after_a_failed_upgrade_sorts_its_item(client):
         assert not any(x["id"] == it["id"] for x in upgrade_review.listing())
     finally:
         safe_mode.set_next_start(False)
+        safe_mode.reset_for_tests()          # decided once per process: never from this test's marker
         upgrade_review.resolve(it["id"])

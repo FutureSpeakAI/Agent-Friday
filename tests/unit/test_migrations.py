@@ -29,7 +29,12 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("FRIDAY_HOME", str(h))
     (h / "settings.json").write_text(json.dumps({"agent_name": "Friday", "version": 3}), encoding="utf-8")
     (h / "notes.txt").write_text("before", encoding="utf-8")
-    return h
+    from agent_friday.services import safe_mode
+    safe_mode.reset_for_tests()
+    yield h
+    # safe mode is decided once per process: a marker a test wrote must not
+    # decide it for every later test in this worker
+    safe_mode.reset_for_tests()
 
 
 @pytest.fixture
