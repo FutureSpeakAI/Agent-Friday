@@ -81,7 +81,8 @@ def _m1_apply(home: Path) -> None:
     try:
         from agent_friday.services import store_inventory
         inv = store_inventory.public(store_inventory.inventory(home))
-        cur["stores"] = {r["store"]: r["version"] for r in inv["stores"] if r.get("durable", True)}
+        cur["stores"] = {r["store"]: r["version"] for r in inv["stores"]
+                         if r.get("durable", True) and r["store"] != "data_schema"}   # not itself
         cur["inventory_version"] = inv.get("inventory_version")
     except Exception as e:  # noqa: BLE001
         cur["stores"] = {}
