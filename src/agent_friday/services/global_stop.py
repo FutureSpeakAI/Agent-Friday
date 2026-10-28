@@ -436,9 +436,11 @@ def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict
     except Exception as exc:
         receipt_error = str(exc)[:200] or type(exc).__name__
         _log.error("stop receipt not written: %s", receipt_error)
-    if not was:
-        _record_event("safety.stop", by=by, source=source)   # NS-31.7-1: before the owner hears
     halted = _walk_lanes(gen)
+    if not was:
+        # NS-31.7-1: after the lanes (a slow disk never delays halting them), before stop()
+        # returns, which is when the owner is answered.
+        _record_event("safety.stop", by=by, source=source)
     try:
         _receipt("stop_lanes", by=by, source=source, halted=halted)
     except Exception as exc:

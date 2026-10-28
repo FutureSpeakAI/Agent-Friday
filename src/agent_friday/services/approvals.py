@@ -1258,7 +1258,7 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     """Tell every open Friday page (services/approval_feed.py). Best-effort:
     a page that misses this picks the card up from the pending list when it
     reconnects, and nothing here can fail an approval."""
-    if name == "card_resolved":
+    if name == "card_resolved" and not record.get("off_record"):
         # NS-31.7-1: the decision (or expiry, or withdrawal) is in the event log before any page
         # or the tray hears of it. Ids and kinds only. A record that fails is logged; the
         # decision itself is already saved and still reaches the owner.
