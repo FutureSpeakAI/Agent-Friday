@@ -278,14 +278,27 @@ _REF_KEY_LOCK = threading.Lock()
 
 
 def _ref_key_path() -> Path:
+    # Kept with the other local keys under ~/.friday/security (left out of
+    # exports as a secret), not in the card directory: everything in
+    # core_memory/ is the owner's card and its text journal, and a sealed
+    # key there is a binary file among them. Placed beside the card's own
+    # home (``_dir().parent`` is ``friday_home()``), so it follows the card.
+    return _dir().parent / "security" / "core-memory-line-ref.key"
+
+
+def _old_ref_key_path() -> Path:
+    """Where an earlier build of this slice kept the key, next to the card."""
     return _dir() / "line-ref.key"
 
 
 def _ref_key() -> Optional[bytes]:
-    """The local key line refs are made with: minted once, kept next to the
-    card through credential_store (sealed under the vault key or DPAPI when
-    either is there), never sent anywhere. A key file that exists but cannot
-    be read is not replaced (that would orphan every ref): None, no ref."""
+    """The local key line refs are made with: minted once, kept under
+    ~/.friday/security through credential_store (sealed under the vault key
+    or DPAPI when either is there), never sent anywhere. A key file that
+    exists but cannot be read is not replaced (that would orphan every ref):
+    None, no ref. A key left in the card directory by an earlier build is
+    moved to the new place (read, written, read back, then removed); if it
+    cannot be read it is left where it is and no new key is minted."""
     path = _ref_key_path()
     k = str(path)
     if k in _REF_KEYS:
@@ -298,11 +311,30 @@ def _ref_key() -> Optional[bytes]:
         except Exception:
             return None
         key = None
+        old = _old_ref_key_path()
         if path.exists():
             try:
                 key = _cs.read_secret(path)
             except Exception:
                 return None
+        elif old.exists():
+            try:
+                key = _cs.read_secret(old)
+            except Exception:
+                return None
+            if not key:
+                return None
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _cs.write_secret(path, key)
+                if _cs.read_secret(path) != key:
+                    return None
+            except Exception:
+                return None
+            try:
+                old.unlink()
+            except OSError:
+                pass
         if not key:
             import secrets as _secrets
             key = _secrets.token_bytes(32)
