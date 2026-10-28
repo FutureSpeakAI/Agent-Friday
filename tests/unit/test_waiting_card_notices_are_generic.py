@@ -68,3 +68,38 @@ def test_the_notice_for_a_held_card_that_ran_out_is_generic_too(pushed):
     ap._notify_expired_while_held(rec)
     note = [p for p in pushed if p.get("kind") == "approval_expired_held"][-1]
     assert "expired before you saw it" in note["title"] and SECRET not in _shown(note)
+
+
+def test_the_text_message_offer_is_generic_too(pushed, monkeypatch):
+    from agent_friday.phone import config as phone_config
+    from agent_friday.phone import service as phone_service
+    sent, saved = [], {}
+    monkeypatch.setattr(phone_config, "load", lambda: {"enabled": True, "sms_approvals": True})
+    monkeypatch.setattr(phone_config, "verified_owner_cell", lambda: "owner-cell")
+    monkeypatch.setattr(phone_service, "_may_text_about", lambda rec: True)
+    monkeypatch.setattr(phone_service, "_gate_text", lambda t: t)
+    monkeypatch.setattr(phone_service, "_load_state", lambda name, default: {"codes": {}, "failures": []})
+    monkeypatch.setattr(phone_service, "_save_state", lambda name, st: saved.update(st))
+    monkeypatch.setattr(phone_service, "text_owner", lambda body, reason="": sent.append(body))
+    monkeypatch.setattr(ap, "_hold", lambda rec: None, raising=False)
+    _card()
+    assert phone_service.offer_pending_approvals() == 1
+    assert SECRET not in sent[0] and "calendar" in sent[0].lower(), sent[0]
+    assert SECRET not in repr(saved), "the waiting card's title was kept in the text-approval state"
+
+
+def test_a_memory_proposal_notice_keeps_no_words_and_the_tray_still_shows_them(pushed, tmp_path, monkeypatch):
+    import agent_friday.notifications_engine as ne
+    from agent_friday.services import notification_policy as pol
+    words = "Dana's new address is 12 Synthetic Lane"
+    card = _card(kind="memory_proposal", subject_type="memory_proposal", title="Remember: " + words,
+                 description=words, action_description=words, payload={"tool": "memory_proposal"})
+    monkeypatch.setattr(pol, "is_memory_proposal", lambda rec: rec.get("kind") == "memory_proposal")
+    pushed.clear()
+    ap._notify_pending(ap.get_approval(card["approval_id"]))
+    stored = [p for p in pushed if p.get("kind") == "approval_pending"][-1]
+    assert words not in repr(stored), "what Friday proposes to remember was kept in the notice"
+    live = getattr(ne, "_with_live_detail", None)
+    assert live is not None, "the tray has no way to show the proposal without storing it"
+    shown = live({"meta": dict(stored.get("meta") or {})})
+    assert words in shown["meta"]["detail"]
