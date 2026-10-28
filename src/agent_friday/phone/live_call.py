@@ -146,10 +146,63 @@ def _stream_url(cfg: dict) -> str:
     return "wss://" + cfg["public_base_url"].split("://", 1)[-1] + "/twilio/media"
 
 
+#: A stream's signature covers only the fixed media URL, the same for every call, so
+#: the "direction" parameter cannot be trusted on its own: a captured signature could
+#: open a stream claiming "inbound". An inbound stream must carry a single-use ticket
+#: Friday minted in that call's own TwiML; without a good one the call is treated as
+#: one with someone else (NS-34.17-2).
+_TICKET_TTL_S = 120
+_USED_TICKETS: dict = {}
+_TICKET_LOCK = threading.Lock()
+
+
+def _ticket_key() -> bytes:
+    from agent_friday.governance.action_gate import _governance_key
+    import hashlib as _h
+    return _h.sha256(b"agent-friday/call-ticket/v1\0" + _governance_key()).digest()
+
+
+def mint_ticket(direction: str, call_sid: str) -> str:
+    import hashlib as _h
+    import hmac as _hm
+    import secrets as _s
+    body = "%s|%s|%d|%s" % (direction, call_sid or "", int(time.time()), _s.token_hex(8))
+    sig = _hm.new(_ticket_key(), body.encode("utf-8"), _h.sha256).hexdigest()
+    return body + "|" + sig
+
+
+def ticket_direction(ticket: str) -> str:
+    """The direction a good, fresh, unused ticket names; "" otherwise (spent here)."""
+    import hashlib as _h
+    import hmac as _hm
+    try:
+        body, sig = str(ticket or "").rsplit("|", 1)
+        direction, _sid, ts, _nonce = body.split("|")
+        good = _hm.compare_digest(sig, _hm.new(_ticket_key(), body.encode("utf-8"),
+                                               _h.sha256).hexdigest())
+    except Exception:
+        return ""
+    now = time.time()
+    if not good or not (0 <= now - int(ts) <= _TICKET_TTL_S):
+        return ""
+    with _TICKET_LOCK:
+        for k in [k for k, t in _USED_TICKETS.items() if now - t > 2 * _TICKET_TTL_S]:
+            _USED_TICKETS.pop(k, None)
+        if body in _USED_TICKETS:
+            return ""
+        _USED_TICKETS[body] = now
+    return direction
+
+
 def connect_twiml(cfg: dict, call_sid: str) -> str:
     """An inbound call from the owner's cell, answered live."""
+    try:
+        ticket = mint_ticket("inbound", call_sid)
+    except Exception:
+        ticket = ""                     # without one the call is treated as someone else
     return ("<Connect><Stream url=%s><Parameter name=\"direction\" value=\"inbound\"/>"
-            "</Stream></Connect>" % quoteattr(_stream_url(cfg)))
+            "<Parameter name=\"ticket\" value=%s/>"
+            "</Stream></Connect>" % (quoteattr(_stream_url(cfg)), quoteattr(ticket)))
 
 
 def outbound_twiml(cfg: dict, *, disclosure: str, opening: str, approval_id: str) -> str:
@@ -177,6 +230,18 @@ CALL_NOTE = (
     "booking, buying, changing anything), say you need to check with the person "
     "you work for, and write [[ASK_OWNER: <one line saying what, for whom>]] in "
     "your reply. That marker is not spoken; it asks the owner for approval.]")
+
+
+#: The whole system prompt on a call with someone other than the owner: who Friday is
+#: and how to behave, and nothing of the owner's notes, memory or files.
+OTHER_PARTY_SYSTEM = (
+    "You are Friday, an AI assistant, speaking on a phone call you placed on behalf of "
+    "the person you work for. The other person is not the person you work for. You know "
+    "only what was said on this call and the purpose you were given for it. Do not "
+    "guess at, or reveal, anything about the person you work for: their schedule, "
+    "contacts, files, notes or plans. If the other person asks for something that needs "
+    "them, say you will check, and write [[ASK_OWNER: <one line>]] in your reply. Keep "
+    "replies short and spoken.")
 
 
 def split_asks(reply: str):
@@ -303,15 +368,17 @@ class CallBridge:
         msgs[0]["content"] = named(CALL_NOTE) + "\n\n" + msgs[0]["content"]
         last = history[-1]["text"] if history else ""
         ctx = {"origin": "phone", "authenticated": False}
+        builder = lambda provider: _gated_system_prompt(provider, keywords=last)  # noqa: E731
         if str((self.params or {}).get("direction") or "").lower() != "inbound":
             # A call Friday placed (or one whose direction is unknown): the other
-            # person is not the owner. Only the owner's calendar may be read, to
-            # arrange a time; files, notes, the library and memory stay closed
-            # (agent._governance_check, NS-34.17-2).
+            # person is not the owner. No tool reads the owner's records
+            # (agent._governance_check), and the system prompt carries none of them
+            # either: no wiki or memory pulled in by what the other person says
+            # (NS-34.17-2). Anything that needs the owner goes through [[ASK_OWNER]].
             ctx["call_party"] = "other"
+            builder = lambda provider: OTHER_PARTY_SYSTEM  # noqa: E731
         reply, _ = _generate_agent(
-            msgs, session_ctx=ctx,
-            system_builder=lambda provider: _gated_system_prompt(provider, keywords=last),
+            msgs, session_ctx=ctx, system_builder=builder,
             workspace="chat", max_tokens=400)
         return reply or ""
 
@@ -365,7 +432,13 @@ class CallBridge:
             st = msg.get("start") or {}
             self.stream_sid = st.get("streamSid") or msg.get("streamSid") or ""
             self.call_sid = st.get("callSid") or ""
-            self.params = st.get("customParameters") or {}
+            self.params = dict(st.get("customParameters") or {})
+            # "inbound" only with the single-use ticket this call's own TwiML carried;
+            # otherwise the call is treated as one with someone else.
+            if str(self.params.get("direction") or "").lower() == "inbound" \
+                    and ticket_direction(self.params.get("ticket") or "") != "inbound":
+                self.params["direction"] = "unverified"
+            self.params.pop("ticket", None)
             opening = self.params.get("opening") or ""
             if opening:
                 self.history.append({"who": "friday", "text": opening})
