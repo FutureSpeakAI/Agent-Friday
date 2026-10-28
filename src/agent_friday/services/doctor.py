@@ -363,8 +363,8 @@ def _c_migrations():
         return "broken", "upgrade_failed_safe_mode_held"
     if migrations._journal_path(home).exists():
         return "repairing", "migration_journal_beside_folder"
-    if have < want:
-        return "repairing", "migration_pending:%d<%d" % (have, want)
+    if have < want:                      # runs at the next start (server.py), nothing is running now
+        return "unverified", "migration_pending_next_start:%d<%d" % (have, want)
     return "healthy", "schema_%d" % have
 
 
@@ -642,7 +642,8 @@ def render_text(report: dict) -> str:
         lines += ["", "Repairs offered (none needs a model):"]
         for cid, rs in sorted(rep.items()):
             for r in rs if isinstance(rs, list) else []:
-                lines.append("  %-16s %s" % (cid, r.get("label")))
+                lines.append("  %-16s %s%s" % (cid, r.get("label"),
+                                               (" (this page: %s)" % r["where"]) if r.get("where") else ""))
     au = report.get("after_upgrade")
     if isinstance(au, dict):
         un = au.get("unresolved") if isinstance(au.get("unresolved"), dict) else {}

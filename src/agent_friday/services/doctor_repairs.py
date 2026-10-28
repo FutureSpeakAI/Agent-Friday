@@ -8,7 +8,10 @@ asks a model, none reaches the network, and none changes the owner's settings
 behind their back. ``offered(checks)`` maps each check id that is not healthy
 to the repairs for it, as {id, label, where}: ``where`` is the Doctor page
 section that holds the press (an anchor), or "" for a step taken elsewhere.
-The Doctor report carries the ids and labels; the page links them.
+A repair can be limited to the check codes it fits (``codes``: prefixes), so
+a newer data folder is never told to retry an upgrade. A check that could not
+say anything (unverified) gets repairs only when the check itself failed. The
+Doctor report carries them, and its text lists each with where it is.
 
 A check with no repair listed says so ("no repair here"), so the owner is
 never left guessing whether one exists.
@@ -24,11 +27,14 @@ NEEDS_MODEL = False                     # the rule for every entry below; tests 
 #: the repair to be offered.
 REPAIRS: dict = {
     "migrations": [
+        {"id": "update_friday", "label": "Update Friday to the version that last used this data folder; "
+                                         "nothing in it was changed", "where": "", "codes": ("newer_folder",)},
         {"id": "migration_retry", "label": "Restart Friday: the next start tries the upgrade step again",
-         "where": ""},
+         "where": "", "codes": ("upgrade_failed", "migration_journal")},
         {"id": "diagnostic_start", "label": "Make the next start a diagnostic start", "where": "#diagnostic",
-         "needs": "agent_friday.services.diagnostic_start"},
-        {"id": "leave_safe_mode", "label": "Leave safe mode once the upgrade has run", "where": "#safe"},
+         "needs": "agent_friday.services.diagnostic_start", "codes": ("upgrade_failed", "migration_journal")},
+        {"id": "leave_safe_mode", "label": "Leave safe mode once the upgrade has run", "where": "#safe",
+         "codes": ("upgrade_failed",)},
     ],
     "after_upgrade": [
         {"id": "rebuild_now", "label": "Rebuild an index now", "where": "#afterupgrade",
@@ -58,7 +64,13 @@ REPAIRS: dict = {
          "needs": "agent_friday.services.diagnostic_start"},
     ],
     "safe_mode": [
-        {"id": "leave_safe_mode", "label": "Leave safe mode at the next start", "where": "#safe"},
+        {"id": "leave_safe_mode", "label": "Leave safe mode at the next start", "where": "#safe",
+         "codes": ("safe_mode_marker",)},
+        {"id": "diagnostic_start", "label": "The last starts failed: make the next start a diagnostic start",
+         "where": "#diagnostic", "needs": "agent_friday.services.diagnostic_start",
+         "codes": ("safe_mode_failed_starts",)},
+        {"id": "start_normally", "label": "This start was asked for in safe mode: start Friday normally",
+         "where": "", "codes": ("safe_mode_start", "safe_mode_diagnostic")},
     ],
     "backup": [
         {"id": "make_bundle", "label": "Make a Friday Bundle now", "where": "#bundle"},
@@ -70,8 +82,8 @@ REPAIRS: dict = {
                                          "never rewrites one", "where": ""},
     ],
     "governance_key": [
-        {"id": "restore_key", "label": "Restore a Friday Bundle with the receipts chosen: the key travels with "
-                                       "them", "where": "#bundle"},
+        {"id": "restore_key", "label": "Restore a Friday Bundle with the receipts chosen (friday restore "
+                                       "<file> --replace): the key travels with them", "where": ""},
     ],
     "settings": [
         {"id": "settings_by_hand", "label": "Fix settings.json by hand or restore a Friday Bundle; the Doctor never "
@@ -97,18 +109,28 @@ def _have(mod: str) -> bool:
         return False
 
 
-def for_check(cid: str) -> list:
+def for_check(cid: str, code: str = "") -> list:
     out = []
     for r in REPAIRS.get(cid, []):
         if r.get("needs") and not _have(r["needs"]):
+            continue
+        if r.get("codes") and not any(str(code or "").startswith(c) for c in r["codes"]):
             continue
         out.append({"id": r["id"], "label": r["label"], "where": r["where"]})
     return out or [dict(NONE)]
 
 
 def offered(checks: Iterable[dict]) -> dict:
-    """{check id: [repairs]} for every check that is not healthy (unavailable
-    by configuration or hardware is not a fault and gets none)."""
+    """{check id: [repairs]} for every check that is not healthy. Unavailable
+    by configuration or hardware is not a fault and gets none; unverified gets
+    them only when the check itself failed to run."""
     calm = {"healthy", "unavailable_by_configuration", "unavailable_by_hardware"}
-    return {c["id"]: for_check(c["id"]) for c in checks
-            if isinstance(c, dict) and c.get("id") and c.get("state") not in calm}
+    out = {}
+    for c in checks:
+        if not (isinstance(c, dict) and c.get("id")) or c.get("state") in calm:
+            continue
+        code = str(c.get("code") or "")
+        if c.get("state") == "unverified" and not (code.startswith("check_failed:") or code == "bad_state"):
+            continue
+        out[c["id"]] = for_check(c["id"], code)
+    return out
