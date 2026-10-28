@@ -36,6 +36,24 @@ if __name__ == '__main__':
             print("  Restore: Friday is not starting on this data folder yet.")
             sys.exit(3)
 
+# The data folder is brought to this Friday's schema (services/migrations.py),
+# after any interrupted restore is settled and before anything else uses it. A
+# migration that fails puts its files back and this start is safe mode: Friday
+# never runs on a half-migrated folder.
+if __name__ == '__main__':
+    try:
+        from agent_friday.services import migrations as _mig_boot
+        _mr = _mig_boot.run_pending()
+    except Exception as _mr_err:
+        _mr = {"ok": False, "safe_mode": True,
+               "why": "the migration check failed (%s)" % type(_mr_err).__name__}
+    if _mr:
+        print("  Migrations: %s" % (("schema %s -> %s" % (_mr.get("from"), _mr.get("to")))
+                                   if _mr.get("ok") else _mr.get("why")))
+        if _mr.get("safe_mode"):
+            os.environ["FRIDAY_SAFE_START"] = "1"
+            print("  Migrations: starting in safe mode.")
+
 # Native thread pools are sized when their library first loads, so the caps
 # go in before anything heavy is imported (services/thread_caps.py).
 try:
