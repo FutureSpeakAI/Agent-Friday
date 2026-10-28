@@ -39,6 +39,16 @@
   <p id="safe-note" role="status"></p>
 </section>
 
+<section id="diagnostic" aria-labelledby="diag-h">
+  <h2 id="diag-h">Diagnostic start</h2>
+  <p class="muted">To find out why Friday will not start or misbehaves, choose a diagnostic start below and restart Friday, or run <code>friday diagnose</code>. That one start is in safe mode, records how far the start got and when, and saves a Doctor report with it in the diagnostics folder. It holds no content and is never sent. The start after it is as it would have been.</p>
+  <p id="diag-state" role="status">Checking...</p>
+  <button id="diag-next" type="button">Make the next start a diagnostic start</button>
+  <button id="diag-cancel" type="button" hidden>Cancel the diagnostic start</button>
+  <p id="diag-note" role="status"></p>
+  <pre id="diag-out" hidden></pre>
+</section>
+
 <section id="capabilities" aria-labelledby="caps-h">
   <h2 id="caps-h">What Friday can do right now</h2>
   <p>Read live. <strong>Off</strong> means a setting, a choice of yours or this PC keeps something off: nothing is wrong. <strong>Needs attention</strong> means something is wrong, with what to do.</p>
@@ -153,6 +163,35 @@
   })).then(r => r.json().then(d => ({ ok: r.ok, d })));
   const $ = id => document.getElementById(id);
   const text = (el, s) => { el.textContent = s; };
+
+  function diagState() {
+    api('/api/doctor/diagnostic').then(({ d }) => {
+      if (!d || d.status !== 'ok') { text($('diag-state'), 'The diagnostic report could not be read.'); return; }
+      const r = d.report;
+      $('diag-next').hidden = !!d.next_start;
+      $('diag-cancel').hidden = !d.next_start;
+      const now = (d.active ? 'This is a diagnostic start. ' : '') + (d.next_start ? 'The next start will be a diagnostic start. ' : '');
+      if (!r || (d.active && !d.this_run)) {
+        text($('diag-state'), now + (d.active ? 'Its report is being made; reload in a moment.' : 'No diagnostic start has been run.')
+             + (r ? ' The newest report below is from an earlier start.' : ''));
+        if (!r) return;
+      } else {
+        text($('diag-state'), now + 'Newest diagnostic report: ' + r.id + ' (' + r.generated_at + ').');
+      }
+      text($('diag-out'), d.text || '');
+      $('diag-out').hidden = false;
+    }).catch(() => text($('diag-state'), 'The diagnostic report could not be read.'));
+  }
+
+  function diagNext(on) {
+    api('/api/doctor/diagnostic', { method: 'POST', body: JSON.stringify({ next_start: on }) }).then(({ ok, d }) => {
+      text($('diag-note'), ok ? (d.next_start ? 'Restart Friday for the diagnostic start.' : 'The next start will not be a diagnostic start.')
+                              : (d.error || 'That did not work.'));
+      diagState();
+    });
+  }
+  $('diag-next').addEventListener('click', () => diagNext(true));
+  $('diag-cancel').addEventListener('click', () => diagNext(false));
 
   function safeState() {
     api('/api/safe-mode').then(({ d }) => {
@@ -436,7 +475,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); history(); stores();
+  safeState(); diagState(); history(); stores();
 })();
 </script>
 </body>

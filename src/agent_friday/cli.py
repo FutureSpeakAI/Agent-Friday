@@ -1520,6 +1520,8 @@ examples:
 
     # safe mode (services/safe_mode.py)
     sub.add_parser("safe", help="Start Friday in safe mode: extensions and the cloud off")
+    sub.add_parser("diagnose", help="Start Friday once in diagnostic mode: safe mode, a start "
+                                    "timeline and a Doctor report (services/diagnostic_start.py)")
     p_safe = sub.add_parser("safe-mode", help="Start in safe mode next time, or leave it")
     p_safe.add_argument("state", choices=["on", "off", "status"])
 
@@ -2260,6 +2262,30 @@ def cmd_resume(args) -> int:
     return 0
 
 
+def cmd_diagnose():
+    """One diagnostic start (services/diagnostic_start.py). Friday must not be
+    running already: a running Friday is a normal start, not this one."""
+    if not _port_free(SERVER_PORT):
+        print("Friday is already running. Stop it first (the tray icon, Quit), then run "
+              "friday diagnose again.")
+        return 2
+    os.environ["FRIDAY_DIAGNOSTIC_START"] = "1"         # this start only
+    os.environ["FRIDAY_SAFE_START"] = "1"
+    print("Starting Friday in diagnostic mode: safe mode for this start; the report is saved "
+          "in the diagnostics folder and shown on the Doctor page.")
+    rv = cmd_start()
+    try:
+        from agent_friday.services import diagnostic_start
+        left = diagnostic_start.settle_unfinished()
+        if left:
+            reached = [r["phase"] for r in left.get("timeline") or []]
+            print("The start ended before it was serving (last phase reached: %s). Report %s is in "
+                  "the diagnostics folder." % (reached[-1] if reached else "none", left["id"]))
+    except Exception as e:  # noqa: BLE001
+        print("The diagnostic report could not be finished (%s)." % type(e).__name__)
+    return rv
+
+
 def cmd_safe_mode(state):
     from agent_friday.services import safe_mode
     if state == "status":
@@ -2306,6 +2332,8 @@ def main():
     elif cmd == "safe":
         os.environ["FRIDAY_SAFE_START"] = "1"
         rv = cmd_start()
+    elif cmd == "diagnose":
+        rv = cmd_diagnose()
     elif cmd == "safe-mode":
         rv = cmd_safe_mode(args.state)
     elif cmd == "authority":

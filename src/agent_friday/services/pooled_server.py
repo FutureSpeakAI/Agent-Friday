@@ -309,11 +309,17 @@ def completed_count() -> int:
     return _current.stats.completed if _current is not None else 0
 
 
-def serve(host, port, app, *, ssl_context=None, **kw) -> None:
-    """Serve until interrupted. Raises OSError when the port cannot be bound."""
+def serve(host, port, app, *, ssl_context=None, on_bound=None, **kw) -> None:
+    """Serve until interrupted. Raises OSError when the port cannot be bound.
+    `on_bound`, when given, is called once the port is bound."""
     global _current
     srv = make_pooled_server(host, port, app, ssl_context=ssl_context, **kw)
     _current = srv
+    if on_bound is not None:
+        try:
+            on_bound()
+        except Exception:  # noqa: BLE001 - a caller's note never stops serving
+            pass
     scheme = "https" if ssl_context else "http"
     _log.info("serving %s://%s:%s with %d pre-started workers (streams capped at %d)",
               scheme, host, port, srv.n_workers, srv.stream_limit)

@@ -14,6 +14,9 @@ import os
 import sys
 import threading
 import logging
+import time as _diag_time
+
+_DIAG_T0 = _diag_time.monotonic()        # a diagnostic start's timeline counts from here
 
 # A Friday Bundle restore cut off by a crash or a power cut is finished (its
 # folders were swapped) or rolled back (they were not) before anything else
@@ -36,6 +39,24 @@ if __name__ == '__main__':
             print("  Restore: Friday is not starting on this data folder yet.")
             sys.exit(3)
 
+# A diagnostic start (`friday diagnose`, or chosen on the Doctor page for the
+# next start; services/diagnostic_start.py): safe mode for this start, a start
+# timeline counted from the top of this file, and a Doctor report. Decided here,
+# before the migration check and before safe mode is first asked about.
+_diag = None
+if __name__ == '__main__':
+    try:
+        from agent_friday.services import diagnostic_start as _diag
+        if _diag.claim_next_start():
+            _diag.set_origin(_DIAG_T0)
+            _diag.start_watch()
+            print("  DIAGNOSTIC START: safe mode for this start; a Doctor report follows "
+                  "once the page is serving.")
+        else:
+            _diag = None
+    except Exception:
+        _diag = None
+
 # The data folder is brought to this Friday's schema (services/migrations.py),
 # after any interrupted restore is settled and before anything else uses it. A
 # migration that fails puts its files back and this start is safe mode: Friday
@@ -56,6 +77,9 @@ if __name__ == '__main__':
         if _mr.get("safe_mode"):
             os.environ["FRIDAY_SAFE_START"] = "1"           # this start only
             print("  Migrations: starting in safe mode.")
+    if _diag is not None:
+        _diag.note_migrations(_mr)
+        _diag.mark("migrations", ran=bool(_mr))
 
 # Native thread pools are sized when their library first loads, so the caps
 # go in before anything heavy is imported (services/thread_caps.py).
@@ -515,6 +539,9 @@ def _residency_boot():
             "could not audit local dispatch: %s", e)
 
 
+if _diag is not None:
+    _diag.mark("imports")
+
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
     # Safe mode (services/safe_mode.py): extensions and the cloud off, so Friday
@@ -530,6 +557,8 @@ if not _TESTING:
               "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
               "Leave it there or with `friday safe-mode off`, then restart."
               % _safe.state().get("why"))
+    if _diag is not None:
+        _diag.mark("safe_mode", active=bool(_safe.active()))
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
@@ -1069,6 +1098,8 @@ if __name__ == '__main__':
 
     # Single-instance guard — FIRST, before anything else can hang or race.
     _instance_lock_fh = _acquire_single_instance_lock()
+    if _diag is not None:
+        _diag.mark("instance_lock")
     if _instance_lock_fh is None:
         _lock_path = FRIDAY_DIR / "friday_server.lock"
         _pid_path = FRIDAY_DIR / "friday_server.pid"
@@ -1452,6 +1483,8 @@ if __name__ == '__main__':
         _ir.check_after_boot()
     except Exception as _ir_err:
         print(f"  Data integrity: check unavailable ({_ir_err})")
+    if _diag is not None:
+        _diag.mark("boot_checks")
     # Migration receipts were written to the data folder at the top of start;
     # they go into the action ledger now, off the start path.
     try:
@@ -1483,8 +1516,11 @@ if __name__ == '__main__':
         print(f"  Accept probe: skipped ({_probe_err})")
     try:
         from agent_friday.services import pooled_server as _pooled
-        _pooled.serve(bind_host, _port, app, ssl_context=_ssl_context)
+        _pooled.serve(bind_host, _port, app, ssl_context=_ssl_context,
+                      on_bound=(lambda: _diag.mark("serving")) if _diag is not None else None)
     except OSError as _bind_err:
+        if _diag is not None:
+            _diag.run_report(_mr)          # the port was not bound: report now, before exiting
         # The single-instance lock above catches almost all of this now, but
         # stays as a backstop for a race the lock can't see — e.g. something
         # else entirely holding the TCP port. Diagnose the occupant, log

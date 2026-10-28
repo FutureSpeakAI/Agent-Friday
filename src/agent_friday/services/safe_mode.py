@@ -22,10 +22,14 @@ In safe mode Friday starts a minimal local interface:
 
 How it is entered, in order of precedence:
 
+* ``FRIDAY_DIAGNOSTIC_START=1`` (``friday diagnose``, or the Doctor page's
+  one-shot "make the next start a diagnostic start"): safe mode for that start
+  plus a start timeline and a Doctor report (services/diagnostic_start.py);
 * ``FRIDAY_SAFE_START=1`` in the environment of the process (``friday safe``
-  and the tray's "Restart in safe mode" set it);
+  sets it);
 * ``<home>/safe_mode/ON``, written by "Start in safe mode next time" (CLI
-  ``friday safe-mode on`` or the Doctor page); it stays until the owner leaves
+  ``friday safe-mode on``, the Doctor page or the tray's "Restart in safe
+  mode"); it stays until the owner leaves
   safe mode, so a start that keeps failing cannot slip out of it;
 * automatically, when the last three starts failed (services/boot_guard keeps
   the count): safe mode must stay reachable after a failed migration or a
@@ -75,6 +79,9 @@ def _failed_starts() -> int:
 
 
 def _decide() -> dict:
+    # a diagnostic start (services/diagnostic_start.py) is a safe start too
+    if os.environ.get("FRIDAY_DIAGNOSTIC_START", "").strip().lower() in ("1", "true", "yes", "on"):
+        return {"active": True, "why": "started in diagnostic mode", "how": "diagnostic"}
     if os.environ.get("FRIDAY_SAFE_START", "").strip().lower() in ("1", "true", "yes", "on"):
         return {"active": True, "why": "started in safe mode", "how": "start"}
     try:
