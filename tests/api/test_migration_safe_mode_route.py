@@ -28,3 +28,4 @@ def test_leaving_safe_mode_after_a_failed_upgrade_takes_the_press(client, monkey
         assert got and "after a failed upgrade" in got[0]["reason"]
     finally:
         safe_mode.set_next_start(False)
+        safe_mode.reset_for_tests()          # decided once per process: never from this test's marker
