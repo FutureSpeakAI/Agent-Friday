@@ -173,7 +173,7 @@
     </div>
 
     <!-- Parallax Tracker Dot -->
-    <div id="camera-indicator"></div>
+    <div id="camera-indicator" role="img" aria-label="Camera off" title="Camera off"></div>
 
     <div id="hud-overlay">
         <!-- Minimalist Optical Arcs -->
@@ -455,6 +455,7 @@
             if (!ind) return;
             if (active && isHologramMode) { ind.classList.add('holo-active'); }
             else { ind.classList.remove('holo-active'); }
+            const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : 'Camera off'; ind.setAttribute('aria-label', lab); ind.title = lab;
         }
 
         // --- AESTHETIC CONFIGURATION ---
