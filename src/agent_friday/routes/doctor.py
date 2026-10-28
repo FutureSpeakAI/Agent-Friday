@@ -15,6 +15,11 @@
   GET  /api/doctor/known-issues       this release's known issues (KNOWN_ISSUES.md)
   GET  /api/doctor/stores             every store Friday keeps: version, size,
                                       location (read-only, this PC only)
+  GET  /api/doctor/diagnostic         is this a diagnostic start, is the next one,
+                                      and the newest diagnostic report (this PC only)
+  POST /api/doctor/diagnostic         {"next_start": true|false}: make the next
+                                      start a diagnostic start (one start only).
+                                      A press on Friday's own page only.
   GET  /api/safe-mode                 is this run in safe mode, and the next?
   POST /api/safe-mode                 {"next_start": true|false}: start in safe
                                       mode next time, or leave it. A press on
@@ -188,6 +193,50 @@ def doctor_stores():
         return resp
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The list of stores could not be made.")
+
+
+@doctor_bp.route("/api/doctor/diagnostic", methods=["GET"])
+@login_required
+def doctor_diagnostic():
+    """A diagnostic start's report (§33.5-6). Read-only; this PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    try:
+        from agent_friday.services import diagnostic_start
+        rep = diagnostic_start.latest()
+        resp = jsonify({"status": "ok", "active": diagnostic_start.active(),
+                        "next_start": diagnostic_start.next_marker().exists(), "report": rep,
+                        "this_run": bool(rep) and rep.get("id") == diagnostic_start.this_run_id(),
+                        "text": diagnostic_start.render_text(rep) if rep else None})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The diagnostic report could not be read.")
+
+
+@doctor_bp.route("/api/doctor/diagnostic", methods=["POST"])
+@login_required
+def doctor_diagnostic_next():
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Choose this on Friday's own page, on this PC."}), 403
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("next_start"), bool):
+        return jsonify({"status": "error", "error": "next_start must be true or false."}), 400
+    try:
+        from agent_friday.services import diagnostic_start
+        on = diagnostic_start.set_next_start(body["next_start"])
+        try:
+            from agent_friday.services import action_ledger
+            action_ledger.try_append("decision", {
+                "tool": "diagnostic_start:next_start", "class": "owner", "decision": "allow",
+                "surface": "doctor", "reason": "on" if on else "off"})
+        except Exception:
+            pass
+        return jsonify({"status": "ok", "next_start": on})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The next start could not be set to a diagnostic start.")
 
 
 @doctor_bp.route("/api/safe-mode", methods=["GET"])
