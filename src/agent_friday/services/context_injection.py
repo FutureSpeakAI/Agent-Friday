@@ -146,8 +146,14 @@ def build_injected_context(workspace: str = "", message: str = "",
         from agent_friday.services.knowledge_graph.integration import (
             knowledge_context_block)
         parts += knowledge_context_block(message)
-    except Exception:
-        pass
+        from agent_friday.services import recall_health
+        recall_health.note_ok("knowledge_graph")
+    except Exception as e:
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_failure("knowledge_graph", e)
+        except Exception:
+            pass
 
     body = "\n".join(p for p in parts if p).strip()
     if not body:

@@ -129,6 +129,23 @@ _SUPERSEDED_AT = "superseded_at"
 _SUPERSEDED_BY = "superseded_by"
 
 
+def _recall_failed(source, exc=None):
+    """services/recall_health: this store could not be read (never raises)."""
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_failure(source, exc)
+    except Exception:
+        pass
+
+
+def _recall_ok(source):
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_ok(source)
+    except Exception:
+        pass
+
+
 class ConversationMemory:
     """Persistent, embedding-backed store of every chat turn.
 
@@ -471,6 +488,7 @@ class ConversationMemory:
             with self._lock:
                 count = self._collection.count()
                 if count == 0:
+                    _recall_ok("past_conversations")      # read, and empty
                     return []
                 # Over-fetch when filtering supersession out in Python. Doing
                 # it here rather than in a Chroma `where` clause is deliberate:
@@ -523,9 +541,12 @@ class ConversationMemory:
                 })
                 if len(out) >= want:
                     break
+            _recall_ok("past_conversations")
             return out
         except Exception as e:
             print(f"  [MEMORY] search failed (non-fatal): {e}")
+            # Not "nothing relevant": the store could not be read (services/recall_health).
+            _recall_failed("past_conversations", e)
             return []
 
     def _shared_query_ok(self):
