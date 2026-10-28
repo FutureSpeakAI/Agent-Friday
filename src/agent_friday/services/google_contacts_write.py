@@ -94,6 +94,72 @@ def build_person(*, name="", email="", phone="", company="", job_title="") -> tu
     return body, ""
 
 
+import threading as _threading
+import time as _time
+
+#: Creates already made (or possibly made) in this turn or task: a retry of the same create with
+#: the same details does not make a second contact (NS-33.6-2). key -> {"at", "resource_name"}
+#: (resource_name None: the create's answer was lost, so it may exist).
+_RECENT: dict = {}
+_RECENT_LOCK = _threading.Lock()
+_RECENT_TTL_S = 3600
+
+
+def _create_key(account_id: str, body: dict):
+    """One create: the same account and details in the same turn (or, outside a turn, the same
+    background task or run). None outside both (the owner's own page): each save is asked for."""
+    import hashlib
+    import json
+    scope = None
+    try:
+        from agent_friday.services import turn_plan
+        scope = turn_plan.current_turn_id()
+    except Exception:
+        scope = None
+    if not scope:
+        try:
+            from agent_friday.services import agent as _ag
+            ctx = _ag._CURRENT_TOOL_CONTEXT.get() or {}
+            scope = ctx.get("run_id") or ctx.get("task_id")
+        except Exception:
+            scope = None
+    if not scope:
+        return None
+    blob = json.dumps({"s": str(scope), "a": account_id, "b": body}, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _remember(key, resource_name) -> None:
+    if not key:
+        return
+    now = _time.time()
+    with _RECENT_LOCK:
+        for k in [k for k, v in _RECENT.items() if now - v["at"] > _RECENT_TTL_S]:
+            _RECENT.pop(k, None)
+        _RECENT[key] = {"at": now, "resource_name": resource_name}
+
+
+def _reserve(key):
+    """The earlier copy of this create, or None, in which case this caller holds it (marked
+    in flight) until it records how it went: two identical creates at once make one contact."""
+    if not key:
+        return None
+    now = _time.time()
+    with _RECENT_LOCK:
+        v = _RECENT.get(key)
+        if v and now - v["at"] <= _RECENT_TTL_S:
+            return dict(v)
+        _RECENT[key] = {"at": now, "resource_name": None, "in_flight": True}
+    return None
+
+
+def _release(key) -> None:
+    """The create was refused outright (nothing was made): a retry may run."""
+    if key:
+        with _RECENT_LOCK:
+            _RECENT.pop(key, None)
+
+
 def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> dict:
     """Create a contact, or update `resource_name` (people/c123...) in place.
 
@@ -110,6 +176,19 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
     if svc is None:
         return {"ok": False, "error": err}
     resource_name = (resource_name or "").strip()
+    key = None if resource_name else _create_key(rec["id"], body)
+    prior = _reserve(key)
+    if prior is not None:
+        if prior.get("in_flight"):
+            return {"ok": False, "unconfirmed": True,
+                    "error": "This same contact is being saved right now; it was not saved twice."}
+        if prior.get("resource_name"):
+            return {"ok": True, "action": "already_saved", "account": rec.get("email"),
+                    "resource_name": prior["resource_name"],
+                    "note": "This contact was already saved a moment ago; no second copy was made."}
+        return {"ok": False, "unconfirmed": True,
+                "error": ("A moment ago Google did not confirm saving this same contact, so it may "
+                          "already be in Google Contacts. It was not saved again: check Contacts first.")}
     try:
         if resource_name:
             if not re.match(r"^people/[A-Za-z0-9_\-]+$", resource_name):
@@ -128,10 +207,21 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
             action = "created"
     except Exception as e:
         from agent_friday.services import connector_outcome as _co
+        try:
+            from agent_friday.services import egress_gate as _eg
+            if _eg.result_for_error(e) != "failed":
+                _remember(key, None)       # the answer was lost after it left: it may exist
+            else:
+                _release(key)
+        except Exception:
+            _remember(key, None)
         return {"ok": False, "error": _co.failed(e, "Google Contacts", account_id=rec["id"])}
     from agent_friday.services import connector_outcome as _co
     if not _co.confirmed(out, "resourceName"):
+        _remember(key, None)
         return {"ok": False, "unconfirmed": True,
                 "error": _co.not_done("unconfirmed", "Google Contacts")}
+    if action == "created":
+        _remember(key, out.get("resourceName"))
     return {"ok": True, "action": action, "account": rec.get("email"),
             "resource_name": out.get("resourceName")}
