@@ -396,6 +396,17 @@ def _norm_source(source: str) -> str:
     return s if s in SOURCES else "other"
 
 
+def _record_event(kind: str, *, by: str, source: str) -> None:
+    """The canonical event (services/events), after the receipt. Never raises; a stop or resume
+    is never held by it (the receipt is what holds a resume)."""
+    try:
+        from agent_friday.services import events
+        events.record_critical(kind, source="global_stop",
+                               payload={"by": str(by)[:40], "surface": str(source)[:40]})
+    except Exception:
+        pass
+
+
 def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict[str, Any]:
     """Stop everything. Idempotent; never needs approval; never raises.
 
@@ -425,6 +436,8 @@ def stop(*, by: str = "owner", source: str = "button", reason: str = "") -> Dict
     except Exception as exc:
         receipt_error = str(exc)[:200] or type(exc).__name__
         _log.error("stop receipt not written: %s", receipt_error)
+    if not was:
+        _record_event("safety.stop", by=by, source=source)   # NS-31.7-1: before the owner hears
     halted = _walk_lanes(gen)
     try:
         _receipt("stop_lanes", by=by, source=source, halted=halted)
@@ -453,6 +466,7 @@ def resume(*, by: str = "owner", source: str = "button") -> Dict[str, Any]:
         except Exception as exc:
             raise ResumeHeld("the resume receipt could not be written, so nothing resumed: %s"
                              % (str(exc)[:160] or type(exc).__name__)) from exc
+        _record_event("safety.resume", by=str(by or "owner"), source=source)
         prev = dict(_STATE)
         _STATE.clear()
         _STATE.update({"stopped": False, "resumed_at": time.time(), "resumed_by": str(by)[:40],

@@ -1258,6 +1258,20 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     """Tell every open Friday page (services/approval_feed.py). Best-effort:
     a page that misses this picks the card up from the pending list when it
     reconnects, and nothing here can fail an approval."""
+    if name == "card_resolved":
+        # NS-31.7-1: the decision (or expiry, or withdrawal) is in the event log before any page
+        # or the tray hears of it. Ids and kinds only. A record that fails is logged; the
+        # decision itself is already saved and still reaches the owner.
+        try:
+            from agent_friday.services import events as _ev
+            _ev.record_critical(
+                "approval.resolved", source="approvals",
+                payload={"status": str(record.get("status") or "")[:20],
+                         "kind": str(record.get("kind") or "")[:40],
+                         "decided_by": str(record.get("decided_by") or "")[:40]},
+                related_ids={"approval": record.get("approval_id")})
+        except Exception:
+            pass
     try:
         from agent_friday.services import approval_feed
         if name == "card_pending":

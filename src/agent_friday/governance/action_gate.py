@@ -1063,7 +1063,20 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
         gs = [x for x in _read_grants() if x.get("expires_at", 0) > time.time()]
         gs.append(g)
         _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
+    _grant_event("grant.created", g["grant_id"], tools=g["tools"], scope=g["scope"],
+                  expires_at=round(g["expires_at"]), max_uses=g["uses_left"])
     return g
+
+
+def _grant_event(kind: str, grant_id: str, **payload) -> None:
+    """NS-31.7-1: a grant made or taken back is in the canonical event log (ids, tool names and
+    limits; never a note's words). Never raises."""
+    try:
+        from agent_friday.services import events
+        events.record_critical(kind, source="action_gate", payload=payload,
+                               related_ids={"grant": grant_id})
+    except Exception:
+        pass
 
 
 def list_grants() -> list:
@@ -1075,6 +1088,8 @@ def revoke_grant(grant_id: str) -> bool:
         gs = _read_grants()
         keep = [g for g in gs if g.get("grant_id") != grant_id]
         _grants_file().write_text(json.dumps(keep, indent=1), encoding="utf-8")
+    if len(keep) != len(gs):
+        _grant_event("grant.revoked", grant_id)
     return len(keep) != len(gs)
 
 
