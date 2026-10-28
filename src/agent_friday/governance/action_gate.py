@@ -627,7 +627,7 @@ def classify_command(cmd: str) -> tuple:
 #: PowerShell accepts any unambiguous prefix of a parameter name, so these are
 #: matched by prefix (at least two letters after the dash).
 _REMOTE_FLAGS = ("-computername", "-cn", "-cimsession", "-session", "-online",
-                 "-pssession", "-uri", "-credential")
+                 "-pssession", "-credential")
 #: Quote characters PowerShell honours, and the dashes it reads as "-".
 _QUOTES = "'\"‘’‚‛“”„‟`"
 _DASHES = {"–": "-", "—": "-", "―": "-"}
