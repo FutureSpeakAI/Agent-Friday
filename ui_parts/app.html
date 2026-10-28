@@ -2780,6 +2780,25 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const LSK='friday_fwin_'+id;
   // The window grows out of (and folds back into) its own dock icon.
   const fwinRef=useRef(null);
+  // A workspace's own headings are read under the window's title (level 2): an h1 or h2 inside
+  // is announced at level 3, an h3 at 4, and so on (north star 33.1-6). Headings that already
+  // carry a level (a document's Markdown, read two levels down) keep it. Checked once a frame
+  // at most while the window's content changes.
+  useEffect(() => {
+    const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
+    if (!body || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const fix = () => {
+      raf = 0;
+      body.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.hasAttribute('aria-level')) h.setAttribute('aria-level', String(Math.max(3, Math.min(6, Number(h.tagName[1]) + 1))));
+      });
+    };
+    fix();
+    const mo = new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(fix); });
+    mo.observe(body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
   const [historyTop, setHistoryTop] = useState(37);
   React.useLayoutEffect(() => {
     const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');

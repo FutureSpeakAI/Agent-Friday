@@ -50,3 +50,12 @@ def test_a_documents_headings_sit_under_the_window_title(rel):
     assert "body = body.replace(/<h([1-6])(?=[\\s>])/gi, (m, n) => m + ' aria-level=\"' + Math.min(6, Number(n) + 2) + '\"');" in s
     i = s.index("function renderFridayMarkdown(")
     assert s.index("aria-level=\"' + Math.min(6", i) < s.index("\n}", i), "inside renderFridayMarkdown"
+
+
+@pytest.mark.parametrize("rel", ["index.html", "ui_parts/app.html"])
+def test_a_windows_own_headings_are_read_under_its_title(rel):
+    s = _t(rel)
+    fwin = s[s.index("function FWin("):]
+    assert "body.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {" in fwin
+    assert "if (!h.hasAttribute('aria-level')) h.setAttribute('aria-level', String(Math.max(3, Math.min(6, Number(h.tagName[1]) + 1))));" in fwin
+    assert "mo.observe(body, { childList: true, subtree: true });" in fwin

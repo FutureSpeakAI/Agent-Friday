@@ -2,15 +2,15 @@
 //
 // The page has one top-level heading, and every open window's title is a level-2 heading under it, so a person
 // who lists headings (or presses H in a screen reader) can go from window to window. Inside a window nothing claims
-// level 1. A workspace's own top headings are h2 today and sit at the window title's level; the outline of each window
-// is printed so that can be read from the run (a follow-up moves them to level 3).
+// level 1 or 2: a workspace's own headings are read at level 3 and down, under its window's title. The outline of
+// each window is printed.
 import { test, expect } from '../fixtures';
 import { bootApp } from '../harness';
 import { settle } from '../helpers/settle';
 
 const WORKSPACES = ['settings', 'calendar', 'messages', 'news', 'knowledge'];
 
-test('one top-level heading, a level-2 heading per window, no level-1 heading inside a window', async ({ page }) => {
+test('one top-level heading, a level-2 heading per window, nothing above level 3 inside a window', async ({ page }) => {
   // Past first run: its own screen ("Before anything else") is a page of its own, with its own h1.
   await page.route('**/api/setup/status', r => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ initialized: true }) }));
   await bootApp(page);
@@ -38,7 +38,7 @@ test('one top-level heading, a level-2 heading per window, no level-1 heading in
       return {
         ws: (w as HTMLElement).dataset.fridayWorkspace || '?',
         title: t ? { role: t.getAttribute('role'), level: t.getAttribute('aria-level'), text: (t.textContent || '').trim() } : null,
-        tooHigh: inner.filter(e => level(e) < 2).map(e => e.tagName + ' ' + (e.textContent || '').trim().slice(0, 40)),
+        tooHigh: inner.filter(e => level(e) < 3).map(e => e.tagName + ' ' + (e.textContent || '').trim().slice(0, 40)),
         outline: inner.map(e => level(e) + ' ' + (e.textContent || '').trim().slice(0, 40)),
       };
     });
@@ -51,5 +51,5 @@ test('one top-level heading, a level-2 heading per window, no level-1 heading in
     expect(w.title!.text.length, `${w.ws}: the heading has text`).toBeGreaterThan(0);
   }
   expect(found.wins.filter(w => w.tooHigh.length).map(w => `${w.ws}: ${w.tooHigh.join(', ')}`),
-    'level-1 headings inside a window (the page has one, outside every window)').toEqual([]);
+    'headings inside a window at level 1 or 2 (they would sit beside the window titles)').toEqual([]);
 });
