@@ -232,6 +232,17 @@ def _grandfathered_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return row if _verified(row) and row.get("tool") == GRANDFATHERED else None
 
 
+ANCHOR_NAME = "tool_manifests"
+
+
+def _anchored_items():
+    """The connectors the action ledger says were carried over (minus released), or None.
+    Raises trust_anchor.AnchorUnavailable when the ledger cannot say."""
+    from agent_friday.governance import trust_anchor
+    a = trust_anchor.carried(ANCHOR_NAME)
+    return None if a is None else a["items"]
+
+
 def grandfathered(server: str, spec: Any = None) -> bool:
     """A connector configured before A30 on an existing install, not yet answered, and still
     running or reaching what it did then (``spec``: its current config; None skips that check,
@@ -240,6 +251,14 @@ def grandfathered(server: str, spec: Any = None) -> bool:
     servers = (row or {}).get("servers") or {}
     if not isinstance(servers, dict) or server not in servers:
         return False
+    try:
+        # The owner's ruling (2026-10-28): trust from before A30 holds only while the
+        # append-only action ledger says so (governance/trust_anchor).
+        anchored = _anchored_items()
+    except Exception:
+        return False
+    if not anchored or anchored.get(server) != servers[server]:
+        return False
     return spec is None or servers[server] == config_fingerprint(spec)
 
 
@@ -247,9 +266,40 @@ def carry_over_at_boot(config: Any = None) -> int:
     """Once ever, at the first boot with this list: on an existing install, the connectors
     configured now are recorded as from before A30 (they keep working until their card is
     answered). On a new install nothing is. Never refilled from the config afterwards."""
+    from agent_friday.governance import trust_anchor
     with _LOCK:
         raw = _read_raw()
-        if raw is None or GRANDFATHERED in raw or _history_path().exists():
+        if raw is None:
+            return 0
+        try:
+            anchored = _anchored_items()
+        except trust_anchor.AnchorUnavailable:
+            return 0                               # the ledger cannot say: carry nothing over
+        if anchored is not None:
+            # It already happened (the ledger says so): files deleted since are rebuilt from the
+            # ledger, never extended, and the carry-over never runs again.
+            if _grandfathered_row(raw) is None:
+                try:
+                    _key()
+                except Exception:
+                    return 0
+                row = {"tool": GRANDFATHERED, "server": "", "servers": dict(anchored),
+                       "made_by": "rebuilt_from_ledger", "made_at": time.time(),
+                       "existing_install": True}
+                row["sig"] = _sign(row)
+                raw[GRANDFATHERED] = row
+                _write_raw(raw)
+                _history({"event": "rebuilt_from_ledger", "servers": dict(anchored)})
+            return 0
+        existing_row = _grandfathered_row(raw)
+        if existing_row is not None:
+            # Carried over before the anchor existed: anchor what it trusted now (backfill).
+            try:
+                trust_anchor.record(ANCHOR_NAME, dict(existing_row.get("servers") or {}))
+            except Exception:
+                pass
+            return 0
+        if GRANDFATHERED in raw or _history_path().exists():
             return 0
         from agent_friday import core
         try:
@@ -274,6 +324,12 @@ def carry_over_at_boot(config: Any = None) -> int:
             conf = cfg.get("servers", cfg) if isinstance(cfg, dict) else {}
             servers = {str(n): config_fingerprint(s) for n, s in sorted((conf or {}).items())
                        if isinstance(s, dict) and s.get("enabled") is not False}
+        try:
+            # Anchored first: if the ledger cannot record it, nothing is carried over.
+            trust_anchor.record(ANCHOR_NAME, servers)
+        except Exception as e:  # noqa: BLE001
+            _history({"event": "carry_over_refused", "why": type(e).__name__})
+            servers = {}
         row = {"tool": GRANDFATHERED, "server": "", "servers": servers, "made_by": "carried_over",
                "made_at": time.time(), "existing_install": bool(existing)}
         row["sig"] = _sign(row)
@@ -290,6 +346,11 @@ def release_grandfather(server: str, *, why: str) -> None:
         row = _grandfathered_row(raw or {})
         if raw is None or not row or server not in (row.get("servers") or {}):
             return
+        try:
+            from agent_friday.governance import trust_anchor
+            trust_anchor.release(ANCHOR_NAME, server, why=why)
+        except Exception:
+            pass
         row = dict(row, servers={k: v for k, v in row["servers"].items() if k != server})
         row.pop("sig", None)
         row["sig"] = _sign(row)
