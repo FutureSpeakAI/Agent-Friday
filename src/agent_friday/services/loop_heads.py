@@ -130,9 +130,9 @@ def first_stall(steps: Sequence[dict]) -> Optional[int]:
 
 #: Friday's own failure shapes: a bracketed deny or error sentinel, "Error:" / "ERROR:",
 #: the verifier's "INVALID ARGUMENTS". A colon is required, so "Error handling in ..." is a result.
-_ERROR_SHAPE = re.compile(r"^\s*(\[[A-Z0-9 _-]*(DENY|DENIED|ERROR|BLOCKED|REFUSED)[^\]]*\]|ERROR:|Error:|"
+_ERROR_SHAPE = re.compile(r"^\s*(\[[A-Z0-9 _-]*(DENY|DENIED|ERROR|BLOCKED|REFUSED|NOT RUN|DECLINED)[^\]]*\]|ERROR:|Error:|"
                           r"error:|INVALID ARGUMENTS)")
-_PLACEHOLDER = re.compile(r"^\s*\[(image|screenshot) returned to (the )?model\]|^\s*\[held\b", re.I)
+_PLACEHOLDER = re.compile(r"^\s*\[(image|screenshot) returned to (the )?model\]", re.I)
 
 
 def steps_from_trace(tool_trace: Sequence[dict]) -> List[dict]:
@@ -256,7 +256,8 @@ def _generation() -> Optional[int]:
         return None
 
 
-def shadow_turn(tool_trace: Sequence[dict], *, surface: str = "agent", resumed: int = 0) -> bool:
+def shadow_turn(tool_trace: Sequence[dict], *, surface: str = "agent", resumed: int = 0,
+                gen: Optional[int] = None) -> bool:
     """After an agent turn: replay its tool trace through the head and leave one
     receipt. Nothing is changed; the turn has already ended. False when the head
     is off, the owner is off the record, or the turn used fewer than WINDOW tools.
@@ -268,7 +269,10 @@ def shadow_turn(tool_trace: Sequence[dict], *, surface: str = "agent", resumed: 
     rows = list(tool_trace or [])[max(0, int(resumed or 0)):]
     if mode() == "off" or _off_record() or len(rows) < WINDOW:
         return False
-    gen = _generation()
+    if gen is None:
+        gen = _generation()
+    elif gen != _generation():
+        return False                    # the private-memory lifetime changed during the turn
 
     def job():
         if _off_record() or _generation() != gen:

@@ -103,9 +103,12 @@ def _series_one(question: str, passages: List[str], calibration: dict, *,
                 shadow: bool = False) -> Optional[List[float]]:
     """R1 cosine through the head's Platt calibration. No calibration, no reading
     (an uncalibrated cosine is not a probability). In shadow it never loads the
-    encoder cold and never waits for it: a busy or unloaded encoder means the
-    reading is skipped, so live routing and the turn's embedding never queue
-    behind it (review finding 1)."""
+    encoder cold, and skips the reading when the encoder is busy at that moment
+    (review finding 1). It still holds the encoder for one short batch (about
+    30 ms for nine texts); a live embed that arrives then waits that long.
+    The calibration was fitted on Library-style passages and is applied to
+    recalled conversation turns: fine for shadow, to be refitted from shadow
+    receipts before any act."""
     platt = calibration.get("platt")
     if not (isinstance(platt, (list, tuple)) and len(platt) == 2):
         return None
@@ -274,7 +277,8 @@ def shadow_memory(question: str, snippets: Sequence[str], *, surface: str = "cha
     if not q or not ps:
         return False
     import hashlib
-    if not _first_time((_turn_id(), hashlib.sha256(q.encode("utf-8", "replace")).hexdigest()[:16])):
+    tid = _turn_id() or "t%d" % int(time.time() // 60)      # no turn id: the same question within a minute
+    if not _first_time((tid, hashlib.sha256(q.encode("utf-8", "replace")).hexdigest()[:16])):
         return False
     gen = _generation()
 

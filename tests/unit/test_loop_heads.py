@@ -111,7 +111,7 @@ def test_the_agent_loops_hand_their_trace_to_the_head_after_returning(monkeypatc
     from agent_friday.services import agent
     seen = []
     stub = types.ModuleType("agent_friday.services.loop_heads")
-    stub.shadow_turn = lambda trace, surface="agent", resumed=0: seen.append((len(trace), surface, resumed))
+    stub.shadow_turn = lambda trace, surface="agent", resumed=0, gen=None: seen.append((len(trace), surface, resumed))
     monkeypatch.setitem(sys.modules, "agent_friday.services.loop_heads", stub)
     import agent_friday.services as _svc
     monkeypatch.setattr(_svc, "loop_heads", stub, raising=False)
@@ -121,6 +121,29 @@ def test_the_agent_loops_hand_their_trace_to_the_head_after_returning(monkeypatc
     monkeypatch.setattr(agent, "_call_claude_agent_run", lambda *a, **k: ("ok", [{"name": "t"}] * 4))
     assert agent._call_claude_agent([], resumed_tool_trace=[{"name": "t"}]) == ("ok", [{"name": "t"}] * 4)
     assert seen == [(5, "agent.local", 0), (4, "agent.claude", 1)]
+
+
+def test_a_turn_that_started_off_the_record_hands_nothing_to_the_head(monkeypatch):
+    import sys
+    import types
+    from agent_friday.services import agent
+    seen = []
+    stub = types.ModuleType("agent_friday.services.loop_heads")
+    stub.shadow_turn = lambda *a, **k: seen.append(1)
+    monkeypatch.setitem(sys.modules, "agent_friday.services.loop_heads", stub)
+    import agent_friday.services as _svc
+    monkeypatch.setattr(_svc, "loop_heads", stub, raising=False)
+    monkeypatch.setattr(agent, "_off_record_at_start", lambda: (True, 7))
+    monkeypatch.setattr(agent, "_call_claude_agent_run", lambda *a, **k: ("ok", [{"name": "t"}] * 6))
+    assert agent._call_claude_agent([]) == ("ok", [{"name": "t"}] * 6)
+    assert seen == []
+
+
+def test_a_generation_change_during_the_turn_leaves_nothing(lh, monkeypatch):
+    _heads(monkeypatch)
+    monkeypatch.setattr(lh, "_generation", lambda: 9)
+    trace = [{"name": "s", "input": {"q": i}, "result": "x."} for i in range(6)]
+    assert not lh.shadow_turn(trace, gen=8)
 
 
 def test_a_raising_head_never_reaches_the_agent(monkeypatch):
@@ -157,6 +180,8 @@ def test_only_a_known_tool_that_is_not_read_only_counts_as_a_write():
     ("INVALID ARGUMENTS: path is required", False, False),
     ({"error": "timed out"}, False, False),
     ("[image returned to model]", None, True),
+    ("[NOT RUN] needs your approval first", False, False),
+    ("[DECLINED] the owner said no", False, False),
 ])
 def test_friday_failure_shapes_and_placeholders(result, ok, placeholder):
     lh = importlib.import_module("agent_friday.services.loop_heads")

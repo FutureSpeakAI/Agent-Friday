@@ -9,5 +9,5 @@
   "budget_ms": 500,
   "calibration": {"platt": [7.517279, -4.760621], "score": "library: cosine x (0.6 + 0.4 x keyword coverage)", "fitted_on": "ftv/decision_eval E1 2026-10-28_0151, a_rule, dev third of 240 synthetic items (not independent of the bench author)"},
   "mode_default": "shadow",
-  "about": "P(this passage holds the whole answer), from the R1 encoder and the Library's own passage score, Platt-calibrated on the bench. Passage-level AUROC 0.97 on the bench. Label only: it never removes a passage."
+  "about": "P(this passage holds the whole answer), from the R1 encoder and the Library's own passage score, Platt-calibrated on the bench. Passage-level AUROC 0.97 on the bench. The act threshold 0.99 is out of reach for this scorer (highest possible P about 0.94), so holds is never true; the reading is the p. Label only: it never removes a passage."
 }

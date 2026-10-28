@@ -16837,8 +16837,9 @@ def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
     try:
+        _rec = _off_record_at_start()
         out = _call_claude_agent_run(*args, **kwargs)
-        _shadow_loop_head(out, "agent.claude", resumed=len(kwargs.get("resumed_tool_trace") or []))
+        _shadow_loop_head(out, "agent.claude", resumed=len(kwargs.get("resumed_tool_trace") or []), started=_rec)
         return out
     finally:
         _LOOP_PROVIDER.reset(_tok)
@@ -17711,23 +17712,39 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
     _oai_agentic_loop_run."""
     _tok = _LOOP_PROVIDER.set("local" if kw.get("seat") == "local" else provider)
     try:
+        _rec = _off_record_at_start()
         out = _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
                                     model=model, **kw)
-        _shadow_loop_head(out, "agent.local" if kw.get("seat") == "local" else "agent.oai")
+        _shadow_loop_head(out, "agent.local" if kw.get("seat") == "local" else "agent.oai", started=_rec)
         return out
     finally:
         _LOOP_PROVIDER.reset(_tok)
 
 
-def _shadow_loop_head(result, surface: str, resumed: int = 0) -> None:
+def _off_record_at_start():
+    """(was off the record, private-memory generation) when a tool loop starts, so
+    a turn run off the record leaves nothing even if it ends after the owner is
+    back on the record (services/off_record bumps the generation then)."""
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.active()), int(_off.generation())
+    except Exception:
+        return True, None                      # unknown: treat as off the record
+
+
+def _shadow_loop_head(result, surface: str, resumed: int = 0, started=None) -> None:
     """After a tool loop has returned: hand its trace to the loop no-progress head
     (services/loop_heads, DM5), which replays it on its own worker in shadow and
     leaves one receipt. The turn is over; this never changes or delays it beyond
-    a cached mode read. Rows resumed from an earlier run are not counted again."""
+    a cached mode read. Rows resumed from an earlier run are not counted again.
+    ``started`` is (was off the record, generation) taken when the loop began."""
     try:
         if isinstance(result, tuple) and len(result) >= 2 and isinstance(result[1], list):
+            was_off, gen = started if started else (False, None)
+            if was_off:
+                return
             from agent_friday.services import loop_heads
-            loop_heads.shadow_turn(result[1], surface=surface, resumed=resumed)
+            loop_heads.shadow_turn(result[1], surface=surface, resumed=resumed, gen=gen)
     except Exception:
         pass
 
