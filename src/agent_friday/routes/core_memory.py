@@ -11,13 +11,15 @@ Agent Friday — Memory card API (services/core_memory)
   GET   /api/memory/search  ?q=&kinds=a,b&since=&until=&superseded=1&limit=
                                       the owner's search over everything Friday keeps
   GET   /api/memory/why     ?kind=&id=  where Friday knows one result from
+  GET   /api/memory/export  ?q=&kinds=&since=&until=&superseded=1&format=json|md
+                                      the search's results (no q: the whole memory, bounded) as a download
 
 Every write here is the owner's own, so it reaches every open conversation's
-next turn at once (services/prompt_freeze). The two reads are the owner's
+next turn at once (services/prompt_freeze). The three reads are the owner's
 only (principal "user"; an observer or any other is refused), the parameters are bounded, and
 neither the query nor a result is logged (services/memory_search).
 """
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
 from agent_friday.core import login_required
 from agent_friday.routes._errors import public_result
@@ -71,6 +73,32 @@ def memory_why_route():
     except ms.BadRequest as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     return jsonify(public_result(ms.why(kind, item_id), "Couldn't look that up"))
+
+
+@core_memory_bp.route("/api/memory/export", methods=["GET"])
+@login_required
+def memory_export_route():
+    """The owner's search results (or, with no query, the whole memory, bounded) as a file to keep:
+    format=json or md. Streamed from memory; nothing is written to disk here (services/memory_export)."""
+    if _not_owner():
+        return jsonify({"ok": False, "error": "Only the owner can export Friday's memory."}), 403
+    from agent_friday.services import memory_export as me
+    a = request.args
+    try:
+        q, kinds, since, until, fmt = me.check_params(a.get("q") if "q" in a else a.get("query"), a.get("kinds"),
+                                                      a.get("since"), a.get("until"), a.get("format"))
+    except me.BadRequest as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    exp = me.build(q, kinds=kinds, since=since, until=until, include_superseded=_flag(a.get("superseded")))
+    if not exp.get("ok"):
+        return jsonify(public_result(exp, "Couldn't export memory")), 500
+    if fmt == "md":
+        body, mimetype = me.to_markdown(exp), "text/markdown; charset=utf-8"
+    else:
+        body, mimetype = me.to_json(exp), "application/json; charset=utf-8"
+    return Response(stream_with_context(body), mimetype=mimetype,
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % me.filename(fmt),
+                             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @core_memory_bp.route("/api/core-memory", methods=["GET"])
