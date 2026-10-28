@@ -61,6 +61,9 @@ def create_exclusive(path: Path, data: bytes, *, harden_file: bool = True,
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = unique_tmp(path)
     try:
+        # The temp file is created owner-only before the secret goes in, so no
+        # copy is ever readable by others, even for the moment before harden().
+        os.close(os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600))
         tmp.write_bytes(data)
         try:
             with open(tmp, "r+b") as fh:          # a writable handle: fsync needs one on Windows

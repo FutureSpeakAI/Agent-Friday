@@ -222,7 +222,16 @@ def _load_or_create_secret():
         theirs = p.read_text(encoding="utf-8").strip()
         if len(theirs) >= 16:
             return theirs
-        return secrets.token_hex(32)       # an unusable file: a per-process secret, never a short one
+        # The file holds no usable secret (empty, or cut short): replace it, so
+        # sessions survive the next restart instead of resetting every time.
+        import logging as _logging
+        _logging.getLogger("friday.core").warning("the session secret file was unusable; writing a new one")
+        from agent_friday.secure_file import harden, unique_tmp
+        tmp = unique_tmp(p)
+        tmp.write_text(s, encoding="utf-8")
+        harden(tmp)
+        os.replace(tmp, p)
+        return s
     except Exception:
         # Last resort: ephemeral per-process secret (logs everyone out on restart,
         # but never a guessable constant).

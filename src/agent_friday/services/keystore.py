@@ -126,14 +126,20 @@ def _write_file(doc: dict) -> None:
     from agent_friday.services.credential_store import _unique_tmp, harden_permissions
     KEYSTORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _unique_tmp(KEYSTORE_PATH)
-    tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     try:
-        with open(tmp, "rb") as fh:
-            os.fsync(fh.fileno())
-    except Exception:
-        pass
-    harden_permissions(tmp)
-    tmp.replace(KEYSTORE_PATH)
+        tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        try:
+            with open(tmp, "r+b") as fh:          # a writable handle: fsync needs one on Windows
+                os.fsync(fh.fileno())
+        except Exception:
+            pass
+        harden_permissions(tmp)
+        tmp.replace(KEYSTORE_PATH)
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
     harden_permissions(KEYSTORE_PATH)
 
 

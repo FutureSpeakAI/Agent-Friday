@@ -512,7 +512,10 @@ def get_governance_key() -> bytes:
                 from agent_friday.secure_file import create_exclusive
                 if not create_exclusive(_GOV_KEY_FILE, key):
                     raw = _GOV_KEY_FILE.read_bytes()       # another process minted first
-                    return raw if len(raw) == 32 else bytes.fromhex(raw.decode().strip())
+                    theirs = raw if len(raw) == 32 else bytes.fromhex(raw.decode().strip())
+                    if len(theirs) != 32:
+                        raise ValueError("the governance key another process wrote is not a key")
+                    return theirs
                 try:
                     import stat
                     _GOV_KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600
