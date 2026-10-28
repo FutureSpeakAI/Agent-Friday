@@ -146,10 +146,38 @@ def _stream_url(cfg: dict) -> str:
     return "wss://" + cfg["public_base_url"].split("://", 1)[-1] + "/twilio/media"
 
 
+#: One-time tokens naming a call the ingress connected from the owner's verified cell
+#: (token -> expiry). The media socket's own signature is the same on every call, so it
+#: cannot say which call is the owner's; this can, once (BD-13).
+_OWNER_CALLS: dict = {}
+_OWNER_CALLS_LOCK = threading.Lock()
+OWNER_TOKEN_TTL_S = 120
+
+
+def _owner_token() -> str:
+    import secrets as _secrets
+    tok = _secrets.token_urlsafe(24)
+    now = time.time()
+    with _OWNER_CALLS_LOCK:
+        for k in [k for k, exp in _OWNER_CALLS.items() if exp < now]:
+            _OWNER_CALLS.pop(k, None)
+        _OWNER_CALLS[tok] = now + OWNER_TOKEN_TTL_S
+    return tok
+
+
+def _claim_owner_token(tok: str) -> bool:
+    if not tok:
+        return False
+    with _OWNER_CALLS_LOCK:
+        exp = _OWNER_CALLS.pop(str(tok), None)
+    return exp is not None and exp >= time.time()
+
+
 def connect_twiml(cfg: dict, call_sid: str) -> str:
     """An inbound call from the owner's cell, answered live."""
     return ("<Connect><Stream url=%s><Parameter name=\"direction\" value=\"inbound\"/>"
-            "</Stream></Connect>" % quoteattr(_stream_url(cfg)))
+            "<Parameter name=\"owner\" value=%s/>"
+            "</Stream></Connect>" % (quoteattr(_stream_url(cfg)), quoteattr(_owner_token())))
 
 
 def outbound_twiml(cfg: dict, *, disclosure: str, opening: str, approval_id: str) -> str:
@@ -254,6 +282,9 @@ class CallBridge:
         #: the hang-up waits for it (at most a few seconds), then the call ends.
         self.acking = threading.Event()
         self.ack_done = threading.Event()
+        #: Nothing more is said on this call once it is set, except the one "Stopped.".
+        self.stopped = threading.Event()
+        self._owner = False
         self._told: set = set()
         self._last_poll = clock()
         if engine is None:
@@ -272,7 +303,9 @@ class CallBridge:
         with self._send_lock:
             self.ws.send(json.dumps(msg))
 
-    def say(self, text: str) -> None:
+    def say(self, text: str, *, ack: bool = False) -> None:
+        if self.stopped.is_set() and not ack:
+            return                       # stopped: no goodbye, no approval news, nothing
         from agent_friday import brand
         text = brand.spoken((text or "").strip())
         if not text:
@@ -294,6 +327,8 @@ class CallBridge:
 
     def barge_in(self) -> None:
         """The caller spoke over Friday: drop what Twilio still has queued."""
+        if self.acking.is_set():
+            return                       # the one "Stopped." is not talked over
         self._send({"event": "clear", "streamSid": self.stream_sid})
         self.speaking_until = 0.0
 
@@ -346,7 +381,7 @@ class CallBridge:
         """An inbound live call: the ingress connects one only from the verified owner cell
         (ingress.voice_in). On a call Friday placed, the other person is not the owner, and
         their words never stop her."""
-        return str(self.params.get("direction") or "") == "inbound"
+        return self._owner and str(self.params.get("direction") or "") == "inbound"
 
     @staticmethod
     def _is_stop(text: str) -> bool:
@@ -360,13 +395,24 @@ class CallBridge:
         """Stop everything, now, then say the one fixed reply (A28) and let the call end."""
         from agent_friday.services import global_stop
         self.acking.set()
+        self.stopped.set()
         try:
-            global_stop.stop(by="owner", source="phone_call",
-                             reason="said on a live call from your verified cell")
+            # The flag is set at once by stop(); its lane walk (up to a few seconds) runs on its
+            # own thread so the reply is said while the lanes stop, not after.
+            threading.Thread(target=global_stop.stop, name="phone-call-stop", daemon=True,
+                             kwargs={"by": "owner", "source": "phone_call",
+                                     "reason": "said on a live call from your verified cell"}).start()
+            deadline = self._clock() + 1.0
+            while not global_stop.active() and self._clock() < deadline:
+                time.sleep(0.005)
             ack = global_stop.claim_ack("phone_call", self.call_sid or "this call")
             if ack:
                 try:
-                    self.say(ack)
+                    self.say(ack, ack=True)
+                    # Let Twilio play it before the call is closed (at most a few seconds).
+                    until = min(self.speaking_until, self._clock() + 3.0) + 0.3
+                    while self._clock() < until:
+                        time.sleep(0.02)
                 except Exception as e:  # noqa: BLE001 - the stop already happened
                     _log.info("stop acknowledgement not spoken: %s", type(e).__name__)
         finally:
@@ -380,7 +426,8 @@ class CallBridge:
 
     def _turn_text(self, text: str) -> None:
         from agent_friday.services import global_stop
-        if global_stop.active():
+        if global_stop.active() or self.stopped.is_set():
+            self.stopped.set()
             return                       # stopped while this waited: nothing more is said
         self.history.append({"who": "caller", "text": text})
         try:
@@ -388,7 +435,8 @@ class CallBridge:
         except Exception as e:
             _log.warning("live call agent turn failed: %s", e)
             reply = "Sorry, I lost my train of thought. Could you say that again?"
-        if global_stop.active():
+        if global_stop.active() or self.stopped.is_set():
+            self.stopped.set()           # a Resume meanwhile does not bring this call back
             return                       # stopped while the model was answering: say nothing
         spoken, asks = split_asks(reply)
         for what in asks:
@@ -411,6 +459,9 @@ class CallBridge:
             self.stream_sid = st.get("streamSid") or msg.get("streamSid") or ""
             self.call_sid = st.get("callSid") or ""
             self.params = st.get("customParameters") or {}
+            # The owner's call, named once by its one-time token (connect_twiml).
+            self._owner = (str(self.params.get("direction") or "") == "inbound"
+                           and _claim_owner_token(self.params.get("owner") or ""))
             opening = self.params.get("opening") or ""
             if opening:
                 self.history.append({"who": "friday", "text": opening})
