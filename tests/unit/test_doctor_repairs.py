@@ -32,16 +32,33 @@ def home(tmp_path, monkeypatch):
     safe_mode.reset_for_tests()
 
 
+MODEL_OR_NETWORK = {"model_router", "anthropic", "openai", "requests", "httpx", "ollama", "google.genai"}
+
+
+def _imports(path: Path) -> set:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    out = set()
+    for n in ast.walk(tree):                       # module-level and inside functions
+        if isinstance(n, ast.Import):
+            out |= {a.name for a in n.names}
+        elif isinstance(n, ast.ImportFrom):
+            out |= {n.module or ""} | {a.name for a in n.names}
+    return {x for part in out for x in (part, part.rsplit(".", 1)[-1])}
+
+
 def test_no_repair_needs_a_model_or_the_network():
     dr = _dr()
     assert dr.NEEDS_MODEL is False
-    tree = ast.parse((ROOT / "src" / "agent_friday" / "services" / "doctor_repairs.py").read_text(encoding="utf-8"))
-    names = {a.name for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
-    mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
-    assert not ({"model_router", "anthropic", "openai", "requests", "httpx"} & (names | mods))
+    targets = {"doctor_repairs", "safe_mode", "authority"} | {
+        r["needs"].rsplit(".", 1)[-1] for rs in dr.REPAIRS.values() for r in rs
+        if r.get("needs") and importlib.util.find_spec(r["needs"]) is not None}
+    for name in sorted(targets):
+        p = ROOT / "src" / "agent_friday" / "services" / (name + ".py")
+        bad = _imports(p) & MODEL_OR_NETWORK
+        assert not bad, (name, bad)
     for rs in dr.REPAIRS.values():
         for r in rs:
-            assert set(r) <= {"id", "label", "where", "needs"} and r["label"]
+            assert set(r) <= {"id", "label", "where", "needs", "codes"} and r["label"]
             assert r["where"] == "" or r["where"].startswith("#")
 
 
@@ -51,9 +68,22 @@ def test_every_place_a_repair_points_to_is_on_the_doctor_page():
     for rs in dr.REPAIRS.values():
         for r in rs:
             if r["where"] and not (r.get("needs") and importlib.util.find_spec(r["needs"]) is None):
-                if r["where"] == "#localmodel":
-                    continue                     # the local model section ships with its repairs
                 assert 'id="%s"' % r["where"][1:] in html, r
+
+
+def test_repairs_fit_the_code_and_a_check_that_found_nothing_gets_none():
+    dr = _dr()
+    ids = lambda out, cid: [r["id"] for r in out[cid]]
+    out = dr.offered([{"id": "migrations", "state": "misconfigured", "code": "newer_folder:2>1"}])
+    assert ids(out, "migrations") == ["update_friday"]                  # never "retry the upgrade"
+    out = dr.offered([{"id": "migrations", "state": "broken", "code": "upgrade_failed_safe_mode_held"}])
+    assert "migration_retry" in ids(out, "migrations") and "leave_safe_mode" in ids(out, "migrations")
+    out = dr.offered([{"id": "receipt_chain", "state": "unverified", "code": "no_key_to_check_with"},
+                      {"id": "rules", "state": "unverified", "code": "self_test_not_run"},
+                      {"id": "vault", "state": "unverified", "code": "check_failed:OSError"}])
+    assert set(out) == {"vault"}                                         # only a check that failed to run
+    out = dr.offered([{"id": "safe_mode", "state": "blocked_by_policy", "code": "safe_mode_failed_starts"}])
+    assert "leave_safe_mode" not in ids(out, "safe_mode")
 
 
 def test_a_broken_check_gets_its_repairs_and_an_unlisted_one_says_none():
