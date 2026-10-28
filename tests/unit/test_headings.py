@@ -40,3 +40,13 @@ def test_a_windows_title_is_a_level_2_heading():
 
 def test_the_app_suite_checks_it():
     assert "headings.spec.ts" in _t(".github/workflows/tests.yml")
+
+
+@pytest.mark.parametrize("rel", ["index.html", "ui_parts/app.html"])
+def test_a_documents_headings_sit_under_the_window_title(rel):
+    """Markdown rendered in a window (a page, a reply) is read with its headings two levels down: its
+    "# Title" is level 3, under the window's level 2, and never a second h1."""
+    s = _t(rel)
+    assert "body = body.replace(/<h([1-6])(?=[\\s>])/gi, (m, n) => m + ' aria-level=\"' + Math.min(6, Number(n) + 2) + '\"');" in s
+    i = s.index("function renderFridayMarkdown(")
+    assert s.index("aria-level=\"' + Math.min(6", i) < s.index("\n}", i), "inside renderFridayMarkdown"

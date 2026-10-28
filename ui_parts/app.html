@@ -2159,6 +2159,9 @@ function renderFridayMarkdown(mdText,opts){
   }catch(e){body=fridayFallbackMd(psrc);}
   body=body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi,'<a target="_blank" rel="noopener" $1>');
   body = fridaySanitizeMarkup(body);
+  // A document's headings sit under the page's h1 and the window title's level 2 (north star 33.1-6): a screen
+  // reader hears its `# Title` at level 3. Only the level read out changes; the drawn size stays.
+  body = body.replace(/<h([1-6])(?=[\s>])/gi, (m, n) => m + ' aria-level="' + Math.min(6, Number(n) + 2) + '"');
   return'<div class="friday-doc'+(compact?' compact':'')+'">'+body+'</div>';
 }
 if(typeof window!=='undefined'){window.renderFridayMarkdown=renderFridayMarkdown;}

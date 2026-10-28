@@ -22,8 +22,10 @@ test('one top-level heading, a level-2 heading per window, no level-1 heading in
   await settle(page, { quietMs: 1000, timeout: 15_000 });
   const found = await page.evaluate(() => {
     const level = (e: Element) => {
+      // The level a screen reader announces: aria-level when set (it overrides the tag), else the tag's.
+      if (e.getAttribute('aria-level')) return Number(e.getAttribute('aria-level'));
       const m = /^H([1-6])$/.exec(e.tagName);
-      return m ? Number(m[1]) : Number(e.getAttribute('aria-level') || 2);
+      return m ? Number(m[1]) : 2;
     };
     const all = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]'));
     const tops = all.filter(e => level(e) === 1).map(e => (e.textContent || '').trim());
