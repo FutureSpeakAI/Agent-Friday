@@ -60,13 +60,15 @@ def _replay():
 # -- which tools the ruling covers ---------------------------------------------
 
 @pytest.mark.parametrize("name", ["check_job_status", "work_order_status", "workflow_status",
-                                  "queue_status", "pollExport", "wait_for_upload", "job.status"])
+                                  "queue_status", "pollJob", "wait_for_job", "job.status",
+                                  "mcp_ci_get_job_status", "getHTTPStatus"])
 def test_a_status_poll_or_wait_tool_is_recognised(name):
     assert tb.is_status_tool(name) is True
 
 
 @pytest.mark.parametrize("name", ["search_email", "calendar_events", "read_file", "fetch_page",
-                                  "send_draft", "check_plan_travel", "statusbar_theme_x", ""])
+                                  "send_draft", "check_plan_travel", "statusbar_theme_x", "",
+                                  "content_post_status"])
 def test_any_other_tool_is_not(name):
     assert tb.is_status_tool(name) is False
 
@@ -109,7 +111,8 @@ def test_a_job_flapping_between_two_states_is_still_a_loop():
     lambda i: json.dumps({"state": "running", "request_id": "r%d" % i}),
     lambda i: "running, elapsed %ds" % (30 * i),
     lambda i: "running, checked at epoch %d" % (1761300000 + i),
-    lambda i: {"state": "running", "uptime": 100 + i, "attempt": i},
+    lambda i: str({"state": "running", "uptime": 100 + i, "attempt": i}),   # how the loops store a dict
+    lambda i: "running (attempt %d)" % i,
 ])
 def test_counters_and_ids_that_only_tick_are_not_a_change(make):
     args = {"job_id": "j"}
@@ -120,6 +123,30 @@ def test_a_result_long_enough_to_have_been_clipped_is_judged_as_before():
     args = {"job_id": "j"}
     calls = [("check_job_status", args, "x" * 1995 + str(i)) for i in range(5)]
     assert _run(calls) == 2
+
+
+def test_a_row_written_before_the_guard_looked_makes_it_judge_as_before():
+    # The local loop records a call with bad arguments, then asks the guard.
+    args = {"job_id": "j"}
+    trace = []
+    g = tb.LoopGuard(trace=trace)
+    stops = []
+    for p in (10, 20, 30, 40):
+        trace.append({"name": "check_job_status", "input": args, "result": "%d%%" % p})
+        stops.append(g.observe("check_job_status", args))
+    assert stops[:2] == [None, None] and stops[2]
+
+
+def test_a_trace_that_shrinks_is_never_trusted_again():
+    args = {"job_id": "j"}
+    trace = []
+    g = tb.LoopGuard(trace=trace)
+    assert g.observe("check_job_status", args) is None
+    trace.append({"name": "check_job_status", "input": args, "result": "10%"})
+    assert g.observe("check_job_status", args) is None
+    trace.append({"name": "check_job_status", "input": args, "result": "20%"})
+    trace.clear()
+    assert g.observe("check_job_status", args)        # the third call, judged as before
 
 
 def test_a_cycle_through_a_status_poll_and_another_tool_is_caught_as_before():
@@ -133,7 +160,9 @@ def test_a_cycle_through_a_status_poll_and_another_tool_is_caught_as_before():
 
 
 @pytest.mark.parametrize("name", ["set_status", "update_status", "post_status_update",
-                                  "wait_then_send", "create_commit_status"])
+                                  "wait_then_send", "create_commit_status", "deploy_and_wait",
+                                  "mcp_slack_set_status", "mcp_github_create_commit_status",
+                                  "wait_for_upload"])
 def test_a_tool_that_changes_something_is_not_a_status_tool(name):
     assert tb.is_status_tool(name) is False
 

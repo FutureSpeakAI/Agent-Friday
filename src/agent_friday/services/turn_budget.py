@@ -262,15 +262,25 @@ def loop_guard_enabled() -> bool:
 #: lets a repeated call through when its result changes, but only for status,
 #: poll and wait tools." Such a tool reports on something that moves by itself (a
 #: job, a queue, a workflow), so asking again with the same arguments is how it
-#: is used. A tool counts when a word of its name is one of these, and its first
-#: and last words are not a verb that changes something (set_status,
-#: post_status_update and wait_then_send are writes, not polls). Nothing else is
-#: loosened: a search, a read or a write repeated is judged exactly as before.
+#: is used. A tool counts only when its name has the shape of a read: it ends in
+#: one of these words, or starts with a reading verb (get_, check_, poll_,
+#: wait_...), and NO word of it is a verb that changes something. So
+#: mcp_slack_set_status, deploy_and_wait and wait_then_send are not status tools,
+#: and an ambiguous name (content_post_status) is judged as before, which is the
+#: safe side. An MCP tool (mcp_<server>_<tool>) is judged on the words after the
+#: server. Nothing else is loosened: a search, a read or a write repeated is
+#: judged exactly as before.
 STATUS_TOOL_WORDS = frozenset({"status", "statuses", "poll", "polling", "wait", "waiting"})
 _WRITE_VERBS = frozenset({
     "set", "update", "create", "post", "put", "patch", "mark", "add", "delete", "remove",
     "send", "change", "write", "cancel", "submit", "approve", "clear", "reset", "start",
-    "stop", "run", "retry", "trigger", "enqueue", "publish", "edit", "save", "move"})
+    "stop", "run", "retry", "trigger", "enqueue", "publish", "edit", "save", "move",
+    "deploy", "build", "launch", "restart", "kill", "exec", "execute", "invoke", "call",
+    "notify", "schedule", "assign", "close", "merge", "push", "upload", "apply", "sync",
+    "resume", "pause", "rerun", "release", "click", "type", "press", "open", "install",
+    "uninstall", "import", "export", "download", "rename", "archive", "upsert", "insert"})
+_READ_VERBS = frozenset({"get", "check", "read", "fetch", "query", "show", "poll", "wait",
+                         "watch", "await", "list", "view"})
 
 #: A result this long may have been clipped when it was written to the trace (the
 #: loops keep 2,000 characters), and a clipped result can look changed when only
@@ -288,7 +298,8 @@ _NOISE_KEYS = ("elapsed|elapsed_s|elapsed_ms|uptime|duration|age|attempt|attempt
                "checked_at|last_checked|updated_at|heartbeat|last_heartbeat|timestamp|ts|now|"
                "request_id|trace_id|correlation_id|etag|next_check|next_poll")
 _VOLATILE = [
-    re.compile(r"\"(?:%s)\"\s*:\s*(?:\"[^\"]*\"|-?[\d.eE+]+)" % _NOISE_KEYS, re.I),
+    re.compile(r"[\"'](?:%s)[\"']\s*:\s*(?:\"[^\"]*\"|'[^']*'|-?[\d.eE+]+)" % _NOISE_KEYS, re.I),
+    re.compile(r"\b(?:attempt|retry|try|poll|check|seq|sequence|iteration|tick)\s*(?:no\.?|number)?\s*#?\s*\d+", re.I),
     re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?", re.I),
     re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:am|pm)?\b", re.I),
     re.compile(r"\b\d{10,13}\b"),
@@ -308,9 +319,13 @@ def _name_words(name: Any) -> list:
 def is_status_tool(name: Any) -> bool:
     """Is this a status, poll or wait tool, by the words of its name?"""
     words = _name_words(name)
+    if words[:1] == ["mcp"]:
+        words = words[2:]                # mcp_<server>_<tool>: the tool's own words
     if not words or not any(w in STATUS_TOOL_WORDS for w in words):
         return False
-    return words[0] not in _WRITE_VERBS and words[-1] not in _WRITE_VERBS
+    if any(w in _WRITE_VERBS for w in words):
+        return False
+    return words[-1] in STATUS_TOOL_WORDS or words[0] in _READ_VERBS
 
 
 def result_fingerprint(result: Any) -> str:
