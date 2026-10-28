@@ -46,6 +46,11 @@ def restart(tmp_path, monkeypatch):
     monkeypatch.setattr(tj, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     tj.reset_for_tests()
+    try:
+        from agent_friday.services import recovery_receipts
+        recovery_receipts._reset_for_tests()
+    except ImportError:
+        pass
     import agent_friday.notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **kw: kw)
 
@@ -89,8 +94,11 @@ def test_a_kill_during_a_later_send_says_it_will_ask_first(tmp_path, restart):
     """, tmp_path)[-1]
     before = len(_recovery())
     tj.reconcile_on_boot()
-    [r] = [d for d in _recovery()[before:] if d["subject"] == "task:" + tid]
+    mine = [d for d in _recovery()[before:] if d["subject"] == "task:" + tid]
+    assert len(mine) == 1, "an interruption needs exactly one recovery receipt"
+    r = mine[0]
     assert r["next"] == "asks_the_owner_before_resuming" and r["last_boundary"]
+    assert r["may_have_acted"] is True, "a later send in flight may have happened"
 
 
 def test_an_approved_action_killed_mid_run_leaves_one_receipt(tmp_path, restart):
@@ -125,3 +133,25 @@ def test_a_receipt_that_cannot_be_written_never_stops_a_start(tmp_path, restart,
     monkeypatch.setattr(action_gate, "_receipt", no_recovery)
     out = tj.reconcile_on_boot()
     assert [s["task_id"] for s in out["interrupted"]] == [tid]
+
+
+def test_a_stop_after_the_receipt_but_before_the_mark_does_not_write_a_second(tmp_path, restart,
+                                                                               monkeypatch):
+    tid = _kill_after(_START_TASK + """
+    task_resume.mark_tool_pending(tid, "send_email", "tu_1")
+    """, tmp_path)[-1]
+    before = len(_recovery())
+    real_write = tj.write_state
+
+    def die_here(task_id, st, *a, **k):
+        raise SystemExit("killed between the receipt and the mark")
+    monkeypatch.setattr(tj, "write_state", die_here)
+    with pytest.raises(SystemExit):
+        tj.reconcile_on_boot()                               # receipt written, mark not
+    monkeypatch.setattr(tj, "write_state", real_write)
+    from agent_friday.services import recovery_receipts
+    recovery_receipts._reset_for_tests()                     # a new process: read from the ledger
+    tj.reconcile_on_boot()
+    mine = [d for d in _recovery()[before:] if d["subject"] == "task:" + tid]
+    assert len(mine) == 1, "the next start wrote a second receipt for the same interruption"
+

@@ -663,6 +663,17 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
                 restored.append(st)
         how = _exit_words(previous)
         for tid, st, last_cp, last_hb in pending:
+            # BD-16 / NS-32.11-1: the signed recovery receipt first, so a crash before the
+            # record below is marked cannot leave this interruption without one (and the next
+            # start, finding it again, does not write a second).
+            try:
+                from agent_friday.services import recovery_receipts
+                recovery_receipts.task_interrupted(
+                    tid, st, previous,
+                    (last_cp or {}).get("summary") or (last_cp or {}).get("kind"),
+                    interruption=(last_hb or last_cp or {}).get("ts") or st.get("state_written"))
+            except Exception as _rr:
+                _log.error("recovery receipt failed for %s: %s", tid, type(_rr).__name__)
             # NS-17.7-1: the record was recovered after Friday stopped; `exit` says how.
             append(tid, "state", state="recovered_after_crash", was=st.get("state"),
                    exit=previous.get("kind"))
@@ -682,14 +693,6 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
             write_state(tid, st)
             index_put(tid, st.get("name", ""), "interrupted", st.get("created"), st["ended"])
             interrupted.append(st)
-            # BD-16 / NS-32.11-1: one signed recovery receipt for this interruption.
-            try:
-                from agent_friday.services import recovery_receipts
-                recovery_receipts.task_interrupted(
-                    tid, st, previous,
-                    (last_cp or {}).get("summary") or (last_cp or {}).get("kind"))
-            except Exception as _rr:
-                _log.error("recovery receipt failed for %s: %s", tid, type(_rr).__name__)
     except Exception as e:
         _log.error("task journal reconciliation failed: %s", e)
     return {"interrupted": interrupted, "restored": restored, "previous_exit": previous}
