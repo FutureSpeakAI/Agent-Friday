@@ -693,6 +693,11 @@ def public(inv: dict) -> dict:
                "bytes": _num(r.get("bytes")), "files": _num(r.get("files")),
                "modified": r.get("modified") if isinstance(r.get("modified"), str)
                and _ISO.fullmatch(r["modified"]) else None}
+        try:                             # what the store declares (services/store_policy, §11.7-3)
+            from agent_friday.services import store_policy
+            out["policy"] = store_policy.policy(s)
+        except Exception:  # noqa: BLE001 - the inventory never fails for its declarations
+            out["policy"] = None
         for flag in ("link", "at_least"):
             if r.get(flag) is True:
                 out[flag] = True
