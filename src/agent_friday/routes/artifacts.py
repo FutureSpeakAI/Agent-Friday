@@ -54,6 +54,9 @@ def artifact_manifest_record():
     path = str(request.args.get("path") or "").strip()
     if not path or len(path) > 4096 or "\x00" in path:
         return _bad("path is required")
+    why = am.refused_path(path)
+    if why:
+        return _bad(why)
     rec = am.lookup(path)
     if rec is None:
         return _bad("Friday has no manifest record for this file as it is now", 404)
@@ -63,12 +66,28 @@ def artifact_manifest_record():
 @artifacts_bp.route("/api/artifacts/manifest/verify", methods=["POST"])
 @login_required
 def artifact_manifest_verify():
-    """The owner checked the file and says it is right."""
+    """The owner checked the file and says it is right. The file must be
+    there (404 when it is not); a network or device path is refused (400)
+    before anything is opened."""
+    from pathlib import Path
     from agent_friday.services import artifact_manifest as am
     body = request.get_json(silent=True) or {}
     path = str(body.get("path") or "").strip()
     if not path or len(path) > 4096 or "\x00" in path:
         return _bad("path is required")
+    why = am.refused_path(path)
+    if why:
+        return _bad(why)
+    try:
+        resolved = Path(path).resolve()
+        why = am.refused_path(str(resolved))        # a mapped drive can resolve to a share
+        present = not why and resolved.is_file()
+    except (OSError, ValueError, RuntimeError):
+        present = False
+    if why:
+        return _bad(why)
+    if not present:
+        return _bad("the file is not there, so it cannot be verified", 404)
     if am.mark_owner_verified(path) is None:
         return _bad("Friday has no manifest record for this file as it is now", 404)
     return jsonify({"status": "ok", "manifest": am.lookup(path)})

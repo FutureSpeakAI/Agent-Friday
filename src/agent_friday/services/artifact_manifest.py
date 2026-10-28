@@ -28,11 +28,22 @@ and, for NS-24.1-2:
                             never the words that set it
   verification_state        "unverified" | "qa_passed" | "qa_failed" |
                             "owner_verified" (the last from an event line)
+  verification_reason       why a file is "unverified" when the checks did not
+                            run: "checks unavailable in this build" (a frozen
+                            build cannot start the isolated check), the check's
+                            own warning (a timeout), or null
   delivery_receipt          null when made; the newest delivery once the file
                             was sent or published (an event line, below)
-  version_history           the earlier versions of the same path, oldest
-                            first: sha256, when, and the backup write_file
-                            kept (or null), with its receipt id
+  previous_version          the version this line replaced, or null: sha256,
+                            when, and the backup write_file kept (or null),
+                            with its receipt id. Only the one before: the line
+                            never copies the whole history (the file stays
+                            small). `lookup` rebuilds `version_history`, oldest
+                            first, by walking the lines for the same path
+                            (at most MAX_VERSIONS). Older lines that carry a
+                            full `version_history` are still read.
+  first_version             True on the first line Friday wrote for the path
+                            (the walk back stops there)
 
 What happens to a file later is an "artifact_event" line, signed the same
 way and tied to the artifact line's HMAC: "delivered" (with the action
@@ -46,14 +57,20 @@ to `submit`, which records them on a background thread: hashing a long
 video or checking a big PDF never holds up the conversation.
 
 `lookup(path)` gives the full record for a file whose bytes still match:
-the latest verified line with its events applied. `receipt_of(line)` the
-receipt it names (verified), `verify(line)` checks a line, `qa_failures`
-the files a task made that failed their checks.
+the latest verified line with its events applied. It finds the lines for
+the resolved path first (the last 4 MB of the manifest, then further back,
+up to 64 MB, when the path has no line there) and only hashes the file when
+a line exists. Network (UNC, \\\\host\\share) and device (\\\\?\\, \\\\.\\) paths
+are refused, never opened (`refused_path`). `receipt_of(line)` the receipt
+it names (verified), `verify(line)` checks a line, `qa_verdict` /
+`qa_failures` the files a task made that failed their checks, waiting only
+for that task's own queued checks (`wait_for_task`).
 """
 from __future__ import annotations
 
 import hashlib
 import hmac as _hmac
+import itertools
 import json
 import os
 import queue
@@ -93,6 +110,28 @@ MAX_VERSIONS = 50
 MAX_LINE_FINDINGS = 20
 #: How long a finishing task waits for its files' checks before judging them.
 QA_WAIT_S = 30.0
+#: Why a file is unverified when this build cannot run the isolated check.
+UNAVAILABLE_REASON = "checks unavailable in this build"
+#: Why a task is unverified when its files' checks had not finished.
+PENDING_REASON = "checks still running"
+#: `lookup` reads this much of the manifest's end first, and goes back at
+#: most this far when the path has no line there.
+LOOKUP_TAIL_BYTES = 4 * 1024 * 1024
+LOOKUP_MAX_BYTES = 64 * 1024 * 1024
+_BLOCK = 1024 * 1024
+
+
+def refused_path(path: Any) -> Optional[str]:
+    """Why `path` is never looked up or opened, or None. A network (UNC)
+    path would make Windows reach another machine (and offer it this
+    account's credentials) just to hash a file; a device path (\\\\?\\, \\\\.\\)
+    bypasses the normal path rules."""
+    s = str(path or "").strip()
+    if s.startswith(("\\\\?\\", "\\\\.\\", "//?/", "//./", "\\??\\")):
+        return "device paths are not accepted"
+    if s.startswith(("\\\\", "//")):
+        return "network (UNC) paths are not accepted"
+    return None
 
 
 def manifest_path() -> Path:
@@ -388,27 +427,69 @@ def _write_receipt(name: str, result: Any) -> Optional[dict]:
             "before_sha256": item.get("before_sha256"), "backup": backup}
 
 
-def _version_history(prior: Optional[dict], sha: Optional[str], wr: Optional[dict]) -> List[dict]:
-    """The earlier versions of a path: the previous line's history, plus the
-    previous version itself when the bytes changed."""
-    hist = list((prior or {}).get("version_history") or [])
+def _previous_version(prior: Optional[dict], sha: Optional[str], wr: Optional[dict]) -> Optional[dict]:
+    """The version this line replaces, when the bytes changed, or None. Only
+    that one: the history is rebuilt at read time (`_history`)."""
     if prior and prior.get("sha256") and prior.get("sha256") != sha:
         entry = {"sha256": prior["sha256"], "ts": prior.get("ts"), "backup": None,
                  "write_receipt": None, "by_friday": True}
         if wr and wr.get("before_sha256") == prior["sha256"]:
             entry["backup"], entry["write_receipt"] = wr.get("backup"), wr.get("receipt_id")
-        hist.append(entry)
-    elif not prior and wr and wr.get("existed") and wr.get("before_sha256") and wr["before_sha256"] != sha:
+        return entry
+    if not prior and wr and wr.get("existed") and wr.get("before_sha256") and wr["before_sha256"] != sha:
         # The file was there before Friday's first recorded version of it.
-        hist.append({"sha256": wr["before_sha256"], "ts": None, "backup": wr.get("backup"),
-                     "write_receipt": wr.get("receipt_id"), "by_friday": False})
-    return hist[-MAX_VERSIONS:]
+        return {"sha256": wr["before_sha256"], "ts": None, "backup": wr.get("backup"),
+                "write_receipt": wr.get("receipt_id"), "by_friday": False}
+    return None
+
+
+def _history(base: dict, lines: List[dict]) -> List[dict]:
+    """The earlier versions of `base`'s path, oldest first, rebuilt from the
+    `previous_version` of `base` and of the older lines for the same path
+    (`lines`, newest first). A legacy line that carries the whole
+    `version_history` ends the walk with it. At most MAX_VERSIONS."""
+    hist: List[dict] = []                     # newest first while walking
+    started = False
+    for e in lines:
+        if not started:
+            started = e is base or (e.get("hmac") and e.get("hmac") == base.get("hmac"))
+            if not started:
+                continue
+        if e.get("kind") != "artifact" or e.get("path") != base.get("path"):
+            continue
+        pv = e.get("previous_version")
+        if isinstance(pv, dict):
+            hist.append(pv)
+        elif "previous_version" not in e and isinstance(e.get("version_history"), list):
+            hist.extend(v for v in reversed(e["version_history"]) if isinstance(v, dict))
+            break
+        if len(hist) >= MAX_VERSIONS or e.get("first_version"):
+            break
+    if not started:
+        legacy = base.get("version_history")
+        if "previous_version" not in base and isinstance(legacy, list):
+            return [v for v in legacy if isinstance(v, dict)][-MAX_VERSIONS:]
+        pv = base.get("previous_version")
+        return [pv] if isinstance(pv, dict) else []
+    return list(reversed(hist[:MAX_VERSIONS]))
 
 
 def _state_of(qa: dict) -> str:
     if not qa.get("checked"):
         return "unverified"
     return "qa_passed" if qa.get("ok") else "qa_failed"
+
+
+def _reason_of(qa: dict) -> Optional[str]:
+    """Why a file whose checks did not run is unverified, or None."""
+    if qa.get("checked"):
+        return None
+    if qa.get("unavailable"):
+        return UNAVAILABLE_REASON
+    for f in qa.get("findings") or []:
+        if isinstance(f, dict) and f.get("severity") == "warn" and f.get("message"):
+            return str(f["message"])[:200]
+    return None
 
 
 def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
@@ -470,9 +551,12 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
                     # An append keeps the state the file had when it was checked.
                     "verification_state": ((prior or {}).get("verification_state") or "unverified")
                                           if appended else _state_of(qa),
+                    "verification_reason": (prior or {}).get("verification_reason")
+                                           if appended else _reason_of(qa),
                     "delivery_receipt": None,
                     "write_receipt": (wr or {}).get("receipt_id"),
-                    "version_history": _version_history(prior, sha, wr),
+                    "previous_version": _previous_version(prior, sha, wr),
+                    "first_version": prior is None,
                 }, where.get("key")))
             except Exception:
                 continue
@@ -491,6 +575,45 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
 _QUEUE: "queue.Queue" = queue.Queue(maxsize=256)
 _WORKER: Optional[threading.Thread] = None
 _WORKER_LOCK = threading.Lock()
+#: The queued (or running) jobs of each task, by job id, so a finishing task
+#: waits for its own files' checks and no one else's.
+_PENDING: Dict[str, set] = {}
+_PENDING_CV = threading.Condition()
+_JOB_IDS = itertools.count(1)
+
+
+def _track(task_id: str) -> int:
+    with _PENDING_CV:
+        jid = next(_JOB_IDS)
+        _PENDING.setdefault(task_id, set()).add(jid)
+        return jid
+
+
+def _untrack(task_id: str, jid: int) -> None:
+    with _PENDING_CV:
+        jobs = _PENDING.get(task_id)
+        if jobs is not None:
+            jobs.discard(jid)
+            if not jobs:
+                _PENDING.pop(task_id, None)
+        _PENDING_CV.notify_all()
+
+
+def pending(task_id: Optional[str]) -> int:
+    """How many of this task's files are still queued or being checked."""
+    if not task_id:
+        return 0
+    with _PENDING_CV:
+        return len(_PENDING.get(task_id) or ())
+
+
+def wait_for_task(task_id: Optional[str], timeout: float) -> bool:
+    """Wait up to `timeout` seconds for this task's own queued checks (not
+    the whole queue). True when none is left."""
+    if not task_id:
+        return True
+    with _PENDING_CV:
+        return bool(_PENDING_CV.wait_for(lambda: not _PENDING.get(task_id), max(0.0, float(timeout or 0))))
 
 
 def _work() -> None:
@@ -501,6 +624,8 @@ def _work() -> None:
         except Exception:
             pass
         finally:
+            if len(job) > 3 and job[2]:
+                _untrack(job[2], job[3])
             _QUEUE.task_done()
 
 
@@ -523,9 +648,11 @@ def submit(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
     paths = written_paths(name, args, result)          # resolved here, not later elsewhere
     if not paths:
         return False
+    jid = _track(task_id) if task_id else 0
     job = ((name, args, result), {"task_id": task_id, "started_at": started_at, "ok": ok,
                                   "turn_id": _current_turn(), "where": where, "paths": paths,
-                                  "task_context": _task_context(task_id)})
+                                  "task_context": _task_context(task_id)},
+           task_id, jid)
     with _WORKER_LOCK:
         if _WORKER is None or not _WORKER.is_alive():
             _WORKER = threading.Thread(target=_work, name="artifact-manifest", daemon=True)
@@ -534,6 +661,8 @@ def submit(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
         _QUEUE.put_nowait(job)
         return True
     except queue.Full:
+        if task_id:
+            _untrack(task_id, jid)
         # Dropped, not guessed: a file with no line claims nothing (lookup
         # returns None), but the gap is logged.
         import logging
@@ -570,10 +699,70 @@ def entries(limit: int = 500) -> List[dict]:
     return _read(manifest_path(), None, limit)
 
 
+def _reverse_lines(mp: Path, max_bytes: int):
+    """(line, bytes read so far) from the end of the file backwards, at most
+    `max_bytes`, one block at a time. A line cut by the limit is dropped."""
+    try:
+        f = open(mp, "rb")
+    except OSError:
+        return
+    with f:
+        f.seek(0, os.SEEK_END)
+        end = pos = f.tell()
+        floor = max(0, end - max_bytes)
+        rest = b""
+        while pos > floor:
+            step = min(_BLOCK, pos - floor)
+            pos -= step
+            f.seek(pos)
+            parts = (f.read(step) + rest).split(b"\n")
+            rest = parts[0]
+            for raw in reversed(parts[1:]):
+                if raw.strip():
+                    yield raw.decode("utf-8", errors="replace"), end - pos
+        if floor == 0 and rest.strip():
+            yield rest.decode("utf-8", errors="replace"), end
+
+
+def _path_lines(mp: Path, path_str: str, key: Optional[bytes] = None, *,
+                tail: Optional[int] = None, max_bytes: Optional[int] = None) -> List[dict]:
+    """The verified lines (artifact and event) for one path, newest first.
+    Reads the last `tail` bytes; when the path has no artifact line there,
+    keeps going back, at most `max_bytes`. Only lines that name the path are
+    parsed and their signatures checked."""
+    tail = LOOKUP_TAIL_BYTES if tail is None else tail
+    max_bytes = LOOKUP_MAX_BYTES if max_bytes is None else max_bytes
+    needle = json.dumps(path_str)[1:-1]
+    out: List[dict] = []
+    found = 0
+    older = False          # the oldest line read so far replaced a version Friday recorded
+    for line, read in _reverse_lines(mp, max_bytes):
+        # Past the tail, go on only while the history chain still points further back.
+        if read > tail and found and (not older or found > MAX_VERSIONS):
+            break
+        if needle not in line:
+            continue
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(e, dict) or e.get("path") != path_str:
+            continue
+        if e.get("kind") == "artifact" and verify(e, key):
+            out.append(dict(e, verified=True))
+            found += 1
+            # A line with `previous_version` that is not the path's first has
+            # older lines; a legacy line carries its whole history itself.
+            older = "previous_version" in e and not e.get("first_version")
+        elif e.get("kind") == "artifact_event" and verify_event(e, key):
+            out.append(dict(e, verified=True))
+    return out
+
+
 def _latest_line(mp: Path, path_str: str, key: Optional[bytes] = None) -> Optional[dict]:
     """The newest verified artifact line for a path, whatever its bytes."""
-    for e in _read(mp, key, 5000):
-        if e.get("kind") == "artifact" and e.get("verified") and e.get("path") == path_str:
+    for e in _path_lines(mp, path_str, key):
+        if e.get("kind") == "artifact":
             return e
     return None
 
@@ -584,10 +773,14 @@ def _with_events(base: dict, lines: List[dict]) -> dict:
     rec.setdefault("principal", None)
     rec.setdefault("goal_ancestry", None)
     rec.setdefault("sensitivity", None)
-    rec.setdefault("version_history", [])
+    rec["version_history"] = _history(base, lines)
+    rec.setdefault("previous_version", None)
     rec.setdefault("delivery_receipt", None)
     if not rec.get("verification_state"):
         rec["verification_state"] = _state_of(rec.get("qa") or {})
+    if "verification_reason" not in rec:
+        rec["verification_reason"] = (_reason_of(rec.get("qa") or {})
+                                      if rec["verification_state"] == "unverified" else None)
     events = [e for e in lines if e.get("kind") == "artifact_event" and e.get("verified")
               and e.get("artifact") == base.get("hmac")]                       # newest first
     deliveries = [e.get("delivery_receipt") for e in events
@@ -602,18 +795,31 @@ def _with_events(base: dict, lines: List[dict]) -> dict:
     return rec
 
 
+def _resolved(path) -> Optional[str]:
+    """The resolved path, or None for a refused (network or device) path."""
+    if refused_path(path):
+        return None
+    want = str(Path(str(path)).resolve())
+    return None if refused_path(want) else want
+
+
 def lookup(path) -> Optional[dict]:
     """The full record (NS-24.1-2) for a file whose bytes still match: the
-    newest verified line with its events applied, or None."""
+    newest verified line with its events applied, or None. The lines for the
+    resolved path are found first; the file is hashed only when one exists.
+    A network or device path is never resolved or read (None)."""
     try:
-        want = str(Path(path).resolve())
+        want = _resolved(path)
+        if want is None:
+            return None
+        lines = _path_lines(manifest_path(), want)
+        if not any(e.get("kind") == "artifact" for e in lines):
+            return None
         sha = _sha256(Path(want)) if Path(want).is_file() else None
     except Exception:
         return None
-    lines = entries(limit=5000)
     for e in lines:
-        if e.get("kind") == "artifact" and e.get("path") == want and e.get("verified") \
-                and (sha is None or e.get("sha256") == sha):
+        if e.get("kind") == "artifact" and (sha is None or e.get("sha256") == sha):
             return _with_events(e, lines)
     return None
 
@@ -677,11 +883,15 @@ def record_delivery(receipt: Any, *, channel: str, sha256: Optional[str] = None,
 
 def mark_owner_verified(path) -> Optional[dict]:
     """The owner checked the file and says it is right: an "owner_verified"
-    event on its current line. None when there is no line for these bytes."""
+    event on its current line. None when there is no line for these bytes,
+    the file is not there, or the path is a network or device path."""
     try:
         if _off_record():
             return None
-        rec = lookup(path)
+        want = _resolved(path)
+        if want is None or not Path(want).is_file():
+            return None
+        rec = lookup(want)
         if not rec:
             return None
         ev = _event(rec, "owner_verified")
@@ -691,14 +901,26 @@ def mark_owner_verified(path) -> Optional[dict]:
         return None
 
 
+def qa_verdict(task_id: Optional[str], *, wait: float = 0.0) -> dict:
+    """{"failures": qa_failures, "pending": n}: `wait` first lets this
+    task's own queued checks finish; `pending` is how many were still not
+    done after it (the task cannot be called checked while any is)."""
+    if not task_id:
+        return {"failures": [], "pending": 0}
+    if wait:
+        wait_for_task(task_id, wait)
+    return {"failures": qa_failures(task_id), "pending": pending(task_id)}
+
+
 def qa_failures(task_id: Optional[str], *, wait: float = 0.0) -> List[dict]:
     """The files a task made whose newest line failed its checks:
-    [{"path", "errors"}]. `wait` first lets queued checks finish (a task
-    finishing on a background thread)."""
+    [{"path", "errors"}]. `wait` first lets this task's own queued checks
+    finish (a task finishing on a background thread); other tasks' are not
+    waited for."""
     if not task_id:
         return []
     if wait:
-        drain(wait)
+        wait_for_task(task_id, wait)
     out, seen = [], set()
     for e in entries(limit=5000):
         if e.get("kind") != "artifact" or not e.get("verified") or e.get("task_id") != task_id:

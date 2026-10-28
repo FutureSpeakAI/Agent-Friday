@@ -8640,15 +8640,16 @@ function ProvenanceBar({filename}){
 // /api/artifacts/manifest, and says so when Friday has no record of the file.
 function ManifestBar({path}){
   const[data,setData]=useState(null);const[open,setOpen]=useState(false);const[busy,setBusy]=useState(false);
-  const load=()=>{if(!path){setData(null);return Promise.resolve();}return fetch('/api/artifacts/manifest?path='+encodeURIComponent(path)).then(r=>r.json()).then(d=>setData(d)).catch(()=>setData(null));};
+  const load=()=>{if(!path){setData(null);return Promise.resolve();}return apiFetch('/api/artifacts/manifest?path='+encodeURIComponent(path)).then(r=>r.json()).then(d=>setData(d)).catch(()=>setData(null));};
   useEffect(()=>{setData(null);setOpen(false);load();},[path]);
   if(!path||!data)return null;
   if(data.status!=='ok'||!data.manifest)return <div style={{fontSize:10,color:'#6a8b98',fontFamily:'JetBrains Mono',marginBottom:8}}>Manifest: no record for this file as it is now.</div>;
   const m=data.manifest;const st=m.verification_state||'unverified';
-  const col={qa_passed:'#00e87a',owner_verified:'#00ff80',qa_failed:'#ff5470'}[st]||'#8891a8';
-  const lbl={qa_passed:'Checks passed',qa_failed:'Checks failed',owner_verified:'Verified by you',unverified:'Not verified'}[st]||st;
   const ga=m.goal_ancestry;const sens=m.sensitivity||{};const dr=m.delivery_receipt;const vh=m.version_history||[];const qa=m.qa||{};
-  const verify=async()=>{setBusy(true);try{await fetch('/api/artifacts/manifest/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});await load();}catch(e){}setBusy(false);};
+  const qaFailed=!!(qa.checked&&qa.ok===false);
+  const col={qa_passed:'#00e87a',owner_verified:qaFailed?'#ffb454':'#00ff80',qa_failed:'#ff5470'}[st]||'#8891a8';
+  const lbl={qa_passed:'Checks passed',qa_failed:'Checks failed',owner_verified:qaFailed?'Verified by you (checks failed)':'Verified by you',unverified:'Not verified'}[st]||st;
+  const verify=async()=>{if(qaFailed&&!window.confirm('This file failed its checks'+(qa.summary?': '+qa.summary:'.')+'\n\nMark it verified anyway?'))return;setBusy(true);try{await apiFetch('/api/artifacts/manifest/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});await load();}catch(e){}setBusy(false);};
   const row=(k,v)=><div key={k} style={{display:'flex',gap:8}}><span style={{color:'#6a8b98',minWidth:110}}>{k}</span><span style={{color:'#aab',wordBreak:'break-all'}}>{v}</span></div>;
   return(<div style={{marginBottom:10,padding:'8px 10px',borderRadius:8,background:'rgba(127,182,201,0.05)',border:'1px solid rgba(127,182,201,0.14)'}}>
     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
@@ -8663,6 +8664,7 @@ function ManifestBar({path}){
       {row('Goal',ga?(ga.goal_id+(ga.milestone_id?' › '+ga.milestone_id:'')):'none')}
       {row('Sensitivity',sens.level||'unknown')}
       {row('Checks',qa.summary||(qa.checked?'checked':'not checked'))}
+      {st==='unverified'&&m.verification_reason&&row('Why not verified',m.verification_reason)}
       {row('Delivery receipt',dr?((dr.channel||'')+' · '+String(dr.id||'').slice(0,16)+'…'):'not sent')}
       {row('Versions',vh.length?vh.length+' earlier: '+vh.map(v=>String(v.sha256||'').slice(0,8)+(v.backup?' (backup kept)':'')).join(', '):'first version')}
       {row('SHA-256',String(m.sha256||'').slice(0,16)+'…')}

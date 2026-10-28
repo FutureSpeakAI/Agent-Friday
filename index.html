@@ -26380,7 +26380,7 @@ function ManifestBar({
       setData(null);
       return Promise.resolve();
     }
-    return fetch('/api/artifacts/manifest?path=' + encodeURIComponent(path)).then(r => r.json()).then(d => setData(d)).catch(() => setData(null));
+    return apiFetch('/api/artifacts/manifest?path=' + encodeURIComponent(path)).then(r => r.json()).then(d => setData(d)).catch(() => setData(null));
   };
   useEffect(() => {
     setData(null);
@@ -26398,26 +26398,28 @@ function ManifestBar({
   }, "Manifest: no record for this file as it is now.");
   const m = data.manifest;
   const st = m.verification_state || 'unverified';
-  const col = {
-    qa_passed: '#00e87a',
-    owner_verified: '#00ff80',
-    qa_failed: '#ff5470'
-  }[st] || '#8891a8';
-  const lbl = {
-    qa_passed: 'Checks passed',
-    qa_failed: 'Checks failed',
-    owner_verified: 'Verified by you',
-    unverified: 'Not verified'
-  }[st] || st;
   const ga = m.goal_ancestry;
   const sens = m.sensitivity || {};
   const dr = m.delivery_receipt;
   const vh = m.version_history || [];
   const qa = m.qa || {};
+  const qaFailed = !!(qa.checked && qa.ok === false);
+  const col = {
+    qa_passed: '#00e87a',
+    owner_verified: qaFailed ? '#ffb454' : '#00ff80',
+    qa_failed: '#ff5470'
+  }[st] || '#8891a8';
+  const lbl = {
+    qa_passed: 'Checks passed',
+    qa_failed: 'Checks failed',
+    owner_verified: qaFailed ? 'Verified by you (checks failed)' : 'Verified by you',
+    unverified: 'Not verified'
+  }[st] || st;
   const verify = async () => {
+    if (qaFailed && !window.confirm('This file failed its checks' + (qa.summary ? ': ' + qa.summary : '.') + '\n\nMark it verified anyway?')) return;
     setBusy(true);
     try {
-      await fetch('/api/artifacts/manifest/verify', {
+      await apiFetch('/api/artifacts/manifest/verify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -26496,7 +26498,7 @@ function ManifestBar({
       flexDirection: 'column',
       gap: 3
     }
-  }, row('Made by', (m.tool || '?') + (m.task_id ? ' · task ' + m.task_id : '')), row('For', m.principal || 'unknown'), row('Goal', ga ? ga.goal_id + (ga.milestone_id ? ' › ' + ga.milestone_id : '') : 'none'), row('Sensitivity', sens.level || 'unknown'), row('Checks', qa.summary || (qa.checked ? 'checked' : 'not checked')), row('Delivery receipt', dr ? (dr.channel || '') + ' · ' + String(dr.id || '').slice(0, 16) + '…' : 'not sent'), row('Versions', vh.length ? vh.length + ' earlier: ' + vh.map(v => String(v.sha256 || '').slice(0, 8) + (v.backup ? ' (backup kept)' : '')).join(', ') : 'first version'), row('SHA-256', String(m.sha256 || '').slice(0, 16) + '…'), st !== 'owner_verified' && /*#__PURE__*/React.createElement("button", {
+  }, row('Made by', (m.tool || '?') + (m.task_id ? ' · task ' + m.task_id : '')), row('For', m.principal || 'unknown'), row('Goal', ga ? ga.goal_id + (ga.milestone_id ? ' › ' + ga.milestone_id : '') : 'none'), row('Sensitivity', sens.level || 'unknown'), row('Checks', qa.summary || (qa.checked ? 'checked' : 'not checked')), st === 'unverified' && m.verification_reason && row('Why not verified', m.verification_reason), row('Delivery receipt', dr ? (dr.channel || '') + ' · ' + String(dr.id || '').slice(0, 16) + '…' : 'not sent'), row('Versions', vh.length ? vh.length + ' earlier: ' + vh.map(v => String(v.sha256 || '').slice(0, 8) + (v.backup ? ' (backup kept)' : '')).join(', ') : 'first version'), row('SHA-256', String(m.sha256 || '').slice(0, 16) + '…'), st !== 'owner_verified' && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 10,

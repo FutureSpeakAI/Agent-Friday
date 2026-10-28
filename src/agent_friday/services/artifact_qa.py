@@ -31,7 +31,10 @@ Each finding is {"check", "severity", "message"}, and a spreadsheet finding
 also has "sheet" and "cell" (a cell, range, column or rows). "error" means
 the file is broken for its reader, "warn" means it works but falls short,
 "info" is worth knowing (hidden data, a web link). `ok` is False when there
-is any error. Findings name cells, never their contents. Office files are zip packages of XML, so they are
+is any error. Findings name cells, never their contents; they may name
+sheets (and sheet names a formula refers to) and the host name of a
+hyperlink or external link, so a finding is not free of what the file says
+about itself. Office files are zip packages of XML, so they are
 read with the standard library; PDFs with pdfplumber (already a core
 dependency). Never raises: a file that cannot be read is itself a finding.
 """
@@ -421,6 +424,12 @@ def _formula_scan(text: str) -> dict:
             j += 1
         return j
 
+    def _sheet_range_end(j):             # A:B! -> index of the '!', else None
+        k = j
+        while k < n and is_word(text[k]):
+            k += 1
+        return k if k > j and k < n and text[k] == "!" else None
+
     while i < n:
         ch = text[i]
         if ch == '"' or ch == "'":
@@ -459,6 +468,8 @@ def _formula_scan(text: str) -> dict:
                 parses = False
                 break
             i = j + 1
+            if i < n and text[i] == "!":         # [1]!MyName: another workbook's name
+                i = skip_ref(i + 1)
             continue
         if ch == "(":
             depth += 1
@@ -490,6 +501,9 @@ def _formula_scan(text: str) -> dict:
                 funcs.append(token)
             elif nxt == "!":
                 i = skip_ref(i + 1)
+            elif nxt == ":" and _sheet_range_end(i + 1) is not None:
+                # Sheet1:Sheet2!A1, a 3D reference over a range of sheets.
+                i = skip_ref(_sheet_range_end(i + 1) + 1)
             elif nxt != "[":
                 names.append(token)
             continue
@@ -858,9 +872,12 @@ def _formula_findings(ftext: str, name: str, ref: str, names_lower: set, known: 
     # A sheet in another workbook ([1]Prices!A1) is that workbook's: not judged here.
     external = bool(_EXTERNAL_REF.search(ftext))
     for other, col, row in _formula_refs(ftext):
-        if other and other != "REF" and other.lower() not in names_lower and "[" not in other and not external:
+        # 'First:Last'!A1 is a 3D reference over a range of sheets: each end must exist.
+        ends = other.split(":") if other and ":" in other else [other]
+        missing = [s for s in ends if s and s.lower() not in names_lower]
+        if other and other != "REF" and missing and "[" not in other and not external:
             out.append(_finding("formulas", "error", "%s!%s refers to a sheet '%s' that does not exist"
-                                % (name, ref, other[:60]), **where))
+                                % (name, ref, missing[0][:60]), **where))
         if col and (_col_number(col) > _MAX_COL or int(row) > _MAX_ROW or int(row) < 1):
             out.append(_finding("bounds", "error", "%s!%s refers to %s%s, outside any sheet" % (name, ref, col, row),
                                 **where))
@@ -883,7 +900,9 @@ def _formula_findings(ftext: str, name: str, ref: str, names_lower: set, known: 
                                 **where))
     if external:
         out.append(_finding("links", "warn", "%s!%s takes values from another workbook" % (name, ref), **where))
-    if not {"LET", "LAMBDA"} & set(bases):
+    # A formula that reads another workbook may use that workbook's names
+    # ([1]!MyName): they are not this workbook's to define, so not judged.
+    if not external and not {"LET", "LAMBDA"} & set(bases):
         for token in dict.fromkeys(scan["names"]):
             up = token.upper()
             if up in ("TRUE", "FALSE") or up.startswith("_XLPM.") or _CELL.fullmatch(up.replace("$", "")) \
@@ -1321,7 +1340,14 @@ def check_isolated(path, timeout: float = CHECK_TIMEOUT_S) -> Dict:
     them slow down badly on hostile input, so the caller (the agent's
     manifest worker, the office delivery gate) can never be held by one.
     A check that does not finish is a warning, never a pass of the file's
-    content. Never raises."""
+    content. Never raises.
+
+    In a frozen (packaged) build `sys.executable` is the app itself, not a
+    Python, so no child is started and the result is `checked: False` with
+    the warning "the check cannot run in this build". Callers must not read
+    that as a pass: the manifest records it as verification_state
+    "unverified" with the reason "checks unavailable in this build"
+    (artifact_manifest.UNAVAILABLE_REASON)."""
     import json
     import subprocess
     p = Path(path)
@@ -1330,7 +1356,7 @@ def check_isolated(path, timeout: float = CHECK_TIMEOUT_S) -> Dict:
         return {"ok": True, "kind": kind, "checked": False, "findings": []}
     if getattr(sys, "frozen", False):
         # A frozen build's executable is the app, not Python: never start it.
-        return {"ok": True, "kind": kind, "checked": False,
+        return {"ok": True, "kind": kind, "checked": False, "unavailable": True,
                 "findings": [_finding("validity", "warn", "the check cannot run in this build")]}
     code = ("import importlib.util,json,sys\n"
             "s=importlib.util.spec_from_file_location('artifact_qa',sys.argv[1])\n"
