@@ -92,3 +92,33 @@ def test_no_entry_means_nothing_is_saved(saved, monkeypatch):
         _save(saved, lambda s: s["notes"].update(isolation="off"))
     assert saved.read_text(encoding="utf-8") == before
     assert json.loads(before)["servers"]["notes"]["isolation"] == "appcontainer"
+
+
+def test_a_new_program_under_an_old_name_is_a_new_connector(saved):
+    def change(s):
+        s["legacy"]["command"] = "C:\\Tools\\other.exe"              # a different program
+        s["remote"] = {"command": "node", "args": ["was-a-url.js"]}  # a URL entry made a program
+    _save(saved, change)
+    servers = json.loads(saved.read_text(encoding="utf-8"))["servers"]
+    assert servers["legacy"].get("isolation") == "appcontainer", "a swapped program kept full access"
+    assert servers["remote"].get("isolation") == "appcontainer"
+    _save(saved, lambda s: s["notes"].update(command="python", isolation="off"))
+    assert len(_entries("notes")) == 1
+
+
+def test_off_the_record_isolation_is_not_turned_off(saved, monkeypatch):
+    from agent_friday.services import off_record
+    monkeypatch.setattr(off_record, "active", lambda *a, **k: True)
+    before = saved.read_text(encoding="utf-8")
+    with pytest.raises(Exception):
+        _save(saved, lambda s: s["notes"].update(isolation="off"))
+    assert saved.read_text(encoding="utf-8") == before
+
+
+def test_with_the_old_settings_unreadable_every_unisolated_connector_is_written(saved):
+    from agent_friday.services import agent
+    good = json.loads(saved.read_text(encoding="utf-8"))
+    saved.write_text("{ not json", encoding="utf-8")
+    good["servers"]["notes"].pop("isolation")
+    agent._save_mcp_servers(good)
+    assert len(_entries("notes")) == 1, "isolation went with an unreadable file and no entry"
