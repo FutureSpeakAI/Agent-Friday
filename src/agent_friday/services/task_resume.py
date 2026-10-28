@@ -332,6 +332,11 @@ def resumability(task_id) -> Dict[str, Any]:
     ledger_verdict = _ledger_resumability(task_id, int(verdict.get("attempts") or 0))
     if not ledger_verdict.get("resumable"):
         return verdict
+    if verdict.get("may_have_acted"):
+        # An outward step ran (or was running) and its result was never saved in the transcript:
+        # the ledger may pick the task up, but only once the owner says so (NS-33.6-2 c).
+        ledger_verdict["needs_confirmation"] = True
+        ledger_verdict["reason"] = verdict["reason"] + " " + ledger_verdict["reason"]
     if verdict.get("unreadable"):
         ledger_verdict["reason"] = ("the transcript checkpoint cannot be read (most likely "
                                     "written under a previous vault passphrase); resuming "
@@ -549,6 +554,14 @@ def resume(task_id, *, confirm_pending: bool = False,
         return _resume_from_ledger(task_id, verdict)
 
     blob = read(task_id) or {}
+    unsaved, _running = _unsaved_effects(blob)
+    if unsaved:
+        # The owner said go on, but the saved transcript does not show these finished calls, so the
+        # model would ask for them again. The task ledger recorded them with their results: continue
+        # from it when it can; otherwise the transcript is told, before anything runs.
+        ledger_verdict = _ledger_resumability(task_id, int(verdict.get("attempts") or 0))
+        if ledger_verdict.get("resumable"):
+            return _resume_from_ledger(task_id, ledger_verdict)
     from agent_friday.services import cloud_mode_policy as _cmp
     _pinned = bool((session_ctx or {}).get("cloud_pin")
                    or (blob.get("run_context") or {}).get("cloud_pin"))
@@ -569,6 +582,15 @@ def resume(task_id, *, confirm_pending: bool = False,
     from agent_friday.services.compaction import strip_thinking
     convo = strip_thinking(blob.get("convo") or [])
     tool_trace = blob.get("tool_trace") or []
+    if unsaved and convo and convo[-1].get("role") == "user":
+        note = ("[Friday restarted. Before it stopped, these calls already ran and their results "
+                "were not saved: %s. Do NOT call them again; carry on from what they did, and say "
+                "if you cannot tell whether they worked.]" % ", ".join(unsaved))
+        last = dict(convo[-1])
+        content = last.get("content")
+        last["content"] = (list(content) + [{"type": "text", "text": note}] if isinstance(content, list)
+                           else (str(content or "") + "\n\n" + note))
+        convo = convo[:-1] + [last]
 
     ctx = dict(session_ctx or {})
     # Only the stored invocation supplies grant/owner context after a restart.
@@ -738,8 +760,8 @@ def announce_may_have_acted(items: List[Dict[str, Any]]) -> None:
         return
     names = ", ".join((r.get("name") or r["task_id"])[:40] for r in items[:5])
     more = f" and {len(items) - 5} more" if len(items) > 5 else ""
-    body = (f"{names}{more} stopped while doing something outward (such as sending) as "
-            f"its first step. Whether it happened is not known, and Friday will not "
+    body = (f"{names}{more} stopped while, or just after, doing something outward (such as "
+            f"sending) as its first step. It may have happened, and Friday will not "
             f"repeat it on its own. Check before starting {'it' if len(items) == 1 else 'them'} again.")
     try:
         import agent_friday.notifications_engine as ne
@@ -790,8 +812,8 @@ def announce(resumable: List[Dict[str, Any]], resumed: Optional[List[str]] = Non
         if resumed:
             body += f" {len(resumed)} of them are already being resumed."
     if gated:
-        body += (f" {len(gated)} had a tool running at the moment of the crash "
-                 f"and will ask before re-running it.")
+        body += (f" {len(gated)} had a tool running at the moment of the crash, or one that "
+                 f"finished without its result being saved, and will ask before running it again.")
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=f"{len(items)} interrupted task"
