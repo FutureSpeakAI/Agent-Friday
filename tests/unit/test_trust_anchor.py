@@ -153,3 +153,19 @@ def test_a_removal_the_ledger_cannot_record_changes_nothing(home, monkeypatch):
         mcp_hosts.remove(ORIGINAL, made_by="owner:ui")
     assert mcp_hosts.allowed(ORIGINAL)
 
+
+def test_a_removal_during_a_ledger_break_is_still_released(home, monkeypatch):
+    """While the ledger has an open break, Friday cannot read what it carried; a removal still
+    records its release, so a later rebuild cannot bring the host back."""
+    from agent_friday.governance import mcp_hosts, trust_anchor
+    cfg = {"servers": {"notes": {"url": ORIGINAL, "enabled": True}}}
+    mcp_hosts.carry_over_at_boot(cfg)
+
+    def unreadable(*a, **k):
+        raise trust_anchor.AnchorUnavailable("break")
+    monkeypatch.setattr(trust_anchor, "carried", unreadable)
+    assert mcp_hosts.remove(ORIGINAL, made_by="owner:ui")
+    released = [e for e in action_ledger.entries(["trust_carry_over_released"])
+                if (e.get("rec") or {}).get("list") == "mcp_hosts"]
+    assert len(released) == 1
+
