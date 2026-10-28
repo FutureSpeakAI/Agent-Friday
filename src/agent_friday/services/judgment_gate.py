@@ -917,7 +917,9 @@ def _parse_verdicts(raw: str, n: int) -> list[dict] | None:
     if not raw or not isinstance(raw, str):
         return None
     from agent_friday.services.reply_json import last_object
-    data = last_object(raw, accept=lambda d: isinstance(d.get("verdicts"), list))
+    # unique: two verdict objects (a correction, or one echoed from the text
+    # being judged) or a draft from thinking cut short read as malformed.
+    data = last_object(raw, accept=lambda d: isinstance(d.get("verdicts"), list), unique=True)
     items = data.get("verdicts") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return None

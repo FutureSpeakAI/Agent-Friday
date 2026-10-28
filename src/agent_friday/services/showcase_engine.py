@@ -45,20 +45,18 @@ _ACCENT2 = brand.VIOLET_SOFT
 # ── Spec parsing ───────────────────────────────────────────────────────────
 
 def _parse_json_spec(text):
-    """Extract the first JSON object from an LLM reply (fences tolerated)."""
+    """Extract the JSON object from an LLM reply (fences, prose and spilled
+    thinking tolerated; services/reply_json)."""
     if not text:
         return None
-    t = text.strip()
-    if "```" in t:
-        # Take the largest fenced block if any fence is present.
-        blocks = re.findall(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
+    from agent_friday.services.reply_json import THINK_END, last_object
+    found = last_object(text)
+    if found is None and "```" in text and THINK_END not in text:
+        # No object read from the reply as a whole: try its largest fenced
+        # block on its own. Never after thinking, where that block may be a draft.
+        blocks = re.findall(r"```(?:json)?\s*(.*?)```", text.strip(), re.DOTALL)
         if blocks:
-            t = max(blocks, key=len).strip()
-    from agent_friday.services.reply_json import last_object
-    found = last_object(t)
-    if found is None and t != text.strip():
-        # The largest fenced block held no object: read the whole reply.
-        found = last_object(text)
+            found = last_object(max(blocks, key=len).strip())
     return found
 
 

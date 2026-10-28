@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, List, Optional, Tuple
 
 #: The marker a thinking model writes when its reasoning ends.
 THINK_END = "</think>"
+#: The tag that ends the reasoning early on a llama-server seat.
+TOOL_CALL = "<tool_call>"
 
 #: Upper bounds on the scan, so a huge or hostile reply cannot stall a request.
 #: A 16K-token answer is well under 100,000 characters.
@@ -58,9 +60,9 @@ def bounded(raw: str) -> str:
     return raw if len(raw) <= MAX_REPLY_CHARS else raw[-MAX_REPLY_CHARS:]
 
 
-def scan_last(text: str, accept: Callable[[dict], bool]) -> Optional[dict]:
-    """The last top-level JSON object in `text` that `accept` takes and that is
-    not followed by an end-of-thinking marker.
+def scan_all(text: str, accept: Callable[[dict], bool]) -> List[Tuple[int, dict]]:
+    """Every top-level JSON object in `text` that `accept` takes and that is
+    not followed by an end-of-thinking marker, as (start, object), in order.
 
     Scans forward. A `{` that starts a complete object is skipped past as a
     whole, so braces inside it are never visited and an inner object never
@@ -68,7 +70,7 @@ def scan_last(text: str, accept: Callable[[dict], bool]) -> Optional[dict]:
     tried, so stray braces in prose and code cost no decode.
     """
     decoder = json.JSONDecoder()
-    found = None
+    found: List[Tuple[int, dict]] = []
     pos = 0
     starts = 0
     while starts < MAX_STARTS:
@@ -84,8 +86,14 @@ def scan_last(text: str, accept: Callable[[dict], bool]) -> Optional[dict]:
             continue
         pos = end
         if isinstance(obj, dict) and accept(obj) and text.find(THINK_END, end) < 0:
-            found = obj
+            found.append((i, obj))
     return found
+
+
+def scan_last(text: str, accept: Callable[[dict], bool]) -> Optional[dict]:
+    """The last object `scan_all` finds, or None."""
+    found = scan_all(text, accept)
+    return found[-1][1] if found else None
 
 
 def _acceptor(keys: Optional[Iterable[str]],
@@ -106,11 +114,16 @@ def _acceptor(keys: Optional[Iterable[str]],
 
 
 def last_object(raw, *, keys: Optional[Iterable[str]] = None,
-                accept: Optional[Callable[[dict], bool]] = None) -> Optional[dict]:
+                accept: Optional[Callable[[dict], bool]] = None,
+                unique: bool = False) -> Optional[dict]:
     """The JSON object a model answered with, or None. Pure.
 
     keys:   when given, an object must carry at least one of them.
     accept: when given, an object must also pass this check.
+    unique: for readers that must fail closed. Outside a whole-JSON reply,
+            None unless exactly one acceptable object is found, and None when
+            a `<tool_call>` precedes it with no `</think>` anywhere (thinking
+            cut off before it ended, so the object may be a draft).
     """
     if not isinstance(raw, str) or not raw.strip():
         return None
@@ -122,4 +135,12 @@ def last_object(raw, *, keys: Optional[Iterable[str]] = None,
         whole = None
     if isinstance(whole, dict) and ok(whole):
         return whole
-    return scan_last(text, ok)
+    if not unique:
+        return scan_last(text, ok)
+    found = scan_all(text, ok)
+    if len(found) != 1:
+        return None
+    start, obj = found[0]
+    if THINK_END not in text and TOOL_CALL in text[:start]:
+        return None
+    return obj
