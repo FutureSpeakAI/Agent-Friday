@@ -122,7 +122,7 @@ def last_object(raw, *, keys: Optional[Iterable[str]] = None,
     accept: when given, an object must also pass this check.
     unique: for readers that must fail closed. Outside a whole-JSON reply,
             None unless exactly one acceptable object is found, and None when
-            a `<tool_call>` precedes it with no `</think>` anywhere (thinking
+            a `<tool_call>` precedes it with no `</think>` in between (thinking
             cut off before it ended, so the object may be a draft).
     """
     if not isinstance(raw, str) or not raw.strip():
@@ -141,6 +141,7 @@ def last_object(raw, *, keys: Optional[Iterable[str]] = None,
     if len(found) != 1:
         return None
     start, obj = found[0]
-    if THINK_END not in text and TOOL_CALL in text[:start]:
+    tc = text.find(TOOL_CALL)
+    if 0 <= tc < start and text.find(THINK_END, tc, start) < 0:
         return None
     return obj
