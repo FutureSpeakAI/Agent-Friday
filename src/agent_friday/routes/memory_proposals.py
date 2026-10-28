@@ -72,7 +72,7 @@ def api_memory_proposals_approve():
             return jsonify({"ok": False, "reason": "An edit keeps one suggestion: send one fact id and the text."})
         edits = {str(ids[0]): text}
     try:
-        return jsonify(mp.approve(ids, edits=edits))
+        return jsonify(mp.approve(ids, edits=edits) if edits else mp.approve(ids))
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't approve the memory", shape="ok", key="reason")
