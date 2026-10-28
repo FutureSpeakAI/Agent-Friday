@@ -47,6 +47,18 @@ def is_isolated(spec) -> bool:
     return str(spec.get("isolation")).strip().lower() not in _OFF
 
 
+def _is_new(name, spec, old_servers: dict) -> bool:
+    """A connector server new in this save: its name was not there, the old entry was
+    not a command server (a URL, or no program), or its program changed. A different
+    program under an old name is a new connector, not the one the owner had."""
+    if name not in old_servers:
+        return True
+    old = old_servers.get(name)
+    if not _is_command_server(old):
+        return True
+    return str(old.get("command") or "").strip().lower() != str(spec.get("command") or "").strip().lower()
+
+
 def apply_default(new_cfg: dict, old_cfg: Optional[dict]) -> dict:
     """Mark every connector server that is new in `new_cfg` (not in `old_cfg`) and
     says nothing about isolation as isolated. Returns `new_cfg` (changed in place)."""
@@ -54,10 +66,10 @@ def apply_default(new_cfg: dict, old_cfg: Optional[dict]) -> dict:
     if not isinstance(new_servers, dict):
         return new_cfg
     old_servers = (old_cfg or {}).get("servers") if isinstance(old_cfg, dict) else None
-    old_names = set(old_servers) if isinstance(old_servers, dict) else set()
+    old_servers = old_servers if isinstance(old_servers, dict) else {}
     added = []
     for name, spec in new_servers.items():
-        if name in old_names or not _is_command_server(spec):
+        if not _is_command_server(spec) or not _is_new(name, spec, old_servers):
             continue
         added.append(name)
         if "isolation" not in spec:
@@ -87,13 +99,15 @@ def _explicitly_off(spec) -> bool:
             and str(spec.get("isolation")).strip().lower() in _OFF)
 
 
-def turned_off(new_cfg: dict, old_cfg: Optional[dict]) -> List[tuple]:
+def turned_off(new_cfg: dict, old_cfg: Optional[dict], old_unreadable: bool = False) -> List[tuple]:
     """Connector servers this save takes out of isolation: (name, new_spec, before).
 
     Turned off means the new entry runs un-isolated and the old one did not say "off":
     an isolated connector set to "off" (or its key removed), a connector from before
-    A25 set to "off", or a connector added with "off". Values that were already off,
-    and connectors from before A25 left as they are, are not changes."""
+    A25 set to "off", or a connector added (or given a new program) with "off". Values
+    that were already off, and connectors from before A25 left as they are, are not
+    changes. When the old settings could not be read, nothing is known about before:
+    every connector that would run un-isolated is counted."""
     new_servers = (new_cfg or {}).get("servers")
     if not isinstance(new_servers, dict):
         return []
@@ -103,7 +117,10 @@ def turned_off(new_cfg: dict, old_cfg: Optional[dict]) -> List[tuple]:
     for name, spec in new_servers.items():
         if not _is_command_server(spec) or is_isolated(spec):
             continue
-        old = old_servers.get(name)
+        if old_unreadable:
+            out.append((str(name), spec, "unknown"))
+            continue
+        old = None if _is_new(name, spec, old_servers) else old_servers.get(name)
         if _explicitly_off(old):
             continue
         if _explicitly_off(spec) or is_isolated(old):
@@ -112,15 +129,25 @@ def turned_off(new_cfg: dict, old_cfg: Optional[dict]) -> List[tuple]:
     return out
 
 
-def record_turned_off(new_cfg: dict, old_cfg: Optional[dict], source: str = "connector_settings") -> List[str]:
+def record_turned_off(new_cfg: dict, old_cfg: Optional[dict], source: str = "connector_settings",
+                      old_unreadable: bool = False) -> List[str]:
     """Write one signed connector_run_unisolated entry in the action ledger for each
-    connector this save takes out of isolation. Raises when an entry cannot be written:
-    the caller saves nothing (no entry, no un-isolated connector)."""
+    connector this save takes out of isolation. Raises when an entry cannot be written,
+    or when Friday is off the record (the entry would not name the connector): the
+    caller saves nothing (no entry, no un-isolated connector)."""
     skip = getattr(_ALREADY_RECORDED, "names", None) or set()
     written = []
-    for name, spec, before in turned_off(new_cfg, old_cfg):
-        if name in skip:
-            continue
+    changes = [c for c in turned_off(new_cfg, old_cfg, old_unreadable) if c[0] not in skip]
+    if changes:
+        try:
+            from agent_friday.services import off_record as _off
+            off = _off.active()
+        except ImportError:
+            off = False
+        if off:
+            raise RuntimeError("isolation was not turned off: Friday is off the record, and this "
+                               "choice has to be kept in full. Turn off-the-record off first.")
+    for name, spec, before in changes:
         from agent_friday.governance import action_gate as _gate
         try:
             _gate._receipt({"tool": "connector_run_unisolated", "class": getattr(_gate, "OUTWARD", "outward"),

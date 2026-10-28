@@ -16356,11 +16356,13 @@ def _save_mcp_servers(cfg: dict) -> dict:
         cfg = {"servers": cfg}
     # A25: a connector server new in this save runs in Windows' isolated mode unless
     # it says otherwise. Every writer of this file comes through here.
+    old_unreadable = False
     try:
         old = json.loads(MCP_SERVERS_FILE.read_text(encoding="utf-8-sig")) \
             if MCP_SERVERS_FILE.exists() else {"servers": {}}
     except Exception:
         # Unreadable on disk: the servers running now are the ones that existed.
+        old_unreadable = True
         mgr = _MCP_MANAGER
         old = {"servers": {n: {} for n in (getattr(mgr, "servers", None) or {})}} if mgr else None
     from agent_friday.services import connector_isolation as _ci
@@ -16368,7 +16370,9 @@ def _save_mcp_servers(cfg: dict) -> dict:
         cfg = _ci.apply_default(cfg, old)
     # Owner ruling 4: a save that takes a connector out of isolation writes a signed
     # connector_run_unisolated entry first; if it cannot be written, nothing is saved.
-    _ci.record_turned_off(cfg, old)
+    # With the old file unreadable, every connector that would run un-isolated is
+    # written (nothing is known about before).
+    _ci.record_turned_off(cfg, old, old_unreadable=old_unreadable)
     try:
         from agent_friday.services import connector_secrets as _cse
         cfg = _cse.encrypt_config(cfg)
@@ -16379,7 +16383,11 @@ def _save_mcp_servers(cfg: dict) -> dict:
         raise RuntimeError(
             "refusing to save connector config: credentials could not be "
             f"encrypted ({_e})") from _e
-    MCP_SERVERS_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # Written whole and then moved into place: a save reading it meanwhile never sees
+    # half a file (which it would take for unreadable).
+    _tmp = MCP_SERVERS_FILE.with_name(MCP_SERVERS_FILE.name + ".tmp")
+    _tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    os.replace(_tmp, MCP_SERVERS_FILE)
     try:
         from agent_friday.services import credential_store as _cs
         _cs.harden_permissions(MCP_SERVERS_FILE)
