@@ -37,6 +37,7 @@
   const pts2 = list => 'points="' + list.map(p => p.map(v => +v.toFixed(2)).join(',')).join(' ') + '"';
 
   function markerSVG(kind, x, y, r, col, inner) {
+    col = esc(col);
     const fill = 'fill="' + col + '" stroke="#0b0e14" stroke-width="1"', open = 'fill="#0b0e14" stroke="' + col + '" stroke-width="1.8"';
     switch (kind) {
       case 'square': case 'square-open':
@@ -52,6 +53,7 @@
   }
 
   function patternDef(id, kind, col) {
+    id = esc(id); col = esc(col);
     const ink = 'stroke="#0b0e14" stroke-opacity="0.6" stroke-width="1.6"';
     const hatch = '<path d="M-2,2 L2,-2 M0,8 L8,0 M6,10 L10,6" ' + ink + '/>';
     const back = '<path d="M-2,6 L2,10 M0,0 L8,8 M6,-2 L10,2" ' + ink + '/>';
@@ -77,7 +79,8 @@
 
   /** A small SVG for a legend entry that draws what the chart draws: the dash and marker, or the fill pattern. */
   function legendSwatch(l) {
-    const L = l || {};
+    const L = Object.assign({}, l || {});
+    L.color = esc(L.color); L.dash = esc(L.dash || '');
     const open = '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="12" viewBox="0 0 26 12" aria-hidden="true" focusable="false">';
     if (L.kind === 'line' || L.kind === 'area' || L.kind === 'scatter') {
       const line = L.kind === 'scatter' ? '' : '<line x1="1" y1="6" x2="25" y2="6" stroke="' + L.color + '" stroke-width="2"' + (L.dash ? ' stroke-dasharray="' + L.dash + '"' : '') + '/>';

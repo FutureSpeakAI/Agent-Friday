@@ -411,17 +411,27 @@ def _chart_rows(spec: dict):
         rows = [[r.get(c) for c in cols] for r in rows]
     if not cols and spec.get("series"):
         cols = ["x"] + [s.get("name") or "series %d" % (i + 1) for i, s in enumerate(spec["series"])]
-        length = max((len(s.get("data") or []) for s in spec["series"]), default=0)
-        rows = []
-        for i in range(length):
-            first = (spec["series"][0].get("data") or [None] * length)[i]
-            x = first[0] if isinstance(first, (list, tuple)) else (first or {}).get("x") if isinstance(first, dict) else None
-            row = [x]
-            for s in spec["series"]:
-                d = (s.get("data") or [])
-                p = d[i] if i < len(d) else None
-                row.append(p[1] if isinstance(p, (list, tuple)) else (p or {}).get("y") if isinstance(p, dict) else None)
-            rows.append(row)
+        # One row per x value, in the order first seen across all series: a series that skips an x has an
+        # empty cell there, so no number is paired with another series' x (the table under a chart says the same
+        # as the chart, north star 33.1-12).
+        def _xy(p):
+            if isinstance(p, (list, tuple)):
+                return (p[0] if len(p) > 0 else None), (p[1] if len(p) > 1 else None)
+            if isinstance(p, dict):
+                return p.get("x"), p.get("y")
+            return None, None
+        order, at, seen = [], [], set()
+        for s in spec["series"]:
+            m = {}
+            for p in (s.get("data") or []):
+                x, y = _xy(p)
+                k = str(x)
+                if k not in seen:
+                    seen.add(k)
+                    order.append(x)
+                m[k] = y
+            at.append(m)
+        rows = [[x] + [m.get(str(x)) for m in at] for x in order]
     return [str(c) for c in cols], rows
 
 

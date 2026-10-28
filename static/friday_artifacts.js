@@ -332,17 +332,19 @@
     // The same data as a table, for a screen reader or anyone who would rather read numbers (north star 33.1-12).
     const [asTable, setAsTable] = useState(false);
     const table = useMemo(() => asTable && window.FridayChart && window.FridayChart.tableHTML ? window.FridayChart.tableHTML(spec) : '', [content, asTable]);
+    // Drawn once per legend, not on every render (each swatch takes a fresh pattern id).
+    const swatchSvg = useMemo(() => (r.legend || []).map(l => window.FridayChart && window.FridayChart.legendSwatch ? window.FridayChart.legendSwatch(l) : ''), [r]);
     if (!window.FridayChart) return h('div', { className: 'fa-empty' }, 'The chart renderer did not load.');
     if (r.empty) return h('div', { className: 'fa-empty' }, 'Nothing to chart yet.');
-    const swatch = l => window.FridayChart.legendSwatch
-      ? h('i', { className: 'fa-swatch', dangerouslySetInnerHTML: { __html: window.FridayChart.legendSwatch(l) } })
+    const swatch = (l, i) => swatchSvg[i]
+      ? h('i', { className: 'fa-swatch', dangerouslySetInnerHTML: { __html: swatchSvg[i] } })
       : h('i', { style: { background: l.color } });
     return h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } },
       asTable
         ? h('div', { className: 'fa-chart-table', style: { flex: 1, minHeight: 0, overflow: 'auto' }, dangerouslySetInnerHTML: { __html: table } })
         : h('div', { className: 'fa-chart', style: { flex: 1, minHeight: 0 }, dangerouslySetInnerHTML: { __html: r.svg } }),
       h('div', { className: 'fa-legend' },
-        r.legend.map((l, i) => h('span', { key: i }, swatch(l), l.name)),
+        r.legend.map((l, i) => h('span', { key: i }, swatch(l, i), l.name)),
         h('button', { type: 'button', className: 'fa-chart-as', 'aria-pressed': asTable, onClick: () => setAsTable(v => !v),
           title: asTable ? 'Show the chart' : 'Show the data as a table' }, asTable ? 'Chart' : 'Table')));
   }

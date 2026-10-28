@@ -114,3 +114,12 @@ def test_a_published_chart_carries_the_table_and_the_swatches():
     assert t == ('<table><caption>Calls</caption><thead><tr><th scope="col">Month</th><th scope="col">A</th></tr></thead>'
                  '<tbody><tr><th scope="row">Jan</th><td class="num">1</td></tr>'
                  '<tr><th scope="row">Feb</th><td class="num"></td></tr></tbody></table>')
+
+
+def test_a_published_table_lines_series_up_by_x():
+    """Series given as points that skip values: each number sits on its own x (the CSV the same)."""
+    from agent_friday.services import publish_web
+    cols, rows = publish_web._chart_rows({"series": [{"name": "x", "data": [[1, 2], [2, 5]]},
+                                                     {"name": "y", "data": [{"x": 2, "y": 1}, {"x": 3, "y": 9}]}]})
+    assert cols == ["x", "x", "y"]
+    assert rows == [[1, 2, None], [2, 5, 1], [3, None, 9]]
