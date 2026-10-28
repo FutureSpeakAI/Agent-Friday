@@ -77,6 +77,31 @@ def test_an_oversized_manifest_or_an_archive_of_too_many_entries_is_refused(skil
         registry.import_skill(_zip(tmp_path, many, "many.zip"))
 
 
+def test_a_manifest_packed_without_an_output_bound_is_refused(skills, tmp_path):
+    p = tmp_path / "bz.zip"
+    with zipfile.ZipFile(p, "w", compression=zipfile.ZIP_BZIP2) as z:
+        z.writestr("SKILL.md", BODY)
+    with pytest.raises(ValueError):
+        registry.import_skill(p)
+
+
+def test_a_skill_md_that_is_a_link_is_refused(skills, tmp_path):
+    import os
+    secret = tmp_path / "id_ed25519"
+    secret.write_text("synthetic-private-key-material", encoding="utf-8")
+    pkg = tmp_path / "linked"
+    pkg.mkdir()
+    try:
+        os.symlink(str(secret), str(pkg / "SKILL.md"))
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot make a link here")
+    with pytest.raises(ValueError):
+        registry.import_skill(pkg)
+    from agent_friday.services import skill_import_review as sir
+    got = sir._folder_manifest(pkg)
+    assert type(got).__name__ == "Refusal" or not isinstance(got, tuple), got
+
+
 def test_no_skill_path_runs_anything(skills, tmp_path, monkeypatch):
     started = []
 

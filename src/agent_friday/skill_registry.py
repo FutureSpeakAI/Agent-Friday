@@ -1119,6 +1119,14 @@ def import_skill(src, name=None) -> dict:
             man = _find_manifest(src)
             if man is None:
                 raise ValueError(f"folder has no {_MANIFEST_NAMES[0]}")
+            # A manifest that is a link (or leads out of the folder) could make any
+            # file the skill's text.
+            real_man = os.path.normcase(os.path.realpath(str(man)))
+            real_dir = os.path.normcase(os.path.realpath(str(src)))
+            if man.is_symlink() or not real_man.startswith(real_dir.rstrip(os.sep) + os.sep):
+                raise ValueError("the SKILL.md is a link or lies outside the folder")
+            if man.stat().st_size > _MANIFEST_MAX_BYTES:
+                raise ValueError("the skill's manifest is too large")
             skill = _skill_from_manifest(
                 src, man.read_text(encoding="utf-8", errors="replace"),
                 default_source="imported")
@@ -1145,6 +1153,7 @@ def import_skill(src, name=None) -> dict:
 #: Bounds on an imported skill archive: how many entries are looked at, and how big
 #: the one manifest read from it may be.
 _ZIP_MAX_ENTRIES = 2000
+_ZIP_MAX_BYTES = 10 * 1024 * 1024
 _MANIFEST_MAX_BYTES = 256 * 1024
 
 
@@ -1152,6 +1161,8 @@ def _zip_manifest(src: Path) -> tuple:
     """(folder name, manifest text) from a skill archive, reading ONLY the manifest:
     the shallowest SKILL.md. Raises ValueError for an archive that has none, too many
     entries, an encrypted or oversized manifest."""
+    if src.stat().st_size > _ZIP_MAX_BYTES:
+        raise ValueError("the skill archive is too large")
     with zipfile.ZipFile(src) as zf:
         infos = zf.infolist()
         if len(infos) > _ZIP_MAX_ENTRIES:
@@ -1169,6 +1180,10 @@ def _zip_manifest(src: Path) -> tuple:
         _depth, info, parts = sorted(cands, key=lambda c: (c[0], c[1].filename))[0]
         if info.flag_bits & 0x1:
             raise ValueError("the skill's manifest is encrypted")
+        if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            # bzip2 and LZMA are read without an output bound: a small entry could
+            # expand without limit before the size check.
+            raise ValueError("the skill's manifest is packed in a way Friday does not read")
         if info.file_size > _MANIFEST_MAX_BYTES:
             raise ValueError("the skill's manifest is too large")
         with zf.open(info) as f:
