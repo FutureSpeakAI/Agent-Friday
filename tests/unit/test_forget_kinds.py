@@ -126,6 +126,9 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "CONTEXT_LOG_DIR", tmp_path / "vault" / "context-log")
     monkeypatch.setattr(egress_gate, "_DEFAULT_LOG", tmp_path / "vault" / "egress-log.jsonl")
     monkeypatch.setattr(fr, "_owner_names", lambda: set())
+    # The chat mirror (core.CHAT_HISTORY, chat_history.json) of this test only.
+    monkeypatch.setattr(core, "CHAT_HISTORY_FILE", tmp_path / "chat_history.json")
+    monkeypatch.setattr(core, "CHAT_HISTORY", [])
     memory_review._reset_for_tests()
     monkeypatch.setattr(cv, "_root", lambda: tmp_path / "conversations")
     monkeypatch.setattr(fts, "BACKGROUND_BUILD", False)
@@ -145,8 +148,10 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(mem, "_shared_query_ok", lambda: False)
     monkeypatch.setattr(model_router, "_get_conversation_memory", lambda: mem)
     tombstones._reset_for_tests()
+    cv._reset_for_tests()
     yield tmp_path, mem, graph
     tombstones._reset_for_tests()
+    cv._reset_for_tests()
 
 
 def _ts(day, hour):
@@ -578,13 +583,14 @@ def test_stopping_a_site_removes_facts_learned_only_from_it(home):
     r = fk.stop_using_source("https://www.example.com/some/page")
 
     assert r["source_kind"] == "web"
-    assert "research" in r["note"] and "no longer recalled" not in r["note"]
+    assert "research" in r["note"] and "may still open the site" in r["note"]
     _shape_ok(r)
     ids = {e["id"] for e in KnowledgeGraphStore(base_dir=tmp / "kg").load("entities")}
     assert ids == {"fact_bbbbbbbbbbbb", "fact_cccccccccccc", "fact_dddddddddddd"}
     rows = _rows(r)
     assert rows["kg_facts"]["removed"] == 1
-    assert "not supported yet" in rows["conversation_recall"]["not_removable"][0]["reason"]
+    # No chat reply read it, so no turn was touched (owner ruling 10 covers chat; see below).
+    assert rows["conversation_recall"]["removed"] == 0 and rows["conversation_recall"]["not_removable"] == []
     # A later research finding from that site is not taken in; another site's is.
     assert integration.ingest_fact("Example Corp was founded in 1999 in Leeds.", source_kind="research",
                                    source_key="setup-research:j:c", sources=[{"url": "https://example.com/about"}],
@@ -781,6 +787,629 @@ def test_a_tombstone_that_cannot_be_saved_is_reported_when_a_meeting_is_stopped(
     assert tombstones.is_tombstoned(("user_fact",), MEET_FACT)
 
 
+# ── owner ruling 9: forgetting a conversation can delete its transcript ─────
+def test_forgetting_a_conversation_can_delete_its_transcript_too(home):
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import memory_review
+    _conv(tmp, mem, CID, "Boat", [("c1", "user", DAY1, 10, TEA_TURN), ("c2", "user", DAY1, 10, "ok"),
+                                  ("c3", "friday", DAY1, 11, FEE_TURN)])
+    _conv(tmp, mem, CID2, "Insurance", [("d1", "user", DAY2, 9, PRIYA_TURN)])
+    fts.build(force=True)
+    # A file kept beside it (an artifact) and a signed receipt that mentions it.
+    art = tmp / "artifacts" / CID / "a1"
+    art.mkdir(parents=True)
+    (art / "v1.json").write_text("{}", encoding="utf-8")
+    (tmp / "actions").mkdir(parents=True, exist_ok=True)
+    receipts = tmp / "actions" / "receipts.jsonl"
+    receipts.write_text(json.dumps({"tool": "draft_email", "conversation_id": CID, "sig": "x"}) + "\n",
+                        encoding="utf-8")
+    memory_review.note_turn(TEA_TURN, "Noted.", DAY1, start=False)
+
+    r = fk.forget_conversation(CID, delete_transcript=True)
+
+    assert r["ok"] and r["transcript_deleted"] is True
+    _shape_ok(r)
+    rows = _rows(r)
+    # The transcript, its record and its files are gone; every index lets its messages go.
+    assert cv.load(CID) is None and not (tmp / "conversations" / CID).exists()
+    assert not (tmp / "artifacts" / CID).exists()
+    assert not {"c1", "c2", "c3"} & set(mem._collection.rows)
+    assert fts.search("mooring") == [] and fts.search("breakfast") == []
+    fts.build(force=True)
+    assert fts.search("mooring") == []
+    assert all(TEA_TURN != ex["user"] for buf in memory_review._BUFFERS.values() for ex in buf)
+    # The receipt lists the transcript as removed (counts only) instead of kept.
+    assert rows["transcript"]["removed"] == 3 and rows["transcript"]["not_removable"] == []
+    assert rows["conversation_recall"]["retained"] == []
+    assert "deleted from History" in r["note"] and "cannot be undone" in r["note"]
+    # Signed receipts that mention it are kept, and say so.
+    kept = rows["action_receipts"]["retained"]
+    assert kept and kept[0]["count"] == 1 and "verifiable" in kept[0]["reason"]
+    assert CID in receipts.read_text(encoding="utf-8")
+    # The other conversation is untouched.
+    assert cv.load(CID2) and "d1" in mem._collection.rows and fts.search("insurance")
+    dumped = json.dumps(r).lower()
+    assert "mooring" not in dumped and "boat" not in dumped
+    # It is gone, so a second run is refused.
+    assert fk.forget_conversation(CID, delete_transcript=True)["ok"] is False
+
+
+def test_forgetting_a_conversation_keeps_the_transcript_unless_asked(home):
+    tmp, mem, graph = home
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import forget_kinds as fk
+    _conv(tmp, mem, CID, "Boat", [("c1", "user", DAY1, 10, TEA_TURN)])
+    # Only a real True deletes: a truthy string from a careless caller does not.
+    r = fk.forget_conversation(CID, delete_transcript="yes")
+    assert r["transcript_deleted"] is False and "transcript" not in _rows(r)
+    assert cv.load(CID) and (tmp / "conversations" / CID / "messages.jsonl").exists()
+    assert "stays in History" in r["note"]
+
+
+def test_deleting_main_empties_it_and_never_imports_the_old_history_again(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import forget_kinds as fk
+    monkeypatch.setattr(cv, "FRIDAY_DIR", tmp)
+    (tmp / "chat_history.json").write_text(json.dumps([{"role": "user", "text": FEE_TURN}]), encoding="utf-8")
+    cv.ensure_main()
+    assert [m["text"] for m in cv.messages(cv.MAIN_ID)] == [FEE_TURN]
+
+    r = fk.forget_conversation(cv.MAIN_ID, delete_transcript=True)
+
+    assert r["transcript_deleted"] and _rows(r)["transcript"]["removed"] == 1
+    assert "Main is emptied" in _rows(r)["transcript"]["kind"]
+    assert cv.load(cv.MAIN_ID) is not None and cv.messages(cv.MAIN_ID) == []
+    cv.ensure_main()
+    assert cv.messages(cv.MAIN_ID) == [], "the old chat_history.json was imported into Main again"
+
+
+def test_a_transcript_that_cannot_be_deleted_is_reported(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import forget_kinds as fk
+    _conv(tmp, mem, CID, "Boat", [("c1", "user", DAY1, 10, TEA_TURN)])
+
+    def boom(cid):
+        raise OSError("locked")
+    monkeypatch.setattr(cv, "delete", boom)
+    r = fk.forget_conversation(CID, delete_transcript=True)
+    assert r["ok"] and r["transcript_deleted"] is False
+    assert _rows(r)["transcript"]["not_removable"] and "could not be deleted" in r["note"]
+    # Recall was still stopped, and the transcript is still listed as kept.
+    assert "c1" not in mem._collection.rows and _rows(r)["conversation_recall"]["retained"]
+
+
+@pytest.mark.parametrize("variant", ["CONV-MAIN", "Conv-Main", "conv-main.", "conv-main ", "conv-main. ."])
+def test_another_spelling_of_main_is_never_deleted(home, monkeypatch, variant):
+    """Windows opens "CONV-MAIN" or "conv-main." as Main's folder: only the
+    record's exact id is accepted, and a folder that is Main's is never
+    removed under another name."""
+    tmp, mem, graph = home
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import forget_kinds as fk
+    _conv(tmp, mem, cv.MAIN_ID, "Main", [("mm1", "user", DAY1, 10, TEA_TURN)])
+    main_dir = tmp / "conversations" / cv.MAIN_ID
+    before = (main_dir / "messages.jsonl").read_bytes()
+
+    assert fk.forget_conversation(variant, delete_transcript=True)["ok"] is False
+    assert cv.delete(variant)["ok"] is False
+    # Even when the variant's record claims the variant as its id (the folder is still Main's).
+    real_load = cv.load
+    monkeypatch.setattr(cv, "load", lambda c: dict(real_load(cv.MAIN_ID) or {}, id=c))
+    assert cv.delete(variant)["ok"] is False
+    monkeypatch.setattr(cv, "load", real_load)
+    assert main_dir.is_dir() and (main_dir / "messages.jsonl").read_bytes() == before
+    assert "mm1" in mem._collection.rows and not cv.message_deleted("mm1")
+
+
+def test_a_delete_that_stops_part_way_can_be_run_again(home, monkeypatch):
+    """The indexes go first and the record last, so a file held open leaves
+    the conversation loadable, the receipt counts what was left, and running
+    it again finishes."""
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import forget_kinds as fk
+    _conv(tmp, mem, CID, "Boat", [("c1", "user", DAY1, 10, TEA_TURN), ("c2", "friday", DAY1, 11, FEE_TURN)])
+    fts.build(force=True)
+    held = tmp / "conversations" / CID / "held.bin"
+    held.write_bytes(b"\0" * 8)
+    real_unlink = cv._unlink
+    monkeypatch.setattr(cv, "_unlink", lambda p: False if p.name == "held.bin" else real_unlink(p))
+
+    r = fk.forget_conversation(CID, delete_transcript=True)
+
+    assert r["ok"] and r["transcript_deleted"] is False and "Running it again retries" in r["note"]
+    nr = _rows(r)["transcript"]["not_removable"]
+    assert nr and nr[0]["count"] == 1 and "running it again retries" in nr[0]["reason"]
+    # The indexes went first; the record is kept so it can be found again.
+    assert not {"c1", "c2"} & set(mem._collection.rows) and fts.search("mooring") == []
+    assert cv.load(CID) is not None and held.exists()
+    assert not (tmp / "conversations" / CID / "messages.jsonl").exists()
+
+    monkeypatch.setattr(cv, "_unlink", real_unlink)
+    r2 = fk.forget_conversation(CID, delete_transcript=True)
+
+    assert r2["transcript_deleted"] is True and _rows(r2)["transcript"]["not_removable"] == []
+    assert cv.load(CID) is None and not (tmp / "conversations" / CID).exists()
+
+
+def test_deleting_main_clears_the_old_chat_history_rows_without_ids(home, monkeypatch):
+    """chat_history.json rows from before message ids were imported into Main
+    under new ids: deleting Main lets them go by their text (also those older
+    than the 30 days the mirror holds in memory); a row with an id that is
+    not Main's stays."""
+    tmp, mem, graph = home
+    from agent_friday import core
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import forget_kinds as fk
+    monkeypatch.setattr(cv, "FRIDAY_DIR", tmp)
+    hist = tmp / "chat_history.json"
+    now = datetime.now().isoformat()
+    legacy = [{"role": "user", "text": FEE_TURN, "timestamp": now},
+              {"role": "friday", "text": TEA_TURN, "timestamp": "2020-01-01T09:00:00"}]
+    hist.write_text(json.dumps(legacy), encoding="utf-8")
+    cv.ensure_main()
+    assert sorted(m["text"] for m in cv.messages(cv.MAIN_ID)) == sorted([FEE_TURN, TEA_TURN])
+    # Later the mirror took a turn of another conversation (with its id).
+    keep = {"id": "other-1", "role": "user", "text": PRIYA_TURN, "timestamp": now}
+    hist.write_text(json.dumps(legacy + [keep]), encoding="utf-8")
+    monkeypatch.setattr(core, "CHAT_HISTORY_FILE", hist)
+    # The mirror in memory holds the last 30 days only (the 2020 row is on disk alone).
+    monkeypatch.setattr(core, "CHAT_HISTORY", [dict(legacy[0]), dict(keep)])
+
+    r = fk.forget_conversation(cv.MAIN_ID, delete_transcript=True)
+
+    assert r["transcript_deleted"]
+    rows = json.loads(hist.read_text(encoding="utf-8"))
+    assert [x.get("id") for x in rows] == ["other-1"], rows
+    assert [x.get("id") for x in core.CHAT_HISTORY] == ["other-1"]
+    # A single message deleted in another conversation never takes an id-less row by its text.
+    from agent_friday.services import conversation_fts as fts
+    core.CHAT_HISTORY.append({"role": "user", "text": PRIYA_TURN, "timestamp": now})
+    _conv(tmp, mem, CID2, "Insurance", [("d1", "user", DAY2, 9, PRIYA_TURN)])
+    assert fts.delete_message(CID2, "d1")["ok"]
+    assert any(x.get("text") == PRIYA_TURN and not x.get("id") for x in core.CHAT_HISTORY)
+
+
+def test_an_index_that_fails_does_not_stop_the_others(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import memory_review
+    _conv(tmp, mem, CID, "Boat", [("c1", "user", DAY1, 10, TEA_TURN)])
+    memory_review.note_turn(TEA_TURN, "Noted.", DAY1, start=False)
+
+    def locked():
+        raise OSError("database is locked")
+    monkeypatch.setattr(fts, "_connect", locked)
+
+    out = cv.delete(CID)
+
+    assert out["ok"] and out["index_errors"] == 1
+    # The vector memory and the review buffers were still cleaned, and the transcript is gone.
+    assert "c1" not in mem._collection.rows
+    assert all(TEA_TURN != ex["user"] for buf in memory_review._BUFFERS.values() for ex in buf)
+    assert cv.load(CID) is None
+
+
+def test_a_deleted_conversation_takes_no_late_reply(home, monkeypatch):
+    """A reply that finishes after the delete neither writes the conversation
+    back nor is indexed; Main refuses what was stamped before its delete."""
+    tmp, mem, graph = home
+    from agent_friday.services import conversations as cv
+    from agent_friday.services import model_router
+    _no_arc(monkeypatch)
+    _conv(tmp, mem, CID, "Boat", [("c1", "user", DAY1, 10, TEA_TURN)])
+    assert cv.delete(CID)["ok"]
+    assert cv.was_deleted(CID) and cv.message_deleted("c1")
+
+    cv.append(CID, {"id": "late-u", "role": "user", "text": "And the fee?"})
+    cv.append(CID, {"id": "late-f", "role": "friday", "text": FEE_TURN})
+    model_router._index_chat_turn_body("And the fee?", FEE_TURN, DAY1, "late-u", "late-f")
+
+    assert cv.load(CID) is None and not (tmp / "conversations" / CID).exists()
+    assert not {"late-u", "late-f"} & set(mem._collection.rows)
+    # Main: emptied, not removed; a message stamped before the delete is refused, a new one is kept.
+    _conv(tmp, mem, cv.MAIN_ID, "Main", [("mm1", "user", DAY1, 10, TEA_TURN)])
+    assert cv.delete(cv.MAIN_ID)["ok"]
+    cv.append(cv.MAIN_ID, {"id": "old-1", "role": "user", "text": "late", "ts": _ts(DAY1, 11)})
+    cv.append(cv.MAIN_ID, {"id": "new-1", "role": "user", "text": "a new message"})
+    assert [m["id"] for m in cv.messages(cv.MAIN_ID)] == ["new-1"]
+    # Made again on purpose, the id is usable again.
+    cv.create(title="Again", cid=CID)
+    cv.append(CID, {"id": "again-1", "role": "user", "text": "hello"})
+    assert [m["id"] for m in cv.messages(CID)] == ["again-1"]
+
+
+# ── owner ruling 10: the sites read in chat, a full stop, and using one again ─
+SITE = "example.com"
+OTHER = "example.org"
+WEB_REPLY = "The Example harbour office says high tide on Saturday is at 06:40 and again at 19:05."
+OTHER_REPLY = "The Other harbour office lists the mooring waiting list as eleven boats this season."
+
+
+def _web_results():
+    """Fake web tool results, built here: one search, one page, one refused page, one news hit."""
+    search = ("Search results for 'tides' (backend: test, 2 results). URLs below are real and fetchable — "
+              "pass one verbatim to browse_web:\n\n1. Tides\n   High tide times.\n   https://www.%s/tides?d=1"
+              "\n\n2. Harbour\n   Moorings.\n   https://news.%s/harbour" % (SITE, OTHER))
+    page = "[https://blog.%s/post/7]\nThe page text." % SITE
+    refused = "[CREW DENY] This conversation with a working agent has no tool authority."
+    news = json.dumps({"query": "q", "hits": [{"title": "t", "url": "https://www.bbc.co.uk/news/1"}]})
+    return [{"name": "search_web", "input": {"query": "tides"}, "result": search},
+            {"name": "browse_web", "input": {"url": "https://blog.%s/post/7" % SITE}, "result": page},
+            {"name": "browse_web", "input": {"url": "https://refused.example.net/"}, "result": refused},
+            {"name": "search_news", "input": {"query": "q"}, "result": news},
+            {"name": "read_file", "input": {"path": "x"}, "result": "https://not-a-web-read.example.net/"}]
+
+
+def test_registered_domains_and_a_turn_s_web_sources(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import off_record
+    from agent_friday.services import web_provenance as wp
+    wp._reset_for_tests()
+    assert wp.registered_domain("https://WWW.Example.com/a/b?c=1") == "example.com"
+    assert wp.registered_domain("https://news.bbc.co.uk/x") == "bbc.co.uk"
+    assert wp.registered_domain("https://dana.github.io/blog") == "dana.github.io"
+    for none in ("https://127.0.0.1/x", "http://localhost/", "co.uk", "", "not a url at all"):
+        assert wp.registered_domain(none) == "", none
+    # Domains only, from the reads that happened; a gate's refusal and a local file are not web reads.
+    assert wp.from_trace(_web_results()) == [SITE, OTHER, "bbc.co.uk"]
+    # A tool noted a page for this conversation; the turn takes trace and notes once.
+    wp.note(["https://shop.example.net/item?id=9"], CID)
+    got = wp.turn_sources(_web_results(), CID)
+    assert got == sorted([SITE, OTHER, "bbc.co.uk", "example.net"])
+    assert wp.turn_sources(None, CID) == []
+    assert all("/" not in d and "?" not in d for d in got)
+    # Off the record nothing is noted or recorded.
+    monkeypatch.setattr(off_record, "active", lambda settings=None: True)
+    assert wp.note(["https://www.%s/" % SITE], CID) == [] and wp.turn_sources(_web_results(), CID) == []
+
+
+def _no_arc(monkeypatch):
+    from agent_friday.services import model_router
+
+    class _Arc:
+        def record(self, *a, **k):
+            return None
+    monkeypatch.setattr(model_router, "_get_emotional_arc", lambda: _Arc())
+
+
+def test_a_reply_that_read_the_web_carries_its_sites_into_what_is_learned(home, monkeypatch):
+    """(a) The reply's index row, the graph's facts from it, a card suggestion
+    from its window and a proposal whose evidence it holds all carry the
+    domains, and only the domains."""
+    tmp, mem, graph = home
+    from agent_friday import conversation_memory as cm_mod
+    from agent_friday.services import core_memory
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import memory_review
+    from agent_friday.services import model_router
+    from agent_friday.services import web_provenance as wp
+    from agent_friday.services.knowledge_graph import indexer
+    _no_arc(monkeypatch)
+    wp._reset_for_tests()
+    web = wp.turn_sources(_web_results()[:2], CID)            # the search and the page: example.com, example.org
+    assert web == [SITE, OTHER]
+
+    model_router._index_chat_turn_body("When is high tide on Saturday?", WEB_REPLY, DAY1, "u-1", "f-1",
+                                       web_sources=web)
+
+    rows = mem._collection.rows
+    assert rows["f-1"][1]["web_sources"] == "%s,%s" % (SITE, OTHER)
+    assert "web_sources" not in rows["u-1"][1], "the owner's own question was marked as read from the web"
+    assert next(r for r in mem.recent(10) if r["text"] == WEB_REPLY)["web_sources"] == [SITE, OTHER]
+    # The graph's chunk from that reply carries the domains (they merge into every entity it makes).
+    monkeypatch.setattr(cm_mod, "ConversationMemory", lambda *a, **k: mem)
+    chunk = next(c for c in indexer._conversation_chunks() if c["text"].startswith("The Example harbour"))
+    assert chunk["provenance"]["web_sources"] == [SITE, OTHER]
+    # A card suggestion from a window that read the web carries them.
+    buf = list(memory_review._BUFFERS[DAY1])
+    assert buf[-1]["web_sources"] == [SITE, OTHER]
+    memory_review.review(buf, ask=lambda p: json.dumps({"add": [
+        {"target": "user", "text": "The user keeps a boat in the Example harbour.", "evidence": "high tide"}],
+        "change": [], "remove": []}))
+    pend = [r for r in core_memory.pending() if "Example harbour" in r["text"]]
+    assert pend and pend[0]["web_sources"] == [SITE, OTHER]
+    # A proposal whose evidence is in that reply carries them.
+    monkeypatch.setattr(mp, "seat", lambda: {"assigned": True, "model": "m", "provider": "ollama", "reason": ""})
+    monkeypatch.setattr(mp, "_ask_seat", lambda prompt, model, provider, **k: json.dumps([
+        {"category": "preference", "text": "High tide at the Example harbour is early on Saturdays.",
+         "evidence": "high tide on Saturday is at 06:40"},
+        {"category": "preference", "text": "The user asks about the tide before sailing.",
+         "evidence": "When is high tide"}]))
+    out = mp.propose(datetime.now().strftime("%Y-%m-%d"), memory=mem)     # the turn was indexed today
+    assert out["stored"] == 2
+    conn = mp._connect()
+    try:
+        prov = dict(conn.execute("SELECT text, provenance FROM proposed_facts").fetchall())
+    finally:
+        conn.close()
+    assert json.loads(prov["High tide at the Example harbour is early on Saturdays."]) == {"web_sources": [SITE, OTHER]}
+    assert prov["The user asks about the tide before sailing."] is None
+
+
+def _seed_site(tmp, mem):
+    """A chat that read example.com and another that read example.org, with what was learned from each."""
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import memory_review
+    cv_dir = tmp / "conversations"
+    from agent_friday.services import conversations as cv
+    cv.create(title="Tides", cid=CID)
+    lines = [{"id": "u-1", "role": "user", "text": "When is high tide on Saturday?", "ts": _ts(DAY1, 9)},
+             {"id": "f-1", "role": "friday", "text": WEB_REPLY, "ts": _ts(DAY1, 9),
+              "meta": {"kind": "turn", "web_sources": [SITE]}},
+             {"id": "u-2", "role": "user", "text": "And the waiting list?", "ts": _ts(DAY1, 10)},
+             {"id": "f-2", "role": "friday", "text": OTHER_REPLY, "ts": _ts(DAY1, 10),
+              "meta": {"kind": "turn", "web_sources": [OTHER]}}]
+    with open(cv_dir / CID / "messages.jsonl", "w", encoding="utf-8") as fh:
+        for m in lines:
+            fh.write(json.dumps(m) + "\n")
+            mem.index(m["text"], m["role"], session_id=DAY1, timestamp="%sT09:00:00" % DAY1, msg_id=m["id"],
+                      web_sources=(m.get("meta") or {}).get("web_sources"))
+    # A vector row that read the site with no transcript message (its conversation was cleared).
+    mem.index("An older reply that quoted the Example harbour page about winter berths.", "friday",
+              session_id=DAY2, timestamp="%sT09:00:00" % DAY2, msg_id="f-old", web_sources=[SITE])
+    fts.build(force=True)
+    _card(tmp, ["The user sails to Harwich in June."])
+    with open(tmp / "core_memory" / "pending.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"id": "pend-web", "ts": 1.0, "target": "user", "op": "add", "old": "", "source": "review",
+                             "text": "The user keeps a boat in the Example harbour.", "reason": "",
+                             "web_sources": [SITE]}) + "\n")
+        fh.write(json.dumps({"id": "pend-own", "ts": 1.0, "target": "user", "op": "add", "old": "", "source": "review",
+                             "text": "The user likes jazz on Sundays.", "reason": ""}) + "\n")
+    _proposals([("p-web", "High tide at the Example harbour is early on Saturdays.",
+                 json.dumps({"web_sources": [SITE]})),
+                ("p-other", "The Other harbour has a long waiting list.", json.dumps({"web_sources": [OTHER]})),
+                ("p-own", "The user likes jazz on Sundays.", None)])
+    _kg(tmp, [{"id": "ent_aaaaaaaaaaaa", "title": "Example Harbour", "type": "place", "description": "d",
+               "provenance": {"conversations": ["x1"], "web_sources": [SITE]}},
+              {"id": "ent_bbbbbbbbbbbb", "title": "Other Harbour", "type": "place", "description": "d",
+               "provenance": {"conversations": ["x2"], "web_sources": [OTHER]}},
+              {"id": "ent_cccccccccccc", "title": "Harwich", "type": "place", "description": "d",
+               "provenance": {"conversations": ["x1"], "web_sources": [SITE], "wiki_pages": ["places.md"]}}])
+    memory_review.note_turn("When is high tide on Saturday?", WEB_REPLY, DAY1, start=False, web_sources=[SITE])
+    memory_review.note_turn("And the waiting list?", OTHER_REPLY, DAY1, start=False, web_sources=[OTHER])
+
+
+def test_stopping_a_site_fully_stops_what_was_read_there_in_chat(home, monkeypatch):
+    """(b) Its replies leave recall and search (durably), its graph facts,
+    card suggestions and proposals go (refused first), and from then on
+    nothing read there is remembered or proposed."""
+    tmp, mem, graph = home
+    from agent_friday import conversation_memory as cm_mod
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import core_memory
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import memory_review
+    from agent_friday.services import model_router
+    from agent_friday.services import web_provenance as wp
+    from agent_friday.services.knowledge_graph import indexer
+    from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
+    _no_arc(monkeypatch)
+    _seed_site(tmp, mem)
+    transcript = (tmp / "conversations" / CID / "messages.jsonl").read_bytes()
+    assert fts.search("example") and "f-1" in mem._collection.rows
+
+    where = {s["store"]: s for s in fk.show_everywhere("web:" + SITE)["stores"]}
+    assert where["conversation_turns"]["count"] == 2 and where["kg_facts"]["count"] == 1
+    assert where["memory_card_pending"]["count"] == 1 and where["memory_proposals"]["count"] == 1
+
+    r = fk.stop_using_source("https://www.%s/tides" % SITE)
+
+    assert r["ok"] and r["source_kind"] == "web"
+    _shape_ok(r)
+    rows = _rows(r)
+    # The replies that read it: out of recall and search, also after a rebuild; the transcript keeps them.
+    assert not {"f-1", "f-old"} & set(mem._collection.rows)
+    assert {"u-1", "u-2", "f-2"} <= set(mem._collection.rows)
+    assert fts.is_forgotten("f-1") and not fts.is_forgotten("f-2") and not fts.is_forgotten("u-1")
+    fts.build(force=True)
+    assert fts.search("example") == [] and fts.search("waiting")
+    assert (tmp / "conversations" / CID / "messages.jsonl").read_bytes() == transcript
+    assert rows["conversation_recall"]["removed"] == 2
+    assert rows["conversation_recall"]["retained"][0]["count"] == 1
+    assert WEB_REPLY in [t for batch in graph for t in batch]
+    # Its graph facts go; one also held by the owner's own notes stays, and the receipt says so.
+    ids = {e["id"] for e in KnowledgeGraphStore(base_dir=tmp / "kg").load("entities")}
+    assert ids == {"ent_bbbbbbbbbbbb", "ent_cccccccccccc"}
+    assert rows["kg_facts"]["removed"] == 1 and rows["kg_facts"]["not_removable"][0]["count"] == 1
+    # Card suggestions and proposals read there go, and are not suggested again.
+    assert [p["id"] for p in core_memory.pending()] == ["pend-own"]
+    assert _proposal_ids() == ["p-other", "p-own"]
+    assert rows["memory_card_pending"]["removed"] == 1 and rows["memory_proposals"]["removed"] == 1
+    assert core_memory.queue("user", "add", text="The user keeps a boat in the Example harbour.",
+                             source="review").get("tombstoned")
+    assert mp._refused_before("High tide at the Example harbour is early on Saturdays.")
+    # The review buffers forget the exchange that read it.
+    assert all(WEB_REPLY != ex["friday"] for buf in memory_review._BUFFERS.values() for ex in buf)
+    # The receipt says Friday may still open it but remembers nothing from it; no domain or content in it.
+    assert "may still open the site" in r["note"] and "nothing read there is remembered" in r["note"]
+    dumped = json.dumps(r).lower()
+    assert "example" not in dumped and "tide" not in dumped
+
+    # From now on: a reply that reads it is not remembered, searched, reviewed, learned or proposed.
+    model_router._index_chat_turn_body("And on Sunday?", "Sunday high tide is at 07:15 per the page.", DAY2,
+                                       "u-3", "f-3", web_sources=["blog." + SITE])
+    assert "f-3" not in mem._collection.rows and fts.is_forgotten("f-3")
+    assert "u-3" in mem._collection.rows, "the owner's own question was dropped"
+    assert list(memory_review._BUFFERS[DAY2])[-1]["friday"] == wp.STOPPED_STANDIN
+    monkeypatch.setattr(cm_mod, "ConversationMemory", lambda *a, **k: mem)
+    mem.index("A reply that read the site before it was stopped, long enough to be indexed.", "friday",
+              session_id=DAY2, msg_id="f-late", web_sources=[SITE])
+    assert not any("before it was stopped" in c["text"] for c in indexer._conversation_chunks())
+    assert mp.web_sources_of("high tide", [{"text": "high tide is early", "web_sources": [SITE]}]) == ([SITE], True)
+    assert memory_review.review([{"user": "u", "friday": WEB_REPLY, "owner": True, "web_sources": [SITE]}],
+                                ask=lambda p: pytest.fail("a window from a stopped site was reviewed")) == {
+        "ok": True, "added": 0, "queued": 0}
+    # Another site is learned from as before.
+    model_router._index_chat_turn_body("Others?", OTHER_REPLY + " Again.", DAY2, "u-4", "f-4",
+                                       web_sources=[OTHER])
+    assert mem._collection.rows["f-4"][1]["web_sources"] == OTHER
+
+
+def test_stopping_part_of_a_site_says_chat_reads_are_kept_by_the_whole_site(home):
+    tmp, mem, graph = home
+    from agent_friday.services import forget_kinds as fk
+    _seed_site(tmp, mem)
+    r = fk.stop_using_source("web:news." + SITE)
+    rows = _rows(r)
+    assert rows["conversation_recall"]["removed"] == 0 and "f-1" in mem._collection.rows
+    assert "stop the whole site" in rows["chat_reads"]["not_removable"][0]["reason"]
+
+
+def test_stopped_sources_are_listed_with_sealed_labels_and_can_be_used_again(home, monkeypatch):
+    """(c) The owner sees what they stopped (the name sealed at rest), and Use
+    again lets a source be used from now on without bringing anything back."""
+    tmp, mem, graph = home
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import credential_store as cs
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import meeting_archive as ma
+    monkeypatch.setattr(ma, "remove_meeting", lambda mid, store=None: 0)
+    _no_arc(monkeypatch)
+    _seed_site(tmp, mem)
+    fk.stop_using_source("web:" + SITE)
+    fk.stop_using_source("meeting:m-7")
+
+    raw = (tmp / fk.STOPPED_FILE).read_text(encoding="utf-8")
+    assert "example" not in raw and "m-7" not in raw and "meeting" not in raw
+    entries = json.loads(raw)["entries"]
+    assert all(e["label"].startswith("sealed:") for e in entries)
+    listed = fk.list_stopped()
+    assert listed["ok"]
+    by_label = {s["label"]: s for s in listed["sources"]}
+    assert set(by_label) == {SITE, "meeting m-7"}
+    assert by_label[SITE]["kind"] == "site" and by_label["meeting m-7"]["kind"] == "meeting"
+    # A label that cannot be opened (another machine's keystore) shows as the kind and the day.
+    real = cs.unprotect
+    monkeypatch.setattr(cs, "unprotect", lambda blob: (_ for _ in ()).throw(RuntimeError("no key")))
+    day = entries[0]["day"]
+    assert {s["label"] for s in fk.list_stopped()["sources"]} == {"a stopped site from " + day,
+                                                                 "a stopped meeting from " + day}
+    monkeypatch.setattr(cs, "unprotect", real)
+
+    out = fk.unstop(by_label[SITE]["id"])
+
+    assert out["ok"] and "does not come back" in out["note"]
+    assert not fk.site_stopped(SITE) and fk.source_stopped("meeting:m-7")
+    assert {s["label"] for s in fk.list_stopped()["sources"]} == {"meeting m-7"}
+    # Nothing removed comes back; the site is read and learned from again from now on.
+    assert fts.is_forgotten("f-1") and "f-1" not in mem._collection.rows
+    from agent_friday.services import model_router
+    model_router._index_chat_turn_body("Tide?", WEB_REPLY + " Updated.", DAY2, "u-9", "f-9", web_sources=[SITE])
+    assert mem._collection.rows["f-9"][1]["web_sources"] == SITE
+    assert fk.unstop(by_label[SITE]["id"])["ok"] is False and fk.unstop("../x")["ok"] is False
+
+
+def test_a_label_that_cannot_be_sealed_is_never_written_in_the_clear(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import credential_store as cs
+    from agent_friday.services import forget_kinds as fk
+
+    def refuse(data):
+        raise RuntimeError("no way to encrypt on this host")
+    monkeypatch.setattr(cs, "protect", refuse)
+    assert fk.record_stopped("web:" + SITE)["ok"]
+    raw = (tmp / fk.STOPPED_FILE).read_text(encoding="utf-8")
+    assert "example" not in raw and "label" not in raw
+    src = fk.list_stopped()["sources"][0]
+    assert src["label"].startswith("a stopped site from ") and src["named"] is False
+    assert fk.site_stopped(SITE)
+    # It can still be used again.
+    assert fk.unstop(src["id"])["ok"] and not fk.site_stopped(SITE)
+
+
+def test_an_entry_written_before_ids_and_labels_can_be_listed_and_used_again(home):
+    tmp, mem, graph = home
+    from agent_friday.services import forget_kinds as fk
+    assert fk.record_stopped("web:" + SITE)["ok"]
+    data = json.loads((tmp / fk.STOPPED_FILE).read_text(encoding="utf-8"))
+    data["entries"] = [{"h": e["h"], "day": e["day"]} for e in data["entries"]]      # the old shape
+    (tmp / fk.STOPPED_FILE).write_text(json.dumps(data), encoding="utf-8")
+    src = fk.list_stopped()["sources"][0]
+    assert src["label"].startswith("a stopped source from ") and fk.site_stopped(SITE)
+    assert fk.unstop(src["id"])["ok"] and not fk.site_stopped(SITE)
+
+
+def test_the_learning_paths_fail_closed_when_the_stopped_record_cannot_be_read(home, monkeypatch):
+    """A record that cannot be read: the plain check stays open, but nothing
+    read on the web is indexed, reviewed, proposed or taken into the graph;
+    a turn that read no web page is learned from as usual."""
+    tmp, mem, graph = home
+    from agent_friday import conversation_memory as cm_mod
+    from agent_friday.services import conversation_fts as fts
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import memory_proposals as mp
+    from agent_friday.services import memory_review
+    from agent_friday.services import model_router
+    from agent_friday.services import web_provenance as wp
+    from agent_friday.services.knowledge_graph import indexer
+    _no_arc(monkeypatch)
+    (tmp / fk.STOPPED_FILE).write_text("{not json", encoding="utf-8")
+
+    assert wp.stopped([OTHER]) == [] and fk.site_stopped(OTHER) is False
+    assert wp.stopped([OTHER], fail_closed=True) == [OTHER] and wp.stopped([], fail_closed=True) == []
+
+    model_router._index_chat_turn_body("Waiting list?", OTHER_REPLY, DAY2, "u-5", "f-5", web_sources=[OTHER])
+    assert "f-5" not in mem._collection.rows and fts.is_forgotten("f-5") and "u-5" in mem._collection.rows
+    assert list(memory_review._BUFFERS[DAY2])[-1]["friday"] == wp.STOPPED_STANDIN
+    model_router._index_chat_turn_body("Tea?", "You like green tea at breakfast, with honey.", DAY2, "u-6", "f-6")
+    assert "f-6" in mem._collection.rows
+    assert memory_review.review([{"user": "u", "friday": OTHER_REPLY, "owner": True, "web_sources": [OTHER]}],
+                                ask=lambda p: pytest.fail("a web window was reviewed")) == {
+        "ok": True, "added": 0, "queued": 0}
+    assert mp.web_sources_of("waiting list", [{"text": OTHER_REPLY, "web_sources": [OTHER]}]) == ([OTHER], True)
+    assert mp.web_sources_of("green tea", [{"text": "You like green tea.", "web_sources": []}]) == ([], False)
+    monkeypatch.setattr(cm_mod, "ConversationMemory", lambda *a, **k: mem)
+    mem.index("A reply that read the other harbour page about the waiting list this season.", "friday",
+              session_id=DAY2, msg_id="f-web", web_sources=[OTHER])
+    assert not any("other harbour page" in c["text"] for c in indexer._conversation_chunks())
+
+
+def test_the_stopped_record_is_read_once_until_it_changes(home, monkeypatch):
+    tmp, mem, graph = home
+    from agent_friday.services import forget_kinds as fk
+    assert fk.record_stopped("web:" + SITE)["ok"]
+    real = fk._read_stopped
+    reads = []
+    monkeypatch.setattr(fk, "_read_stopped", lambda: reads.append(1) or real())
+
+    for _ in range(20):
+        assert fk.site_stopped("https://www.%s/a" % SITE) and not fk.site_stopped(OTHER)
+    assert len(reads) <= 1, "the record was read on every check"
+
+    # A change to the file (another writer) is seen; so is Friday's own unstop.
+    data = json.loads((tmp / fk.STOPPED_FILE).read_text(encoding="utf-8"))
+    (tmp / fk.STOPPED_FILE).write_text(json.dumps({"version": 1, "entries": []}), encoding="utf-8")
+    assert not fk.site_stopped(SITE)
+    (tmp / fk.STOPPED_FILE).write_text(json.dumps(data), encoding="utf-8")
+    assert fk.site_stopped(SITE)
+    sid = fk.list_stopped()["sources"][0]["id"]
+    assert fk.unstop(sid)["ok"] and not fk.site_stopped(SITE)
+
+
+def test_every_search_result_s_site_counts_as_read(home):
+    """The choice web_provenance records: every result search_web returned
+    counts, cited or not (a snippet can be learned from), so one stopped
+    result holds back the whole reply."""
+    tmp, mem, graph = home
+    from agent_friday.services import forget_kinds as fk
+    from agent_friday.services import web_provenance as wp
+    wp._reset_for_tests()
+    search = _web_results()[0]
+    assert wp.turn_sources([search], CID) == sorted([SITE, OTHER])
+    assert fk.record_stopped("web:" + OTHER)["ok"]
+    assert wp.stopped(wp.turn_sources([search], CID), fail_closed=True) == [OTHER]
+    assert "EVERY result" in (wp.__doc__ or "")
+
+
 # ── the desktop controls ─────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parents[2]
 SHARED_START = "// Forget a fact, a conversation or a source, and look first"
@@ -798,10 +1427,21 @@ def test_the_forget_controls_are_in_both_ui_files(name):
                    "'Forget this'", "'/api/memory/forget-fact'", "/api/memory/show-everywhere?q=",
                    "'/api/memory/forget-conversation'", "'/api/knowledge-graph/entity/delete'",
                    "'/api/knowledge-graph/entity/restore'", "'/api/user-model/fact/delete'",
-                   "'Forget this conversation…'", "data-user-facts"):
+                   "'Forget this conversation…'", "data-user-facts",
+                   # Owner ruling 9: the transcript, a separate box with its own confirm.
+                   "\"Also delete the transcript (can't be undone)\"", "data-forget-transcript-confirm",
+                   "delete_transcript: true, confirm_transcript: true",
+                   # Owner ruling 10: the stopped sources, each with Use again.
+                   "function StoppedSourcesPanel(", "'/api/memory/stopped-sources'", "'Use again'",
+                   "/unstop'"):
         assert needle in html, "%s: %s missing" % (name, needle)
     card = html.split("function MemoryCardPanel(")[1].split("// End memory card panel")[0]
     assert "E(ForgetThisControls" in card and "delFact(" in card
+    assert "E(StoppedSourcesPanel" in card, "the stopped sources are not in the memory panel"
+    # Deleting the transcript is reached only through its own confirm step.
+    search = html.split("function ConversationSearchPanel(")[1].split("// End conversation search panel")[0]
+    assert search.count("forgetConv(h, true)") == 1
+    assert search.index("ask === 't' + h.message_id") < search.index("forgetConv(h, true)")
     # A Delete on a graph entity in both graph views: the Knowledge workspace bar and the graph's own panel.
     assert html.count("fridayKgDeleteEntity(sel,") == 1 and html.count("fridayKgDeleteEntity(selected") == 1
     assert html.count("data-kg-delete") >= 2
