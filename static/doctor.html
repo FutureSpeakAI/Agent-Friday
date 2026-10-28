@@ -367,7 +367,7 @@
       tb.appendChild(head);
       kept.concat(rows.filter(r => r.durable === false)).forEach(r => {
         const tr = document.createElement('tr');
-        const pol = r.policy || {};
+        const pol = (d.policies || {})[r.store] || {};
         [r.store, r.version, size(r.bytes) + (r.at_least ? ' or more' : ''), r.files, r.location,
          r.durable === false ? r.format + ' (not durable)' : r.format, pol.encryption, pol.backup].forEach(v => {
           const td = document.createElement('td'); td.textContent = v == null ? '' : String(v); tr.appendChild(td);
