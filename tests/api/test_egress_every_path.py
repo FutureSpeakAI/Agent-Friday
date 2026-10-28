@@ -178,19 +178,20 @@ class TestFileGrants:
         payload = "The weather is mild today.\n\n" + PRIVATE_PARA
         assert PRIVATE_PARA not in eg._gate_text(payload, "anthropic", "tool_result")
 
-    def test_an_expired_folder_grant_stops_it(self, grants, tmp_path):
+    def test_an_expired_folder_grant_stops_it(self, grants, tmp_path, monkeypatch):
         folder = tmp_path / "project"
         folder.mkdir()
         p = folder / "notes.txt"
         p.write_text(PRIVATE_PARA, encoding="utf-8")
         try:
-            fg.create_scope_grant(str(folder), "folder", 3.0 / 86400.0)
+            fg.create_scope_grant(str(folder), "folder", 1.0)
         except Exception as e:  # a temporary folder may count as too broad here
             pytest.skip("folder grant refused for the test folder: %s" % e)
         fg._invalidate_cache()
         fg.on_file_read(p, PRIVATE_PARA)
         assert eg._gate_text(PRIVATE_PARA, "anthropic", "tool_result") == PRIVATE_PARA
-        time.sleep(3.2)
+        later = time.time() + 2 * 86400.0
+        monkeypatch.setattr(fg.time, "time", lambda: later)
         fg._invalidate_cache()
         assert PRIVATE_PARA not in eg._gate_text(PRIVATE_PARA, "anthropic", "tool_result")
 
@@ -265,6 +266,35 @@ class TestImageMetadata:
         assert b"Owner Name Here" not in out
         with Image.open(io.BytesIO(out)) as im:
             assert im.format == "PNG" and im.size == (4, 4)
+
+    def test_a_multi_picture_phone_jpeg_is_stripped(self):
+        from PIL import Image
+        from agent_friday.services.image_egress import strip_metadata
+        ex = Image.Exif()
+        ex[0x010F] = "TestCamMake"
+        first, second = Image.new("RGB", (8, 8), (1, 2, 3)), Image.new("RGB", (8, 8), (4, 5, 6))
+        buf = io.BytesIO()
+        try:
+            first.save(buf, "MPO", save_all=True, append_images=[second], exif=ex)
+        except Exception as e:
+            pytest.skip("this Pillow cannot write MPO: %s" % e)
+        raw = buf.getvalue()
+        with Image.open(io.BytesIO(raw)) as im:
+            if im.format != "MPO":
+                pytest.skip("Pillow read it back as %s" % im.format)
+        out, what = strip_metadata(raw)
+        assert what == "stripped"
+        assert b"TestCamMake" not in out
+        with Image.open(io.BytesIO(out)) as im:
+            assert im.format == "JPEG"
+
+    def test_a_truncated_jpeg_still_loses_its_metadata(self):
+        from agent_friday.services.image_egress import strip_metadata
+        raw = _photo_with_metadata((64, 64))
+        cut = raw[: len(raw) - 40]
+        out, what = strip_metadata(cut)
+        assert b"TestCamMake" not in out and b"OwnerSoftware" not in out
+        assert what == "stripped"
 
     def test_unreadable_bytes_go_unchanged_and_say_so(self):
         from agent_friday.services.image_egress import strip_metadata
