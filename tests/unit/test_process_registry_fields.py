@@ -4,25 +4,29 @@ label, category, model/provider, status, start, progress, step, cost, stop capab
 result, receipt link").
 
 core.process_register / process_update are the one registry the tray, the orbs and
-/api/processes read. These tests register processes the way Friday's code does and read
-them back; nothing runs.
+/api/processes read. Ancestry and principal come from the task record services/agent
+._spawn_task keeps (goal_ancestry, principal, schedule_id), so a milestone's child tasks
+and a task resumed after a restart keep them. These tests register processes the way
+Friday's code does and read them back; nothing runs.
 """
 from __future__ import annotations
+
+import inspect
 
 import pytest
 
 from agent_friday import core
+from agent_friday.services import agent
 
 
 @pytest.fixture(autouse=True)
-def clean():
+def clean(monkeypatch):
     made = []
+    monkeypatch.setattr(agent, "TASKS", dict(agent.TASKS))
     yield made
     with core.PROCESSES_LOCK:
         for pid in made:
             core.PROCESSES.pop(pid, None)
-    if hasattr(core, "TASK_ANCESTRY"):
-        core.TASK_ANCESTRY.clear()
 
 
 def _reg(clean, pid, **kw):
@@ -32,37 +36,46 @@ def _reg(clean, pid, **kw):
         return dict(core.PROCESSES[pid])
 
 
-FIELDS = ("goal_id", "principal", "cost_usd", "receipt_id", "stoppable")
+def _task(tid, **rec):
+    agent.TASKS[tid] = dict({"task_id": tid, "principal": "owner", "goal_ancestry": None}, **rec)
+
+
+FIELDS = ("goal_id", "milestone_id", "principal", "schedule_id", "cost_usd", "receipt_id", "stop_capability")
 
 
 def test_every_process_carries_the_registry_fields(clean):
     row = _reg(clean, "p-plain")
     missing = [f for f in FIELDS if f not in row]
     assert not missing, "the process registry has no %s (NS-29.2-1)" % ", ".join(missing)
-    assert row["principal"] == "owner" and row["stoppable"] is True and row["cost_usd"] == 0.0
+    assert row["principal"] == "owner" and row["cost_usd"] == 0.0
+    assert row["stop_capability"] == "stop_everything"
 
 
 def test_a_goal_milestones_task_shows_its_ancestry(clean):
-    note = getattr(core, "note_task_ancestry", None)
-    assert note is not None, "nothing records which goal a task works for"
-    note("task-77", goal_id="g-1", milestone_id="m-2")
+    _task("task-77", goal_ancestry={"goal_id": "g-1", "milestone_id": "m-2"})
     row = _reg(clean, "p-goal", task_id="task-77")
-    assert (row["goal_id"], row["milestone_id"], row["principal"]) == ("g-1", "m-2", "goal")
+    assert (row.get("goal_id"), row.get("milestone_id")) == ("g-1", "m-2"), "no goal ancestry"
+    assert row.get("stop_capability") == "after_this_step"
 
 
-def test_ancestry_noted_after_the_process_started_still_reaches_it(clean):
-    row = _reg(clean, "p-late", task_id="task-88")
-    assert row.get("goal_id") is None
-    core.note_task_ancestry("task-88", goal_id="g-9", milestone_id=None)
+def test_a_crew_task_and_a_scheduled_task_say_whose_they_are(clean):
+    _task("task-crew", principal="crew:researcher")
+    _task("task-sched", schedule_id="daily-brief")
+    assert _reg(clean, "p-crew", task_id="task-crew").get("principal") == "crew:researcher"
+    assert _reg(clean, "p-sched", task_id="task-sched").get("schedule_id") == "daily-brief"
+
+
+def test_a_task_linked_after_the_process_started_still_reaches_it(clean):
+    _task("task-88", goal_ancestry={"goal_id": "g-9", "milestone_id": None})
+    _reg(clean, "p-late")
+    core.process_update("p-late", task_id="task-88")
     with core.PROCESSES_LOCK:
-        assert core.PROCESSES["p-late"]["goal_id"] == "g-9"
-
-
-def test_a_scheduled_run_works_for_the_schedule(clean):
-    assert _reg(clean, "sched-daily-brief-1")["principal"] == "schedule"
+        assert core.PROCESSES["p-late"].get("goal_id") == "g-9"
 
 
 def test_cost_adds_up_and_the_receipt_is_linked(clean):
+    params = inspect.signature(core.process_update).parameters
+    assert "cost_usd" in params and "receipt" in params, "a process cannot record its cost or receipt"
     _reg(clean, "p-cost")
     core.process_update("p-cost", cost_usd=0.012)
     core.process_update("p-cost", cost_usd=0.003, receipt="decision:4521")
@@ -72,13 +85,8 @@ def test_cost_adds_up_and_the_receipt_is_linked(clean):
         assert p["cost_usd"] == pytest.approx(0.015) and p["receipt_id"] == "decision:4521"
 
 
-def test_a_process_that_cannot_be_stopped_says_why(clean):
-    row = _reg(clean, "p-commit", stoppable=False, stop_note="Writing the backup; stopping now would leave it half-made.")
-    assert row["stoppable"] is False and "half-made" in row["stop_note"]
-    core.process_update("p-commit", stoppable=True)
-    with core.PROCESSES_LOCK:
-        assert core.PROCESSES["p-commit"]["stoppable"] is True
-        assert core.PROCESSES["p-commit"]["stop_note"] is None
+def test_an_image_job_can_be_cancelled_at_once(clean):
+    assert _reg(clean, "image-123").get("stop_capability") == "cancel_now"
 
 
 def test_old_callers_are_unchanged(clean):

@@ -1918,58 +1918,53 @@ def turn_liveness(turn_id, now=None):
     }
 
 
-#: BD-16 / NS-29.2-1: which goal (and milestone) a task belongs to, so the process registry can
-#: show a process's ancestry. Set by services/goals when it starts a milestone's task.
-TASK_ANCESTRY: dict = {}
-_ANCESTRY_LOCK = threading.Lock()
-_ANCESTRY_MAX = 2000
-
-
-def note_task_ancestry(task_id, *, goal_id, milestone_id=None) -> None:
-    """Record that `task_id` runs for `goal_id` (and `milestone_id`). Never raises."""
-    if not task_id or not goal_id:
-        return
-    with _ANCESTRY_LOCK:
-        if len(TASK_ANCESTRY) >= _ANCESTRY_MAX:
-            for k in list(TASK_ANCESTRY)[: _ANCESTRY_MAX // 4]:
-                TASK_ANCESTRY.pop(k, None)
-        TASK_ANCESTRY[str(task_id)] = {"goal_id": str(goal_id),
-                                       "milestone_id": str(milestone_id) if milestone_id else None}
-    with PROCESSES_LOCK:
-        for p in PROCESSES.values():
-            if p.get("task_id") == task_id and not p.get("goal_id"):
-                p["goal_id"], p["milestone_id"] = str(goal_id), (str(milestone_id) if milestone_id else None)
-                p["principal"] = p.get("principal") if p.get("principal") not in (None, "owner") else "goal"
-
-
-def _ancestry(task_id) -> dict:
+def _task_context(task_id) -> dict:
+    """What the task record says about a process's task (BD-16 / NS-29.2-1): the goal and
+    milestone it serves (goal_ancestry), whose task it is (principal: owner or crew:<id>) and
+    the schedule it runs for. Read from services/agent.TASKS, the one place _spawn_task records
+    them (inherited by child tasks, restored after a restart). A plain dict read, no lock taken,
+    so it is safe from inside PROCESSES_LOCK. Never raises."""
     if not task_id:
         return {}
-    with _ANCESTRY_LOCK:
-        return dict(TASK_ANCESTRY.get(str(task_id)) or {})
+    try:
+        import sys as _sys
+        agent = _sys.modules.get("agent_friday.services.agent")
+        rec = (getattr(agent, "TASKS", {}) or {}).get(task_id) if agent else None
+        if not isinstance(rec, dict):
+            return {}
+        anc = rec.get("goal_ancestry") or {}
+        return {"goal_id": anc.get("goal_id") if isinstance(anc, dict) else None,
+                "milestone_id": anc.get("milestone_id") if isinstance(anc, dict) else None,
+                "principal": rec.get("principal") or None,
+                "schedule_id": rec.get("schedule_id") or None}
+    except Exception:
+        return {}
 
 
-def _principal_for(pid, goal_id, principal):
-    """Who the process works for (NS-29.2-1): the owner's own request, a goal, or a schedule."""
-    if principal:
-        return str(principal)[:40]
-    if goal_id:
-        return "goal"
-    if str(pid).startswith("sched-"):
-        return "schedule"
-    return "owner"
+def _stop_capability(pid, task_id) -> str:
+    """How this process can be stopped (NS-29.2-1 'stop capability'): an image or video job is
+    cancelled at once (its job flag, then the sampler); a task stops after its current step;
+    anything else is stopped by Stop everything. Read-only: it changes no stop path."""
+    p = str(pid)
+    if p.startswith(("image-", "video-")):
+        return "cancel_now"
+    if task_id:
+        return "after_this_step"
+    return "stop_everything"
+
+
+def _apply_task_context(row: dict, ctx: dict) -> None:
+    for k in ("goal_id", "milestone_id", "schedule_id"):
+        if ctx.get(k) and not row.get(k):
+            row[k] = ctx[k]
+    if ctx.get("principal") and row.get("principal") in (None, "owner"):
+        row["principal"] = ctx["principal"]
 
 
 def process_register(pid, *, name="Task", label=None, category="default",
                      icon="⚡", steps=None, model=None, color=None,
-                     task_id=None, eta_s=None, step_total=None,
-                     goal_id=None, principal=None, stoppable=True, stop_note=None):
+                     task_id=None, eta_s=None, step_total=None):
     """Register a new process for the holographic orb display.
-
-    BD-16 / NS-29.2-1 (one process registry): `goal_id` (else the goal the task belongs to,
-    note_task_ancestry), `principal` (who it works for: owner, goal, schedule; derived when
-    not given), `stoppable` and `stop_note` (a process that cannot be stopped safely says why;
-    the cancel route refuses it). `process_update` adds `cost_usd` and `receipt`.
 
     `color` (optional int, e.g. 0x22c55e) overrides the category/local orb color
     in the 3-D scene — used for the green vault-access orb.
@@ -1995,19 +1990,17 @@ def process_register(pid, *, name="Task", label=None, category="default",
                 task_id = _job.id
     except Exception:
         pass
-    _anc = _ancestry(task_id)
-    goal_id = goal_id or _anc.get("goal_id")
+    _ctx = _task_context(task_id)
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
             "id": pid,
-            # NS-29.2-1: ancestry, principal, cost, receipt link, stop capability.
-            "goal_id": goal_id,
-            "milestone_id": _anc.get("milestone_id") if _anc.get("goal_id") == goal_id else None,
-            "principal": _principal_for(pid, goal_id, principal),
+            # NS-29.2-1 (one process registry): ancestry and principal from the task record,
+            # cost and the receipt it produced (process_update), and how it can be stopped.
+            "goal_id": None, "milestone_id": None, "schedule_id": None,
+            "principal": "owner",
             "cost_usd": 0.0,
             "receipt_id": None,
-            "stoppable": bool(stoppable),
-            "stop_note": (str(stop_note)[:200] if stop_note else None),
+            "stop_capability": _stop_capability(pid, task_id),
             "name": name,
             "label": label or name,
             "category": category,
@@ -2051,6 +2044,7 @@ def process_register(pid, *, name="Task", label=None, category="default",
             # row can expand into the reasoning behind it.
             "trace_id": _current_trace_id(),
         }
+        _apply_task_context(PROCESSES[pid], _ctx)
     turn_pet(label=label or name, model=model)
     # The lattice's background orbiter (avatar-visual-genome.md §13): a
     # scheduled run is background work from the moment it is registered.
@@ -2079,14 +2073,14 @@ def _current_trace_id():
 
 def process_update(pid, *, status=None, progress=None, label=None,
                    step=None, steps=None, task_id=None, result=None,
-                   step_n=None, step_total=None, cost_usd=None, receipt=None,
-                   stoppable=None, stop_note=None):
+                   step_n=None, step_total=None, cost_usd=None, receipt=None):
     """Update an existing process entry.
 
     `result` attaches the process's final output (e.g. a local model's reply)
     so the notification detail panel has a real process to show — a subagent
     task whose orb carries no log/result renders as an empty "nothing".
     """
+    _ctx = _task_context(task_id) if task_id is not None else {}
     with PROCESSES_LOCK:
         p = PROCESSES.get(pid)
         if not p:
@@ -2109,12 +2103,9 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["steps"] = steps
         if task_id is not None:
             p["task_id"] = task_id
-            if not p.get("goal_id"):
-                _anc = _ancestry(task_id)
-                if _anc.get("goal_id"):
-                    p["goal_id"], p["milestone_id"] = _anc["goal_id"], _anc.get("milestone_id")
-                    if p.get("principal") in (None, "owner"):
-                        p["principal"] = "goal"
+            _apply_task_context(p, _ctx)
+            if p.get("stop_capability") == "stop_everything":
+                p["stop_capability"] = _stop_capability(pid, task_id)
         if cost_usd is not None:
             try:
                 p["cost_usd"] = round(float(p.get("cost_usd") or 0.0) + max(0.0, float(cost_usd)), 6)
@@ -2122,9 +2113,6 @@ def process_update(pid, *, status=None, progress=None, label=None,
                 pass
         if receipt is not None:
             p["receipt_id"] = str(receipt)[:120]
-        if stoppable is not None:
-            p["stoppable"] = bool(stoppable)
-            p["stop_note"] = (str(stop_note)[:200] if stop_note else None) if not stoppable else None
         if result is not None:
             p["result"] = str(result)[:4000]
         p["updated"] = _time.time()
