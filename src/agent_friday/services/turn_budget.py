@@ -42,9 +42,10 @@ to continue, instead of truncating and naming an internal knob.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 #: NO BUILT-IN ROUND CAP.
 #:
@@ -257,6 +258,51 @@ def loop_guard_enabled() -> bool:
     return True
 
 
+#: STATUS, POLL AND WAIT TOOLS (owner ruling, decision 19, 2026-10-28): "LoopGuard
+#: lets a repeated call through when its result changes, but only for status,
+#: poll and wait tools." Such a tool reports on something that moves by itself (a
+#: job, a queue, a workflow), so asking again with the same arguments is how it
+#: is used. A tool counts when a word of its name is one of these; nothing else
+#: is loosened, so a search, a read or a write repeated is judged exactly as
+#: before. A tool name split on any non-letter and on camelCase.
+STATUS_TOOL_WORDS = frozenset({"status", "statuses", "poll", "polling", "wait", "waiting"})
+
+#: What does not count as the result changing. A status reply that differs only
+#: in a clock reading, a "last seen 4m ago" age, an ISO timestamp, a request,
+#: trace or etag id, or a long hex or uuid id has not moved: a hung job keeps
+#: printing a fresh heartbeat age. Every substitution can only make two results
+#: compare EQUAL, so it can only keep the guard as strict as it was before the
+#: ruling, never looser.
+_VOLATILE = [
+    re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?", re.I),
+    re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?\s*(?:am|pm)?\b", re.I),
+    re.compile(r"\b\d+(?:\.\d+)?\s*(?:ms|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?)\s+ago\b", re.I),
+    re.compile(r"\b(?:request|req|trace|correlation|etag|e-tag)[ _-]?(?:id)?\s*[:=]\s*\S+", re.I),
+    re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I),
+    re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{12,}\b", re.I),
+]
+
+
+def is_status_tool(name: Any) -> bool:
+    """Is this a status, poll or wait tool, by a word of its name?"""
+    raw = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(name or ""))
+    return any(w in STATUS_TOOL_WORDS for w in re.split(r"[^a-z0-9]+", raw.lower()) if w)
+
+
+def result_fingerprint(result: Any) -> str:
+    """A tool result with its volatile parts removed, for "has it changed?"."""
+    if isinstance(result, str):
+        text = result
+    else:
+        try:
+            text = json.dumps(result, sort_keys=True, default=str)
+        except Exception:
+            text = repr(result)
+    for rx in _VOLATILE:
+        text = rx.sub("~", text)
+    return " ".join(text.split()).lower()
+
+
 class LoopGuard:
     """Counts identical (tool, arguments) calls within one turn.
 
@@ -272,8 +318,13 @@ class LoopGuard:
     no single call ever repeats. See `_cycling`.
     """
 
-    def __init__(self, repeat_limit: int = REPEAT_LIMIT_DEFAULT):
+    def __init__(self, repeat_limit: int = REPEAT_LIMIT_DEFAULT,
+                 trace: Optional[Sequence[dict]] = None):
         self.repeat_limit = max(2, int(repeat_limit or REPEAT_LIMIT_DEFAULT))
+        #: The turn's own tool trace ({name, input, result} rows, appended as each
+        #: call finishes), read but never written. Only a status, poll or wait
+        #: tool consults it; without it the guard behaves exactly as before.
+        self._trace = trace
         self._seen: Dict[str, int] = {}
         #: Tool names in call order, for the drifting-cycle check below.
         self._sequence: list = []
@@ -292,14 +343,50 @@ class LoopGuard:
     def observe(self, name: str, args: Any = None) -> Optional[str]:
         """Record a call. Returns None, or a reason when it looks stuck."""
         key = self._key(name, args)
-        n = self._seen.get(key, 0) + 1
+        before = self._seen.get(key, 0)
+        n = before + 1
         self._seen[key] = n
         self._sequence.append(str(name or ""))
-        self._keys.append(key)
-        if n >= self.repeat_limit:
-            return ("%s was called %d times with the same arguments"
-                    % (str(name or "a tool"), n))
+        polled = self._since_result_changed(name, key, before)
+        if polled is None:
+            self._keys.append(key)
+            if n >= self.repeat_limit:
+                return ("%s was called %d times with the same arguments"
+                        % (str(name or "a tool"), n))
+            return self._cycling()
+        # A status, poll or wait tool whose earlier results are all in view: only
+        # the calls since its result last changed are repeats. Each change starts
+        # a new stretch, and the cycle check below sees each stretch as new ground.
+        streak, stretch = polled
+        self._keys.append("%s#%d" % (key, stretch))
+        if streak + 1 >= self.repeat_limit:
+            return ("%s returned the same result %d times in a row"
+                    % (str(name or "a tool"), streak))
         return self._cycling()
+
+    def _since_result_changed(self, name: Any, key: str, before: int):
+        """For a status, poll or wait tool: (calls since its result last changed,
+        how many times it has changed), from the turn's trace. None, meaning
+        "judge it as before", for any other tool, when there is no trace, and
+        whenever the trace does not hold exactly one result for each earlier
+        identical call (a batch not yet run, a row written before the guard
+        looked, arguments recorded in another form)."""
+        if self._trace is None or not is_status_tool(name):
+            return None
+        if before == 0:
+            return 0, 0
+        try:
+            prior = [result_fingerprint(r.get("result")) for r in list(self._trace)
+                     if isinstance(r, dict) and self._key(r.get("name"), r.get("input")) == key]
+        except Exception:
+            return None
+        if len(prior) != before:
+            return None
+        streak = 1
+        while streak < len(prior) and prior[-streak - 1] == prior[-1]:
+            streak += 1
+        changes = sum(1 for a, b in zip(prior, prior[1:]) if a != b)
+        return streak, changes
 
     # ── the same few tools, round and round, with the arguments drifting ────
     #

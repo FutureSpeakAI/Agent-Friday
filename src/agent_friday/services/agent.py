@@ -17033,7 +17033,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     from agent_friday.services import turn_budget as _tb
     _round_cap = max_iters if max_iters else _tb.rounds_for(str(model or ""))
     _rounds_left = int(_round_cap) if _round_cap else None
-    _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
+    _loop_guard = _tb.LoopGuard(trace=tool_trace) if _tb.loop_guard_enabled() else None
 
     # ── Fewer tools up front, on the cloud too. ──
     # Every schema on every round was ~46k tokens a call. The cloud now gets
@@ -17854,7 +17854,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
     loops = max_iters if oai_tools else 1
     # The one guard left on by default, and the owner can switch it off in
     # Settings > Spending. It catches a stuck model, not a long one.
-    _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
+    _loop_guard = _tb.LoopGuard(trace=tool_trace) if _tb.loop_guard_enabled() else None
     # The clock and the token ceiling are only constructed when the owner asked
     # for one. `None` is not "use a default" any more -- there is no default.
     _wall_s = _tb.wall_clock_for("local")
