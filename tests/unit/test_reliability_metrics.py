@@ -114,9 +114,28 @@ class TestConnectorSuccess:
 
     def test_an_untrusted_ledger_is_unknown_not_a_number(self, monkeypatch):
         _out("create_task", n=100)
-        monkeypatch.setattr(L, "summary", lambda **kw: {"key_available": True, "intact": False})
+        monkeypatch.setattr(L, "summary", lambda **kw: {"key_available": True, "intact": False, "ok": False})
         m = _rm().connector_success()
         assert m["state"] == "unknown" and m["connectors"] == [] and m["why"]
+
+    def test_an_acknowledged_break_still_counts(self, monkeypatch):
+        _out("create_task", n=100)
+        monkeypatch.setattr(L, "summary", lambda **kw: {"key_available": True, "intact": False, "ok": True})
+        assert _rm().connector_success()["state"] == "ok"
+
+    def test_a_draft_that_may_send_is_measured_not_held_to_the_bar(self):
+        _out("draft_email", n=3)
+        r = _conn(_rm().connector_success(), "google:gmail:by-argument")
+        assert r["supported"] is False and r["state"] == "measured"
+
+    def test_the_report_never_names_another_connected_tool(self):
+        _out("mcp_wilhelmina-private-notes_read", n=2)
+        _out("create_task", n=3)
+        rm = _rm()
+        rep = rm.for_report(rm.metrics())
+        blob = json.dumps(rep) + "\n".join(rm.render_lines(rep))
+        assert "wilhelmina" not in blob
+        assert any(r["id"] == "mcp" and r["attempts"] == 2 for r in rep["connectors"]["connectors"])
 
     def test_the_window_is_thirty_days(self):
         _out("create_task", n=100)
@@ -151,8 +170,9 @@ class TestCrashFree:
         s = _rm().crash_free(now=now)
         assert s["state"] == "not_enough" and s["rate_pct"] is None
 
-    def test_the_journal_records_each_start(self):
+    def test_the_journal_records_each_start(self, tmp_path, monkeypatch):
         from agent_friday.services import session_log, task_journal
+        monkeypatch.setattr(task_journal, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
         task_journal.reconcile_on_boot()
         task_journal.mark_clean_exit("quit")
         task_journal.reconcile_on_boot()
@@ -168,21 +188,69 @@ def test_metrics_and_the_doctor_text():
     assert "Google Tasks" in text and "100 of 100" in text
 
 
-def test_an_error_result_is_not_recorded_as_ok(monkeypatch):
-    """A handler that returns (rather than raises) an error result: its
-    receipt and outcome say the call did not succeed."""
+@pytest.fixture
+def fixture_tool(monkeypatch):
     from agent_friday.governance import action_gate as gate
-    from agent_friday.services import agent as ag, tool_receipts
-    monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, "fixture_change",
-                        lambda inp: "Tool error (fixture_change): the service said no")
+    from agent_friday.services import agent as ag
+    box = {}
+    monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, "fixture_change", lambda inp: box["fn"](inp))
     monkeypatch.setitem(ag.TOOL_RINGS, "fixture_change", 0)
     monkeypatch.setattr(gate, "INTERNAL_TOOLS", frozenset(gate.INTERNAL_TOOLS) | {"fixture_change"})
     monkeypatch.setattr(ag, "CLAUDE_TOOLS", list(ag.CLAUDE_TOOLS) + [{
         "name": "fixture_change", "description": "fixture",
         "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}}])
-    tool_receipts.begin_turn()
-    ag._execute_tool("fixture_change", {"q": "x"})
-    assert tool_receipts.receipts()[-1]["ok"] is False
+    outcomes = []
+    monkeypatch.setattr(gate, "record_outcome",
+                        lambda tool, decision, status, **kw: outcomes.append((status, kw.get("detail"))))
+    # every call is one whose outcome is recorded
+    monkeypatch.setattr(ag, "_outcome_recorder", _always_recorder)
+
+    def run(fn):
+        from agent_friday.services import tool_receipts
+        box["fn"] = fn
+        outcomes.clear()
+        tool_receipts.begin_turn()
+        ag._execute_tool("fixture_change", {"q": "x"})
+        return tool_receipts.receipts()[-1], list(outcomes)
+    return run
+
+
+def _always_recorder(name, decision, ctx):
+    from agent_friday.governance import action_gate as gate
+    done = []
+
+    def _write(status, detail=""):
+        if not done:
+            done.append(status)
+            gate.record_outcome(name, decision, status, detail=detail)
+    return _write
+
+
+def test_an_error_result_is_not_recorded_as_ok(fixture_tool):
+    """A handler that returns (rather than raises) an error result: its
+    receipt and outcome say the call did not succeed."""
+    receipt, outcomes = fixture_tool(lambda inp: "Tool error (fixture_change): the service said no")
+    assert receipt["ok"] is False
+    assert outcomes and outcomes[0][0] == "error"
+
+
+def test_a_result_waiting_for_a_card_is_held_not_ok(fixture_tool):
+    from agent_friday.services import agent as ag
+    pending = ag._TOOL_PENDING_SENTINELS[0] + " the owner decides"
+    _receipt, outcomes = fixture_tool(lambda inp: pending)
+    assert outcomes and outcomes[0][0] == "held"
+
+
+def test_a_result_the_handler_declined_is_refused_not_ok(fixture_tool):
+    from agent_friday.services import agent as ag
+    declined = ag._TOOL_DENY_SENTINELS[0] + " not now"
+    _receipt, outcomes = fixture_tool(lambda inp: declined)
+    assert outcomes and outcomes[0][0] == "refused"
+
+
+def test_a_plain_result_is_still_ok(fixture_tool):
+    receipt, outcomes = fixture_tool(lambda inp: '{"id": "t1"}')
+    assert receipt["ok"] is True and outcomes and outcomes[0][0] == "ok"
 
 
 # ── NS-35.11-6: the quantity of stored memory is never a goal ────────────────

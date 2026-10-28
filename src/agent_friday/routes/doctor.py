@@ -3,6 +3,8 @@
   GET  /doctor                        the Doctor page (plain, local)
   POST /api/doctor/report             run the checks now; the report is kept
                                       under <home>/doctor/reports/
+  GET  /api/doctor/reliability        connector change success and crash-free
+                                      runs, measured on this PC (this PC only)
   GET  /api/doctor/reports            the newest saved reports (id, time, counts)
   GET  /api/doctor/reports/<id>.<json|txt>
                                       a saved report as a file to save and

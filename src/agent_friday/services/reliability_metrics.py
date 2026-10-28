@@ -15,6 +15,9 @@ Two numbers the release gate asks for:
 * **Crash-free sessions**: of the runs that have ended, how many ended because
   the owner closed or restarted Friday (services/session_log).
 
+While off the record, outcome receipts carry no detail, so a change the
+provider could not take counts as a failure then: the rate errs low, never high.
+
 Counts only. Nothing here is sent anywhere: it is shown on the Doctor page and
 goes into a Doctor report only when the owner makes one and shares it by hand.
 A source that cannot be read or trusted shows "unknown", never a number.
@@ -52,8 +55,14 @@ def connector_of(tool: str) -> Optional[dict]:
         op = {}
     if op:
         svc = str(op.get("service") or "google")
-        return {"id": "google:" + svc, "label": "Google " + svc.capitalize(),
-                "supported": True, "access": op.get("access") or "write"}
+        # An operation whose effect depends on its arguments (a draft that may
+        # send, an undo of either kind) has no single "did it" to verify: it is
+        # measured, not held to the bar.
+        measured_only = bool(op.get("send_scopes") or op.get("by_argument"))
+        return {"id": "google:" + svc + (":by-argument" if measured_only else ""),
+                "label": "Google " + svc.capitalize() + (" (depends on what was asked)"
+                                                          if measured_only else ""),
+                "supported": not measured_only, "access": op.get("access") or "write"}
     if name.startswith("mcp_") and name.count("_") >= 2:
         server = name[4:].split("_", 1)[0]
         return {"id": "mcp:" + server, "label": "Connected tool: " + server,
@@ -100,7 +109,7 @@ def _trusted_ledger() -> Optional[str]:
         return "the action ledger could not be read (%s)" % type(e).__name__
     if not s.get("key_available"):
         return "the action ledger's key is not available"
-    if not s.get("intact", s.get("ok")):
+    if not s.get("ok"):          # an acknowledged break leaves ok true
         return "the action ledger has a break to review"
     return None
 
@@ -209,6 +218,26 @@ def crash_free(*, now: Optional[float] = None, window_days: float = WINDOW_DAYS)
     return {"state": "measured", "ended": n, "crashed": crashed,
             "rate_pct": round(100.0 * (n - crashed) / n, 2),
             "min_sessions": MIN_SESSIONS, "window_days": window_days}
+
+
+def for_report(m: dict) -> dict:
+    """`m` as a Doctor report carries it: the names of other connected tools
+    (MCP servers the owner added) are private, so they become one row."""
+    m = dict(m)
+    c = dict(m.get("connectors") or {})
+    rows = c.get("connectors") or []
+    kept = [r for r in rows if r.get("supported") or str(r.get("id", "")).startswith("google:")]
+    other = [r for r in rows if r not in kept]
+    if other:
+        agg = {"id": "mcp", "label": "Other connected tools", "supported": False,
+               "state": "measured", "target_pct": None, "rate_pct": None}
+        for k in ("attempts", "succeeded", "failed", "never_reported", "provider_unavailable",
+                  "needs_owner", "reads", "reads_failed"):
+            agg[k] = sum(int(r.get(k) or 0) for r in other)
+        kept.append(agg)
+    c["connectors"] = kept
+    m["connectors"] = c
+    return m
 
 
 def metrics(*, now: Optional[float] = None) -> dict:

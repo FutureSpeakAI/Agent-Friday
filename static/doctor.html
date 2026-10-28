@@ -262,7 +262,7 @@
         s.state === 'not_enough' ? 'Runs: not enough finished runs yet to say (' + (s.ended || 0) + ' so far).' :
         'Runs: ' + (s.ended - s.crashed) + ' of ' + s.ended + ' ended because you closed or restarted Friday (' + s.rate_pct + '% crash-free).';
       box.appendChild(p2);
-    });
+    }).catch(() => { $('rel').textContent = 'Could not be read.'; });
   }
   function row(c) {
     const tr = document.createElement('tr');

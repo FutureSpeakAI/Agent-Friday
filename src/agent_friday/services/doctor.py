@@ -509,7 +509,7 @@ def _reliability() -> dict:
     """Connector change success and crash-free runs (services/reliability_metrics)."""
     try:
         from agent_friday.services import reliability_metrics
-        return reliability_metrics.metrics()
+        return reliability_metrics.for_report(reliability_metrics.metrics())
     except Exception as e:  # noqa: BLE001
         return {"state": "unknown", "why": type(e).__name__}
 
@@ -525,7 +525,7 @@ def build() -> dict:
         "report_version": REPORT_VERSION,
         "id": "doctor-%s-%s" % (stamp, hashlib.sha256(os.urandom(8)).hexdigest()[:6]),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "content": "none: versions, checks, error signatures, drift and performance only",
+        "content": "none: versions, checks, error signatures, drift, performance and reliability counts only",
         "sharing": "by hand only; Friday never sends this file anywhere",
         "versions": _versions(),
         "checks": [_check(cid, dom, fn) for cid, dom, fn in CHECKS],
