@@ -3,8 +3,8 @@
 llama-server ends a thinking model's reasoning at the first literal
 `<tool_call>` it sees, so the reply text can be: the rest of the thinking
 (often with a draft object of the same shape), `</think>`, then the answer.
-Every reader below used to take the span from the first `{` to the last `}`,
-which is not JSON in that shape, and silently fell back or gave up.
+A reader that takes the span from the first `{` to the last `}` gets text
+that is not JSON in that shape, and silently falls back or gives up.
 
 Each test feeds a reader that shape and checks it returns the ANSWER, not the
 draft and not nothing. Nothing here calls a model.
@@ -128,6 +128,7 @@ def test_knowledge_graph_parse_report():
     rep = _parse_report(split_reply({"title": "Team", "summary": "who works with whom",
                                      "findings": [], "rating": 7.0},
                                     draft={"title": "draft", "summary": "draft"}))
+    assert rep is not None
     assert rep["title"] == "Team" and rep["rating"] == 7.0
 
 
@@ -158,12 +159,45 @@ def test_judgment_gate_unreadable_is_still_none():
     assert jg._parse_verdicts('<tool_call>{"name": "x"} </think> {"verdicts": ', 1) is None
 
 
+def test_judgment_gate_two_verdict_objects_fail_closed():
+    from agent_friday.services import judgment_gate as jg
+    a = {"verdicts": [{"i": 0, "verdict": jg.NEVER_SEND, "reason": "r"}]}
+    b = {"verdicts": [{"i": 0, "verdict": jg.ABOUT_THE_WORLD, "reason": "r"}]}
+    assert jg._parse_verdicts(json.dumps(a) + "\nOr rather:\n" + json.dumps(b), 1) is None
+
+
+def test_judgment_gate_thinking_cut_short_fails_closed():
+    from agent_friday.services import judgment_gate as jg
+    draft = {"verdicts": [{"i": 0, "verdict": jg.ABOUT_THE_WORLD, "reason": "draft"}]}
+    reply = "<tool_call>{\"name\": \"x\"} was quoted. A draft: " + json.dumps(draft) + "\nHmm, but"
+    assert jg._parse_verdicts(reply, 1) is None
+
+
+class TestUnique:
+    def _lo(self, *a, **k):
+        from agent_friday.services.reply_json import last_object
+        return last_object(*a, **k)
+
+    def test_one_object_is_taken(self):
+        assert self._lo('Answer: {"a": 1}', unique=True) == {"a": 1}
+
+    def test_two_objects_are_refused(self):
+        assert self._lo('{"a": 1} then {"a": 2}', unique=True) is None
+
+    def test_whole_reply_is_taken(self):
+        assert self._lo('{"a": 1}', unique=True) == {"a": 1}
+
+    def test_answer_after_thinking_is_taken(self):
+        assert self._lo(split_reply({"a": 2}, draft={"a": 1}), unique=True) == {"a": 2}
+
+
 def test_workflow_overview_model_draft():
     from agent_friday.services.workflow_overview import _model_draft
     answer = {"name": "Morning mail", "summary": "s",
               "steps": [{"name": "Read", "prompt": "Read today's mail"}]}
     reply = split_reply(answer, draft={"name": "draft", "steps": []})
     got = _model_draft("draft me a workflow", lambda *a, **k: reply)
+    assert got is not None
     assert got["name"] == "Morning mail"
     assert got["steps"][0]["prompt"] == "Read today's mail"
 
