@@ -71,6 +71,10 @@ KIND_LABELS = {
     "authority": "Action authority revoked or restored",
     "policy_version": "The rules actions ran under changed",
     "item_batch_run": "Approved change run",
+    "spend_halt": "Paused by your spending cap",
+    "gate_event": "Checkpoint settings changed",
+    "file_grant": "File access granted, denied or revoked",
+    "setting_change": "A setting changed (with Undo)",
 }
 
 #: What an approved change's run marker (services/item_actions.RUN_KIND) says happened.
