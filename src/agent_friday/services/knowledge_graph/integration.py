@@ -112,8 +112,10 @@ def ingest_fact(text: str, *, source_kind: str, source_key: str,
         from agent_friday.services import tombstones as _tomb
         if _tomb.is_tombstoned("kg_entity", {"id": eid}):
             return None
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("friday.tombstones").warning(
+            "knowledge graph: the fact tombstone check failed (fail open): %s: %s", type(e).__name__, e)
     research_sources = []
     if source_kind == "research":
         for s in sources or []:

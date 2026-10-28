@@ -333,7 +333,9 @@ def _refused_before(text: str) -> bool:
     try:
         from agent_friday.services import tombstones
         return tombstones.is_tombstoned(tombstones.STATEMENT_KINDS, text)
-    except Exception:                                       # noqa: BLE001
+    except Exception as e:                                  # noqa: BLE001
+        _log.warning("memory_proposals: the tombstone check failed (fail open): %s: %s",
+                     type(e).__name__, e)
         return False
 
 
@@ -609,7 +611,9 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
             for t in texts:
                 if (t or "").strip() and not tombstones.add("proposal", t).get("ok"):
                     unmarked += 1
-        except Exception:                                   # noqa: BLE001
+        except Exception as e:                              # noqa: BLE001
+            _log.warning("memory_proposals: rejected suggestions could not be tombstoned: %s: %s",
+                         type(e).__name__, e)
             unmarked = len([t for t in texts if (t or "").strip()])
         cur = conn.execute(
             f"UPDATE proposed_facts SET status='rejected', decided_ts=? "

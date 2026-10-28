@@ -81,6 +81,7 @@ or approving the proposal themselves lifts the tombstone for that text
 """
 from __future__ import annotations
 
+import builtins
 import hashlib
 import hmac
 import json
@@ -294,7 +295,10 @@ def _read(strict: bool = False) -> Tuple[Dict[str, Any], ...]:
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         rows = data.get("entries") if isinstance(data, dict) else None
-        if not isinstance(rows, (list, tuple)):
+        # builtins.list: the module-level `list` is the facade's list_tombstones
+        # (bottom of this file), and isinstance() against a function raises
+        # TypeError, which made every read "unreadable" (fail open).
+        if not isinstance(rows, (builtins.list, tuple)):
             raise ValueError("no entry list")
         entries = tuple(r for r in rows if isinstance(r, dict)
                         and r.get("kind") in HASHED and isinstance(r.get("h"), str))
@@ -593,5 +597,6 @@ def _reset_for_tests() -> None:
 
 
 #: The facade's list, by the name the spec uses. It shadows the builtin inside
-#: this module, so nothing here calls the builtin list() (comprehensions only).
+#: this module, so nothing here names the builtin list (comprehensions, and
+#: builtins.list where the type is needed).
 list = list_tombstones  # noqa: A001

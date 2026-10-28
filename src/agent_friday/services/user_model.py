@@ -287,8 +287,10 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
         elif _tomb.is_tombstoned(_tomb.STATEMENT_KINDS, text):
             return {"ok": False, "tombstoned": True,
                     "error": "the owner deleted this; it is not stored again from a derived source"}
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("friday.tombstones").warning(
+            "user_model: the tombstone check failed (fail open): %s: %s", type(e).__name__, e)
     try:
         confidence = max(0.0, min(1.0, float(confidence)))
     except (TypeError, ValueError):
@@ -488,7 +490,10 @@ def forget_fact(fact_id: str, *, source: Optional[str] = None,
         try:
             from agent_friday.services import tombstones as _tomb
             marked = bool(_tomb.add("user_fact", str(row[0])).get("ok"))
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger("friday.tombstones").warning(
+                "user_model: the fact could not be tombstoned: %s: %s", type(e).__name__, e)
             marked = False
         if not marked:
             out.update(tombstoned=False,

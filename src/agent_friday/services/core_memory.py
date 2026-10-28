@@ -372,8 +372,17 @@ def _tombstoned(target: str, text: str) -> bool:
     try:
         from agent_friday.services import tombstones
         return tombstones.is_tombstoned(_tomb_kinds(target), text)
-    except Exception:
+    except Exception as e:
+        _tomb_warn("check", e)
         return False
+
+
+def _tomb_warn(what: str, e: BaseException) -> None:
+    """A tombstone call that raised (an ImportError included) is said, never
+    silently treated as 'not tombstoned'."""
+    import logging
+    logging.getLogger("friday.tombstones").warning(
+        "core_memory: the tombstone %s failed (fail open): %s: %s", what, type(e).__name__, e)
 
 
 def _tombstone(text: str) -> bool:
@@ -381,7 +390,8 @@ def _tombstone(text: str) -> bool:
     try:
         from agent_friday.services import tombstones
         return bool(tombstones.add("card_line", text).get("ok"))
-    except Exception:
+    except Exception as e:
+        _tomb_warn("write", e)
         return False
 
 
@@ -395,8 +405,8 @@ def _affirmed(text: str) -> None:
     try:
         from agent_friday.services import tombstones
         tombstones.owner_affirmed(text)
-    except Exception:
-        pass
+    except Exception as e:
+        _tomb_warn("lift", e)
 
 
 _TOMBSTONED = ("the owner deleted this line from the memory card; Friday does not add or suggest "

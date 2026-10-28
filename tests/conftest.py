@@ -780,9 +780,14 @@ def _no_tombstone_outlives_its_test():
             p.unlink()
     except Exception:
         pass
+    # A background thread a test started (a chat send's post-turn work) may be
+    # importing services/tombstones at this moment: sys.modules then holds a
+    # partially initialised module with no _reset_for_tests yet. Nothing of it
+    # is cached then, so there is nothing to reset.
     tb = sys.modules.get("agent_friday.services.tombstones")
-    if tb is not None:
-        tb._reset_for_tests()
+    reset = getattr(tb, "_reset_for_tests", None) if tb is not None else None
+    if reset is not None:
+        reset()
 
 
 @pytest.fixture(autouse=True)

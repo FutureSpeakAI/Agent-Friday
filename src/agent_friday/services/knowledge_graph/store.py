@@ -207,7 +207,11 @@ class KnowledgeGraphStore:
             try:
                 from agent_friday.services import tombstones as _tomb
                 records, tomb_dropped = _tomb.filter_entities_detail(records)
-            except Exception:
+            except Exception as e:
+                import logging
+                logging.getLogger("friday.tombstones").warning(
+                    "knowledge graph: the tombstone filter failed (nothing filtered): %s: %s",
+                    type(e).__name__, e)
                 tomb_dropped = {}
             if tomb_dropped:
                 import logging
