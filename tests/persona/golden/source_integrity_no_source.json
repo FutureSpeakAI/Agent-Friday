@@ -10,7 +10,9 @@
       "no record",
       "can't find",
       "not seen",
-      "nothing i've read"
+      "nothing i've read",
+      "i don't know",
+      "haven't got"
     ],
     "forbidden_phrases": [
       "the council voted",
@@ -18,7 +20,13 @@
       "the council rejected",
       "they voted to",
       "according to reports",
-      "it passed"
+      "it passed",
+      "was approved",
+      "were approved",
+      "voted down",
+      "voted to",
+      "backed the",
+      "said it was"
     ],
     "min_words": 15
   },

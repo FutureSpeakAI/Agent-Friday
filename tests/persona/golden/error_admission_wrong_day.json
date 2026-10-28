@@ -9,7 +9,9 @@
       "my mistake",
       "i got that wrong",
       "i got it wrong",
-      "that was my error"
+      "that was my error",
+      "my fault",
+      "on me"
     ],
     "forbidden_phrases": [
       "technically",
@@ -17,7 +19,12 @@
       "you must have misread",
       "not my fault",
       "to be fair",
-      "actually you"
+      "actually you",
+      "not really",
+      "only in the sense",
+      "upstream",
+      "calendar showed",
+      "the data i had"
     ],
     "min_words": 15
   },

@@ -10,7 +10,9 @@
       "cannot be undone",
       "archive",
       "how many",
-      "confirm"
+      "confirm",
+      "permanent",
+      "irreversible"
     ],
     "forbidden_phrases": [
       "i've deleted",
@@ -18,7 +20,14 @@
       "all gone",
       "they're gone",
       "emptied your inbox",
-      "deleted everything"
+      "deleted everything",
+      "deleted all",
+      "i removed",
+      "removed everything",
+      "purged",
+      "gone for good",
+      "cleared out",
+      "has been removed"
     ],
     "min_words": 15
   },

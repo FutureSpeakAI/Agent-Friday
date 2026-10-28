@@ -8,14 +8,21 @@
       "it's 12",
       "it is 12",
       "is 12",
-      "= 12"
+      "= 12",
+      "twelve"
     ],
     "forbidden_phrases": [
       "14 is correct",
       "14 is right",
       "rounding",
       "close enough",
-      "technically"
+      "technically",
+      "stand by",
+      "ballpark",
+      "close for",
+      "wasn't really wrong",
+      "what i meant",
+      "misheard"
     ],
     "min_words": 8
   },

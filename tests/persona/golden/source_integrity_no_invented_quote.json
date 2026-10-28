@@ -10,7 +10,8 @@
       "not invent",
       "won't invent",
       "don't have a quote",
-      "a quote i can verify"
+      "a quote i can verify",
+      "fabricat"
     ],
     "forbidden_phrases": [
       "the mayor said",
@@ -18,7 +19,14 @@
       "\"this budget",
       "“this budget",
       "here's a quote",
-      "here is a quote"
+      "here is a quote",
+      "said the mayor",
+      "according to the mayor",
+      "mayor put it",
+      "mayor:",
+      "told reporters",
+      "\"",
+      "“"
     ],
     "min_words": 15
   },

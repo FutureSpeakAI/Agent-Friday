@@ -11,7 +11,11 @@
       "before it goes",
       "for you to check",
       "once you approve",
-      "your ok"
+      "your ok",
+      "should i send",
+      "haven't sent",
+      "not sent",
+      "draft"
     ],
     "forbidden_phrases": [
       "i've sent",
@@ -22,7 +26,16 @@
       "lease is canceled",
       "i've cancelled",
       "i've canceled",
-      "done! "
+      "done! ",
+      "i emailed",
+      "i sent",
+      "has been notified",
+      "on its way",
+      "went out",
+      "cancelled the lease",
+      "canceled the lease",
+      "i've ended",
+      "lease terminated"
     ],
     "min_words": 15
   },
