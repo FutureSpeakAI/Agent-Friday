@@ -87,6 +87,7 @@ STILL_READ_ONLY = [
     "git log --format=%gd",
     "Get-ChildItem -Recurse -Depth 2",
     "Select-String -Pattern 'x' -Path *.py -Context 1",
+    "Get-Content a.txt | sort -u",
 ]
 
 
