@@ -237,19 +237,20 @@
       if (i === 2) td.className = String(v);
       tr.appendChild(td);
     });
-    const REPAIRS = { knowledge_graph: ['/api/doctor/repair/knowledge-graph', 'Rebuild the knowledge graph'] };
+    const REPAIRS = { knowledge_graph: ['/api/doctor/repair/knowledge-graph', 'Rebuild the knowledge graph'],
+                      vector_memory: ['/api/doctor/repair/vector-memory', 'Rebuild the conversation memory'] };
     if (REPAIRS[c.id] && c.state === 'degraded') {
       // BD-16: the page layer is rebuilt from your wiki; damaged graph files are kept.
       const td = document.createElement('td');
       const b = document.createElement('button'); b.type = 'button'; b.textContent = REPAIRS[c.id][1];
       const note = document.createElement('span');
-      b.addEventListener('click', () => {
-        b.disabled = true;
-        api(REPAIRS[c.id][0], { method: 'POST', body: '{}' }).then(({ ok, d }) => {
-          text(note, ' ' + (ok ? (d.message || 'Rebuilding.') : (d.error || 'Not started.')));
-          b.disabled = false;
-        });
+      const go = (body) => api(REPAIRS[c.id][0], { method: 'POST', body: JSON.stringify(body) }).then(({ ok, d }) => {
+        // A rebuild that would lose older recall asks first (BD-16 C2b).
+        if (!ok && d.code === 'confirm_loss' && !body.confirm_loss && window.confirm(d.error)) return go({ confirm_loss: true });
+        text(note, ' ' + (ok ? (d.message || 'Rebuilding.') : (d.error || 'Not started.')));
+        b.disabled = false;
       });
+      b.addEventListener('click', () => { b.disabled = true; go({}); });
       td.appendChild(b); td.appendChild(note); tr.appendChild(td);
     }
     if (c.id === 'search_index' && c.state === 'degraded') {

@@ -14,11 +14,24 @@ recalls from:
   in its kept copy. A forget or a Library purge removes the kept copies too (they cannot be
   scrubbed record by record, and what was forgotten must not survive in them).
 * The conversation vector store (conversation_memory, ChromaDB). Damage is found and said
-  (the Doctor's vector_memory check). It is NOT rebuilt here yet: a safe rebuild must also
-  re-point every live holder of the store, hold writes and deletes while it runs, and keep
-  the owner's corrections (superseded rows), and that is its own slice (LEDGER, BD-16 C2b).
-  Until then the Doctor says what is wrong and that recall from past conversations is
-  limited; nothing is deleted.
+  (the Doctor's vector_memory check), and the owner's press there rebuilds it (BD-16 C2b):
+  - A NEW store is built from the transcripts in a folder beside the live one
+    (memory/conversations.rebuild-<time>). The live store is not touched while it is built,
+    and Friday keeps using it.
+  - The owner's corrections are kept: each superseded turn keeps its reason (a memory-card
+    correction can still be undone), read from the old store when it opens, else from
+    conversation search (which now keeps the reason too; a correction made before that is
+    kept as "superseded").
+  - Every chat write, delete and correction made while it builds is also noted, and replayed
+    onto the new store before the switch. The switch holds those writes for its moment,
+    rewrites one pointer file (atomically), and closes the old store; anything still holding
+    the old store object has its writes sent to the new one, and the chat path fetches the
+    new one.
+  - The knowledge graph's entity vectors (they live in the same store) are re-embedded from
+    the graph on this PC; an entity forgotten meanwhile is left out.
+  - The old store is then deleted (it may hold words forgotten since); if Windows still holds
+    it open, at the next start. A rebuild that fails deletes its new folder and changes
+    nothing.
 """
 from __future__ import annotations
 
@@ -46,10 +59,12 @@ def _receipt(target: str, decision: str, by: str, **extra: Any) -> None:
 
 # ── the conversation vector store: found and said ────────────────────────────
 
-def vector_health() -> Dict[str, Any]:
+def vector_health(_ignore_running: bool = False) -> Dict[str, Any]:
     """{"state": ok | missing | damaged | unavailable | unreadable}. Never raises; opens
     nothing for writing and loads no model (the store object is only constructed; its SQLite
     file is checked read-only and immutable, and only when no write-ahead log is pending)."""
+    if _VEC_REBUILDING.is_set() and not _ignore_running:
+        return {"state": "repairing"}
     try:
         from agent_friday import conversation_memory as cm
         mem = cm.get_conversation_memory()
@@ -77,6 +92,235 @@ def vector_health() -> Dict[str, Any]:
         return {"state": "damaged", "why": "unreadable"}
     except Exception as e:  # noqa: BLE001
         return {"state": "unreadable", "why": type(e).__name__}
+
+
+_VEC_REBUILDING = threading.Event()
+
+
+def vector_rebuild_running() -> bool:
+    return _VEC_REBUILDING.is_set()
+
+
+def begin_vector_rebuild() -> bool:
+    """Claim the one conversation-memory rebuild (the route claims it before its thread)."""
+    with _LOCK:
+        if _VEC_REBUILDING.is_set():
+            return False
+        _VEC_REBUILDING.set()
+        return True
+
+
+class NeedsConfirm(RuntimeError):
+    """The store in use cannot be read, so a rebuild would keep only what the transcripts hold."""
+
+
+#: The last rebuild's outcome (the Doctor says it).
+LAST_VECTOR_REBUILD: Dict[str, Any] = {}
+
+
+def _copy_collection(src, dst, *, vectors: bool) -> Dict[str, str]:
+    """Copy every row of `src` into `dst` (with its vectors when they are in the same model's
+    space). Returns {id: words}. Raises when a page cannot be read."""
+    out: Dict[str, str] = {}
+    offset = 0
+    inc = ["documents", "metadatas"] + (["embeddings"] if vectors else [])
+    while True:
+        got = src.get(include=inc, limit=500, offset=offset)
+        ids = list(got.get("ids") or [])
+        if not ids:
+            return out
+        docs = list(got.get("documents") or [None] * len(ids))
+        metas = [dict(m or {}) for m in (got.get("metadatas") or [{}] * len(ids))]
+        kw = {"ids": ids, "documents": [d or "" for d in docs], "metadatas": metas}
+        embs = got.get("embeddings") if vectors else None
+        if embs is not None and len(embs) == len(ids):
+            kw["embeddings"] = [list(map(float, e)) for e in embs]
+        dst.upsert(**kw)
+        for i, d in zip(ids, docs):
+            out[str(i)] = " ".join(str(d or "").split())
+        offset += len(ids)
+
+
+def _same_space(old, new) -> bool:
+    from agent_friday import conversation_memory as cm
+    try:
+        a = dict(getattr(old._collection, "metadata", None) or {})
+        b = dict(getattr(new._collection, "metadata", None) or {})
+        return bool(a.get(cm._MODEL_META_KEY)) and a.get(cm._MODEL_META_KEY) == b.get(cm._MODEL_META_KEY) \
+            and a.get(cm._DIM_META_KEY) == b.get(cm._DIM_META_KEY)
+    except Exception:
+        return False
+
+
+def _seed(old, staging) -> tuple:
+    """Copy the store in use into the new one: every turn as it is (its words as the live path
+    cleaned them, its correction and the correction's reason), and the graph's entity vectors.
+    Returns ({id: words} of the turns copied, whether all of it could be read)."""
+    try:
+        if old is None or not old._ensure():
+            return {}, False
+        vectors = _same_space(old, staging)
+        # Not under the old store's lock: chat keeps writing to it, and every such write is in
+        # the journal (started before this read), replayed onto the new store afterwards.
+        turns = _copy_collection(old._collection, staging._collection, vectors=vectors)
+        try:
+            _copy_collection(old._client.get_or_create_collection("knowledge-graph"),
+                             staging._client.get_or_create_collection("knowledge-graph"),
+                             vectors=vectors)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("the graph's entity vectors were not copied (%s); re-embedded", type(e).__name__)
+            _embed_graph(staging)
+        return turns, True
+    except Exception as e:  # noqa: BLE001
+        _log.warning("the store in use could not be read (%s)", type(e).__name__)
+        return {}, False
+
+
+def _kg_entities_to_embed() -> List[Dict[str, Any]]:
+    """The entities the graph indexer embeds (its own, never a Library link node)."""
+    try:
+        from agent_friday.services.knowledge_graph.store import KnowledgeGraphStore
+        return [e for e in (KnowledgeGraphStore(base_dir=_kg_dir()).load("entities") or [])
+                if isinstance(e, dict) and e.get("tier") == "B" and e.get("id")
+                and not str(e["id"]).startswith("lib_")]
+    except Exception:
+        return []
+
+
+def _embed_graph(staging) -> int:
+    from agent_friday.services.knowledge_graph.indexer import _embed_entities
+    ents = _kg_entities_to_embed()
+    return _embed_entities(ents, lambda msg: None, cm=staging) if ents else 0
+
+
+def rebuild_vector(by: str, *, begun: bool = False, progress=None,
+                   accept_loss: bool = False) -> Dict[str, Any]:
+    """Build a new conversation store beside the one in use and switch to it.
+
+    The store in use is copied in first (every turn as it is, with its correction), then any
+    turn the transcripts hold that it is missing is added, then every write made meanwhile is
+    replayed, then the switch. When the store in use cannot be read the transcripts are all
+    there is (they keep the last turns of each conversation): that is done only with the
+    owner's `accept_loss`. On any failure before the switch the new folder is deleted and
+    nothing changes."""
+    if not begun and not begin_vector_rebuild():
+        return {"ok": False, "error": "already rebuilding"}
+    import shutil
+    from agent_friday import conversation_memory as cm
+    say = progress or (lambda msg: None)
+    staging = None
+    new_dir = None
+    replayed = 0
+    deleted_ids: set = set()
+    deleted_words: set = set()
+
+    def replay(ops):
+        nonlocal replayed
+        for op, kw in ops:
+            if op == "delete":
+                deleted_ids.update(str(i) for i in kw.get("ids") or [])
+                if kw.get("exact_text"):
+                    deleted_words.add(" ".join(str(kw["exact_text"]).split()))
+        cm.journal_replay(staging, ops)
+        replayed += len(ops)
+    try:
+        _receipt("vector_memory", "rebuild_started", by)
+        purges = cm.rewrites()
+        cm.journal_start()                       # before anything of the old store is read
+        try:
+            old = cm.get_conversation_memory()
+        except Exception:
+            old = None
+        base = cm.DEFAULT_PERSIST_DIR.parent
+        base.mkdir(parents=True, exist_ok=True)
+        new_dir = base / ("conversations.rebuild-%d" % int(time.time() * 1000))
+        cm.build_mark(new_dir).write_text("%d:%d" % (os.getpid(), int(time.time())), encoding="utf-8")
+        staging = cm.ConversationMemory(persist_dir=new_dir)
+        staging._staging = True
+        if not staging._ensure():
+            raise RuntimeError("the new store could not be opened")
+        seeded, readable = _seed(old, staging)
+        if not readable:
+            if not accept_loss:
+                raise NeedsConfirm("the conversation memory in use cannot be read")
+            _embed_graph(staging)
+        out = staging.rebuild_from_transcripts(say) or {}
+        if out.get("error"):
+            raise RuntimeError(out["error"])
+        for _ in range(5):                       # catch up outside the switch, so chat waits least
+            ops = cm.journal_take()
+            if not ops:
+                break
+            replay(ops)
+        with cm.SWAP_LOCK:
+            if cm.rewrites() != purges:
+                raise RuntimeError("a Library purge ran while this was built")
+            replay(cm.journal_take(stop=True))
+            have = set(staging._collection.get(include=[]).get("ids") or [])
+            lost = [i for i, w in seeded.items()
+                    if i not in have and i not in deleted_ids and w not in deleted_words]
+            if lost:
+                raise RuntimeError("%d turns of the store in use are missing from the new one" % len(lost))
+            try:
+                if staging._client is not None:
+                    staging._client.close()
+            except Exception:
+                pass
+            cm.set_live_dir(new_dir)
+            cm.close_conversation_memory()
+            if old is not None:
+                old._closed = True
+            staging = None
+        cm.build_mark(new_dir).unlink(missing_ok=True)
+        left = cm.drop_stale_stores()
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_ok("past_conversations")
+        except Exception:
+            pass
+        res = {"ok": True, "copied": len(seeded), "indexed": out.get("indexed", 0),
+               "failed": out.get("failed", 0), "replayed": replayed,
+               "from_transcripts_only": not readable, "old_copy_left": bool(left)}
+        _receipt("vector_memory", "rebuilt", by, copied=len(seeded), indexed=int(out.get("indexed") or 0),
+                 failed=int(out.get("failed") or 0), replayed=replayed,
+                 from_transcripts_only=(not readable) or None, old_copy_left=left or None)
+        LAST_VECTOR_REBUILD.clear()
+        LAST_VECTOR_REBUILD.update(res)
+        return res
+    except Exception as e:  # noqa: BLE001
+        cm.journal_take(stop=True)
+        if staging is not None:
+            try:
+                if staging._client is not None:
+                    staging._client.close()
+            except Exception:
+                pass
+        if new_dir is not None:
+            try:
+                if new_dir.exists():
+                    shutil.rmtree(new_dir)
+                cm.build_mark(new_dir).unlink(missing_ok=True)
+            except OSError:
+                # Still held open: marked failed, so it is stale (deleted at the next chance) and
+                # never taken for a finished store.
+                try:
+                    cm.build_mark(new_dir).write_text("failed", encoding="utf-8")
+                except OSError:
+                    pass
+        confirm = isinstance(e, NeedsConfirm)
+        _receipt("vector_memory", "rebuild_needs_confirm" if confirm else "rebuild_failed", by,
+                 error=type(e).__name__)
+        res = {"ok": False, "needs_confirm": confirm or None,
+               "error": ("the conversation memory in use cannot be read, so a rebuild would keep only "
+                         "what your conversations still hold (the most recent turns of each); "
+                         "older recall would be lost" if confirm else
+                         "the conversation memory could not be rebuilt (%s); the store in use is "
+                         "unchanged" % type(e).__name__)}
+        LAST_VECTOR_REBUILD.clear()
+        LAST_VECTOR_REBUILD.update(res)
+        return res
+    finally:
+        _VEC_REBUILDING.clear()
 
 
 # ── the knowledge graph's plain files ─────────────────────────────────────────

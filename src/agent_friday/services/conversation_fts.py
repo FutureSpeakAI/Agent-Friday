@@ -105,6 +105,7 @@ def _prepare(conn: sqlite3.Connection) -> sqlite3.Connection:
             role TEXT, via TEXT, sent_to TEXT);
         CREATE INDEX IF NOT EXISTS msgs_cid ON msgs(cid);
         CREATE TABLE IF NOT EXISTS superseded(mid TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS superseded_reason(mid TEXT PRIMARY KEY, reason TEXT, by_ TEXT);
         CREATE VIRTUAL TABLE IF NOT EXISTS msgs_fts USING fts5(text, tokenize='porter unicode61');
         """)
     try:
@@ -564,9 +565,24 @@ def superseded_ids() -> set:
             conn.close()
 
 
-def mark_superseded(mids, on: bool = True) -> int:
+def superseded_reasons() -> dict:
+    """{message id: (reason, superseded_by)} for corrections recorded with their reason, so a
+    rebuilt conversation memory keeps the owner's own correction (and can undo it)."""
+    with _LOCK:
+        conn = _connect()
+        try:
+            return {r[0]: (r[1] or "superseded", r[2] or "")
+                    for r in conn.execute("SELECT mid, reason, by_ FROM superseded_reason")}
+        except sqlite3.Error:
+            return {}
+        finally:
+            conn.close()
+
+
+def mark_superseded(mids, on: bool = True, reason: str = "", superseded_by: str = "") -> int:
     """Record (or clear) that these message ids are superseded, so search
-    leaves them out. Survives a rebuild of the index. Returns how many."""
+    leaves them out. Survives a rebuild of the index. Returns how many.
+    `reason` (and `superseded_by`) are kept beside it for the conversation memory's rebuild."""
     mids = [str(m) for m in (mids or []) if str(m).strip()]
     if not mids:
         return 0
@@ -575,8 +591,12 @@ def mark_superseded(mids, on: bool = True) -> int:
         try:
             if on:
                 conn.executemany("INSERT OR IGNORE INTO superseded(mid) VALUES(?)", [(m,) for m in mids])
+                if reason:
+                    conn.executemany("INSERT OR REPLACE INTO superseded_reason(mid, reason, by_) VALUES(?,?,?)",
+                                     [(m, str(reason)[:200], str(superseded_by or "")[:200]) for m in mids])
             else:
                 conn.executemany("DELETE FROM superseded WHERE mid = ?", [(m,) for m in mids])
+                conn.executemany("DELETE FROM superseded_reason WHERE mid = ?", [(m,) for m in mids])
             conn.commit()
         finally:
             conn.close()

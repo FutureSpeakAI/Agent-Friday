@@ -135,7 +135,8 @@ def _memory_index(fp) -> tuple[int, str | None]:
     Returns (records changed, why it could not be swept or None)."""
     n = 0
     try:
-        from agent_friday.conversation_memory import get_conversation_memory
+        from agent_friday.conversation_memory import get_conversation_memory, note_rewrite
+        note_rewrite()                         # a conversation-memory rebuild running now is abandoned
         cm = get_conversation_memory()
         if not Path(cm.persist_dir).exists():
             return 0, None                     # nothing was ever stored, so nothing needs opening

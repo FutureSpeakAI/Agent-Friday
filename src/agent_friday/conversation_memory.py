@@ -27,8 +27,11 @@ Design rules, consistent with the rest of the codebase:
 
 from __future__ import annotations
 
+import functools
+import os
 import re
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -155,8 +158,10 @@ class ConversationMemory:
     """
 
     def __init__(self, persist_dir=None, model_name=EMBED_MODEL):
-        self.persist_dir = Path(persist_dir) if persist_dir else DEFAULT_PERSIST_DIR
+        self.persist_dir = Path(persist_dir) if persist_dir else live_dir()
         self.model_name = model_name
+        self._staging = False      # a rebuild's new store, not yet live (its writes are not journaled)
+        self._closed = False       # replaced by a rebuild: writes go to the live store instead
         self._client = None
         self._collection = None
         self._init_attempted = False
@@ -328,6 +333,8 @@ class ConversationMemory:
         topic_keywords list[str] | comma-string; auto-extracted when omitted
         msg_id         stable id for idempotent upserts; uuid when omitted
         """
+        _journal(self, "index", text=text, role=role, session_id=session_id, timestamp=timestamp,
+                 topic_keywords=topic_keywords, msg_id=msg_id)
         text = (text or "").strip()
         # A key is withheld before it is embedded, stored as a document,
         # added to the full-text index or turned into topic keywords; the
@@ -581,6 +588,7 @@ class ConversationMemory:
 
     def _set_supersession(self, ids, flag, reason, superseded_by):
         ids = [str(i) for i in (ids or []) if str(i).strip()]
+        _journal(self, "supersession", ids=list(ids), flag=flag, reason=reason, superseded_by=superseded_by)
         out = {"superseded": [], "missing": []}
         if not ids or not self._ensure():
             out["missing"] = ids
@@ -615,7 +623,8 @@ class ConversationMemory:
                 from agent_friday.services import conversation_fts as _fts
                 # Every id asked for: a turn the full-text index holds but
                 # Chroma does not (its indexing failed) is corrected there too.
-                _fts.mark_superseded(ids, bool(flag))
+                if not getattr(self, "_staging", False):   # a rebuild's new store: the live index has it
+                    _fts.mark_superseded(ids, bool(flag), reason=reason, superseded_by=superseded_by)
             except Exception as _e:
                 print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
@@ -678,6 +687,12 @@ class ConversationMemory:
         indexed = kept = failed = flagged = 0
         new_ids = []
         corrected = _fts_superseded()
+        # The owner's own reason, as conversation search kept it (a memory-card correction can be
+        # undone only with its reason).
+        try:
+            why = dict(fts.superseded_reasons())
+        except Exception:
+            why = {}
         try:
             convs = cv.list_all(include_archived=True)
         except Exception as e:
@@ -723,7 +738,7 @@ class ConversationMemory:
                     indexed += 1
                     new_ids.append(mid)
                     norm = " ".join(str(text).split())
-                    flag = (("superseded", "") if mid in corrected
+                    flag = (why.get(mid) or ("superseded", "") if mid in corrected or mid in why
                             else flagged_text.get(norm) if text != elided else None)
                     if flag and self._set_supersession([mid], "1", flag[0], flag[1]).get("superseded"):
                         flagged += 1
@@ -779,6 +794,7 @@ class ConversationMemory:
         random id). Returns how many were removed. For deleting one message
         from every index at once (services/conversation_fts.delete_message)."""
         ids = [str(i) for i in (ids or []) if str(i).strip()]
+        _journal(self, "delete", ids=list(ids), exact_text=exact_text)
         if not self._ensure():
             return 0
         removed = 0
@@ -942,6 +958,219 @@ class ConversationMemory:
             }
 
 
+# ── which folder is the live store ───────────────────────────────────────
+#: A rebuild (services/memory_store_repair) builds a new store in a folder beside the live one
+#: and then switches to it by rewriting this one small pointer file (atomically). No store
+#: folder is renamed while it is open (Windows holds ChromaDB's files open past close()).
+_STORE_NAME = re.compile(r"^conversations(\.rebuild-\d{8,20})?$")
+
+
+def _pointer() -> Path:
+    return DEFAULT_PERSIST_DIR.parent / "conversations.current"
+
+
+def _read_pointer():
+    """(name or None, ok). ok is False when the pointer exists but cannot be trusted."""
+    p = _pointer()
+    if not p.exists():
+        return None, True
+    try:
+        name = p.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None, False
+    if not _STORE_NAME.match(name) or not (p.parent / name).is_dir():
+        return None, False
+    return name, True
+
+
+def live_dir() -> Path:
+    """The live store's folder: the pointer's, else memory/conversations. A pointer that exists
+    but cannot be read is read again; if it still cannot, the newest COMPLETED rebuild is used
+    (a pointer only ever names the newest completed rebuild), never the store it replaced."""
+    for attempt in range(3):
+        name, ok = _read_pointer()
+        if ok:
+            return (DEFAULT_PERSIST_DIR.parent / name) if name else DEFAULT_PERSIST_DIR
+        time.sleep(0.05 * (attempt + 1))
+    base = DEFAULT_PERSIST_DIR.parent
+    try:
+        done = sorted((d for d in base.iterdir() if d.is_dir() and d.name.startswith("conversations.rebuild-")
+                       and _STORE_NAME.match(d.name) and not build_mark(d).exists()),
+                      key=lambda d: int(d.name.rsplit("-", 1)[1]))
+    except (OSError, ValueError):
+        done = []
+    print("  [MEMORY] the conversation store pointer could not be read; using the newest rebuilt store")
+    return done[-1] if done else DEFAULT_PERSIST_DIR
+
+
+def set_live_dir(path) -> None:
+    """Make `path` (a store folder beside the default one) the live store. Atomic."""
+    path = Path(path)
+    if path.parent.resolve() != DEFAULT_PERSIST_DIR.parent.resolve() or not _STORE_NAME.match(path.name):
+        raise ValueError("not a conversation store folder")
+    p = _pointer()
+    tmp = p.with_name(p.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(path.name)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
+
+
+def stale_stores():
+    """Store folders that are not the live one: a store a rebuild replaced (it may hold words
+    forgotten since), or a rebuild that stopped part way. Empty when the pointer cannot be
+    trusted (nothing is judged stale then)."""
+    name, ok = _read_pointer()
+    if not ok:
+        return []
+    live = name or DEFAULT_PERSIST_DIR.name
+    base = DEFAULT_PERSIST_DIR.parent
+    if not base.is_dir():
+        return []
+    return sorted(d for d in base.iterdir()
+                  if d.is_dir() and _STORE_NAME.match(d.name) and d.name != live
+                  and not _building(d))
+
+
+#: A rebuild in progress (in this or another Friday process) marks its folder; the mark is
+#: trusted for six hours, so a rebuild that crashed is cleaned up after that.
+BUILD_MARK_TTL = 6 * 3600
+
+
+def build_mark(d) -> Path:
+    d = Path(d)
+    return d.with_name(d.name + ".building")
+
+
+def _building(d) -> bool:
+    m = build_mark(d)
+    try:
+        if not m.exists():
+            return False
+        if time.time() - m.stat().st_mtime >= BUILD_MARK_TTL:
+            return False
+        mark = m.read_text(encoding="utf-8").strip()
+        if mark == "failed":
+            return False                      # a rebuild that failed and could not delete it yet
+        pid = int((mark or "0").split(":")[0])
+    except (OSError, ValueError):
+        return True
+    try:
+        import psutil
+        return bool(pid) and psutil.pid_exists(pid)
+    except Exception:
+        return True
+
+
+def drop_stale_stores() -> int:
+    """Delete stale store folders. Returns how many are left (a folder still held open by
+    this process is retried at the next start). Never raises."""
+    import shutil
+    left = 0
+    try:
+        stale = stale_stores()
+    except OSError:
+        return 0
+    for d in stale:
+        try:
+            shutil.rmtree(d)
+            build_mark(d).unlink(missing_ok=True)
+        except OSError:
+            left += 1
+    return left
+
+
+# ── the write journal during a rebuild (services/memory_store_repair) ─────
+#: While a rebuild builds a new store beside this one, every write asked of the live store is
+#: also noted here, then replayed onto the new store before it replaces the old one, so no
+#: turn indexed, deleted or corrected meanwhile is lost (BD-16 C2b).
+_JOURNAL = {"on": False, "ops": []}
+_JOURNAL_LOCK = threading.Lock()
+#: Held while the new store replaces the old one: a write waits (briefly) instead of landing
+#: in a store that is being moved.
+SWAP_LOCK = threading.RLock()
+
+
+def _journal(mem, op, **kw):
+    if getattr(mem, "_staging", False):
+        return                                   # the new store's own writes are not replayed
+    with _JOURNAL_LOCK:
+        if _JOURNAL["on"]:
+            _JOURNAL["ops"].append((op, kw))
+
+
+#: Counts rewrites made to the store's rows in place (a Library purge). A rebuild that saw one
+#: start while it ran is abandoned: what it read may hold words the purge removed.
+_REWRITES = [0]
+
+
+def note_rewrite() -> None:
+    """Called before rewriting the live store's rows in place. Waits out a switch."""
+    with SWAP_LOCK:
+        _REWRITES[0] += 1
+
+
+def rewrites() -> int:
+    return _REWRITES[0]
+
+
+def journal_start():
+    with _JOURNAL_LOCK:
+        _JOURNAL["on"], _JOURNAL["ops"] = True, []
+
+
+def journal_take(stop=False):
+    """The writes noted so far (and, with `stop`, stop noting)."""
+    with _JOURNAL_LOCK:
+        ops, _JOURNAL["ops"] = list(_JOURNAL["ops"]), []
+        if stop:
+            _JOURNAL["on"] = False
+        return ops
+
+
+def journal_replay(mem, ops):
+    """Apply noted writes to `mem` in order: index, delete, supersede, unsupersede."""
+    for op, kw in ops:
+        try:
+            if op == "index":
+                mem.index(**kw)
+            elif op == "delete":
+                mem.delete(**kw)
+            elif op == "supersession":
+                mem._set_supersession(**kw)
+            elif op == "kg_upsert":
+                from agent_friday.services.knowledge_graph.indexer import _embed_entities
+                _embed_entities(kw["entities"], lambda msg: None, cm=mem)
+            elif op == "kg_delete":
+                if mem._ensure():
+                    mem._client.get_or_create_collection("knowledge-graph").delete(ids=kw["ids"])
+        except Exception as e:  # noqa: BLE001
+            print(f"  [MEMORY] a write made during the rebuild was not replayed: {e}")
+
+
+def _held(name, fn):
+    """A write to the store waits while a rebuild switches stores, and a write asked of a
+    store the rebuild replaced goes to the live store instead (a holder that kept the old
+    object loses nothing)."""
+    @functools.wraps(fn)
+    def w(self, *a, **k):
+        with SWAP_LOCK:
+            if getattr(self, "_closed", False) and not getattr(self, "_staging", False):
+                live = get_conversation_memory()
+                if live is not self:
+                    return getattr(live, name)(*a, **k)
+            out = fn(self, *a, **k)
+        if name == "delete" and not getattr(self, "_staging", False):
+            drop_stale_stores()               # a replaced store may hold the deleted words
+        return out
+    return w
+
+
+for _n in ("index", "delete", "_set_supersession"):
+    setattr(ConversationMemory, _n, _held(_n, getattr(ConversationMemory, _n)))
+
+
 # ── process-wide singleton ────────────────────────────────────────────
 _instance = None
 _instance_lock = threading.Lock()
@@ -953,6 +1182,8 @@ def get_conversation_memory(persist_dir=None):
     if _instance is None:
         with _instance_lock:
             if _instance is None:
+                if persist_dir is None:
+                    drop_stale_stores()       # a store a rebuild replaced, once nothing holds it
                 _instance = ConversationMemory(persist_dir=persist_dir)
     return _instance
 
@@ -981,6 +1212,8 @@ def close_conversation_memory() -> None:
     with _instance_lock:
         inst = _instance
         _instance = None
+    if inst is not None:
+        inst._closed = True
     if inst is not None and inst._client is not None:
         try:
             inst._client.close()
