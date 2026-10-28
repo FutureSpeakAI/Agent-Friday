@@ -255,6 +255,7 @@ def test_receipts_go_into_the_ledger_after_the_start(home, monkeypatch):
 
 def test_the_server_settles_migrations_before_it_uses_the_data_folder():
     src = (ROOT / "src" / "agent_friday" / "server.py").read_text(encoding="utf-8")
+    assert "_mig_boot.run_pending()" in src, "the server never runs migrations at start"
     i = src.index("_mig_boot.run_pending()")
     assert i < src.index("= _acquire_single_instance_lock()")
     assert src.index("recover_interrupted_restore()") < i            # an interrupted restore first
