@@ -6104,7 +6104,8 @@ if sock is not None:
                             # bug this replaced (a broad `except` that let a
                             # NeverSendBlocked verdict fall through to the
                             # ungated result).
-                            result = _gate_voice_tool_result(result, fname)[:8000]
+                            result = _gate_voice_tool_result(result, fname)
+                            result = result[:8000]
                             _live_laya.for_call(_voice_session).note_sent(fname, result)
                             refused = _refused_crew_response(fname, fid, _orb_id)
                             if refused is not None:
