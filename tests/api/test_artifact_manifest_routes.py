@@ -56,6 +56,42 @@ def test_a_file_that_is_not_there_cannot_be_verified(client, home):
     assert r.status_code == 404 and "not there" in r.get_json()["error"]
 
 
+def test_a_path_not_in_the_manifest_is_404_and_never_touched_on_disk(client, home, monkeypatch):
+    import pathlib
+    from agent_friday.services import artifact_manifest as am
+    _made(home)
+    other = home / "never-recorded.md"
+    other.write_text("not Friday's", encoding="utf-8")
+    touched = []
+    for name in ("resolve", "is_file", "exists", "stat"):
+        real = getattr(pathlib.Path, name)
+
+        def spy(self, *a, _real=real, **k):
+            touched.append(str(self))
+            return _real(self, *a, **k)
+        monkeypatch.setattr(pathlib.Path, name, spy)
+    monkeypatch.setattr(am, "_sha256", lambda p: touched.append(str(p)))
+    r = client.post("/api/artifacts/manifest/verify", json={"path": str(other)})
+    assert r.status_code == 404 and "no manifest record" in r.get_json()["error"]
+    r = client.get("/api/artifacts/manifest", query_string={"path": str(other)})
+    assert r.status_code == 404
+    assert not [t for t in touched if "never-recorded" in t], touched
+
+
+def test_another_spelling_of_a_recorded_path_is_found_and_verified(client, home):
+    import os
+    import sys
+    p = _made(home, name="Report.md")
+    spellings = [str(home) + os.sep + "." + os.sep + "Report.md", str(home / "sub" / ".." / "Report.md")]
+    if sys.platform == "win32":
+        spellings += [str(p).upper(), str(p).replace("\\", "/")]
+    for asked in spellings:
+        assert client.get("/api/artifacts/manifest", query_string={"path": asked}).status_code == 200, asked
+    r = client.post("/api/artifacts/manifest/verify", json={"path": spellings[-1]})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["manifest"]["verification_state"] == "owner_verified"
+
+
 def test_the_owner_verifies_a_file_that_is_there(client, home):
     p = _made(home)
     r = client.post("/api/artifacts/manifest/verify", json={"path": str(p)})

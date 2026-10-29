@@ -68,7 +68,9 @@ def artifact_manifest_record():
 def artifact_manifest_verify():
     """The owner checked the file and says it is right. The file must be
     there (404 when it is not); a network or device path is refused (400)
-    before anything is opened."""
+    before anything is opened. The asked-for path is only compared, as
+    text, with the paths Friday recorded; what is checked on disk is the
+    recorded path (404 when there is none)."""
     from pathlib import Path
     from agent_friday.services import artifact_manifest as am
     body = request.get_json(silent=True) or {}
@@ -78,19 +80,18 @@ def artifact_manifest_verify():
     why = am.refused_path(path)
     if why:
         return _bad(why)
+    stored = am.recorded_path(path)
+    if stored is None:
+        return _bad("Friday has no manifest record for this file as it is now", 404)
     try:
-        resolved = Path(path).resolve()
-        why = am.refused_path(str(resolved))        # a mapped drive can resolve to a share
-        present = not why and resolved.is_file()
-    except (OSError, ValueError, RuntimeError):
+        present = Path(stored).is_file()
+    except (OSError, ValueError):
         present = False
-    if why:
-        return _bad(why)
     if not present:
         return _bad("the file is not there, so it cannot be verified", 404)
-    if am.mark_owner_verified(path) is None:
+    if am.mark_owner_verified(stored) is None:
         return _bad("Friday has no manifest record for this file as it is now", 404)
-    return jsonify({"status": "ok", "manifest": am.lookup(path)})
+    return jsonify({"status": "ok", "manifest": am.lookup(stored)})
 
 
 @artifacts_bp.route("/api/artifacts/<cid>", methods=["POST"])

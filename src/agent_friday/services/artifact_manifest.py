@@ -724,15 +724,30 @@ def _reverse_lines(mp: Path, max_bytes: int):
             yield rest.decode("utf-8", errors="replace"), end
 
 
+def _path_key(path_str: str) -> str:
+    """How two spellings of one path compare: made absolute, with `.`, `..`
+    and doubled separators folded, and case folded where the file system
+    ignores it (Windows). Pure string work: nothing on disk is touched."""
+    return os.path.normcase(os.path.normpath(os.path.abspath(path_str)))
+
+
 def _path_lines(mp: Path, path_str: str, key: Optional[bytes] = None, *,
                 tail: Optional[int] = None, max_bytes: Optional[int] = None) -> List[dict]:
     """The verified lines (artifact and event) for one path, newest first.
+    A line is the path's when its own recorded "path" has the same
+    `_path_key` (so another spelling of a recorded path still finds it).
     Reads the last `tail` bytes; when the path has no artifact line there,
     keeps going back, at most `max_bytes`. Only lines that name the path are
     parsed and their signatures checked."""
     tail = LOOKUP_TAIL_BYTES if tail is None else tail
     max_bytes = LOOKUP_MAX_BYTES if max_bytes is None else max_bytes
-    needle = json.dumps(path_str)[1:-1]
+    want = _path_key(path_str)
+    fold = os.path.normcase("A") == "a"          # this file system ignores case
+    needle = json.dumps(want)[1:-1]
+    # The quick text test before parsing: case-blind where case is ignored. A
+    # non-ASCII path is written \\u-escaped, whose case does not fold, so it
+    # is parsed and compared instead.
+    quick = not fold or want.isascii()
     out: List[dict] = []
     found = 0
     older = False          # the oldest line read so far replaced a version Friday recorded
@@ -740,13 +755,18 @@ def _path_lines(mp: Path, path_str: str, key: Optional[bytes] = None, *,
         # Past the tail, go on only while the history chain still points further back.
         if read > tail and found and (not older or found > MAX_VERSIONS):
             break
-        if needle not in line:
+        if quick and needle not in (line.lower() if fold else line):
             continue
         try:
             e = json.loads(line)
         except Exception:
             continue
-        if not isinstance(e, dict) or e.get("path") != path_str:
+        if not isinstance(e, dict) or not isinstance(e.get("path"), str):
+            continue
+        try:
+            if _path_key(e["path"]) != want:
+                continue
+        except (TypeError, ValueError):
             continue
         if e.get("kind") == "artifact" and verify(e, key):
             out.append(dict(e, verified=True))
@@ -795,27 +815,61 @@ def _with_events(base: dict, lines: List[dict]) -> dict:
     return rec
 
 
-def _resolved(path) -> Optional[str]:
-    """The resolved path, or None for a refused (network or device) path."""
+def _wanted(path) -> Optional[str]:
+    """The `_path_key` of a path someone asked about, or None for a refused
+    (network or device) path. String work only: the asked-for path is never
+    resolved, opened or checked on disk."""
     if refused_path(path):
         return None
-    want = str(Path(str(path)).resolve())
+    s = str(path).strip()
+    if not s or "\x00" in s:
+        return None
+    try:
+        want = _path_key(s)
+    except (TypeError, ValueError):
+        return None
     return None if refused_path(want) else want
+
+
+def _recorded(path):
+    """(the path as Friday recorded it, that path's lines newest first), or
+    (None, []). The asked-for path is only compared, as text, with the paths
+    on Friday's own signed lines; anything later opened or hashed is the
+    newest artifact line's own "path" (which Friday wrote, from a resolved
+    path), never the asked-for value. A recorded network or device path is
+    refused too."""
+    want = _wanted(path)
+    if want is None:
+        return None, []
+    lines = _path_lines(manifest_path(), want)
+    base = next((e for e in lines if e.get("kind") == "artifact"), None)
+    stored = base.get("path") if base else None
+    if not isinstance(stored, str) or not stored or refused_path(stored):
+        return None, []
+    return stored, lines
+
+
+def recorded_path(path) -> Optional[str]:
+    """The path of the file as Friday recorded it, for a path someone asked
+    about (another spelling of it is fine), or None. Nothing is opened."""
+    try:
+        return _recorded(path)[0]
+    except Exception:
+        return None
 
 
 def lookup(path) -> Optional[dict]:
     """The full record (NS-24.1-2) for a file whose bytes still match: the
     newest verified line with its events applied, or None. The lines for the
-    resolved path are found first; the file is hashed only when one exists.
-    A network or device path is never resolved or read (None)."""
+    path are found first (by text, against the paths Friday recorded); the
+    recorded file is hashed only when one exists. A network or device path
+    is never read (None)."""
     try:
-        want = _resolved(path)
-        if want is None:
+        stored, lines = _recorded(path)
+        if stored is None:
             return None
-        lines = _path_lines(manifest_path(), want)
-        if not any(e.get("kind") == "artifact" for e in lines):
-            return None
-        sha = _sha256(Path(want)) if Path(want).is_file() else None
+        p = Path(stored)
+        sha = _sha256(p) if p.is_file() else None
     except Exception:
         return None
     for e in lines:
@@ -888,10 +942,10 @@ def mark_owner_verified(path) -> Optional[dict]:
     try:
         if _off_record():
             return None
-        want = _resolved(path)
-        if want is None or not Path(want).is_file():
+        stored = recorded_path(path)           # matched as text; the asked-for path is never opened
+        if stored is None or not Path(stored).is_file():
             return None
-        rec = lookup(want)
+        rec = lookup(stored)
         if not rec:
             return None
         ev = _event(rec, "owner_verified")

@@ -253,6 +253,59 @@ def test_network_device_and_missing_paths_are_never_verified(home, monkeypatch):
     assert am.mark_owner_verified(p) is None
 
 
+def _spy_on_disk(monkeypatch):
+    """Every path the code resolves, stats, checks or hashes (as text)."""
+    import pathlib
+    from agent_friday.services import artifact_manifest as am
+    touched = []
+    for name in ("resolve", "is_file", "exists", "stat"):
+        real = getattr(pathlib.Path, name)
+
+        def spy(self, *a, _real=real, **k):
+            touched.append(str(self))
+            return _real(self, *a, **k)
+        monkeypatch.setattr(pathlib.Path, name, spy)
+    real_sha = am._sha256
+    monkeypatch.setattr(am, "_sha256", lambda q: (touched.append(str(q)), real_sha(q))[1])
+    return touched
+
+
+def test_a_path_not_in_the_manifest_is_never_touched_on_disk(home, monkeypatch):
+    from agent_friday.services import artifact_manifest as am
+    _record(home / "made.md", "Friday made this")
+    other = home / "never-recorded.md"
+    other.write_text("not Friday's", encoding="utf-8")
+    touched = _spy_on_disk(monkeypatch)
+    for asked in (other, str(other), str(home / "sub" / ".." / "never-recorded.md")):
+        assert am.lookup(asked) is None
+        assert am.mark_owner_verified(asked) is None
+        assert am.recorded_path(asked) is None
+    assert not [t for t in touched if "never-recorded" in t], touched
+
+
+def test_another_spelling_of_a_recorded_path_finds_it_and_only_the_recorded_path_is_opened(home, monkeypatch):
+    import os
+    import sys
+    from agent_friday.services import artifact_manifest as am
+    p = home / "Report.md"
+    line = _record(p, "the report")
+    stored = line["path"]
+    spellings = [str(home) + os.sep + "." + os.sep + "Report.md",
+                 str(home / "sub" / ".." / "Report.md")]
+    if sys.platform == "win32":                     # the file system ignores case and accepts /
+        spellings += [str(p).upper(), str(p).lower(), str(p).replace("\\", "/")]
+    touched = _spy_on_disk(monkeypatch)
+    for asked in spellings:
+        assert am.recorded_path(asked) == stored, asked
+        rec = am.lookup(asked)
+        assert rec and rec["hmac"] == line["hmac"], asked
+    assert am.mark_owner_verified(spellings[0])
+    assert am.lookup(spellings[-1])["verification_state"] == "owner_verified"
+    # Only the path Friday recorded was checked or hashed, never what was asked.
+    files = [t for t in touched if "report" in t.lower()]
+    assert files and set(files) == {stored}, touched
+
+
 def test_a_frozen_build_records_checks_unavailable(home, monkeypatch):
     import sys
     from agent_friday.services import artifact_manifest as am
