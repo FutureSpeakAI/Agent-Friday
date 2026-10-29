@@ -169,6 +169,10 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # a server-granted spoken approval is a later phase.)
     "web_task_plan": frozenset({"owner:ui"}),
     "file_grant_request": frozenset({"owner:ui"}),
+    # Running an add-on (connector server) outside Windows' isolated mode when its
+    # program cannot run isolated (A25, services/connector_isolation): full access to
+    # the owner's account, so only a press on this PC's own screen.
+    "connector_runtime_blocked": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
     # Library changes Friday proposes (services/library/cards.py): the click is
     # the consent, as it is for a file grant.

@@ -1315,6 +1315,15 @@ def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
         return "read_file error: 'path' is required."
+    # Where file tools may reach (services/path_policy, BD-26), judged on the resolved
+    # path here as well as in the sandbox hook, which settings can switch off. Key
+    # material keeps its own refusal (and its signed receipt) first.
+    from agent_friday.services import path_policy as _pp
+    # The text first: a network share or a device path is refused before anything
+    # resolves it (resolving a share contacts it).
+    _why = _pp._text_reason(str(raw))
+    if _why:
+        return _pp.refusal(raw, _why, "read")
     try:
         p = Path(raw).expanduser().resolve()
     except Exception as e:
@@ -1323,6 +1332,9 @@ def _tool_read_file(inp):
     from agent_friday.services import credential_paths as _cred
     if _cred.check(p):
         return _cred.refusal(p)
+    p, _why = _pp.judge(raw, "read")
+    if p is None:
+        return _pp.refusal(raw, _why, "read")
     if not p.exists():
         return f"File not found: {p}.{_suggest_near_miss(p)}"
     if not p.is_file():
@@ -1459,11 +1471,17 @@ def _tool_write_file(inp):
         return "write_file error: 'path' is required."
     if mode not in ('write', 'append'):
         mode = 'write'
+    from agent_friday.services import path_policy as _pp
+    _p_ok, _why = _pp.judge(raw, "write")
+    if _p_ok is None:
+        return _pp.refusal(raw, _why, "write")
+    # Key material is not written over either (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred_w
+    if _cred_w.check(_p_ok, sniff=False):
+        return _cred_w.refusal(_p_ok)
     from agent_friday.services import file_write_receipts as _fwr
-    try:
-        p = Path(raw).expanduser().resolve()
-    except Exception as e:
-        return f"Write error: {e}"
+    # The path the policy judged (resolved) is the one written.
+    p = _p_ok
     if p.is_dir():
         return f"Write error: {p} is a folder, not a file. Nothing was written."
     # The backup and the receipt come first: an existing file is copied (and
@@ -3094,9 +3112,14 @@ def _tool_run_command(inp):
         return _second
     # The governance check already refuses these; this is the backstop.
     from agent_friday.governance.action_gate import classify_command
-    if classify_command(cmd)[0] == "forbidden":
-        return ("Blocked: this command addresses Friday's own local API, which "
-                "trusts this machine as the owner. It was not run.")
+    _klass, _kwhy = classify_command(cmd)
+    if _klass == "forbidden":
+        if "local API" in _kwhy:
+            return ("Blocked: this command addresses Friday's own local API, which "
+                    "trusts this machine as the owner. It was not run.")
+        return ("[SANDBOX DENY] Not run, even with approval: %s. Commands follow the same "
+                "folder rules as Friday's file tools (Settings > Privacy > Folder grants). "
+                "Do not try another spelling of the same path." % _kwhy)
     # The command runs held in (services/code_sandbox.run_shell), never as the owner's bare process.
     # A command the gate classed as read-only runs without a card, so it gets the full box: Low
     # integrity, a job object, a scrubbed environment, a scratch folder. A command the owner
@@ -15918,6 +15941,25 @@ def _save_mcp_servers(cfg: dict) -> dict:
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if "servers" not in cfg:
         cfg = {"servers": cfg}
+    # A25: a connector server new in this save runs in Windows' isolated mode unless
+    # it says otherwise. Every writer of this file comes through here.
+    old_unreadable = False
+    try:
+        old = json.loads(MCP_SERVERS_FILE.read_text(encoding="utf-8-sig")) \
+            if MCP_SERVERS_FILE.exists() else {"servers": {}}
+    except Exception:
+        # Unreadable on disk: the servers running now are the ones that existed.
+        old_unreadable = True
+        mgr = _MCP_MANAGER
+        old = {"servers": {n: {} for n in (getattr(mgr, "servers", None) or {})}} if mgr else None
+    from agent_friday.services import connector_isolation as _ci
+    if old is not None:
+        cfg = _ci.apply_default(cfg, old)
+    # Owner ruling 4: a save that takes a connector out of isolation writes a signed
+    # connector_run_unisolated entry first; if it cannot be written, nothing is saved.
+    # With the old file unreadable, every connector that would run un-isolated is
+    # written (nothing is known about before).
+    _ci.record_turned_off(cfg, old, old_unreadable=old_unreadable)
     try:
         from agent_friday.services import connector_secrets as _cse
         cfg = _cse.encrypt_config(cfg)
@@ -15928,7 +15970,11 @@ def _save_mcp_servers(cfg: dict) -> dict:
         raise RuntimeError(
             "refusing to save connector config: credentials could not be "
             f"encrypted ({_e})") from _e
-    MCP_SERVERS_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # Written whole and then moved into place: a save reading it meanwhile never sees
+    # half a file (which it would take for unreadable).
+    _tmp = MCP_SERVERS_FILE.with_name(MCP_SERVERS_FILE.name + ".tmp")
+    _tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    os.replace(_tmp, MCP_SERVERS_FILE)
     try:
         from agent_friday.services import credential_store as _cs
         _cs.harden_permissions(MCP_SERVERS_FILE)
@@ -16336,6 +16382,13 @@ def _mcp_boot() -> None:
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
+        # A25: connectors added before isolation became the default are offered it
+        # once, by a card; nothing is switched without the owner's answer.
+        try:
+            from agent_friday.services import connector_isolation as _ci
+            _ci.offer_existing((cfg or {}).get("servers") or {})
+        except Exception as _ci_err:  # noqa: BLE001
+            print(f"  [mcp] isolation offer skipped: {_ci_err}")
         # Non-blocking: each server starts in its own thread; tools register via
         # the on_ready callback as each handshake completes.
         mgr.start_all(on_ready=_mcp_register_server_tools)

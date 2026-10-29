@@ -1699,10 +1699,10 @@ _RUN_COMMAND_ALLOW = (
     "get-childitem", "select-string", "findstr", "where", "which", "test-path",
     "dotnet", "cargo", "go", "rustc", "pytest", "ruff", "black", "mypy", "flake8",
 )
-# Only WRITES are path-confined by default (reads are lower-risk and confining
-# them would break legitimate reads of files outside HOME the user references).
-# Add "read_file" here, or run strict mode, to also confine reads.
-_SANDBOX_PATH_TOOLS = {"write_file": "path"}
+# Reads and writes are both confined (services/path_policy, BD-26): the owner's home
+# folder minus application data and Friday's own state, Friday's output folders, the
+# Library and file-search roots (reads), and folders the owner granted on screen.
+_SANDBOX_PATH_TOOLS = {"write_file": ("path", "write"), "read_file": ("path", "read")}
 
 
 def _sandbox_policy(name, args):
@@ -1717,18 +1717,18 @@ def _sandbox_policy(name, args):
         return True, "sandbox off"
     args = args or {}
 
-    field = _SANDBOX_PATH_TOOLS.get(name)
-    if field:
+    spec = _SANDBOX_PATH_TOOLS.get(name)
+    if spec:
+        field, op = spec
         raw = str(args.get(field) or "").strip()
         if raw:
             try:
-                p = Path(raw).expanduser().resolve()
-                root = Path(FRIDAY_SANDBOX_ROOT).expanduser().resolve()
-                p.relative_to(root)
-            except ValueError:
-                return False, f"path {raw!r} escapes sandbox root {FRIDAY_SANDBOX_ROOT}"
+                from agent_friday.services import path_policy as _pp
+                _p, why = _pp.judge(raw, op)
             except Exception as e:
                 return False, f"path check failed: {e}"
+            if _p is None:
+                return False, f"path {raw!r} is not allowed: {why}"
 
     if name == "run_command":
         cmd = str(args.get("command") or "").strip()
@@ -2447,6 +2447,16 @@ DEFAULT_SETTINGS = {
     # default. Read by services/agent.py::_maybe_auto_open and
     # services/creations.py::_notify_creation.
     "auto_open_created_files": False,
+    # Friday's loopback allow-list proxy (services/egress_proxy). An approved
+    # command reaches only these hosts; an MCP stdio server reaches its own
+    # `allow_hosts` (mcp_servers.json) or, without them, is "observe"d (every host
+    # recorded) unless this says "enforce". Not a boundary: a program that
+    # ignores proxy settings goes around it.
+    "command_network": {"allow_hosts": [
+        "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "registry.yarnpkg.com",
+        "github.com", "*.github.com", "objects.githubusercontent.com", "codeload.github.com",
+        "raw.githubusercontent.com"]},
+    "mcp_network_default": "observe",
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     # The Local beat is the owner's to name; nothing ships with a city.

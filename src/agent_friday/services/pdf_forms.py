@@ -56,10 +56,12 @@ def open_pdf(path) -> Path:
     """Resolve `path` to an existing PDF file, or raise FormRefused."""
     if not path:
         raise FormRefused("a PDF path is required")
-    try:
-        p = Path(str(path)).expanduser().resolve()
-    except Exception as e:
-        raise FormRefused(f"invalid path {path!r}: {e}")
+    # Where file tools may reach (services/path_policy, BD-26).
+    from agent_friday.services import path_policy as _pp
+    p, why = _pp.judge(str(path), "read")
+    if p is None:
+        raise FormRefused(f"{path!s} is not a place Friday may read ({why}); the owner can allow "
+                          f"a folder in {_pp.WHERE_TO_ALLOW}")
     if not p.is_file():
         raise FormRefused(f"file not found: {p}")
     try:
@@ -290,7 +292,12 @@ def _resolve_target(src: Path, output_path) -> Path:
         p = output_dir() / p.name
     if p.suffix.lower() != ".pdf":
         p = p.with_suffix(".pdf")
-    return p.resolve()
+    from agent_friday.services import path_policy as _pp
+    ok, why = _pp.judge(str(p), "write")
+    if ok is None:
+        raise FormRefused(f"{p} is not a place Friday may write ({why}); the owner can allow "
+                          f"a folder in {_pp.WHERE_TO_ALLOW}")
+    return ok
 
 
 def classify(args: dict) -> tuple:
