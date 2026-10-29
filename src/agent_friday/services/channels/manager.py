@@ -218,19 +218,28 @@ def revoke_channel(name: str) -> Dict[str, Any]:
     a = _ADAPTERS.get(name)
     if a is not None:
         a.configure(ch)
-    removed = False
     try:
         from agent_friday.services import credential_store
-        removed = bool(credential_store.delete_provider_key(f"channel_{name}"))
+        credential_store.delete_provider_key(f"channel_{name}")
         try:
             credential_store.clear_provider_key_live(f"channel_{name}")
         except Exception:
             pass
-        credential_store.audit_event("channel", "revoked", channel=name, token_deleted=removed)
+        # Gone means the store no longer has it, not that a delete was attempted.
+        gone = credential_store.provider_key_status(f"channel_{name}") == "missing"
+        credential_store.audit_event("channel", "revoked", channel=name, token_deleted=gone)
     except Exception as e:
         return {"ok": False, "error": ExceptionText(f"the token could not be deleted: {e}")}
-    return {"ok": bool(saved.get("ok")), "channel": name, "stopped": bool(stopped.get("ok", True)),
-            "token_deleted": removed, "at_the_service": _PROVIDER_REVOKE.get(name, "")}
+    problems = []
+    if not gone:
+        problems.append("its token is still stored (the file could not be deleted)")
+    if not saved.get("ok"):
+        problems.append("it could not be switched off in the settings")
+    if not stopped.get("ok", True):
+        problems.append(stopped.get("error") or "it did not stop")
+    return {"ok": not problems, "channel": name, "stopped": bool(stopped.get("ok", True)),
+            "token_deleted": gone, "at_the_service": _PROVIDER_REVOKE.get(name, ""),
+            **({"error": "Not finished: " + "; ".join(problems) + "."} if problems else {})}
 
 
 def overview() -> Dict[str, Any]:
@@ -249,7 +258,9 @@ def overview() -> Dict[str, Any]:
             "reach": ("%d chat%s on its allowlist; nobody else is answered" % (len(allow), "" if len(allow) == 1 else "s"))
                      if allow else "nobody yet: its allowlist is empty",
             "can": [
-                "answers your messages from the chats on its allowlist, with the same tools as chat on this PC",
+                "answers your messages from the chats on its allowlist",
+                "uses Friday's own tools on this PC, but not tools that reach the internet or other "
+                "services; controls the mouse and keyboard only while Computer Control is on",
                 "every reply passes the privacy check and is recorded before it leaves",
             ],
             "cannot": ["approve cards", "send notifications or briefings", "make or take calls"],
@@ -267,6 +278,13 @@ def _phone_overview() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001
         c = {}
     can, cannot = [], []
+    if not c.get("enabled"):
+        return {"channel": "phone", "title": "Phone (texts and calls)", "on": False, "running": None,
+                "has_token": None, "health": "", "reach": "nobody: the phone is switched off",
+                "can": [], "cannot": ["anything while it is switched off"],
+                "test": "in Phone below: Send a test text",
+                "remove": ("in Phone below: delete its secrets; to make them useless everywhere, "
+                           "delete the API key in the Twilio console")}
     if c.get("sms_conversation"):
         can.append("answers texts from your verified cell, reading only (no changes from a text)")
     else:

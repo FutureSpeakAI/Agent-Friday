@@ -121,6 +121,8 @@ def complete_setup(data: dict, *, routing_via: str = "unverified") -> dict:
             cs.hot_reload_provider_key(pname, val)
     providers_payload = data.get('providers') or {}
     for pname, pcfg in providers_payload.items():
+        if str(pname).lower().startswith("channel_"):
+            continue      # a channel token is set only in Settings > Message channels (press)
         if isinstance(pcfg, dict):
             kv = (pcfg.get('api_key') or pcfg.get('key') or '').strip()
             if kv:

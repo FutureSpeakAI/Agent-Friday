@@ -100,3 +100,16 @@ def test_settings_shows_the_channels(page):
     text = (ROOT / page).read_text(encoding="utf-8")
     assert "ChannelsCard" in text and "/api/channels/overview" in text, \
         "Settings has no place that shows the message channels"
+
+
+def test_the_generic_key_route_cannot_change_a_channel_token(client, home):
+    r = client.post("/api/providers/channel_telegram/key", json={"key": TOKEN})
+    assert r.status_code == 403 and cs.provider_key_status("channel_telegram") == "missing"
+    manager.configure_channel("telegram", {"enabled": True, "allowlist": ["5550001"]}, token=TOKEN)
+    r = client.delete("/api/providers/channel_telegram/key")
+    assert r.status_code == 403 and cs.provider_key_status("channel_telegram") == "connected"
+
+
+def test_a_switched_off_phone_claims_nothing(client, home):
+    phone = _overview(client)["phone"]
+    assert phone["on"] is False and phone["can"] == []

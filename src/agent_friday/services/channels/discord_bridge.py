@@ -96,12 +96,28 @@ class DiscordBridge(ChannelAdapter):
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        self._loop_ref = loop
         try:
             loop.run_until_complete(client.start(token))
         except Exception as e:
             self._last_error = exception_text(e)
         finally:
             self._running = False
+
+    def stop(self) -> Dict[str, Any]:
+        """Close the gateway too: the base stop only sets a flag this library-driven loop never
+        reads, so the bot stayed connected (and a later start opened a second client)."""
+        out = super().stop()
+        client, loop = self._client, getattr(self, "_loop_ref", None)
+        if client is not None and loop is not None and loop.is_running():
+            try:
+                import asyncio
+                asyncio.run_coroutine_threadsafe(client.close(), loop).result(timeout=10)
+            except Exception as e:  # noqa: BLE001
+                self._last_error = exception_text(e)
+                return {"ok": False, "error": "the Discord connection did not close: %s" % self._last_error}
+        self._client = None
+        return out
 
     def _poll_once(self) -> None:  # not used — gateway-driven
         pass
