@@ -49928,6 +49928,12 @@ function TaskTimeline({
         color: '#f59e0b'
       }
     }), "\u2192 steer (", ev.source, "): ", ev.message);
+    /* Step records (\u00a730.9): a tool call's step already shows as its tool_call row. */
+    if (k === 'step' && ev.step_kind !== 'tool_call') return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#888'
+      }
+    }), "\u25e6 ", ev.step_kind === 'subagent' ? 'subagent' : ev.step_kind === 'milestone_run' ? 'goal attempt' : String(ev.step_kind || 'step'), " \xB7 ", String(ev.state || ''), ev.duration_ms != null ? ' \xB7 ' + ev.duration_ms + 'ms' : '');
     if (k === 'started' || k === 'ended' || k === 'created') return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
       style: {
         color: '#888'

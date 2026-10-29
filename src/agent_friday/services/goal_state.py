@@ -20,7 +20,9 @@ owns the rules those obey, so each rule is stated once:
 * **No progress (§17.10).** An attempt that produces the same result as an
   earlier one, the same critique, or the same blocker again, stops the
   milestone with a `no_progress` blocker that says what was tried, instead of
-  trying again or failing generically.
+  trying again or failing generically. Within a run, step records (§30.9)
+  that keep reaching no new distinct_progress_key stop it the same way
+  (`stalled_steps`).
 
 Pure functions over goal dicts; no I/O.
 """
@@ -477,6 +479,39 @@ def repeated(marks: Iterable[Dict[str, Any]], *, output: str = "", critique: str
             return "it produced the same result as an earlier attempt"
         if cr_fp and m.get("critique") == cr_fp:
             return "its check found the same problem as last time"
+    return None
+
+
+#: Steps in a row that reached no new distinct_progress_key (§17.10, §30.9):
+#: the same limit as the same blocker in a row.
+NO_NEW_PROGRESS_LIMIT = SAME_BLOCKER_LIMIT
+
+
+def stalled_steps(steps: Iterable[Dict[str, Any]], *,
+                  limit: int = NO_NEW_PROGRESS_LIMIT) -> Optional[str]:
+    """Why a run of step records is no progress, or None.
+
+    Walks the steps in order keeping the distinct_progress_keys seen so far
+    (services/step_records says what a key is made of). A step whose key was
+    already seen made no new progress; a step with a new key resets the count.
+    `limit` such steps in a row anywhere in the run is no progress: repeated
+    identical calls, and cycles (A, B, A, B, ...) once they come round again.
+    A step without a key (older records) neither counts nor resets: for those
+    the attempt-level fingerprints (`repeated`) remain the check."""
+    seen: set = set()
+    run = 0
+    for s in steps or ():
+        key = (s or {}).get("distinct_progress_key")
+        if not key:
+            continue
+        if key in seen:
+            run += 1
+            if run >= limit:
+                return (f"its last {run} steps found nothing new (the same calls came back "
+                        "with the same results)")
+        else:
+            seen.add(key)
+            run = 0
     return None
 
 
