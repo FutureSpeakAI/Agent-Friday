@@ -20035,7 +20035,7 @@ function CredentialsPanel(){
   if(!rows)return <div style={muted}>Reading the stored credentials…</div>;
   return <div data-testid="credential-list" style={{marginTop:12}}>
     <div style={{fontSize:12,color:'#fff',marginBottom:6}}>Stored credentials</div>
-    {rows.length===0&&<div style={muted}>Friday holds no credentials.</div>}
+    {rows.length===0&&<div style={muted}>{fridayName()} holds no credentials.</div>}
     {rows.map(row=><div key={row.name} style={{borderTop:'1px solid rgba(255,255,255,0.06)',padding:'6px 0'}}>
       <div style={{display:'flex',gap:8,alignItems:'center'}}>
         <div style={{flex:1,fontSize:12,color:'rgba(255,255,255,0.85)'}}>{row.kind}: {row['for']}</div>
