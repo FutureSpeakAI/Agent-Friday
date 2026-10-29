@@ -161,11 +161,12 @@ SCHEMA_FILE = "schema.json"
 #: (north star §8.5-3). Said on the Doctor page's backup section and after
 #: `friday bundle`; the page carries the same sentences (a test holds them).
 PROTECTION_LINES = (
-    "On this PC, Friday's data folder is protected by your Windows account: anyone who can sign in as you, "
-    "or an administrator of this PC, can read most of it. Only the vault's sealed items and Friday's sign-ins "
-    "need more.",
+    "On this PC, Friday's data folder is protected by your Windows account: anyone who can sign in as you "
+    "can read all of it, including the vault and Friday's sign-ins, because Friday keeps the keys that open "
+    "them under your account so she can start on her own. An administrator of this PC can read it too.",
     "A Friday Bundle is protected by its passphrase instead: wherever the file goes (a USB drive, a cloud "
-    "folder, another PC), no one can open it without the passphrase, not even someone signed in as you.",
+    "folder, another PC), no one can open it without the passphrase, not even someone signed in as you. "
+    "Without it, only the bundle's date, the Friday version and which kinds of data it holds can be seen.",
     "Scheduled bundles keep their passphrase in this Windows account's credential store so they can be made "
     "while you are away: anyone who can sign in as you can open those.",
 )
