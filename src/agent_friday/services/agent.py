@@ -12958,17 +12958,8 @@ def _get_vault_key() -> bytes | None:
         return None
 
     try:
-        _VAULT_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        cfg = {}
-        if _VAULT_CONFIG_FILE.exists():
-            cfg = json.loads(_VAULT_CONFIG_FILE.read_text(encoding="utf-8"))
-        salt_hex = cfg.get("salt_hex")
-        if not salt_hex:
-            salt_hex = os.urandom(16).hex()
-            cfg.update({"salt_hex": salt_hex, "kdf": "argon2id", "cipher": "aes-256-gcm"})
-            _tmp = _VAULT_CONFIG_FILE.with_name(_VAULT_CONFIG_FILE.name + ".tmp")
-            _tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-            _tmp.replace(_VAULT_CONFIG_FILE)
+        from agent_friday.services.credential_store import vault_salt_hex as _vault_salt_hex
+        salt_hex = _vault_salt_hex(_VAULT_CONFIG_FILE)
         _VAULT_KEY = _vc.derive_key(_passphrase, bytes.fromhex(salt_hex))
         _VAULT_ENCRYPTION_STATE["enabled"] = True
         _VAULT_ENCRYPTION_STATE["error"] = ""
