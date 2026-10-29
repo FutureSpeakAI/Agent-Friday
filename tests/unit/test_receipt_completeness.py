@@ -141,13 +141,15 @@ def test_an_error_and_a_later_hold_are_outcomes_too(monkeypatch):
 def test_the_audit_finds_an_action_that_ran_without_its_decision():
     from agent_friday.services import receipt_audit
     d = L.append("decision", {"tool": "send_email", "class": "outward", "decision": "deny",
-                              "args_hash": "x"}, durable=True)
-    L.append("outcome", {"tool": "send_email", "status": "ok"})                 # no decision at all
+                              "args_hash": "x", "action_id": "act_rc_d1"}, durable=True)
+    L.append("outcome", {"tool": "send_email", "status": "ok",
+                         "action_id": "act_rc_o1"})                                # no decision at all
     L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": d["seq"],
-                         "decision_hash": d["hash"]})                              # ran though denied
+                         "decision_hash": d["hash"], "action_id": "act_rc_d1"})   # ran though denied
     L.append("outcome", {"tool": "create_calendar_event", "status": "ok", "decision_seq": d["seq"],
-                         "decision_hash": d["hash"]})                              # another tool's decision
-    L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": 999999})
+                         "decision_hash": d["hash"], "action_id": "act_rc_o3"})   # another tool's decision
+    L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": 999999,
+                         "action_id": "act_rc_o4"})
     r = receipt_audit.audit()
     whys = sorted(o["why"] for o in r["orphan_outcomes"])
     assert r["ok"] is False and r["orphan_count"] == 4, whys
@@ -159,9 +161,11 @@ def test_the_audit_finds_an_action_that_ran_without_its_decision():
 def test_an_allowed_action_that_never_reported_back_is_unverified():
     from agent_friday.services import receipt_audit
     L.append("decision", {"tool": "send_email", "class": "outward", "decision": "allow",
-                          "args_hash": "x", "via": "tool_call"}, durable=True)
+                          "args_hash": "x", "via": "tool_call", "action_id": "act_rc_open1"},
+             durable=True)
     L.append("decision", {"tool": "claude_code_action", "class": "outward", "decision": "allow",
-                          "args_hash": "x"}, durable=True)          # decided outside a tool call
+                          "args_hash": "x", "action_id": "act_rc_open2"},
+             durable=True)                                            # decided outside a tool call
     assert receipt_audit.audit()["open_count"] == 0                 # inside the grace period
     r = receipt_audit.audit(now=time.time() + 2 * receipt_audit.GRACE_S)
     assert r["open_count"] == 1 and r["ok"] is True
@@ -249,7 +253,7 @@ def test_the_audit_reads_only_signed_entries_and_the_last_thirty_days():
                             "rec": {"tool": "send_email", "status": "ok"}}) + "\n")
     L.reset_caches()
     assert receipt_audit.audit()["orphan_count"] == 0              # an unsigned line is not read
-    old = L.append("outcome", {"tool": "send_email", "status": "ok"})
+    old = L.append("outcome", {"tool": "send_email", "status": "ok", "action_id": "act_rc_old"})
     r = receipt_audit.audit(now=time.time() + 40 * 86400)
     assert r["orphan_count"] == 0                                    # older than the look
 
@@ -258,22 +262,26 @@ def test_the_audit_reads_only_signed_entries_and_the_last_thirty_days():
 def test_an_approval_name_alone_does_not_hide_a_run_and_an_old_seq_is_looked_up(monkeypatch):
     from agent_friday.services import receipt_audit
     d = L.append("decision", {"tool": "send_email", "class": "outward", "decision": "confirm",
-                              "args_hash": "x", "via": "tool_call"}, durable=True)
+                              "args_hash": "x", "via": "tool_call", "action_id": "act_rc_a1"},
+                 durable=True)
     L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": d["seq"],
-                         "decision_hash": d["hash"], "approval": "anything"})   # no such yes
+                         "decision_hash": d["hash"], "approval": "anything",
+                         "action_id": "act_rc_a1"})                           # no such yes
     L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": 999999,
-                         "approval": "anything"})                             # no such decision
-    L.append("outcome", {"tool": "send_email", "status": "ok", "approval": "ap-not-on-record"})
+                         "approval": "anything", "action_id": "act_rc_a2"})  # no such decision
+    L.append("outcome", {"tool": "send_email", "status": "ok", "approval": "ap-not-on-record",
+                         "action_id": "act_rc_a3"})
     r = receipt_audit.audit()
     assert r["orphan_count"] == 3, r["orphan_outcomes"]
     # an outcome naming a decision older than the look is checked, not skipped
     old = L.append("decision", {"tool": "send_email", "class": "outward", "decision": "deny",
-                                "args_hash": "x", "via": "tool_call"}, durable=True)
+                                "args_hash": "x", "via": "tool_call", "action_id": "act_rc_b1"},
+                   durable=True)
     later = time.time() + 5 * 86400
     real_time = time.time
     monkeypatch.setattr(time, "time", lambda: real_time() + 5 * 86400)
     L.append("outcome", {"tool": "send_email", "status": "ok", "decision_seq": old["seq"],
-                         "decision_hash": old["hash"]})
+                         "decision_hash": old["hash"], "action_id": "act_rc_b1"})
     monkeypatch.setattr(time, "time", real_time)
     r = receipt_audit.audit(now=later + 1, window_s=86400.0)
     assert any("deny" in o["why"] for o in r["orphan_outcomes"])

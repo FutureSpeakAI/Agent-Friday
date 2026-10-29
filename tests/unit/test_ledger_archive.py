@@ -40,7 +40,8 @@ def _seal():
 
 def _old_and_new(n_old=4, n_new=2):
     for i in range(n_old):
-        L.append("decision", {"tool": "probe_old", "i": i, "note": MARK}, durable=True)
+        L.append("decision", {"tool": "probe_old", "i": i, "note": MARK,
+                              "action_id": "act_archive_old_%d" % i}, durable=True)
     _seal()
     for i in range(n_new):
         L.append("activity", {"kind": "tool_call", "tool": "probe_new", "i": i})
@@ -164,7 +165,8 @@ def test_an_archive_substituted_from_another_ledger_is_a_break(tmp_path, monkeyp
     monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(tmp_path / "other-ledger"))
     L.reset_caches()
     for i in range(4):
-        L.append("decision", {"tool": "someone_else", "i": i}, durable=True)
+        L.append("decision", {"tool": "someone_else", "i": i,
+                              "action_id": "act_archive_else_%d" % i}, durable=True)
     _seal()
     L.append("activity", {"kind": "x"})
     L.archive_old(now=_later(), days=730)
@@ -383,7 +385,7 @@ def test_old_receipt_files_stay_shut_when_the_archive_is_removed_or_garbled(how)
 def test_an_empty_anchored_ledger_never_reads_a_planted_old_file():
     from agent_friday.paths import friday_home
     L.migrate_legacy()
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     shutil.rmtree(L.ledger_dir())
     planted = friday_home() / "actions" / "receipts.jsonl"
     planted.parent.mkdir(parents=True, exist_ok=True)
@@ -414,11 +416,11 @@ def test_strict_readers_refuse_an_archive_list_put_back_from_an_earlier_copy():
 
 
 def test_an_acknowledged_flag_does_not_stop_archiving_for_good():
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     with open(L.live_path(), "ab") as f:
         f.write(b'{"half a line')               # a power cut mid-write
     L.reset_caches()
-    L.append("decision", {"tool": "y"}, durable=True)   # sets the torn line aside, flags it
+    L.append("decision", {"tool": "y", "action_id": "act_archive_y"}, durable=True)   # sets the torn line aside, flags it
     rep = L.verify()
     assert not rep["ok"]
     L.acknowledge("owner:test", reviewed=[p for p in rep["problems"] if not p["acknowledged"]])
@@ -459,7 +461,7 @@ def test_a_forged_first_line_does_not_reopen_the_switch_after_the_archive_is_rem
 
 def test_a_forged_line_in_an_emptied_anchored_ledger_does_not_reopen_the_switch():
     L.migrate_legacy()
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     shutil.rmtree(L.ledger_dir())
     L.ledger_dir().mkdir(parents=True)
     L.live_path().write_text(json.dumps({"seq": 1, "prev": "0" * 64, "kind": "x", "rec": {}}) + "\n",
@@ -477,7 +479,7 @@ def test_cutting_the_record_back_before_the_switch_ended_does_not_reopen_it():
     old.write_text("".join(json.dumps({"receipt_id": "r%d" % i, "status": "complete"}) + "\n"
                            for i in range(2)), encoding="utf-8")
     L.migrate_legacy()
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     lines = L.live_path().read_text(encoding="utf-8").splitlines()
     assert any(json.loads(ln)["kind"] == "migration_complete" for ln in lines)
     keep = [ln for ln in lines if json.loads(ln)["kind"] == "action"]
@@ -533,7 +535,7 @@ def test_strict_readers_refuse_a_rolled_back_list_with_no_live_record_left():
 def test_bytes_that_are_not_an_entry_do_not_reopen_the_switch(junk):
     """An anchored ledger emptied down to a line that is not an entry stays switched."""
     L.migrate_legacy()
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     shutil.rmtree(L.ledger_dir())
     L.ledger_dir().mkdir(parents=True)
     L.live_path().write_bytes(junk)
@@ -567,12 +569,12 @@ def test_strict_readers_refuse_a_cut_record_even_without_an_archive():
 def test_a_ledger_folder_swapped_for_a_link_is_a_break_and_keeps_its_anchor(tmp_path):
     """A link on ledger/ is a break and never names another keychain account."""
     import os
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     acct = L._anchor_account()
     d = L.ledger_dir()
     old = tmp_path / "older-copy"
     shutil.copytree(d, old)
-    L.append("decision", {"tool": "y"}, durable=True)
+    L.append("decision", {"tool": "y", "action_id": "act_archive_y"}, durable=True)
     shutil.move(str(d), str(tmp_path / "moved-away"))
     try:
         os.symlink(old, d, target_is_directory=True)
@@ -597,7 +599,7 @@ def test_strict_readers_wait_while_the_ledger_has_an_open_break():
 
 
 def test_an_acknowledgement_that_cannot_keep_its_anchor_says_so(monkeypatch):
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     p = L.live_path()
     p.write_text(p.read_text(encoding="utf-8").replace('"x"', '"X"'), encoding="utf-8")
     L.reset_caches()
@@ -647,7 +649,7 @@ def test_a_junction_for_the_ledger_folder_is_a_break(tmp_path):
     import subprocess
     if os.name != "nt":
         pytest.skip("junctions are a Windows thing")
-    L.append("decision", {"tool": "x"}, durable=True)
+    L.append("decision", {"tool": "x", "action_id": "act_archive_x"}, durable=True)
     d = L.ledger_dir()
     old = tmp_path / "older-copy"
     shutil.copytree(d, old)

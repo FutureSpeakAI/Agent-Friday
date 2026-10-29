@@ -65,6 +65,7 @@ KIND_LABELS = {
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
     "authority": "Action authority revoked or restored",
+    "policy_version": "The rules actions ran under changed",
 }
 
 _LAST_FULL = [0.0]

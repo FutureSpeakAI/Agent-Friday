@@ -50,7 +50,8 @@ _SECRET_NAME = re.compile(r"(?i)(secret|token|passw|passphrase|pwd|api.?key|apik
                           r"credential|auth_?(?:token|key|header)|authorization|bearer|cookie|"
                           r"session_?(?:id|key|token)|webhook|signing|_pat$|^pat$|_pass$|^pass$)")
 #: Fields of a ledger entry that are its chain, not its content.
-_CHAIN_FIELDS = frozenset({"v", "seq", "ts", "t", "kind", "principal", "kid", "prev", "hash", "sig"})
+_CHAIN_FIELDS = frozenset({"v", "seq", "ts", "t", "kind", "principal", "pv", "kid", "prev", "hash",
+                           "sig"})
 #: Values that carry a credential whatever their name: a webhook, a token or
 #: key in a query, a user and password in a URL.
 _SECRET_VALUE = re.compile(r"(?i)(hooks\.slack\.com/|discord(?:app)?\.com/api/webhooks/|"

@@ -56,7 +56,8 @@ def home(tmp_path, monkeypatch):
     (h / "security").mkdir()
     (h / "security" / "root.key").write_text(SECRET, encoding="utf-8")
     from agent_friday.services import action_ledger, wiki_engine
-    action_ledger.append("decision", {"tool": "search_web", "decision": "allow", "class": "internal"})
+    action_ledger.append("decision", {"tool": "search_web", "decision": "allow", "class": "internal",
+                                      "action_id": "act_export_probe"})
     real = wiki_engine.wiki_read_text
     monkeypatch.setattr(wiki_engine, "wiki_read_text",
                         lambda p: wiki_engine.VAULT_LOCKED_PLACEHOLDER if Path(p).name == "health.md" else real(p))
