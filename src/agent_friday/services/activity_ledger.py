@@ -26,6 +26,8 @@ archive with a signed "archived" entry in the chain, never deleted.
 this module renames, rotates or deletes a file.
 """
 
+import copy
+import threading
 import time
 
 from agent_friday.core import FRIDAY_DIR
@@ -181,8 +183,66 @@ def _is_signed(e: dict) -> bool:
     return all(isinstance(e.get(f), str) and e.get(f) for f in ("prev", "hash", "sig"))
 
 
+#: The last verify_chain() result, keyed on the ledger's own file stats
+#: (action_ledger.stats_token(), as action_ledger.verify caches), the folder,
+#: whether the old file waits and the line cap: the Ledger page and the
+#: Doctor do not re-read up to VERIFY_MAX_LINES lines while nothing changed.
+#: Kept at most action_ledger.FULL_RECHECK_S (an edit that put back a file's
+#: size and time is found then, as verify finds it); cleared by
+#: action_ledger.reset_caches(). A result cut short by the time budget, or an
+#: error, is never kept.
+_VERIFY_CACHE: dict = {}
+_VERIFY_LOCK = threading.Lock()
+
+
+def reset_cache() -> None:
+    with _VERIFY_LOCK:
+        _VERIFY_CACHE.clear()
+
+
+def _chain_cache_key(cap):
+    """The cache key for verify_chain, or None when it cannot be read (then
+    nothing is cached). Never raises."""
+    try:
+        from agent_friday.services import action_ledger as L
+        try:
+            legacy = bool(LEDGER_FILE.exists())
+        except OSError:
+            legacy = None
+        return (str(L.ledger_dir()), L.stats_token(), legacy, cap)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def verify_chain(*, max_lines=None, max_seconds=None) -> dict:
-    """The activity record's chain, in counts (A9; NS-11.8-2/-3).
+    """verify_chain_uncached(), reused while no ledger file changed (see
+    _VERIFY_CACHE). Never raises."""
+    try:
+        cap = VERIFY_MAX_LINES if max_lines is None else max(1, int(max_lines))
+    except Exception:  # noqa: BLE001 - the uncached check reports it as an error
+        return _verify_chain_uncached(max_lines=max_lines, max_seconds=max_seconds)[0]
+    key = _chain_cache_key(cap)
+    if key is not None:
+        try:
+            from agent_friday.services import action_ledger as L
+            max_age = float(getattr(L, "FULL_RECHECK_S", 600.0))
+        except Exception:  # noqa: BLE001
+            max_age = 600.0
+        with _VERIFY_LOCK:
+            hit = _VERIFY_CACHE.get("entry")
+        if hit and hit[0] == key and time.monotonic() - hit[1] < max_age:
+            return copy.deepcopy(hit[2])
+    out, timed_out = _verify_chain_uncached(max_lines=max_lines, max_seconds=max_seconds)
+    keep = (not timed_out and out.get("state") != "error" and not out.get("unreadable_segments")
+            and (out.get("first_break") or {}).get("segment") != "key")   # a key-less check is not kept
+    if key is not None and keep and _chain_cache_key(cap) == key:   # nothing was written while it read
+        with _VERIFY_LOCK:
+            _VERIFY_CACHE["entry"] = (key, time.monotonic(), copy.deepcopy(out))
+    return out
+
+
+def _verify_chain_uncached(*, max_lines=None, max_seconds=None) -> tuple:
+    """(report, timed_out): the activity record's chain, in counts (A9; NS-11.8-2/-3).
 
     Activity rows are entries of the one action ledger, so the chain, its
     HMAC signatures and its checks are action_ledger's own (`verify()`); this
@@ -220,6 +280,7 @@ def verify_chain(*, max_lines=None, max_seconds=None) -> dict:
            "breaks": 0, "activity_breaks": 0, "first_break": None, "acknowledged": 0,
            "archived_notes": 0, "archived_segments": 0, "archived_records": 0,
            "unreadable_segments": 0, "scanned": 0, "partial": False, "state": "intact"}
+    timed_out = False
     try:
         from agent_friday.services import action_ledger as L
         cap = VERIFY_MAX_LINES if max_lines is None else max(1, int(max_lines))
@@ -240,6 +301,7 @@ def verify_chain(*, max_lines=None, max_seconds=None) -> dict:
                 for raw in L._reverse_lines(p):
                     if out["scanned"] >= cap or time.monotonic() > deadline:
                         out["partial"] = True
+                        timed_out = out["scanned"] < cap
                         break
                     out["scanned"] += 1
                     e = L._safe_json(raw)
@@ -289,4 +351,4 @@ def verify_chain(*, max_lines=None, max_seconds=None) -> dict:
     except Exception as e:  # noqa: BLE001 - fail-safe: a check never breaks its caller
         out["state"] = "error"
         out["error"] = type(e).__name__
-    return out
+    return out, timed_out

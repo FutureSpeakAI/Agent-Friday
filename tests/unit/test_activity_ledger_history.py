@@ -196,6 +196,60 @@ def test_past_the_cap_it_says_partial():
     assert v["partial"] is True and v["state"] == "partial" and v["scanned"] == 3
 
 
+def test_a_second_check_with_no_new_lines_reads_nothing_and_a_new_line_reads_again(monkeypatch):
+    """verify_chain() is kept while no ledger file changed (keyed on
+    action_ledger's own file stats, as verify is): the Ledger page and the
+    Doctor do not re-read the record each time. A new line is read."""
+    _tools(5)
+    reads = []
+    real = L._reverse_lines
+
+    def counting(p):
+        reads.append(p)
+        return real(p)
+    monkeypatch.setattr(L, "_reverse_lines", counting)
+    first = al.verify_chain()
+    assert first["state"] == "intact" and first["lines"] == 5 and reads
+    reads.clear()
+    second = al.verify_chain()
+    assert reads == [], "no ledger line re-read while nothing changed"
+    assert second == first
+    second["lines"] = -1                                  # a copy, never the kept result
+    assert al.verify_chain()["lines"] == 5
+    _tools(1, "after")
+    third = al.verify_chain()
+    assert reads, "an appended line is read"
+    assert third["lines"] == 6 and third["chained"] == 6
+    # a different cap is its own check; reset_caches drops the kept one
+    reads.clear()
+    al.verify_chain(max_lines=2)
+    assert reads
+    reads.clear()
+    al.verify_chain()
+    assert reads == []
+    L.reset_caches()
+    al.verify_chain()
+    assert reads
+
+
+def test_a_result_cut_short_by_time_is_not_kept(monkeypatch):
+    import types
+    _tools(3)
+    ticks = [0.0]
+
+    def monotonic():                                    # every reading is 10 s later
+        ticks[0] += 10.0
+        return ticks[0]
+    monkeypatch.setattr(al, "time", types.SimpleNamespace(monotonic=monotonic, time=time.time))
+    v = al.verify_chain(max_seconds=1.0)
+    assert v["partial"] is True and v["state"] == "partial"
+    reads = []
+    real = L._reverse_lines
+    monkeypatch.setattr(L, "_reverse_lines", lambda p: reads.append(p) or real(p))
+    al.verify_chain(max_seconds=1.0)
+    assert reads, "a timed-out check is run again"
+
+
 def test_it_never_raises(monkeypatch):
     _tools(1)
 

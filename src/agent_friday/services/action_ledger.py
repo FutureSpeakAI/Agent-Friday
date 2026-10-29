@@ -257,6 +257,13 @@ def reset_caches() -> None:
             _pv._RECORDED.clear()
         except Exception:  # noqa: BLE001
             pass
+    # the activity record's chain check is read again too
+    _al = sys.modules.get("agent_friday.services.activity_ledger")
+    if _al is not None:
+        try:
+            _al.reset_cache()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ── Keys and hashing ────────────────────────────────────────────────────────
