@@ -232,8 +232,10 @@ def doctor_check() -> tuple:
     code = _fit([
         ("sig_bad", s.get("bad", 0)), ("breaks", ch.get("breaks", 0)), ("gaps", ch.get("gaps", 0)),
         ("unsigned", u.get("lines", 0)), ("open", o.get("open", 0)),
-        ("unconfirmed", o.get("unconfirmed", 0)), ("duplicate", o.get("duplicate", 0)),
-        ("duplicate_key", o.get("duplicate_key", 0)), ("false_done", o.get("false_done", 0)),
+        # Short names (unconf, dup, fdone) so a clean code keeps the whole
+        # policy version within CODE_MAX even with large activity counts.
+        ("unconf", o.get("unconfirmed", 0)), ("dup", o.get("duplicate", 0)),
+        ("duplicate_key", o.get("duplicate_key", 0)), ("fdone", o.get("false_done", 0)),
         ("act", "%s/%d/%d/%d" % (
             "err" if "activity_error" in v else _ACT_STATE.get(a.get("state"), "unknown"),
             a.get("lines") or 0, a.get("legacy_unchained") or 0, a.get("activity_breaks") or 0)),

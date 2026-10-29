@@ -8,7 +8,12 @@
               wrote again has a newer line). Manifest lines whose signature
               does not hold are `bad_lines`. Bounded: at most MAX_FILES files,
               MAX_BYTES hashed and MAX_SECONDS per check, newest first; what a
-              cap stops is `unchecked` and the result is `partial`. A file
+              cap stops is `unchecked` and the result is `partial`. The file
+              and time caps end the check (time is also checked while one
+              file is read); the byte cap skips only the file that would pass
+              it, so older files are still checked, and a file bigger than
+              the whole byte cap is `not_hashed`. A file is read to at most
+              its stat size + 1 byte: one that grew since is `changed`. A file
               whose size and modification time have not moved is not hashed
               again for FILE_CACHE_S. Problems are named by the line's own
               reference (the start of its signature), the tool and the time:
@@ -47,7 +52,7 @@ import os
 import stat as _stat
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 #: How many files one artifact check looks at (newest first).
 MAX_FILES = 200
@@ -129,22 +134,43 @@ def _keep(part: str, key: Optional[tuple], result: dict) -> None:
 
 # ── artifacts ───────────────────────────────────────────────────────────────
 
-def _hash_file(path: str, size: int, mtime_ns: int) -> str:
+_CHUNK = 1024 * 1024
+
+
+def _hash_file(path: str, size: int, mtime_ns: int,
+               deadline: Optional[float] = None) -> Tuple[Optional[str], int, bool]:
+    """(sha256, bytes read, out of time). At most `size` + 1 bytes are read:
+    a file that holds more than its stat said (it grew after the stat) gives
+    no digest, so it is never read without bound and never matches. When
+    `deadline` (time.monotonic) passes before the whole file is read, the
+    digest is None and out of time is True. Only a whole, unchanged read is
+    cached."""
     ck = (path, size, mtime_ns)
     with _LOCK:
         hit = _FILE_CACHE.get(ck)
     if hit and time.time() - hit[0] < FILE_CACHE_S:
-        return hit[1]
+        return hit[1], 0, False
     h = hashlib.sha256()
+    read = 0
     with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+        while read <= size:
+            chunk = f.read(min(_CHUNK, size + 1 - read))
+            if not chunk:
+                break
+            read += len(chunk)
+            if read > size:
+                return None, read, False      # grew after the stat: not this file's bytes
             h.update(chunk)
+            if read < size and deadline is not None and time.monotonic() > deadline:
+                return None, read, True
+    if read != size:
+        return h.hexdigest(), read, False     # shrank after the stat: never matches, not cached
     digest = h.hexdigest()
     with _LOCK:
         if len(_FILE_CACHE) >= 4 * MAX_FILES:
             _FILE_CACHE.clear()
         _FILE_CACHE[ck] = (time.time(), digest)
-    return digest
+    return digest, read, False
 
 
 def _would_hash(path: str, size: int, mtime_ns: int) -> bool:
@@ -168,8 +194,9 @@ def artifact_check(*, max_files: int = MAX_FILES, max_bytes: int = MAX_BYTES,
     items = []
     seen = set()
     spent = checked = 0
-    partial = False
+    partial = stopped = False
     started = time.monotonic()
+    deadline = started + max_seconds
     lines = am.entries(limit=MAX_LINES)
     counts["lines"] = len(lines)
     for e in lines:
@@ -183,8 +210,10 @@ def artifact_check(*, max_files: int = MAX_FILES, max_bytes: int = MAX_BYTES,
         counts["files"] += 1
         if not e.get("receipt"):
             counts["no_receipt"] += 1
-        if partial or checked >= max_files or time.monotonic() - started > max_seconds:
-            partial = True
+        # The file-count and time caps stop the check; the byte cap only skips
+        # the file that would pass it (below), and older files are still checked.
+        if stopped or checked >= max_files or time.monotonic() > deadline:
+            partial = stopped = True
             counts["unchecked"] += 1
             continue
         state = None
@@ -203,17 +232,24 @@ def artifact_check(*, max_files: int = MAX_FILES, max_bytes: int = MAX_BYTES,
                 state = "changed"             # another size: no need to hash it
             elif not isinstance(want, str) or st.st_size > am.MAX_HASH_BYTES:
                 state = "not_hashed"
+            elif _would_hash(path, st.st_size, st.st_mtime_ns) and st.st_size > max_bytes:
+                state = "not_hashed"          # alone more than one check may hash
             elif _would_hash(path, st.st_size, st.st_mtime_ns) and spent + st.st_size > max_bytes:
-                partial = True
+                partial = True                # this one is skipped; older files still are checked
                 counts["unchecked"] += 1
                 continue
             else:
                 try:
-                    if _would_hash(path, st.st_size, st.st_mtime_ns):
-                        spent += st.st_size
-                    state = "ok" if _hash_file(path, st.st_size, st.st_mtime_ns) == want else "changed"
+                    digest, read, out_of_time = _hash_file(path, st.st_size, st.st_mtime_ns, deadline)
                 except OSError:
                     state = "unreadable"
+                else:
+                    spent += read
+                    if out_of_time:
+                        partial = stopped = True
+                        counts["unchecked"] += 1
+                        continue
+                    state = "ok" if digest is not None and digest == want else "changed"
         checked += 1
         counts[state] += 1
         if state not in ("ok", "not_hashed") and len(items) < MAX_ITEMS:
