@@ -10,7 +10,9 @@
 * Drive, Tasks and Contacts answers were not marked partial when one account failed beside
   a working one.
 
-Google is a fake here: googleapiclient's build() returns synthetic pages. Synthetic data only.
+The last fixture (an expired account named, the other still read) is a guard: that already
+held on main and must keep holding. Google is a fake here: googleapiclient's build() returns
+synthetic pages. Synthetic data only.
 """
 from __future__ import annotations
 
@@ -131,7 +133,7 @@ def test_a_gmail_count_says_when_gmail_has_more(fake_build, one_account, monkeyp
     d = json.loads(ag._tool_search_email({"query": "from:bank is:unread"}))
     assert d["count"] == 25
     assert d.get("incomplete"), "25 of about 140 was answered as the total"
-    assert d["incomplete"][0].get("about") == 140
+    assert d["incomplete"][0].get("estimated_total") == 140
     assert "error" not in d, "having more mail than was read is not a failed search"
 
 
@@ -209,3 +211,38 @@ def test_an_expired_account_is_named_and_the_other_is_still_read(one_account, mo
     got = ga.merged_calendar(days=2)
     assert [e["title"] for e in got["events"]] == ["Dentist"]
     assert got["errors"] == [{"account_id": "acct0002", "label": "Work", "error": "needs_reauth"}]
+
+
+def test_a_search_where_no_message_could_be_read_is_a_failed_search_not_zero(fake_build, one_account, monkeypatch):
+    from agent_friday.services import gmail_api
+
+    class Msgs:
+        def list(self, **kw):
+            return _Req(lambda: {"messages": [{"id": "m1"}, {"id": "m2"}]})
+
+    class Users:
+        def messages(self):
+            return Msgs()
+
+    class Gmail:
+        def users(self):
+            return Users()
+    fake_build["gmail"] = Gmail()
+    monkeypatch.setattr(gmail_api, "execute", lambda req, **k: req.execute())
+    monkeypatch.setattr(gmail_api, "batch_get", lambda svc, ids, **k: (
+        {}, [{"id": i, "kind": "rate_limited", "message": "Rate limit exceeded"} for i in ids]))
+    d = json.loads(ag._tool_search_email({"query": "from:bank"}))
+    assert d.get("search_failed") is True and "count" not in d
+
+
+def test_voice_says_there_may_be_more_and_counts_the_whole_day():
+    from agent_friday.services import voice_spoken as vs
+    data = {"count": 20, "total": 26, "truncated": True, "events": [], "accounts": []}
+    assert vs._total(data, 20) == 26, "the spoken day counted only the 20 shown"
+    pt = getattr(vs, "_partial_text", None)
+    assert pt is not None and vs._incomplete(data), "voice drops 'there may be more'"
+    assert pt(data) == vs._MORE
+    failed = {"not_searched": [{"account": "Work"}], "accounts": []}
+    assert pt(failed) == vs._PARTIAL
+    from agent_friday.services import voice_front as vf
+    assert "incomplete" in vf._META_LISTS

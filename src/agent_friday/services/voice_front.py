@@ -378,7 +378,7 @@ def subject(tool: str, args=None, label: str = "") -> str:
 
 #: List-valued keys that describe the look-up, not what it found.
 _META_LISTS = frozenset({"accounts", "not_searched", "attendees", "errors",
-                         "needs_reauth", "warnings"})
+                         "needs_reauth", "warnings", "incomplete"})
 #: A note that reports a failure (the Google tools put fetch errors there).
 _NOTE_ERROR = re.compile(
     r"(?i)\b(errors?|fail(?:ed|ure|s)?|could not|couldn't|unable|expired|"
