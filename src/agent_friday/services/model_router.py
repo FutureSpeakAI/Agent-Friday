@@ -165,6 +165,7 @@ def _seal_or_block(payload, provider, model=""):
         raise _sc.PrivacyCheckStarting(_sc.HOLD_NOTICE)
     if not operational:
         _log.error("egress gate failed its startup self-test — BLOCKING cloud send")
+        _eg.record_blocked(provider, "the privacy gate failed its startup self-test", model=model or "")
         raise RuntimeError(
             "Egress gate is non-functional (startup self-test failed); cloud "
             "send blocked. Fix the gate (see boot log) or use a local model."

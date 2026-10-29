@@ -721,6 +721,16 @@ def _brave_results(query, limit=8):
         key = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
     if not key:
         return []
+    # The query is gated like a web search's (NS-34.6-14): a beat can carry the owner's own words.
+    try:
+        from agent_friday.services.web_search import _gate_search_query
+        query, refusal = _gate_search_query(query, "brave-news")
+    except Exception as e:
+        _log.warning("news search not sent: the privacy gate could not run (%s)", type(e).__name__)
+        return []
+    if refusal or not (query or "").strip():
+        _log.info("news search not sent: the query held content that stays on this device")
+        return []
     try:
         import requests as _req
         resp = _req.get(

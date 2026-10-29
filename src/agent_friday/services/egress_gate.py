@@ -878,6 +878,17 @@ def record_address(channel: str, url: str, result: Any = "sent", *, content: Any
         return None
 
 
+def record_blocked(provider: str, reason: str, *, model: str = "", log_path: Path | None = None) -> None:
+    """A send stopped before the gate could seal it (its startup self-test failed): one call row,
+    result "blocked", so the egress ledger shows every send that was refused, not only the gated
+    ones (NS-34.6-7). Never raises."""
+    try:
+        tok = _open_call(provider, model, "blocked:" + str(reason or "")[:40])
+        _close_call(tok, None, result="blocked", log_path=log_path, note=str(reason or ""))
+    except Exception:
+        pass
+
+
 def record_service_send(channel: str, provider: str, *, destination: str = "", content: Any = None,
                         result: str = "sent", recipients: int | None = None, note: str = "",
                         part: str = "") -> dict | None:
@@ -1355,7 +1366,13 @@ def _gate_text_span(text: str, provider: str, field: str,
     try:
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
-    except Exception:
+    except Exception as _floor_err:
+        if type(_floor_err).__name__ == "NeverSendListUnreadable":
+            # Say what actually happened: the owner's list could not be read (not "your text
+            # matched it"), and nothing is sent until it can be.
+            _log(provider, field, Tier.SENSITIVE, "block",
+                 "the never-send list could not be read - payload blocked", log_path)
+            raise NeverSendBlocked(str(_floor_err))
         # The floor that cannot be checked holds the payload: a floor that
         # opens when its check breaks is not a floor.
         _never = ["the never-send check could not run"]
@@ -1825,7 +1842,13 @@ def _gate_tool_prose(text: str, provider: str, field: str,
     try:
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
-    except Exception:
+    except Exception as _floor_err:
+        if type(_floor_err).__name__ == "NeverSendListUnreadable":
+            # Say what actually happened: the owner's list could not be read (not "your text
+            # matched it"), and nothing is sent until it can be.
+            _log(provider, field, Tier.SENSITIVE, "block",
+                 "the never-send list could not be read - payload blocked", log_path)
+            raise NeverSendBlocked(str(_floor_err))
         # The floor that cannot be checked holds the payload: a floor that
         # opens when its check breaks is not a floor.
         _never = ["the never-send check could not run"]
@@ -2553,6 +2576,31 @@ _SELF_TEST_RESULT = None  # None = not yet run; dict {"ok": bool, ...} once run
 
 
 def startup_self_test() -> dict:
+    """See _startup_self_test. An unreadable never-send list is not a broken gate: it stops every
+    real send per call (until it can be read), so the probe runs without it and the result notes
+    it, instead of refusing all cloud routing until a restart (NS-34.6-7)."""
+    global _SELF_TEST_RESULT
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        tok = _jg.IGNORE_UNREADABLE.set(True)
+    except Exception:
+        _jg, tok = None, None
+    try:
+        out = _startup_self_test()
+    finally:
+        if tok is not None:
+            _jg.IGNORE_UNREADABLE.reset(tok)
+    try:
+        if _jg is not None and _jg._NEVER_CACHE.get("broken") and isinstance(_SELF_TEST_RESULT, dict):
+            _SELF_TEST_RESULT["floor_unreadable"] = True
+            _SELF_TEST_RESULT["note"] = ("the never-send list could not be read; every cloud send stops "
+                                         "until it can be")
+    except Exception:
+        pass
+    return out
+
+
+def _startup_self_test() -> dict:
     """Seal a known-SENSITIVE probe once and record whether the gate withheld it.
 
     Called at server boot: if the gate cannot positively withhold a probe that
