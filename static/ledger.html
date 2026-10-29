@@ -35,6 +35,7 @@
   <p class="muted" id="arch"></p>
   <p id="integrity" role="status"></p>
   <p id="activity-record" role="status"></p>
+  <div id="verify-everything" role="status"></div>
   <p id="audit" role="status"></p>
   <button type="button" id="verify">Check every entry now</button>
   <a class="btn" id="exp-report" href="/api/ledger/export?format=report">Save the verification report</a>
@@ -204,7 +205,47 @@
         + (o.unconfirmed || 0) + ' unconfirmed, ' + (o.duplicate || 0) + ' with two final receipts, '
         + (o.duplicate_key || 0) + ' run twice; policy version ' + (v.policy_version || 'unknown') + '.';
       activityRecord(v);
+      verifyEverything(v);
     });
+  }
+  // Everything else the owner can check (A10, services/verify_everything): edited
+  // lines, decisions with no final outcome, the files Friday made against their
+  // fingerprints, outward actions without a decision receipt. Counts and short
+  // references only, each line set with textContent.
+  function verifyEverything(v) {
+    const box = $('verify-everything');
+    box.textContent = '';
+    const line = (txt, bad) => box.appendChild(el('p', txt, bad == null ? 'muted' : (bad ? 'bad' : 'ok')));
+    const s = v.signatures;
+    line(s ? 'Edited lines: ' + (s.edited || 0) + ' ledger line(s) changed after they were written.'
+           : 'Edited lines: could not be checked.', s ? (s.edited || 0) > 0 : null);
+    const t = v.terminal;
+    line(t ? 'Decisions with no final outcome: ' + (t.no_final_outcome || 0) + '; '
+             + (t.unconfirmed || 0) + ' where nobody confirmed whether it happened; '
+             + (t.waiting || 0) + ' waiting for you; ' + (t.in_flight || 0) + ' still in progress.'
+           : 'Decisions with no final outcome: could not be checked.',
+         t ? (t.no_final_outcome || 0) > 0 : null);
+    const ar = v.artifacts, c = (ar && ar.counts) || {};
+    line(ar ? 'Files Friday made, checked against their fingerprints: ' + (ar.checked || 0) + ' checked, '
+              + (c.ok || 0) + ' unchanged, ' + (c.changed || 0) + ' changed since, '
+              + (c.missing || 0) + ' missing, ' + (c.unreadable || 0) + ' could not be read, '
+              + (c.not_hashed || 0) + ' too big to fingerprint'
+              + (c.bad_lines ? '; ' + c.bad_lines + ' manifest line(s) whose signature does not hold' : '')
+              + (ar.partial ? '. Only the newest were checked; ' + (c.unchecked || 0) + ' left for the next check.' : '.')
+            : 'Files Friday made: could not be checked.',
+         ar ? (c.bad_lines || 0) > 0 : null);
+    (ar && ar.items || []).forEach(it => line('  ' + it.state + ': a file from ' + (it.tool || 'a tool')
+      + ' at ' + String(it.ts || '?').replace('T', ' ').slice(0, 19) + ' (manifest line ' + it.ref + ')', null));
+    const u = v.unlinked;
+    if (!u) { line('Outward actions without a decision receipt: could not be checked.', null); return; }
+    const nl = u.not_linkable || {}, ch = nl.by_channel || {};
+    line('Outward actions without a decision receipt, last ' + u.window_days + ' days: ' + (u.problems || 0)
+         + ' of ' + (u.checked || 0) + ' checked (approved cards carried out and approved batches run)'
+         + (u.partial ? '. Only the newest part was read.' : '.'), (u.problems || 0) > 0);
+    (u.items || []).forEach(it => line('  ' + (it.source === 'card' ? 'card ' : 'batch run ') + it.ref
+      + (it.by ? ' (' + it.by + ')' : '') + ': ' + (it.problem === 'missing_id' ? 'names no decision' : 'its decision is not in the ledger'), true));
+    line('Sends recorded without an action id to match (not linkable): ' + (nl.total || 0)
+         + (Object.keys(ch).length ? ' (' + Object.entries(ch).map(([k, n]) => k + ' ' + n).join(', ') + ')' : '') + '.', null);
   }
   // The activity record's history (activity_ledger.verify_chain): every row kept,
   // chained across segments; older rows archived, never deleted. Counts only.

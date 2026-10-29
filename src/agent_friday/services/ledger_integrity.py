@@ -19,6 +19,21 @@
                (first location), retention (archive) notes, partial past the
                cap. Doctor code `act:<state>/<lines>/<legacy>/<breaks>`
                (short: the Doctor keeps a code to 160 characters)
+  edits        signatures.edited: ledger lines changed after they were written
+               (a subset of signatures.bad; the Ledger page says "edited lines")
+  terminal     outward decisions with no final outcome (`no_final_outcome`,
+               the outward audit's open) and those nobody confirmed
+               (`unconfirmed`): NS-18.9-2's missing terminal receipts, labelled
+  artifacts    A10 (services/verify_everything.artifact_check): the files the
+               artifact manifest recorded, hashed again against their signed
+               fingerprints: ok, changed, missing, unreadable; manifest lines
+               whose signature does not hold. Bounded and cached; partial past
+               a cap. Doctor code `art:<changed>/<missing>/<unreadable>/<bad lines>`
+  unlinked     A10 (services/verify_everything.unlinked_outward): outward
+               effects services record (cards an outward executor carried out,
+               approved batch runs) whose decision is missing from the ledger
+               or not named; sends recorded with no action id are counted as
+               not linkable. Doctor code `unl:<problems>/<not linkable>`
 
 Shared by the Doctor (`doctor_check`), the Ledger page's "State of the record"
 line and GET /api/ledger/integrity. Read-only; never a record's content.
@@ -36,6 +51,10 @@ _SIGNATURE = ("signature does not match", "signed with a key this device does no
               "cannot be read as a record")
 _BREAK = ("out of order", "does not follow the record before it")
 _GAP = ("missing", "are gone", "was replaced")
+#: action_ledger.verify's reason for a line whose content no longer matches its hash.
+_EDITED = "changed after it was written"
+#: The Doctor keeps a code to this many characters (services/doctor._SAFE).
+CODE_MAX = 160
 #: activity_ledger.verify_chain states, short for the Doctor's code.
 _ACT_STATE = {"intact": "ok", "before_chaining": "legacy", "broken": "break",
               "partial": "partial", "error": "err"}
@@ -86,21 +105,24 @@ def _unsigned(window: float, now: float) -> dict:
 def integrity(window: float = WINDOW_S, *, now: Optional[float] = None) -> dict:
     """The combined view. Each part that cannot be read says so
     (`<part>_error`) instead of failing the rest. Never raises."""
+    now_given = now
     now = time.time() if now is None else float(now)
     out: dict = {"window_days": round(float(window) / 86400.0, 2)}
     try:
         from agent_friday.services import action_ledger as L
         r = L.verify(force=False, migrate=False)
         counts = {"signature": 0, "break": 0, "gap": 0, "other": 0}
-        acked = 0
+        acked = edited = 0
         for pr in r.get("problems") or []:
             if pr.get("acknowledged"):
                 acked += 1
                 continue
             counts[_kind_of(pr.get("reason"))] += 1
+            if _EDITED in str(pr.get("reason") or ""):
+                edited += 1
         out["signatures"] = {"ok": bool(r.get("ok")), "intact": bool(r.get("intact")),
                              "key_available": bool(r.get("key_available")),
-                             "bad": counts["signature"],
+                             "bad": counts["signature"], "edited": edited,
                              "foreign_records": int(r.get("foreign_records") or 0)}
         out["chain"] = {"records": int(r.get("records") or 0),
                         "archived_records": int(r.get("archived_records") or 0),
@@ -132,8 +154,22 @@ def integrity(window: float = WINDOW_S, *, now: Optional[float] = None) -> dict:
         out["outward"] = {k: int(c.get(k) or 0) for k in (
             "decisions", "closed", "waiting", "in_flight", "open", "unconfirmed", "duplicate",
             "duplicate_key", "false_done")}
+        out["terminal"] = {"no_final_outcome": out["outward"]["open"],
+                           "unconfirmed": out["outward"]["unconfirmed"],
+                           "waiting": out["outward"]["waiting"],
+                           "in_flight": out["outward"]["in_flight"]}
     except Exception as e:  # noqa: BLE001
         out["outward_error"] = type(e).__name__
+    try:
+        from agent_friday.services import verify_everything
+        out["artifacts"] = verify_everything.artifact_check()
+    except Exception as e:  # noqa: BLE001
+        out["artifacts_error"] = type(e).__name__
+    try:
+        from agent_friday.services import verify_everything
+        out["unlinked"] = verify_everything.unlinked_outward(window, now=None if now_given is None else now)
+    except Exception as e:  # noqa: BLE001
+        out["unlinked_error"] = type(e).__name__
     try:
         from agent_friday.services import policy_version
         out["policy_version"] = policy_version.current_id()
@@ -149,27 +185,65 @@ def _ok(v: dict) -> bool:
         return False
     s, ch, u, o = v.get("signatures") or {}, v.get("chain") or {}, v.get("unsigned") or {}, \
         v.get("outward") or {}
+    art = (v.get("artifacts") or {}).get("counts") or {}
+    unl = v.get("unlinked") or {}
+    # A file changed or gone since Friday made it is shown, not a failure: the
+    # owner may edit or move their own files. A manifest line whose signature
+    # does not hold, and an outward effect with no decision, are.
     return bool(s.get("ok")) and not ch.get("open_problems") and not u.get("lines") \
         and not (o.get("open") or o.get("duplicate")
-                                            or o.get("duplicate_key") or o.get("false_done"))
+                                            or o.get("duplicate_key") or o.get("false_done")) \
+        and not art.get("bad_lines") and not unl.get("problems")
+
+
+def _fit(parts: list) -> str:
+    """The Doctor's code from (name, value) parts, within CODE_MAX: the policy
+    version is shortened first, then parts whose value is 0 are dropped from
+    the end, then the code is cut."""
+    def join(ps):
+        return ",".join("%s:%s" % (k, val) for k, val in ps)
+    code = join(parts)
+    if len(code) <= CODE_MAX:
+        return code
+    parts = [(k, (str(val)[:8] if k == "pv" else val)) for k, val in parts]
+    code = join(parts)
+    keep = list(parts)
+    for i in range(len(keep) - 1, -1, -1):
+        if len(code) <= CODE_MAX:
+            break
+        if str(keep[i][1]) == "0":
+            del keep[i]
+            code = join(keep)
+    return code[:CODE_MAX]
 
 
 def doctor_check() -> tuple:
     """(state, code) for the Doctor: counts only. broken while the chain has
     a break to review; unverified for an unsigned line, an open or duplicated
-    outward action, or a part that could not be read; else healthy."""
+    outward action, an artifact manifest line whose signature does not hold,
+    an outward effect with no decision receipt, or a part that could not be
+    read; else healthy. The code is kept within CODE_MAX (_fit)."""
     v = integrity()
     s, ch, u, o = v.get("signatures") or {}, v.get("chain") or {}, v.get("unsigned") or {}, \
         v.get("outward") or {}
     a = v.get("activity") or {}
-    code = ("sig_bad:%d,breaks:%d,gaps:%d,unsigned:%d,open:%d,unconfirmed:%d,duplicate:%d,"
-            "duplicate_key:%d,false_done:%d,act:%s/%d/%d/%d,pv:%s") % (
-        s.get("bad", 0), ch.get("breaks", 0), ch.get("gaps", 0),
-        u.get("lines", 0), o.get("open", 0), o.get("unconfirmed", 0),
-        o.get("duplicate", 0), o.get("duplicate_key", 0), o.get("false_done", 0),
-        "err" if "activity_error" in v else _ACT_STATE.get(a.get("state"), "unknown"),
-        a.get("lines") or 0, a.get("legacy_unchained") or 0, a.get("activity_breaks") or 0,
-        (v.get("policy_version") or "none")[:16])
+    art = (v.get("artifacts") or {}).get("counts") or {}
+    unl = v.get("unlinked") or {}
+    code = _fit([
+        ("sig_bad", s.get("bad", 0)), ("breaks", ch.get("breaks", 0)), ("gaps", ch.get("gaps", 0)),
+        ("unsigned", u.get("lines", 0)), ("open", o.get("open", 0)),
+        ("unconfirmed", o.get("unconfirmed", 0)), ("duplicate", o.get("duplicate", 0)),
+        ("duplicate_key", o.get("duplicate_key", 0)), ("false_done", o.get("false_done", 0)),
+        ("act", "%s/%d/%d/%d" % (
+            "err" if "activity_error" in v else _ACT_STATE.get(a.get("state"), "unknown"),
+            a.get("lines") or 0, a.get("legacy_unchained") or 0, a.get("activity_breaks") or 0)),
+        ("art", "err" if "artifacts_error" in v else "%d/%d/%d/%d%s" % (
+            art.get("changed", 0), art.get("missing", 0), art.get("unreadable", 0),
+            art.get("bad_lines", 0), "+" if (v.get("artifacts") or {}).get("partial") else "")),
+        ("unl", "err" if "unlinked_error" in v else "%d/%d" % (
+            unl.get("problems", 0), (unl.get("not_linkable") or {}).get("total", 0))),
+        ("pv", (v.get("policy_version") or "none")[:16]),
+    ])
     if "ledger_error" in v:
         return "unverified", "ledger_unreadable:" + v["ledger_error"]
     if not s.get("ok") or ch.get("open_problems"):
