@@ -77,3 +77,40 @@ def test_the_notice_says_to_reconnect_not_finished(monkeypatch):
             agent.TASKS.pop(tid, None)
     assert said and "reconnect" in said[0].split("\n")[0].lower()
     assert "finished" not in said[0].split("\n")[0].lower()
+
+
+def test_a_call_the_model_recovered_from_is_not_a_reconnect():
+    trace = [{"name": "create_calendar_event", "input": {"account_id": "a1"}, "result": co.NOT_DONE + "x",
+              "needs_owner": [{"kind": "revoked", "service": "Google Calendar"}]},
+             {"name": "create_calendar_event", "input": {"account_id": "a2"}, "result": '{"ok": true}'}]
+    assert agent._evidence_verdict(trace)[2] != "needs_reconnect"
+
+
+def test_a_pending_card_still_says_waiting_for_your_decision():
+    trace = [{"name": "send_email", "input": {}, "result": "[APPROVAL CARD RAISED] waits"},
+             {"name": "create_calendar_event", "input": {}, "result": co.NOT_DONE + "x",
+              "needs_owner": [{"kind": "revoked", "service": "Google Calendar"}]}]
+    assert agent._evidence_verdict(trace)[2] == "waiting_approval"
+
+
+def test_a_workflow_stops_at_a_step_that_needs_a_reconnect(monkeypatch):
+    tid = "task-reconnect-chain"
+    with agent.TASKS_LOCK:
+        agent.TASKS[tid] = {"task_id": tid, "name": "step 1", "status": "needs_reconnect", "log": [],
+                            "chain": "synthetic-chain", "chain_step": 0, "run_id": "run-1"}
+    started = []
+    monkeypatch.setattr(agent, "load_workflow_chain",
+                        lambda name: {"slug": "synthetic-chain", "steps": [{"name": "a"}, {"name": "b"}]})
+    monkeypatch.setattr(agent, "spawn_task", lambda *a, **k: started.append(a) or "t2", raising=False)
+    try:
+        assert agent._advance_task_chain_once(tid, "needs you to reconnect") is None
+    finally:
+        with agent.TASKS_LOCK:
+            agent.TASKS.pop(tid, None)
+    assert started == [], "the next step started after a step that needs a reconnect"
+
+
+def test_a_write_the_account_has_no_permission_for_waits_on_the_owner():
+    with co.call() as notes:
+        co.settle({"error": "Calendar changes are not allowed for this account yet.", "needs_reconnect": True})
+    assert notes and notes[0]["kind"] == "scope"

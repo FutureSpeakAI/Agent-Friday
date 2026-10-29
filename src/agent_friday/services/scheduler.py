@@ -2140,7 +2140,7 @@ def _run_task_inner(rec):
         pass
     timeout = int(rec.get("timeout_seconds", 1800))
     deadline = _time.time() + timeout
-    terminal = {"complete", "completed", "completed_unverified", "failed",
+    terminal = {"needs_reconnect", "complete", "completed", "completed_unverified", "failed",
                 "timeout", "error", "cancelled"}
     while _time.time() < deadline:
         snap = _task_snapshot(tid) or {}

@@ -6088,8 +6088,16 @@ def _evidence_verdict(tool_trace):
         _presence.emit("verify", "once", ok=verified, turn=_presence.current_turn())
     except Exception:
         pass
-    reconnect = [n for t in calls for n in (t.get('needs_owner') or [])]
-    if reconnect:
+    reconnect = []
+    for i, t in enumerate(calls):
+        if not t.get('needs_owner'):
+            continue
+        # the model recovered (another account, a second try that worked): not a reconnect
+        if any(u.get('name') == t.get('name') and _tool_call_status(u.get('result')) == 'ok'
+               and not u.get('needs_owner') for u in calls[i + 1:]):
+            continue
+        reconnect += list(t.get('needs_owner') or [])
+    if reconnect and not waiting:
         # Expired or revoked sign-in, or a missing permission (NS-32.7-1): the work cannot be done
         # until the owner reconnects; never 'complete', and never retried on its own.
         services = ', '.join(dict.fromkeys(str(n.get('service') or 'Google') for n in reconnect))
@@ -7185,7 +7193,7 @@ def _report_workflow_completion(task_id, name, status, result_text):
         # A step waiting on a card holds the run there (the next step starts only once the
         # owner decides), so the owner hears about it now, not when a later step finishes.
         if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout',
-                                                     WAITING_APPROVAL):
+                                                     WAITING_APPROVAL, NEEDS_RECONNECT):
             _task_set(task_id, delivery={'status': 'deferred', 'reason': 'Next workflow step owns delivery.'})
             return
         if (status in ('failed', 'error') and index < len(steps) and not rec.get('settled')
@@ -7216,7 +7224,10 @@ def _report_workflow_completion(task_id, name, status, result_text):
         label = {'completed_unverified': 'finished; output checks are incomplete',
                  'cancelled': 'stopped', 'stopped': 'stopped', 'failed': 'failed', 'timeout': 'timed out',
                  'waiting': 'is waiting for your decision on an approval card',
-                 WAITING_APPROVAL: 'is waiting for your decision on an approval card'}.get(aggregate, 'finished')
+                 WAITING_APPROVAL: 'is waiting for your decision on an approval card',
+                 'needs_reconnect': 'stopped: a connection it needs must be reconnected (Settings > Connections)',
+                 NEEDS_RECONNECT: 'stopped: a connection it needs must be reconnected (Settings > Connections)',
+                 }.get(aggregate, 'finished')
         if status == DECLINED:
             label = 'stopped: you did not approve its card'
         body = str(result_text or '').strip() or '(no output)'
@@ -8246,6 +8257,15 @@ def chain_run_status(name, run_id=None):
     elif statuses & {'waiting', WAITING_APPROVAL, 'waiting_for_approval'}:
         # Held at a step whose card the owner has not decided: waiting on you, not working.
         state = 'waiting'
+    elif NEEDS_RECONNECT in statuses:
+        # Stopped at a step whose connection must be reconnected (NS-32.7-1).
+        state = 'needs_reconnect'
+        for x, row in zip(out_steps, selected):
+            if x['status'] == NEEDS_RECONNECT:
+                x['reason'] = (row.get('blocker') or {}).get('text') or 'a connection it needs must be reconnected'
+            elif x['status'] == 'pending':
+                x['status'] = 'skipped'
+                x['reason'] = 'an earlier step needs a connection reconnected, so this step did not run'
     elif DECLINED in statuses:
         state = 'stopped'
         stop = None
@@ -8621,6 +8641,9 @@ def _advance_task_chain_once(task_id, result_text):
         _chain_sync(task_id)
         return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
+        return None
+    if t.get('status') == NEEDS_RECONNECT:
+        _task_log(task_id, 'A connection this step needs must be reconnected: the next step did not start.')
         return None
     if t.get('status') in (WAITING_APPROVAL, DECLINED) or (t.get('settled') and t.get('status') == 'failed'):
         # The step raised a card: what follows may depend on it, so the next step does not
