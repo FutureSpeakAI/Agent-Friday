@@ -22773,7 +22773,7 @@ function TasksInboxPanel() {
 function permissionDiffText(df){
   const adds=(df.adds||[]).map(a=>'+ '+a.what);
   return 'This asks Google for:\n'+(adds.length?adds.join('\n'):'nothing new (already allowed)')
-    +((df.lets_friday||[]).length?'\n\nIt lets Friday: '+df.lets_friday.join(', ')+'.':'')
+    +((df.lets_friday||[]).length?'\n\nIt lets '+fridayName()+': '+df.lets_friday.join(', ')+'.':'')
     +'\n\n'+(df.still||[]).join(' ')+'\n\nEverything else stays as it is. Continue to Google?';
 }
 async function fetchPermissionDiff(accountId,caps){
