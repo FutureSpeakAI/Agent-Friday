@@ -5420,6 +5420,24 @@ def _task_log(task_id, line):
     _journal_state(task_id)
 
 
+#: task id -> the effects a stopped run had already taken (cancel_effects), for
+#: its notice; written once when the run is marked cancelled.
+_CANCEL_EFFECTS: dict = {}
+
+
+def _cancel_effects_for(task_id, started):
+    """What run `task_id` had already done when it was stopped, kept for its
+    notice. Never raises: a record that cannot be read is named as unknown."""
+    try:
+        from agent_friday.services import cancel_effects as _ce
+        eff = _ce.effects_taken(task_id, since=started)
+    except Exception as e:  # noqa: BLE001
+        eff = {"outward": [], "may_have_acted": [], "files_written": [], "cards": 0,
+               "unknown": ["the run's record (%s)" % type(e).__name__]}
+    _CANCEL_EFFECTS[task_id] = eff
+    return eff
+
+
 def _task_set(task_id, **fields):
     with TASKS_LOCK:
         t = TASKS.get(task_id)
@@ -5495,8 +5513,11 @@ def _task_set(task_id, **fields):
                 tj.append(task_id, "started", model=snap.get('model'),
                           seat=snap.get('seat'), provider=snap.get('provider'))
             elif new_status == 'cancelled':
+                # NS-32.22-1: the halt says what the run had already done.
+                _eff = _cancel_effects_for(task_id, snap.get('started'))
                 tj.append(task_id, "halt", cause="cancelled",
-                          detail=str(snap.get('result') or '')[:300])
+                          detail=str(snap.get('result') or '')[:300],
+                          effects=_eff)
             elif _is_terminal_status(new_status):
                 tj.append(task_id, "ended", status=new_status,
                           result=str(snap.get('result') or ''),
@@ -7224,6 +7245,17 @@ def _report_task_completion(task_id, name, status, result_text):
     body = (result_text or '').strip()
     ok = status not in ('failed', 'error')
     waiting = status == WAITING_APPROVAL
+    stopped = status == 'cancelled'
+    if stopped:
+        # A stopped run is not "finished", and it says what it already did.
+        try:
+            from agent_friday.services import cancel_effects as _ce
+            _eff = _CANCEL_EFFECTS.get(task_id)
+            if _eff is None:
+                _eff = _cancel_effects_for(task_id, (rec or {}).get('started'))
+            body = (_ce.summary(_eff) + ("\n\n" + body if body else "")).strip()
+        except Exception:
+            pass
     cid = None
     try:
         cid = _task_conversation_id(task_id)
@@ -7233,6 +7265,7 @@ def _report_task_completion(task_id, name, status, result_text):
     # in the chat line, the panel card and the spoken notice alike.
     said = ('is waiting for your decision on an approval card (Approvals, in the System '
             'workspace); nothing it asked for has run yet' if waiting
+            else 'was stopped at your request' if stopped
             else 'finished' if ok else 'FAILED')
     text = (f"Background task \"{name}\" {said}.\n\n"
             f"{body or '(no output)'}")
@@ -7246,8 +7279,10 @@ def _report_task_completion(task_id, name, status, result_text):
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
         notifications_engine.push(
             title=(f"Task needs your decision: {name}" if waiting
+                   else f"Task stopped: {name}" if stopped
                    else f"Task {'finished' if ok else 'failed'}: {name}"),
             body=lede or ('Waiting for your decision.' if waiting
+                          else 'Stopped.' if stopped
                           else 'Finished with no output.' if ok else 'Failed.'),
             emitter='E02', dedupe_key=f'task-done:{task_id}',
             target={"kind": "task", "id": task_id},

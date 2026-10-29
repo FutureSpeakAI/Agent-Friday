@@ -1059,7 +1059,10 @@ def digest(task_id: str, n: int = 20, include_reasoning: bool = False) -> Option
         "checkpoints": [{"seq": c.get("seq"), "ts": c.get("ts"), "iteration": c.get("iteration"),
                          "summary": c.get("summary")} for c in checkpoints],
         "halts": [{"seq": h.get("seq"), "cause": h.get("cause"), "detail": h.get("detail"),
-                   "resume_hint": h.get("resume_hint")} for h in halts],
+                   "resume_hint": h.get("resume_hint"),
+                   # a stopped run: what it had already done (services/cancel_effects)
+                   **({"effects": h["effects"]} if isinstance(h.get("effects"), dict) else {})}
+                  for h in halts],
         "journal_last_seq": (events[-1]["seq"] if events else 0),
         "unrecorded": bool(st.get("unrecorded")),
     }
