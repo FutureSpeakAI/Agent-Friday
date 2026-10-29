@@ -79,7 +79,12 @@ def test_one_event_still_waits_for_a_card_because_it_reaches_google(world):
 def test_the_yes_moves_each_event_by_the_same_amount_keeping_its_length(world):
     state, calls = world
     _org(events=["e1", "e3"], days=1, minutes=-30)
-    ap.decide_with_outcome(_pending()[0]["approval_id"], "approve", decided_by="owner")
+    card_id = _pending()[0]["approval_id"]
+    ap.decide_with_outcome(card_id, "approve", decided_by="owner")
+    # the yes runs the batch on a background thread: wait for its receipt, so the run is over
+    # before this test's checks, and before the next test's fixtures swap the stores under it
+    ran = ia.wait_for(card_id, 10)
+    assert ran and ran["status"] == "complete", ran
     assert state["e1"]["start"].startswith("2026-10-07T13:30:00") and state["e1"]["end"].startswith("2026-10-07T14:30:00")
     assert state["e3"]["start"].startswith("2026-10-08T08:30:00") and state["e3"]["end"].startswith("2026-10-08T08:45:00")
     assert {c[0] for c in calls} == {"e1", "e3"}
@@ -94,7 +99,10 @@ def test_a_day_forward_across_a_clock_change_keeps_the_wall_clock_time():
 def test_undo_puts_each_event_back_at_its_old_time(world):
     state, calls = world
     _org(events=["e1", "e2"], days=3)
-    ap.decide_with_outcome(_pending()[0]["approval_id"], "approve", decided_by="owner")
+    move_id = _pending()[0]["approval_id"]
+    ap.decide_with_outcome(move_id, "approve", decided_by="owner")
+    moved = ia.wait_for(move_id, 10)      # the move runs on a background thread; its receipt is what Undo reads
+    assert moved and moved["status"] == "complete", moved
     assert state["e1"]["start"] != EVENTS["e1"]["start"]
     rec = journal.latest(None)
     res = ia.undo(rec["receipt_id"])
