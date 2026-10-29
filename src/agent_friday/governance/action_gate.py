@@ -1654,8 +1654,12 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         if rec is None:
             rec = _ap.find_for_subject("external_action", subject, "governed_action")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
-            _ap.mark_used(rec["approval_id"], requested_by)
-            v = Verdict("allow", OUTWARD, "approved on a card")
+            # spent here and now, by exactly one caller: two at once cannot both run on it
+            if _ap.spend_once(rec["approval_id"], requested_by):
+                v = Verdict("allow", OUTWARD, "approved on a card")
+            else:
+                v = Verdict("deny", OUTWARD, "that card's one approval was already used by "
+                                             "another call at the same moment; nothing was done twice")
         elif rec and rec.get("status") in ("denied", "blocked"):
             v = Verdict("deny", OUTWARD, "declined on a card")
         else:
