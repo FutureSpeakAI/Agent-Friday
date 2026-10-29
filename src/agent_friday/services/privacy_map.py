@@ -161,6 +161,23 @@ def _ret_laya() -> str:
         return "I couldn't tell how long it is kept."
 
 
+def _ret_receipts() -> str:
+    """The receipts row: the action ledger (activity rows included, A9) is
+    never cut; past the owner's period its old files move to the encrypted
+    archive (ledger_archive_after_days; 0 keeps them all live)."""
+    base = "Kept until you delete them, so the record stays whole. "
+    tail = " The list of what went into each send keeps its newest 40 MB or so."
+    try:
+        from agent_friday.services import action_ledger
+        days = action_ledger.archive_after_days()
+    except Exception:
+        return base + "I couldn't tell when old entries move to the archive." + tail
+    if not days:
+        return base + "Nothing is archived: every entry stays in the live record." + tail
+    return (base + f"Entries older than {days} days move to an encrypted archive on this PC, "
+            "never deleted." + tail)
+
+
 def _ret_rotates(mb: int) -> str:
     return f"Kept until it reaches about {mb} MB; then the oldest part is set aside."
 
@@ -454,15 +471,14 @@ def _stores() -> List[dict]:
          "controls": [_EXPORT_ALL, _ERASE_ALL]},
         {"key": "receipts", "name": "Receipts and audit logs",
          "holds": "Signed records of approvals, actions, sends and what left this PC.",
-         "paths": ["actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl", "mail_outbox",
+         "paths": ["ledger", "actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl", "mail_outbox",
                    "activity_ledger.jsonl", "vault/egress-log.jsonl", "vault/context-manifests.jsonl",
                    "vault/access-log.jsonl",
                    "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl",
                    # which Idempotency-Keys were already handled (keyed digests only, 24 hours)
                    "idempotency_keys.json"],
          "enc": _enc("no", "Readable on this disk; each is signed or chained so a change shows."),
-         "ret": lambda: ("Kept until you delete them, so the record stays whole. The activity record rotates at "
-                         "about 20 MB; the list of what went into each send keeps its newest 40 MB or so."),
+         "ret": _ret_receipts,
          "controls": [_ctl("settings", "Friday's changes", "Every action with its receipt and undo.",
                            nav={"workspace": "system"}), _EXPORT_ALL]},
         {"key": "sent_text", "name": "The full text of what was sent",

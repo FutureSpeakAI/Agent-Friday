@@ -34,6 +34,7 @@
   <div id="state" class="state" role="status">Checking…</div>
   <p class="muted" id="arch"></p>
   <p id="integrity" role="status"></p>
+  <p id="activity-record" role="status"></p>
   <p id="audit" role="status"></p>
   <button type="button" id="verify">Check every entry now</button>
   <a class="btn" id="exp-report" href="/api/ledger/export?format=report">Save the verification report</a>
@@ -202,7 +203,25 @@
         + (u.lines || 0) + ' unsigned line(s); outward actions: ' + (o.open || 0) + ' open, '
         + (o.unconfirmed || 0) + ' unconfirmed, ' + (o.duplicate || 0) + ' with two final receipts, '
         + (o.duplicate_key || 0) + ' run twice; policy version ' + (v.policy_version || 'unknown') + '.';
+      activityRecord(v);
     });
+  }
+  // The activity record's history (activity_ledger.verify_chain): every row kept,
+  // chained across segments; older rows archived, never deleted. Counts only.
+  function activityRecord(v) {
+    const p = $('activity-record');
+    const a = v.activity;
+    if (!a) { p.className = 'muted'; p.textContent = 'Activity record: could not be checked.'; return; }
+    const fb = a.first_break;
+    p.className = a.state === 'broken' ? 'bad' : (a.state === 'intact' || a.state === 'before_chaining' ? 'ok' : 'muted');
+    p.textContent = 'Activity record: ' + (a.lines || 0) + ' entr' + (a.lines === 1 ? 'y' : 'ies') + ' in '
+      + (a.activity_segments || 0) + ' file(s), ' + (a.chained || 0) + ' chained'
+      + (a.legacy_unchained ? ', ' + a.legacy_unchained + ' from before chaining (brought in, not tampered with)' : '')
+      + (a.legacy_file_waiting ? ', an older activity file still waiting to be brought in' : '')
+      + (a.archived_notes ? ', ' + (a.archived_segments || 0) + ' older ledger file(s) moved to the encrypted archive, each noted in the chain' : '')
+      + '; ' + (a.activity_breaks || 0) + ' break(s) on activity entries'
+      + (fb ? ', first at ' + fb.segment + ' line ' + fb.line + (fb.seq != null ? ' (record ' + fb.seq + ')' : '') + ': ' + fb.reason : '')
+      + (a.partial ? '. Only the newest part was checked.' : '.');
   }
   $('f').addEventListener('submit', ev => { ev.preventDefault(); lastSeq = null; load(false); });
   $('more').addEventListener('click', () => load(true));
