@@ -96,8 +96,7 @@ def verify_claws() -> tuple:
     try:
         with _LOCK:
             if not pin.exists():
-                pin.write_text(json.dumps({"claws_hmac": mac, "pinned_at": time.time()}),
-                               encoding="utf-8")
+                pin.write_text(json.dumps(_pin_doc(mac)), encoding="utf-8")
                 return True, "pinned on first use"
             want = json.loads(pin.read_text(encoding="utf-8")).get("claws_hmac")
     except Exception as e:
@@ -107,11 +106,19 @@ def verify_claws() -> tuple:
     return True, "intact"
 
 
+def _pin_doc(mac: str) -> dict:
+    """The pin: the signature, when, and the rules text it signs. The text is kept so a
+    later release that changes the rules can show the owner what changed before she
+    re-confirms them (north star §13.2, NS-13.2-10); the signature covers it, so a kept
+    text that was edited on disk no longer verifies and is not shown as hers."""
+    from agent_friday.governance.proof_of_integrity import CLAWS_TEXT
+    return {"claws_hmac": mac, "pinned_at": time.time(), "claws_text": CLAWS_TEXT}
+
+
 def repin_claws() -> str:
     """Owner action after an intended cLaws or key change."""
     mac = claws_hmac()
-    (_gov_dir() / "claws.pin.json").write_text(
-        json.dumps({"claws_hmac": mac, "pinned_at": time.time()}), encoding="utf-8")
+    (_gov_dir() / "claws.pin.json").write_text(json.dumps(_pin_doc(mac)), encoding="utf-8")
     return mac
 
 
