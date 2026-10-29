@@ -64,6 +64,18 @@ def _safe(fn):
     return wrapped
 
 
+def _receipted(domain: str, item_id: str) -> bool:
+    """Whether a recent receipt already records making this item (F3: a repeated create)."""
+    try:
+        for r in _journal().recent(200):
+            if r.get("domain") == domain and r.get("action") == "create" and any(
+                    (i or {}).get("id") == item_id for i in r.get("items") or []):
+                return True
+    except Exception:  # noqa: BLE001 - then the repeat gets its own receipt; Undo still works once
+        return False
+    return False
+
+
 def _sealed(fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The item's own words for Undo, sealed (services/undo_store): the row keeps a token and the
     field names, never the values. None when they cannot be kept encrypted: then no Undo."""
@@ -188,6 +200,8 @@ def changed_words(changed: List[str]) -> str:
 def calendar_created(res: dict, *, conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("ok") and res.get("id")):
         return None
+    if res.get("already_made") and _receipted("calendar", res["id"]):
+        return None                     # a repeat of a create already receipted (F3)
     tok = seal_title(res.get("title"))
     return _record("create_calendar_event", "create", "calendar",
                    items=[dict({"id": res["id"], "start": res.get("start")}, **_ts(tok))],
@@ -304,6 +318,8 @@ def _undo_calendar_row(cw, r: dict) -> bool:
 def task_created(res: dict, *, tasklist_id: str, conversation_id: Optional[str] = None) -> Optional[dict]:
     if not (isinstance(res, dict) and res.get("id") and not res.get("error")):
         return None
+    if res.get("already_made") and _receipted("tasks", res["id"]):
+        return None                     # a repeat of a create already receipted (F3)
     tok = seal_title(res.get("title"))
     return _record("create_task", "create", "tasks",
                    items=[dict({"id": res["id"]}, **_ts(tok))],
