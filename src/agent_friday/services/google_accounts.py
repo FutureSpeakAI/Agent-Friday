@@ -1095,7 +1095,7 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None,
         for m in _gmail_for_creds(creds, limit_per_account, days=days, query=query):
             if m.get("more_available"):
                 incomplete.append({"account_id": aid, "label": rec.get("label"),
-                                   "estimate": m.get("estimate") or 0,
+                                   "estimated_total": m.get("estimate") or 0,
                                    "why": "this account has more matching mail than was read"})
                 continue
             if "error" in m:
@@ -1198,7 +1198,8 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
             out.append({"error": "%d of %d messages could not be read: %s"
                                  % (len(failed), len(ids), failed[0].get("message")),
                         "error_kind": "rate_limited" if "rate_limited" in kinds else failed[0].get("kind", "other"),
-                        "partial": True})
+                        # partial only when some mail WAS read; none read is a failed search
+                        "partial": any("gmail_id" in m for m in out)})
         return out
     except gmail_api.GmailError as e:
         return out + [{"error": e.message, "error_kind": e.kind, "partial": bool(out)}]
@@ -1488,6 +1489,8 @@ def _tasks_for_creds(creds, max_results: int) -> list:
                 break
         out = []
         for tl in lists:
+            if len(out) > max_results:
+                break        # enough read: the marker below says there is more (no further calls)
             if _inbox_fenced(None, tl.get("id")):
                 continue
             items, ttoken = [], None
