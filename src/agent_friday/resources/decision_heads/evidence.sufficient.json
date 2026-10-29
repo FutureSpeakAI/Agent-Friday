@@ -1,0 +1,14 @@
+{
+  "id": "evidence.sufficient",
+  "version": 1,
+  "preset": "evidence.sufficient",
+  "question_type": "choice",
+  "labels": ["sufficient", "search_more", "unsure"],
+  "direction": "add_only",
+  "scorer": "series_one",
+  "thresholds": {"act": 0.99, "abstain": 0.32},
+  "budget_ms": 500,
+  "calibration": {"platt": [7.517279, -4.760621], "fitted_on": "ftv/decision_eval E1 2026-10-28_0151, a_rule"},
+  "mode_default": "shadow",
+  "about": "From the best passage's P(holds): below 0.32 search_more (on the bench 96% of such items were not fully answered, 77% on reworded twins; ECE 0.18, measured over all items); act 0.99 is out of reach for this scorer (its highest possible P is about 0.94) because no Series One threshold reached even 80% precision for sufficient (near misses score high), so sufficient is never said; between, unsure. Fitted on Library-style passages, applied to recalled conversation turns: refit from shadow receipts before any act. Add only: in act mode it could only add a retrieval step or an I-could-not-find line."
+}
