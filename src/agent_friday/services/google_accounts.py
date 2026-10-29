@@ -1571,6 +1571,27 @@ def _gate_task_text(body: dict) -> tuple[dict, str]:
     return out, ""
 
 
+def read_task(account_id: str, tasklist_id: str, task_id: str) -> dict | None:
+    """One task as it is now ({title, notes, due, status}), for Undo to set back or make again
+    (services/change_receipts). None when it cannot be read; a write never depends on it."""
+    if not (account_id and tasklist_id and task_id):
+        return None
+    try:
+        creds = credentials_for(account_id)
+        if not creds:
+            return None
+        from googleapiclient.discovery import build
+        svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
+        t = svc.tasks().get(tasklist=tasklist_id, task=task_id).execute()
+    except Exception as e:  # noqa: BLE001 - Undo is then unavailable, said in the receipt
+        _log.info("task could not be read before a change: %s", type(e).__name__)
+        return None
+    if not isinstance(t, dict) or not t.get("id"):
+        return None
+    return {"title": t.get("title") or "", "notes": t.get("notes") or "", "due": t.get("due") or "",
+            "status": t.get("status") or "needsAction"}
+
+
 def _no_task_credentials(account_id: str) -> dict:
     """The account produced no credentials before a Tasks change: nothing was sent. `error` keeps
     its code ("needs_reauth", or "unreachable" when the refresh never got an answer) and
@@ -1618,8 +1639,11 @@ def complete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
 
 def update_task(account_id: str, tasklist_id: str, task_id: str, *,
                 title: str | None = None, notes: str | None = None,
-                due: str | None = None, status: str | None = None) -> dict:
-    """Patch one task's fields, in the one account/tasklist named."""
+                due: str | None = None, status: str | None = None,
+                clear_due: bool = False) -> dict:
+    """Patch one task's fields, in the one account/tasklist named. `clear_due` removes the due
+    date (Google wants null, not ""); reopening a task (status needsAction) clears its
+    completed time the same way."""
     if not task_id:
         return {"error": "task_id is required."}
     body = {}
@@ -1631,6 +1655,10 @@ def update_task(account_id: str, tasklist_id: str, task_id: str, *,
         body["due"] = due
     if status is not None:
         body["status"] = status
+        if status == "needsAction":
+            body["completed"] = None
+    if clear_due:
+        body["due"] = None
     if not body:
         return {"error": "No fields to update (title/notes/due/status all empty)."}
     return _one_task_write(account_id, tasklist_id, task_id, body)

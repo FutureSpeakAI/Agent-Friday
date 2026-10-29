@@ -102,7 +102,7 @@ def _held_by_the_gate(action, target, nothing_done):
     try:
         _gate.record_external(action, surface="calendar_workspace", target=str(target or "")[:300])
     except _gate.Held as e:
-        print(f"  [calendar] {action} on {target} held by the action gate: {type(e).__name__}")
+        print(f"  [calendar] {action} held by the action gate: {type(e).__name__}")
         return jsonify({"status": "error", "held": True,
                         "message": nothing_done + ": the action checkpoint held this change "
                                                   "(its integrity check or signed receipt failed), "
@@ -618,7 +618,8 @@ def api_calendar_create_event():
         aid, cid = _calendar_of(data.get("calendar_key"))
         if cid is None:
             return jsonify({"status": "error", "message": "choose a calendar from the list"}), 400
-        held = _held_by_the_gate("calendar:create_event", "%s|%s %s" % (aid or "", cid, title), "Nothing was added")
+        # the signed receipt names the calendar, never the event's title (kept sealed, 2026-10-24)
+        held = _held_by_the_gate("calendar:create_event", "%s|%s" % (aid or "", cid), "Nothing was added")
         if held:
             return held
         out = cw.create_event(title=title, start=sdt.astimezone().isoformat(),
