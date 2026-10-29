@@ -630,7 +630,9 @@ def test_an_approved_batch_killed_mid_run_is_not_run_again(tmp_path, boot, monke
     assert boot.batches == [marks[0]["run_id"]]
     assert marks[0]["decision_ref"]["action_id"] == d["action_id"] and marks[0]["count"] == 2
     card = approvals.get_approval(aid)
-    assert card["outcome"] == "unknown" and card["consumed"] and not card.get("used_at")
+    # the checkpoint burned the card when it allowed the batch (used_at); the batch itself
+    # never recorded its end (it is never named the card's user)
+    assert card["outcome"] == "unknown" and card["consumed"] and card.get("used_by") != ia.END_ACTOR
     told = [p for p in boot.pushed if p.get("kind") == "approval_outcome_unknown"]
     assert len(told) == 1                                       # the owner is told once
     assert "2 conversations" in told[0]["body"] and "may have" in told[0]["body"]
