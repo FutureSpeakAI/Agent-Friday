@@ -72,7 +72,9 @@ def strip_jpeg_segments(data: bytes) -> bytes | None:
     n = len(data)
     while i < n:
         if i + 1 >= n or data[i] != 0xFF:
-            return None if not out[2:] else bytes(out)
+            # Bytes that are not a marker: keep what was read, never what follows
+            # (a file that breaks off this way is no picture to anyone).
+            return bytes(out)
         marker = data[i + 1]
         if marker == 0xFF:                      # fill byte
             i += 1

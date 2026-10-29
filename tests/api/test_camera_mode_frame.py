@@ -161,18 +161,21 @@ def test_a_frame_is_described_once_in_the_cloud_and_the_turn_says_so(
 
     d = _stream(client, cid, "what am I holding?", image=FRAME_B64)
 
-    # Exactly one vision call, carrying the frame's own bytes as a JPEG.
+    # Exactly one vision call, carrying the frame as a JPEG, its metadata
+    # removed first (services/image_egress).
+    from agent_friday.services.image_egress import strip_metadata
+    sent = strip_metadata(FRAME_BYTES)[0]
     assert len(genai_spy) == 1, "expected one Gemini vision call, got %d" % len(genai_spy)
     parts = [p for p in genai_spy[0]["contents"] if isinstance(p, dict) and p.get("part")]
     assert len(parts) == 1, "the vision call carried %d image parts" % len(parts)
-    assert parts[0]["data"] == FRAME_BYTES
+    assert parts[0]["data"] == sent
     assert parts[0]["mime_type"] == "image/jpeg"
     # Cloud-only mode never asks the local seat.
     assert local_describer["calls"] == 0
-    # The send is in the egress ledger with its size.
+    # The send is in the egress ledger with the size that left.
     assert [r for r in ledger if r["kind"] == "vision_image"] == [
         {"provider": "gemini", "kind": "vision_image", "action": "allow",
-         "byte_len": len(FRAME_BYTES)}]
+         "byte_len": len(sent)}]
     # And disclosed in the turn, naming the camera frame and Google.
     assert _vision_kinds(d) == ["vision_cloud"]
     text = d["vision_events"][0]["text"]

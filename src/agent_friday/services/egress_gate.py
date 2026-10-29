@@ -1615,11 +1615,14 @@ def _note_image_block(block, provider: str, field: str,
     a send this gate cannot classify: it still gets its own UNCLASSIFIABLE
     ledger row. Never raises."""
     kind = block.get("type") if isinstance(block, dict) else None
-    if kind not in _IMAGE_PART_TYPES and kind not in _BINARY_PART_TYPES:
+    if kind in _IMAGE_PART_TYPES:
+        reason = "image block in a cloud payload; a text classifier cannot judge it"
+    elif kind in _BINARY_PART_TYPES:
+        reason = "file or audio block in a cloud payload; a text classifier cannot judge it"
+    else:
         return
     try:
-        record_binary_egress(provider, field, action="allow",
-                             reason="%s block in a cloud payload; a text classifier cannot judge it" % kind,
+        record_binary_egress(provider, field, action="allow", reason=reason,
                              byte_len=_image_block_bytes(block), log_path=log_path)
     except Exception:
         pass
