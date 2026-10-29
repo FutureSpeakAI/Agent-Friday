@@ -74,7 +74,7 @@ jobs:
           if-no-files-found: error
 
   dependency-review:
-    if: ${{ inputs.called != true && github.event_name == 'pull_request' }}
+    if: ${{ inputs.called != true && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

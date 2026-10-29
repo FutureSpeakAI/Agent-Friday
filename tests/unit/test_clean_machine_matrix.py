@@ -96,7 +96,10 @@ def test_only_a_beta_tag_records_without_failing(gate, ref, records_only):
 
 def test_called_by_the_release_it_tests_the_release_build_not_its_own():
     wf = _workflow()
-    assert wf["jobs"]["build"]["if"] == "${{ inputs.called != true }}"
+    # (and a red-evidence PR, which runs only its changed tests, builds nothing)
+    assert wf["jobs"]["build"]["if"] == (
+        "${{ inputs.called != true && !(github.event_name == 'pull_request' && "
+        "contains(github.event.pull_request.labels.*.name, 'red-evidence')) }}")
     assert "needs.build.result == 'skipped'" in wf["jobs"]["leg"]["if"]
 
 
@@ -154,7 +157,11 @@ def test_the_locale_leg_is_not_english():
 
 def test_the_evidence_job_reads_every_leg_even_when_one_failed():   # §34.3-8
     job = _workflow()["jobs"]["evidence"]
-    assert "leg" in job["needs"] and job["if"] == "${{ always() }}"
+    # always(): a failed leg is still read. The only other condition is the
+    # red-evidence skip (a red-evidence PR runs only its changed tests).
+    assert "leg" in job["needs"] and job["if"] == (
+        "${{ always() && !(github.event_name == 'pull_request' && "
+        "contains(github.event.pull_request.labels.*.name, 'red-evidence')) }}")
     run = " ".join(s.get("run", "") for s in job["steps"])
     assert "scripts/clean_machine_evidence.py" in run and "--installer-sha256" in run
 

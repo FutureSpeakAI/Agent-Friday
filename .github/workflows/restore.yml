@@ -34,8 +34,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A red-evidence PR runs only its changed tests (tests.yml); none of these.
   make-bundle:
     name: machine A (windows) seeds and makes a bundle
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -64,6 +66,7 @@ jobs:
 
   first-backup:
     name: the first backup on a freshly set up Friday (34.4-9)
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -85,6 +88,7 @@ jobs:
 
   restore-windows:
     name: machine B (a different windows runner) restores it
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     needs: make-bundle
     runs-on: windows-latest
     timeout-minutes: 30
@@ -129,6 +133,7 @@ jobs:
 
   restore-ubuntu:
     name: machine C (ubuntu) restores the windows bundle
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     needs: make-bundle
     runs-on: ubuntu-latest
     timeout-minutes: 30
