@@ -1525,6 +1525,12 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
         result = _find_just_made(svc, tasklist_id, body) or result
     if not _co.confirmed(result):
         return {"error": _co.not_done("unconfirmed", "Google Tasks"), "unconfirmed": True}
+    # Read it back from Google (NS-4.6-1): there, with what was asked of it.
+    _want = {k: body[k] for k in ("title", "status") if k in (body or {})}
+    _co.reread("task", result.get("id"),
+               lambda: svc.tasks().get(tasklist=tasklist_id, task=result["id"]).execute(),
+               lambda r: isinstance(r, dict) and r.get("id") == result.get("id") and not r.get("deleted")
+               and all(r.get(k) == v for k, v in _want.items()))
     return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
             "status": result.get("status", "needsAction"), "due": result.get("due", "")}
 

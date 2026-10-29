@@ -6047,6 +6047,12 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 pass
 
 
+#: Changes at a connected service that are read back after they are made (NS-4.6-1: calendar
+#: events, tasks, contacts). A task that made one is verified only when it was found there.
+REREAD_TOOLS = frozenset({"create_calendar_event", "update_calendar_event", "delete_calendar_event",
+                          "create_task", "update_task", "complete_task", "save_google_contact"})
+
+
 def _evidence_verdict(tool_trace):
     """The evidence gate: a task is verified only when it used a tool other
     than spawning another task AND that tool actually ran. A call that raised
@@ -6064,13 +6070,19 @@ def _evidence_verdict(tool_trace):
     calls = [t for t in (tool_trace or []) if t.get('name') not in ('spawn_task',)]
     evidence = [t for t in calls if _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
     waiting = [t for t in calls if _tool_call_status(t.get('result')) == 'pending']
-    verified = len(evidence) > 0 and not waiting
+    # A change at a connected service that can be read back (NS-4.6-1) is evidence only once it
+    # was: the service's own reply naming an id is not proof the change is there.
+    unread = [t for t in evidence if t.get('name') in REREAD_TOOLS and not t.get('verified')]
+    verified = len(evidence) > 0 and not waiting and not unread
     if waiting:
         summary = 'waiting for your decision on: ' + ', '.join(
             dict.fromkeys(str(t.get('name') or '?') for t in waiting[:10]))
     else:
         summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
                    if evidence else 'no tools used')
+        if unread:
+            summary += '; not read back from the service: ' + ', '.join(
+                dict.fromkeys(str(t.get('name') or '?') for t in unread[:10]))
     try:
         from agent_friday.services import presence as _presence
         _presence.emit("verify", "once", ok=verified, turn=_presence.current_turn())
@@ -13856,6 +13868,17 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import connector_outcome as _conn_outcome
+
+#: What the last tool call re-read at its source and found (NS-4.6-1), for the loop to put on the
+#: call's trace entry. Set only when the call succeeded; taken (and cleared) by the loop.
+import contextvars as _cv_verified
+_LAST_VERIFIED = _cv_verified.ContextVar("friday_last_tool_verified", default=None)
+
+
+def _take_verified():
+    got = _LAST_VERIFIED.get()
+    _LAST_VERIFIED.set(None)
+    return list(got or [])
 from agent_friday.services import change_receipts as _change_receipts
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
@@ -14452,6 +14475,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     else:
         _receipts.record(name, ok=True)
         _outcome("ok", "")
+        _LAST_VERIFIED.set(list(getattr(_not_done, "verified", None) or []))
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
@@ -17676,6 +17700,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     from agent_friday.privacy.public_query import for_tool_call as _pq_call
                     with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
                                   str(kwargs.get("model") or model or ""), _pq_name, tu.input):
+                        _LAST_VERIFIED.set(None)
                         result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
@@ -17706,7 +17731,8 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     tool_results.append(img_block)
                     continue
 
-                tool_trace.append({"name": tu.name, "input": tu.input, "result": clip(result, 2000)})
+                tool_trace.append({"name": tu.name, "input": tu.input, "result": clip(result, 2000),
+                                   **({"verified": _v} if (_v := _take_verified()) else {})})
                 _bmon_log(tu.name, tu.input, result)
                 tool_results.append({
                     "type": "tool_result",
@@ -18568,6 +18594,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                       else _ctxlib.nullcontext()), \
                         _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
                                  model or "", _pq_name, targs):
+                    _LAST_VERIFIED.set(None)
                     result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                            session_ctx=_zt_ctx)
             finally:
@@ -18594,7 +18621,8 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                 "cannot see images, so the document is NOT "
                                 "visually verified \u2014 say so rather than "
                                 "claiming it looks right]")
-            tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000)})
+            tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000),
+                               **({"verified": _v} if (_v := _take_verified()) else {})})
             # A local seat re-reads every result on every later round inside a
             # small window, so it gets the result without formatting
             # boilerplate; the data is unchanged and the trace keeps the

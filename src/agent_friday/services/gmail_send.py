@@ -806,12 +806,27 @@ def send(approval_id: str) -> dict:
                           detail="Gmail refused the message: %s" % str(e)[:300])
 
     _record_egress(payload, raw, "sent")
+    # Read it back (NS-4.6-1): the message is in the account's Sent mail, not only "accepted".
+    verified = False
+    if (sent or {}).get("id"):
+        try:
+            got = svc.users().messages().get(userId="me", id=sent["id"], format="minimal").execute()
+            verified = "SENT" in ((got or {}).get("labelIds") or [])
+        except Exception as e:  # noqa: BLE001 - the send happened; only the check is missing
+            _log.info("sent message not read back: %s", type(e).__name__)
+    if verified:
+        try:
+            from agent_friday.services import connector_outcome as _co
+            _co.verified("mail", sent["id"])
+        except Exception:
+            pass
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),
-                                              "thread_id": sent.get("threadId")})
-    _outbox_record(appr, ok=True, message_id=sent.get("id"))
+                                              "thread_id": sent.get("threadId"),
+                                              "verified": verified})
+    _outbox_record(appr, ok=True, message_id=sent.get("id"), verified=verified)
     _log.info("sent message %s via approval %s", sent.get("id"), approval_id)
     return {"ok": True, "message_id": sent.get("id"),
-            "thread_id": sent.get("threadId"),
+            "thread_id": sent.get("threadId"), "verified": verified,
             "to": payload.get("to"), "approval_id": approval_id}
 
 
@@ -1401,11 +1416,13 @@ def _outbox_path():
 
 
 def _outbox_record(appr: dict, *, ok: bool, message_id: str | None = None,
-                   error: str | None = None, unconfirmed: bool = False) -> None:
+                   error: str | None = None, unconfirmed: bool = False,
+                   verified: bool | None = None) -> None:
     import time
     payload = appr.get("payload") or {}
     row = {"at": time.time(), "ok": bool(ok),
            **({"unconfirmed": True} if unconfirmed else {}),
+           **({"verified": bool(verified)} if verified is not None else {}),
            "approval_id": appr.get("approval_id"),
            "from": payload.get("from_email"),
            "to": payload.get("to"), "cc": payload.get("cc"),
