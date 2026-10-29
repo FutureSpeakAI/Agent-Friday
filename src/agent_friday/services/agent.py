@@ -3102,10 +3102,14 @@ def _tool_run_command(inp):
     # fenced at Low integrity because it may change what the owner approved it to change.
     # If the sandbox cannot be set up the command is NOT run: there is no unsandboxed fallback.
     from agent_friday.governance.action_gate import INTERNAL as _INTERNAL
+    from agent_friday.governance.action_gate import harden_read_only_git as _harden_git
     from agent_friday.services import code_sandbox as _sbx
+    _read_only = classify_command(cmd)[0] == _INTERNAL
+    if _read_only:
+        # a read-only git stage must not run what the repository's config names
+        cmd = _harden_git(cmd)
     try:
-        res = _sbx.run_shell(cmd, read_only=(classify_command(cmd)[0] == _INTERNAL),
-                             timeout_s=300)
+        res = _sbx.run_shell(cmd, read_only=_read_only, timeout_s=300)
     except Exception as e:
         return f"Command error: {e}"
     if not res.get("ok"):
