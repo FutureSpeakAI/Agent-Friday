@@ -255,13 +255,19 @@ def _on_decision(record: Dict[str, Any]) -> None:
             res = apply(payload.get("proposal"), approval_id=aid)
         except BaseException:
             _close_card_decision(ref, False, "tidy_error")
+            # the card is spent, not left claimed forever with no record of why
+            try:
+                ap.mark_used(aid, "media", {"ok": False, "error": "tidy_error", "moved": 0})
+            except Exception:
+                pass
             raise
         moved = len((res or {}).get("moved") or [])
         failed = len((res or {}).get("failed") or [])
         ok = (res or {}).get("status") == "ok" and moved > 0
         _close_card_decision(ref, ok, "tidied" if ok and not failed else
                              "tidied_partly" if ok else "nothing_moved")
-        ap.mark_used(aid, "media", {"ok": res.get("status") == "ok", "moved": len(res.get("moved") or [])})
+        # ok as the decision closed: something actually moved
+        ap.mark_used(aid, "media", {"ok": ok, "moved": moved})
     except Exception:
         pass
 

@@ -1724,6 +1724,11 @@ def _on_decision(record: Dict[str, Any]) -> None:
             res = complete_publish(payload.get("card"), approval_id=aid)
         except BaseException:
             _close_card_decision(ref, False, "publish_error")
+            # the card is spent, not left claimed forever with no record of why
+            try:
+                ap.mark_used(aid, "media", {"ok": False, "error": "publish_error"})
+            except Exception:
+                pass
             raise
         ok = isinstance(res, dict) and res.get("status") == "ok"
         _close_card_decision(ref, ok, "published" if ok else "not_published")

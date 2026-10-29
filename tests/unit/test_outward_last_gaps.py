@@ -172,6 +172,49 @@ def test_a_closing_that_fails_never_raises_into_the_hook(monkeypatch):
     _tidy_hook(monkeypatch, "ok")
 
 
+# ── the card is marked used when the work raises, and ok matches the outcome ─
+
+def _used(mp):
+    used = []
+    mp.setattr(approvals, "mark_used", lambda aid, *a, **k: used.append((aid, a, k)))
+    return used
+
+
+def test_a_publish_that_raises_still_marks_its_card_used(monkeypatch):
+    used = _used(monkeypatch)
+    _publish_hook(monkeypatch, "raise")
+    assert len(used) == 1
+    aid, args, _kw = used[0]
+    assert aid == "ap-pub" and args[0] == "media"
+    assert args[1]["ok"] is False and args[1]["error"] == "publish_error"
+
+
+def test_a_tidy_that_raises_still_marks_its_card_used(monkeypatch):
+    used = _used(monkeypatch)
+    _tidy_hook(monkeypatch, "raise")
+    assert len(used) == 1
+    aid, args, _kw = used[0]
+    assert aid == "ap-tidy" and args[0] == "media"
+    assert args[1]["ok"] is False and args[1]["error"] == "tidy_error"
+
+
+def test_a_mark_used_that_fails_after_a_raise_never_hides_the_hook(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("approvals gone")
+    monkeypatch.setattr(approvals, "mark_used", boom)
+    _one_decision_one_outcome(_publish_hook(monkeypatch, "raise"), "ap-pub", G.FAILED)
+    _one_decision_one_outcome(_tidy_hook(monkeypatch, "raise"), "ap-tidy", G.FAILED)
+
+
+@pytest.mark.parametrize("how, ok, moved", [("ok", True, 1), ("nothing", False, 0)])
+def test_the_tidy_marks_its_card_ok_only_when_something_moved(monkeypatch, how, ok, moved):
+    used = _used(monkeypatch)
+    _tidy_hook(monkeypatch, how)
+    assert len(used) == 1
+    _aid, args, _kw = used[0]
+    assert args[1]["ok"] is ok and args[1]["moved"] == moved
+
+
 # ── the audit over a run of them ────────────────────────────────────────────
 
 def test_the_audit_over_the_hooks_finds_nothing_open_or_unconfirmed(monkeypatch):
