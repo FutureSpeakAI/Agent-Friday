@@ -537,7 +537,7 @@ def _gate_calendar_field(text: str, field: str) -> tuple[str, str]:
 
 def create_event(*, title: str, start: str, end: str = "", location: str = "",
                  description: str = "", attendees=None,
-                 account_id=None, calendar_id: str = "primary") -> dict:
+                 account_id=None, calendar_id: str = "primary", idempotency_key: str | None = None) -> dict:
     """Create an event. `start`/`end` are ISO 8601 datetimes.
 
     `account_id` names the account; see `resolve_write_account`. `calendar_id`
@@ -577,17 +577,47 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
     if attendees:
         body["attendees"] = [{"email": a} for a in attendees if a]
     from agent_friday.services import connector_outcome as _co
+    if idempotency_key:
+        # One create, however many times it is sent (F3): Google refuses a second insert with this id.
+        body["id"] = _co.event_id(idempotency_key, _cal(calendar_id), aid or "")
+    already = False
     try:
         ev = svc.events().insert(calendarId=_cal(calendar_id), body=body).execute()
     except Exception as e:
-        return _fail("create_failed", _co.failed(e, "Google Calendar", account_id=aid))
+        kind = _co.classify(e)
+        ev = _made_already(svc, calendar_id, body) if body.get("id") and (
+            _co._status(e) == 409 or kind == "unconfirmed") else None
+        if ev is None:
+            if body.get("id") and _co._status(e) == 409:
+                return _fail("create_failed", "An event from this same request already exists or was "
+                                              "removed since; nothing new was made. Look at the calendar, "
+                                              "or ask again in a new message to make another.")
+            return _fail("create_failed", _co.failed(e, "Google Calendar", account_id=aid))
+        already = _co._status(e) == 409
     _drop_calendar_cache()
+    if not _co.confirmed(ev) and body.get("id"):
+        ev = _made_already(svc, calendar_id, body)      # the id is known: look, before saying "check"
     if not _co.confirmed(ev):
         # an empty reply names no event: not reported as created (BD-06, NS-34.11-3)
         return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
-    return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
-            "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
-            "start": start, "end": end, "guests": len(body.get("attendees") or [])}
+    out = {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
+           "account_id": aid, "calendar_id": _cal(calendar_id), "html_link": ev.get("htmlLink"),
+           "start": start, "end": end, "guests": len(body.get("attendees") or [])}
+    if already:
+        out["already_made"] = "This event was already made by this same request; it was not made twice."
+    return out
+
+
+def _made_already(svc, calendar_id, body) -> dict | None:
+    """The event a create with a known id made, when Google has it (and it is not deleted)."""
+    try:
+        ev = svc.events().get(calendarId=_cal(calendar_id), eventId=body["id"]).execute()
+    except Exception as e:
+        _logged("reading back an event Friday made", e)
+        return None
+    if not isinstance(ev, dict) or not ev.get("id") or ev.get("status") == "cancelled":
+        return None
+    return ev
 
 
 def get_event(event_id: str, *, account_id=None, calendar_id: str = "primary",
