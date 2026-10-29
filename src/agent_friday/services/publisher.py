@@ -604,6 +604,7 @@ def _dispatch_target(target: Dict[str, Any]) -> str:
             pass
         outcome = "failed"
     try:
+        _close_decision(tid, outcome)       # the publish's own result closes its decision
         if outcome == "failed":
             _spend_authorization(tid)       # a re-arm asks again
         return outcome
@@ -1166,8 +1167,8 @@ def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
             via = f"series:{parent_tid}"
     if via:
         try:
-            action_gate.record_external(PUBLISH_ACTION, surface="publisher",
-                                        approval_id=via, target=platform)
+            _link_decision(tid, action_gate.record_external(PUBLISH_ACTION, surface="publisher",
+                                                            approval_id=via, target=platform))
         except action_gate.Held:
             return "deny"
         if rec.get("via") != via:
@@ -1191,9 +1192,55 @@ def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
             _ask_again_overdue(target, post, due)
     v, card_id = _ask(target, post, texts, rewritten)
     if v.action == "allow":
+        _link_decision(tid, (v.detail or {}).get("decision_ref"))
         _auth_update(tid, sha=sha, media_sha=media_sha, via=card_id, series=_series(post),
                      post_id=str(target.get("post_id")), platform=platform)
     return v.action
+
+
+#: The checkpoint's decision for each target being published now, by target id: the
+#: publish's own result closes it (_close_decision), however long after the request
+#: that armed or approved it (BD-11a). A request's settlement leaves it alone.
+_DECISIONS: Dict[str, dict] = {}
+_DECISIONS_LOCK = threading.Lock()
+
+#: What a dispatch's result says became of the publish.
+_RESULT_OUTCOME = {"confirmed": "completed_verified", "failed": "failed", "held": "forbidden",
+                   "deferred": "failed", "retrying": "unconfirmed"}
+
+
+def _link_decision(tid: str, ref: Optional[dict]) -> None:
+    if not isinstance(ref, dict):
+        return
+    from agent_friday.governance import action_gate
+    action_gate.defer_external(ref)
+    with _DECISIONS_LOCK:
+        old = _DECISIONS.pop(tid, None)
+        _DECISIONS[tid] = ref
+    if old is not None and old is not ref:
+        # a decision for this target that was never carried out: a newer one replaced it
+        action_gate.close_external(old, False, detail="superseded")
+
+
+def _close_decision(tid: str, result: str) -> None:
+    """The publish's terminal outcome for the decision that let it go, from the
+    dispatch's result: confirmed -> completed_verified; failed, or deferred with
+    nothing sent -> failed; held -> forbidden; retrying -> unconfirmed (it may
+    have reached the platform). Never raises."""
+    word = _RESULT_OUTCOME.get(str(result or ""))
+    if not word:
+        return
+    try:
+        from agent_friday.governance import action_gate
+        with _DECISIONS_LOCK:
+            ref = _DECISIONS.pop(tid, None)
+        if ref is None:
+            return
+        action_gate.close_external(ref, word in ("completed_verified", "unconfirmed"),
+                                   detail="publish_" + str(result), outcome=word,
+                                   verified=word == "completed_verified")
+    except Exception:  # noqa: BLE001 - a receipt never changes a publish
+        pass
 
 
 def request_publish_approval(post_id: str) -> Dict[str, Any]:

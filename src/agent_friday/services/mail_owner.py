@@ -90,7 +90,10 @@ def held(action: str, target: str, nothing_done: str):
     from flask import jsonify
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external(action, surface=SURFACE, target=str(target or "")[:300])
+        # the route sends the change and answers from Gmail's result: that answer closes it
+        # (an error is failed, a partial answer unconfirmed, a clean one executed)
+        _gate.close_on_answer(_gate.record_external(action, surface=SURFACE, target=str(target or "")[:300]),
+                              detail="mail_change")
     except _gate.Held as e:
         # The reason stays in Friday's own log; the answer carries a fixed sentence.
         print(f"  [mail] {action} held by the action gate: {e}")

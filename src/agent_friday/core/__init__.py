@@ -5091,6 +5091,45 @@ def _answer_correlation(resp):
     return resp
 
 
+@app.after_request
+def _settle_external_actions(resp):
+    """Every outward decision this request wrote outside a tool call
+    (action_gate.record_external) that its executor neither closed nor
+    deferred is marked `unconfirmed`, never executed or failed: the answer is
+    not evidence of what became of the action. The code says how the request
+    answered (request_ok / request_error) (BD-11a, NS-36.3-12). Records only."""
+    try:
+        from flask import g as _g
+        if getattr(_g, "_friday_externals", None):
+            ok = resp.status_code < 400
+            if ok and resp.is_json and not (resp.is_streamed or resp.direct_passthrough):
+                body = resp.get_json(silent=True)
+                if isinstance(body, dict) and (body.get("status") == "error" or body.get("ok") is False):
+                    ok = False
+            from agent_friday.governance import action_gate as _ag
+            _ag.settle_request_externals(ok)
+    except Exception:  # noqa: BLE001 - a receipt never changes the answer
+        pass
+    return resp
+
+
+@app.teardown_request
+def _settle_external_actions_on_error(exc=None):
+    """A request that ended in an exception: what it decided and left open is
+    unconfirmed (request_exception). Only on an exception: a context torn down
+    without one (a streamed reply's copied request context, whose after_request
+    already ran on the original) is left to its executor, never marked failed."""
+    if exc is None:
+        return
+    try:
+        from flask import g as _g
+        if getattr(_g, "_friday_externals", None):
+            from agent_friday.governance import action_gate as _ag
+            _ag.settle_request_externals(False, "request_exception")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @app.teardown_request
 def _end_correlation(_exc=None):
     try:

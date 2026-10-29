@@ -69,7 +69,9 @@ def owner_change(ws_id, op):
         return refused
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external("workspace:" + op, surface="workspace_studio", target=ws_id)
+        # the route makes the change itself and answers from its result: that answer closes it
+        _gate.close_on_answer(_gate.record_external("workspace:" + op, surface="workspace_studio",
+                                                    target=ws_id), detail="workspace_" + op)
     except _gate.Held:
         return jsonify(status='error', code='held',
                        message="Nothing changed: the action checkpoint held this workspace change "

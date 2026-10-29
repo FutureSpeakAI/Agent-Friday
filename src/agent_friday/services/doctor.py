@@ -307,6 +307,13 @@ def _c_receipt_completeness():
     return receipt_audit.doctor_check()
 
 
+def _c_outward_terminal():
+    """Every outward action has exactly one terminal receipt, no request ran
+    twice, no task said done early (services/outward_audit). Counts only."""
+    from agent_friday.services import outward_audit
+    return outward_audit.doctor_check()
+
+
 def _c_backup():
     try:
         from agent_friday.services import backup_schedule
@@ -444,6 +451,7 @@ CHECKS = (
     ("governance_key", "key and credential availability", _c_governance_key),
     ("receipt_chain", "receipt chains", _c_ledger),
     ("receipt_completeness", "receipt chains", _c_receipt_completeness),
+    ("outward_terminal", "receipt chains", _c_outward_terminal),
     ("authority", "action gate", _c_authority),
     ("rules", "action gate", _c_claws),
     ("egress_gate", "egress gate", _c_egress),

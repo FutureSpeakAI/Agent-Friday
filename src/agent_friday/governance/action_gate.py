@@ -1377,7 +1377,8 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
 #: target, or hash of the arguments (a hash of a short message can be guessed).
 _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
                             "grant", "task_id", "tainted", "chosen_by",
-                            "plan_version", "action_id", "policy_version", "envelope")
+                            "plan_version", "action_id", "policy_version", "envelope",
+                            "outcome")
 
 
 def _policy_version_id() -> Optional[str]:
@@ -1613,18 +1614,95 @@ def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
 #: exact decision it carried out (north star §18.9, NS-34.17-7).
 LAST_RECEIPT: ContextVar = ContextVar("friday_last_decision_receipt", default=None)
 
-#: Outcome statuses an outcome entry may carry.
-OUTCOMES = ("ok", "error", "refused", "held")
+#: Statuses an outcome entry may carry: how the call ended, as its caller saw it.
+OUTCOME_STATUSES = ("ok", "error", "refused", "held")
+
+# ── The outcome vocabulary (NS-31.5-2, BD-11a) ──────────────────────────────
+#
+# One word for what became of an action, on every verdict, decision receipt
+# and outcome receipt. Labels only: no decision reads them.
+#
+#   executed            it runs (a verdict), or it ran (an outcome)
+#   approval_required   it waits for the owner's yes (a card or a chat question)
+#   denied              the owner said no, or the handler refused it
+#   forbidden           a rule or a hold stopped it (forbidden class, safe mode,
+#                       a revocation, a ledger break, a later check)
+#   waiting             a card for it is already open, or everything is stopped
+#   failed              it was tried and did not work, or the check itself failed
+#   completed_verified  it ran and the service confirmed it (an id came back)
+#   unconfirmed         nobody knows yet: the request that carried it out
+#                       answered, but its executor never said what became of it
+#                       (settle_request_externals), or a send the gateway could
+#                       not confirm. Not terminal: a later outcome may close it.
+
+EXECUTED = "executed"
+APPROVAL_REQUIRED = "approval_required"
+DENIED = "denied"
+FORBIDDEN = "forbidden"
+WAITING = "waiting"
+FAILED = "failed"
+COMPLETED_VERIFIED = "completed_verified"
+UNCONFIRMED = "unconfirmed"
+OUTCOMES = (EXECUTED, APPROVAL_REQUIRED, DENIED, FORBIDDEN, WAITING, FAILED, COMPLETED_VERIFIED,
+            UNCONFIRMED)
+#: After one of these nothing more happens to the action: its terminal receipt.
+TERMINAL_OUTCOMES = frozenset({EXECUTED, FAILED, COMPLETED_VERIFIED, DENIED, FORBIDDEN})
+#: An outcome entry's status as an outcome word.
+STATUS_OUTCOME = {"ok": EXECUTED, "error": FAILED, "refused": DENIED, "held": FORBIDDEN}
+#: A task's state (services/task_states.derive) as an outcome word.
+TASK_STATE_OUTCOME = {
+    "completed_verified": COMPLETED_VERIFIED, "completed_unverified": EXECUTED,
+    "failed": FAILED, "recovered_after_crash": FAILED, "cancelled": DENIED,
+    "waiting_for_approval": WAITING, "waiting_for_input": WAITING,
+    "waiting_for_external_event": WAITING,
+}
+
+
+def verdict_outcome(action: str, klass: str = "", reason: str = "") -> str:
+    """The outcome word for a checkpoint verdict (allow/confirm/card/deny)."""
+    if action == "allow":
+        return EXECUTED
+    if action in ("confirm", "card"):
+        return APPROVAL_REQUIRED
+    why = str(reason or "").strip().lower()
+    if klass == "forbidden" or why.startswith(("not allowed", "held")):
+        return FORBIDDEN
+    if why.startswith("declined"):
+        return DENIED
+    return FAILED                       # the check itself failed: nothing ran
+
+
+def outcome_of_status(status: str) -> str:
+    """An outcome entry's status (ok/error/refused/held), or a task status, as
+    an outcome word. Unknown words are `failed`, never `executed`."""
+    s = str(status or "").strip().lower()
+    if s in STATUS_OUTCOME:
+        return STATUS_OUTCOME[s]
+    if s in OUTCOMES:
+        return s
+    try:
+        from agent_friday.services import task_states
+        return TASK_STATE_OUTCOME.get(task_states.derive({"status": s}), FAILED)
+    except Exception:  # noqa: BLE001
+        return FAILED
 
 
 def record_outcome(tool: str, decision: Optional[dict], status: str, *,
                    approval: Optional[str] = None, duration_ms: Optional[float] = None,
-                   detail: str = "") -> None:
+                   detail: str = "", outcome: Optional[str] = None) -> None:
     """The terminal receipt of an outward or reading action: what happened
     after the decision (it ran: ok or error; the handler refused; a later
     check held it), linked to the decision's seq and hash. `detail` is a
-    fixed code, never free text, and is left out off the record. Never raises."""
+    fixed code, never free text, and is left out off the record. Never raises.
+
+    `outcome`: the outcome word (OUTCOMES), else the status's (STATUS_OUTCOME).
+    `completed_verified` stands only on a status of ok. A `decision` dict
+    passed in is marked closed (`_closed`), so it is not settled twice."""
     try:
+        st = status if status in OUTCOME_STATUSES else "error"
+        oc = outcome if outcome in OUTCOMES else STATUS_OUTCOME[st]
+        if oc in (EXECUTED, COMPLETED_VERIFIED) and st != "ok":
+            oc = STATUS_OUTCOME[st]
         from agent_friday.services import action_ledger
         from agent_friday.services import policy_version as _pv
         try:
@@ -1645,13 +1723,146 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
             **({"action_id_origin": "outcome"} if minted else {}),
             "policy_version": _policy_version_id(),
             "decision_policy_version": (decision or {}).get("policy_version"),
-            "tool": tool, "status": status if status in OUTCOMES else "error",
+            "tool": tool, "status": st, "outcome": oc, "terminal": oc in TERMINAL_OUTCOMES,
             "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
             "approval": approval or (decision or {}).get("approval"),
             "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
             "detail": str(detail or "")[:120]})
+        if isinstance(decision, dict) and oc in TERMINAL_OUTCOMES:
+            decision["_closed"] = True
     except Exception:
         pass
+
+
+# ── Outcomes for executors outside a tool call ──────────────────────────────
+
+def _external_ref(out: Any, tool: str, approval_id: Optional[str]) -> dict:
+    """The decision as an outcome names it (seq, hash, action id), returned
+    for `close_external` and kept in a request's list for
+    `settle_request_externals`."""
+    out = out if isinstance(out, dict) else {}
+    rec = out.get("rec") if isinstance(out.get("rec"), dict) else {}
+    ref = {"seq": out.get("seq"), "hash": out.get("hash"), "tool": tool, "class": OUTWARD,
+           "decision": "allow", "action_id": rec.get("action_id"),
+           "policy_version": rec.get("policy_version"), "approval": approval_id,
+           "t": time.time()}
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            g._friday_externals = (getattr(g, "_friday_externals", None) or []) + [ref]
+    except Exception:  # noqa: BLE001 - outside Flask: the executor closes it itself
+        pass
+    return ref
+
+
+def close_external(ref: Optional[dict], ok: bool = True, *, detail: str = "",
+                   verified: bool = False, outcome: Optional[str] = None) -> bool:
+    """Write the terminal outcome of an action decided by `record_external`
+    (or an allowing `authorize_external`), given the decision it returned:
+    `ok` executed, else failed; `verified` (the service confirmed it, an id
+    came back) completed_verified; `outcome` names another word. Once per
+    decision; anything but a decision it returned is ignored. True when an
+    outcome was written. Never raises.
+
+    `outcome=UNCONFIRMED` is not terminal: it is written at most once and the
+    decision stays open for the real outcome."""
+    try:
+        r = ref
+        # a decision the ledger did not keep (no action id) has nothing to close
+        if not (isinstance(r, dict) and r.get("class") == OUTWARD and r.get("action_id")) \
+                or r.get("_closed"):
+            return False
+        oc = outcome if outcome in OUTCOMES else (
+            COMPLETED_VERIFIED if ok and verified else EXECUTED if ok else FAILED)
+        if oc == UNCONFIRMED and r.get("_unconfirmed"):
+            return False
+        record_outcome(str(r.get("tool") or ""), r, "ok" if ok else "error",
+                       approval=r.get("approval"), detail=detail, outcome=oc)
+        if oc in TERMINAL_OUTCOMES:
+            r["_closed"] = True
+        else:
+            r["_unconfirmed"] = oc == UNCONFIRMED or bool(r.get("_unconfirmed"))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def answer_outcome(resp) -> Optional[str]:
+    """The outcome word a route's own answer gives for the change it made
+    itself (the route is the executor, and builds its answer from the change's
+    result): failed for an error status or an error body, unconfirmed for a
+    partial or streamed answer, else executed. None when it cannot be read."""
+    try:
+        if resp.status_code >= 400:
+            return FAILED
+        if resp.is_streamed or resp.direct_passthrough or not resp.is_json:
+            return UNCONFIRMED
+        body = resp.get_json(silent=True)
+        if not isinstance(body, dict):
+            return UNCONFIRMED
+        st = str(body.get("status") or "").lower()
+        if st in ("error", "conflict", "denied", "failed") or body.get("ok") is False:
+            return FAILED
+        if st in ("partial", "unsure", "pending", "queued") or resp.status_code == 202:
+            return UNCONFIRMED
+        return EXECUTED
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def close_on_answer(ref: Optional[dict], detail: str = "route_answer") -> Optional[dict]:
+    """For a route that carries out the change itself, inside this request:
+    close `ref` from the route's own answer (`answer_outcome`) as the answer
+    leaves. Outside a request this does nothing (the caller closes it).
+    Returns `ref`."""
+    if not isinstance(ref, dict):
+        return ref
+    try:
+        from flask import after_this_request, has_request_context
+        if not has_request_context():
+            return ref
+
+        @after_this_request
+        def _close(resp):
+            oc = answer_outcome(resp)
+            if oc is not None:
+                close_external(ref, oc in (EXECUTED, UNCONFIRMED), detail=detail, outcome=oc)
+            return resp
+    except Exception:  # noqa: BLE001
+        pass
+    return ref
+
+
+def defer_external(ref: Optional[dict]) -> Optional[dict]:
+    """Mark a decision as one its executor closes later, outside this request
+    (a scheduled publish closes when the publish finishes): the request's
+    settlement leaves it alone. Returns `ref`."""
+    if isinstance(ref, dict):
+        ref["_deferred"] = True
+    return ref
+
+
+def settle_request_externals(ok: bool, detail: str = "") -> int:
+    """At the end of a request: every decision `record_external` wrote in it
+    that its executor neither closed nor deferred is marked `unconfirmed` (not
+    terminal), with a fixed code saying how the request ended (`ok`: it answered
+    without an error). The request's answer is not evidence of what became of
+    the action, so settlement never writes executed or failed. Returns how
+    many. Never raises."""
+    try:
+        from flask import g, has_request_context
+        if not has_request_context():
+            return 0
+        refs = getattr(g, "_friday_externals", None) or []
+        g._friday_externals = []
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    for r in refs:
+        if isinstance(r, dict) and not r.get("_closed") and not r.get("_deferred"):
+            n += bool(close_external(r, ok, outcome=UNCONFIRMED,
+                                     detail=detail or ("request_ok" if ok else "request_error")))
+    return n
 
 
 def receipts_path() -> Path:
@@ -1705,6 +1916,13 @@ class Verdict:
     reason: str
     grant: Optional[dict] = None
     detail: dict = field(default_factory=dict)
+    #: The outcome word (OUTCOMES); derived from action, class and reason
+    #: (verdict_outcome) unless the checkpoint names it.
+    outcome: str = ""
+
+    def __post_init__(self):
+        if self.outcome not in OUTCOMES:
+            self.outcome = verdict_outcome(self.action, self.klass, self.reason)
 
 
 #: The owner's decision behind the tool call running now: an approved card's
@@ -1792,6 +2010,9 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         try:
             _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
+                  # what became of it as the checkpoint sees it (OUTCOMES); a
+                  # deny is its own terminal receipt
+                  "outcome": v.outcome,
                   # "tool_call": the governance hook of _execute_tool, whose
                   # call writes an outcome (services/receipt_audit expects one)
                   "via": via or None,
@@ -2052,7 +2273,7 @@ class Held(RuntimeError):
 
 
 def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
-                    target: str = "") -> Optional[dict]:
+                    target: str = "") -> dict:
     """The checkpoint's integrity check and signed receipt, for an executor
     that carries out an already-decided action outside a tool call (an
     approved email, an approved text).
@@ -2060,8 +2281,13 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     The decision itself (the card) is the caller's to verify. This adds the
     two steps every tool call gets in `authorize`: the cLaws are intact, and
     a signed receipt of the action is written. Raises `Held` if either fails,
-    so the caller stops before anything leaves the machine. Returns the decision's ledger entry
-    (its seq and hash), so the caller's outcome receipt can name the decision it carried out.
+    so the caller stops before anything leaves the machine.
+
+    Returns the decision as an outcome names it; the executor writes the
+    action's terminal outcome with `close_external` (inside a request, one it
+    leaves open is marked unconfirmed: settle_request_externals). The
+    decision receipt carries no outcome word: nothing has run yet, and what
+    became of the action is its outcome receipt's to say.
     """
     import agent_friday.core as _core_gs
     if _core_gs.GLOBAL_STOP.is_set():
@@ -2077,13 +2303,13 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     if hold:
         raise Held(hold)
     try:
-        entry = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
-                          "surface": surface,
-                          "reason": "approved card" if approval_id else surface,
-                          "approval": approval_id, "target": target})
+        out = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
+                        "surface": surface,
+                        "reason": "approved card" if approval_id else surface,
+                        "approval": approval_id, "target": target})
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
-    return entry if isinstance(entry, dict) else None
+    return _external_ref(out, action, approval_id)
 
 
 def external_subject(action: str, detail: dict) -> str:
@@ -2119,7 +2345,8 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         if _core_gs.GLOBAL_STOP.is_set():
             # Stop everything (services/global_stop): held, and the card is not used up.
             # "card", not "deny": callers wait (as for a card) instead of recording a decline.
-            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
+            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)",
+                           outcome=WAITING)
     except Exception:
         pass
     try:
@@ -2143,23 +2370,33 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
                 rec = named
         if rec is None:
             rec = _ap.find_for_subject("external_action", subject, "governed_action")
+        card_id = (rec or {}).get("approval_id")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
             _ap.mark_used(rec["approval_id"], requested_by)
             v = Verdict("allow", OUTWARD, "approved on a card")
         elif rec and rec.get("status") in ("denied", "blocked"):
-            v = Verdict("deny", OUTWARD, "declined on a card")
+            v = Verdict("deny", OUTWARD, "declined on a card", outcome=DENIED)
         else:
             if rec is None or rec.get("status") == "expired" or rec.get("consumed"):
-                _ap.create_approval(
+                made = _ap.create_approval(
                     kind="governed_action", subject_type="external_action",
                     subject_id=subject + (f":{uuid.uuid4().hex[:6]}" if rec else ""),
                     title=title or f"Allow {action}",
                     description=description or json.dumps(detail, default=str)[:600],
                     action_description=action_description or action, force_gate=True,
                     payload=detail, requested_by=requested_by)
-            v = Verdict("card", OUTWARD, "waiting for the owner's decision")
-        _receipt({"tool": action, "class": OUTWARD, "decision": v.action,
-                  "reason": v.reason, "surface": requested_by})
+                card_id = (made or {}).get("approval_id") if isinstance(made, dict) else None
+                v = Verdict("card", OUTWARD, "waiting for the owner's decision",
+                            outcome=APPROVAL_REQUIRED)
+            else:
+                # its card is already open: the action waits on it
+                v = Verdict("card", OUTWARD, "waiting for the owner's decision", outcome=WAITING)
+        out = _receipt({"tool": action, "class": OUTWARD, "decision": v.action,
+                        "reason": v.reason, "surface": requested_by, "outcome": v.outcome,
+                        **({"approval": card_id} if card_id else {})})
+        if v.action == "allow":
+            # the caller carries it out next: its outcome closes this decision
+            v.detail["decision_ref"] = _external_ref(out, action, card_id)
         return v
     except Exception as e:
         return Verdict("deny", OUTWARD, f"governance check failed ({e})")

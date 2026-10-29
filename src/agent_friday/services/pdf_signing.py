@@ -344,20 +344,25 @@ def sign_approved(approval_id: str, actor: str = "owner") -> dict:
         if image is None:
             raise SignRefused("the signature image is no longer set. Nothing was signed.")
     try:
-        action_gate.record_external("pdf:sign", surface="pdf_signing",
-                                    approval_id=approval_id, target=src.name)
+        decision = action_gate.record_external("pdf:sign", surface="pdf_signing",
+                                               approval_id=approval_id, target=src.name)
     except action_gate.Held as e:
         raise SignRefused(f"held by governance: {e}. Nothing was signed.")
-    if mode == "stamp":
-        data = pdf_forms.stamp_image(src, image, page, box)
-    else:
-        data = _digital_sign(src, page, box, payload.get("reason") or "",
-                             f"FridaySignature_{fp[:8]}")
-    out = pdf_forms.unique_output(f"{src.stem}-signed.pdf")
-    if out.resolve() == src.resolve():
-        raise SignRefused("the signed copy is never written over the original")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_bytes(data)
+    try:
+        if mode == "stamp":
+            data = pdf_forms.stamp_image(src, image, page, box)
+        else:
+            data = _digital_sign(src, page, box, payload.get("reason") or "",
+                                 f"FridaySignature_{fp[:8]}")
+        out = pdf_forms.unique_output(f"{src.stem}-signed.pdf")
+        if out.resolve() == src.resolve():
+            raise SignRefused("the signed copy is never written over the original")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+    except Exception:
+        action_gate.close_external(decision, False, detail="not_signed")
+        raise
+    action_gate.close_external(decision, True, detail="signed_copy_written")
     try:
         from agent_friday.services.provenance import sign_saved
         sign_saved(out, "pdf_signing.sign", "document", sources=[{"kind": "file", "path": str(src)}])
