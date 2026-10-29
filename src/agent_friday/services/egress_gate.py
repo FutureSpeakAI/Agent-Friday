@@ -1499,6 +1499,16 @@ def _gate_text_span(text: str, provider: str, field: str,
     return _redact_placeholder(tier)
 
 
+def _gate_loose_text(text: str, provider: str, field: str, log_path: Path | None = None) -> str:
+    """Text found where the gate did not expect it (NS-34.6-8), gated like message content."""
+    if LOCAL_ONLY_MARK in text:
+        _log(provider, field, Tier.SENSITIVE, "block",
+             "local-only result withheld from a cloud model", log_path)
+        return _LOCAL_ONLY_WITHHELD
+    g = _gate_text(text, provider, field, log_path)
+    return g if (g or not text) else _MESSAGE_WITHHELD
+
+
 def _gate_messages(messages: list, provider: str,
                    log_path: Path | None = None, model: str = "") -> list:
     """Gate a list of message dicts. Returns a new list; never mutates input.
@@ -1507,12 +1517,34 @@ def _gate_messages(messages: list, provider: str,
     seat's own text only for that same (provider, model) (_gate_tool_args)."""
     gated = []
     for i, msg in enumerate(messages):
+        if isinstance(msg, str):
+            # A bare string where a message dict belongs (a malformed payload,
+            # NS-34.6-8): gated like the content it is, never passed whole.
+            gated.append(_gate_loose_text(msg, provider, f"message[{i}]", log_path))
+            continue
         if not isinstance(msg, dict):
-            gated.append(msg)
+            if msg is None or isinstance(msg, (bool, int, float)):
+                gated.append(msg)          # carries no text
+            else:
+                # Any other shape (a list, a tuple, an object) could hold text the
+                # gate cannot read reliably: withheld, fail closed.
+                _log(provider, f"message[{i}]", Tier.SENSITIVE, "block",
+                     "malformed message (%s) withheld" % type(msg).__name__, log_path)
+                gated.append(_MESSAGE_WITHHELD)
             continue
         out = msg
         if "content" in msg:
             content = msg["content"]
+            if isinstance(content, dict):
+                # One content block where a list or a string belongs: its text is
+                # gated; a block with no text field the gate can read is withheld.
+                if isinstance(content.get("text"), str):
+                    out = {**out, "content": {**content, "text": _gate_loose_text(
+                        content["text"], provider, f"message[{i}].content.text", log_path)}}
+                else:
+                    _log(provider, f"message[{i}].content", Tier.SENSITIVE, "block",
+                         "malformed content block withheld", log_path)
+                    out = {**out, "content": _MESSAGE_WITHHELD}
             if isinstance(content, str) and LOCAL_ONLY_MARK in content:
                 # A result the local model produced on this PC (a handoff the
                 # owner approved): it never leaves the device, under any consent.
@@ -1552,6 +1584,18 @@ def _gate_messages(messages: list, provider: str,
                         new_parts.append(_gate_tool_use(
                             part, provider, f"message[{i}].content[{j}]", log_path,
                             model=model))
+                    elif isinstance(part, str):
+                        # A bare string part (malformed): gated as text.
+                        new_parts.append(_gate_loose_text(part, provider, f"message[{i}].content[{j}]", log_path))
+                    elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                        # A part of a type the gate does not know that still carries
+                        # text (input_text, output_text, a typo'd "type"): its text is gated.
+                        new_parts.append({**part, "text": _gate_loose_text(
+                            part["text"], provider, f"message[{i}].content[{j}].text", log_path)})
+                    elif isinstance(part, (list, tuple)):
+                        _log(provider, f"message[{i}].content[{j}]", Tier.SENSITIVE, "block",
+                             "malformed content part withheld", log_path)
+                        new_parts.append({"type": "text", "text": _MESSAGE_WITHHELD})
                     else:
                         new_parts.append(part)
                 out = {**out, "content": new_parts}
@@ -2420,8 +2464,17 @@ def _seal_outbound_inner(payload, provider, log_path, pii_lookup, model):
 
 def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     """seal_outbound's scrub and gate steps (§5.5), on its copy of the payload."""
+    _m = sealed.get("messages")
+    if isinstance(_m, tuple):
+        sealed["messages"] = list(_m)     # scrubbed and gated like a list (NS-34.6-8)
+    elif isinstance(_m, dict):
+        sealed["messages"] = [_m]         # one message where the list belongs
+    elif _m is not None and not isinstance(_m, (list, str, bytes)) and hasattr(_m, "__iter__"):
+        sealed["messages"] = list(_m)     # a generator or other iterable of messages
     try:
-        for key in ("system", "messages", "prompt", "context"):
+        # `input` (an OpenAI Responses-style payload) and `contents` (Gemini's shape): no
+        # caller builds them today; scrubbed and gated all the same, before anything does.
+        for key in ("system", "messages", "prompt", "context", "input", "contents"):
             if key in sealed and not _unrestricted:
                 sealed[key] = _scrub_all(sealed[key], _lk)
     except Exception as e:
@@ -2444,6 +2497,13 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
         _sys = sealed["system"]
         if isinstance(_sys, str):
             sealed["system"] = _gate_text(_sys, provider, "system", log_path)
+        elif isinstance(_sys, dict):
+            # One block where a string or a list belongs (NS-34.6-8).
+            if isinstance(_sys.get("text"), str):
+                sealed["system"] = {**_sys, "text": _gate_loose_text(_sys["text"], provider, "system.text", log_path)}
+            else:
+                _log(provider, "system", Tier.SENSITIVE, "block", "malformed system block withheld", log_path)
+                sealed["system"] = _MESSAGE_WITHHELD
         elif isinstance(_sys, list):
             _blocks = []
             for _k, _b in enumerate(_sys):
@@ -2451,11 +2511,23 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
                     _blocks.append({**_b, "text": _gate_text(
                         _b.get("text", ""), provider, f"system[{_k}].text",
                         log_path)})
+                elif isinstance(_b, str):
+                    _blocks.append(_gate_loose_text(_b, provider, f"system[{_k}]", log_path))
+                elif isinstance(_b, dict) and isinstance(_b.get("text"), str):
+                    _blocks.append({**_b, "text": _gate_loose_text(
+                        _b["text"], provider, f"system[{_k}].text", log_path)})
                 else:
                     _blocks.append(_b)
             sealed["system"] = _blocks
 
     # Message history (Anthropic format: list of dicts)
+    # A tuple of messages is gated like a list; a bare string where the list
+    # belongs is gated as one message (NS-34.6-8: malformed, never ungated).
+    if "messages" in sealed and isinstance(sealed["messages"], tuple):
+        sealed["messages"] = list(sealed["messages"])
+    if "messages" in sealed and isinstance(sealed["messages"], str):
+        sealed["messages"] = _gate_messages([sealed["messages"]], provider, log_path,
+                                            model=str(model or sealed.get("model") or ""))[0]
     if "messages" in sealed and isinstance(sealed["messages"], list):
         # The seat a replayed public query is checked against: the caller's
         # model, else the model named in the payload itself.
@@ -2476,6 +2548,18 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     # untouched whenever `prompt` was the payload's only content.
     if "prompt" in sealed and isinstance(sealed["prompt"], str):
         sealed["prompt"] = _gate_text(sealed["prompt"], provider, "prompt", log_path)
+    elif "prompt" in sealed and isinstance(sealed["prompt"], (list, tuple, dict)):
+        # A list of prompts (completion APIs take one), or a structured prompt: every
+        # string in it is gated, its shape kept (NS-34.6-8).
+        sealed["prompt"] = _gate_json_value(sealed["prompt"], provider, "prompt", log_path)
+
+    # Other providers' message fields (see the scrub above): every string in them is
+    # gated, the shape kept.
+    for _key in ("input", "contents"):
+        if _key in sealed and isinstance(sealed[_key], str):
+            sealed[_key] = _gate_loose_text(sealed[_key], provider, _key, log_path)
+        elif _key in sealed and isinstance(sealed[_key], (list, tuple, dict)):
+            sealed[_key] = _gate_json_value(sealed[_key], provider, _key, log_path)
 
     # Federation task context (compute_client.py — the only caller today):
     # an arbitrary structured dict of task data, gated the same way a JSON
