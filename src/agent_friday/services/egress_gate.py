@@ -786,6 +786,9 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
         entry["channel"] = call["channel"]
         if call.get("recipients") is not None:
             entry["recipients"] = int(call["recipients"])
+    if call.get("action_id"):
+        # The gate decision that authorised this send (A10): an id only.
+        entry["action_id"] = call["action_id"]
     try:
         from agent_friday.services import turn_plan as _tp
         _turn = _tp.current_turn_id()
@@ -878,9 +881,29 @@ def record_address(channel: str, url: str, result: Any = "sent", *, content: Any
         return None
 
 
+def action_id_of(decision: Any) -> str | None:
+    """The action id of the gate decision that authorised a send (what
+    action_gate.record_external returns, a decision_ref, an envelope), or
+    None. Only a well-formed id (``act_`` + 20 hex) is returned, so nothing
+    else (no content) can reach the ledger through it. Never raises."""
+    try:
+        if isinstance(decision, str):
+            aid = decision
+        elif isinstance(decision, dict):
+            aid = decision.get("action_id")
+            if not aid and isinstance(decision.get("envelope"), dict):
+                aid = decision["envelope"].get("action_id")
+        else:
+            aid = getattr(decision, "action_id", None)
+        from agent_friday.services import policy_version as _pv
+        return aid if _pv.valid_action_id(aid) else None
+    except Exception:
+        return None
+
+
 def record_service_send(channel: str, provider: str, *, destination: str = "", content: Any = None,
                         result: str = "sent", recipients: int | None = None, note: str = "",
-                        part: str = "") -> dict | None:
+                        part: str = "", action_id: str | None = None) -> dict | None:
     """One ledger row (and its context manifest) for a send that leaves
     through a service: mail, a tool server, a calendar/tasks/contacts write,
     a post, a page Friday fetches, a search. The same row a model call gets:
@@ -890,7 +913,11 @@ def record_service_send(channel: str, provider: str, *, destination: str = "", c
 
     `content` is what left (the message, the arguments, the URL); it is not
     written into the ledger, only fingerprinted and, unless the owner chose
-    fingerprints only or is off the record, kept encrypted beside it."""
+    fingerprints only or is off the record, kept encrypted beside it.
+
+    `action_id`: the action id of the gate decision that authorised the send
+    (action_id_of), so the integrity view can link the send to it (A10).
+    Records only; anything but a well-formed id is dropped."""
     try:
         if channel not in SERVICE_CHANNELS:
             channel = "other"
@@ -903,7 +930,7 @@ def record_service_send(channel: str, provider: str, *, destination: str = "", c
                            "model": "", "via": "service:" + channel, "fields": 0, "withheld": 0,
                            "grants": set(), "joinable": False, "nested": cur is not None,
                            "channel": channel, "destination": str(destination or "")[:200],
-                           "recipients": recipients})
+                           "recipients": recipients, "action_id": action_id_of(action_id)})
         try:
             from agent_friday.services import context_manifest as _cm
             _cm.tally(_CALL.get(), part or channel, "SERVICE",

@@ -31,9 +31,9 @@
                a cap. Doctor code `art:<changed>/<missing>/<unreadable>/<bad lines>`
   unlinked     A10 (services/verify_everything.unlinked_outward): outward
                effects services record (cards an outward executor carried out,
-               approved batch runs) whose decision is missing from the ledger
-               or not named; sends recorded with no action id are counted as
-               not linkable. Doctor code `unl:<problems>/<not linkable>`
+               approved batch runs, sends whose egress row names an action id)
+               whose decision is missing from the ledger or not named; sends
+               recorded with no action id are counted as not linkable. Doctor code `unl:<problems>/<not linkable>`
 
 Shared by the Doctor (`doctor_check`), the Ledger page's "State of the record"
 line and GET /api/ledger/integrity. Read-only; never a record's content.

@@ -240,9 +240,10 @@
     if (!u) { line('Outward actions without a decision receipt: could not be checked.', null); return; }
     const nl = u.not_linkable || {}, ch = nl.by_channel || {};
     line('Outward actions without a decision receipt, last ' + u.window_days + ' days: ' + (u.problems || 0)
-         + ' of ' + (u.checked || 0) + ' checked (approved cards carried out and approved batches run)'
+         + ' of ' + (u.checked || 0) + ' checked (approved cards carried out, approved batches run'
+         + ' and sends that name their decision)'
          + (u.partial ? '. Only the newest part was read.' : '.'), (u.problems || 0) > 0);
-    (u.items || []).forEach(it => line('  ' + (it.source === 'card' ? 'card ' : 'batch run ') + it.ref
+    (u.items || []).forEach(it => line('  ' + (it.source === 'card' ? 'card ' : it.source === 'send' ? 'send ' : 'batch run ') + it.ref
       + (it.by ? ' (' + it.by + ')' : '') + ': ' + (it.problem === 'missing_id' ? 'names no decision' : 'its decision is not in the ledger'), true));
     line('Sends recorded without an action id to match (not linkable): ' + (nl.total || 0)
          + (Object.keys(ch).length ? ' (' + Object.entries(ch).map(([k, n]) => k + ' ' + n).join(', ') + ')' : '') + '.', null);
