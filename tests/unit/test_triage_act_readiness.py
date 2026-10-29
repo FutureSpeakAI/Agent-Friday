@@ -40,6 +40,8 @@ def heads(tmp_path, monkeypatch):
     th._mode_override.clear()
     th.clear_mode_cache()
     th.reset_cache()
+    for k in th._counters:
+        th._counters[k] = 0
     assert th.warm()
     yield tmp_path
     th._mode_override.clear()
@@ -70,23 +72,38 @@ def _count_scores(monkeypatch):
 
 # -- the request path --------------------------------------------------------------
 
+def _real_worker(monkeypatch):
+    """The real worker thread, and a request budget generous enough that a slow
+    CI runner does not abandon the ask before the reading is queued."""
+    from agent_friday.services import laya
+    monkeypatch.setattr(th, "RUN_INLINE", False)
+    monkeypatch.setattr(laya, "TRIAGE_REQUEST_BUDGET_MS", 10000)
+
+
+def _settle():
+    end = __import__("time").time() + 10
+    while th._pending and __import__("time").time() < end:
+        th.drain(0.2)
+    return th.drain(5.0) and not th._pending
+
+
 def test_an_act_mode_mail_miss_with_a_busy_encoder_waits_for_nothing_and_learns(monkeypatch):
-    monkeypatch.setattr(th, "RUN_INLINE", False)          # the real worker thread
+    _real_worker(monkeypatch)
     monkeypatch.setattr(th, "_encoder_free", lambda: False)
     _mode = th._mode_override
     _mode["mail"] = "fallback"
     assert _classify(CAREER_SEED)[0] == mt._fallback_lane()      # no reading yet: the incumbent answers
-    assert th.drain(5.0)
+    assert _settle()
     assert th.cache_stats()["miss_queued"] == 1 and th.cache_stats()["refreshed"] == 1
     assert _classify(CAREER_SEED)[0] == "career"                  # the queued reading is used next time
 
 
 def test_an_act_mode_notice_with_a_busy_encoder_is_left_as_the_policy_said(monkeypatch):
-    monkeypatch.setattr(th, "RUN_INLINE", False)
+    _real_worker(monkeypatch)
     monkeypatch.setattr(th, "_encoder_free", lambda: False)
     th._mode_override["notify"] = "escalate"
     assert pol.tier_for("sync", "worker", "low", None, URGENT_SEED) == pol.FYI
-    assert th.drain(5.0)
+    assert _settle()
     assert pol.tier_for("sync", "worker", "low", None, URGENT_SEED) == pol.NEEDS_YOU
 
 
@@ -100,7 +117,8 @@ def test_a_request_path_reading_skips_the_extra_embeddings_in_the_laya_preset(mo
     from agent_friday.services import laya
     calls = []
     monkeypatch.setattr(laya, "_calibrated_triage", lambda *a, **k: calls.append(1))
-    laya.triage_read("mail", [th.mail_text(CAREER_SEED, "")], cached=True, request_path=True)
+    got = laya.triage_read("mail", [th.mail_text(CAREER_SEED, "")], cached=True, request_path=True)
+    assert got and max(got[0], key=got[0].get) == "career"        # it did read
     assert calls == []
     laya.triage_read("mail", [th.mail_text(CAREER_SEED, "")], cached=True)
     assert calls == [1]
@@ -126,12 +144,35 @@ def test_a_stale_reading_answers_at_once_and_is_refreshed_behind(monkeypatch):
     assert len(calls) == 2                                          # the refresh, on the worker
 
 
-def test_a_new_head_tag_makes_a_cached_reading_stale(monkeypatch):
+def test_a_new_head_tag_does_not_re_embed_the_scores_only_the_decision_changes(monkeypatch):
+    calls = _count_scores(monkeypatch)
     th._mode_override["mail"] = "fallback"
     _classify(CAREER_SEED)
     monkeypatch.setattr(th, "tag", lambda name: "v2-new")
     _classify(CAREER_SEED)
-    assert th.cache_stats()["stale"] == 1
+    assert len(calls) == 1 and th.cache_stats()["stale"] == 0
+
+
+def test_a_refresh_queued_before_going_off_the_record_reads_nothing(monkeypatch):
+    calls = _count_scores(monkeypatch)
+    text = th.mail_text(CAREER_SEED, "")
+    th._cached_score("mail", text)
+    monkeypatch.setattr(th, "_CACHE_FRESH_S", -1.0)
+    monkeypatch.setattr(th, "_off_record", lambda: True)     # the job runs after the owner went off
+    th._cached_score("mail", text)
+    assert len(calls) == 1 and th.cache_stats()["refreshed"] == 0
+
+
+def test_a_reading_that_started_before_a_reset_is_not_stored_after_it(monkeypatch):
+    real = th._Head.score
+
+    def reset_midway(self, texts, **kw):
+        out = real(self, texts, **kw)
+        th.reset_cache()                                      # an encoder or seed change meanwhile
+        return out
+    monkeypatch.setattr(th._Head, "score", reset_midway)
+    th._cached_score("mail", "a message about a job interview next week")
+    assert len(th._cache) == 0
 
 
 def test_the_cache_forgets_its_oldest_reading_not_all_of_them(monkeypatch):

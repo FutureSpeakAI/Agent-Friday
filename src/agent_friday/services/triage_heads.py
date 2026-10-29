@@ -523,6 +523,7 @@ def reset_cache() -> None:
     with _cache_lock:
         _cache.clear()
         _pending.clear()
+        _generation[0] += 1
         for k in _counters_cache:
             _counters_cache[k] = 0
     with _shadow_seen_lock:
@@ -548,18 +549,32 @@ def argmax(scores: Dict[str, float]) -> Tuple[Optional[str], float]:
 # One-text decisions on the request path are cached by digest, so a message
 # the list shows twice (and a retry) costs one encode.
 #
-# STALE WHILE REVALIDATE (DM7 gate). Each entry keeps when it was scored and the
-# decision head's tag it was scored under. A fresh entry is used as it is. A
-# stale one (older than _CACHE_FRESH_S, or scored under another tag) is still
-# answered at once, and a fresh reading is queued on the worker, so a request
-# never waits for the refresh. The cache is an LRU, so a busy inbox evicts the
-# oldest message rather than emptying the whole cache.
+# STALE WHILE REVALIDATE (DM7 gate). Each entry keeps when it was scored (and,
+# for the record only, the decision head's tag then in force: the scores do not
+# depend on the tag, only the decision drawn from them does, so a new tag does
+# not re-embed anything). An entry older than _CACHE_FRESH_S is still answered
+# at once and a fresh reading is queued on the worker, so a request never waits
+# for the refresh. The cache is an LRU, so a busy inbox evicts the oldest
+# message rather than emptying the whole cache. A generation number, bumped by
+# reset_cache (an encoder or seed change), stops a reading that started before
+# the reset from being stored after it.
+#
+# THE REQUEST PATH'S BOUND. A miss is read inline only when the encoder is
+# loaded and its lock is free at that moment. That check and the embed are not
+# atomic, and a long text's turn-vector peek takes the same lock, so in a rare
+# race the read can still wait; laya.ask's request budget
+# (TRIAGE_REQUEST_BUDGET_MS, 400 ms) caps that wait and the incumbent answers.
 _cache_lock = threading.Lock()
 _cache: "OrderedDict[Tuple[str, str], Tuple[float, Optional[str], Dict[str, float]]]" = OrderedDict()
 _CACHE_MAX = 512
 _CACHE_FRESH_S = 600.0
+#: Refreshes share the shadow worker's queue; past this depth they are skipped
+#: so shadow work is not crowded out (the stale reading keeps answering).
+_REFRESH_MAX_QUEUE = 16
 _pending: set = set()
-_counters_cache = {"hit": 0, "stale": 0, "miss_inline": 0, "miss_queued": 0, "refreshed": 0}
+_generation = [0]
+_counters_cache = {"hit": 0, "stale": 0, "miss_inline": 0, "miss_queued": 0, "refreshed": 0,
+                   "refresh_skipped": 0}
 
 
 def cache_stats() -> dict:
@@ -582,26 +597,36 @@ def _encoder_free() -> bool:
         return False
 
 
-def _store(key, name: str, scores: Dict[str, float]) -> None:
+def _store(key, name: str, scores: Dict[str, float], gen: int) -> bool:
+    t = tag(name)                                   # outside the lock: it may read a file
     with _cache_lock:
-        _cache[key] = (time.monotonic(), tag(name), scores)
+        if gen != _generation[0]:
+            return False                            # read before a reset: not stored
+        _cache[key] = (time.monotonic(), t, scores)
         _cache.move_to_end(key)
         while len(_cache) > _CACHE_MAX:
             _cache.popitem(last=False)
+    return True
 
 
 def _revalidate(name: str, text: str, allowed, key) -> bool:
-    """Queue a fresh reading of one text on the worker; at most one per key at a time."""
+    """Queue a fresh reading of one text on the worker; at most one per key at a
+    time, none while the queue is deep, and none for a turn off the record."""
+    if _q.qsize() > _REFRESH_MAX_QUEUE:
+        _counters_cache["refresh_skipped"] += 1
+        return False
     with _cache_lock:
         if key in _pending:
             return False
         _pending.add(key)
+        gen = _generation[0]
 
     def job():
         try:
+            if _off_record():
+                return                              # nothing is read off the record
             out = _heads[name].score([text], block=True, allowed=allowed)
-            if out:
-                _store(key, name, out[0])
+            if out and _store(key, name, out[0], gen):
                 _counters_cache["refreshed"] += 1
         finally:
             with _cache_lock:
@@ -618,16 +643,17 @@ def _cached_score(name: str, text: str, *, allowed: Optional[Iterable[str]] = No
     """``request_path``: an act-mode decision on a request or a push. A miss is
     scored inline only when the encoder is free at that moment; otherwise there
     is no reading now (the incumbent answers) and one is queued, so the next
-    sighting of the same text has it. It never waits on the encoder."""
+    sighting of the same text has it."""
     key = (name, digest(text) + "|" + ",".join(sorted(allowed or ())))
     allowed = list(allowed) if allowed is not None else None
     with _cache_lock:
         hit = _cache.get(key)
         if hit is not None:
             _cache.move_to_end(key)
+        gen = _generation[0]
     if hit is not None:
-        ts, htag, scores = hit
-        if htag == tag(name) and time.monotonic() - ts < _CACHE_FRESH_S:
+        ts, _htag, scores = hit
+        if time.monotonic() - ts < _CACHE_FRESH_S:
             _counters_cache["hit"] += 1
         else:
             _counters_cache["stale"] += 1
@@ -643,7 +669,7 @@ def _cached_score(name: str, text: str, *, allowed: Optional[Iterable[str]] = No
             _revalidate(name, text, allowed, key)
         return None
     _counters_cache["miss_inline"] += 1
-    _store(key, name, out[0])
+    _store(key, name, out[0], gen)
     return out[0]
 
 
@@ -866,7 +892,10 @@ _SHADOW_SEEN_MAX = 8192
 
 
 def _shadow_key(row: dict) -> tuple:
+    # A news row also names its pool, so a story seen in a different pool the
+    # same day is logged with that pool's ranking.
     return (row.get("head"), row.get("h"), row.get("incumbent"), row.get("label"), row.get("tag"),
+            row.get("pool"),
             time.strftime("%Y-%m-%d", time.gmtime(row.get("ts") or time.time())))
 
 
@@ -1006,6 +1035,7 @@ def news_shadow(items: List[dict], incumbents: Optional[List[str]] = None) -> bo
     except Exception:
         return False
     texts = [news_text(i) for i in items]
+    pool = digest("\n".join(texts))
 
     def job():
         if _off_record():
@@ -1021,7 +1051,7 @@ def news_shadow(items: List[dict], incumbents: Optional[List[str]] = None) -> bo
             lab, p = decide("news", s)
             rows.append(_shadow_row("news", t, lab, inc_label, p,
                                     pos=idx, pos_blend=pos_blend[idx],
-                                    blend=news_blend(inc_label, s)[0]))
+                                    blend=news_blend(inc_label, s)[0], pool=pool))
         _counters["shadow_rows"] += _append_shadow(rows)
     return _submit(job)
 
