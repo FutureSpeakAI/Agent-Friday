@@ -1093,6 +1093,21 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
     return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
+def _grant_live(g: dict, tool_name: str, scopes: set, now: float) -> bool:
+    return bool(g.get("scope") in scopes and tool_name in (g.get("tools") or [])
+                and g.get("expires_at", 0) > now and int(g.get("uses_left") or 0) > 0)
+
+
+def _grant_covers(tool_name: str, ctx: dict) -> bool:
+    """Whether `_use_grant` would find a live grant for this call. Spends nothing."""
+    scopes = _scopes(ctx)
+    if not scopes:
+        return False
+    now = time.time()
+    with _LOCK:
+        return any(_grant_live(g, tool_name, scopes, now) for g in _read_grants())
+
+
 def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
     scopes = _scopes(ctx)
     if not scopes:
@@ -1101,8 +1116,7 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
         gs = _read_grants()
         now = time.time()
         for g in gs:
-            if (g.get("scope") in scopes and tool_name in (g.get("tools") or [])
-                    and g.get("expires_at", 0) > now and int(g.get("uses_left") or 0) > 0):
+            if _grant_live(g, tool_name, scopes, now):
                 g["uses_left"] = int(g["uses_left"]) - 1
                 # the policy version this use was made under (NS-30.19-1); the
                 # decision receipt that names the grant carries it too
@@ -1160,6 +1174,14 @@ class ActionEnvelope:
     policy_version     the governing policy version (services/policy_version)
     claws_state        {"hash", "status"}: the cLaws as this action found them
     created_at         unix seconds
+    origin             where the request came from (ORIGINS): chat, voice, task,
+                       schedule, channel, card, owner_route, route, other; derived
+                       from the session context the gate already reads
+    risk_class         the gate's own classification (observe, internal,
+                       outward, forbidden); None when it is not known
+    provenance_summary counts of where the call's arguments came from
+                       ({"owner", "content", "sender", "model"}: services/taint
+                       origins); never a value. None when no provenance check ran
     """
     action_id: str
     principal: str
@@ -1170,12 +1192,91 @@ class ActionEnvelope:
     policy_version: Optional[str]
     claws_state: dict
     created_at: float
+    origin: Optional[str] = None
+    risk_class: Optional[str] = None
+    provenance_summary: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 ENVELOPE_FIELDS = tuple(f.name for f in fields(ActionEnvelope))
+
+#: Where a request came from, as the envelope names it (NS-18.1-1). Labels only.
+#: owner_route: a route whose request is verified as the owner's (check_auth);
+#: route: any other request to a route.
+ORIGINS = ("chat", "voice", "task", "schedule", "channel", "card", "owner_route", "route", "other")
+#: The provenance buckets an envelope counts (services/taint Origin kinds:
+#: "user" and "own" are the owner's; "content", "sender" and "model" as they are).
+PROVENANCE_KEYS = ("owner", "content", "sender", "model")
+_PROVENANCE_OF = {"user": "owner", "own": "owner", "content": "content", "sender": "sender",
+                  "model": "model"}
+
+
+def derive_origin(ctx: Optional[dict] = None, *, surface: Optional[str] = None,
+                  approval: Optional[str] = None) -> str:
+    """The envelope's `origin` from what the gate already reads: the session
+    context (origin, approved_card, scheduled/schedule_id, is_voice/surface,
+    is_background_task/task_id, session_id) or, for an executor outside a tool
+    call, its surface and card. Records only; never raises."""
+    try:
+        c = ctx if isinstance(ctx, dict) else {}
+        o = str(c.get("origin") or "").strip().lower()
+        s = str(c.get("surface") or surface or "").strip().lower()
+        if approval or c.get("approved_card") or c.get("approved_card_decision") \
+                or s == "approval_card":
+            return "card"
+        if o in ("channel", "phone") or s.startswith(("channel", "phone")):
+            return "channel"
+        if c.get("scheduled") or c.get("schedule_id") or s.startswith("schedul"):
+            return "schedule"
+        if c.get("is_voice") or o == "voice" or s.startswith("voice"):
+            return "voice"
+        if c.get("is_background_task") or c.get("task_id") or s in (
+                "background", "web_task", "work_order", "claude_code"):
+            return "task"
+        if c.get("session_id") or s in ("chat", "typed"):
+            return "chat"
+        try:
+            from flask import has_request_context
+            if has_request_context():
+                # a route: the owner's only when the request is verified as theirs
+                return "owner_route" if _owner_verified_request() else "route"
+        except Exception:  # noqa: BLE001
+            pass
+        return "other"
+    except Exception:  # noqa: BLE001
+        return "other"
+
+
+def _owner_verified_request() -> bool:
+    """Whether the current request passed core.check_auth as the owner: its
+    principal is the user (not the observer credential) and it is signed in
+    (the session check_auth marks, or this launch's page token). A label for
+    the envelope; decides nothing. Never raises."""
+    try:
+        from flask import g, request, session
+        if getattr(g, "friday_principal", None) != "user":
+            return False
+        if session.get("authenticated"):
+            return True
+        from agent_friday import core as _core
+        return bool(_core._api_token_valid(request.headers.get("X-Friday-Token")))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def provenance_summary(origins: Any) -> Optional[dict]:
+    """Counts per PROVENANCE_KEYS from a taint origin tally ({kind: n}); None
+    when there is no tally. Never a value."""
+    if not isinstance(origins, dict):
+        return None
+    out = {k: 0 for k in PROVENANCE_KEYS}
+    for kind, n in origins.items():
+        b = _PROVENANCE_OF.get(str(kind))
+        if b is not None and isinstance(n, int) and n > 0:
+            out[b] += n
+    return out
 
 
 def _verification_plan(klass, decision, via=None) -> dict:
@@ -1206,6 +1307,140 @@ def _idempotency_key(tool, args_hash, ctx, principal) -> Optional[str]:
     return "idk_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
 
 
+#: The idempotency scopes that name one request (NS-36.3-5): a caller's own
+#: key, one turn, one task, one run. A session or a schedule is not one
+#: request (the same message may rightly go out again tomorrow), so a key
+#: scoped by them never refuses anything.
+_ONE_REQUEST_SCOPES = frozenset({"client", "turn_id", "task_id", "run_id", "turn"})
+
+
+def _idempotency_scope(ctx) -> str:
+    """Which scope `_idempotency_key` derived its key from (same order)."""
+    c = ctx if isinstance(ctx, dict) else {}
+    if str(c.get("idempotency_key") or "").strip():
+        return "client"
+    named = next((k for k in ("turn_id", "task_id", "run_id", "schedule_id", "session_id")
+                  if c.get(k)), "")
+    if named:
+        return named
+    return "turn" if _turn_id() else ""
+
+
+def idempotency_scope_refuses(scope: Optional[str]) -> bool:
+    """Whether a key derived under `scope` (`_idempotency_scope`) names one
+    request: the gate refuses a repeat of it, and the outward audit counts
+    it run twice as duplicate_key. The one rule both read."""
+    return str(scope or "") in _ONE_REQUEST_SCOPES
+
+
+#: The decision record's field naming the scope its idempotency key was
+#: derived under (`_idempotency_scope`; "client" for a card's own key).
+IDEMPOTENCY_SCOPE_FIELD = "idempotency_scope"
+
+
+#: The outward tool calls a repeat of which is refused as already done
+#: (NS-36.3-5): one-shot sends and writes whose second run is a second
+#: message, post, booking or record at another person's or service's end.
+#: Texts, scheduled posts, bookings and holds, calendar writes, Google Tasks
+#: writes, a contact saved; plus connector writes (ONE_SHOT_CONNECTOR_PREFIX,
+#: is_one_shot). Deliberately NOT here: SELF_GATED tools (their handler
+#: raises its own card, and a codebase command, a browser click or an
+#: organize/undo is rightly repeated within one task), commands
+#: (run_command, run_sandboxed, install_package), the browser and desktop
+#: control. Email is sent from its card (draft_email send=true is SELF_GATED;
+#: gmail_send uses record_external(once=True), which is keyed by the card).
+ONE_SHOT_ACTIONS = frozenset({
+    "text_by_phone",
+    "content_schedule_post", "content_create_post",
+    "book_slot", "hold_slots",
+    "create_calendar_event", "update_calendar_event", "delete_calendar_event",
+    "annotate_calendar_events",
+    "create_task", "update_task", "complete_task", "delete_task",
+    "save_google_contact",
+})
+#: A connector (MCP) tool; an outward one is a write at the connected service.
+ONE_SHOT_CONNECTOR_PREFIX = "mcp_"
+
+
+def is_one_shot(tool_name: Any) -> bool:
+    """Whether a repeat of this outward tool call is refused as already done:
+    ONE_SHOT_ACTIONS, or a connector write (not a desktop-control connector,
+    which is judged per click like Friday's own). Never raises."""
+    t = str(tool_name or "")
+    if t in ONE_SHOT_ACTIONS:
+        return True
+    if t in SELF_GATED or not t.lower().startswith(ONE_SHOT_CONNECTOR_PREFIX):
+        return False
+    try:
+        from agent_friday.services import desktop_grants as _dg
+        return not _dg.is_desktop_tool(t)
+    except Exception:  # noqa: BLE001 - not known to be a connector write: refuses nothing
+        return False
+
+
+def recorded_key_names_one_request(rec: Any) -> bool:
+    """`idempotency_scope_refuses` for a decision already on record (its
+    IDEMPOTENCY_SCOPE_FIELD), and, for a tool call's own derived key, only a
+    one-shot tool (is_one_shot; a card's own key, scope "client", names one
+    card). A decision written before the scope was recorded counts, as it
+    always did. Never raises."""
+    if not isinstance(rec, dict) or IDEMPOTENCY_SCOPE_FIELD not in rec:
+        return True
+    scope = rec.get(IDEMPOTENCY_SCOPE_FIELD)
+    if not idempotency_scope_refuses(scope):
+        return False
+    return scope == "client" or is_one_shot(rec.get("tool"))
+
+
+def _args_hash_of(args) -> str:
+    return hashlib.sha256(json.dumps(args or {}, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _principal_of(ctx) -> str:
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    return str((ctx or {}).get("principal") or _principal)[:40]
+
+
+def _duplicate_of(tool_name, args, ctx) -> Optional[str]:
+    """The action that already carried out this exact request (the key
+    `build_envelope` would give it), when the tool is one-shot (is_one_shot)
+    and its key names one request; else None. Never raises."""
+    try:
+        if not is_one_shot(tool_name) or not idempotency_scope_refuses(_idempotency_scope(ctx)):
+            return None
+        key = _idempotency_key(str(tool_name or "")[:120], _args_hash_of(args), ctx,
+                               _principal_of(ctx))
+    except Exception:  # noqa: BLE001 - a lookup that cannot run refuses nothing
+        return None
+    return _already_done(key)
+
+
+def _already_done_verdict(klass, done: str) -> "Verdict":
+    return Verdict("deny", klass, ALREADY_DONE_REASON, outcome=DENIED,
+                   detail={"duplicate_key": True, "already_done_action": done})
+
+
+def _already_done(idem_key: Optional[str]) -> Optional[str]:
+    """The action id that already carried out this idempotency key (executed
+    or completed_verified in the last 30 days: services/idempotency_index),
+    else None. A lookup that cannot run refuses nothing (as before). Never raises."""
+    if not idem_key:
+        return None
+    try:
+        from agent_friday.services import idempotency_index
+        return idempotency_index.done_action(idem_key)
+    except Exception as e:  # noqa: BLE001
+        _log.warning("idempotency lookup unavailable: %s", type(e).__name__)
+        return None
+
+
+#: The verdict reason for a refused repeat (detail code `duplicate_key`).
+ALREADY_DONE_REASON = "already done: this exact request was already carried out, so it was not run again"
+
+
 def _current_pv() -> Optional[dict]:
     """The governing policy version now ({"id", "parts"}), or None when the
     module cannot be used. Read once per decision and passed along. Never raises."""
@@ -1228,16 +1463,16 @@ _DECISION_PV: ContextVar = ContextVar("friday_decision_policy_version", default=
 
 def build_envelope(tool, *, args_hash: Optional[str] = None, ctx: Optional[dict] = None,
                    klass=None, decision=None, via=None, action_id: Optional[str] = None,
-                   key: Optional[bytes] = None, pv: Optional[dict] = None) -> ActionEnvelope:
+                   key: Optional[bytes] = None, pv: Optional[dict] = None,
+                   origin: Optional[str] = None,
+                   provenance: Optional[dict] = None) -> ActionEnvelope:
     """The envelope for one action; records only. `pv`: the policy version
-    the caller already read (else it is read here)."""
+    the caller already read (else it is read here). `origin`: else derived
+    from `ctx` (derive_origin); `provenance`: a taint origin tally, counted
+    (provenance_summary)."""
     from agent_friday.services import policy_version as _pv
-    try:
-        from agent_friday.services.action_ledger import PRINCIPAL as _principal
-    except Exception:  # noqa: BLE001
-        _principal = "owner"
     pvd = _given_pv(pv) or _current_pv()
-    principal = str((ctx or {}).get("principal") or _principal)[:40]
+    principal = _principal_of(ctx)
     aid = action_id if _pv.valid_action_id(action_id) else _pv.new_action_id()
     tool = str(tool or "")[:120]
     return ActionEnvelope(
@@ -1246,7 +1481,20 @@ def build_envelope(tool, *, args_hash: Optional[str] = None, ctx: Optional[dict]
         idempotency_key=_idempotency_key(tool, args_hash, ctx, principal),
         verification_plan=_verification_plan(klass, decision, via),
         policy_version=(pvd or {}).get("id"), claws_state=_pv.claws_state(key, pv=pvd),
-        created_at=time.time())
+        created_at=time.time(),
+        origin=origin if origin in ORIGINS else derive_origin(ctx, surface=via),
+        risk_class=str(klass)[:20] if klass else None,
+        provenance_summary=provenance_summary(provenance))
+
+
+def _origin_of_entry(entry: dict) -> str:
+    """The origin a receipt entry names (its surface and card), for an
+    envelope built at the receipt. Never raises."""
+    try:
+        return derive_origin({"task_id": entry.get("task_id")} if entry.get("task_id") else None,
+                             surface=entry.get("surface"), approval=entry.get("approval"))
+    except Exception:  # noqa: BLE001
+        return "other"
 
 
 def _envelope_of(entry: dict, key: Optional[bytes], pv: Optional[dict] = None) -> dict:
@@ -1260,10 +1508,14 @@ def _envelope_of(entry: dict, key: Optional[bytes], pv: Optional[dict] = None) -
         env = build_envelope(entry.get("tool"), args_hash=entry.get("args_hash"),
                              klass=entry.get("class"), decision=entry.get("decision"),
                              via=entry.get("via"), action_id=entry.get("action_id"),
-                             key=key, pv=pvd).to_dict()
+                             key=key, pv=pvd, origin=_origin_of_entry(entry)).to_dict()
     else:
         env = {k: env.get(k) for k in ENVELOPE_FIELDS}
         env["claws_state"] = _pv.claws_state(key, pv=pvd)
+        if env.get("origin") not in ORIGINS:
+            env["origin"] = _origin_of_entry(entry)
+        if not env.get("risk_class") and entry.get("class"):
+            env["risk_class"] = str(entry.get("class"))[:20]
     env["policy_version"] = (pvd or {}).get("id") or env.get("policy_version")
     return env
 
@@ -1297,7 +1549,11 @@ def _fallback_envelope(entry: dict) -> dict:
             "idempotency_key": idk if isinstance(idk, str) else None,
             "verification_plan": plan, "policy_version": PV_UNAVAILABLE,
             "claws_state": {"hash": None, "status": "unavailable"},
-            "created_at": time.time()}
+            "created_at": time.time(),
+            "origin": given.get("origin") if given.get("origin") in ORIGINS else _origin_of_entry(entry),
+            "risk_class": str(entry.get("class"))[:20] if entry.get("class") else None,
+            "provenance_summary": given.get("provenance_summary")
+            if isinstance(given.get("provenance_summary"), dict) else None}
 
 
 def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
@@ -1337,7 +1593,8 @@ def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
         if _off.active():
             entry = {k: entry.get(k) for k in _OFF_RECORD_RECEIPT_KEYS if k in entry}
             # no hash of the arguments off the record (a short message can be guessed)
-            entry["envelope"] = dict(env, args_hash=None, idempotency_key=None)
+            entry["envelope"] = dict(env, args_hash=None, idempotency_key=None,
+                                     provenance_summary=None)
             entry["off_record"] = True
     except ImportError:
         pass
@@ -1794,8 +2051,13 @@ def _interactive(ctx: dict) -> bool:
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
               *, tainted: bool = False, clean: bool = False,
-              grant_tainted: Optional[bool] = None, via: str = "") -> Verdict:
+              grant_tainted: Optional[bool] = None, via: str = "",
+              provenance: Optional[dict] = None) -> Verdict:
     """Decide whether this action may run now. Never raises.
+
+    `provenance`: the provenance check's origin tally for the call's
+    arguments (services/taint Decision.origins), counted into the envelope.
+    Records only.
 
     `tainted`: a detail came from outside content badly enough to need a card.
     `clean`: the provenance check found nothing at all from outside content in
@@ -1811,7 +2073,9 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
              the confirmation gate asks the user yes/no in chat
     card     outward and nobody can be asked in chat, or a detail came from
              outside content: an approval card decides it
-    deny     never run (forbidden, or the checkpoint itself failed)
+    deny     never run (forbidden, the checkpoint itself failed, or an outward
+             request already carried out: ALREADY_DONE_REASON, detail
+             duplicate_key)
     """
     ctx = session_ctx or {}
     failed = None
@@ -1839,8 +2103,8 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _args_hash = hashlib.sha256(json.dumps(args or {}, sort_keys=True,
-                                               default=str).encode()).hexdigest()
+        _args_hash = _args_hash_of(args)
+        _scope = _idempotency_scope(ctx)
         # The single action envelope (NS-36.3-1), built once here and carried
         # to the decision receipt and, through LAST_RECEIPT, to the outcome.
         # Records only: nothing reads it to decide. The policy version is read
@@ -1848,10 +2112,31 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         _pvd = _current_pv()
         try:
             _env = build_envelope(tool_name, args_hash=_args_hash, ctx=ctx, klass=v.klass,
-                                  decision=v.action, via=via or None, pv=_pvd).to_dict()
+                                  decision=v.action, via=via or None, pv=_pvd,
+                                  provenance=provenance).to_dict()
         except Exception as e:  # noqa: BLE001 - _receipt builds one instead
             _log.warning("action envelope not built here: %s", type(e).__name__)
             _env = None
+        # Idempotent execute (NS-36.3-5): an outward action about to run whose
+        # request (its idempotency key, scoped to one turn, task or run, or the
+        # caller's own key) was already carried out is refused, not run again.
+        # The only thing here that changes a verdict, and only toward refusing.
+        # (`_decide` checks first, before it spends a grant use: a refused
+        # repeat never uses one up.) Only a one-shot send or write
+        # (ONE_SHOT_ACTIONS, is_one_shot): a self-gated tool, a command or a
+        # browser step is rightly repeated within one task, run or turn.
+        # Known limit: two identical calls at the same moment both pass (the
+        # first has no outcome yet when the second is checked); this refuses
+        # a repeat after the first one ran, it is not a lock.
+        _dup = None
+        if v.action == "deny" and (v.detail or {}).get("duplicate_key"):
+            _dup = v.detail.get("already_done_action")
+        elif (v.action == "allow" and v.klass == OUTWARD and _env
+                and is_one_shot(tool_name) and idempotency_scope_refuses(_scope)):
+            _dup = _already_done(_env.get("idempotency_key"))
+            if _dup:
+                v = _already_done_verdict(v.klass, _dup)
+                _env["verification_plan"] = _verification_plan(v.klass, "deny", via or None)
         # (through a context variable, not an argument: callers and tests
         # replace _receipt with one-argument callables)
         _pv_token = _DECISION_PV.set(_pvd)
@@ -1866,6 +2151,10 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "via": via or None,
                   "args_hash": _args_hash,
                   **({"envelope": _env, "action_id": _env["action_id"]} if _env else {}),
+                  **({"detail": "duplicate_key", "already_done_action": _dup} if _dup else {}),
+                  # the scope its idempotency key was derived under, so the
+                  # outward audit applies the gate's own rule to it
+                  IDEMPOTENCY_SCOPE_FIELD: _scope or None,
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
                                                      "background" if ctx.get("is_background_task") else "other"),
                   "grant": (v.grant or {}).get("grant_id"),
@@ -2061,6 +2350,14 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         return Verdict("allow", klass, "its own approval card is the gate (with provenance)",
                        detail=withheld)
     if not tainted and not _interactive(ctx):
+        # Idempotent execute (NS-36.3-5) before a grant use is spent: a request
+        # the grant would let run, already carried out, is refused here (as
+        # `authorize` would refuse it after) and the grant keeps its use.
+        # One-shot sends and writes only (is_one_shot), as in `authorize`.
+        if is_one_shot(tool_name) and _grant_covers(tool_name, ctx):
+            done = _duplicate_of(tool_name, args, ctx)
+            if done:
+                return _already_done_verdict(klass, done)
         g = _use_grant(tool_name, ctx)
         if g is not None:
             return Verdict("allow", klass, f"pre-approved grant {g['grant_id']}", grant=g)
@@ -2120,6 +2417,22 @@ class Held(RuntimeError):
     """An outward action the checkpoint would not let through."""
 
 
+class AlreadyDone(Held):
+    """`record_external(once=True)`: the card's action was already carried
+    out (its idempotency key has an executed or completed_verified outcome),
+    so it is refused, not run again (NS-36.3-5). `action_id`: the one that
+    ran. A new card is a new key: the owner re-does it with a new card.
+
+    One-shot by construction, whatever the tool: the key names one approval
+    card (its id, action and target), and one approved card is carried out
+    once. It does not read ONE_SHOT_ACTIONS (that set is for a tool call's
+    key derived from its turn, task or run, which a legitimate repeat can share)."""
+
+    def __init__(self, msg: str, action_id: Optional[str] = None):
+        super().__init__(msg)
+        self.action_id = action_id
+
+
 def check_external() -> None:
     """The checks `record_external` makes before its receipt (Stop is not
     pressed, the cLaws are intact, no outward hold). Raises `Held`."""
@@ -2173,12 +2486,27 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     if task_id:
         entry["task_id"] = str(task_id)[:120]
     if approval_id and once:
+        entry[IDEMPOTENCY_SCOPE_FIELD] = "client"       # the card's own key: one request
         try:
             entry["envelope"] = build_envelope(
                 action, klass=OUTWARD, decision="allow", via=surface,
-                ctx={"idempotency_key": "approval|%s|%s|%s" % (approval_id, action, target)}).to_dict()
+                ctx={"idempotency_key": "approval|%s|%s|%s" % (approval_id, action, target)},
+                origin=derive_origin(None, surface=surface, approval=approval_id)).to_dict()
         except Exception:  # noqa: BLE001 - the envelope records; _receipt builds one without a key
             pass
+        # Idempotent execute (NS-36.3-5): this card's action already ran (the
+        # key names the card, so only this card): refused, with its own
+        # receipt, and nothing is carried out again.
+        done = _already_done((entry.get("envelope") or {}).get("idempotency_key"))
+        if done:
+            env = dict(entry["envelope"], verification_plan=_verification_plan(OUTWARD, "deny", surface))
+            refusal = dict(entry, decision="deny", reason=ALREADY_DONE_REASON, outcome=DENIED,
+                           detail="duplicate_key", already_done_action=done, envelope=env)
+            try:
+                _receipt(refusal)
+            except Exception as e:  # noqa: BLE001 - refused either way
+                _log.warning("the already-done refusal could not be receipted: %s", type(e).__name__)
+            raise AlreadyDone("%s (approval %s)" % (ALREADY_DONE_REASON, approval_id), done)
     try:
         out = _receipt(entry)
     except Exception as e:

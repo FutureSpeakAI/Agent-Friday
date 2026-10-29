@@ -299,6 +299,14 @@ def _c_outward_terminal():
     return outward_audit.doctor_check()
 
 
+def _c_record_integrity():
+    """One view of the record (services/ledger_integrity): signature health,
+    chain breaks and gaps, unsigned lines, open, unconfirmed and duplicated
+    outward actions, and the policy version id. Counts only."""
+    from agent_friday.services import ledger_integrity
+    return ledger_integrity.doctor_check()
+
+
 def _c_backup():
     try:
         from agent_friday.services import backup_schedule
@@ -363,6 +371,7 @@ CHECKS = (
     ("receipt_chain", "receipt chains", _c_ledger),
     ("receipt_completeness", "receipt chains", _c_receipt_completeness),
     ("outward_terminal", "receipt chains", _c_outward_terminal),
+    ("record_integrity", "receipt chains", _c_record_integrity),
     ("authority", "action gate", _c_authority),
     ("rules", "action gate", _c_claws),
     ("egress_gate", "egress gate", _c_egress),

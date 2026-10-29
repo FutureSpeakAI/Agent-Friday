@@ -15,7 +15,12 @@
                                  actions (services/outward_audit): counts and
                                  action ids; ?days= window (1 to 365, default 30).
                                  Read-only.
-  GET  /api/ledger/retention     the retention period and the archive (A22)
+  GET  /api/ledger/integrity     one view of the record (services/ledger_integrity):
+                                 signature health, chain breaks and gaps,
+                                 unsigned lines, open/unconfirmed/duplicate
+                                 outward actions, the policy version id.
+                                 Counts only; ?days= as for audit. Read-only.
+  GET  /api/ledger/retention    the retention period and the archive (A22)
   POST /api/ledger/retention     {"days": n}: change it (0 = off, at least 30);
                                  on this PC only. Archives at once; never deletes.
   POST /api/ledger/acknowledge   the owner has looked at the breaks shown;
@@ -339,6 +344,25 @@ def api_ledger_audit():
         return jsonify({"status": "ok", "audit": outward_audit.audit(days * 86400.0)})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The outward actions could not be checked.")
+
+
+@ledger_bp.route("/api/ledger/integrity", methods=["GET"])
+@login_required
+def api_ledger_integrity():
+    """One view of the record (services/ledger_integrity): signature health,
+    chain breaks and gaps, unsigned lines, open, unconfirmed and duplicated
+    outward actions, the policy version id. Counts only. Owner only, as
+    /api/ledger/audit (the session; not on the observer's list). Reads;
+    writes nothing."""
+    try:
+        from agent_friday.services import ledger_integrity
+        try:
+            days = max(1.0, min(float(request.args.get("days") or 30), 365.0))
+        except (TypeError, ValueError):
+            days = 30.0
+        return jsonify({"status": "ok", "integrity": ledger_integrity.integrity(days * 86400.0)})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The record could not be checked.")
 
 
 @ledger_bp.route("/api/ledger/acknowledge", methods=["POST"])

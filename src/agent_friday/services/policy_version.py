@@ -112,6 +112,8 @@ GATE_TABLES = (
     "OUTWARD_TOOLS", "SELF_GATED", "LIBRARY_SCREEN_ACTIONS", "INTERNAL_TOOLS", "BY_ARGUMENT",
     "CARD_ONLY_WHEN_OUTWARD", "READ_ONLY_COMMANDS", "SAFE_MODE_HELD_TOOLS",
     "CONNECTED_SERVICE_TOOLS", "CONNECTED_SERVICE_WRITES",
+    # which outward tool calls a repeat of is refused as already done (NS-36.3-5)
+    "ONE_SHOT_ACTIONS",
 )
 #: What a scoped grant covers (governance/grants.json); uses left is not policy.
 _GATE_GRANT_FIELDS = ("grant_id", "tools", "scope", "expires_at", "created_by")
