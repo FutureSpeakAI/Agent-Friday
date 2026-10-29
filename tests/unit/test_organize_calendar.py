@@ -27,6 +27,13 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
     monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
+    # This file tests the calendar card, not the gate's holds or Stop: state another file's test
+    # left in this xdist worker's shared home (the safe-mode marker, a failed-start count, a
+    # restore hold) or in the process (Stop everything is a process-wide flag) must not refuse the
+    # card here. The gate's and Stop's own tests cover those.
+    from agent_friday.services import global_stop
+    global_stop._reset_for_tests()
+    monkeypatch.setattr(ag, "outward_hold", lambda: None)
     monkeypatch.setattr(journal, "_path", lambda: tmp_path / "receipts.jsonl")
     journal.reset()
     state = {k: dict(v) for k, v in EVENTS.items()}
@@ -48,12 +55,21 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(cw, "get_event", get_event)
     monkeypatch.setattr(cw, "update_event", update_event)
     yield state, calls
+    global_stop._reset_for_tests()        # and never leave Stop on for the next file's tests
     journal.reset()
     desktop_bus.reset()
 
 
 def _org(**kw):
-    return agent._tool_organize_calendar(dict({"action": "shift"}, **kw))
+    out = agent._tool_organize_calendar(dict({"action": "shift"}, **kw))
+    _org.last = out                     # the tool's own answer, for a failure message
+    return out
+
+
+def _first_card():
+    cards = _pending()
+    assert cards, "no card was raised; the tool said: %r" % (getattr(_org, "last", None),)
+    return cards[0]
 
 
 def _pending():
@@ -79,9 +95,12 @@ def test_one_event_still_waits_for_a_card_because_it_reaches_google(world):
 def test_the_yes_moves_each_event_by_the_same_amount_keeping_its_length(world):
     state, calls = world
     _org(events=["e1", "e3"], days=1, minutes=-30)
-    aid = _pending()[0]["approval_id"]
-    ap.decide_with_outcome(aid, "approve", decided_by="owner")
-    assert ia.wait_for(aid, 10), "the approved batch runs on its own thread: wait for it"
+    card_id = _first_card()["approval_id"]
+    ap.decide_with_outcome(card_id, "approve", decided_by="owner")
+    # the yes runs the batch on a background thread: wait for its receipt, so the run is over
+    # before this test's checks, and before the next test's fixtures swap the stores under it
+    ran = ia.wait_for(card_id, 10)
+    assert ran and ran["status"] == "complete", ran
     assert state["e1"]["start"].startswith("2026-10-07T13:30:00") and state["e1"]["end"].startswith("2026-10-07T14:30:00")
     assert state["e3"]["start"].startswith("2026-10-08T08:30:00") and state["e3"]["end"].startswith("2026-10-08T08:45:00")
     assert {c[0] for c in calls} == {"e1", "e3"}
@@ -96,9 +115,10 @@ def test_a_day_forward_across_a_clock_change_keeps_the_wall_clock_time():
 def test_undo_puts_each_event_back_at_its_old_time(world):
     state, calls = world
     _org(events=["e1", "e2"], days=3)
-    aid = _pending()[0]["approval_id"]
-    ap.decide_with_outcome(aid, "approve", decided_by="owner")
-    assert ia.wait_for(aid, 10), "the approved batch runs on its own thread: wait for it"
+    move_id = _first_card()["approval_id"]
+    ap.decide_with_outcome(move_id, "approve", decided_by="owner")
+    moved = ia.wait_for(move_id, 10)      # the move runs on a background thread; its receipt is what Undo reads
+    assert moved and moved["status"] == "complete", moved
     assert state["e1"]["start"] != EVENTS["e1"]["start"]
     rec = journal.latest(None)
     res = ia.undo(rec["receipt_id"])
@@ -144,3 +164,19 @@ def test_the_gate_classifies_it_outward_and_the_tool_is_registered_everywhere():
     assert "organize_calendar" in taint.TOOL_ROLES
     assert "organize_calendar" in voice_engine._VOICE_SHARED_TOOLS
     assert "organize_calendar" in {t["name"] for t in agent.CLAUDE_TOOLS}
+
+
+def test_a_hold_left_by_another_test_in_this_worker_does_not_stop_the_card(request, monkeypatch):
+    # Under xdist one worker runs many files with one test home; safe mode's decision is cached per
+    # process and a restore or ledger hold can be left behind. Any of them makes the gate refuse the
+    # card, and the undo test then failed with an IndexError (no card) on most branches.
+    monkeypatch.setattr(ag, "outward_hold", lambda: "safe mode (left by an earlier test in this worker)")
+    from agent_friday.services import global_stop
+    global_stop._flag().set()               # Stop everything left on by another test
+    try:
+        request.getfixturevalue("world")
+        out = _org(events=["e1"], days=1)
+        assert len(_pending()) == 1, "state left by another test refused the card: %r" % (out,)
+    finally:
+        global_stop._reset_for_tests()
+
