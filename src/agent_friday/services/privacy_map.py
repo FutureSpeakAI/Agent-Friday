@@ -1034,12 +1034,15 @@ def view(now: Optional[float] = None) -> dict:
             _log.warning("privacy map: %s could not be read: %s", getattr(fn, "__name__", "?"), e)
             return fallback
 
-    # Built once: the services list and the off-the-record lines read the
-    # same connection checklist.
+    # The folder is measured first: building the connection checklist can
+    # write its own small files, and what the map counts must not depend on
+    # it. The checklist is then built once for the services list and the
+    # off-the-record lines.
+    counted = safe(stores, [])
     items = _checklist_items()
     return {
         "generated_at": now,
-        "stores": safe(stores, []),
+        "stores": counted,
         "left": safe(left, {"destinations": [], "rows": 0, "readable": False,
                             "not_recorded": list(NOT_RECORDED)}),
         "mail": safe(mail, {"sent": 0, "failed": 0, "recipients": []}),
