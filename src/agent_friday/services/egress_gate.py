@@ -635,7 +635,7 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         dest.parent.mkdir(parents=True, exist_ok=True)
         with _LOG_LOCK:
             with open(dest, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+                f.write(json.dumps(_stamped(entry)) + "\n")
     except Exception:
         pass
 
@@ -725,6 +725,20 @@ def _destination(provider: str) -> str:
     except Exception:
         pass
     return str(provider or "unknown")
+
+
+def _stamped(entry: dict) -> dict:
+    """`entry` with the current request's correlation id (services/correlation), so one
+    request's egress rows, friday.log lines and decision receipts can be read together
+    (NS-26.17-2). A row written outside a request carries none."""
+    try:
+        from agent_friday.services import correlation as _corr
+        cid = _corr.current()
+        if cid and "correlation_id" not in entry:
+            entry["correlation_id"] = cid
+    except Exception:
+        pass
+    return entry
 
 
 def _canonical(obj: Any) -> str:
@@ -819,7 +833,7 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
         dest.parent.mkdir(parents=True, exist_ok=True)
         with _LOG_LOCK:
             with open(dest, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+                f.write(json.dumps(_stamped(entry)) + "\n")
     except Exception:
         pass
     try:
@@ -977,7 +991,7 @@ def record_binary_egress(provider: str, field: str, *, action: str,
         dest.parent.mkdir(parents=True, exist_ok=True)
         with _LOG_LOCK:
             with open(dest, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
+                f.write(json.dumps(_stamped(entry)) + "\n")
     except Exception:
         pass
     return entry

@@ -1129,12 +1129,17 @@ def _setup_friday_logging() -> None:
 
 
 def _install_log_redaction() -> None:
-    """Every handler of the "friday" logger passes the one redaction filter (secrets out,
-    the request's correlation id in: services/log_redaction). A filter that cannot be
-    installed is said once on stderr; logging itself keeps working."""
+    """Every log record from every logger passes the one redaction step (secrets out,
+    the request's correlation id in: services/log_redaction), and so does every handler
+    of the "friday", root and werkzeug loggers. A redactor that cannot be installed is
+    said once on stderr; logging itself keeps working."""
     try:
         from agent_friday.services import log_redaction
-        log_redaction.install(logging.getLogger("friday"))
+        if _TESTING:
+            # A test that sets up logging must not change every later test's records.
+            log_redaction.install(logging.getLogger("friday"))
+        else:
+            log_redaction.install_everywhere()
     except Exception as e:  # noqa: BLE001
         try:
             sys.stderr.write("[FRIDAY] the log redaction filter could not be installed (%s)\n"
@@ -5316,6 +5321,52 @@ def _idempotency_forget(_exc=None):
             _idem.forget(scope)          # the request failed before an answer: a retry runs
         except Exception:  # noqa: BLE001
             pass
+
+
+# ── What an error answer says (BD-08, NS-26.5-5) ─────────────────
+# Registered after every other app-level after_request in this module, so it runs
+# FIRST among them (Flask runs them last-registered first): the idempotency store
+# keeps, and replays, the answer as it stands after this.
+
+#: Error answers larger than this are not re-read (an error is a sentence, not a payload).
+_ERROR_BODY_MAX = 1024 * 1024
+
+
+@app.after_request
+def _redact_error_answer(resp):
+    """An error answer (4xx/5xx JSON) never carries a key-shaped value: many routes answer
+    with the exception's own words, and an upstream error can quote the key or token it
+    was sent. Every string in the JSON passes services/log_redaction; names and structure
+    stay. An answer that cannot be checked becomes a fixed one."""
+    try:
+        if resp.status_code < 400 or resp.direct_passthrough or resp.is_streamed:
+            return resp
+        if resp.mimetype != "application/json":
+            return resp
+        if (resp.content_length or 0) > _ERROR_BODY_MAX:
+            return resp
+        raw = resp.get_data()
+        if not raw or len(raw) > _ERROR_BODY_MAX:
+            return resp
+        from agent_friday.services import log_redaction as _lr
+        try:
+            obj = json.loads(raw)
+        except ValueError:
+            text = raw.decode("utf-8", "replace")
+            fixed = _lr.redact(text)
+            if fixed != text:
+                resp.set_data(json.dumps({"error": fixed}))
+            return resp
+        new, changed = _lr.redact_json(obj)
+        if changed:
+            resp.set_data(json.dumps(new))
+    except Exception:  # noqa: BLE001 - an answer that cannot be checked is not sent as it was
+        try:
+            resp.set_data(json.dumps({"error": "Something went wrong; the details are in Friday's log."}))
+            resp.mimetype = "application/json"
+        except Exception:  # noqa: BLE001
+            pass
+    return resp
 
 
 @app.route('/api/session/token')
