@@ -614,6 +614,20 @@ def _preset_loop(ctx: Ctx, spec: dict) -> dict:
 PRESETS["loop.no_progress"] = _preset_loop
 
 
+def _preset_supports(ctx: Ctx, spec: dict) -> dict:
+    """The citation support head (services/citation_heads, second wave): does
+    each footnote's passage support its sentence, in shadow. Label only."""
+    try:
+        from agent_friday.services import citation_heads
+    except ImportError:
+        return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
+                "why": "the citation head is not part of this build"}
+    return citation_heads.preset(ctx, spec)
+
+
+PRESETS["evidence.supports"] = _preset_supports
+
+
 def _clamp_add_only(ans: dict, res: dict) -> bool:
     """Invariant 1. If a preset names a floor and an order (low to high) and its
     answer sits below the floor, raise it to the floor. True when it did."""
