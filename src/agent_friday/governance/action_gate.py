@@ -1233,6 +1233,8 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
         gs = [x for x in _read_grants(key) if x.get("expires_at", 0) > time.time()]
         gs.append(g)
         _write_grants(gs)
+    _grant_event("grant.created", g["grant_id"], tools=g["tools"], scope=g["scope"],
+                 expires_at=round(g["expires_at"]), max_uses=g["max_uses"])
     return dict(g)
 
 
@@ -1249,6 +1251,8 @@ def revoke_all_grants() -> list:
         for gid in ids:
             action_ledger.append("grant_revoke", {"grant": gid}, durable=True)
         _write_grants([])
+    for gid in ids:
+        _grant_event("grant.revoked", gid)
     return ids
 
 
@@ -1257,6 +1261,17 @@ def all_grant_ids() -> list:
     take back (list_grants shows only the live ones)."""
     return [str(g.get("grant_id")) for g in _read_raw_grants()
             if isinstance(g, dict) and g.get("grant_id")]
+
+
+def _grant_event(kind: str, grant_id: str, **payload) -> None:
+    """NS-31.7-1: a grant made or taken back is in the canonical event log (ids, tool names and
+    limits; never a note's words). Never raises."""
+    try:
+        from agent_friday.services import events
+        events.record_critical(kind, source="action_gate", payload=payload,
+                               related_ids={"grant": grant_id})
+    except Exception:
+        pass
 
 
 def list_grants() -> list:
@@ -1294,6 +1309,8 @@ def revoke_grant(grant_id: str) -> bool:
         action_ledger.append("grant_revoke", {"grant": str(grant_id)}, durable=True)
         keep = [g for g in gs if not (isinstance(g, dict) and g.get("grant_id") == grant_id)]
         _write_grants(keep)
+    if found:
+        _grant_event("grant.revoked", grant_id)
     return found
 
 
