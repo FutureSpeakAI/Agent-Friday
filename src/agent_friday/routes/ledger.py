@@ -75,6 +75,7 @@ KIND_LABELS = {
     "gate_event": "Checkpoint settings changed",
     "file_grant": "File access granted, denied or revoked",
     "setting_change": "A setting changed (with Undo)",
+    "self_check": "Friday checked her own safeguards",
 }
 
 #: What an approved change's run marker (services/item_actions.RUN_KIND) says happened.

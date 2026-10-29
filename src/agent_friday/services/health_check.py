@@ -162,7 +162,10 @@ def check_credential_store() -> Tuple[bool, str]:
         from agent_friday.services import credential_store as cs
     except Exception as e:
         return False, ExceptionText(f"credential_store could not be imported: {type(e).__name__}: {e}")
-    canary_path = core.FRIDAY_DIR / "security" / ".health_check_canary"
+    import uuid as _uuid
+    # one name per call: two checks at once (a health poll and the safeguard
+    # sweep) never remove each other's canary
+    canary_path = core.FRIDAY_DIR / "security" / (".health_check_canary." + _uuid.uuid4().hex[:12])
     canary_value = b"friday-health-check-canary"
     try:
         # The canary holds a constant and is deleted below; the round trip is
