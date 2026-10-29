@@ -1271,7 +1271,7 @@ def _gate_voice_tool_result(result: str, fname: str) -> str:
                   "withholding rather than sending ungated", fname, _ie)
         return _GATE_UNREACHABLE_TOOL
     try:
-        gated = _eg._gate_text(result, "google-gemini", f"live.tool.{fname}")
+        gated = _eg._gate_text(result, "google-gemini", "live.tool.%s" % _eg._tool_label(fname))
         if result and not gated:
             gated = _eg._TOOL_RESULT_WITHHELD
         return gated
@@ -6107,7 +6107,11 @@ if sock is not None:
                                 result = str(result)
                             result = _live_laya.for_call(_voice_session).shape_result(
                                 fname, fargs, result, _voice_session.get("owner_text") or "")
-                            result = result[:8000]
+                            # Gated BEFORE it is cut to the 8000 characters the live model
+                            # takes: a cut first can break a JSON result mid-value, and the gate
+                            # then withholds all of it instead of only the private fields
+                            # (NS-34.6-10). A very large result is still bounded for the gate.
+                            result = result[:16000]
                             # Tool results are CLOUD EGRESS: emails, wiki
                             # excerpts, calendar attendees ship to Google here.
                             # Run the same gate as the text-chat path; a fully
@@ -6119,6 +6123,7 @@ if sock is not None:
                             # NeverSendBlocked verdict fall through to the
                             # ungated result).
                             result = _gate_voice_tool_result(result, fname)
+                            result = result[:8000]
                             _live_laya.for_call(_voice_session).note_sent(fname, result)
                             refused = _refused_crew_response(fname, fid, _orb_id)
                             if refused is not None:

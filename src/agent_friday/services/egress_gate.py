@@ -1307,11 +1307,14 @@ def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> st
         changed = _changed_paths(parsed, gated)
         if changed:
             shown = ", ".join(changed[:8]) + (" and %d more" % (len(changed) - 8) if len(changed) > 8 else "")
-            gated["privacy_gate"] = (
+            # First in the result, so a cut that keeps the head (voice, compaction) keeps it too.
+            # this notice always wins over a key of that name already in the result
+            gated = dict({"privacy_gate": (
                 "The privacy gate withheld %d part(s) of this result because they were classified "
                 "sensitive; they stayed on this device: %s. Tell the owner which items (which message "
                 "or field) were withheld and why; they can be read on a local seat. Do not guess what "
-                "the withheld parts said." % (len(changed), shown))
+                "the withheld parts said." % (len(changed), shown))},
+                         **{k: v for k, v in gated.items() if k != "privacy_gate"})
             if mail is not None:
                 # Money paragraphs: the owner is shown exactly that text and asked (no silent hold).
                 try:
@@ -1504,9 +1507,18 @@ def _gate_messages(messages: list, provider: str,
     """Gate a list of message dicts. Returns a new list; never mutates input.
 
     `model` is the model the messages go to; a replayed public query is the
-    seat's own text only for that same (provider, model) (_gate_tool_args)."""
+    seat's own text only for that same (provider, model) (_gate_tool_args).
+
+    A tool's result is recorded under the tool's name (NS-34.6-10: which connector's
+    content was held), in either wire shape: an OpenAI-compatible `role: "tool"` message
+    answering a `tool_calls` id, or an Anthropic `tool_result` block answering a
+    `tool_use` id. A result withheld whole is replaced by the tool-result marker, never
+    by the marker that speaks of the user's own message."""
+    names: dict = {}
     gated = []
     for i, msg in enumerate(messages):
+        # a result answers the nearest call before it with that id (ids can repeat across turns)
+        names.update(_tool_names([msg]) if isinstance(msg, dict) and msg.get("role") != "tool" else {})
         if not isinstance(msg, dict):
             gated.append(msg)
             continue
@@ -1521,13 +1533,18 @@ def _gate_messages(messages: list, provider: str,
                 gated.append({**out, "content": _LOCAL_ONLY_WITHHELD})
                 continue
             if isinstance(content, str):
-                _g = _gate_text(content, provider, f"message[{i}].content", log_path)
+                is_result = msg.get("role") == "tool"
+                field = (f"message[{i}].tool_result:{_tool_label(names.get(msg.get('tool_call_id')))}"
+                         if is_result else f"message[{i}].content")
+                _g = _gate_text(content, provider, field, log_path)
                 if content and not _g:
                     # The Anthropic API rejects empty message content ("all messages
                     # must have non-empty content"), turning a withheld turn into a
                     # hard 400 for the whole call. Substitute a marker the model can
-                    # act on — it still sees NONE of the withheld content.
-                    _g = _MESSAGE_WITHHELD
+                    # act on — it still sees NONE of the withheld content. A tool's
+                    # result gets the tool-result marker: the other one tells the
+                    # model the USER's message was sensitive, which is not what happened.
+                    _g = _TOOL_RESULT_WITHHELD if is_result else _MESSAGE_WITHHELD
                 out = {**out, "content": _g}
             elif isinstance(content, list):
                 new_parts = []
@@ -1537,6 +1554,11 @@ def _gate_messages(messages: list, provider: str,
                         _log(provider, f"message[{i}].content[{j}].text", Tier.SENSITIVE, "block",
                              "local-only result withheld from a cloud model", log_path)
                         new_parts.append({**part, "text": _LOCAL_ONLY_WITHHELD})
+                    elif isinstance(part, dict) and part.get("type") == "text" and msg.get("role") == "tool":
+                        _txt = part.get("text", "")
+                        _gp = _gate_text(_txt, provider, f"message[{i}].tool_result[{j}]:%s"
+                                         % _tool_label(names.get(msg.get("tool_call_id"))), log_path)
+                        new_parts.append({**part, "text": _gp if (_gp or not _txt) else _TOOL_RESULT_WITHHELD})
                     elif isinstance(part, dict) and part.get("type") == "text":
                         new_parts.append({
                             **part,
@@ -1547,7 +1569,8 @@ def _gate_messages(messages: list, provider: str,
                         })
                     elif isinstance(part, dict) and part.get("type") == "tool_result":
                         new_parts.append(_gate_tool_result(
-                            part, provider, f"message[{i}].content[{j}]", log_path))
+                            part, provider, f"message[{i}].content[{j}]", log_path,
+                            tool=names.get(part.get("tool_use_id"))))
                     elif isinstance(part, dict) and part.get("type") == "tool_use":
                         new_parts.append(_gate_tool_use(
                             part, provider, f"message[{i}].content[{j}]", log_path,
@@ -1678,8 +1701,45 @@ def _changed_paths(old, new, prefix: str = "") -> list:
     return [prefix or "(whole result)"] if isinstance(old, str) and old != new else []
 
 
+def _tool_names(messages: list) -> dict:
+    """{tool call id: tool name} from the calls in `messages` (both wire shapes)."""
+    names = {}
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get("id"):
+                names[tc["id"]] = (tc.get("function") or {}).get("name") or tc.get("name")
+        if isinstance(m.get("content"), list):
+            for p in m["content"]:
+                if isinstance(p, dict) and p.get("type") == "tool_use" and p.get("id"):
+                    names[p["id"]] = p.get("name")
+    return names
+
+
+def _tool_label(name) -> str:
+    """A tool's name as the egress log records it: ASCII letters, digits, _ . - only, and only a
+    tool Friday knows (a registered tool or an add-on's mcp_ tool). Any other name a model put in
+    a call is logged as "unregistered", so model-chosen text never lands in the owner's log."""
+    import re as _re
+    import sys as _sys
+    s = _re.sub(r"[^A-Za-z0-9_.-]", "", str(name or ""))[:64]
+    if not s:
+        return "unknown"
+    if s.startswith("mcp_"):
+        return s
+    agent = _sys.modules.get("agent_friday.services.agent")
+    if agent is not None:
+        # a known tool: one with a handler, or one in the ring map (voice-only tools have no
+        # text-chat handler but are Friday's own)
+        known = set(getattr(agent, "CLAUDE_TOOL_HANDLERS", {}) or {}) | set(getattr(agent, "TOOL_RINGS", {}) or {})
+        if known and s not in known:
+            return "unregistered"
+    return s
+
+
 def _gate_tool_result(part: dict, provider: str, field: str,
-                      log_path: Path | None = None) -> dict:
+                      log_path: Path | None = None, tool=None) -> dict:
     """Gate the text inside a tool_result block (file reads, command output —
     whatever a tool pulled mid-loop). Anthropic allows `content` as a plain
     string or a list of typed blocks; non-text blocks (images) pass through
@@ -1688,9 +1748,10 @@ def _gate_tool_result(part: dict, provider: str, field: str,
         out = _gate_text(text, provider, subfield, log_path)
         return _TOOL_RESULT_WITHHELD if (text and out == "") else out
 
+    label = ":" + _tool_label(tool) if tool is not None else ""
     inner = part.get("content")
     if isinstance(inner, str):
-        return {**part, "content": _gate_one(inner, f"{field}.tool_result")}
+        return {**part, "content": _gate_one(inner, f"{field}.tool_result{label}")}
     if isinstance(inner, list):
         new_inner = []
         for k, block in enumerate(inner):
@@ -1698,7 +1759,7 @@ def _gate_tool_result(part: dict, provider: str, field: str,
                 new_inner.append({
                     **block,
                     "text": _gate_one(block.get("text", ""),
-                                      f"{field}.tool_result[{k}]"),
+                                      f"{field}.tool_result[{k}]{label}"),
                 })
             else:
                 new_inner.append(block)
