@@ -97,15 +97,20 @@ def test_a_task_of_reads_is_judged_as_before():
     assert agent._evidence_verdict([{"name": "read_file", "input": {}, "result": "text"}])[2] == "complete"
 
 
-def test_the_tool_call_hands_what_it_read_back_to_the_loop():
+def test_the_tool_call_hands_what_it_read_back_to_the_loop(monkeypatch):
     def handler(inp):
         co.verified("calendar", "e-synthetic")
         return "done"
+    # a local probe tool, as tests/unit/test_authoritative_clock_wiring.py registers one
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "read_back_probe_tool", handler)
+    monkeypatch.setitem(agent.TOOL_RINGS, "read_back_probe_tool", 0)
+    from agent_friday.governance import action_gate
+    monkeypatch.setattr(action_gate, "INTERNAL_TOOLS", action_gate.INTERNAL_TOOLS | {"read_back_probe_tool"})
     agent._LAST_VERIFIED.set(None)
-    agent._execute_tool("synthetic_read_back", {}, session_ctx={"authenticated": True}, handler=handler)
+    out = agent._execute_tool("read_back_probe_tool", {})
+    assert "done" in str(out), out
     assert agent._take_verified() == [{"kind": "calendar", "ref": "e-synthetic"}]
     assert agent._take_verified() == [], "taken once"
-
 
 def test_a_sent_email_found_in_sent_is_marked_verified(tmp_path, monkeypatch):
     from agent_friday.services import approvals
