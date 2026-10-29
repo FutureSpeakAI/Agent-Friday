@@ -97,6 +97,17 @@ SCREEN_READER_OK = (
     "keyboard, nothing here has a time limit, and each new line is announced "
     "once.")
 
+#: Said once after "talk or type" (NS-8.4-2, the accessibility part; BD-21).
+#: True because the page follows the system: prefers-reduced-motion stops the
+#: decorative loops, prefers-contrast / forced-colors strengthen dim text and
+#: the focus ring (tests/unit/test_setup_tells_display_settings.py checks both).
+DISPLAY_NOTE = (
+    "On screen I follow this computer's own accessibility settings, so there is "
+    "nothing to set here. If you turn off animation effects in Windows Settings > "
+    "Accessibility > Visual effects, the moving decorations stop. If you pick a "
+    "contrast theme under Accessibility > Contrast themes, dim text gets stronger "
+    "and the focus outline gets thicker.")
+
 RESUME = ("We got as far as {where}. Want to carry on? Just answer the "
           "question above, or use \"Set up later\".")
 
