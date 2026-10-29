@@ -141,6 +141,74 @@ def reconcile_at_boot(started_at: Optional[float] = None, *, announce: bool = Tr
         return []
 
 
+#: How a decision the previous process left open is closed (a fixed code).
+INTERRUPTED_DETAIL = "process_stopped"
+
+
+def settle_interrupted_decisions(started_at: Optional[float] = None, *,
+                                 window: Optional[float] = None) -> List[str]:
+    """NS-34.16-4: an outward action the previous process allowed and never
+    closed (it was killed between the decision and the action's terminal
+    receipt: before the call, or after it and before its receipt) is marked
+    ``unconfirmed`` once, with a fixed code. Never ``executed``: whether it
+    happened is not known, and a later reconcile that can know (a site
+    publication's deployment status) still writes its terminal outcome.
+    Nothing is retried. Only allowed outward decisions older than this
+    process's start (less the clock margin) with no outcome at all are
+    judged. Returns the action ids. Never raises."""
+    started_at = process_started() if started_at is None else started_at
+    if started_at is None:
+        return []
+    try:
+        from agent_friday.governance import action_gate as G
+        from agent_friday.services import action_ledger as L
+        from agent_friday.services import outward_audit as OA
+        since = float(started_at) - float(OA.WINDOW_S if window is None else window)
+        cutoff = float(started_at) - CLOCK_MARGIN_S
+        rows = L.entries(["decision", "outcome"], newest_first=False, verified=True,
+                         where=lambda e: isinstance(e.get("t"), (int, float)) and e["t"] >= since)
+        said_aids, said_seqs, loose, decisions = set(), set(), [], []
+        for e in rows:
+            rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
+            if e.get("kind") == "decision":
+                if rec.get("class") == G.OUTWARD:
+                    decisions.append((e, rec))
+                continue
+            said = OA._action_id(rec)
+            if said and rec.get("action_id_origin") != "outcome":
+                said_aids.add(said)
+            elif rec.get("decision_seq") is not None:
+                said_seqs.add(rec.get("decision_seq"))
+            else:
+                loose.append((str(rec.get("approval")), str(rec.get("tool"))))
+        out, used_loose = [], set()
+        for e, rec in decisions:
+            # matched the way outward_audit matches them: an outcome written before its
+            # decision was known names the same card, and closes one decision only
+            aid = OA._action_id(rec) or "seq:%s" % e.get("seq")
+            if aid in said_aids or e.get("seq") in said_seqs:
+                continue
+            if rec.get("approval"):
+                hit = next((i for i, o in enumerate(loose) if i not in used_loose
+                            and o == (str(rec["approval"]), str(rec.get("tool")))), None)
+                if hit is not None:
+                    used_loose.add(hit)
+                    continue
+            if not (rec.get("decision") == "allow" and rec.get("action_id") and e["t"] < cutoff):
+                continue
+            ref = {"seq": e.get("seq"), "hash": e.get("hash"), "tool": rec.get("tool"),
+                   "class": G.OUTWARD, "decision": "allow", "action_id": aid,
+                   "policy_version": rec.get("policy_version"), "approval": rec.get("approval")}
+            if G.close_external(ref, True, outcome=G.UNCONFIRMED, detail=INTERRUPTED_DETAIL):
+                out.append(aid)
+        if out:
+            _log.info("%d outward action(s) the last run never closed are marked unconfirmed", len(out))
+        return out
+    except Exception as e:
+        _log.warning("settling interrupted decisions at boot failed: %s", e)
+        return []
+
+
 def _announce(cards: List[Dict[str, Any]]) -> None:
     names = "; ".join(str(c.get("title") or c.get("kind") or c["approval_id"])[:80] for c in cards[:5])
     more = " and %d more" % (len(cards) - 5) if len(cards) > 5 else ""

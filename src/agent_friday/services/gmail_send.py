@@ -306,6 +306,44 @@ CLOUD_SENSITIVE_NOTE = ("Written on a cloud model, and it has private details in
                         "what would be sent. Send, or Don't send.")
 
 
+#: Why a pre-approval does not carry a message that may already have been sent.
+MAYBE_SENT_WHY = ("a message exactly like this one may already have been sent before Friday "
+                  "restarted (its send was cut off), so you see it first")
+MAYBE_SENT_NOTE = ("A message exactly like this one may already have been sent before Friday "
+                   "restarted (its send was cut off). Check your Sent folder before sending it again.")
+
+
+#: How long a cut-off send keeps an identical message off a pre-approval.
+MAYBE_SENT_WINDOW_S = 7 * 86400
+
+
+def _maybe_sent(fingerprint: str, now: float | None = None) -> bool:
+    """The last send of this exact message was cut off by a restart
+    (card_recovery, or the held-mail tick, marked its card's outcome unknown),
+    so it may already have gone. Only the newest spent card for the message
+    counts, and only for MAYBE_SENT_WINDOW_S: once the owner has sent it again
+    (or a week has passed), a repeat of the same message is a normal send.
+    Never raises."""
+    try:
+        from agent_friday.services import approvals as _ap
+        now = _time.time() if now is None else now
+        for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):  # newest first
+            if (rec.get("payload") or {}).get("fingerprint") != fingerprint:
+                continue
+            if (rec.get("status") or "").lower() != "approved" or not rec.get("consumed"):
+                continue                         # undecided, unspent, denied or expired: nothing went
+            if rec.get("outcome") != "unknown":
+                return False                     # the newest spend is known
+            found = rec.get("outcome_found_at")
+            try:
+                return found is None or now - float(found) < MAYBE_SENT_WINDOW_S
+            except (TypeError, ValueError):
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def ccs_for_note(cc, bcc) -> list:
     return _addresses(cc or []) + _addresses(bcc or [])
 
@@ -410,6 +448,15 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     except Exception:
         pass
     withheld = _withheld_reason()
+    # NS-34.16-4: an identical message whose send a restart cut off (card_recovery marked its
+    # card's outcome unknown) may already have gone. Asking again is the owner's call on a
+    # card, never a standing pre-approval's: a resumed task or a retry does not send it twice.
+    maybe_sent = _maybe_sent(fp)
+    if maybe_sent:
+        if not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
+            withheld = MAYBE_SENT_WHY
+        else:
+            notes.append(MAYBE_SENT_NOTE)
     # Written on a cloud model with private details (privacy/vault_access: cloud_send_card_<tier>):
     # the owner sees exactly what would go and decides on this card, whatever was pre-approved.
     sensitive = bool(_tool_context().get("sensitive_cloud_send"))
@@ -455,7 +502,7 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     # for the exact message, so a grant revoked a moment ago is not used. The
     # record is created approved by that grant: no card, but the same undo
     # window, burn-once send, outbox and a logged use.
-    grant = None if sensitive else _pre_approval(tos + ccs + _addresses(bcc or []))
+    grant = None if (sensitive or maybe_sent) else _pre_approval(tos + ccs + _addresses(bcc or []))
     if grant is not None:
         appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
         if appr.get("status") == "approved" and not appr.get("consumed"):
@@ -638,7 +685,7 @@ def send(approval_id: str) -> dict:
     from agent_friday.governance import action_gate as _gate
     try:
         decision_ref = _gate.record_external("gmail:send", surface="mail", approval_id=approval_id,
-                                             target=_fingerprint_target(payload))
+                                             target=_fingerprint_target(payload), once=True)
     except _gate.Held as e:
         raise SendRefused("held by the action checkpoint (error %s). Nothing was sent."
                           % log_failure(e, "Mail send held by the action checkpoint"),
@@ -1056,7 +1103,12 @@ def hold(record: dict, now: float | None = None, undo_seconds: int | None = None
            # revoking that grant takes this message back (cancel_for_grant).
            "pre_approved": record.get("pre_approved") or None}
     with _HELD_LOCK:
-        rows = [r for r in _load_held() if r.get("approval_id") != row["approval_id"]]
+        rows = _load_held()
+        sending = next((r for r in rows if r.get("approval_id") == row["approval_id"]
+                        and r.get("state") == SENDING), None)
+        if sending is not None:
+            return sending                       # already on its way (or settled by the tick)
+        rows = [r for r in rows if r.get("approval_id") != row["approval_id"]]
         rows.append(row)
         _save_held(rows)
     _WAKE.set()
@@ -1068,7 +1120,9 @@ def held() -> list:
     now = _time.time()
     with _HELD_LOCK:
         rows = sorted(_load_held(), key=lambda r: r.get("due") or 0)
-    return [dict(r, seconds_left=max(0, round(r["due"] - now))) for r in rows]
+    inner = ("sending_by", "sending_pid", "sending_started")   # the tick's own bookkeeping
+    return [dict({k: v for k, v in r.items() if k not in inner}, seconds_left=max(0, round(r["due"] - now)))
+            for r in rows]
 
 
 def _burn(approval_id: str, why: str, detail: dict) -> None:
@@ -1090,6 +1144,8 @@ def cancel(approval_id: str) -> dict:
         if not mine:
             raise SendRefused("that message is not waiting to be sent (it has already gone, "
                               "or was never approved)")
+        if any(r.get("state") == SENDING for r in mine):
+            raise SendRefused("that message is being sent now, so it can no longer be taken back")
         _save_held([r for r in rows if r.get("approval_id") != approval_id])
     _burn(approval_id, "gmail_send_cancelled", {"reason": "cancelled by you before it was sent"})
     return {"ok": True, "approval_id": approval_id, "sent": False}
@@ -1143,9 +1199,10 @@ def cancel_for_grant(grant_id: str) -> list:
         return []
     with _HELD_LOCK:
         rows = _load_held()
-        mine = [r for r in rows
-                if (r.get("pre_approved") or
-                    (_ap.get_approval(r.get("approval_id") or "") or {}).get("pre_approved")) == gid]
+        # a row being sent is past taking back (the held-mail tick settles it)
+        mine = [r for r in rows if r.get("state") != SENDING and
+                (r.get("pre_approved") or
+                 (_ap.get_approval(r.get("approval_id") or "") or {}).get("pre_approved")) == gid]
         if not mine:
             return []
         ids = {r.get("approval_id") for r in mine}
@@ -1180,9 +1237,130 @@ def _deliver(approval_id: str, to) -> None:
                 priority="high", kind="warning")
 
 
+#: A held row the tick has taken to send: it stays in the queue, marked, until
+#: the send's result is recorded (NS-34.16-4). A row left marked by a process
+#: that is gone is never sent again automatically: it may have gone out.
+SENDING = "sending"
+_INSTANCE = __import__("uuid").uuid4().hex
+
+#: What the owner reads on the card raised for a send a stop cut off.
+INTERRUPTED_MAYBE_NOTE = ("Friday stopped while sending this message, so it may already have been "
+                          "sent, or may not. Check your Sent folder first: approve this card only "
+                          "to send it again.")
+INTERRUPTED_NOT_SENT_NOTE = ("Friday stopped just before sending this approved message, so it was "
+                             "not sent. Approve this card to send it now.")
+
+
+def _process_started() -> float | None:
+    try:
+        from agent_friday.services import card_recovery as _cr
+        return _cr.process_started()
+    except Exception:
+        return None
+
+
+def _sender_alive(row: dict) -> bool:
+    """Is the process that marked this row still running (and so still
+    sending it)? This process always is. Another one is judged by its pid and
+    start time; when that cannot be read it is taken as gone (one Friday
+    server runs per home: server._acquire_single_instance_lock)."""
+    if row.get("sending_by") == _INSTANCE:
+        return True
+    try:
+        import psutil
+        pid = int(row.get("sending_pid") or 0)
+        if not pid or not psutil.pid_exists(pid):
+            return False
+        started = row.get("sending_started")
+        return started is not None and abs(psutil.Process(pid).create_time() - float(started)) < 1.0
+    except Exception:
+        return False
+
+
+def _drop(approval_id: str, by: str | None) -> None:
+    """Take a sent (or settled) row out of the queue: only the marked row
+    itself, never a newer one for the same card."""
+    with _HELD_LOCK:
+        rows = _load_held()
+        keep = [r for r in rows if not (r.get("approval_id") == approval_id
+                                        and r.get("state") == SENDING and r.get("sending_by") == by)]
+        if len(keep) != len(rows):
+            _save_held(keep)
+
+
+def _send_again_card(appr: dict, maybe_went: bool) -> dict | None:
+    """A card for the same message, for the owner to decide: never sent by a
+    pre-approval, and raised once per interrupted card."""
+    from agent_friday.services import approvals as _ap
+    import uuid
+    aid = appr.get("approval_id")
+    for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):
+        if (rec.get("payload") or {}).get("resend_of") == aid:
+            return rec
+    payload = dict(appr.get("payload") or {}, resend_of=aid)
+    fp = str(payload.get("fingerprint") or "")
+    note = INTERRUPTED_MAYBE_NOTE if maybe_went else INTERRUPTED_NOT_SENT_NOTE
+    return _ap.create_approval(
+        force_gate=True, kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE,
+        subject_id="%s:%s" % (fp, uuid.uuid4().hex[:8]),
+        title=str(appr.get("title") or "Send email"),
+        action_description=note + "\n\n" + str(appr.get("action_description") or ""),
+        description=str(appr.get("description") or "This leaves your machine and arrives as a "
+                                                    "message from you. It cannot be unsent."),
+        payload=payload, requested_by="friday")
+
+
+def _settle_interrupted(row: dict) -> str:
+    """A row a process that is gone left marked `sending`: never sent again
+    here. Its result on record (the send finished) ends it quietly. Otherwise
+    the card can never send (burned, or its outcome unknown), a card for the
+    same message asks the owner whether to send it again, and they are told.
+    Its decision, if one was written, is marked unconfirmed by the boot sweep
+    (card_recovery.settle_interrupted_decisions). Returns what was done."""
+    from agent_friday.services import approvals as _ap
+    aid = row.get("approval_id") or ""
+    appr = _ap.get_approval(aid) if aid else None
+    if not appr or appr.get("used_at"):
+        _drop(aid, row.get("sending_by"))
+        return "recorded"
+    # The card is burned just before Gmail is called (send): unburned, nothing went.
+    maybe_went = bool(appr.get("consumed"))
+    if maybe_went:
+        if appr.get("outcome") != "unknown":
+            try:
+                from agent_friday.services.card_recovery import NOTE as _note
+            except Exception:
+                _note = ""
+            _ap._patch(aid, outcome="unknown", outcome_note=_note,
+                       outcome_found_at=_time.time(), consumed=True)
+    else:
+        _burn(aid, "gmail_send_interrupted",
+              {"reason": "not sent: Friday stopped before it went out"})
+    again = _send_again_card(appr, maybe_went)
+    who = ", ".join(row.get("to") or []) or "your recipient"
+    _notify("Email may or may not have been sent" if maybe_went else "Email NOT sent",
+            ("Friday stopped while sending your message to %s (\"%s\"). It may or may not have "
+             "gone: check your Sent folder. To send it again, approve the new card."
+             if maybe_went else
+             "Friday stopped just before sending your message to %s (\"%s\"), so it was not "
+             "sent. To send it now, approve the new card.")
+            % (who, row.get("subject") or ""),
+            priority="high", kind="warning", key="interrupted:%s" % aid,
+            target={"workspace": "system", "tab": "approvals"})
+    _drop(aid, row.get("sending_by"))
+    _log.info("held send %s was cut off by a stop; card %s asks the owner",
+              aid, (again or {}).get("approval_id"))
+    return "interrupted"
+
+
 def _tick(now: float | None = None) -> list:
     """Send what is due. A message due more than LATE_LIMIT_S ago (Friday was
-    off) is not sent: its approval is burned and the owner is told."""
+    off) is not sent: its approval is burned and the owner is told.
+
+    Crash-safe (NS-34.16-4): a due row is marked `sending` on disk before it
+    is sent and leaves the queue only once the send's result is recorded, so a
+    kill in between never loses it silently. A row a dead process left marked
+    is never resent: `_settle_interrupted` asks the owner instead."""
     now = _time.time() if now is None else now
     # Stop everything (services/global_stop): nothing is sent while stopped; the
     # rows stay held and are judged again after Resume.
@@ -1191,16 +1369,35 @@ def _tick(now: float | None = None) -> list:
         return []
     with _HELD_LOCK:
         rows = _load_held()
-        due = [r for r in rows if (r.get("due") or 0) <= now]
-        if not due:
+        stuck = [dict(r) for r in rows if r.get("state") == SENDING and not _sender_alive(r)]
+        due = [r for r in rows if r.get("state") != SENDING and (r.get("due") or 0) <= now]
+        if not due and not stuck:
             return []
-        _save_held([r for r in rows if (r.get("due") or 0) > now])
+        if due:
+            mark = {"state": SENDING, "sending_by": _INSTANCE, "sending_at": now,
+                    "sending_pid": __import__("os").getpid(), "sending_started": _process_started()}
+            for r in due:
+                r.update(mark)
+            _save_held(rows)                    # on disk before anything is sent
+        due = [dict(r) for r in due]
     done = []
+    for r in stuck:
+        try:
+            done.append((r.get("approval_id"), _settle_interrupted(r)))
+        except Exception as e:  # the row stays marked; the next tick tries again
+            _log.warning("could not settle an interrupted send: %s", e)
     for i, r in enumerate(due):
         if _core_gs.GLOBAL_STOP.is_set():
             # Stopped after the rows were taken: they go back, held, for after Resume.
+            back = {x["approval_id"] for x in due[i:]}
             with _HELD_LOCK:
-                _save_held(_load_held() + due[i:])
+                rows = _load_held()
+                for x in rows:
+                    if (x.get("approval_id") in back and x.get("state") == SENDING
+                            and x.get("sending_by") == _INSTANCE):
+                        for k in ("state", "sending_by", "sending_at", "sending_pid", "sending_started"):
+                            x.pop(k, None)
+                _save_held(rows)
             break
         if now - r["due"] > LATE_LIMIT_S:
             _burn(r["approval_id"], "gmail_send_missed",
@@ -1211,9 +1408,13 @@ def _tick(now: float | None = None) -> list:
                     % ("scheduled" if r.get("scheduled") else "approved",
                        ", ".join(r.get("to") or []), r.get("subject") or ""),
                     priority="high", kind="warning")
+            _drop(r["approval_id"], _INSTANCE)
             done.append((r["approval_id"], "missed"))
             continue
-        _deliver(r["approval_id"], r.get("to"))
+        try:
+            _deliver(r["approval_id"], r.get("to"))   # records its result (outbox, card, receipt)
+        finally:
+            _drop(r["approval_id"], _INSTANCE)    # this process saw the attempt end
         done.append((r["approval_id"], "sent"))
     return done
 
@@ -1223,7 +1424,8 @@ def _scheduler_loop():
         try:
             _tick()
             with _HELD_LOCK:
-                nxt = min([r.get("due") or 0 for r in _load_held()] or [_time.time() + 30])
+                nxt = min([r.get("due") or 0 for r in _load_held() if r.get("state") != SENDING]
+                          or [_time.time() + 30])
         except Exception as e:
             _log.warning("held-mail scheduler: %s", e)
             nxt = _time.time() + 5

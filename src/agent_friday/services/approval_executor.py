@@ -206,8 +206,11 @@ def _decide(record: dict) -> None:
     # fails the action does NOT run.
     try:
         from agent_friday.governance import action_gate as _gate
+        # the task that raised the card, when one did: its decision names it (outward_audit false_done)
+        task_id = str(payload.get("task_id") or "")
         decision_ref = _gate.record_external(tool, surface="approval_card", approval_id=aid,
-                                             target=str(args.get("path") or args.get("title") or ""))
+                                             target=str(args.get("path") or args.get("title") or ""),
+                                             once=True, **({"task_id": task_id} if task_id else {}))
     except Exception as e:
         _ap.mark_used(aid, "approval_executor",
                       detail={"ok": False, "error": "held: %s" % e})

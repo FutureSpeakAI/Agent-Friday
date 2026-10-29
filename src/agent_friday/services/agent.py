@@ -5654,6 +5654,13 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 summary['cards_outcome_unknown'] = _cards.reconcile_at_boot()
             except Exception:
                 pass
+            # NS-34.16-4: an outward action the previous process allowed and never closed is
+            # marked unconfirmed (never executed, never retried), so nothing is left open.
+            try:
+                from agent_friday.services import card_recovery as _cards2
+                summary['decisions_unconfirmed'] = _cards2.settle_interrupted_decisions()
+            except Exception:
+                pass
         try:
             removed = tj.apply_retention()
             if removed:

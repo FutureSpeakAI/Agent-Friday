@@ -2138,7 +2138,7 @@ def check_external() -> None:
 
 
 def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
-                    target: str = "") -> dict:
+                    target: str = "", task_id: Optional[str] = None, once: bool = False) -> dict:
     """The checkpoint's integrity check and signed receipt, for an executor
     that carries out an already-decided action outside a tool call (an
     approved email, an approved text).
@@ -2153,13 +2153,33 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     leaves open is marked unconfirmed: settle_request_externals). The
     decision receipt carries no outcome word: nothing has run yet, and what
     became of the action is its outcome receipt's to say.
+
+    `once` (with `approval_id`), for an executor whose card buys exactly one
+    action (the approval executor, a mail send): the decision's idempotency
+    key is the card's (with the action and target), so the outward audit sees
+    that card carried out twice (`duplicate_key`), across restarts too. Not
+    the default: some cards rightly carry more than one decision of the same
+    action and target (a site build's operation and its process launch, a
+    publisher series).
+    `task_id`: the task the card was raised for, so the audit can tell a task
+    marked done whose approved action never ended executed (false_done).
     """
     check_external()
+    entry = {"tool": action, "class": OUTWARD, "decision": "allow",
+             "surface": surface,
+             "reason": "approved card" if approval_id else surface,
+             "approval": approval_id, "target": target}
+    if task_id:
+        entry["task_id"] = str(task_id)[:120]
+    if approval_id and once:
+        try:
+            entry["envelope"] = build_envelope(
+                action, klass=OUTWARD, decision="allow", via=surface,
+                ctx={"idempotency_key": "approval|%s|%s|%s" % (approval_id, action, target)}).to_dict()
+        except Exception:  # noqa: BLE001 - the envelope records; _receipt builds one without a key
+            pass
     try:
-        out = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
-                        "surface": surface,
-                        "reason": "approved card" if approval_id else surface,
-                        "approval": approval_id, "target": target})
+        out = _receipt(entry)
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
     return _external_ref(out, action, approval_id)
