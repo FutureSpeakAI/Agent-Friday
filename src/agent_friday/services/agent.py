@@ -5420,20 +5420,23 @@ def _task_log(task_id, line):
     _journal_state(task_id)
 
 
-#: task id -> the effects a stopped run had already taken (cancel_effects), for
-#: its notice; written once when the run is marked cancelled.
+#: task id -> the effects a stopped run had already taken (cancel_effects), as
+#: of the moment it was marked cancelled. Bounded; the notice reads afresh.
 _CANCEL_EFFECTS: dict = {}
+_CANCEL_EFFECTS_MAX = 200
 
 
 def _cancel_effects_for(task_id, started):
-    """What run `task_id` had already done when it was stopped, kept for its
-    notice. Never raises: a record that cannot be read is named as unknown."""
+    """What run `task_id` had already done when it was stopped. Never raises:
+    a record that cannot be read is named as unknown."""
     try:
         from agent_friday.services import cancel_effects as _ce
         eff = _ce.effects_taken(task_id, since=started)
     except Exception as e:  # noqa: BLE001
         eff = {"outward": [], "may_have_acted": [], "files_written": [], "cards": 0,
                "unknown": ["the run's record (%s)" % type(e).__name__]}
+    if len(_CANCEL_EFFECTS) >= _CANCEL_EFFECTS_MAX:
+        _CANCEL_EFFECTS.clear()
     _CANCEL_EFFECTS[task_id] = eff
     return eff
 
@@ -7250,9 +7253,11 @@ def _report_task_completion(task_id, name, status, result_text):
         # A stopped run is not "finished", and it says what it already did.
         try:
             from agent_friday.services import cancel_effects as _ce
-            _eff = _CANCEL_EFFECTS.get(task_id)
-            if _eff is None:
-                _eff = _cancel_effects_for(task_id, (rec or {}).get('started'))
+            # Read again now: the run has left its loop, so a step that was
+            # still in flight when the stop was asked is on record by now.
+            _CANCEL_EFFECTS.pop(task_id, None)
+            _eff = _cancel_effects_for(task_id, (rec or {}).get('started'))
+            _CANCEL_EFFECTS.pop(task_id, None)
             body = (_ce.summary(_eff) + ("\n\n" + body if body else "")).strip()
         except Exception:
             pass

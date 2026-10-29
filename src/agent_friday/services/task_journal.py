@@ -1078,6 +1078,8 @@ def digest(task_id: str, n: int = 20, include_reasoning: bool = False) -> Option
 _SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reason", "chosen",
                   "alternatives", "prompt", "result", "message", "description", "name",
                   "detail", "last_checkpoint", "now",
+                  # a stopped run's effects (services/cancel_effects): file paths
+                  "files_written",
                   # task rows served by /api/tasks and /api/tasks/<id> (these
                   # are on the observer allowlist, so they must be sealed)
                   "log", "label", "output", "error",
