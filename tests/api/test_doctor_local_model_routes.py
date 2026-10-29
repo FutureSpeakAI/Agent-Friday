@@ -9,8 +9,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _press():
     from agent_friday.core import _current_api_token
+    from agent_friday.services import desk_press
     return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost",
-            "X-Friday-Token": _current_api_token()}
+            "X-Friday-Token": _current_api_token(), "X-Friday-Desk": desk_press._KEY}
 
 
 def test_the_state_is_given_on_this_pc_only(client):
