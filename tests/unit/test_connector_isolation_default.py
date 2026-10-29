@@ -81,7 +81,8 @@ def test_catalog_connectors_say_how_they_run_and_reconnecting_keeps_the_owners_c
     defs = cn.CONNECTOR_DEFS
     for key in ("slack", "discord"):
         t = defs[key]["mcp_template"]
-        assert t.get("isolation") == "appcontainer" and "registry.npmjs.org" in t.get("allow_hosts", []), key
+        hosts = list(t.get("allow_hosts") or [])
+        assert t.get("isolation") == "appcontainer" and any(h == "registry.npmjs.org" for h in hosts), key
     for key in ("github", "windows_desktop"):
         t = defs[key]["mcp_template"]
         assert t.get("isolation") == "off" and t.get("isolation_note"), key
