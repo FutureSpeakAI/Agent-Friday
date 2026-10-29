@@ -490,7 +490,7 @@ btnEnd.addEventListener('click', endSession);
 (function makeDraggable(){
   let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
   const onDown = e => {
-    dragging = true;
+    dragging = true; moved = false;
     const p = e.touches ? e.touches[0] : e;
     startX = p.clientX; startY = p.clientY;
     const r = camPip.getBoundingClientRect();
@@ -500,10 +500,28 @@ btnEnd.addEventListener('click', endSession);
   const onMove = e => {
     if (!dragging) return;
     const p = e.touches ? e.touches[0] : e;
+    if (Math.abs(p.clientX - startX) + Math.abs(p.clientY - startY) > 6) moved = true;
     camPip.style.left = Math.max(4, origX + (p.clientX - startX)) + 'px';
     camPip.style.top = Math.max(4, origY + (p.clientY - startY)) + 'px';
   };
+  let moved = false;
   const onUp = () => { dragging = false; };
+  // A tap (no drag) moves the preview to the next corner: the same move without dragging (WCAG 2.5.7).
+  const corners = () => {
+    const w = camPip.offsetWidth, h = camPip.offsetHeight, m = 12, W = innerWidth, H = innerHeight;
+    return [[m, m], [W - w - m, m], [W - w - m, H - h - m], [m, H - h - m]];
+  };
+  camPip.setAttribute('role', 'button');
+  camPip.setAttribute('tabindex', '0');
+  camPip.setAttribute('aria-label', 'Move the camera preview to the next corner');
+  const nextCorner = () => {
+    const r = camPip.getBoundingClientRect(), cs = corners();
+    const at = cs.findIndex(([x, y]) => Math.abs(x - r.left) < 24 && Math.abs(y - r.top) < 24);
+    const [x, y] = cs[(at + 1) % cs.length];
+    camPip.style.right = 'auto'; camPip.style.left = x + 'px'; camPip.style.top = y + 'px';
+  };
+  camPip.addEventListener('click', () => { if (!moved) nextCorner(); moved = false; });
+  camPip.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nextCorner(); } });
   camPip.addEventListener('touchstart', onDown, { passive: true });
   camPip.addEventListener('touchmove', onMove, { passive: true });
   camPip.addEventListener('touchend', onUp);
