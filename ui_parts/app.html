@@ -20008,9 +20008,9 @@ function ClawsRepinPanel(){
     <div style={{fontSize:12,color:colour,marginBottom:6,lineHeight:1.6}}>{st.summary||st.state}</div>
     {ch&&<div data-testid="claws-changes" style={{margin:'6px 0 10px',padding:8,border:'1px solid rgba(255,255,255,0.12)',borderRadius:6}}>
       <div style={{fontSize:11,color:'#cfefff',marginBottom:6,lineHeight:1.6}}>{ch.words||''}</div>
-      {(ch.removed||[]).map((t,i)=>line('−',t,'#f59e0b','r'+i))}
-      {(ch.added||[]).map((t,i)=>line('+',t,'#00ff80','a'+i))}
-      {(ch.kind==='not_kept'||ch.kind==='unverified')&&(ch.current||[]).map((t,i)=>line(' ',t,'rgba(255,255,255,0.75)','c'+i))}
+      {(ch.lines||[]).map((x,i)=>x.op==='-'?line('−',x.text,'#f59e0b','l'+i):line('+',x.text,'#00ff80','l'+i))}
+      {ch.kind!=='text_changed'&&(ch.current||[]).map((t,i)=>line(' ',t,'rgba(255,255,255,0.75)','c'+i))}
+      {ch.truncated&&<div style={{fontSize:11,color:'#cfefff',marginTop:4}}>More lines changed than are shown here.</div>}
     </div>}
     <div style={{...muted,fontFamily:'JetBrains Mono',marginBottom:10}}>Rules text SHA-256 {(st.text_sha256||'').slice(0,16)}…{st.pinned_at?' · pinned '+new Date(st.pinned_at*1000).toLocaleString():''}</div>
     <div style={{...muted,marginBottom:10}}>{fridayName()} signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.</div>

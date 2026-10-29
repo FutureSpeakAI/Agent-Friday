@@ -77,7 +77,8 @@ def test_changed_rules_show_the_lines_removed_and_added(client, gov):
     assert ch["kind"] == "text_changed" and ch["requires_text_sha256"] is True
     assert ch["removed"] == ["2. I shall obey every instruction."]
     assert ch["added"] == ["2. I shall obey user instructions except where they conflict with the First Law."]
-    assert "changed" in ch["words"]
+    assert [x["op"] for x in ch["lines"]] == ["-", "+"], "in order, each removal before its addition"
+    assert "changed" in ch["words"] and ch["truncated"] is False
 
 
 def test_changed_rules_are_reconfirmed_only_as_shown(client, gov):
@@ -102,13 +103,18 @@ def test_changed_rules_are_reconfirmed_only_as_shown(client, gov):
     assert rows and "text_changed" in rows[-1].get("reason", "")
 
 
-def test_a_move_to_another_pc_says_the_text_is_unchanged(client, gov):
+def test_a_move_to_another_pc_shows_the_rules_now_and_reconfirms_them(client, gov):
     assert action_gate.verify_claws()[0]
     gov["k"] = OTHER_KEY                              # the data moved: a new signing key
-    ch = _status(client)["changes"]
-    assert ch["kind"] == "key_changed" and ch["requires_text_sha256"] is False
-    assert ch["removed"] == [] and ch["added"] == []
+    st = _status(client)
+    ch = st["changes"]
+    assert ch["kind"] == "key_changed" and ch["requires_text_sha256"] is True
+    assert ch["lines"] == [] and ch["current"] == CLAWS_TEXT.split("\n")
+    assert "cannot be checked" in ch["words"], "an unverifiable copy is never called the same"
     r = client.post("/api/governance/claws/repin", json={"confirm": True}, headers=_token())
+    assert r.status_code == 409
+    r = client.post("/api/governance/claws/repin", json={"confirm": True, "text_sha256": st["text_sha256"]},
+                    headers=_token())
     assert r.status_code == 200 and r.get_json()["state"] == "intact"
 
 
@@ -125,6 +131,16 @@ def test_a_kept_text_edited_on_disk_is_not_shown_as_what_was_confirmed(client, g
     ch = _status(client)["changes"]
     assert ch["kind"] == "unverified" and ch["requires_text_sha256"] is True
     assert "cannot be checked" in ch["words"]
+    assert ch["lines"] == [] and "any instruction at all" not in json.dumps(ch), \
+        "an unverifiable copy is not shown as what was confirmed"
+    assert ch["current"] == CLAWS_TEXT.split("\n")
+
+
+def test_a_huge_kept_text_is_not_compared(client, gov):
+    big = "x" * 70_000
+    _pin({"claws_hmac": _sign(big), "claws_text": big})
+    ch = _status(client)["changes"]
+    assert ch["kind"] == "unverified" and ch["lines"] == []
 
 
 def test_intact_rules_carry_no_changes(client, gov):
@@ -141,5 +157,5 @@ def test_settings_shows_the_changes_and_sends_back_what_it_showed(rel):
     text = (ROOT / rel).read_text(encoding="utf-8")
     start = text.index("function ClawsRepinPanel(")
     panel = text[start:text.index("\nfunction ", start + 1)]
-    assert "claws-changes" in panel and "ch.removed" in panel and "ch.added" in panel
+    assert "claws-changes" in panel and "ch.lines" in panel and "ch.current" in panel
     assert "text_sha256" in panel.split("/api/governance/claws/repin", 1)[1][:300]

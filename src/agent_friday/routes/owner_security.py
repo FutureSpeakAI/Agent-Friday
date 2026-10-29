@@ -82,59 +82,71 @@ def claws_status() -> dict:
     return out
 
 
-#: Lines shown per side of a change (the rules are a few lines; this bounds a bad pin).
+#: Lines shown in a change (the rules are a few lines; this bounds a bad pin).
 _MAX_CHANGED_LINES = 200
+#: A kept text longer than this is not compared at all (the rules are well under 1 KB).
+_MAX_KEPT_CHARS = 64_000
 
 
 def rules_changes(pin_doc: dict, current: str) -> dict:
     """What changed between the rules the owner last confirmed and the rules now
-    (north star §13.2, NS-13.2-10), in a form the page shows before she re-confirms:
+    (north star §13.2, NS-13.2-10), in a form the page shows before she re-confirms.
 
       kind "text_changed"  the kept text verifies under this PC's key and differs:
-                           `removed` and `added` list the lines that changed
-      kind "key_changed"   the kept text is the same as now; only the signing key
-                           differs (her data moved to another PC or account)
-      kind "unverified"    a kept text that does not verify under this PC's key and
-                           differs from now: shown, but marked as not checkable
-      kind "not_kept"      the pin predates keeping the text: only `current` is shown
+                           `lines` lists the changed lines in order ("-" removed,
+                           "+" added); `removed` and `added` are the same, split
+      kind "key_changed"   the kept copy reads the same as the rules now but cannot be
+                           checked under this PC's key (her data moved to another PC
+                           or account): the rules now are shown
+      kind "unverified"    a kept copy that does not verify and differs: it is not
+                           shown (it may not be what she confirmed); the rules now are
+      kind "not_kept"      the pin predates keeping the text: the rules now are shown
 
-    `requires_text_sha256` is true unless the text is known to be unchanged: then
-    re-confirming must name the text the owner was shown."""
+    Only a kept text signed under this PC's key is ever compared line by line.
+    `current` always carries the rules now. `requires_text_sha256` is always true:
+    re-confirming sends back the fingerprint of the rules the page displayed, so a
+    page showing other rules (an older release, a stale tab) cannot re-confirm these."""
     import difflib
+    current = current.replace("\r\n", "\n")
     current_lines = current.split("\n")
+    out = {"current": current_lines[:_MAX_CHANGED_LINES], "lines": [], "removed": [], "added": [],
+           "truncated": len(current_lines) > _MAX_CHANGED_LINES, "requires_text_sha256": True}
     kept = pin_doc.get("claws_text") if isinstance(pin_doc, dict) else None
-    out = {"current": current_lines[:_MAX_CHANGED_LINES], "removed": [], "added": []}
     if not isinstance(kept, str):
-        out.update(kind="not_kept", requires_text_sha256=True,
+        out.update(kind="not_kept",
                    words="The rules confirmed earlier were not kept on this PC, so what "
                          "changed cannot be shown. These are the rules now.")
         return out
-    try:
-        verifies = hmac.compare_digest(str(pin_doc.get("claws_hmac") or ""), sign_text(kept))
-    except Exception:  # noqa: BLE001
-        verifies = False
-    if kept == current:
-        out.update(kind="key_changed", requires_text_sha256=False,
-                   words="The rules text is the same as the one confirmed earlier. Only the "
-                         "signing key differs, as it does after Friday's data moves to "
-                         "another PC or Windows account.")
+    kept = kept.replace("\r\n", "\n")
+    verifies = False
+    if len(kept) <= _MAX_KEPT_CHARS:
+        try:
+            verifies = hmac.compare_digest(str(pin_doc.get("claws_hmac") or ""), sign_text(kept))
+        except Exception:  # noqa: BLE001
+            verifies = False
+    if not verifies:
+        if kept == current:
+            out.update(kind="key_changed",
+                       words="The rules kept on this PC read the same as the rules now, but "
+                             "they cannot be checked under this PC's signing key, as is "
+                             "expected after Friday's data moves to another PC or Windows "
+                             "account. These are the rules now.")
+        else:
+            out.update(kind="unverified",
+                       words="The rules confirmed earlier cannot be checked on this PC (the "
+                             "kept copy does not match its signature), so what changed "
+                             "cannot be shown. These are the rules now.")
         return out
     for line in difflib.ndiff(kept.split("\n"), current_lines):
-        if line.startswith("- "):
-            out["removed"].append(line[2:])
-        elif line.startswith("+ "):
-            out["added"].append(line[2:])
-    out["removed"] = out["removed"][:_MAX_CHANGED_LINES]
-    out["added"] = out["added"][:_MAX_CHANGED_LINES]
-    if verifies:
-        out.update(kind="text_changed", requires_text_sha256=True,
-                   words="An update changed Friday's rules. Read what changed before "
-                         "re-confirming them.")
-    else:
-        out.update(kind="unverified", requires_text_sha256=True,
-                   words="The rules confirmed earlier cannot be checked on this PC (the "
-                         "kept copy does not match its signature), so the lines below "
-                         "may not be what was confirmed. These are the rules now.")
+        if line[:2] in ("- ", "+ "):
+            out["lines"].append({"op": line[0], "text": line[2:]})
+    out["truncated"] = out["truncated"] or len(out["lines"]) > _MAX_CHANGED_LINES
+    out["lines"] = out["lines"][:_MAX_CHANGED_LINES]
+    out["removed"] = [x["text"] for x in out["lines"] if x["op"] == "-"]
+    out["added"] = [x["text"] for x in out["lines"] if x["op"] == "+"]
+    out.update(kind="text_changed",
+               words="An update changed Friday's rules. Read what changed before "
+                     "re-confirming them.")
     return out
 
 
@@ -166,8 +178,8 @@ def governance_claws_repin():
     changes = before.get("changes") or {}
     if changes.get("requires_text_sha256") and \
             str(body.get("text_sha256") or "") != str(before.get("text_sha256") or ""):
-        # Re-confirming changed rules is re-attesting to a text the owner was shown:
-        # the page sends back the fingerprint of the rules it displayed.
+        # Re-confirming names the rules: the page sends back the fingerprint of the
+        # rules it displayed, so a page showing other rules cannot confirm these.
         return jsonify({"ok": False, "code": "rules_not_shown",
                         "message": "The rules changed. Read what changed in Settings, then "
                                    "re-confirm the rules shown there.",
