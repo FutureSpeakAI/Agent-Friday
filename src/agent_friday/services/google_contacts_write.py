@@ -231,5 +231,10 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
                 "error": _co.not_done("unconfirmed", "Google Contacts")}
     if action == "created":
         _remember(key, out.get("resourceName"))
+    # Read it back from Google (NS-4.6-1).
+    _co.reread("contact", out.get("resourceName"),
+               lambda: svc.people().get(resourceName=out["resourceName"],
+                                        personFields="names,emailAddresses").execute(),
+               lambda r: isinstance(r, dict) and r.get("resourceName") == out.get("resourceName"))
     return {"ok": True, "action": action, "account": rec.get("email"),
             "resource_name": out.get("resourceName")}

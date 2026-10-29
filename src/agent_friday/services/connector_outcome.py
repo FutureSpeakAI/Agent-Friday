@@ -224,14 +224,54 @@ def confirmed(reply: Any, key: str = "id") -> bool:
     return isinstance(reply, dict) and bool(reply.get(key))
 
 
+#: Effects re-read at their source after a change, during one tool call (NS-4.6-1).
+_VERIFIED: ContextVar = ContextVar("friday_connector_verified", default=None)
+
+
+class CallNotes(list):
+    """What one tool call noted as not done; `.verified` lists what it re-read and found."""
+
+    def __init__(self):
+        super().__init__()
+        self.verified: List[dict] = []
+
+
+def verified(kind: str, ref: str) -> None:
+    """A change was read back from the service that holds it (an event, a task, a contact, a sent
+    message) and is there as asked. Only after an actual re-read: a write's own reply is not one."""
+    got = _VERIFIED.get()
+    if got is not None:
+        got.append({"kind": str(kind), "ref": str(ref or "")[:120]})
+
+
+def reread(kind: str, ref: str, fetch, check) -> bool:
+    """Read a change back (`fetch()`), and note it verified when `check(reply)` holds. Never raises;
+    a re-read that fails notes nothing (the change itself may still have happened)."""
+    try:
+        if check(fetch()):
+            verified(kind, ref)
+            return True
+    except Exception as e:
+        try:
+            if check(e):
+                verified(kind, ref)
+                return True
+        except Exception:
+            pass
+    return False
+
+
 @contextlib.contextmanager
 def call() -> Iterator[List[dict]]:
     """Collect what is noted during one tool call (agent._execute_tool)."""
-    tok = _NOTES.set([])
+    notes = CallNotes()
+    tok = _NOTES.set(notes)
+    vtok = _VERIFIED.set(notes.verified)
     try:
-        yield _NOTES.get()
+        yield notes
     finally:
         _NOTES.reset(tok)
+        _VERIFIED.reset(vtok)
 
 
 @contextlib.contextmanager
