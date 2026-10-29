@@ -452,7 +452,9 @@ def scan(bundle: Bundle) -> dict:
         if ns:
             refusals.append("never-send material is in the bundle (%d item%s)" % (len(ns), "" if len(ns) == 1 else "s"))
     except Exception as e:
-        warnings.append("the egress floor could not run (%s)" % e)
+        # A public page is never published past a floor that could not be checked (NS-34.6-7).
+        refusals.append("the never-send check could not run (%s), so nothing is published until it can"
+                        % type(e).__name__)
     ids += len(_SSN_RE.findall(text))
     if ids:
         refusals.append("hard identifier(s) found: %d (a national id, card or account number)" % ids)

@@ -644,7 +644,10 @@ def scan_path(path: Path) -> dict:
     for p in paras:
         t = classify(p, default=Tier.PRIVATE, egress=True)
         tier_counts[Tier.NAMES.get(t, "TIER_1")] += 1
-        never_matches.update(_jg.never_send_hits(p))
+        try:
+            never_matches.update(_jg.never_send_hits(p))
+        except _jg.NeverSendListUnreadable:
+            never_matches.add("(your never-send list could not be read)")
     summary = (f"{len(paras)} paragraph(s): {tier_counts['TIER_1']} public, "
                f"{tier_counts['TIER_2']} private, {tier_counts['TIER_3']} sensitive")
     if never_matches:
