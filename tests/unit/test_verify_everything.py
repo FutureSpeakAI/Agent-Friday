@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -107,11 +108,75 @@ def test_the_caps_report_a_partial_check(tmp_path):
     a = VE.artifact_check(max_files=1)
     assert a["partial"] is True and a["checked"] == 1 and a["counts"]["unchecked"] == 2
     VE.reset_cache()
-    b = VE.artifact_check(max_bytes=1)
-    assert b["partial"] is True and b["checked"] == 0 and b["counts"]["unchecked"] == 3
+    b = VE.artifact_check(max_bytes=1)           # each file alone is more than the byte cap
+    assert b["counts"]["not_hashed"] == 3 and b["checked"] == 3 and b["counts"]["unchecked"] == 0
+    assert b["hashed_bytes"] == 0
     c = VE.artifact_check(max_seconds=-1.0)
     assert c["partial"] is True and c["checked"] == 0
     assert VE.artifact_check()["partial"] is False
+
+
+def test_a_file_past_the_byte_cap_does_not_stop_older_files_being_checked(tmp_path):
+    from agent_friday.services import verify_everything as VE
+    small = _made(tmp_path, "small.md", b"first words")          # oldest, 11 bytes
+    _made(tmp_path, "middle.md", b"m" * 20)                       # 20 bytes
+    _made(tmp_path, "fits.md", b"f" * 25)                         # 25 bytes
+    _made(tmp_path, "big.md", b"b" * 100)                         # newest, alone past the cap
+    small.write_bytes(b"other words")                             # same size, other bytes
+    VE.reset_cache()
+    a = VE.artifact_check(max_bytes=40)
+    c = a["counts"]
+    # big: not_hashed; fits: ok (25); middle: 25+20 > 40, skipped; small: 25+11, changed
+    assert c["not_hashed"] == 1 and c["ok"] == 1 and c["unchecked"] == 1 and c["changed"] == 1, a
+    assert a["partial"] is True and a["checked"] == 3 and a["hashed_bytes"] == 36
+    assert [i["state"] for i in a["items"]] == ["changed"]
+
+
+def test_a_file_that_grew_after_the_stat_is_changed_and_read_no_further(tmp_path, monkeypatch):
+    from agent_friday.services import verify_everything as VE
+    p = _made(tmp_path, "growing.md", b"g" * 10)
+    real_open = open
+    opened = []
+
+    class _Growing:                       # the file as read: longer than its stat said
+        def __init__(self, f):
+            self.f, self.asked = f, []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.f.close()
+
+        def read(self, n):
+            self.asked.append(n)
+            return b"g" * n
+
+    def fake_open(path, mode="r", *a, **k):
+        if str(path) == str(p.resolve()) and "b" in mode:
+            g = _Growing(real_open(path, mode, *a, **k))
+            opened.append(g)
+            return g
+        return real_open(path, mode, *a, **k)
+    with monkeypatch.context() as m:
+        m.setattr("builtins.open", fake_open)
+        digest, read, out_of_time = VE._hash_file(str(p.resolve()), 10, p.stat().st_mtime_ns)
+    assert digest is None and read == 11 and out_of_time is False
+    assert sum(opened[0].asked) == 11, "at most the stat size and one byte more"
+
+
+def test_the_time_cap_is_checked_while_one_big_file_is_read(tmp_path, monkeypatch):
+    from agent_friday.services import verify_everything as VE
+    monkeypatch.setattr(VE, "_CHUNK", 4)
+    _made(tmp_path, "older.md", b"older")
+    _made(tmp_path, "long.md", b"x" * 64)                          # newest: 16 chunks
+    VE.reset_cache()
+    clock = iter(range(1000))           # one second per look at the clock, in this module only
+    monkeypatch.setattr(VE, "time", types.SimpleNamespace(time=time.time,
+                                                          monotonic=lambda: float(next(clock))))
+    a = VE.artifact_check(max_seconds=3.0)
+    assert a["partial"] is True and a["checked"] == 0 and a["counts"]["unchecked"] == 2, a
+    assert 0 < a["hashed_bytes"] < 64, "stopped part way through the file"
 
 
 # ── 2. outward effects without a decision receipt ───────────────────────────
@@ -305,6 +370,78 @@ def test_a_chat_channel_send_records_its_decisions_action_id(monkeypatch, _quiet
     assert row["action_id"] == made[0]["action_id"]
 
 
+def test_an_approved_mail_send_records_its_decisions_action_id(tmp_path, monkeypatch, _quiet_egress):
+    import googleapiclient.discovery as _disc
+    from agent_friday.services import dissent_gate, google_accounts
+    from agent_friday.services import gmail_send as gs
+    from agent_friday.services import verify_everything as VE
+
+    class _Gmail:                       # Gmail, stubbed: nothing reaches a network
+        def users(self):
+            return self
+
+        def messages(self):
+            return self
+
+        def send(self, userId=None, body=None):     # noqa: N803 (Google's API)
+            return self
+
+        def execute(self):
+            return {"id": "msg-a10-probe", "threadId": "thr-a10-probe"}
+    monkeypatch.setattr(dissent_gate, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
+    monkeypatch.setattr(gs, "_outbox_path", lambda: tmp_path / "sent_mail.jsonl")
+    monkeypatch.setattr(gs, "sendable_accounts", lambda: [
+        {"id": "acct_a10", "email": "owner@example.com", "label": "main"}])
+    monkeypatch.setattr(gs, "scope_granted", lambda account_id=None: True)
+    monkeypatch.setattr(google_accounts, "credentials_for", lambda aid: object())
+    monkeypatch.setattr(_disc, "build", lambda *a, **k: _Gmail(), raising=False)
+    monkeypatch.setattr(approvals, "_HOOKS", {})    # the test drives send() itself
+    card = gs.request_send(to="someone@example.com", subject="A10 probe",
+                           body="A synthetic body")["approval_id"]
+    approvals.decide(card, "approve")
+    made = _decisions_made(monkeypatch)
+    assert gs.send(card)["ok"] is True
+    assert len(made) == 1 and made[0].get("action_id"), made
+    row = [r for r in _egress_calls() if r.get("channel") == "mail"][-1]
+    assert row["result"] == "sent" and row["action_id"] == made[0]["action_id"]
+    assert "synthetic body" not in json.dumps(row)
+    u = VE.unlinked_outward()
+    assert u["sends"] == {"checked": 1, "linked": 1, "no_decision": 0}, u
+    assert u["cards"]["no_decision"] == 0 and u["problems"] == 0
+
+
+def test_an_approved_publish_records_its_decisions_action_id(tmp_path, monkeypatch, _quiet_egress):
+    from agent_friday.services import publish_hosting
+    from agent_friday.services import publish_web as PW
+    from agent_friday.services import verify_everything as VE
+    bundle = PW.Bundle(files={"index.html": b"<p>A synthetic page</p>"}, title="A10 probe",
+                       slug="a10-probe", kind="page", artifact_id="art-a10", conversation_id="",
+                       version=1)
+    monkeypatch.setattr(PW, "_load_bundle_from_staging", lambda payload: bundle)
+    monkeypatch.setattr(PW, "_staging_root", lambda: tmp_path / "staging")
+    monkeypatch.setattr(PW, "_read_index", lambda: [])
+    monkeypatch.setattr(PW, "_write_index", lambda items: None)
+    monkeypatch.setattr(PW, "_post_back", lambda record, text: None)
+    # the host, stubbed: nothing reaches a network
+    monkeypatch.setattr(publish_hosting, "publish_remote",
+                        lambda adapter, b: "https://a10-probe.example.invalid/")
+    card = "ap_a10_pub_" + hashlib.sha256(str(time.time()).encode()).hexdigest()[:8]
+    record = {"approval_id": card, "status": "approved", "kind": PW.KIND, "title": "a10 probe",
+              "created_at": time.time(),
+              "payload": {"title": "A10 probe", "slug": "a10-probe", "adapter": "probe_host",
+                          "staging": "stg-a10"}}
+    approvals._upsert(dict(record))
+    made = _decisions_made(monkeypatch)
+    PW._on_decision(record)
+    assert len(made) == 1 and made[0].get("action_id"), made
+    row = [r for r in _egress_calls() if r.get("channel") == "web_publish"][-1]
+    assert row["result"] == "sent" and row["action_id"] == made[0]["action_id"]
+    assert (approvals.get_approval(card).get("used_detail") or {}).get("ok") is True
+    u = VE.unlinked_outward()
+    assert u["sends"] == {"checked": 1, "linked": 1, "no_decision": 0}, u
+    assert u["cards"] == {"checked": 1, "linked": 1, "no_decision": 0}, u
+
+
 def test_a_send_never_carries_anything_but_a_well_formed_action_id(_quiet_egress):
     from agent_friday.services import egress_gate
     egress_gate.record_service_send("mail", "gmail", content="body", action_id="not an id: words")
@@ -402,6 +539,26 @@ def test_the_doctor_code_stays_within_160_characters(monkeypatch):
     state, code = ledger_integrity.doctor_check()
     assert state == "unverified" and 0 < len(code) <= 160 and code.startswith("sig_bad:")
     from agent_friday.services import doctor
+    assert doctor._SAFE.match(code)
+
+
+def test_a_clean_doctor_code_keeps_the_whole_policy_version(monkeypatch):
+    from agent_friday.services import doctor, ledger_integrity
+    pv = "pv_" + "0123456789abcdef"
+    fake = {"ok": True, "policy_version": pv,
+            "signatures": {"ok": True, "bad": 0}, "chain": {"breaks": 0, "gaps": 0},
+            "unsigned": {"lines": 0},
+            "outward": {k: 0 for k in ("open", "unconfirmed", "duplicate", "duplicate_key", "false_done")},
+            "activity": {"state": "intact", "lines": 10 ** 8, "legacy_unchained": 10 ** 7,
+                         "activity_breaks": 0},
+            "artifacts": {"counts": {"changed": 0, "missing": 0, "unreadable": 0, "bad_lines": 0},
+                          "partial": True},
+            "unlinked": {"problems": 0, "not_linkable": {"total": 10 ** 6}}}
+    monkeypatch.setattr(ledger_integrity, "integrity", lambda *a, **k: dict(fake))
+    state, code = ledger_integrity.doctor_check()
+    assert state == "healthy" and len(code) <= ledger_integrity.CODE_MAX == 160, code
+    assert code.startswith("sig_bad:0,breaks:0,gaps:0,unsigned:0,open:0")
+    assert code.endswith(",pv:" + pv[:16]) and "duplicate_key:0" in code, code
     assert doctor._SAFE.match(code)
 
 
