@@ -76,6 +76,12 @@
 <section id="bundle" aria-labelledby="bundle-h">
   <h2 id="bundle-h">Backup: Friday Bundle</h2>
   <p>One encrypted file with your memory, vault, settings, skills, workspaces, receipts and conversations. Service sign-ins are not included; you reconnect them after a restore. It is saved in Documents, Friday Bundles. Without the passphrase it cannot be opened, by anyone.</p>
+  <h3>Who can read what</h3>
+  <ul id="bundle-protection">
+    <li>On this PC, Friday's data folder is protected by your Windows account: anyone who can sign in as you, or an administrator of this PC, can read most of it. Only the vault's sealed items and Friday's sign-ins need more.</li>
+    <li>A Friday Bundle is protected by its passphrase instead: wherever the file goes (a USB drive, a cloud folder, another PC), no one can open it without the passphrase, not even someone signed in as you.</li>
+    <li>Scheduled bundles keep their passphrase in this Windows account's credential store so they can be made while you are away: anyone who can sign in as you can open those.</li>
+  </ul>
   <label>Passphrase (four or five unrelated words work well) <input id="bp1" type="password" autocomplete="new-password"></label>
   <span class="meter" id="bp1-meter" role="status" aria-live="polite"></span><br>
   <label>Type it again <input id="bp2" type="password" autocomplete="new-password"></label><br>

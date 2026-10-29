@@ -157,6 +157,19 @@ _FILE_CATEGORY_LOWER = {k.lower(): v for k, v in _FILE_CATEGORY.items()}
 #: Carried and restored whatever categories are chosen (see the docstring).
 SCHEMA_FILE = "schema.json"
 
+#: How the folder on this PC and a bundle are protected, and how they differ
+#: (north star §8.5-3). Said on the Doctor page's backup section and after
+#: `friday bundle`; the page carries the same sentences (a test holds them).
+PROTECTION_LINES = (
+    "On this PC, Friday's data folder is protected by your Windows account: anyone who can sign in as you, "
+    "or an administrator of this PC, can read most of it. Only the vault's sealed items and Friday's sign-ins "
+    "need more.",
+    "A Friday Bundle is protected by its passphrase instead: wherever the file goes (a USB drive, a cloud "
+    "folder, another PC), no one can open it without the passphrase, not even someone signed in as you.",
+    "Scheduled bundles keep their passphrase in this Windows account's credential store so they can be made "
+    "while you are away: anyone who can sign in as you can open those.",
+)
+
 
 def documents_dir() -> Path:
     """The owner's real Documents folder (OneDrive may have moved it), the
