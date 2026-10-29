@@ -406,6 +406,7 @@ def _mutate_goal(goal_id: str, fn: Callable[[Dict[str, Any]], Optional[Dict[str,
         goal = _read_goal_file(goal_id, current=False)
         if goal is None:
             return None
+        before = goal_state.normalize(goal)
         result = fn(goal)
         goal = result if isinstance(result, dict) else goal
         old = goal_state.refresh(goal)
@@ -417,7 +418,15 @@ def _mutate_goal(goal_id: str, fn: Callable[[Dict[str, Any]], Optional[Dict[str,
             goal["history"] = goal["history"][-_HISTORY_KEPT:]
         goal["updated_at"] = _now_iso()
         _write_goal_file(goal)
-        return goal
+    # §4.7 (G9): a goal that has just ended (met, failed, ended by the owner)
+    # gets its outcome record, outside the goal lock.
+    try:
+        from agent_friday.services import outcome_memory as _om
+        if goal.get("status") in _om.GOAL_END_STATES and before != goal.get("status"):
+            _om.on_goal_end(goal)
+    except Exception as e:
+        _log.warning("outcome memory for a goal failed: %s", e)
+    return goal
 
 
 #: History lines kept per goal (the oldest go first); receipts are kept whole.
@@ -996,6 +1005,13 @@ def _append_receipt(goal_id: str, receipt: Dict[str, Any]) -> Optional[Dict[str,
             action_ledger.append("goal", receipt)
     except Exception as e:
         _log.error("receipt log append FAILED: %s", e)
+    # §4.7 (G9): a receipt that ends a milestone is also its outcome record
+    # (services/outcome_memory; nothing off the record; never raises).
+    try:
+        from agent_friday.services import outcome_memory as _om
+        _om.on_milestone_receipt(goal, receipt)
+    except Exception as e:
+        _log.warning("outcome memory for a milestone failed: %s", e)
     return goal
 
 

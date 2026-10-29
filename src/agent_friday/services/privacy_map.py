@@ -305,6 +305,27 @@ def _enc_tasks() -> tuple:
     return "unknown", "I couldn't tell how task records are locked." + fallback
 
 
+def _enc_outcomes() -> tuple:
+    """Outcome records (services/outcome_memory) are written only encrypted."""
+    state, words = _enc_keys()
+    never = " Nothing is written if it can't be encrypted."
+    if state == "yes":
+        return "yes", "Encrypted with Friday's key store; " + words[0].lower() + words[1:] + never
+    if state == "partly":
+        return "partly", ("Encrypted with Friday's key store, but its key is kept in Friday's folder "
+                          "without a passphrase, so anyone who can read that folder can open them." + never)
+    return "unknown", "I couldn't tell how outcome records are locked." + never
+
+
+def _ret_outcomes() -> str:
+    try:
+        from agent_friday.services import outcome_memory as om
+        return ("Kept until you forget them; past %d records the oldest resolved ones go first. "
+                "Each says when it may no longer be true." % om.RECORDS_MAX)
+    except Exception:
+        return _FOREVER
+
+
 def _enc(state: str, words: str):
     return lambda: (state, words)
 
@@ -441,6 +462,15 @@ def _stores() -> List[dict]:
          "holds": "Goals you set, their steps and the signed record of what was done.",
          "paths": ["goals"], "enc": _PLAIN, "ret": lambda: _FOREVER,
          "controls": [_EXPORT_ALL, _ERASE_ALL]},
+        {"key": "outcomes", "name": "How things turned out",
+         "holds": ("For each finished goal, step and checked outward action: what was decided, the ids of "
+                   "its evidence, how many attempts, how it turned out, what is still open, your "
+                   "corrections, and when to look again. Summaries and ids only, never the work itself."),
+         "paths": ["outcomes"], "enc": _enc_outcomes, "ret": _ret_outcomes,
+         "controls": [_ctl("delete", "Correct, resolve or forget", "Each outcome can be corrected, marked "
+                           "resolved or forgotten in Goals.", nav={"workspace": "system"}),
+                      _ctl("export", "Export outcomes", "A readable file of every outcome record.",
+                           href="/api/outcomes?export=1"), _ERASE_ALL]},
         {"key": "traces", "name": "Reasoning traces",
          "holds": "How Friday reasoned through each request, for you to inspect.",
          "paths": ["traces"], "enc": _PLAIN, "ret": _ret_traces,

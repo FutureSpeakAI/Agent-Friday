@@ -330,6 +330,124 @@ def run_review_route():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  Outcome memory (north star §4.7; services/outcome_memory)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Owner only: a signed-in session (login_required) and the owner principal.
+# An observer credential (or any principal that is not the owner) gets 403,
+# not a sealed copy. Writes go through login_required like every mutation here.
+#   GET    /api/outcomes                      list (?limit=, newest first; ?due=1 due revisits;
+#                                             ?export=1 every record, readable)
+#   POST   /api/outcomes/<id>/correct         {"outcome"?, "unresolved"?, "note"?}: a correction event
+#   POST   /api/outcomes/<id>/resolve         {"note"?}
+#   DELETE /api/outcomes/<id>                 forget one record (deletion receipt)
+#   POST   /api/outcomes/forget               {"goal_id"|"action_id"|"task_id"}: forget its records
+
+def _owner_only():
+    try:
+        from flask import g as _g
+        who = getattr(_g, "friday_principal", "user") or "user"
+    except Exception:
+        who = "user"
+    if who != "user":
+        return jsonify({"ok": False, "error": "outcomes are only served to the owner"}), 403
+    return None
+
+
+def _outcome_id(rid):
+    rid = str(rid or "")
+    return rid if rid.startswith("out_") and len(rid) <= 40 and rid[4:].isalnum() else None
+
+
+@goals_bp.route("/api/outcomes", methods=["GET"])
+@login_required
+def list_outcomes_route():
+    refused = _owner_only()
+    if refused:
+        return refused
+    from agent_friday.services import outcome_memory as _om
+    if request.args.get("export") in ("1", "true", "yes"):
+        resp = jsonify({"ok": True, **_om.export()})
+        resp.headers["Content-Disposition"] = "attachment; filename=friday-outcomes.json"
+        return resp
+    try:
+        limit = int(request.args.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    rows = _om.due_revisits() if request.args.get("due") in ("1", "true", "yes") else _om.records(limit=limit)
+    return jsonify({"ok": True, "outcomes": rows, "count": len(rows), "total": _om.count(),
+                    "limit": _om.LIST_MAX})
+
+
+@goals_bp.route("/api/outcomes/<rid>/correct", methods=["POST"])
+@login_required
+def correct_outcome_route(rid):
+    refused = _owner_only()
+    if refused:
+        return refused
+    rid = _outcome_id(rid)
+    if not rid:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    from agent_friday.services import outcome_memory as _om
+    body = request.get_json(silent=True) or {}
+    out = _om.correct(rid, outcome=body.get("outcome"), unresolved=body.get("unresolved"),
+                      note=body.get("note") if isinstance(body.get("note"), str) else None)
+    if not out.get("ok"):
+        code = 404 if out.get("error") == "not_found" else 400
+        return jsonify({"ok": False, "error": str(out.get("error"))[:200]}), code
+    return jsonify(out)
+
+
+@goals_bp.route("/api/outcomes/<rid>/resolve", methods=["POST"])
+@login_required
+def resolve_outcome_route(rid):
+    refused = _owner_only()
+    if refused:
+        return refused
+    rid = _outcome_id(rid)
+    if not rid:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    from agent_friday.services import outcome_memory as _om
+    body = request.get_json(silent=True) or {}
+    out = _om.resolve(rid, note=body.get("note") if isinstance(body.get("note"), str) else None)
+    if not out.get("ok"):
+        code = 404 if out.get("error") == "not_found" else 400
+        return jsonify({"ok": False, "error": str(out.get("error"))[:200]}), code
+    return jsonify(out)
+
+
+@goals_bp.route("/api/outcomes/<rid>", methods=["DELETE"])
+@login_required
+def forget_outcome_route(rid):
+    refused = _owner_only()
+    if refused:
+        return refused
+    rid = _outcome_id(rid)
+    if not rid:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    from agent_friday.services import outcome_memory as _om
+    out = _om.forget_record(rid)
+    if not out.get("ok"):
+        return jsonify(out), 404 if out.get("error") == "not_found" else 400
+    return jsonify(out)
+
+
+@goals_bp.route("/api/outcomes/forget", methods=["POST"])
+@login_required
+def forget_outcomes_route():
+    refused = _owner_only()
+    if refused:
+        return refused
+    from agent_friday.services import outcome_memory as _om
+    body = request.get_json(silent=True) or {}
+    for kind in ("goal", "action", "task"):
+        ident = body.get(kind + "_id")
+        if isinstance(ident, str) and ident.strip():
+            return jsonify(_om.forget_subject(kind, ident.strip()))
+    return jsonify({"ok": False, "error": "say which goal_id, action_id or task_id"}), 400
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  General approval queue (services/approvals.py)
 # ═══════════════════════════════════════════════════════════════════════════
 

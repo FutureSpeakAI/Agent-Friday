@@ -367,7 +367,18 @@ def delete_task(task_id):
     existed_on_disk = _tj.delete(task_id)
     if not (existed_in_cache or existed_on_disk):
         return jsonify({"error": "Task not found"}), 404
-    return jsonify({"status": "deleted", "journal": "deleted"})
+    # The owner deleted the task's record: the outcome records it was the source
+    # of go too, with their deletion receipt (services/outcome_memory, §4.7).
+    # Retention-based deletion does not do this: an outcome outlives its journal.
+    forgot = None
+    try:
+        from agent_friday.services import outcome_memory as _om
+        forgot = _om.forget_subject("task", task_id)
+    except Exception:
+        pass
+    return jsonify({"status": "deleted", "journal": "deleted",
+                    **({"outcomes_forgotten": {k: forgot.get(k) for k in ("receipt_id", "removed")}}
+                       if forgot and forgot.get("removed") else {})})
 
 
 # ── Reading the record (task-visibility.md §4.5, TV6, TV11) ──────────────────
