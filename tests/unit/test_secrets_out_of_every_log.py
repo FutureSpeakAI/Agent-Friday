@@ -140,6 +140,48 @@ def test_an_open_line_is_redacted_when_flushed_and_plain_text_is_unchanged():
     assert inner2.getvalue() == "model answered in 812 ms\n"
 
 
+def test_another_threads_flush_never_sends_half_of_this_threads_line():
+    import threading
+    inner = io.StringIO()
+    s = lr.wrap_stream(inner)
+    s.write("Authorization: Bearer ")             # print() writes its arguments one by one
+    other = threading.Thread(target=lambda: (s.write("hello from another thread\n"), s.flush()))
+    other.start()
+    other.join()
+    s.write(FAKE_BEARER)
+    s.write("\n")
+    text = inner.getvalue()
+    assert FAKE_BEARER not in text, text
+    assert "hello from another thread\n" in text and "Bearer hello" not in text
+
+
+def test_a_very_long_line_is_checked_in_pieces_that_do_not_split_a_value():
+    inner = io.StringIO()
+    s = lr.wrap_stream(inner)
+    filler = "word " * 3999                        # 19,995 characters
+    s.write(filler + "key " + FAKE_KEY + " and the end of the line\n")
+    text = inner.getvalue()
+    assert FAKE_KEY not in text and text.endswith("and the end of the line\n")
+
+
+def test_a_write_from_inside_the_redactor_goes_out_redacted_at_once():
+    inner = io.StringIO()
+    s = lr.wrap_stream(inner)
+    s._local.busy = True                            # as if a warning were printed mid-redaction
+    try:
+        s.write("token=" + "w" * 24)
+    finally:
+        s._local.busy = False
+    assert "w" * 24 not in inner.getvalue() and "token=" in inner.getvalue()
+
+
+def test_a_record_whose_message_is_set_after_it_was_made_is_redacted_again(everywhere):
+    rec = logging.makeLogRecord({"name": "some_library", "levelno": logging.WARNING,
+                                 "levelname": "WARNING", "msg": "key %s", "args": (FAKE_KEY,)})
+    lr._FILTER.filter(rec)
+    assert FAKE_KEY not in rec.getMessage()
+
+
 def test_a_wrapped_stream_keeps_its_own_attributes_and_is_wrapped_once():
     inner = io.StringIO()
     s = lr.wrap_stream(inner)
