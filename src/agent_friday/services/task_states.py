@@ -54,6 +54,9 @@ def derive(rec: Optional[Dict[str, Any]], *, stop_requested: bool = False) -> st
         return "cancelled"              # declined: the owner said no on the task's card
     if status == "interrupted":
         return "recovered_after_crash"
+    if status == "needs_reconnect":
+        # Terminal for the journal; the task waits on the owner to reconnect (NS-32.7-1).
+        return "waiting_for_input"
     if status in ("waiting_approval", "waiting_for_approval"):
         # Terminal for the journal (the worker is done; a restart must not run it again), but the
         # task is not finished: it waits for the owner's card (agent.settle_waiting_task).

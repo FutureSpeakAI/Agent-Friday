@@ -6088,6 +6088,12 @@ def _evidence_verdict(tool_trace):
         _presence.emit("verify", "once", ok=verified, turn=_presence.current_turn())
     except Exception:
         pass
+    reconnect = [n for t in calls for n in (t.get('needs_owner') or [])]
+    if reconnect:
+        # Expired or revoked sign-in, or a missing permission (NS-32.7-1): the work cannot be done
+        # until the owner reconnects; never 'complete', and never retried on its own.
+        services = ', '.join(dict.fromkeys(str(n.get('service') or 'Google') for n in reconnect))
+        return False, 'needs you to reconnect: ' + services, NEEDS_RECONNECT
     if waiting:
         return False, summary, WAITING_APPROVAL
     return verified, summary, ('complete' if verified else 'completed_unverified')
@@ -6099,6 +6105,9 @@ def _evidence_verdict(tool_trace):
 WAITING_APPROVAL = 'waiting_approval'
 #: Every card the task waited on was declined or expired: nothing it asked for ran.
 DECLINED = 'declined'
+#: A connection the task needed has an expired or revoked sign-in, or lacks a permission
+#: (NS-32.7-1): the worker is done, and the task waits for the owner to reconnect.
+NEEDS_RECONNECT = 'needs_reconnect'
 
 
 def settle_waiting_task(task_id, *, from_worker=False):
@@ -6612,7 +6621,19 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         _checked_outcome = None
         # A task waiting on a card is not graded as done or not done: the owner's
         # decision settles it (settle_waiting_task).
-        if final_status not in ('failed', WAITING_APPROVAL):
+        if final_status == NEEDS_RECONNECT:
+            try:
+                from agent_friday.services import goal_state as _gs_b
+                _txt = ('It could not finish: %s (or give it the permission it asks for) in Settings > Connections, then ask '
+                        'again.' % verification_summary)
+                _task_set(task_id, blocker=_gs_b.blocker(
+                    'needs_user_input', _txt, type='connector_reauth', needs_confirmation=False,
+                    services=sorted({str(n.get('service') or 'Google') for t in tool_trace
+                                     for n in (t.get('needs_owner') or [])})),
+                          status_reason=_txt)
+            except Exception as _be:
+                _task_log(task_id, 'Reconnect blocker not recorded: %s' % type(_be).__name__)
+        if final_status not in ('failed', WAITING_APPROVAL, NEEDS_RECONNECT):
             outcome = _verify_workflow_task(task_id, reply or '', tool_trace)
             _checked_outcome = outcome
             if outcome is not None:
@@ -7308,6 +7329,7 @@ def _report_task_completion(task_id, name, status, result_text):
     body = (result_text or '').strip()
     ok = status not in ('failed', 'error')
     waiting = status == WAITING_APPROVAL
+    reconnect = status == NEEDS_RECONNECT
     cid = None
     try:
         cid = _task_conversation_id(task_id)
@@ -7317,7 +7339,9 @@ def _report_task_completion(task_id, name, status, result_text):
     # in the chat line, the panel card and the spoken notice alike.
     said = ('is waiting for your decision on an approval card (Approvals, in the System '
             'workspace); nothing it asked for has run yet' if waiting
-            else 'finished' if ok else 'FAILED')
+            else ('could not finish: a connection it needs must be reconnected or given a permission (Settings > '
+                  'Connections); then ask again' if reconnect
+                  else 'finished' if ok else 'FAILED'))
     text = (f"Background task \"{name}\" {said}.\n\n"
             f"{body or '(no output)'}")
 
@@ -7330,6 +7354,7 @@ def _report_task_completion(task_id, name, status, result_text):
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
         notifications_engine.push(
             title=(f"Task needs your decision: {name}" if waiting
+                   else f"Task needs a reconnection: {name}" if reconnect
                    else f"Task {'finished' if ok else 'failed'}: {name}"),
             body=lede or ('Waiting for your decision.' if waiting
                           else 'Finished with no output.' if ok else 'Failed.'),
@@ -13882,6 +13907,19 @@ def _take_verified():
     got = _LAST_VERIFIED.get()
     _LAST_VERIFIED.set(None)
     return list(got or [])
+
+
+#: Why the last tool call was not done, when the reason is a connection only the owner can fix
+#: (its sign-in expired or was revoked, or a permission is missing: NS-32.7-1). Taken by the loop.
+_LAST_NEEDS_OWNER = _cv_verified.ContextVar("friday_last_tool_needs_owner", default=None)
+#: connector_outcome kinds that only the owner can clear (reconnect, or grant the permission).
+OWNER_FIX_KINDS = ("revoked", "scope")
+
+
+def _take_needs_owner():
+    got = _LAST_NEEDS_OWNER.get()
+    _LAST_NEEDS_OWNER.set(None)
+    return list(got or [])
 from agent_friday.services import change_receipts as _change_receipts
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
@@ -14472,6 +14510,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _outcome("refused", "credential refusal")
     elif _not_done:
         _nd = "not done: %s" % _not_done[0].get("kind", "failed")
+        _LAST_NEEDS_OWNER.set([{"kind": n.get("kind"), "service": n.get("service") or "Google"}
+                               for n in _not_done if n.get("kind") in OWNER_FIX_KINDS])
         _receipts.record(name, ok=False, detail=_nd)
         _outcome("error", _nd)
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
@@ -17704,6 +17744,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
                                   str(kwargs.get("model") or model or ""), _pq_name, tu.input):
                         _LAST_VERIFIED.set(None)
+                        _LAST_NEEDS_OWNER.set(None)
                         result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
@@ -17735,7 +17776,8 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     continue
 
                 tool_trace.append({"name": tu.name, "input": tu.input, "result": clip(result, 2000),
-                                   **({"verified": _v} if (_v := _take_verified()) else {})})
+                                   **({"verified": _v} if (_v := _take_verified()) else {}),
+                                   **({"needs_owner": _no} if (_no := _take_needs_owner()) else {})})
                 _bmon_log(tu.name, tu.input, result)
                 tool_results.append({
                     "type": "tool_result",
@@ -18598,6 +18640,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                         _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
                                  model or "", _pq_name, targs):
                     _LAST_VERIFIED.set(None)
+                    _LAST_NEEDS_OWNER.set(None)
                     result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
                                            session_ctx=_zt_ctx)
             finally:
@@ -18625,7 +18668,8 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                 "visually verified \u2014 say so rather than "
                                 "claiming it looks right]")
             tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000),
-                               **({"verified": _v} if (_v := _take_verified()) else {})})
+                               **({"verified": _v} if (_v := _take_verified()) else {}),
+                               **({"needs_owner": _no} if (_no := _take_needs_owner()) else {})})
             # A local seat re-reads every result on every later round inside a
             # small window, so it gets the result without formatting
             # boilerplate; the data is unchanged and the trace keeps the

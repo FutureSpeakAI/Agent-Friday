@@ -61,7 +61,10 @@ TERMINAL = ("complete", "completed", "completed_unverified", "done", "failed",
             "error", "timeout", "cancelled", "interrupted", "superseded", "killed",
             # The worker is finished and what is left is the owner's decision on a card
             # (services/agent.settle_waiting_task): a restart must never run it again.
-            "waiting_approval", "declined")
+            "waiting_approval", "declined",
+            # a connection it needs has an expired sign-in: the owner reconnects and asks again;
+            # a restart never runs it again on its own (NS-32.7-1)
+            "needs_reconnect")
 
 
 def is_terminal(status) -> bool:
