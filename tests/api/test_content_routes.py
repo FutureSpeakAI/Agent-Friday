@@ -578,7 +578,82 @@ def test_platform_connect_app_password_session_failure_not_ok(client, monkeypatc
 #  Delete + takedown ordering (§12.6 erase)
 # ═════════════════════════════════════════════════════════════════════════════
 
-def test_delete_published_post_with_takedown(client):
+@pytest.fixture
+def gate_open(monkeypatch):
+    """The action checkpoint's integrity checks pass (a takedown passes
+    action_gate.record_external before any platform is called)."""
+    from agent_friday.governance import action_gate as ag
+    monkeypatch.setattr(ag, "verify_claws", lambda *a, **k: (True, "ok"))
+    monkeypatch.setattr(ag, "outward_hold", lambda: None)
+    return ag
+
+
+def _published_on_mock(client, platform_post_id):
+    adapter = pr.get_adapter("mock")
+    adapter.reset()
+    adapter.published.append({"platform_post_id": platform_post_id})
+    post = _mk_post(client, platforms=["mock"])
+    client.post(f"/api/content/posts/{post['id']}/publish-now", json={})
+    _confirm_target(post["id"], platform_post_id=platform_post_id)
+    return adapter, post
+
+
+def _takedown_receipts():
+    from agent_friday.services import action_ledger as L
+    decs = [e["rec"] for e in L.entries(["decision"], newest_first=False)
+            if e["rec"].get("tool") == "content:takedown"]
+    outs = [e["rec"] for e in L.entries(["outcome"], newest_first=False)
+            if e["rec"].get("tool") == "content:takedown"]
+    return decs, outs
+
+
+def test_a_takedown_while_stopped_is_held_and_deletes_nothing(client, gate_open):
+    """Stop pressed: the takedown answers 409 with the reason, and nothing is
+    deleted, on the platform or here."""
+    import agent_friday.core as core
+    adapter, post = _published_on_mock(client, "mock-take-stop")
+    core.GLOBAL_STOP.set()
+    try:
+        res = client.delete(f"/api/content/posts/{post['id']}?takedown=1")
+    finally:
+        core.GLOBAL_STOP.clear()
+    assert res.status_code == 409
+    body = res.get_json()
+    assert body["ok"] is False and body.get("held") is True
+    assert "stopped" in body["error"].lower()
+    assert "mock-take-stop" not in adapter.deleted
+    got = client.get(f"/api/content/posts/{post['id']}").get_json()["post"]
+    assert got["status"] != "CANCELLED"
+    decs, outs = _takedown_receipts()
+    assert decs == [] and outs == []
+
+
+def test_a_takedown_leaves_one_decision_and_one_terminal_outcome(client, gate_open):
+    adapter, post = _published_on_mock(client, "mock-take-rcpt")
+    res = client.delete(f"/api/content/posts/{post['id']}?takedown=1")
+    assert res.status_code == 200 and res.get_json()["ok"]
+    assert "mock-take-rcpt" in adapter.deleted
+    decs, outs = _takedown_receipts()
+    assert len(decs) == 1
+    d = decs[0]
+    assert d["class"] == gate_open.OUTWARD and d["surface"] == "owner_route"
+    assert d["target"] == "mock:mock-take-rcpt"
+    assert len(outs) == 1
+    assert outs[0]["action_id"] == d["action_id"]
+    assert outs[0]["outcome"] == gate_open.EXECUTED and outs[0]["terminal"] is True
+
+
+def test_a_takedown_that_fails_everywhere_closes_failed(client, gate_open, monkeypatch):
+    adapter, post = _published_on_mock(client, "mock-take-fail")
+    monkeypatch.setattr(adapter, "delete", lambda pid: {"ok": False, "error": "nope"})
+    res = client.delete(f"/api/content/posts/{post['id']}?takedown=1")
+    assert res.get_json()["ok"]
+    decs, outs = _takedown_receipts()
+    assert len(decs) == 1 and len(outs) == 1
+    assert outs[0]["outcome"] == gate_open.FAILED
+
+
+def test_delete_published_post_with_takedown(client, gate_open):
     """§12.6 erase on a PUBLISHED post: local delete succeeds (CANCELLED) and
     the confirmed platform copy is taken down."""
     adapter = pr.get_adapter("mock")
@@ -597,9 +672,10 @@ def test_delete_published_post_with_takedown(client):
     assert "mock-take-1" in adapter.deleted
 
 
-def test_delete_refusal_fires_no_takedowns(client, monkeypatch):
+def test_delete_refusal_fires_no_takedowns(client, monkeypatch, gate_open):
     """Ordering guard: when the store refuses the delete (PUBLISHING post),
-    no irreversible platform-side takedown may fire."""
+    no irreversible platform-side takedown may fire. The checkpoint lets the
+    takedown through (gate_open), so it is the store's refusal that stops it."""
     adapter = pr.get_adapter("mock")
     adapter.reset()
     deletes = []
@@ -617,10 +693,35 @@ def test_delete_refusal_fires_no_takedowns(client, monkeypatch):
     assert got["post"]["status"] == "PUBLISHING"  # linkedin target in flight
 
     res = client.delete(f"/api/content/posts/{post['id']}?takedown=1")
+    assert res.status_code == 200, "not held by the checkpoint: the store refused"
     body = res.get_json()
     assert body["ok"] is False
     assert "takedowns" not in body
     assert deletes == []
+    decs, outs = _takedown_receipts()
+    assert len(decs) == 1 and len(outs) == 1
+    assert outs[0]["outcome"] == gate_open.DENIED and outs[0]["detail"] == "local_delete_refused"
+
+
+def test_a_failed_takedown_is_kept_and_a_retry_takes_down_only_what_is_left(
+        client, gate_open, monkeypatch):
+    """A takedown that failed answers TAKEDOWN_FAILED with the target ids;
+    the same DELETE ?takedown=1 retries only those."""
+    adapter, post = _published_on_mock(client, "mock-take-retry")
+    tid = client.get(f"/api/content/posts/{post['id']}").get_json()["post"]["targets"][0]["id"]
+    monkeypatch.setattr(adapter, "delete", lambda pid: {"ok": False, "error": "try later"})
+    body = client.delete(f"/api/content/posts/{post['id']}?takedown=1").get_json()
+    assert body["ok"] and body["takedown_status"] == "TAKEDOWN_FAILED"
+    assert body["takedown_failed"] == [tid]
+    tried = []
+    monkeypatch.setattr(adapter, "delete", lambda pid: tried.append(pid) or {"ok": True})
+    body = client.delete(f"/api/content/posts/{post['id']}?takedown=1").get_json()
+    assert body["ok"] and "takedown_status" not in body
+    assert tried == ["mock-take-retry"]
+    # done: a third press takes nothing down again
+    tried.clear()
+    body = client.delete(f"/api/content/posts/{post['id']}?takedown=1").get_json()
+    assert body["ok"] and tried == [] and body.get("already_taken_down") == [tid]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
