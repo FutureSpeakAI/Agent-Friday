@@ -257,7 +257,11 @@ def test_a_plain_result_is_still_ok(fixture_tool):
 
 def test_skill_scores_do_not_reward_memory():
     from agent_friday import skillopt_engine as se
-    assert not [k for k in se.DEFAULT_WEIGHTS if any(w in k.lower() for w in ("memor", "fact", "entr"))]
+    def _about_memory(key):
+        words = key.lower().split("_")
+        return any(w.startswith("memor") or w in ("fact", "facts", "entry", "entries", "stored")
+                   for w in words)
+    assert not [k for k in se.DEFAULT_WEIGHTS if _about_memory(k)]
     m = {"accuracy": 0.8, "latency_ms": 900, "cost_usd": 0.01,
          "user_satisfaction": 0.7, "completeness": 0.9}
     assert se.composite_score(m) == se.composite_score({**m, "memories_added": 10 ** 6,
