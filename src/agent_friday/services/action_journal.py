@@ -167,6 +167,14 @@ def public_view(rec: dict) -> dict:
     out = {k: v for k, v in (rec or {}).items() if k != "undo"}
     out["undoable"] = bool((rec or {}).get("undo")) and not (rec or {}).get("undone") \
         and (rec or {}).get("status") in ("complete", "partial")
+    if any(isinstance(i, dict) and i.get("title_sealed") for i in out.get("items") or []):
+        # A calendar or task title is kept sealed (services/change_receipts); the owner's page
+        # opens it to show it. It is never written back readable.
+        from agent_friday.services import change_receipts as _cr
+        out["items"] = [dict({k: v for k, v in i.items() if k != "title_sealed"},
+                             title=_cr.title_of(i, "(title no longer kept)"))
+                        if isinstance(i, dict) and i.get("title_sealed") else i
+                        for i in out.get("items") or []]
     return out
 
 

@@ -49,7 +49,8 @@ def receipt_read(rid):
 # Undos that change something outside Friday's own state go through the action
 # checkpoint (cLaws, signed receipt, held while everything is stopped). A
 # file goes back over whatever is on disk now, so it is one of them.
-_OUTWARD_UNDO = {"email": "gmail:undo", "calendar": "calendar:undo", "file_write": "file:undo"}
+_OUTWARD_UNDO = {"email": "gmail:undo", "calendar": "calendar:undo", "tasks": "tasks:undo",
+                 "file_write": "file:undo"}
 
 
 @actions_bp.route("/api/actions/receipts/<rid>/undo", methods=["POST"])

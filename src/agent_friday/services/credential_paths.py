@@ -75,6 +75,9 @@ def _deny_dirs() -> list[tuple[Path, str]]:
         # that could delete the owner's fingerprints-only choice would turn
         # keeping back on; one that could plant an entry would forge a receipt.
         (f / "vault" / "sent-text", "the full text of what left this PC"),
+        # Undo's sealed copies (services/undo_store): a tool that could plant or delete one would
+        # change what Undo puts back.
+        (f / "vault" / "undo", "what Undo keeps to put a change back"),
     ]
 
 
