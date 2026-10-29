@@ -18,9 +18,23 @@ included):
                  that skip, no document language, a PDF with no text layer,
                  a page that loads anything from the internet
 
-Each finding is {"check", "severity", "message"}; "error" means the file is
-broken for its reader, "warn" means it works but falls short. `ok` is False
-when there is any error. Office files are zip packages of XML, so they are
+Spreadsheets (.xlsx, and .csv where it applies) also get the integrity
+checks of NS-24.5-1: formulas that do not parse, names a formula uses that
+the workbook does not define, named ranges that point at missing sheets or
+deleted ranges, numbers and dates stored as text, columns that mix types,
+chart series over missing or empty ranges, links to other workbooks and the
+internet, decimal commas mixed with decimal points, function names from a
+non-English Excel, number formats that change within a column, and hidden
+sheets, rows and columns that hold data.
+
+Each finding is {"check", "severity", "message"}, and a spreadsheet finding
+also has "sheet" and "cell" (a cell, range, column or rows). "error" means
+the file is broken for its reader, "warn" means it works but falls short,
+"info" is worth knowing (hidden data, a web link). `ok` is False when there
+is any error. Findings name cells, never their contents; they may name
+sheets (and sheet names a formula refers to) and the host name of a
+hyperlink or external link, so a finding is not free of what the file says
+about itself. Office files are zip packages of XML, so they are
 read with the standard library; PDFs with pdfplumber (already a core
 dependency). Never raises: a file that cannot be read is itself a finding.
 """
@@ -141,8 +155,16 @@ def _formula_refs(text: str):
             yield sheet, "", ""
 
 
-def _finding(check: str, severity: str, message: str) -> dict:
-    return {"check": check, "severity": severity, "message": message[:300]}
+def _finding(check: str, severity: str, message: str, **where) -> dict:
+    """One finding. Spreadsheet findings also say where: `sheet` and `cell`
+    (a cell, a range, a column or a row span), each None when it does not
+    apply; both keys are present whenever either is given."""
+    out = {"check": check, "severity": severity, "message": message[:300]}
+    if where:
+        for k in ("sheet", "cell"):
+            v = where.get(k)
+            out[k] = None if v is None else str(v)[:120]
+    return out
 
 
 def _col_number(letters: str) -> int:
@@ -300,13 +322,365 @@ def _check_docx(path: Path) -> List[dict]:
 
 # ── Excel ──────────────────────────────────────────────────────────────────
 
+#: Spreadsheet integrity (NS-24.5-1). A column's types are judged once it
+#: has this many data cells; numbers and text in one column are "mixed" when
+#: the smaller share is at least MIXED_TYPE_SHARE of at least
+#: MIXED_TYPE_MIN_CELLS cells. Per sheet, at most MAX_TYPE_CELLS cells are read
+#: for the column checks (errors and formulas are read in every cell).
+MIN_COLUMN_CELLS = 3
+MIXED_TYPE_SHARE = 0.2
+MIXED_TYPE_MIN_CELLS = 5
+MAX_TYPE_CELLS = 200_000
+#: Cell text longer than this is never a number or a date.
+_MAX_TYPED_TEXT = 64
+
+#: Error literals a formula may contain.
+_ERROR_LITERALS = ("#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A",
+                   "#GETTING_DATA", "#SPILL!", "#CALC!")
+#: Function names from non-English Excel. A file stores English names, so
+#: one of these in a stored formula is #NAME? on every machine.
+_LOCALIZED_FUNCTIONS = frozenset((
+    # German
+    "SUMME", "WENN", "MITTELWERT", "ANZAHL", "ANZAHL2", "SVERWEIS", "WVERWEIS", "RUNDEN",
+    "SUMMEWENN", "ZÄHLENWENN", "HEUTE", "JETZT", "VERKETTEN", "WENNFEHLER", "UND", "ODER",
+    # French
+    "SOMME", "MOYENNE", "RECHERCHEV", "RECHERCHEH", "NB", "NBVAL", "NB.SI", "SOMME.SI", "ARRONDI",
+    "AUJOURDHUI", "MAINTENANT", "CONCATENER", "SIERREUR", "ET", "OU",
+    # Spanish
+    "SUMA", "PROMEDIO", "BUSCARV", "BUSCARH", "CONTAR", "CONTARA", "CONTAR.SI", "SUMAR.SI",
+    "REDONDEAR", "HOY", "AHORA", "CONCATENAR", "SI.ERROR",
+    # Italian
+    "SOMMA", "MEDIA", "CERCA.VERT", "CERCA.ORIZZ", "CONTA.NUMERI", "CONTA.SE", "SOMMA.SE",
+    "ARROTONDA", "OGGI", "ADESSO", "SE.ERRORE",
+    # Dutch
+    "SOM", "ALS", "GEMIDDELDE", "VERT.ZOEKEN", "HORIZ.ZOEKEN", "AANTAL", "AFRONDEN", "VANDAAG",
+    "NU", "ALS.FOUT",
+    # Portuguese
+    "SOMA", "SE", "MÉDIA", "PROCV", "PROCH", "CONT.NÚM", "CONT.SE", "SOMASE", "ARRED", "HOJE",
+    "AGORA", "SEERRO",
+    # Swedish
+    "SUMMA", "OM", "MEDEL", "LETARAD", "LETAKOLUMN", "ANTAL", "AVRUNDA", "IDAG",
+))
+_EXTERNAL_REF = re.compile(r"\[\d+\][^\[\]\"!]{0,100}!|\[\d+\]!")
+_RANGE_REF = re.compile(r"(?:'((?:[^']|''){1,100})'|([A-Za-z0-9_.]{1,100}))!"
+                        r"\$?([A-Z]{1,3})\$?(\d{1,7})(?::\$?([A-Z]{1,3})\$?(\d{1,7}))?")
+_COL_ONLY = re.compile(r"\$?[A-Za-z]{1,3}|\$?\d+")
+_NUM_COMMA = re.compile(r"[-+]?\d{1,3}(?:\.\d{3})+,\d+|[-+]?\d+,\d{1,2}|[-+]?\d+,\d{4,}")
+_NUM_POINT = re.compile(r"[-+]?[$€£¥]?\d+\.\d+%?|[-+]?[$€£¥]?\(?\d{1,3}(?:,\d{3})+(?:\.\d+)?\)?%?")
+_NUM_INT = re.compile(r"[-+]?[$€£¥]?(?:[1-9]\d*|0)%?")
+_MONTHS = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]{0,6}\.?"
+_DATE_FORMS = (
+    ("iso", re.compile(r"\d{4}-\d{1,2}-\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?")),
+    ("slash", re.compile(r"\d{1,2}/\d{1,2}/\d{2,4}")),
+    ("dot", re.compile(r"\d{1,2}\.\d{1,2}\.\d{2,4}")),
+    ("dash", re.compile(r"\d{1,2}-\d{1,2}-\d{4}")),
+    ("words", re.compile(_MONTHS + r" \d{1,2},? \d{4}|\d{1,2} " + _MONTHS + r" \d{4}", re.I)),
+)
+#: Built-in number formats (ECMA-376 18.8.30) by what they show.
+_BUILTIN_FORMATS = {0: "general", 1: "number", 2: "number", 3: "number", 4: "number",
+                    5: "currency", 6: "currency", 7: "currency", 8: "currency",
+                    9: "percent", 10: "percent", 11: "scientific", 12: "fraction", 13: "fraction",
+                    37: "number", 38: "number", 39: "number", 40: "number",
+                    41: "currency", 42: "currency", 43: "currency", 44: "currency",
+                    48: "scientific", 49: "text"}
+_BUILTIN_FORMATS.update({i: "date" for i in list(range(14, 23)) + list(range(27, 37))
+                         + list(range(45, 48)) + list(range(50, 59))})
+
+
+def _col_letters(n: int) -> str:
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def _split_ref(ref: str):
+    """(column number, row number) of an A1 cell reference, or None."""
+    m = _CELL.fullmatch(ref or "")
+    if not m:
+        return None
+    return _col_number(m.group(1)), int(m.group(2))
+
+
+def _formula_scan(text: str) -> dict:
+    """One linear pass over a formula: does it parse (brackets and quotes
+    balance), the functions it calls, the bare names it uses, and whether it
+    separates arguments with ';' (a regional setting, never valid in a file).
+    Strings, quoted sheet names, [external or table] parts and error literals
+    are skipped, never searched with a backtracking regex."""
+    i, n = 0, len(text)
+    depth = brace = 0
+    funcs: List[str] = []
+    names: List[str] = []
+    semicolon = False
+    parses = True
+
+    def is_word(ch):
+        return ch.isalnum() or ch in "_.$\\"
+
+    def skip_ref(j):                     # the reference after Sheet!
+        while j < n and (is_word(text[j]) or text[j] in ":#"):
+            j += 1
+        return j
+
+    def _sheet_range_end(j):             # A:B! -> index of the '!', else None
+        k = j
+        while k < n and is_word(text[k]):
+            k += 1
+        return k if k > j and k < n and text[k] == "!" else None
+
+    while i < n:
+        ch = text[i]
+        if ch == '"' or ch == "'":
+            j, closed = i + 1, False
+            while j < n:
+                if text[j] == ch:
+                    if j + 1 < n and text[j + 1] == ch:
+                        j += 2
+                        continue
+                    closed = True
+                    break
+                j += 1
+            if not closed:
+                parses = False
+                break
+            i = j + 1
+            if ch == "'" and i < n and text[i] == "!":
+                i = skip_ref(i + 1)
+            continue
+        if ch == "#":
+            lit = next((e for e in _ERROR_LITERALS if text.startswith(e, i)
+                        or text[i:i + len(e)].upper() == e), None)
+            i += len(lit) if lit else 1
+            continue
+        if ch == "[":
+            level, j = 0, i
+            while j < n:
+                if text[j] == "[":
+                    level += 1
+                elif text[j] == "]":
+                    level -= 1
+                    if level == 0:
+                        break
+                j += 1
+            if level:
+                parses = False
+                break
+            i = j + 1
+            if i < n and text[i] == "!":         # [1]!MyName: another workbook's name
+                i = skip_ref(i + 1)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                parses = False
+                break
+        elif ch == "{":
+            brace += 1
+        elif ch == "}":
+            brace -= 1
+            if brace < 0:
+                parses = False
+                break
+        elif ch == ";" and brace == 0:
+            semicolon = True
+        elif ch.isdigit() or ch == ".":
+            while i < n and is_word(text[i]):
+                i += 1
+            continue
+        elif is_word(ch):
+            start = i
+            while i < n and is_word(text[i]):
+                i += 1
+            token = text[start:i]
+            nxt = text[i] if i < n else ""
+            if nxt == "(":
+                funcs.append(token)
+            elif nxt == "!":
+                i = skip_ref(i + 1)
+            elif nxt == ":" and _sheet_range_end(i + 1) is not None:
+                # Sheet1:Sheet2!A1, a 3D reference over a range of sheets.
+                i = skip_ref(_sheet_range_end(i + 1) + 1)
+            elif nxt != "[":
+                names.append(token)
+            continue
+        i += 1
+    if depth or brace:
+        parses = False
+    return {"parses": parses, "funcs": funcs, "names": names, "semicolon": semicolon}
+
+
+def _function_base(name: str) -> str:
+    up = name.upper()
+    for prefix in ("_XLFN._XLWS.", "_XLFN.", "_XLWS."):
+        if up.startswith(prefix):
+            return up[len(prefix):]
+    return up
+
+
+def _format_category(fmt_id: int, code: Optional[str]) -> str:
+    if code is None:
+        return _BUILTIN_FORMATS.get(fmt_id, "general")
+    code = code[:255]
+    if re.search(r"[$€£¥]|\[\$", code):
+        return "currency"
+    plain = re.sub(r'"[^"]*"|\\.|\[[^\]]*\]', "", code).lower()
+    if "%" in plain:
+        return "percent"
+    if plain.strip() == "@":
+        return "text"
+    if plain.strip() in ("", "general"):
+        return "general"
+    if re.search(r"[ymdhs]", plain.replace("general", "")):
+        return "date"
+    if "e+" in plain or "e-" in plain:
+        return "scientific"
+    if re.search(r"[0#?]", plain):
+        return "number"
+    return "general"
+
+
+def _style_categories(pkg: "_Pkg") -> List[str]:
+    """The number-format category of each cell style (xf index)."""
+    root = pkg.xml("xl/styles.xml")
+    if root is None:
+        return []
+    custom = {}
+    for nf in root.iter("{%s}numFmt" % NS["s"]):
+        try:
+            custom[int(nf.get("numFmtId"))] = nf.get("formatCode") or ""
+        except (TypeError, ValueError):
+            continue
+    xfs = root.find("s:cellXfs", NS)
+    out = []
+    for xf in (xfs.findall("s:xf", NS) if xfs is not None else []):
+        try:
+            fid = int(xf.get("numFmtId") or 0)
+        except ValueError:
+            fid = 0
+        out.append(_format_category(fid, custom.get(fid)))
+    return out
+
+
+def _text_kind(text: str):
+    """("textnum", decimal style or None) | ("datetext", form) | ("text", None)
+    for a cell's text. Leading zeros ("007") are an identifier, not a number."""
+    v = (text or "").strip()
+    if not v or len(v) > _MAX_TYPED_TEXT:
+        return ("text", None)
+    if _NUM_COMMA.fullmatch(v):
+        return ("textnum", "comma")
+    if _NUM_POINT.fullmatch(v):
+        return ("textnum", "point" if "." in v else None)
+    if _NUM_INT.fullmatch(v):
+        return ("textnum", None)
+    for form, rx in _DATE_FORMS:
+        if rx.fullmatch(v):
+            return ("datetext", form)
+    return ("text", None)
+
+
+class _Column:
+    __slots__ = ("num", "textnum", "text", "datetext", "first", "last", "first_textnum",
+                 "first_datetext", "first_comma", "first_point", "cats", "date_forms")
+
+    def __init__(self):
+        self.num = self.textnum = self.text = self.datetext = 0
+        self.first = self.last = None
+        self.first_textnum = self.first_datetext = self.first_comma = self.first_point = None
+        self.cats = {}
+        self.date_forms = {}
+
+    def add(self, ref: str, row: int, kind: str, detail) -> None:
+        if self.first is None:
+            self.first = (row, ref)
+        self.last = (row, ref)
+        if kind == "num":
+            self.num += 1
+            self.cats[detail] = self.cats.get(detail, 0) + 1
+        elif kind == "textnum":
+            self.textnum += 1
+            self.first_textnum = self.first_textnum or ref
+            if detail == "comma":
+                self.first_comma = self.first_comma or ref
+            elif detail == "point":
+                self.first_point = self.first_point or ref
+        elif kind == "datetext":
+            self.datetext += 1
+            self.first_datetext = self.first_datetext or ref
+            self.date_forms[detail] = self.date_forms.get(detail, 0) + 1
+        else:
+            self.text += 1
+
+    def findings(self, sheet: Optional[str], col: str, *, typed_cells: bool) -> List[dict]:
+        """The column's type, locale and style findings. `typed_cells`: the
+        file has real numbers (a workbook); in a CSV every value is text, so
+        "stored as text" does not apply there."""
+        out: List[dict] = []
+        total = self.num + self.textnum + self.text + self.datetext
+        if total < MIN_COLUMN_CELLS:
+            return out
+        span = "%s:%s" % (self.first[1], self.last[1]) if self.first and self.last else col
+        where = {"sheet": sheet, "cell": span}
+        label = ("%s column %s" % (sheet, col)) if sheet else ("column %s" % col)
+        numeric = self.num + self.textnum
+        if typed_cells and self.textnum and numeric * 2 >= total:
+            out.append(_finding("types", "warn", "%s has %d number(s) stored as text (first at %s); they do "
+                                "not add up or sort as numbers" % (label, self.textnum, self.first_textnum), **where))
+        if total >= MIXED_TYPE_MIN_CELLS and numeric and self.text \
+                and min(numeric, self.text) >= MIXED_TYPE_SHARE * total:
+            out.append(_finding("types", "warn", "%s mixes numbers (%d) and text (%d)"
+                                % (label, numeric, self.text), **where))
+        if typed_cells and self.datetext:
+            out.append(_finding("types", "warn", "%s has %d date(s) stored as text (first at %s); they do not "
+                                "sort or calculate as dates" % (label, self.datetext, self.first_datetext), **where))
+        if not typed_cells and len(self.date_forms) > 1:
+            out.append(_finding("types", "warn", "%s writes dates in %d different ways (%s)"
+                                % (label, len(self.date_forms), ", ".join(sorted(self.date_forms))), **where))
+        if self.first_comma and self.first_point:
+            out.append(_finding("locale", "warn", "%s writes decimals both with a point (%s) and with a comma "
+                                "(%s); one of them is read wrong in any one locale"
+                                % (label, self.first_point, self.first_comma), **where))
+        cats = set(self.cats)
+        if len(cats - {"general"}) >= 2 or ("general" in cats and cats & {"date", "percent", "currency"}):
+            out.append(_finding("styles", "warn", "%s shows its numbers in different formats (%s)"
+                                % (label, ", ".join(sorted(cats))), **where))
+        return out
+
+
+def _rels_targets(pkg: "_Pkg", part: str) -> List[dict]:
+    """The relationships of one part: [{"type", "target", "external"}]."""
+    folder, _, name = part.rpartition("/")
+    rels = pkg.xml("%s/_rels/%s.rels" % (folder, name))
+    out = []
+    for rel in (list(rels) if rels is not None else []):
+        out.append({"type": rel.get("Type") or "", "target": rel.get("Target") or "",
+                    "external": (rel.get("TargetMode") or "") == "External"})
+    return out
+
+
+def _link_findings(target: str, sheet: str) -> List[dict]:
+    import urllib.parse
+    low = target.strip().lower()
+    if low.startswith(("http://", "https://", "mailto:")):
+        host = urllib.parse.urlsplit(target).hostname or ("an email address" if low.startswith("mailto:") else "?")
+        return [_finding("links", "info", "%s links to %s" % (sheet, host[:80]), sheet=sheet, cell=None)]
+    return [_finding("links", "warn", "%s links to another file (%s), which may not be there on the reader's "
+                                      "machine" % (sheet, target.replace("\\", "/").rsplit("/", 1)[-1][:80]),
+                     sheet=sheet, cell=None)]
+
+
 def _check_xlsx(path: Path) -> List[dict]:
     pkg = _Pkg(path)
     wb = pkg.xml("xl/workbook.xml")
     if wb is None:
         return [_finding("validity", "error", "not an Excel workbook: xl/workbook.xml is missing")]
     out: List[dict] = []
-    sheets = [s.get("name") or "" for s in wb.findall(".//s:sheets/s:sheet", NS)]
+    sheet_els = wb.findall(".//s:sheets/s:sheet", NS)
+    sheets = [s.get("name") or "" for s in sheet_els]
     names_lower = {n.lower() for n in sheets}
     if not sheets:
         out.append(_finding("validity", "error", "the workbook has no sheets"))
@@ -316,45 +690,297 @@ def _check_xlsx(path: Path) -> List[dict]:
     if rels is not None:
         for rel in rels:
             targets[rel.get("Id")] = (rel.get("Target") or "").lstrip("/").replace("xl/", "", 1)
+    shared_root = pkg.xml("xl/sharedStrings.xml")
+    shared: List[str] = []
+    if shared_root is not None:
+        for si in shared_root.findall("s:si", NS):
+            shared.append("".join(t.text or "" for t in si.iter("{%s}t" % NS["s"])))
+    styles = _style_categories(pkg)
+    # Defined names: the workbook's own, and each one checked (ranges).
+    global_names, local_names = set(), {}
+    for dn in wb.findall(".//s:definedNames/s:definedName", NS):
+        dname = (dn.get("name") or "").strip()
+        text = (dn.text or "").strip()[:MAX_FORMULA]
+        local = dn.get("localSheetId")
+        scope = None
+        if local is not None:
+            try:
+                idx = int(local)
+            except ValueError:
+                idx = -1
+            local_names.setdefault(idx, set()).add(dname.upper())
+            if 0 <= idx < len(sheets):
+                scope = sheets[idx]
+            else:
+                out.append(_finding("ranges", "error", "the named range '%s' belongs to a sheet that does not exist"
+                                    % dname[:60], sheet=None, cell=dname))
+        else:
+            global_names.add(dname.upper())
+        builtin = dname.startswith("_xlnm.")
+        where = {"sheet": scope, "cell": dname}
+        if not text:
+            out.append(_finding("ranges", "error", "the named range '%s' is empty" % dname[:60], **where))
+            continue
+        if "#REF!" in text:
+            out.append(_finding("ranges", "warn" if builtin else "error",
+                                "the named range '%s' points at a deleted range" % dname[:60], **where))
+        external = bool(_EXTERNAL_REF.search(text))
+        if external:
+            out.append(_finding("links", "warn", "the named range '%s' takes its values from another workbook"
+                                % dname[:60], **where))
+        for other, col, row in _formula_refs(text):
+            if other and other != "REF" and "[" not in other and not external and other.lower() not in names_lower:
+                out.append(_finding("ranges", "error", "the named range '%s' points at sheet '%s', which does not "
+                                    "exist" % (dname[:60], other[:60]), **where))
+            if col and (_col_number(col) > _MAX_COL or int(row) > _MAX_ROW or int(row) < 1):
+                out.append(_finding("ranges", "error", "the named range '%s' points at %s%s, outside any sheet"
+                                    % (dname[:60], col, row), **where))
+    tables = set()
+    for tpart in pkg.matching(r"xl/tables/table\d+\.xml"):
+        troot = pkg.xml(tpart)
+        if troot is not None:
+            tables.update(v.upper() for v in (troot.get("name"), troot.get("displayName")) if v)
+    # Links to other workbooks and outside data.
+    for xpart in pkg.matching(r"xl/externalLinks/externalLink\d+\.xml"):
+        linked = [r["target"] for r in _rels_targets(pkg, xpart) if r["target"]]
+        what = linked[0].replace("\\", "/").rsplit("/", 1)[-1][:80] if linked else "a file"
+        out.append(_finding("links", "warn", "the workbook takes values from another workbook (%s); they go "
+                            "stale, or break when that file moves" % what, sheet=None, cell=None))
+    if "xl/connections.xml" in pkg.names:
+        out.append(_finding("links", "warn", "the workbook has data connections that refresh from outside "
+                                             "sources", sheet=None, cell=None))
     cells = 0
-    for s in wb.findall(".//s:sheets/s:sheet", NS):
+    filled: Dict[str, Optional[set]] = {}      # sheet -> {(col, row)} with data; None when not fully read
+    s_ns = "{%s}" % NS["s"]
+    for index, s in enumerate(sheet_els):
         name = s.get("name") or "?"
         rid = s.get("{%s}id" % NS["r"])
         part = "xl/" + targets.get(rid, "") if rid in targets else None
         root = pkg.xml(part) if part else None
         if root is None:
-            out.append(_finding("validity", "error", "sheet '%s' has no data part" % name))
+            out.append(_finding("validity", "error", "sheet '%s' has no data part" % name, sheet=name, cell=None))
             continue
-        for c in root.iter("{%s}c" % NS["s"]):
-            cells += 1
-            ref = c.get("r") or "?"
-            v = c.find("s:v", NS)
-            f = c.find("s:f", NS)
-            if c.get("t") == "e" or (v is not None and (v.text or "").strip() in _CELL_ERROR):
-                out.append(_finding("formulas", "error", "%s!%s shows %s" % (name, ref, (v.text if v is not None else "an error"))))
-            if f is not None and f.text:
-                ftext = f.text
-                if len(ftext) > MAX_FORMULA:
-                    out.append(_finding("formulas", "error", "%s!%s has a formula longer than Excel allows" % (name, ref)))
+        known = global_names | local_names.get(index, set()) | tables
+        hidden_cols = set()
+        for col_el in root.iter(s_ns + "col"):
+            if col_el.get("hidden") in ("1", "true"):
+                try:
+                    lo, hi = int(col_el.get("min")), int(col_el.get("max"))
+                except (TypeError, ValueError):
                     continue
-                if "#REF!" in ftext:
-                    out.append(_finding("formulas", "error", "%s!%s refers to a deleted range" % (name, ref)))
-                for other, col, row in _formula_refs(ftext):
-                    if other and other != "REF" and other.lower() not in names_lower and "[" not in other:
-                        out.append(_finding("formulas", "error", "%s!%s refers to a sheet '%s' that does not exist"
-                                            % (name, ref, other[:60])))
-                    if col and (_col_number(col) > _MAX_COL or int(row) > _MAX_ROW or int(row) < 1):
-                        out.append(_finding("bounds", "error", "%s!%s refers to %s%s, outside any sheet" % (name, ref, col, row)))
+                hidden_cols.update(range(lo, min(hi, lo + _MAX_COL) + 1))
+        here: Optional[set] = set()
+        typed = []                              # (col, row, ref, kind, detail) of value cells
+        hidden_rows_with_data, hidden_cols_with_data = [], set()
+        for row_el in root.iter(s_ns + "row"):
+            row_hidden = row_el.get("hidden") in ("1", "true")
+            row_has_data = False
+            for c in row_el.findall("s:c", NS):
+                cells += 1
+                ref = c.get("r") or "?"
+                where = {"sheet": name, "cell": ref}
+                v = c.find("s:v", NS)
+                f = c.find("s:f", NS)
+                t = c.get("t") or "n"
+                vtext = (v.text or "") if v is not None else ""
+                if t == "inlineStr":
+                    vtext = "".join(x.text or "" for x in c.iter(s_ns + "t"))
+                has_data = bool(vtext.strip()) or (f is not None and bool(f.text))
+                pos = _split_ref(ref)
+                if has_data:
+                    row_has_data = True
+                    if pos and here is not None:
+                        if len(here) < MAX_TYPE_CELLS:
+                            here.add(pos)
+                        else:
+                            here = None
+                    if pos and pos[0] in hidden_cols:
+                        hidden_cols_with_data.add(pos[0])
+                if t == "e" or (v is not None and vtext.strip() in _CELL_ERROR):
+                    out.append(_finding("formulas", "error", "%s!%s shows %s"
+                                        % (name, ref, (v.text if v is not None else "an error")), **where))
+                if f is not None and f.text:
+                    out += _formula_findings(f.text, name, ref, names_lower, known)
+                elif pos and has_data and t not in ("b", "e") and len(typed) < MAX_TYPE_CELLS:
+                    if t == "s":
+                        try:
+                            kind, detail = _text_kind(shared[int(vtext)])
+                        except (ValueError, IndexError):
+                            kind, detail = "text", None
+                    elif t in ("inlineStr", "str"):
+                        kind, detail = _text_kind(vtext)
+                    elif t == "d":
+                        kind, detail = "num", "date"
+                    elif t == "n":
+                        try:
+                            style = styles[int(c.get("s") or 0)] if styles else "general"
+                        except (ValueError, IndexError):
+                            style = "general"
+                        kind, detail = "num", style
+                    else:
+                        kind, detail = "text", None
+                    typed.append((pos[0], pos[1], ref, kind, detail))
+                if len(out) >= MAX_FINDINGS:
+                    break
+            if row_hidden and row_has_data:
+                try:
+                    hidden_rows_with_data.append(int(row_el.get("r")))
+                except (TypeError, ValueError):
+                    pass
             if len(out) >= MAX_FINDINGS:
                 break
+        filled[name.lower()] = here
         if len(out) >= MAX_FINDINGS:
             break
+        if (here is None or here) and (s.get("state") or "visible") in ("hidden", "veryHidden"):
+            out.append(_finding("styles", "info", "sheet '%s' is hidden and holds data" % name, sheet=name, cell=None))
+        if hidden_rows_with_data:
+            lo, hi = min(hidden_rows_with_data), max(hidden_rows_with_data)
+            out.append(_finding("styles", "info", "%s has %d hidden row(s) that hold data (%s)"
+                                % (name, len(hidden_rows_with_data), "%d:%d" % (lo, hi)),
+                                sheet=name, cell="%d:%d" % (lo, hi)))
+        if hidden_cols_with_data:
+            cols = sorted(hidden_cols_with_data)
+            span = "%s:%s" % (_col_letters(cols[0]), _col_letters(cols[-1]))
+            out.append(_finding("styles", "info", "%s has %d hidden column(s) that hold data (%s)"
+                                % (name, len(cols), span), sheet=name, cell=span))
+        out += _column_findings(typed, name)
+        # Links in the sheet: hyperlinks to the internet (info) or to other files (warn).
+        seen_links = set()
+        for r in _rels_targets(pkg, part):
+            if r["external"] and r["type"].endswith("/hyperlink") and r["target"] not in seen_links \
+                    and len(seen_links) < 5:
+                seen_links.add(r["target"])
+                out += _link_findings(r["target"], name)
     if sheets and not cells:
         out.append(_finding("validity", "error", "the workbook has no cells"))
-    shared = pkg.xml("xl/sharedStrings.xml")
-    if shared is not None:
-        out += _placeholder_findings("".join(t.text or "" for t in shared.iter("{%s}t" % NS["s"])), "the workbook")
+    if shared:
+        out += _placeholder_findings("".join(shared), "the workbook")
     out += _chart_findings(pkg, "xl/")
+    out += _chart_range_findings(pkg, filled, names_lower)
+    return out
+
+
+def _formula_findings(ftext: str, name: str, ref: str, names_lower: set, known: set) -> List[dict]:
+    """Everything wrong with one stored formula."""
+    where = {"sheet": name, "cell": ref}
+    if len(ftext) > MAX_FORMULA:
+        return [_finding("formulas", "error", "%s!%s has a formula longer than Excel allows" % (name, ref), **where)]
+    out = []
+    if "#REF!" in ftext:
+        out.append(_finding("formulas", "error", "%s!%s refers to a deleted range" % (name, ref), **where))
+    # A sheet in another workbook ([1]Prices!A1) is that workbook's: not judged here.
+    external = bool(_EXTERNAL_REF.search(ftext))
+    for other, col, row in _formula_refs(ftext):
+        # 'First:Last'!A1 is a 3D reference over a range of sheets: each end must exist.
+        ends = other.split(":") if other and ":" in other else [other]
+        missing = [s for s in ends if s and s.lower() not in names_lower]
+        if other and other != "REF" and missing and "[" not in other and not external:
+            out.append(_finding("formulas", "error", "%s!%s refers to a sheet '%s' that does not exist"
+                                % (name, ref, missing[0][:60]), **where))
+        if col and (_col_number(col) > _MAX_COL or int(row) > _MAX_ROW or int(row) < 1):
+            out.append(_finding("bounds", "error", "%s!%s refers to %s%s, outside any sheet" % (name, ref, col, row),
+                                **where))
+    scan = _formula_scan(ftext)
+    if not scan["parses"]:
+        out.append(_finding("formulas", "error", "%s!%s has a formula that does not parse (its brackets or "
+                                                 "quotes do not balance)" % (name, ref), **where))
+        return out
+    if scan["semicolon"]:
+        out.append(_finding("locale", "error", "%s!%s separates arguments with ';', a regional setting; a file "
+                                               "stores ',' so the formula breaks" % (name, ref), **where))
+    bases = [_function_base(fn) for fn in scan["funcs"]]
+    for fn in dict.fromkeys(bases):
+        if fn in _LOCALIZED_FUNCTIONS or not fn.isascii():
+            out.append(_finding("locale", "error", "%s!%s calls %s, a function name from a non-English Excel; a "
+                                                   "file stores English names, so it shows #NAME?" % (name, ref, fn[:40]),
+                                **where))
+        elif fn == "WEBSERVICE":
+            out.append(_finding("links", "warn", "%s!%s fetches data from the internet (WEBSERVICE)" % (name, ref),
+                                **where))
+    if external:
+        out.append(_finding("links", "warn", "%s!%s takes values from another workbook" % (name, ref), **where))
+    # A formula that reads another workbook may use that workbook's names
+    # ([1]!MyName): they are not this workbook's to define, so not judged.
+    if not external and not {"LET", "LAMBDA"} & set(bases):
+        for defined_name in dict.fromkeys(scan["names"]):
+            up = defined_name.upper()
+            if up in ("TRUE", "FALSE") or up.startswith("_XLPM.") or _CELL.fullmatch(up.replace("$", "")) \
+                    or _COL_ONLY.fullmatch(defined_name) or up in known:
+                continue
+            short = defined_name[:60]
+            out.append(_finding("names", "error", "%s!%s uses the name '%s', which the workbook does not define"
+                                % (name, ref, short), **where))
+    return out
+
+
+def _column_findings(typed, sheet: Optional[str], *, typed_cells: bool = True,
+                     header: bool = True) -> List[dict]:
+    """Type, locale and style findings per column. With `header`, a first
+    row that is all text is a header and is left out."""
+    if not typed:
+        return []
+    first_row = min(r for _c, r, _ref, _k, _d in typed)
+    kinds = [k for _c, r, _ref, k, _d in typed if r == first_row]
+    skip_header = header and all(k == "text" for k in kinds) and any(r != first_row for _c, r, _ref, _k, _d in typed)
+    columns: Dict[int, _Column] = {}
+    for col, row, ref, kind, detail in sorted(typed, key=lambda x: (x[0], x[1])):
+        if skip_header and row == first_row:
+            continue
+        columns.setdefault(col, _Column()).add(ref, row, kind, detail)
+    out = []
+    for col in sorted(columns):
+        out += columns[col].findings(sheet, _col_letters(col), typed_cells=typed_cells)
+        if len(out) >= MAX_FINDINGS:
+            break
+    return out
+
+
+def _chart_range_findings(pkg: "_Pkg", filled: Dict[str, Optional[set]], names_lower: set) -> List[dict]:
+    """Each chart series' ranges: on a sheet that exists, inside the grid,
+    and not empty (judged only for a sheet that was read in full)."""
+    out = []
+    parts = {"c:val": "values", "c:yVal": "values", "c:xVal": "x values", "c:cat": "categories"}
+    for name in pkg.matching(r"xl/charts/chart\d+\.xml"):
+        root = pkg.xml(name)
+        if root is None:
+            continue
+        label = name.rsplit("/", 1)[-1]
+        for i, ser in enumerate(root.findall(".//c:ser", NS), 1):
+            for tag, what in parts.items():
+                el = ser.find(tag, NS)
+                ref_el = el.find(".//c:f", NS) if el is not None else None
+                text = (ref_el.text or "").strip()[:2048] if ref_el is not None else ""
+                if not text or "#REF!" in text:
+                    continue
+                where = {"sheet": None, "cell": text[:120]}
+                if _EXTERNAL_REF.search(text):
+                    out.append(_finding("links", "warn", "%s series %d takes its %s from another workbook"
+                                        % (label, i, what), **where))
+                    continue
+                for m in _RANGE_REF.finditer(text):
+                    sheet = (m.group(1) or "").replace("''", "'") or m.group(2)
+                    where = {"sheet": sheet, "cell": text[:120]}
+                    if sheet.lower() not in names_lower:
+                        out.append(_finding("charts", "error", "%s series %d takes its %s from sheet '%s', which does "
+                                            "not exist" % (label, i, what, sheet[:60]), **where))
+                        continue
+                    c1, r1 = _col_number(m.group(3)), int(m.group(4))
+                    c2 = _col_number(m.group(5)) if m.group(5) else c1
+                    r2 = int(m.group(6)) if m.group(6) else r1
+                    if max(c1, c2) > _MAX_COL or max(r1, r2) > _MAX_ROW or min(r1, r2) < 1:
+                        out.append(_finding("charts", "error", "%s series %d takes its %s from outside any sheet"
+                                            % (label, i, what), **where))
+                        continue
+                    data = filled.get(sheet.lower())
+                    if data is None:
+                        continue                # too big to index, or not read: not judged
+                    lo_c, hi_c, lo_r, hi_r = min(c1, c2), max(c1, c2), min(r1, r2), max(r1, r2)
+                    if not any(lo_c <= c <= hi_c and lo_r <= r <= hi_r for c, r in data):
+                        out.append(_finding("charts", "error", "%s series %d takes its %s from %s, which is empty"
+                                            % (label, i, what, text[:80]), **where))
+            if len(out) >= MAX_FINDINGS:
+                return out
     return out
 
 
@@ -611,7 +1237,39 @@ def _check_csv(path: Path) -> List[dict]:
     if bad:
         return [_finding("bounds", "error", "row %d has %d columns; the header has %d"
                          % (bad[0], len(rows[bad[0] - 1]), width))]
-    return []
+    return _csv_integrity(rows)
+
+
+#: CSV rows read for the column checks.
+MAX_CSV_ROWS = 50_000
+
+
+def _csv_integrity(rows) -> List[dict]:
+    """The spreadsheet checks that apply to a CSV (NS-24.5-1): every value is
+    text there, so the questions are whether a column mixes numbers and text,
+    writes decimals both ways or dates several ways, and whether a cell will
+    run as a formula when a spreadsheet opens the file."""
+    out: List[dict] = []
+    typed = []
+    injected: Dict[int, List[str]] = {}
+    for r_index, row in enumerate(rows[1:MAX_CSV_ROWS], 2):
+        for c_index, raw in enumerate(row, 1):
+            v = (raw or "").strip()
+            if not v:
+                continue
+            ref = "%s%d" % (_col_letters(c_index), r_index)
+            if v[0] in "=@" or (v[0] in "+-" and len(v) > 1 and not (v[1].isdigit() or v[1] == ".")):
+                injected.setdefault(c_index, []).append(ref)
+            kind, detail = _text_kind(v)
+            typed.append((c_index, r_index, ref, kind, detail))
+    for col, refs in sorted(injected.items()):
+        out.append(_finding("formulas", "warn", "column %s has %d cell(s) that a spreadsheet will run as a formula "
+                            "(first at %s)" % (_col_letters(col), len(refs), refs[0]),
+                            sheet=None, cell=refs[0]))
+    # The header row was left out above; every value is text, so nothing is
+    # "a number stored as text" here.
+    out += _column_findings(typed, None, typed_cells=False, header=False)
+    return out[:MAX_FINDINGS]
 
 
 def _check_image(path: Path) -> List[dict]:
@@ -664,9 +1322,13 @@ def check(path) -> Dict:
         findings = [_finding("validity", "error", "a part of the file is not well-formed XML (%s)" % e)]
     except Exception as e:
         findings = [_finding("validity", "error", "the file could not be read (%s)" % type(e).__name__)]
-    findings = findings[:MAX_FINDINGS]
+    # Errors first (in the order found), so a cap never drops one for a note.
+    findings = sorted(findings, key=lambda f: _SEVERITY_RANK.get(f["severity"], 3))[:MAX_FINDINGS]
     return {"ok": not any(f["severity"] == "error" for f in findings), "kind": kind,
             "checked": True, "findings": findings}
+
+
+_SEVERITY_RANK = {"error": 0, "warn": 1, "info": 2}
 
 
 #: How long one check may take in its own process before it is abandoned.
@@ -679,7 +1341,14 @@ def check_isolated(path, timeout: float = CHECK_TIMEOUT_S) -> Dict:
     them slow down badly on hostile input, so the caller (the agent's
     manifest worker, the office delivery gate) can never be held by one.
     A check that does not finish is a warning, never a pass of the file's
-    content. Never raises."""
+    content. Never raises.
+
+    In a frozen (packaged) build `sys.executable` is the app itself, not a
+    Python, so no child is started and the result is `checked: False` with
+    the warning "the check cannot run in this build". Callers must not read
+    that as a pass: the manifest records it as verification_state
+    "unverified" with the reason "checks unavailable in this build"
+    (artifact_manifest.UNAVAILABLE_REASON)."""
     import json
     import subprocess
     p = Path(path)
@@ -688,7 +1357,7 @@ def check_isolated(path, timeout: float = CHECK_TIMEOUT_S) -> Dict:
         return {"ok": True, "kind": kind, "checked": False, "findings": []}
     if getattr(sys, "frozen", False):
         # A frozen build's executable is the app, not Python: never start it.
-        return {"ok": True, "kind": kind, "checked": False,
+        return {"ok": True, "kind": kind, "checked": False, "unavailable": True,
                 "findings": [_finding("validity", "warn", "the check cannot run in this build")]}
     code = ("import importlib.util,json,sys\n"
             "s=importlib.util.spec_from_file_location('artifact_qa',sys.argv[1])\n"
@@ -704,9 +1373,14 @@ def check_isolated(path, timeout: float = CHECK_TIMEOUT_S) -> Dict:
         if (isinstance(res, dict) and isinstance(res.get("ok"), bool) and isinstance(res.get("checked"), bool)
                 and isinstance(fs, list) and len(fs) <= MAX_FINDINGS
                 and all(isinstance(f, dict) and all(isinstance(f.get(k), str) for k in ("check", "severity", "message"))
-                        and f["severity"] in ("error", "warn") for f in fs)):
+                        and f["severity"] in _SEVERITY_RANK
+                        and all(f.get(k) is None or isinstance(f.get(k), str) for k in ("sheet", "cell"))
+                        for f in fs)):
             return {"ok": res["ok"], "kind": kind, "checked": res["checked"],
-                    "findings": [_finding(f["check"], f["severity"], f["message"]) for f in fs]}
+                    "findings": [_finding(f["check"], f["severity"], f["message"],
+                                          **({k: f.get(k) for k in ("sheet", "cell")}
+                                             if ("sheet" in f or "cell" in f) else {}))
+                                 for f in fs]}
         raise ValueError("no result")
     except subprocess.TimeoutExpired:
         why = "the check did not finish within %d seconds, so the file was not checked" % timeout

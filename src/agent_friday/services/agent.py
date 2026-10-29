@@ -6634,6 +6634,33 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                 verification_summary = '; '.join(c['detail'] for c in outcome['checks']
                                                  if c['status'] != 'not_automatically_checked')
 
+        # A file this task made that failed its checks (services/artifact_qa,
+        # recorded in the artifact manifest) leaves the task unverified: the
+        # work ran, but what it produced is broken for its reader (NS-24.5-1).
+        # Only this task's own checks are waited for; any still running after
+        # the wait leave it unverified ("checks still running"), never complete.
+        if final_status == 'complete':
+            try:
+                from agent_friday.services import artifact_manifest as _am_qa
+                if any(t.get('name') in _am_qa.CREATING_TOOLS for t in (tool_trace or [])):
+                    _qv = _am_qa.qa_verdict(task_id, wait=_am_qa.QA_WAIT_S)
+                    _bad = _qv['failures']
+                    if _qv['pending']:
+                        verified, final_status = False, 'completed_unverified'
+                        verification_summary = ((verification_summary + '; ') if verification_summary else '') \
+                            + _am_qa.PENDING_REASON
+                        _task_log(task_id, 'Unverified: %s on %d file(s) it made.' % (
+                            _am_qa.PENDING_REASON, _qv['pending']))
+                    if _bad:
+                        verified, final_status = False, 'completed_unverified'
+                        _names = ', '.join(Path(str(b.get('path') or '')).name for b in _bad[:5])
+                        verification_summary = ((verification_summary + '; ') if verification_summary else '') \
+                            + 'a file it made failed its checks: ' + _names
+                        _task_log(task_id, 'Unverified: %s failed its checks (%s).' % (
+                            _names, '; '.join(m for b in _bad[:3] for m in (b.get('errors') or [])[:2])[:400]))
+            except Exception:
+                pass
+
         # v5: feed the learning loop with this task's outcome. The *approach* is
         # the tool strategy used (deduped tool names), so repeated tasks that
         # share a strategy form mineable buckets — "for agent_task tasks,

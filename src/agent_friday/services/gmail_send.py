@@ -814,10 +814,27 @@ def send(approval_id: str) -> dict:
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),
                                               "thread_id": sent.get("threadId")})
     _outbox_record(appr, ok=True, message_id=sent.get("id"))
+    _record_attachment_deliveries(extras, (decision_ref or {}).get("receipt"), approval_id,
+                                  sent.get("id"))
     _log.info("sent message %s via approval %s", sent.get("id"), approval_id)
     return {"ok": True, "message_id": sent.get("id"),
             "thread_id": sent.get("threadId"),
             "to": payload.get("to"), "approval_id": approval_id}
+
+
+def _record_attachment_deliveries(extras: dict, receipt, approval_id, message_id) -> None:
+    """Each attachment that is a file Friday made gets this send's receipt in
+    the artifact manifest (NS-24.1-2), found by its bytes. Never raises."""
+    try:
+        atts = (extras or {}).get("attachments") or []
+        if not atts or not receipt:
+            return
+        from agent_friday.services import artifact_manifest as _am
+        for a in atts:
+            _am.record_delivery(receipt, channel="gmail", sha256=str(a.get("sha256") or ""),
+                                ref=message_id, approval_id=approval_id)
+    except Exception as e:
+        _log.warning("attachment delivery not recorded in the artifact manifest: %s", type(e).__name__)
 
 
 def _fingerprint_target(payload: dict) -> str:

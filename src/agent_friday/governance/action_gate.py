@@ -1762,7 +1762,7 @@ def _external_ref(out: Any, tool: str, approval_id: Optional[str]) -> dict:
     ref = {"seq": out.get("seq"), "hash": out.get("hash"), "tool": tool, "class": OUTWARD,
            "decision": "allow", "action_id": rec.get("action_id"),
            "policy_version": rec.get("policy_version"), "approval": approval_id,
-           "t": time.time()}
+           "t": time.time(), "receipt": dict(rec) if rec else None}
     try:
         from flask import g, has_request_context
         if has_request_context():
@@ -2418,7 +2418,9 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     action's terminal outcome with `close_external` (inside a request, one it
     leaves open is marked unconfirmed: settle_request_externals). The
     decision receipt carries no outcome word: nothing has run yet, and what
-    became of the action is its outcome receipt's to say.
+    became of the action is its outcome receipt's to say. Its `receipt` is
+    the signed record itself, which a delivery names
+    (services/artifact_manifest.record_delivery).
     """
     check_external()
     try:
