@@ -630,6 +630,17 @@ def _read_head() -> Optional[dict]:
 def _write_head(key: bytes, seq: int, h: str) -> None:
     p = head_path()
     tmp = p.with_name(p.name + f".{os.getpid()}.{threading.get_ident()}.tmp")
+    # The caller holds the ledger lock: any other head temp file is a killed
+    # writer's (NS-34.16-2), never a live one's. Cleared, so crashes do not pile up.
+    try:
+        for stale in p.parent.glob(p.name + ".*.tmp"):
+            if stale != tmp:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        pass
     try:
         tmp.write_text(json.dumps({"seq": seq, "hash": h, "kid": key_id(key),
                                    "sig": _head_sig(key, seq, h)}), encoding="utf-8")
@@ -1992,6 +2003,20 @@ def _legacy_present() -> list[Path]:
         return []
 
 
+def _crash_shaped(p: dict) -> bool:
+    """A problem a crash part-way through a receipt leaves: an unfinished last line of the
+    live file, or the signed note that it was set aside. Nothing else (a cut that removed
+    records also shows the head ahead of the file, a separate problem)."""
+    return ((p.get("reason") == "an unfinished write" and p.get("segment") == LIVE_NAME)
+            or (p.get("segment") == "entry" and "unfinished write was set aside" in str(p.get("reason"))))
+
+
+def _only_a_crash(report: dict) -> bool:
+    """Every break the owner has not looked at yet is crash-shaped (so the crash sentence is true)."""
+    open_ = [p for p in report.get("problems", []) if not p.get("acknowledged")]
+    return bool(open_) and all(_crash_shaped(p) for p in open_)
+
+
 def hold_reason() -> Optional[str]:
     """A sentence when an outward action must wait for the owner to look at
     the ledger; None while it is intact (or every break is acknowledged). A
@@ -2005,6 +2030,12 @@ def hold_reason() -> Optional[str]:
         first = next((p for p in r.get("problems", []) if not p.get("acknowledged")), {})
         if first.get("segment") == "key":
             return "the action ledger cannot be checked: the governance key is unavailable"
+        if _only_a_crash(r):
+            # What a crash (or a kill) part-way through writing a receipt leaves: the
+            # cut-off bytes are kept under ledger/torn/, nothing earlier is touched.
+            return ("Friday stopped part-way through writing a receipt (record %s); the cut-off "
+                    "part is kept and nothing earlier changed. Open Activity to look at it "
+                    "before anything goes out" % (first.get("seq") or "at the end"))
         return ("the action ledger was changed on disk (%s, record %s: %s); "
                 "open Activity to review it" % (first.get("segment"), first.get("seq"),
                                                 first.get("reason")))
