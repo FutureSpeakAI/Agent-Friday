@@ -529,6 +529,13 @@ def data_erase():
     except Exception:
         count = 0
     try:
+        # Kept Idempotency-Keys live in memory too: forget them, or the next keyed request
+        # would write them back into the erased folder.
+        from agent_friday.services import idempotency as _idem
+        _idem.erase()
+    except Exception:
+        pass
+    try:
         shutil.rmtree(FRIDAY_DIR)
     except Exception as e:
         return api_error(e, "Erase failed")
