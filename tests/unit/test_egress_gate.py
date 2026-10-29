@@ -184,7 +184,8 @@ class TestPayloadStructure:
 # ── gate_messages: list processing ───────────────────────────────────────────
 
 class TestGateMessages:
-    def test_non_dict_messages_passed_through(self):
+    def test_a_harmless_non_dict_message_is_kept(self):
+        # A bare string is gated as text (NS-34.6-8); harmless text comes through as it was.
         msgs = ["not a dict"]
         result = _gate_messages(msgs, "anthropic")
         assert result == msgs
