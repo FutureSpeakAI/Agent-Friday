@@ -33214,8 +33214,10 @@ function GoalsCard() {
   const [def, setDefRaw] = useState(null);
   const [preview, setPreview] = useState(null);
   const [drafts, setDrafts] = useState([]);
+  const [outs, setOuts] = useState([]);
   const load = useCallback(() => {
     apiFetch('/api/goals/drafts').then(r => r.json()).then(x => setDrafts((x && x.drafts) || [])).catch(() => {});
+    apiFetch('/api/outcomes?limit=20').then(r => r.ok ? r.json() : null).then(x => setOuts((x && x.outcomes) || [])).catch(() => {});
     apiFetch('/api/goals/summary' + (finished ? '?finished=1' : '')).then(r => r.json()).then(x => { setD(x); })
       .catch(() => setMsg('Could not read your goals.'));
   }, [finished]);
@@ -33225,6 +33227,21 @@ function GoalsCard() {
     .then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j }), () => ({ ok: r.ok, status: r.status, j: {} })));
   const done = (x, words) => { setMsg(x.ok ? words : ((x.j && (x.j.message || x.j.error)) || 'That did not work.')); load(); };
   const fail = () => setMsg('Could not reach the server.');
+  // §4.7: how finished work turned out. Memory as of a date, never the current state.
+  const OUTCOME_WORDS = ['succeeded', 'failed', 'partial', 'unknown'];
+  const outSummary = o => (o.decision && o.decision.summary) || o.id;
+  const correctOutcome = o => {
+    const v = window.prompt('How did “' + outSummary(o) + '” actually turn out? (' + OUTCOME_WORDS.join(', ') + ')', o.effective ? o.effective.result : '');
+    if (v == null) return;
+    const w = v.trim().toLowerCase();
+    if (OUTCOME_WORDS.indexOf(w) < 0) { setMsg('Say one of: ' + OUTCOME_WORDS.join(', ') + '.'); return; }
+    send('/api/outcomes/' + enc(o.id) + '/correct', 'POST', { outcome: w }).then(x => done(x, 'Correction kept.')).catch(fail);
+  };
+  const resolveOutcome = o => send('/api/outcomes/' + enc(o.id) + '/resolve', 'POST', {}).then(x => done(x, 'Marked resolved.')).catch(fail);
+  const forgetOutcome = o => {
+    if (!window.confirm('Forget the outcome of “' + outSummary(o) + '”? It cannot be brought back.')) return;
+    send('/api/outcomes/' + enc(o.id), 'DELETE').then(x => done(x, 'Forgotten.')).catch(fail);
+  };
   const move = (g, mv) => {
     if (mv.to === 'abandoned' && !window.confirm('End “' + g.title + '”? Nothing more runs for it; you can reopen it later.')) return;
     if (mv.to === 'met_unverified' && !window.confirm('Mark “' + g.title + '” met? It is recorded as your judgment, not as checked.')) return;
@@ -33312,6 +33329,19 @@ function GoalsCard() {
               patch(g, { allowed_routes: r.value }, 'This goal now runs ' + r.label + '.');
             }, { key: r.label, 'aria-pressed': routeRank(g.allowed_routes) === routeRank(r.value) }))),
           btn('Pre-approved sends', () => window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: 'settings', tab: 'privacy', section: 'Pre-approved sends' }), { title: 'Revoke a standing permission' }))))),
+    outs.length > 0 && E('div', { role: 'region', 'aria-label': 'Outcomes', 'data-goal-outcomes': 'true', style: { marginTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 } },
+      E('div', { className: 'card-title', style: { fontSize: 12 } }, 'Outcomes'),
+      E('div', { style: { fontSize: 10, color: '#888' } }, 'How finished work turned out, as of the date shown. This is memory, not the current state.'),
+      outs.map(o => E('div', { key: o.id, 'data-outcome-status': o.status, style: { fontSize: 11, color: '#cdd', marginTop: 4 } },
+        outSummary(o) + ': ' + ((o.effective && o.effective.result) || 'unknown')
+          + (o.effective && o.effective.verified ? ' (checked)' : o.effective && o.effective.source === 'owner' ? ' (your correction)' : ' (not checked)')
+          + ' · as of ' + (o.as_of || 'unknown') + (o.stale ? ' · may be out of date' : '')
+          + (o.revisit_due ? ' · due for another look' : '') + (o.recorded_status === 'resolved' ? ' · resolved' : ''),
+        (o.unresolved || []).length > 0 && E('ul', { 'aria-label': 'Still open for ' + outSummary(o), style: { fontSize: 10, color: '#9ab', margin: '2px 0', paddingLeft: 14 } }, o.unresolved.map((u, i) => E('li', { key: i }, u))),
+        E('div', null,
+          btn('Correct', () => correctOutcome(o), { 'aria-label': 'Correct the outcome of ' + outSummary(o) }),
+          o.recorded_status !== 'resolved' && btn('Resolved', () => resolveOutcome(o), { 'aria-label': 'Mark resolved: ' + outSummary(o) }),
+          btn('Forget', () => forgetOutcome(o), { 'aria-label': 'Forget the outcome of ' + outSummary(o) }))))),
     E('div', { style: { marginTop: 6 } }, btn(finished ? 'Hide archived goals' : 'Show archived goals', () => setFinished(!finished))),
     drafts.map(dr => E('div', { key: dr.draft_id, role: 'region', 'aria-label': 'Goal draft: ' + dr.title, 'data-goal-draft': dr.draft_id, style: { marginTop: 8, padding: 6, border: '1px solid rgba(0,212,255,0.25)' } },
       E('div', { className: 'card-title', style: { fontSize: 12 } }, 'Draft from your conversation: ' + dr.title),

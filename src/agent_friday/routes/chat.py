@@ -2450,6 +2450,13 @@ def chat():
                     _conversation_id, exclude_id=_accepted_id)
             except Exception:
                 pass
+            # Past outcomes this message is about (services/outcome_memory):
+            # ids, summary, "as of" and stale, never as the current state.
+            try:
+                from agent_friday.services import outcome_memory as _om
+                tail = tail + _om.context_block(message)
+            except Exception:
+                pass
             if _household_note["text"]:
                 tail = tail + "\n\n" + _household_note["text"] + "\n"
             if voice_mode:
@@ -3841,6 +3848,12 @@ def chat_send():
             try:
                 from agent_friday.services import plans as _plans
                 prompt = prompt + _plans.context_block(_conversation_id)
+            except Exception:
+                pass
+            # Past outcomes this message is about (services/outcome_memory).
+            try:
+                from agent_friday.services import outcome_memory as _om
+                prompt = prompt + _om.context_block(message)
             except Exception:
                 pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy

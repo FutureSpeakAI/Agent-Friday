@@ -79,6 +79,9 @@ def _ensure_defaults() -> None:
     from agent_friday.services import meeting_capture as _meeting_capture
     register_store("meetings", _meeting_capture.people_find, _meeting_capture.people_purge)
     register_store("memory_proposals", _memory_proposals.people_find, _memory_proposals.people_purge)
+    # Outcome records (services/outcome_memory): a goal's or a step's name can name a person.
+    from agent_friday.services import outcome_memory as _outcome_memory
+    register_store("outcome_memory", _outcome_memory.people_find, _outcome_memory.people_purge)
 
 
 def _norm(s: str) -> str:

@@ -1774,6 +1774,16 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
             "detail": str(detail or "")[:120]})
         if isinstance(decision, dict) and oc in TERMINAL_OUTCOMES:
             decision["_closed"] = True
+        # §4.7 (G9): an outward action that closed checked or failed inside a
+        # task is remembered as an outcome (services/outcome_memory: nothing
+        # off the record, nothing without a task).
+        if oc in (COMPLETED_VERIFIED, FAILED) and (decision or {}).get("class") == OUTWARD:
+            try:
+                from agent_friday.services import outcome_memory as _om
+                _om.on_action_closed(tool=tool, action_id=aid, outcome_word=oc,
+                                     approval=approval or (decision or {}).get("approval"))
+            except Exception:
+                pass
     except Exception:
         pass
 

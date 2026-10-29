@@ -141,6 +141,16 @@ def _goals(now):
             updated=updated, priority=90 if state in {"interrupted", "needs_owner"} else
                      75 if state in {"waiting", "at_risk"} else 60,
             state=state, notify=notify))
+    # §4.7 (G9): past outcomes due for another look, as one quiet item (ids
+    # and counts only; the records themselves are read in Goals).
+    try:
+        from agent_friday.services import outcome_memory
+        due = outcome_memory.home_item(now)
+    except Exception:
+        due = None
+    if due:
+        records.append(_record("outcomes:revisit", due["title"], due["body"],
+            updated=due.get("updated_at"), priority=40, state="revisit", notify=True))
     for bad in goals.unreadable_goals()[:5]:
         records.append(_record("unreadable:" + bad["goal_id"], "A goal Friday can't read",
             "The file " + bad["file"] + " and its last good copy could not be read. "
@@ -369,7 +379,8 @@ def automatic(observations, now):
             rows = [r for r in rows if r.get("available") and r.get("state") in {"failed", "error"}]
         elif kind == "goal":
             rows = [r for r in rows if r.get("state") in {"interrupted", "needs_owner", "waiting",
-                                                          "at_risk", "running", "active", "outcome_unknown"}
+                                                          "at_risk", "running", "active", "outcome_unknown",
+                                                          "revisit"}
                     and r.get("notify", True)]
             rows.sort(key=lambda r: (-r["priority"], -(r["updated_at"] or 0), r["id"]))
         elif kind == "project":
