@@ -6616,7 +6616,10 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
             outcome = _verify_workflow_task(task_id, reply or '', tool_trace)
             _checked_outcome = outcome
             if outcome is not None:
-                verified = outcome['verified']
+                # a workflow's own checks never hide a change that was not read back (NS-4.6-1)
+                _unread = [t for t in (tool_trace or []) if t.get('name') in REREAD_TOOLS
+                           and not t.get('verified') and _tool_call_status(t.get('result')) == 'ok']
+                verified = outcome['verified'] and not _unread
                 final_status = 'complete' if verified else 'completed_unverified'
                 verification_summary = '; '.join(c['detail'] for c in outcome['checks']
                                                  if c['status'] != 'not_automatically_checked')

@@ -1526,11 +1526,12 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
     if not _co.confirmed(result):
         return {"error": _co.not_done("unconfirmed", "Google Tasks"), "unconfirmed": True}
     # Read it back from Google (NS-4.6-1): there, with what was asked of it.
-    _want = {k: body[k] for k in ("title", "status") if k in (body or {})}
+    _want = {k: body[k] for k in ("title", "status", "notes") if k in (body or {})}
     _co.reread("task", result.get("id"),
                lambda: svc.tasks().get(tasklist=tasklist_id, task=result["id"]).execute(),
                lambda r: isinstance(r, dict) and r.get("id") == result.get("id") and not r.get("deleted")
-               and all(r.get(k) == v for k, v in _want.items()))
+               and all((r.get(k) or "") == (v or "") for k, v in _want.items())
+               and ("due" not in (body or {}) or str(r.get("due") or "")[:10] == str(body.get("due") or "")[:10]))
     return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
             "status": result.get("status", "needsAction"), "due": result.get("due", "")}
 
@@ -1730,6 +1731,8 @@ def create_task(account_id: str, title: str, tasklist_id: str = "@default",
         if prior and _time.time() - prior[3] < _RECENT_TTL_S:
             still = read_task(prior[0], prior[1], prior[2])
             if still is not None:
+                from agent_friday.services import connector_outcome as _co_r
+                _co_r.verified("task", prior[2])      # read back just now
                 return {"id": prior[2], "title": still.get("title"), "status": still.get("status"),
                         "due": still.get("due"), "account_id": prior[0],
                         "already_made": "This task was already made by this same request; it was "
