@@ -65350,6 +65350,69 @@ function SettingsTabBrowser() {
 // ── Settings → Connections → Phone (Twilio). Off by default. Secrets go in, never come back:
 // the server reports "stored"/"missing"/"unreadable" for each one. Every
 // route behind this tab is refused unless the request comes from this computer.
+// Every message channel in one place (BD-06, NS-19.7-3): what it can do and cannot, who can
+// reach it, whether it is on, a test message and Turn off & remove (a press on this PC).
+function ChannelsCard() {
+  const [rows, setRows] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState('');
+  const load = useCallback(() => {
+    apiFetch('/api/channels/overview').then(r => r.json()).then(d => setRows(d && d.channels || [])).catch(() => setRows([]));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const act = (row, what) => {
+    if (what === 'revoke' && !window.confirm('Turn off ' + row.title + ' and delete its token?\n\n' + row.remove)) return;
+    setBusy(row.channel + what);
+    setMsg('');
+    apiFetch('/api/channels/' + row.channel + '/' + what, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+      if (what === 'revoke') setMsg(ok && d.ok ? 'Turned off and its token deleted here. ' + (d.at_the_service || '') : d.error || d.message || 'Nothing changed.');
+      else setMsg(ok && d.ok !== false ? 'Test message sent.' : d.error || d.message || 'The test did not go out.');
+      load();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(''));
+  };
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.6 };
+  if (!rows) return null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    "data-testid": "channels-card",
+    style: { marginBottom: 10 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 13, color: '#fff', marginBottom: 6 }
+  }, "Message channels"), rows.map(row => /*#__PURE__*/React.createElement("div", {
+    key: row.channel,
+    style: { borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 0' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 8, alignItems: 'center' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.85)' }
+  }, row.title, ": ", row.on ? 'on' : 'off', row.running ? ', running' : ''), row.channel !== 'phone' && row.test && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: { fontSize: 11 },
+    disabled: !!busy,
+    onClick: () => act(row, 'test')
+  }, "Send a test"), row.channel !== 'phone' && (row.on || row.has_token) && /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: { fontSize: 11 },
+    disabled: !!busy,
+    onClick: () => act(row, 'revoke')
+  }, "Turn off & remove")), /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "Who can reach it: ", row.reach, "."), (row.can || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "It can: ", row.can.join('; '), "."), (row.cannot || []).length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "It cannot: ", row.cannot.join('; '), "."), row.channel === 'phone' && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "Test and remove: ", row.test, "; ", row.remove, "."))), msg && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 11, color: '#cfefff', marginTop: 8 }
+  }, msg));
+}
 function SettingsTabPhone() {
   const [st, setSt] = useState(null);
   const [msg, setMsg] = useState('');
@@ -67345,7 +67408,7 @@ function SettingsWS() {
     s: s,
     save: save,
     part: "accounts"
-  }), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
+  }), /*#__PURE__*/React.createElement(ChannelsCard, null), /*#__PURE__*/React.createElement(SettingsTabPhone, null), /*#__PURE__*/React.createElement(SettingsTabSigning, null), /*#__PURE__*/React.createElement(SettingsTabBrowser, null), window.FridaySalonSettings && /*#__PURE__*/React.createElement(window.FridaySalonSettings, null)), tab === 'privacy' && /*#__PURE__*/React.createElement(SettingsTabPrivacy, {
     s: s,
     save: save
   }), tab === 'laya' && /*#__PURE__*/React.createElement(SettingsTabLaya, { s: s, save: save }), tab === 'appearance' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(SettingsTabAppearance, {

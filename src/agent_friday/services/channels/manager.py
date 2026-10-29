@@ -178,11 +178,113 @@ def stop_channel(name: str) -> Dict[str, Any]:
     return a.stop()
 
 
-def test_channel(name: str, chat_id: str, text: str = "Friday here — channel test ✅") -> Dict[str, Any]:
+def test_channel(name: str, chat_id: Optional[str] = None,
+                 text: str = "Friday here — channel test ✅") -> Dict[str, Any]:
+    """Send a test message to a chat on the channel's allowlist (the first one when none is
+    named). A chat that is not on the list gets nothing (NS-19.7-3): a test is a message
+    to the owner's own chat, never to whoever a request names."""
     a = get_adapter(name)
     if a is None:
         return {"ok": False, "error": f"unknown channel: {name}"}
-    return a.send(str(chat_id), text)
+    allow = [str(c) for c in ((load_config().get(_norm(name)) or {}).get("allowlist") or [])]
+    target = str(chat_id) if chat_id else (allow[0] if allow else "")
+    if not target or target not in allow:
+        return {"ok": False, "error": "a test goes only to a chat on this channel's allowlist; "
+                                      "add your own chat id there first"}
+    return a.send(target, text)
+
+
+#: What revoking a channel's token at the service itself takes (Friday cannot do it there).
+_PROVIDER_REVOKE = {
+    "telegram": "To make the old token useless everywhere, send /revoke to @BotFather in Telegram.",
+    "discord": ("To make the old token useless everywhere, reset the bot's token in the Discord "
+                "Developer Portal (Bot > Reset Token)."),
+}
+
+
+def revoke_channel(name: str) -> Dict[str, Any]:
+    """Turn a channel off and forget its token (NS-19.7-3): stop it, switch it off in the
+    settings, and delete the token from the credential store. The service itself cannot be
+    asked to revoke a bot token from here; the answer says how to do that."""
+    name = _norm(name)
+    if name not in CHANNELS:
+        return {"ok": False, "error": f"unknown channel: {name}"}
+    stopped = stop_channel(name)
+    cfg = load_config()
+    ch = dict(cfg.get(name) or {})
+    ch["enabled"] = False
+    cfg[name] = ch
+    saved = save_config(cfg)
+    a = _ADAPTERS.get(name)
+    if a is not None:
+        a.configure(ch)
+    removed = False
+    try:
+        from agent_friday.services import credential_store
+        removed = bool(credential_store.delete_provider_key(f"channel_{name}"))
+        try:
+            credential_store.clear_provider_key_live(f"channel_{name}")
+        except Exception:
+            pass
+        credential_store.audit_event("channel", "revoked", channel=name, token_deleted=removed)
+    except Exception as e:
+        return {"ok": False, "error": ExceptionText(f"the token could not be deleted: {e}")}
+    return {"ok": bool(saved.get("ok")), "channel": name, "stopped": bool(stopped.get("ok", True)),
+            "token_deleted": removed, "at_the_service": _PROVIDER_REVOKE.get(name, "")}
+
+
+def overview() -> Dict[str, Any]:
+    """Every message channel, with what it can do, who can reach it, whether it is on and
+    how to test or remove it (NS-19.7-3). Facts only; no token, number or chat id."""
+    st = status()
+    cfg = load_config()
+    out = []
+    for name in CHANNELS:
+        s = st["channels"].get(name) or {}
+        allow = (cfg.get(name) or {}).get("allowlist") or []
+        out.append({
+            "channel": name, "title": name.title(),
+            "on": bool(st.get("enabled") and s.get("enabled")), "running": bool(s.get("running")),
+            "has_token": bool(s.get("has_token")), "health": (s.get("health") or {}).get("summary", ""),
+            "reach": ("%d chat%s on its allowlist; nobody else is answered" % (len(allow), "" if len(allow) == 1 else "s"))
+                     if allow else "nobody yet: its allowlist is empty",
+            "can": [
+                "answers your messages from the chats on its allowlist, with the same tools as chat on this PC",
+                "every reply passes the privacy check and is recorded before it leaves",
+            ],
+            "cannot": ["approve cards", "send notifications or briefings", "make or take calls"],
+            "test": "sends a test message to the first chat on its allowlist" if allow else "",
+            "remove": "turns it off and deletes its token here. " + _PROVIDER_REVOKE[name],
+        })
+    out.append(_phone_overview())
+    return {"ok": True, "enabled": bool(st.get("enabled")), "channels": out}
+
+
+def _phone_overview() -> Dict[str, Any]:
+    try:
+        from agent_friday.phone import config as pc
+        c = pc.load()
+    except Exception:  # noqa: BLE001
+        c = {}
+    can, cannot = [], []
+    if c.get("sms_conversation"):
+        can.append("answers texts from your verified cell, reading only (no changes from a text)")
+    else:
+        cannot.append("answer texts (turn on conversation in Phone)")
+    if c.get("sms_approvals"):
+        can.append("texts you approval codes; a reply with the code decides the card")
+    if c.get("live_calls"):
+        can.append("answers calls from your cell")
+    if c.get("voicemail"):
+        can.append("takes voicemail")
+    can.append("texts or calls someone else only after your yes on a card")
+    return {"channel": "phone", "title": "Phone (texts and calls)", "on": bool(c.get("enabled")),
+            "running": None, "has_token": None, "health": "",
+            "reach": "your verified cell" if c.get("owner_cell_verified") else "nobody yet: verify your cell in Phone",
+            "can": can, "cannot": cannot,
+            "test": "in Phone below: Send a test text",
+            "remove": ("in Phone below: switch it off and delete its secrets; to make them useless "
+                       "everywhere, delete the API key in the Twilio console")}
 
 
 def _channel_health(name: str, running: bool, cfg: Dict[str, Any]):
