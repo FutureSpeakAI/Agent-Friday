@@ -53,7 +53,7 @@ def claws_status() -> dict:
            "pinned": False, "pinned_at": None}
     pin = ag._gov_dir() / "claws.pin.json"
     try:
-        want = None
+        want, doc = None, None
         if pin.exists():
             doc = json.loads(pin.read_text(encoding="utf-8"))
             want = doc.get("claws_hmac")
@@ -64,6 +64,10 @@ def claws_status() -> dict:
                    summary="The rules signature cannot be checked (%s). Outward "
                            "actions are held." % type(e).__name__)
         return out
+    if doc is not None and not want:
+        # A pin file without a signature: the gate holds outward actions on it
+        # (action_gate.verify_claws), so it is a mismatch the owner can resolve here.
+        want = "-"
     if not want:
         out.update(state="not_pinned", holds_outward=False,
                    summary="Not pinned yet. The rules are pinned on this PC the "
