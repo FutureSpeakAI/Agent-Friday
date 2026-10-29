@@ -1043,22 +1043,17 @@ def record_binary_egress(provider: str, field: str, *, action: str,
             _cm.tally(_call, field, "UNCLASSIFIABLE", action)
         except Exception:
             pass
-    if log_size:
-        _dlog.log(
-            logging.INFO if action == "allow" else logging.WARNING,
-            "%s provider=%s field=%s tier=UNCLASSIFIABLE bytes=%d (%s)",
-            "ALLOW" if action == "allow" else "BLOCK",
-            provider, field, entry["bytes"], reason,
-        )
-    else:
-        # The size is measured from the payload itself: it goes to the
-        # ledger row, not to the plain-text log.
-        _dlog.log(
-            logging.INFO if action == "allow" else logging.WARNING,
-            "%s provider=%s field=%s tier=UNCLASSIFIABLE (%s)",
-            "ALLOW" if action == "allow" else "BLOCK",
-            provider, field, reason,
-        )
+    # The plain-text log carries the decision and the provider only. Which
+    # field, why and how big go to the ledger row: a field name or reason can
+    # be built from what the payload holds (a file name, a header), and the
+    # size is measured from the payload itself. `log_size` is kept for callers.
+    del log_size
+    _dlog.log(
+        logging.INFO if action == "allow" else logging.WARNING,
+        "%s provider=%s tier=UNCLASSIFIABLE (details in the egress ledger)",
+        "ALLOW" if action == "allow" else "BLOCK",
+        provider,
+    )
     dest = log_path or _DEFAULT_LOG
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
