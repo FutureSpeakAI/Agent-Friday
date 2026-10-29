@@ -18,7 +18,10 @@
   GET  /api/ledger/integrity     one view of the record (services/ledger_integrity):
                                  signature health, chain breaks and gaps,
                                  unsigned lines, open/unconfirmed/duplicate
-                                 outward actions, the policy version id.
+                                 outward actions, the policy version id, and
+                                 the activity record (A9: its rows in the
+                                 chain, rows from before chaining, breaks with
+                                 the first location, archive notes).
                                  Counts only; ?days= as for audit. Read-only.
   GET  /api/ledger/retention    the retention period and the archive (A22)
   POST /api/ledger/retention     {"days": n}: change it (0 = off, at least 30);
@@ -351,7 +354,8 @@ def api_ledger_audit():
 def api_ledger_integrity():
     """One view of the record (services/ledger_integrity): signature health,
     chain breaks and gaps, unsigned lines, open, unconfirmed and duplicated
-    outward actions, the policy version id. Counts only. Owner only, as
+    outward actions, the policy version id, the activity record's chain
+    (activity_ledger.verify_chain). Counts only. Owner only, as
     /api/ledger/audit (the session; not on the observer's list). Reads;
     writes nothing."""
     try:

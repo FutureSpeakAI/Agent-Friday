@@ -15,17 +15,27 @@ Every write is best-effort: a ledger failure must never break a turn.
 Since the action ledger, rows are entries of kind "activity" in
 services/action_ledger.py (one hash-chained store). `LEDGER_FILE` is where they
 were kept before; only the one-time migration reads it.
+
+History (A9, NS-11.8-2/-3): the activity record keeps no file of its own and
+never rotates or drops anything. Its rows live in the action ledger, whose
+segments are sealed (never overwritten), whose HMAC chain runs across them,
+and whose only retention is the owner's archive period
+(`ledger_archive_after_days`): whole old segments move into the encrypted
+archive with a signed "archived" entry in the chain, never deleted.
+`verify_chain()` reports that chain as it bears on activity rows. Nothing in
+this module renames, rotates or deletes a file.
 """
 
-import threading
 import time
-from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR
 
 LEDGER_FILE = FRIDAY_DIR / "activity_ledger.jsonl"
-_MAX_BYTES = 20 * 1024 * 1024   # rotate at 20 MB → activity_ledger.jsonl.1
-_LOCK = threading.Lock()
+
+#: verify_chain() reads at most this many ledger lines and this many seconds,
+#: newest first; past either it says "partial" instead of going on.
+VERIFY_MAX_LINES = 200_000
+VERIFY_MAX_S = 5.0
 
 # Whitelisted metadata fields per event kind. Anything not listed here is
 # DROPPED on write — this is the egress-tier guarantee: names, ids, counts and
@@ -75,22 +85,6 @@ _FREE_TEXT_FIELDS = {"description", "workspace", "reason"}
 # Free-text fields still get a hard length cap so a caller can't smuggle a
 # prompt through e.g. `description`.
 _TEXT_CAP = 200
-
-
-def _rotated_path():
-    return Path(str(LEDGER_FILE) + ".1")
-
-
-def _maybe_rotate_locked():
-    """Rotate the ledger when it exceeds _MAX_BYTES. Caller holds _LOCK."""
-    try:
-        if LEDGER_FILE.exists() and LEDGER_FILE.stat().st_size >= _MAX_BYTES:
-            rot = _rotated_path()
-            if rot.exists():
-                rot.unlink()
-            LEDGER_FILE.rename(rot)
-    except Exception:
-        pass
 
 
 def record(kind, /, **fields):
@@ -168,4 +162,119 @@ def read(limit=200, kind=None, model=None, since=None, until=None, task_id=None)
         rec.pop("_migrated", None)
         rec["seq"] = e.get("seq")
         out.append(rec)
+    return out
+
+
+def _is_signed(e: dict) -> bool:
+    return all(isinstance(e.get(f), str) and e.get(f) for f in ("prev", "hash", "sig"))
+
+
+def verify_chain(*, max_lines=None, max_seconds=None) -> dict:
+    """The activity record's chain, in counts (A9; NS-11.8-2/-3).
+
+    Activity rows are entries of the one action ledger, so the chain, its
+    HMAC signatures and its checks are action_ledger's own (`verify()`); this
+    adds what is specific to activity rows, read from the newest end:
+
+      lines             activity rows in the live record (sealed segments and
+                        the live file; `chained + legacy_unchained + unchained`)
+      segments          ledger files read from (sealed + live); and
+      activity_segments those holding an activity row
+      chained           rows written into the chain
+      legacy_unchained  rows written before the chain existed, brought in by
+                        the one-time migration ("before chaining", not
+                        tampering: the chain covers them from that day on)
+      unchained         rows with no link or signature at all (a break)
+      legacy_file_waiting  the old activity_ledger.jsonl is still on disk,
+                        not yet brought in
+      breaks            open (unacknowledged) problems in the chain, anywhere;
+      activity_breaks   those on an activity row; first_break: the first one's
+                        segment, line, seq and reason (never its content)
+      acknowledged      problems the owner already reviewed
+      archived_notes / archived_segments / archived_records
+                        the retention (archive) steps: each is a signed
+                        "archived" entry in the chain naming the segments
+                        moved, their record count and last hash, so the gap in
+                        the live files is accounted for, not a break
+      partial           the line or time cap was reached (or a file could not
+                        be read); counts cover the newest part only
+      state             "intact", "before_chaining" (only legacy rows to
+                        note), "broken", "partial" or "error"
+
+    Read-only, no lock (readers never take the writer's), bounded by
+    VERIFY_MAX_LINES / VERIFY_MAX_S. Never raises: a failure is `error`."""
+    out = {"lines": 0, "segments": 0, "activity_segments": 0, "chained": 0,
+           "legacy_unchained": 0, "unchained": 0, "legacy_file_waiting": False,
+           "breaks": 0, "activity_breaks": 0, "first_break": None, "acknowledged": 0,
+           "archived_notes": 0, "archived_segments": 0, "archived_records": 0,
+           "unreadable_segments": 0, "scanned": 0, "partial": False, "state": "intact"}
+    try:
+        from agent_friday.services import action_ledger as L
+        cap = VERIFY_MAX_LINES if max_lines is None else max(1, int(max_lines))
+        budget = VERIFY_MAX_S if max_seconds is None else max(0.0, float(max_seconds))
+        deadline = time.monotonic() + budget
+        try:
+            out["legacy_file_waiting"] = bool(LEDGER_FILE.exists())
+        except OSError:
+            pass
+        segs = L._reader_segments()
+        out["segments"] = len(segs)
+        seqs = set()
+        for p in reversed(segs):
+            if out["partial"]:
+                break
+            here = 0
+            try:
+                for raw in L._reverse_lines(p):
+                    if out["scanned"] >= cap or time.monotonic() > deadline:
+                        out["partial"] = True
+                        break
+                    out["scanned"] += 1
+                    e = L._safe_json(raw)
+                    if not isinstance(e, dict):
+                        continue
+                    kind = e.get("kind")
+                    if kind == "archived":
+                        names = (e.get("rec") or {}).get("segments") if isinstance(e.get("rec"), dict) else None
+                        if isinstance(names, list) and names:
+                            out["archived_notes"] += 1
+                            out["archived_segments"] += len(names)
+                        continue
+                    if kind != "activity":
+                        continue
+                    here += 1
+                    if isinstance(e.get("seq"), int):
+                        seqs.add(e["seq"])
+                    rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
+                    if not _is_signed(e):
+                        out["unchained"] += 1
+                    elif rec.get("_migrated"):
+                        out["legacy_unchained"] += 1
+                    else:
+                        out["chained"] += 1
+            except OSError:
+                out["unreadable_segments"] += 1
+            out["lines"] += here
+            if here:
+                out["activity_segments"] += 1
+        r = L.verify(force=False, migrate=False)
+        out["archived_records"] = int(r.get("archived_records") or 0)
+        probs = r.get("problems") or []
+        open_ = [pr for pr in probs if not pr.get("acknowledged")]
+        out["breaks"] = int(r.get("open_problem_count") or len(open_))
+        out["acknowledged"] = max(0, int(r.get("problem_count") or 0) - out["breaks"])
+        out["activity_breaks"] = sum(1 for pr in open_ if pr.get("seq") in seqs)
+        if open_:
+            f = open_[0]
+            out["first_break"] = {"segment": f.get("segment"), "line": f.get("line"),
+                                  "seq": f.get("seq"), "reason": f.get("reason")}
+        if out["breaks"] or out["unchained"]:
+            out["state"] = "broken"
+        elif out["partial"] or out["unreadable_segments"]:
+            out["state"] = "partial"
+        elif out["legacy_unchained"] or out["legacy_file_waiting"]:
+            out["state"] = "before_chaining"
+    except Exception as e:  # noqa: BLE001 - fail-safe: a check never breaks its caller
+        out["state"] = "error"
+        out["error"] = type(e).__name__
     return out

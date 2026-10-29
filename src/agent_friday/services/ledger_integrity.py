@@ -14,6 +14,11 @@
                receipts, the same request run twice (duplicate_key), a task
                said done too early
   policy       the governing policy version id (services/policy_version)
+  activity     the activity record (A9, activity_ledger.verify_chain): its
+               rows in the chain, rows from before chaining, breaks on them
+               (first location), retention (archive) notes, partial past the
+               cap. Doctor code `act:<state>/<lines>/<legacy>/<breaks>`
+               (short: the Doctor keeps a code to 160 characters)
 
 Shared by the Doctor (`doctor_check`), the Ledger page's "State of the record"
 line and GET /api/ledger/integrity. Read-only; never a record's content.
@@ -31,6 +36,9 @@ _SIGNATURE = ("signature does not match", "signed with a key this device does no
               "cannot be read as a record")
 _BREAK = ("out of order", "does not follow the record before it")
 _GAP = ("missing", "are gone", "was replaced")
+#: activity_ledger.verify_chain states, short for the Doctor's code.
+_ACT_STATE = {"intact": "ok", "before_chaining": "legacy", "broken": "break",
+              "partial": "partial", "error": "err"}
 
 
 def _kind_of(reason: str) -> str:
@@ -103,6 +111,18 @@ def integrity(window: float = WINDOW_S, *, now: Optional[float] = None) -> dict:
     except Exception as e:  # noqa: BLE001
         out["ledger_error"] = type(e).__name__
     try:
+        from agent_friday.services import activity_ledger
+        a = activity_ledger.verify_chain()
+        if a.get("state") == "error":
+            out["activity_error"] = a.get("error") or "error"
+        else:
+            out["activity"] = {k: a.get(k) for k in (
+                "state", "lines", "segments", "activity_segments", "chained", "legacy_unchained",
+                "unchained", "legacy_file_waiting", "breaks", "activity_breaks", "first_break",
+                "archived_notes", "archived_segments", "archived_records", "partial")}
+    except Exception as e:  # noqa: BLE001
+        out["activity_error"] = type(e).__name__
+    try:
         out["unsigned"] = _unsigned(window, now)
     except Exception as e:  # noqa: BLE001
         out["unsigned_error"] = type(e).__name__
@@ -141,11 +161,14 @@ def doctor_check() -> tuple:
     v = integrity()
     s, ch, u, o = v.get("signatures") or {}, v.get("chain") or {}, v.get("unsigned") or {}, \
         v.get("outward") or {}
+    a = v.get("activity") or {}
     code = ("sig_bad:%d,breaks:%d,gaps:%d,unsigned:%d,open:%d,unconfirmed:%d,duplicate:%d,"
-            "duplicate_key:%d,false_done:%d,pv:%s") % (
+            "duplicate_key:%d,false_done:%d,act:%s/%d/%d/%d,pv:%s") % (
         s.get("bad", 0), ch.get("breaks", 0), ch.get("gaps", 0),
         u.get("lines", 0), o.get("open", 0), o.get("unconfirmed", 0),
         o.get("duplicate", 0), o.get("duplicate_key", 0), o.get("false_done", 0),
+        "err" if "activity_error" in v else _ACT_STATE.get(a.get("state"), "unknown"),
+        a.get("lines") or 0, a.get("legacy_unchained") or 0, a.get("activity_breaks") or 0,
         (v.get("policy_version") or "none")[:16])
     if "ledger_error" in v:
         return "unverified", "ledger_unreadable:" + v["ledger_error"]
