@@ -254,7 +254,7 @@ def _tool_inspect_image(inp):
                 "(GEMINI_API_KEY missing).")
     from google.genai import types
     question = _gate_vision_question(question, "inspect_image.question")
-    from agent_friday.services.image_egress import strip_metadata
+    from agent_friday.services.image_egress import ledger_words, strip_metadata
     sent, meta = strip_metadata(data)
     try:
         resp = client.models.generate_content(
@@ -262,7 +262,7 @@ def _tool_inspect_image(inp):
             contents=[question, types.Part.from_bytes(data=sent, mime_type=mime)])
         _record_media_binary_egress(
             "inspect_image.image", len(sent),
-            reason="vision/audio understanding call; image metadata: %s" % meta)
+            reason="vision/audio understanding call; %s" % ledger_words(meta))
         return "[%s | %.1f KB]\n%s" % (path.name, len(data) / 1024,
                                        (resp.text or "").strip())
     except Exception as e:

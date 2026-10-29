@@ -1005,7 +1005,7 @@ def _result_of(out: Any) -> str:
 
 def record_binary_egress(provider: str, field: str, *, action: str,
                          reason: str, byte_len: int = 0,
-                         log_path: Path | None = None) -> dict:
+                         log_path: Path | None = None, log_size: bool = True) -> dict:
     """Record a send whose PAYLOAD this gate cannot classify.
 
     Images, audio and other binary leave without passing `_gate_text`, because
@@ -1043,12 +1043,22 @@ def record_binary_egress(provider: str, field: str, *, action: str,
             _cm.tally(_call, field, "UNCLASSIFIABLE", action)
         except Exception:
             pass
-    _dlog.log(
-        logging.INFO if action == "allow" else logging.WARNING,
-        "%s provider=%s field=%s tier=UNCLASSIFIABLE bytes=%d (%s)",
-        "ALLOW" if action == "allow" else "BLOCK",
-        provider, field, entry["bytes"], reason,
-    )
+    if log_size:
+        _dlog.log(
+            logging.INFO if action == "allow" else logging.WARNING,
+            "%s provider=%s field=%s tier=UNCLASSIFIABLE bytes=%d (%s)",
+            "ALLOW" if action == "allow" else "BLOCK",
+            provider, field, entry["bytes"], reason,
+        )
+    else:
+        # The size is measured from the payload itself: it goes to the
+        # ledger row, not to the plain-text log.
+        _dlog.log(
+            logging.INFO if action == "allow" else logging.WARNING,
+            "%s provider=%s field=%s tier=UNCLASSIFIABLE (%s)",
+            "ALLOW" if action == "allow" else "BLOCK",
+            provider, field, reason,
+        )
     dest = log_path or _DEFAULT_LOG
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1623,7 +1633,8 @@ def _note_image_block(block, provider: str, field: str,
         return
     try:
         record_binary_egress(provider, field, action="allow", reason=reason,
-                             byte_len=_image_block_bytes(block), log_path=log_path)
+                             byte_len=_image_block_bytes(block), log_path=log_path,
+                             log_size=False)
     except Exception:
         pass
 

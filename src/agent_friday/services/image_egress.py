@@ -104,6 +104,19 @@ def strip_jpeg_segments(data: bytes) -> bytes | None:
     return bytes(out)
 
 
+#: What a ledger row says about an image's metadata: fixed words only, so
+#: nothing read from the image itself reaches a log line.
+_LEDGER_WORDS = {"stripped": "image metadata: stripped",
+                 "no_metadata": "image metadata: none",
+                 "not_stripped": "image metadata: not stripped (format not readable here)"}
+
+
+def ledger_words(label: str) -> str:
+    """The fixed ledger wording for a strip_metadata label."""
+    return _LEDGER_WORDS.get(str(label or "").split(":", 1)[0],
+                             _LEDGER_WORDS["not_stripped"])
+
+
 def strip_metadata(data: bytes) -> Tuple[bytes, str]:
     """(bytes to send, what happened): "stripped", "no_metadata" or
     "not_stripped:<why>". Pure; never raises."""
