@@ -22,3 +22,11 @@ def test_the_closed_settings_panel_is_hidden_after_it_slides_out(rel):
     assert "visibility: hidden;" in rule
     assert "visibility 0s linear 0.35s" in rule, "hidden only once the slide-out has finished"
     assert ".settings-panel.open { right: 0; visibility: visible; transition-delay: 0s; }" in css
+
+
+def test_a_dock_button_says_its_name_once():
+    """The icon's alt text and the label beside it both said it: "Settings Settings"."""
+    idx = (ROOT / "index.html").read_text(encoding="utf-8")
+    assert "\"aria-label\": w.label + (noticeWs.has(w.id) && !openWins.has(w.id) ? ', something waiting' : '')," in idx
+    app = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
+    assert "aria-label={w.label+((noticeWs.has(w.id)&&!openWins.has(w.id))?', something waiting':'')}" in app

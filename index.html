@@ -75107,6 +75107,8 @@ function App() {
     },
     onMouseDown: e => { if (e.button === 1) e.preventDefault(); },
     title: noticeWs.has(w.id) && !openWins.has(w.id) ? (fridayName() + ' left you something here') : w.blurb ? w.label + ' — ' + w.blurb : undefined,
+    // Its name once: the icon's alt text and the label beside it both say it (it was read "Settings Settings").
+    "aria-label": w.label + (noticeWs.has(w.id) && !openWins.has(w.id) ? ', something waiting' : ''),
     style: {
       position: 'relative'
     }
