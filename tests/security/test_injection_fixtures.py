@@ -623,11 +623,18 @@ def test_d_forged_lines_fake_headers_and_unicode_disguises_are_neutralised(
         kind, monkeypatch, tmp_path, request):
     _r, _ctx, out = _ingest(kind, monkeypatch, tmp_path, request)
     forged = [p for p in ui._BREAK_RE.split(out) if ui._LOOKALIKE.search(ui._visible(p))]
-    assert forged, "%s: the forged envelope lines did not survive the reader, so nothing was tested" % kind
     shown = ui.wrap(out)               # services/agent.py: "content": _untrusted.wrap(result)
     _assert_enveloped(shown, kind)
     inner, _ = ui.split(shown)
-    assert "(quoted: an end-of-output line)" in inner
+    if forged:
+        assert "(quoted: an end-of-output line)" in inner
+    else:
+        # This reader drops the forged lines itself (the calendar reader keeps
+        # only the event fields it shows): nothing that imitates the envelope
+        # reaches the model at all, which is the stronger outcome.
+        assert not ui._LOOKALIKE.search(ui._visible(inner)), \
+            "%s: an envelope imitation reached the model unquoted" % kind
+        assert kind in ("calendar",), "%s: the forged envelope lines did not survive the reader" % kind
     # The fake SYSTEM and label headers are data inside the one envelope, never outside it.
     assert "SYSTEM" in inner and shown.count("SYSTEM") == inner.count("SYSTEM")
     assert shown.endswith("[End of tool output %s.]" % shown[len("[Tool output "):len("[Tool output ") + 16])
