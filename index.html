@@ -5999,7 +5999,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 // task (an image or a video render) is cancelled as a process.
                 if (o.task_id) {
                     return post('/api/tasks/' + encodeURIComponent(o.task_id) + '/stop-after-step').then(r => {
-                        if (r.status === 409) return fetch('/api/tasks/' + encodeURIComponent(o.task_id), { method: 'DELETE' });
+                        // Not running (finished meanwhile, paused, or waiting for your OK): nothing is stopped and
+                        // nothing is deleted (a DELETE here would remove a finished task's record); say so.
+                        if (r.status === 409) return r.json().catch(() => ({})).then(d => {
+                            const st = String((d && d.status) || '');
+                            note('cancel:' + o.id, Name(o) + (/^(paused|awaiting_approval)$/.test(st)
+                                ? ' is waiting, so it was not stopped. Find it in Activity.'
+                                : ' had already stopped; its record is kept.'), { ms: 4500 });
+                            return r;
+                        });
                         return r;
                     }).catch(() => {});
                 }
@@ -6009,10 +6017,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 U.tick(performance.now());
                 if (!U.keys().length) { clearInterval(undoTimer); undoTimer = 0; }
             }
+            // What became of a cancel, for anything showing it (the process panel's Cancel button).
+            function said(o, state) {
+                try { window.dispatchEvent(new CustomEvent('friday:orb-cancel', { detail: { id: o.id, state } })); } catch (_) {}
+            }
             function cancel(o) {
                 if (U.has(o.id)) return { ok: true, pending: true };
                 call('mark', o.id, 'cancelling');
-                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); }, performance.now());
+                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); said(o, 'committed'); }, performance.now());
+                said(o, 'pending');
                 note('undo:' + o.id, Name(o) + ' will stop.', { undo: () => undo(o), ms: UNDO_MS });
                 if (!undoTimer) undoTimer = setInterval(undoTick, 200);
                 return { ok: true, pending: true, undo_s: UNDO_MS / 1000 };
@@ -6020,6 +6033,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function undo(o) {
                 if (!U.undo(o.id)) return { ok: false, reason: 'nothing to undo' };
                 dropNote('undo:' + o.id);
+                said(o, 'undone');
                 call('mark', o.id, null);
                 note('undone:' + o.id, Name(o) + ' carries on.', { ms: 2500 });
                 return { ok: true };
@@ -6108,7 +6122,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 return { ok: results.every(r => r.ok !== false), results };
             }
 
-            return { attach, run, act, onScene, statusLine, note, _undo: U };
+            return { attach, run, act, onScene, statusLine, note, _undo: U, cancelOrb: o => cancel(Object.assign({}, find(o.id) || {}, o)) };
         })();
         // </orb-hands>
         // <orb-scene>
@@ -48985,6 +48999,26 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
   const taskId = meta?.linked_task_id || orb.task_id || null;
   const status = meta?.status || orb.status || 'running';
   const running = /^(running|queued|paused|awaiting_approval)$/.test(status);
+  // Cancel without throwing the orb (Stephen's ruling, 2026-10-28; WCAG 2.5.7): the same cancel as a throw, with its
+  // undo window and its note; the button says so while it waits.
+  const [cancelling,setCancelling] = useState(false);
+  const cancellable = /^(running|queued)$/.test(status);
+  useEffect(()=>{
+    setCancelling(false);
+    // Undo in the note puts the button back; a committed cancel leaves it until the panel reads the new status.
+    const on=e=>{const d=e.detail||{};if(d.id===orb.id&&d.state==='undone')setCancelling(false);};
+    window.addEventListener('friday:orb-cancel',on);
+    return()=>window.removeEventListener('friday:orb-cancel',on);
+  },[orb.id]);
+  const cancelTask = e => {
+    e.stopPropagation();
+    if (typeof FridayOrbHands === 'undefined') return;
+    let r = (FridayOrbHands.act('cancel',[orb.id],'button')||[])[0];
+    // The orb is behind Friday just now, or was opened another way: cancel it by id all the same.
+    if ((!r || !r.ok) && FridayOrbHands.cancelOrb) r = FridayOrbHands.cancelOrb({id:orb.id,task_id:taskId,label:orb.label,status});
+    if (r && r.ok) setCancelling(true);
+    else if (typeof fridayToast === 'function') fridayToast('This task could not be cancelled from here. Find it in Activity.');
+  };
   const hasActivity = !!(log?.length || steps.length || meta?.result);
   const [area,setArea] = useState(()=>fridayDesktopArea());
   useEffect(()=>{
@@ -49009,6 +49043,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
       rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
+      cancellable&&typeof FridayOrbHands!=='undefined'&&rtEl('button',{type:'button',className:'thread-cancel','data-orb-cancel':orb.id,'aria-label':cancelling?'Cancelling this task; undo it from the note':'Cancel this task',title:cancelling?'Stopping. Undo it from the note while it shows.':'Stop this task (you can undo it for a few seconds)',disabled:cancelling,onMouseDown:e=>e.stopPropagation(),onClick:cancelTask,style:{minHeight:24,minWidth:24,padding:'2px 8px',borderRadius:6,border:'1px solid rgba(255,0,128,0.45)',background:'transparent',color:'#ff6fa8',font:'600 11px Inter,system-ui,sans-serif',cursor:cancelling?'default':'pointer'}},cancelling?'Cancelling…':'Cancel'),
       rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
       (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
     rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
@@ -71148,7 +71183,7 @@ function App() {
   }, [threadOrb]);
   // Drag the window by its header.
   const startThreadDrag = e => {
-    if(e.target.closest('.thread-close'))return;
+    if(e.target.closest('.thread-close,.thread-cancel'))return;
     const box=e.currentTarget.closest('.thread-panel').getBoundingClientRect();
     threadDrag.current={sx:e.clientX,sy:e.clientY,ox:box.left,oy:box.top,w:box.width,h:box.height};
     const move=event=>{
