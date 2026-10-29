@@ -176,8 +176,7 @@ def governance_claws_repin():
     from agent_friday.governance import action_gate as ag
     before = claws_status()
     changes = before.get("changes") or {}
-    if changes.get("requires_text_sha256") and \
-            str(body.get("text_sha256") or "") != str(before.get("text_sha256") or ""):
+    if str(body.get("text_sha256") or "") != str(before.get("text_sha256") or ""):
         # Re-confirming names the rules: the page sends back the fingerprint of the
         # rules it displayed, so a page showing other rules cannot confirm these.
         return jsonify({"ok": False, "code": "rules_not_shown",

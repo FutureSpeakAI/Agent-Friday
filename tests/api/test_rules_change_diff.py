@@ -143,6 +143,14 @@ def test_a_huge_kept_text_is_not_compared(client, gov):
     assert ch["kind"] == "unverified" and ch["lines"] == []
 
 
+def test_every_reconfirm_names_the_rules_whatever_the_state(client, gov):
+    r = client.post("/api/governance/claws/repin", json={"confirm": True}, headers=_token())
+    assert r.status_code == 409, "not pinned yet: a re-pin still names the rules"
+    sha = _status(client)["text_sha256"]
+    r = client.post("/api/governance/claws/repin", json={"confirm": True, "text_sha256": sha}, headers=_token())
+    assert r.status_code == 200 and r.get_json()["state"] == "intact"
+
+
 def test_intact_rules_carry_no_changes(client, gov):
     assert action_gate.verify_claws()[0]
     st = _status(client)

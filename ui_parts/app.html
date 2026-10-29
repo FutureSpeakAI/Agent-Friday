@@ -20010,7 +20010,7 @@ function ClawsRepinPanel(){
       <div style={{fontSize:11,color:'#cfefff',marginBottom:6,lineHeight:1.6}}>{ch.words||''}</div>
       {(ch.lines||[]).map((x,i)=>x.op==='-'?line('−',x.text,'#f59e0b','l'+i):line('+',x.text,'#00ff80','l'+i))}
       {ch.kind!=='text_changed'&&(ch.current||[]).map((t,i)=>line(' ',t,'rgba(255,255,255,0.75)','c'+i))}
-      {ch.truncated&&<div style={{fontSize:11,color:'#cfefff',marginTop:4}}>More lines changed than are shown here.</div>}
+      {ch.truncated&&<div style={{fontSize:11,color:'#cfefff',marginTop:4}}>Only part of it is shown here.</div>}
     </div>}
     <div style={{...muted,fontFamily:'JetBrains Mono',marginBottom:10}}>Rules text SHA-256 {(st.text_sha256||'').slice(0,16)}…{st.pinned_at?' · pinned '+new Date(st.pinned_at*1000).toLocaleString():''}</div>
     <div style={{...muted,marginBottom:10}}>{fridayName()} signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.</div>

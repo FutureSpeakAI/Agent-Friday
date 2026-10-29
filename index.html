@@ -59398,7 +59398,7 @@ function ClawsRepinPanel() {
     E('div', { style: { fontSize: 11, color: '#cfefff', marginBottom: 6, lineHeight: 1.6 } }, ch.words || ''),
     (ch.lines || []).map((x, i) => E('div', { key: 'l' + i }, x.op === '-' ? line('−', x.text, '#f59e0b') : line('+', x.text, '#00ff80'))),
     ch.kind !== 'text_changed' && (ch.current || []).map((t, i) => E('div', { key: 'c' + i }, line(' ', t, 'rgba(255,255,255,0.75)'))),
-    ch.truncated && E('div', { style: { fontSize: 11, color: '#cfefff', marginTop: 4 } }, 'More lines changed than are shown here.'));
+    ch.truncated && E('div', { style: { fontSize: 11, color: '#cfefff', marginTop: 4 } }, 'Only part of it is shown here.'));
   return E('div', { 'data-testid': 'claws-repin' },
     E('div', { style: { fontSize: 12, color: colour, marginBottom: 6, lineHeight: 1.6 } }, st.summary || st.state),
     changesView,
