@@ -263,6 +263,9 @@ def _ref(report_id) -> str:
 def _render(rep: dict, partly_off_record: bool) -> str:
     from agent_friday.services import doctor
     r = dict(rep, sharing=SHARING)
+    # Reliability counts stay on the Doctor page and in a report the owner
+    # saves by hand; the weekly mail carries what it always has.
+    r.pop("reliability", None)
     if partly_off_record:
         r["errors"] = {}
         perf = dict(r.get("performance") or {})

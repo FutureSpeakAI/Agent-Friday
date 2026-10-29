@@ -684,6 +684,11 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
             interrupted.append(st)
     except Exception as e:
         _log.error("task journal reconciliation failed: %s", e)
+    try:  # the crash-free session rate (services/session_log, NS-33.6-1)
+        from agent_friday.services import session_log
+        session_log.note_start(previous.get("kind"), now=now)
+    except Exception:
+        pass
     return {"interrupted": interrupted, "restored": restored, "previous_exit": previous}
 
 

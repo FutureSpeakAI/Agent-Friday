@@ -14366,9 +14366,23 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, detail=_nd)
         _outcome("error", _nd)
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
+    elif _tool_call_status(result) == "error":
+        # The handler returned rather than raised, with an error result: the
+        # call did not succeed, and its receipt says so (a content-free reason).
+        _receipts.record(name, ok=False, detail="error result")
+        _outcome("error", "error_result")
     else:
         _receipts.record(name, ok=True)
-        _outcome("ok", "")
+        # The outcome says what happened at the service: a result that waits
+        # for the owner's card did not change anything yet, and one the
+        # handler declined did not run.
+        _st_now = _tool_call_status(result)
+        if _st_now == "pending":
+            _outcome("held", "waiting_for_card")
+        elif _st_now == "deny":
+            _outcome("refused", "declined_by_handler")
+        else:
+            _outcome("ok", "")
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
