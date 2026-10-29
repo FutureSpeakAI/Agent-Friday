@@ -65,12 +65,15 @@ def _item(id, group, label, *, unlocks, permissions, connect, status,
             "detail": detail, "docs_url": docs_url}
 
 
-def _perm(text, *, scope="", optional=False, key="", default=False):
+def _perm(text, *, scope="", optional=False, key="", default=False, later=""):
     p = {"text": text}
     if scope:
         p["scope"] = scope
     if optional:
         p.update({"optional": True, "key": key, "default": bool(default)})
+    if later:
+        # Never asked for on this connect: only later, from the button it names.
+        p["later"] = later
     return p
 
 
@@ -176,6 +179,11 @@ def _google_items() -> list:
                        optional=True, key="include_send"))
     perms.append(_perm(copy.GOOGLE_SCOPE_WORDS[ga.GMAIL_MODIFY], scope=ga.GMAIL_MODIFY,
                        optional=True, key="include_modify"))
+    # Asked for later, each only from its own button (read first, BD-06), never on this connect:
+    # listed too, so the card names everything Google's consent screen can ever show (NS-34.4-7).
+    for sc, button in ((ga.CALENDAR_RW, ga.ALLOW_CALENDAR_CHANGES), (ga.TASKS_RW, ga.ALLOW_TASK_CHANGES),
+                       (ga.CONTACTS_RW, "Allow saving to Google Contacts")):
+        perms.append(_perm(ga._SCOPE_PLAIN[sc], scope=sc, later=button))
     try:
         summ = ga.accounts_summary()
     except Exception:
