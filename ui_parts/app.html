@@ -25911,17 +25911,20 @@ function LaneReceipts() {
       h('div', { className: 'local-ai-row-text' },
         h('div', { className: 'local-ai-row-label' }, t.label || t.kind || 'A trace'),
         h('div', { className: 'local-ai-row-meta' }, [t.model, t.status, laneAgo(t.started)].filter(Boolean).join(' · '))),
-      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
+      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', 'aria-label': 'Open the trace: ' + (t.label || t.kind || 'a trace'), onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
 }
 function LaneBody({ tab, onTab, lane, q, onLocal, busy, onChanged }) {
   const h = React.createElement;
   const counts = { needs: lane && lane.needs_you || 0, activity: lane && lane.activity || 0, updates: lane && lane.updates || 0, receipts: 0 };
   const onKey = e => {
-    const i = LANE_TABS.findIndex(x => x[0] === tab);
-    if (e.key === 'ArrowRight') onTab(LANE_TABS[(i + 1) % LANE_TABS.length][0]);
-    else if (e.key === 'ArrowLeft') onTab(LANE_TABS[(i + LANE_TABS.length - 1) % LANE_TABS.length][0]);
-    else return;
+    const i = LANE_TABS.findIndex(x => x[0] === tab), n = LANE_TABS.length;
+    const to = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to < 0) return;
     e.preventDefault();
+    const next = LANE_TABS[to][0];
+    onTab(next);
+    // Focus goes with the selection (WAI-ARIA tabs): the tab left behind is out of the Tab order (tabIndex -1).
+    setTimeout(() => { const b = document.getElementById('lane-tab-' + next); if (b) b.focus(); }, 0);
   };
   return h(React.Fragment, null,
     h('div', { className: 'place-tabs', role: 'tablist', 'aria-label': 'Needs you, Activity, Updates, Receipts and traces', onKeyDown: onKey },
@@ -26544,7 +26547,7 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // A search that shares text from the conversation (privacy/public_query):
   // the exact text that would go out, where it goes, and Send / Don't send.
   const pq = a && a.payload && a.payload.public_query;
-  return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id} {...fridayRow('card',a.approval_id,a.title,{kind:String(a.kind||'').slice(0,30),status:'pending'})}>
+  return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id} role="group" aria-label={a.title||'A request waiting for you'} {...fridayRow('card',a.approval_id,a.title,{kind:String(a.kind||'').slice(0,30),status:'pending'})}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div data-testid={pq ? 'public-query-text' : 'approval-card-description'} style={pq ? { fontSize: 11, color: '#ddd', marginTop: 4, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } : { fontSize: 11, color: '#999', marginTop: 2, whiteSpace: a.payload && a.payload.handler === 'gmail_send' ? 'pre-wrap' : undefined }}>{a.action_description}</div>}
     {pq && <div data-testid="public-query-engine" style={{ fontSize: 11, color: '#b8c7dc', marginTop: 4 }}>Goes to: {pq.engine}</div>}

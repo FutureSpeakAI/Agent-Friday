@@ -67014,17 +67014,20 @@ function LaneReceipts() {
       h('div', { className: 'local-ai-row-text' },
         h('div', { className: 'local-ai-row-label' }, t.label || t.kind || 'A trace'),
         h('div', { className: 'local-ai-row-meta' }, [t.model, t.status, laneAgo(t.started)].filter(Boolean).join(' · '))),
-      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
+      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', 'aria-label': 'Open the trace: ' + (t.label || t.kind || 'a trace'), onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
 }
 function LaneBody({ tab, onTab, lane, q, onLocal, busy, onChanged }) {
   const h = React.createElement;
   const counts = { needs: lane && lane.needs_you || 0, activity: lane && lane.activity || 0, updates: lane && lane.updates || 0, receipts: 0 };
   const onKey = e => {
-    const i = LANE_TABS.findIndex(x => x[0] === tab);
-    if (e.key === 'ArrowRight') onTab(LANE_TABS[(i + 1) % LANE_TABS.length][0]);
-    else if (e.key === 'ArrowLeft') onTab(LANE_TABS[(i + LANE_TABS.length - 1) % LANE_TABS.length][0]);
-    else return;
+    const i = LANE_TABS.findIndex(x => x[0] === tab), n = LANE_TABS.length;
+    const to = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to < 0) return;
     e.preventDefault();
+    const next = LANE_TABS[to][0];
+    onTab(next);
+    // Focus goes with the selection (WAI-ARIA tabs): the tab left behind is out of the Tab order (tabIndex -1).
+    setTimeout(() => { const b = document.getElementById('lane-tab-' + next); if (b) b.focus(); }, 0);
   };
   return h(React.Fragment, null,
     h('div', { className: 'place-tabs', role: 'tablist', 'aria-label': 'Needs you, Activity, Updates, Receipts and traces', onKeyDown: onKey },
@@ -67964,6 +67967,8 @@ function ApprovalCardBody({
     },
     "data-testid": "approval-card",
     "data-approval-id": a.approval_id,
+    role: "group",
+    "aria-label": a.title || 'A request waiting for you',
     ...fridayRow('card', a.approval_id, a.title, { kind: String(a.kind || '').slice(0, 30), status: 'pending' })
   }, /*#__PURE__*/React.createElement("div", {
     style: {
