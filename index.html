@@ -2955,6 +2955,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .fr-state[data-state="bad"] { color:#ff5470; border-radius:1px; }
         .fr-state[data-state="off"] { color:rgba(255,255,255,0.4); border:1.5px solid currentColor; background:transparent; }
         .fr-state[data-kind="cloud"] { border-radius:1px; }
+        /* Read by a screen reader, not drawn (the page's one top-level heading, say). */
+        .fr-sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+            clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
@@ -3783,6 +3786,9 @@ window.addEventListener('DOMContentLoaded',function(){
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
+        <!-- The page's one top-level heading: a screen reader's heading list starts here, and each open window
+             is a level-2 heading under it (north star 33.1-6). -->
+        <h1 class="fr-sr-only">Agent Friday™</h1>
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
 
@@ -14052,6 +14058,9 @@ function renderFridayMarkdown(mdText, opts) {
   }
   body = body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi, '<a target="_blank" rel="noopener" $1>');
   body = fridaySanitizeMarkup(body);
+  // A document's headings sit under the page's h1 and the window title's level 2 (north star 33.1-6): a screen
+  // reader hears its `# Title` at level 3. Only the level read out changes; the drawn size stays.
+  body = body.replace(/<h([1-6])(?=[\s>])/gi, (m, n) => m + ' aria-level="' + Math.min(6, Number(n) + 2) + '"');
   return '<div class="friday-doc' + (compact ? ' compact' : '') + '">' + body + '</div>';
 }
 if (typeof window !== 'undefined') {
@@ -14656,6 +14665,25 @@ function FWin({
   const LSK = 'friday_fwin_' + id;
   // The window grows out of (and folds back into) its own dock icon.
   const fwinRef = useRef(null);
+  // A workspace's own headings are read under the window's title (level 2): an h1 or h2 inside
+  // is announced at level 3, an h3 at 4, and so on (north star 33.1-6). Headings that already
+  // carry a level (a document's Markdown, read two levels down) keep it. Checked once a frame
+  // at most while the window's content changes.
+  useEffect(() => {
+    const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
+    if (!body || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const fix = () => {
+      raf = 0;
+      body.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.hasAttribute('aria-level')) h.setAttribute('aria-level', String(Math.max(3, Math.min(6, Number(h.tagName[1]) + 1))));
+      });
+    };
+    fix();
+    const mo = new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(fix); });
+    mo.observe(body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
   const [historyTop, setHistoryTop] = useState(37);
   React.useLayoutEffect(() => {
     const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');
@@ -14977,7 +15005,9 @@ function FWin({
     ws: id,
     glyph: emoji
   }), /*#__PURE__*/React.createElement("span", {
-    className: "fwin-title-text"
+    className: "fwin-title-text",
+    role: "heading",
+    "aria-level": 2
   }, title), /*#__PURE__*/React.createElement(ConnectorDot, {
     wsId: id
   }), /*#__PURE__*/React.createElement(WsCustomizedMark, {

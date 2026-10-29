@@ -2159,6 +2159,9 @@ function renderFridayMarkdown(mdText,opts){
   }catch(e){body=fridayFallbackMd(psrc);}
   body=body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi,'<a target="_blank" rel="noopener" $1>');
   body = fridaySanitizeMarkup(body);
+  // A document's headings sit under the page's h1 and the window title's level 2 (north star 33.1-6): a screen
+  // reader hears its `# Title` at level 3. Only the level read out changes; the drawn size stays.
+  body = body.replace(/<h([1-6])(?=[\s>])/gi, (m, n) => m + ' aria-level="' + Math.min(6, Number(n) + 2) + '"');
   return'<div class="friday-doc'+(compact?' compact':'')+'">'+body+'</div>';
 }
 if(typeof window!=='undefined'){window.renderFridayMarkdown=renderFridayMarkdown;}
@@ -2777,6 +2780,25 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const LSK='friday_fwin_'+id;
   // The window grows out of (and folds back into) its own dock icon.
   const fwinRef=useRef(null);
+  // A workspace's own headings are read under the window's title (level 2): an h1 or h2 inside
+  // is announced at level 3, an h3 at 4, and so on (north star 33.1-6). Headings that already
+  // carry a level (a document's Markdown, read two levels down) keep it. Checked once a frame
+  // at most while the window's content changes.
+  useEffect(() => {
+    const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
+    if (!body || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const fix = () => {
+      raf = 0;
+      body.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.hasAttribute('aria-level')) h.setAttribute('aria-level', String(Math.max(3, Math.min(6, Number(h.tagName[1]) + 1))));
+      });
+    };
+    fix();
+    const mo = new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(fix); });
+    mo.observe(body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
   const [historyTop, setHistoryTop] = useState(37);
   React.useLayoutEffect(() => {
     const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');
@@ -2883,7 +2905,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
       if(snap.slot){const rel=visible.w?(e.clientX-visible.x)/visible.w:0.5;dOff.current={x:Math.round(rel*size.w),y:e.clientY-visible.y,free:true,sx:e.clientX,sy:e.clientY}}
       else dOff.current={x:e.clientX-visible.x,y:e.clientY-visible.y};
       setDragging(true)}}>
-      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/><span className="fwin-title-text">{title}</span><ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote} arrange={{maxed,current:snap.slot,onToggle:toggleMax,onPick:s=>snap.setSlot(s,'owner'),onChat:f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}} onOpenTab={()=>{const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} onClose={onClose}/></div>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/><span className="fwin-title-text" role="heading" aria-level={2}>{title}</span><ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote} arrange={{maxed,current:snap.slot,onToggle:toggleMax,onPick:s=>snap.setSlot(s,'owner'),onChat:f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}} onOpenTab={()=>{const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} onClose={onClose}/></div>
     </div>{improveNote&&<div className="fwin-tab-blocked" role="alert" data-ws-improve-note={id} onClick={()=>setImproveNote('')}>{improveNote}</div>}{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then choose Open in its own tab again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
     {histOpen&&<WorkspaceHistory top={historyTop} wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
