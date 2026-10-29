@@ -1070,8 +1070,10 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
         recs = _read_store()
         for r in recs:
             if r.get("status") in ("approved", "auto_approved") and not r.get("used_by") \
-                    and not r.get("consumed"):
+                    and not r.get("consumed") and not r.get("executing_at"):
+                # (a card already claimed by its runner is mid-action: it is not taken back)
                 r["status"] = "expired"
+                r["withdrawn"] = True
                 r["decided_at"] = time.time()
                 r["decided_by"] = by
                 r["decision_note"] = note
@@ -1080,6 +1082,11 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
             _write_store(recs)
     for rec in withdrawn:
         _feed("card_resolved", rec)
+        # A task waiting on its tool card is told now (it closes with its typed blocker), not at the
+        # next sweep. Only these kinds: other owners never mark their cards used, so an old card of
+        # theirs that already acted would be re-judged as declined.
+        if rec.get("kind") in ("tainted_action", "tool_confirm"):
+            _fire_hook(rec)
     return len(withdrawn)
 
 

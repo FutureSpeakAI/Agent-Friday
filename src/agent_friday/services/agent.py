@@ -6163,8 +6163,13 @@ def settle_waiting_task(task_id, *, from_worker=False):
         else:
             status, verified = DECLINED, False
             summary = 'not approved (declined, expired or blocked): ' + tools(mine)
+        extra = {}
+        if status == DECLINED:
+            # A typed blocker (NS-32.8-1): what stopped the task, which cards, and that a new
+            # request needs a new card (a declined or expired one is never used again).
+            extra = _approval_blocker(mine, tools(mine))
         _task_set(task_id, status=status, verified=verified, verification_evidence=summary,
-                  settled=_time.time())
+                  settled=_time.time(), **extra)
     _task_log(task_id, 'Your decision closed this task: %s (%s).' % (status, summary))
     if from_worker:
         return status                   # the worker reports and continues the run itself
@@ -6185,6 +6190,31 @@ def settle_waiting_task(task_id, *, from_worker=False):
         except Exception as ce:
             _task_log(task_id, f'Chain advance error: {ce}')
     return status
+
+
+def _approval_blocker(cards, tool_words):
+    """{'blocker': {...}, 'status_reason': text} for a task none of whose cards was approved."""
+    sts = [str(r.get('status') or '') for r in cards]
+    if 'denied' in sts:
+        kind, text = 'approval_denied', 'You declined its approval card (%s), so nothing it asked for ran.'
+    elif 'blocked' in sts:
+        kind, text = 'approval_blocked', 'A safety rule blocked its approval card (%s), so nothing it asked for ran.'
+    elif any(r.get('withdrawn') for r in cards):
+        kind, text = 'approval_withdrawn', ('Its approval (%s) was taken back when you revoked Friday\'s '
+                                            'authority to act, so nothing it asked for ran.')
+    else:
+        kind, text = 'approval_expired', ('Its approval card (%s) expired before you decided, so nothing '
+                                          'it asked for ran.')
+    text = (text % tool_words) + ' Asking again raises a new card.'
+    try:
+        from agent_friday.services import goal_state as _gs
+        b = _gs.blocker('policy_blocked', text, type=kind, needs_confirmation=False,
+                        approval_ids=[r.get('approval_id') for r in cards[:10]],
+                        tools=[str((r.get('payload') or {}).get('tool') or '?') for r in cards[:10]])
+    except Exception:
+        b = {'type': kind, 'category': 'policy_blocked', 'text': text,
+             'approval_ids': [r.get('approval_id') for r in cards[:10]]}
+    return {'blocker': b, 'status_reason': text}
 
 
 _LAST_SWEEP = [0.0]
@@ -8178,12 +8208,25 @@ def chain_run_status(name, run_id=None):
         state = 'waiting'
     elif DECLINED in statuses:
         state = 'stopped'
-        for x in out_steps:
+        stop = None
+        for x, row in zip(out_steps, selected):
             if x['status'] == DECLINED:
-                x['reason'] = 'you declined its approval card'
+                b = row.get('blocker') or {}
+                x['reason'] = b.get('text') or 'you declined its approval card'
+                x['blocker'] = b or None
+                if stop is None:
+                    stop = {'task_id': row.get('task_id'), 'type': b.get('type') or 'approval_denied',
+                            'step': x['index']}
             elif x['status'] == 'pending':
                 x['status'] = 'skipped'
-                x['reason'] = "you declined an earlier step's approval card"
+                x['reason'] = {
+                    'approval_expired': "an earlier step's approval card expired, so this step did not run",
+                    'approval_blocked': "a safety rule blocked an earlier step's approval card, so this step did not run",
+                    'approval_withdrawn': ("an earlier step's approval was taken back when you revoked Friday's "
+                                           "authority, so this step did not run"),
+                }.get((stop or {}).get('type'), "you declined an earlier step's approval card")
+                # the typed reason it never ran (NS-32.8-1): which step's card, and what became of it
+                x['blocked_by'] = dict(stop) if stop else None
     elif statuses & {'failed', 'error', 'timeout'}:
         state = 'failed'
     elif 'cancelled' in statuses:
