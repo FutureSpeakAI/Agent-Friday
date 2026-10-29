@@ -102,8 +102,8 @@ SCREEN_READER_OK = (
 #: motion down (AX2 stops the decorative loops), prefers-contrast / forced-colors strengthen dim text and
 #: the focus ring (tests/unit/test_setup_tells_display_settings.py checks both).
 DISPLAY_NOTE = (
-    "On screen I follow this computer's own accessibility settings, so there is "
-    "nothing to set here. Turn animations off in Windows' accessibility settings "
+    "On screen I follow this computer's own accessibility settings. "
+    "Turn animations off in Windows' accessibility settings "
     "and the movement on screen calms down. Pick a contrast theme there and dim "
     "text gets stronger and the focus outline gets thicker.")
 

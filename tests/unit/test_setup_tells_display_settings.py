@@ -53,7 +53,8 @@ def test_the_note_names_where_the_settings_are_in_plain_words():
     note = _note() or ""
     # Windows 10 and 11 name the pages differently, so the note names the settings, not a path.
     assert "animations" in note and "contrast theme" in note and "accessibility settings" in note
-    assert "nothing to set here" in note
+    # AX9 (#390) adds Friday's own text size, so the note does not say there is nothing to set.
+    assert "follow this computer's own accessibility settings" in note
     assert len(note) < 420, "short enough to hear once"
 
 
