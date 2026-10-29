@@ -2216,7 +2216,7 @@ function ConnectorDot({wsId}){
   if(!s||s==='off')return null;
   const col=s==='connected'?'#00ff80':s==='connecting'?'#f59e0b':'#ff5470';
   const tip=s==='connected'?'Live data source connected':s==='connecting'?'Connecting data source…':'Data source error — check Settings → Connections';
-  return <span title={tip} style={{display:'inline-block',width:7,height:7,borderRadius:'50%',background:col,boxShadow:`0 0 6px ${col}`,marginLeft:7,verticalAlign:'middle'}}/>;
+  return <span className="fr-state" data-state={s==='connected'?'ok':s==='connecting'?'busy':'bad'} role="img" aria-label={tip} title={tip} style={{color:col,width:7,height:7,marginLeft:7}}/>;
 }
 
 // ═══ CHAT KEYS ═══ (see index.html)
@@ -11313,7 +11313,7 @@ function relevanceFor(it){
 function SentimentDot({it}){
   const s=it&&it.sentiment||'neutral';
   const tip={positive:'Positive tone',negative:'Negative tone',neutral:'Neutral tone'}[s]||'Neutral tone';
-  return <span className={'sentiment-dot '+s} title={tip}></span>;
+  return <span className={'sentiment-dot '+s} role="img" aria-label={tip} title={tip}></span>;
 }
 // Source Trust Graph dimension labels + ordering (matches source_trust_graph.py).
 // Labels say what each dimension MEASURES (source_trust_graph.DIMENSION_INFO);
@@ -11335,7 +11335,7 @@ function TrustBadge({it,compact}){
   const color=(it&&it.trust)||(score!=null?trustColor(score):'yellow');
   const dims=it&&it.trust_dims;
   return <span className="trust-badge" tabIndex={0}>
-    <span className={'trust-dot '+color}></span>
+    <span className={'trust-dot '+color} role="img" aria-label={({ green: 'Trust: high', yellow: 'Trust: medium', red: 'Trust: low' }[color] || 'Trust: medium')}></span>
     {score!=null&&!compact&&<span className="trust-num">{score.toFixed(2)}</span>}
     <span className="trust-tip">
       <div className="trust-tip-head">Source trust{score!=null?(' · '+score.toFixed(2)):''}</div>
@@ -12242,7 +12242,7 @@ function NewsWS(){
               <div className="trust-obs-list">
                 {(trustDetail.observations||[]).length===0?<div style={{color:'#888',fontSize:11,padding:'8px 0'}}>No observations yet — this score is a seed estimate from known reputation.</div>:
                  trustDetail.observations.slice().reverse().slice(0,40).map((o,oi)=><div key={oi} className="trust-obs">
-                   <span className={'trust-obs-dot '+trustColor(o.signal)}></span>
+                   <span className={'trust-obs-dot '+trustColor(o.signal)} role="img" aria-label={({ green: 'Good signal', yellow: 'Mixed signal', red: 'Poor signal' }[trustColor(o.signal)] || 'Mixed signal')}></span>
                    <span className="trust-obs-type">{o.type}</span>
                    <span className="trust-obs-dim">{(TRUST_DIMS.find(d=>d[0]===o.dimension)||[null,o.dimension])[1]}</span>
                    <span className="trust-obs-date">{o.date}</span>
@@ -15935,7 +15935,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
           emptyText:'No reasoning was recorded for this process.'}) : rtMuted(readState==='loading'?'Looking for a linked reasoning thread…':'No reasoning trace is linked to this process.')),
       rtEl('details',{open:activityExpanded,style:{marginTop:10}},rtEl('summary',{style:{cursor:'pointer',fontSize:11},onClick:e=>{e.preventDefault();setActivityExpanded(value=>!value);}},'Activity and result'),
         Array.isArray(log)&&log.map((line,i)=>rtEl('div',{key:'log'+i,className:'thread-log-line'},String(line))),
-        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending')}),
+        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending'),role:'img','aria-label':({done:'Done','in-progress':'In progress',pending:'Waiting',error:'Failed'})[step.status||'pending']||String(step.status)}),
           rtEl('div',{className:'thread-step-content'},rtEl('div',{className:'thread-step-text'},step.text),
             step.detail&&rtEl('details',null,rtEl('summary',null,'Details'),rtEl('div',{className:'thread-log-line'},step.detail)),
             step.timestamp&&rtEl('div',{className:'thread-step-time'},step.timestamp)))),
@@ -22919,7 +22919,8 @@ function ProviderStatusDot({prov}){
   else if(avail==='ok'||avail==='unknown'){color='#00ff80';title=avail==='ok'?'healthy':'ready';}
   else if(avail==='degraded'){color='#f59e0b';title='degraded — elevated error rate';}
   else if(avail==='down'){color='#ef4444';title='down — circuit breaker open';}
-  return <span title={title} style={{display:'inline-block',width:9,height:9,borderRadius:5,background:color,boxShadow:`0 0 6px ${color}`,flexShrink:0}}/>;
+  const state=color==='#00ff80'?'ok':color==='#f59e0b'?'warn':color==='#ef4444'?'bad':'off';
+  return <span className="fr-state" data-state={state} role="img" aria-label={'Status: '+title} title={title} style={{color:color,width:9,height:9}}/>;
 }
 function ProviderRow({prov,onChanged}){
   const[keyDraft,setKeyDraft]=useState('');
@@ -23345,12 +23346,13 @@ function SettingsTabConnectors({
       color: c.connected ? 'var(--st-text)' : 'var(--st-dim)'
     }
   }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true",
+    className: "fr-state",
+    "data-state": c.connected ? 'ok' : 'off',
+    role: "img",
+    "aria-label": c.connected ? 'Connected' : 'Not connected',
     style: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-      background: c.connected ? '#00ff80' : 'rgba(255,255,255,0.25)'
+      width: 7,
+      height: 7
     }
   }), c.name || c.id)))));
 }

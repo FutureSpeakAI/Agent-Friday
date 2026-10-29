@@ -350,6 +350,10 @@ window.addEventListener('DOMContentLoaded',function(){
            told from "camera off" without a face. Green (holo-active) still
            means a face is being tracked. */
         #camera-indicator[data-status="live"]:not(.holo-active) { background: #1f6f7f; }
+        /* The camera light by shape too: off a ring, on a half-filled circle, following a face a filled circle. */
+        #camera-indicator { width: 8px; height: 8px; box-sizing: border-box; }
+        #camera-indicator:not(.holo-active):not([data-status="live"]) { background: transparent; border: 1.5px solid #666; }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: linear-gradient(90deg, #1f6f7f 50%, transparent 50%); border: 1.5px solid #1f6f7f; }
         /* What the camera is doing when it is not simply working: busy in
            another app, stopped and reconnecting, released while hidden. Empty
            and invisible while the camera is live or off. */
@@ -559,7 +563,8 @@ window.addEventListener('DOMContentLoaded',function(){
         /* A card Friday raised inside this workspace is waiting: one quiet
            dot under the label, no count and no pulse. It clears when the
            workspace is opened or the card is dismissed. */
-        .dock-btn.has-notice .dot { background: #00d4ff; }
+        /* A notice is a ring, an open window a filled dot: told apart by shape, not only by being cyan. */
+        .dock-btn.has-notice .dot { background: transparent; border: 1px solid #00d4ff; width: 5px; height: 5px; box-sizing: border-box; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -2540,6 +2545,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
         .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
         .thread-dot.error { background: #ff0080; color: #ff0080; }
+        /* A step's state by shape too: done a circle, in progress half filled, pending a ring, error a square. */
+        .thread-dot.in-progress { background: linear-gradient(90deg, #f59e0b 50%, transparent 50%); border: 2px solid #f59e0b; box-sizing: border-box; }
+        .thread-dot.pending { background: transparent; border: 2px solid #3b82f6; box-sizing: border-box; }
+        .thread-dot.error { border-radius: 2px; }
         .thread-step-content { flex: 1; min-width: 0; }
         .thread-step-text {
             font-family: 'Inter', sans-serif; font-size: 12px;
@@ -2935,10 +2944,24 @@ window.addEventListener('DOMContentLoaded',function(){
             padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
             border:1px solid rgba(255,255,255,0.07);
         }
+        /* State is never shown by colour alone (WCAG 1.4.1; north star 33.1-11). One shape per kind of
+           state: ok a filled circle, busy a half-filled circle, warn a diamond, bad a square, off a hollow
+           ring. The colour stays; the shape says the same thing to someone who cannot tell the colours apart. */
+        .fr-state { display:inline-block; width:8px; height:8px; flex-shrink:0; vertical-align:middle; box-sizing:border-box;
+            border-radius:50%; background:currentColor; }
+        .fr-state[data-state="ok"] { color:#00ff80; }
+        .fr-state[data-state="busy"] { color:#f59e0b; border:1.5px solid currentColor; background:linear-gradient(90deg, currentColor 50%, transparent 50%); }
+        .fr-state[data-state="warn"] { color:#f59e0b; border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .fr-state[data-state="bad"] { color:#ff5470; border-radius:1px; }
+        .fr-state[data-state="off"] { color:rgba(255,255,255,0.4); border:1.5px solid currentColor; background:transparent; }
+        .fr-state[data-kind="cloud"] { border-radius:1px; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Trust by shape too: high a circle, medium a diamond, low a square. */
+        .trust-dot.yellow, .trust-obs-dot.yellow { border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .trust-dot.red, .trust-obs-dot.red { border-radius:1px; }
 
         /* ── Source-trust badge + hover tooltip (article cards) ── */
         .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
@@ -3033,6 +3056,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .sentiment-dot.positive { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .sentiment-dot.neutral { background:#7a8190; box-shadow:0 0 4px rgba(122,129,144,0.4); }
         .sentiment-dot.negative { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Tone by shape too: positive a circle, neutral a ring, negative a square. */
+        .sentiment-dot.neutral { background:transparent; border:1.5px solid #7a8190; box-sizing:border-box; }
+        .sentiment-dot.negative { border-radius:1px; }
         /* "In your wiki" connection link */
         .wiki-connect { font-size:10px; color:#9fb0c4; margin-top:7px; }
         .wiki-link { color:#00d4ff; cursor:pointer; text-decoration:none; border-bottom:1px dotted rgba(0,212,255,0.4); }
@@ -3736,7 +3762,7 @@ window.addEventListener('DOMContentLoaded',function(){
     </div>
 
     <!-- Parallax Tracker Dot -->
-    <div id="camera-indicator"></div>
+    <div id="camera-indicator" role="img" aria-label="Camera off" title="Camera off"></div>
     <div id="camera-status" role="status" aria-live="polite"></div>
     <div id="call-mode-chip" role="status" aria-live="polite"></div>
 
@@ -4675,7 +4701,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             function render() {
                 const ind = document.getElementById('camera-indicator');
-                if (ind) ind.dataset.status = state.status;
+                if (ind) { ind.dataset.status = state.status; const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab; }
                 const s = document.getElementById('camera-status');
                 if (!s) return;
                 const show = state.wanted && state.status !== 'live' && state.status !== 'off';
@@ -5071,6 +5097,7 @@ window.addEventListener('DOMContentLoaded',function(){
             if (!ind) return;
             if (active && isHologramMode) { ind.classList.add('holo-active'); }
             else { ind.classList.remove('holo-active'); }
+            const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab;
         }
 
         // --- AESTHETIC CONFIGURATION ---
@@ -14101,16 +14128,16 @@ function ConnectorDot({
   const col = s === 'connected' ? '#00ff80' : s === 'connecting' ? '#f59e0b' : '#ff5470';
   const tip = s === 'connected' ? 'Live data source connected' : s === 'connecting' ? 'Connecting data source…' : 'Data source error — check Settings → Connections';
   return /*#__PURE__*/React.createElement("span", {
+    className: "fr-state",
+    "data-state": s === 'connected' ? 'ok' : s === 'connecting' ? 'busy' : 'bad',
+    role: "img",
+    "aria-label": tip,
     title: tip,
     style: {
-      display: 'inline-block',
+      color: col,
       width: 7,
       height: 7,
-      borderRadius: '50%',
-      background: col,
-      boxShadow: `0 0 6px ${col}`,
-      marginLeft: 7,
-      verticalAlign: 'middle'
+      marginLeft: 7
     }
   });
 }
@@ -16567,7 +16594,10 @@ function ChatSurface(props) {
   }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…'), voiceContract && ['ear', 'mind', 'mouth'].map(k => {
     const st = voiceStages[k] && voiceStages[k].state || 'idle';
     const col = st === 'busy' ? '#38bdf8' : st === 'degraded' ? '#ffb347' : st === 'refused' ? '#ef4444' : '#3effa1';
-    return /*#__PURE__*/React.createElement("span", { key: k, title: k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : ''), style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ●');
+    // The state by its mark too, not only its colour: ● ready, ◐ busy, ▲ degraded, ✕ refused.
+    const mark = st === 'busy' ? '◐' : st === 'degraded' ? '▲' : st === 'refused' ? '✕' : '●';
+    const said = k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : '');
+    return /*#__PURE__*/React.createElement("span", { key: k, title: said, "aria-label": said, role: "img", style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ' + mark);
   }), voiceContract && voiceContract.tools && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, opacity: 0.75 } }, voiceContract.line || (voiceContract.tools.length + ' tools · KG ' + (voiceContract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (voiceContract.memory ? '✓' : '✗')))), voiceOn && voicePartial && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#8a94a6', fontStyle: 'italic', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '“' + voicePartial + '…'), voiceOn && voiceNotices.map(n => /*#__PURE__*/React.createElement("div", { key: n.code, style: { fontSize: 10, color: '#ffb347', marginBottom: 4, fontFamily: 'JetBrains Mono', lineHeight: 1.4 } }, '⚠ ', n.message)), voiceOn && voiceEgress && voiceEgress.active && /*#__PURE__*/React.createElement("div", {
     title: voiceEgress.text || '',
     style: {
@@ -35693,6 +35723,8 @@ function SentimentDot({
   }[s] || 'Neutral tone';
   return /*#__PURE__*/React.createElement("span", {
     className: 'sentiment-dot ' + s,
+    role: "img",
+    "aria-label": tip,
     title: tip
   });
 }
@@ -35719,7 +35751,9 @@ function TrustBadge({
     className: "trust-badge",
     tabIndex: 0
   }, /*#__PURE__*/React.createElement("span", {
-    className: 'trust-dot ' + color
+    className: 'trust-dot ' + color,
+    role: "img",
+    "aria-label": ({ green: 'Trust: high', yellow: 'Trust: medium', red: 'Trust: low' }[color] || 'Trust: medium')
   }), score != null && !compact && /*#__PURE__*/React.createElement("span", {
     className: "trust-num"
   }, score.toFixed(2)), /*#__PURE__*/React.createElement("span", {
@@ -38460,7 +38494,9 @@ function NewsWS() {
     key: oi,
     className: "trust-obs"
   }, /*#__PURE__*/React.createElement("span", {
-    className: 'trust-obs-dot ' + trustColor(o.signal)
+    className: 'trust-obs-dot ' + trustColor(o.signal),
+    role: "img",
+    "aria-label": ({ green: 'Good signal', yellow: 'Mixed signal', red: 'Poor signal' }[trustColor(o.signal)] || 'Mixed signal')
   }), /*#__PURE__*/React.createElement("span", {
     className: "trust-obs-type"
   }, o.type), /*#__PURE__*/React.createElement("span", {
@@ -48955,7 +48991,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
           emptyText:'No reasoning was recorded for this process.'}) : rtMuted(readState==='loading'?'Looking for a linked reasoning thread…':'No reasoning trace is linked to this process.')),
       rtEl('details',{open:activityExpanded,style:{marginTop:10}},rtEl('summary',{style:{cursor:'pointer',fontSize:11},onClick:e=>{e.preventDefault();setActivityExpanded(value=>!value);}},'Activity and result'),
         Array.isArray(log)&&log.map((line,i)=>rtEl('div',{key:'log'+i,className:'thread-log-line'},String(line))),
-        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending')}),
+        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending'),role:'img','aria-label':({done:'Done','in-progress':'In progress',pending:'Waiting',error:'Failed'})[step.status||'pending']||String(step.status)}),
           rtEl('div',{className:'thread-step-content'},rtEl('div',{className:'thread-step-text'},step.text),
             step.detail&&rtEl('details',null,rtEl('summary',null,'Details'),rtEl('div',{className:'thread-log-line'},step.detail)),
             step.timestamp&&rtEl('div',{className:'thread-step-time'},step.timestamp)))),
@@ -55314,9 +55350,11 @@ function ModelRow({ m, need, current, onPick, machine, servingId }) {
   },
     E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
       E('span', {
+        className: 'fr-state', 'data-kind': m.local ? 'local' : 'cloud', role: 'img',
+        'aria-label': (m.local ? 'Runs on this PC' : 'Runs in the cloud') + (m.state === 'resident' ? ', loaded' : ''),
+        title: (m.local ? 'Runs on this PC' : 'Runs in the cloud') + (m.state === 'resident' ? ', loaded' : ''),
         style: {
-          width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-          background: m.local ? '#00ff80' : '#7b61ff',
+          width: 7, height: 7, color: m.local ? '#00ff80' : '#7b61ff',
           boxShadow: m.state === 'resident' ? '0 0 6px #00ff80' : 'none',
         },
       }),
@@ -56354,10 +56392,10 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
       },
         E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
           E('span', {
-            style: {
-              width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-              background: m ? (m.local ? '#00ff80' : '#7b61ff') : 'rgba(255,255,255,0.3)',
-            },
+            className: 'fr-state', role: 'img',
+            'data-kind': m ? (m.local ? 'local' : 'cloud') : undefined, 'data-state': m ? undefined : 'off',
+            'aria-label': m ? (m.local ? 'Runs on this PC' : 'Runs in the cloud') : 'No model',
+            style: { width: 7, height: 7, color: m ? (m.local ? '#00ff80' : '#7b61ff') : 'rgba(255,255,255,0.3)' },
           }),
           E('span', {
             style: {
@@ -57749,11 +57787,10 @@ function IntelligenceDiagnostics() {
         },
       },
         E('span', {
+          className: 'fr-state', 'data-state': p.connected ? 'ok' : 'off', role: 'img',
+          'aria-label': p.connected ? 'Connected' : 'Not connected',
           title: p.connected ? 'connected' : 'not connected',
-          style: {
-            width: 7, height: 7, borderRadius: 4, flexShrink: 0,
-            background: p.connected ? '#00ff80' : 'rgba(255,255,255,0.25)',
-          },
+          style: { width: 7, height: 7 },
         }),
         E('div', { style: { width: 170, flexShrink: 0 } },
           E('div', { style: { fontSize: 12.5, color: 'var(--st-text)' } }, p.label),
@@ -62952,16 +62989,17 @@ function ProviderStatusDot({
     color = '#ef4444';
     title = 'down — circuit breaker open';
   }
+  const state = color === '#00ff80' ? 'ok' : color === '#f59e0b' ? 'warn' : color === '#ef4444' ? 'bad' : 'off';
   return /*#__PURE__*/React.createElement("span", {
+    className: "fr-state",
+    "data-state": state,
+    role: "img",
+    "aria-label": 'Status: ' + title,
     title: title,
     style: {
-      display: 'inline-block',
+      color: color,
       width: 9,
-      height: 9,
-      borderRadius: 5,
-      background: color,
-      boxShadow: `0 0 6px ${color}`,
-      flexShrink: 0
+      height: 9
     }
   });
 }
@@ -64110,12 +64148,13 @@ function SettingsTabConnectors({
       color: c.connected ? 'var(--st-text)' : 'var(--st-dim)'
     }
   }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true",
+    className: "fr-state",
+    "data-state": c.connected ? 'ok' : 'off',
+    role: "img",
+    "aria-label": c.connected ? 'Connected' : 'Not connected',
     style: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-      background: c.connected ? '#00ff80' : 'rgba(255,255,255,0.25)'
+      width: 7,
+      height: 7
     }
   }), c.name || c.id)))));
 }

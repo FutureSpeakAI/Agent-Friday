@@ -283,6 +283,11 @@ window.addEventListener('DOMContentLoaded',function(){
             position: fixed; bottom: 20px; right: 20px; width: 6px; height: 6px;
             border-radius: 50%; background: #666; z-index: 200; transition: background 0.3s, box-shadow 0.3s;
         }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: #1f6f7f; }
+        /* The camera light by shape too: off a ring, on a half-filled circle, following a face a filled circle. */
+        #camera-indicator { width: 8px; height: 8px; box-sizing: border-box; }
+        #camera-indicator:not(.holo-active):not([data-status="live"]) { background: transparent; border: 1.5px solid #666; }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: linear-gradient(90deg, #1f6f7f 50%, transparent 50%); border: 1.5px solid #1f6f7f; }
 
         /* --- REACT UI LAYER STYLES --- */
 
@@ -471,7 +476,8 @@ window.addEventListener('DOMContentLoaded',function(){
         /* A card Friday raised inside this workspace is waiting: one quiet
            dot under the label, no count and no pulse. It clears when the
            workspace is opened or the card is dismissed. */
-        .dock-btn.has-notice .dot { background: #00d4ff; }
+        /* A notice is a ring, an open window a filled dot: told apart by shape, not only by being cyan. */
+        .dock-btn.has-notice .dot { background: transparent; border: 1px solid #00d4ff; width: 5px; height: 5px; box-sizing: border-box; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -1680,6 +1686,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
         .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
         .thread-dot.error { background: #ff0080; color: #ff0080; }
+        /* A step's state by shape too: done a circle, in progress half filled, pending a ring, error a square. */
+        .thread-dot.in-progress { background: linear-gradient(90deg, #f59e0b 50%, transparent 50%); border: 2px solid #f59e0b; box-sizing: border-box; }
+        .thread-dot.pending { background: transparent; border: 2px solid #3b82f6; box-sizing: border-box; }
+        .thread-dot.error { border-radius: 2px; }
         .thread-step-content { flex: 1; min-width: 0; }
         .thread-step-text {
             font-family: 'Inter', sans-serif; font-size: 12px;
@@ -2058,10 +2068,24 @@ window.addEventListener('DOMContentLoaded',function(){
             padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
             border:1px solid rgba(255,255,255,0.07);
         }
+        /* State is never shown by colour alone (WCAG 1.4.1; north star 33.1-11). One shape per kind of
+           state: ok a filled circle, busy a half-filled circle, warn a diamond, bad a square, off a hollow
+           ring. The colour stays; the shape says the same thing to someone who cannot tell the colours apart. */
+        .fr-state { display:inline-block; width:8px; height:8px; flex-shrink:0; vertical-align:middle; box-sizing:border-box;
+            border-radius:50%; background:currentColor; }
+        .fr-state[data-state="ok"] { color:#00ff80; }
+        .fr-state[data-state="busy"] { color:#f59e0b; border:1.5px solid currentColor; background:linear-gradient(90deg, currentColor 50%, transparent 50%); }
+        .fr-state[data-state="warn"] { color:#f59e0b; border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .fr-state[data-state="bad"] { color:#ff5470; border-radius:1px; }
+        .fr-state[data-state="off"] { color:rgba(255,255,255,0.4); border:1.5px solid currentColor; background:transparent; }
+        .fr-state[data-kind="cloud"] { border-radius:1px; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Trust by shape too: high a circle, medium a diamond, low a square. */
+        .trust-dot.yellow, .trust-obs-dot.yellow { border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .trust-dot.red, .trust-obs-dot.red { border-radius:1px; }
 
         /* ── Source-trust badge + hover tooltip (article cards) ── */
         .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
@@ -2156,6 +2180,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .sentiment-dot.positive { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .sentiment-dot.neutral { background:#7a8190; box-shadow:0 0 4px rgba(122,129,144,0.4); }
         .sentiment-dot.negative { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Tone by shape too: positive a circle, neutral a ring, negative a square. */
+        .sentiment-dot.neutral { background:transparent; border:1.5px solid #7a8190; box-sizing:border-box; }
+        .sentiment-dot.negative { border-radius:1px; }
         /* "In your wiki" connection link */
         .wiki-connect { font-size:10px; color:#9fb0c4; margin-top:7px; }
         .wiki-link { color:#00d4ff; cursor:pointer; text-decoration:none; border-bottom:1px dotted rgba(0,212,255,0.4); }
