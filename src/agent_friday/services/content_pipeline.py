@@ -380,9 +380,16 @@ def new_post(title: str = "", body: str = "", assets: Optional[list] = None,
 _TARGET_PAYLOAD_KEYS = ("adapted_title", "adapted_body", "segments",
                         "adapted_assets", "char_limit", "hashtags", "mentions",
                         "options", "publish_at_override")
+#: What the store records about a target after it went out (also kept in
+#: payload_json, but never set by a composer patch): `taken_down_at`, when a
+#: platform takedown of it worked (mark_taken_down).
+_TARGET_RECORD_KEYS = ("taken_down_at",)
+_TARGET_KEPT_KEYS = _TARGET_PAYLOAD_KEYS + _TARGET_RECORD_KEYS
 
 
 def _target_payload(target: Dict[str, Any]) -> str:
+    """A new target's payload: never a record key (a copied target was not
+    taken down)."""
     return _dumps({k: target.get(k) for k in _TARGET_PAYLOAD_KEYS})
 
 
@@ -405,7 +412,7 @@ def _hydrate_target(row) -> Dict[str, Any]:
         "created_at": d.get("created_at"),
         "updated_at": d.get("updated_at"),
     }
-    for k in _TARGET_PAYLOAD_KEYS:
+    for k in _TARGET_KEPT_KEYS:
         out[k] = payload.get(k)
     return out
 
@@ -913,7 +920,7 @@ def release_held(post_id: str, target_id: Optional[str] = None) -> Dict[str, Any
             # while the post stays HELD for a sibling is not released).
             held_post = _get_post_locked(con, post_id)
             for t in to_release:
-                payload = {k: t.get(k) for k in _TARGET_PAYLOAD_KEYS}
+                payload = {k: t.get(k) for k in _TARGET_KEPT_KEYS}
                 opts = dict(payload.get("options") or {})
                 opts["released"] = True          # explicit human release (§7.3)
                 opts["released_sha"] = _pub.released_text_sha(t, held_post)
@@ -1018,8 +1025,8 @@ def update_target(target_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
             if row["status"] in TARGET_TERMINAL:
                 return {"ok": False, "error": "target is CONFIRMED (immutable)"}
             t = _hydrate_target(row)
-            payload = {k: t.get(k) for k in _TARGET_PAYLOAD_KEYS}
-            for k in _TARGET_PAYLOAD_KEYS:
+            payload = {k: t.get(k) for k in _TARGET_KEPT_KEYS}
+            for k in _TARGET_PAYLOAD_KEYS:              # never a record key
                 if k in patch:
                     payload[k] = patch[k]
             sets = ["payload_json=?", "updated_at=?"]
@@ -1036,6 +1043,27 @@ def update_target(target_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
                 params.append(_resolve_publish_at(sched, payload))
             params.append(target_id)
             con.execute(f"UPDATE targets SET {', '.join(sets)} WHERE id=?", params)
+            row = con.execute("SELECT * FROM targets WHERE id=?", (target_id,)).fetchone()
+        return {"ok": True, "target": _hydrate_target(row)}
+    except Exception as e:
+        return {"ok": False, "error": exception_text(e)}
+
+
+def mark_taken_down(target_id: str, when: Optional[str] = None) -> Dict[str, Any]:
+    """Record on the target that its platform takedown worked (`taken_down_at`,
+    an ISO time): a retried takedown skips it, however long ago it was and
+    whatever the rotating publish log still holds. Only this field changes; a
+    CONFIRMED target is otherwise immutable. Never raises."""
+    try:
+        with _LOCK, _connect() as con:
+            row = con.execute("SELECT * FROM targets WHERE id=?", (target_id,)).fetchone()
+            if not row:
+                return {"ok": False, "error": "target not found"}
+            t = _hydrate_target(row)
+            payload = {k: t.get(k) for k in _TARGET_KEPT_KEYS}
+            payload["taken_down_at"] = when or _now_iso()
+            con.execute("UPDATE targets SET payload_json=?, updated_at=? WHERE id=?",
+                        (_dumps(payload), _now_iso(), target_id))
             row = con.execute("SELECT * FROM targets WHERE id=?", (target_id,)).fetchone()
         return {"ok": True, "target": _hydrate_target(row)}
     except Exception as e:
