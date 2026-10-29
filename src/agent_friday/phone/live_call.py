@@ -146,23 +146,88 @@ def _stream_url(cfg: dict) -> str:
     return "wss://" + cfg["public_base_url"].split("://", 1)[-1] + "/twilio/media"
 
 
+#: A stream's signature covers only the fixed media URL, the same for every call, so
+#: the "direction" parameter cannot be trusted on its own: a captured signature could
+#: open a stream claiming "inbound". An inbound stream must carry a single-use ticket
+#: Friday minted in that call's own TwiML; without a good one the call is treated as
+#: one with someone else (NS-34.17-2).
+_TICKET_TTL_S = 120
+#: A call Friday places carries a ticket too (minted before Twilio has a call SID, so
+#: it is bound to no SID): it has to last through the ringing.
+_OUTBOUND_TICKET_TTL_S = 600
+_USED_TICKETS: dict = {}
+_TICKET_LOCK = threading.Lock()
+
+
+def _ticket_key() -> bytes:
+    from agent_friday.governance.action_gate import _governance_key
+    import hashlib as _h
+    return _h.sha256(b"agent-friday/call-ticket/v1\0" + _governance_key()).digest()
+
+
+def mint_ticket(direction: str, call_sid: str) -> str:
+    import hashlib as _h
+    import hmac as _hm
+    import secrets as _s
+    body = "%s|%s|%d|%s" % (direction, call_sid or "", int(time.time()), _s.token_hex(8))
+    sig = _hm.new(_ticket_key(), body.encode("utf-8"), _h.sha256).hexdigest()
+    return body + "|" + sig
+
+
+def ticket_direction(ticket: str, call_sid: str = "") -> str:
+    """The direction a good, fresh, unused ticket for THIS call names; "" otherwise
+    (spent here)."""
+    import hashlib as _h
+    import hmac as _hm
+    try:
+        body, sig = str(ticket or "").rsplit("|", 1)
+        direction, sid, ts, _nonce = body.split("|")
+        good = _hm.compare_digest(sig, _hm.new(_ticket_key(), body.encode("utf-8"),
+                                               _h.sha256).hexdigest())
+    except Exception:
+        return ""
+    now = time.time()
+    ttl = _OUTBOUND_TICKET_TTL_S if direction == "outbound" else _TICKET_TTL_S
+    if not good or not (0 <= now - int(ts) <= ttl):
+        return ""
+    if sid != str(call_sid or ""):        # bound to its own call (or approved card)
+        return ""
+    with _TICKET_LOCK:
+        for k in [k for k, t in _USED_TICKETS.items() if now - t > 2 * _OUTBOUND_TICKET_TTL_S]:
+            _USED_TICKETS.pop(k, None)
+        if body in _USED_TICKETS:
+            return ""
+        _USED_TICKETS[body] = now
+    return direction
+
+
 def connect_twiml(cfg: dict, call_sid: str) -> str:
     """An inbound call from the owner's cell, answered live."""
+    try:
+        ticket = mint_ticket("inbound", call_sid)
+    except Exception:
+        ticket = ""                     # without one the call is treated as someone else
     return ("<Connect><Stream url=%s><Parameter name=\"direction\" value=\"inbound\"/>"
-            "</Stream></Connect>" % quoteattr(_stream_url(cfg)))
+            "<Parameter name=\"ticket\" value=%s/>"
+            "</Stream></Connect>" % (quoteattr(_stream_url(cfg)), quoteattr(ticket)))
 
 
 def outbound_twiml(cfg: dict, *, disclosure: str, opening: str, approval_id: str) -> str:
     """An approved outbound live call. The disclosure is spoken by Twilio
     first, before the stream, so it cannot be skipped by a bridge failure."""
     say = ("<Say>%s</Say>" % escape(disclosure.strip())) if disclosure.strip() else ""
+    try:
+        ticket = mint_ticket("outbound", approval_id)     # bound to the approved call
+    except Exception:
+        ticket = ""          # without one the call is unverified: no free/busy either
     return ("<Response>%s<Connect><Stream url=%s>"
             "<Parameter name=\"direction\" value=\"outbound\"/>"
             "<Parameter name=\"approval_id\" value=%s/>"
             "<Parameter name=\"opening\" value=%s/>"
+            "<Parameter name=\"ticket\" value=%s/>"
             "</Stream></Connect></Response>"
             % (say, quoteattr(_stream_url(cfg)), quoteattr(approval_id),
-               quoteattr(opening[:400])))
+               quoteattr(opening[:400]), quoteattr(ticket)))
 
 
 # ── the mid-call approval marker ─────────────────────────────────────────────
@@ -177,6 +242,71 @@ CALL_NOTE = (
     "booking, buying, changing anything), say you need to check with the person "
     "you work for, and write [[ASK_OWNER: <one line saying what, for whom>]] in "
     "your reply. That marker is not spoken; it asks the owner for approval.]")
+
+
+#: The whole system prompt on a call with someone other than the owner: who Friday is
+#: and how to behave, and nothing of the owner's notes, memory or files.
+OTHER_PARTY_SYSTEM = (
+    "You are Friday, an AI assistant, speaking on a phone call on behalf of the person "
+    "you work for. Treat the other person as someone else, not the person you work for. You know "
+    "only what was said on this call and the purpose you were given for it. Do not "
+    "guess at, or reveal, anything about the person you work for: their schedule, "
+    "contacts, files, notes or plans. If the other person asks for something that needs "
+    "them, say you will check, and write [[ASK_OWNER: <one line>]] in your reply. Keep "
+    "replies short and spoken.")
+
+#: Added to OTHER_PARTY_SYSTEM on a call Friday placed once the talk turns to times
+#: (owner ruling 7): when the person you work for is busy, and nothing else about it.
+FREE_BUSY_NOTE = (
+    "\n\nTo arrange a time you may use when the person you work for is busy. Over the "
+    "next %d days (their local time) they are busy at: %s. Every other time is free. "
+    "Share only whether a time is free or busy: never what they are doing, where, or "
+    "with whom. Offering or agreeing a time is still a request: write [[ASK_OWNER: "
+    "book <time> with <who>]] for it.")
+FREE_BUSY_DAYS = 7
+_TIME_TALK = re.compile(
+    r"\b(time|times|when|free|busy|available|availability|schedul\w*|book\w*|appointment|"
+    r"meet\w*|call back|today|tomorrow|tonight|week|weekend|morning|afternoon|evening|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.)|"
+    r"o'?clock)\b", re.I)
+
+#: The whole system prompt on a call from the owner's cell before the call PIN is said
+#: (owner ruling 8): nothing of the owner's records, and how to open them.
+PIN_NEEDED_SYSTEM = (
+    "You are Friday, an AI assistant, on a phone call that came from the number of the "
+    "person you work for. Caller ID can be forged, so until the caller says their call "
+    "PIN you know nothing about the person you work for and open none of their records: "
+    "no schedule, contacts, files, notes or plans. If they ask for anything that needs "
+    "those, ask them to say their call PIN. Never repeat or guess a PIN. Keep replies "
+    "short and spoken.")
+PIN_UNSET_SYSTEM = (
+    "You are Friday, an AI assistant, on a phone call that came from the number of the "
+    "person you work for. Calls from their phone need a spoken call PIN before you open "
+    "any of their records, and no PIN has been set up yet, so on this call you open none "
+    "of them: no schedule, contacts, files, notes or plans. If they ask for those, say "
+    "the call PIN can be set in Friday's phone settings on the computer Friday runs on. "
+    "Keep replies short and spoken.")
+
+
+def free_busy_text(days: int = FREE_BUSY_DAYS, now=None) -> str:
+    """The owner's busy intervals for the next `days` days in their local time, times
+    only ("Tue 29 Oct 14:00-15:30"); "" when no calendar could be read."""
+    from datetime import datetime, timedelta, timezone
+    from agent_friday.services import scheduling as sch
+    zone = sch.zone_for(sch.scheduling_settings().get("timezone"))
+    start = now or datetime.now(timezone.utc)
+    got = sch.busy_across_accounts(start, start + timedelta(days=int(days)), zone)
+    if not got.get("checked") or got.get("errors"):
+        return ""          # a calendar that could not be read: "free" would not be true
+    parts = []
+    for s, e in (got.get("busy") or [])[:60]:
+        s, e = s.astimezone(zone), e.astimezone(zone)
+        same = s.date() == e.date()
+        parts.append("%s %d %s %s-%s" % (s.strftime("%a"), s.day, s.strftime("%b"), s.strftime("%H:%M"),
+                                         e.strftime("%H:%M") if same else
+                                         "%s %d %s %s" % (e.strftime("%a"), e.day, e.strftime("%b"),
+                                                          e.strftime("%H:%M"))))
+    return "; ".join(parts) or "nothing (free all of it)"
 
 
 def split_asks(reply: str):
@@ -302,11 +432,102 @@ class CallBridge:
         from agent_friday.services.agent_identity import named
         msgs[0]["content"] = named(CALL_NOTE) + "\n\n" + msgs[0]["content"]
         last = history[-1]["text"] if history else ""
+        ctx = {"origin": "phone", "authenticated": False}
+        builder = lambda provider: _gated_system_prompt(provider, keywords=last)  # noqa: E731
+        direction = str((getattr(self, "params", None) or {}).get("direction") or "").lower()
+        if direction == "inbound":
+            # From the owner's cell. Records open only once the call PIN was said, or
+            # when the owner switched the PIN off at the PC (owner ruling 8). Unknown
+            # PIN state is treated as not said.
+            state = getattr(self, "pin_state", None)
+            if state not in ("verified", "not_required"):
+                ctx["call_party"] = "unverified"
+                prompt = PIN_UNSET_SYSTEM if state == "unset" else PIN_NEEDED_SYSTEM
+                builder = lambda provider: prompt  # noqa: E731
+        else:
+            # A call Friday placed, or one whose direction is not verified: the other
+            # person is not the owner. No tool reads the owner's records
+            # (agent._governance_check), and the system prompt carries none of them
+            # either: no wiki or memory pulled in by what the other person says
+            # (NS-34.17-2). Anything that needs the owner goes through [[ASK_OWNER]].
+            # On a call Friday placed (ticketed "outbound"), once the talk turns to
+            # times, the owner's busy times go in too, and nothing else (ruling 7).
+            ctx["call_party"] = "other" if direction == "outbound" else "unverified"
+            prompt = OTHER_PARTY_SYSTEM
+            if direction == "outbound":
+                busy = self._free_busy_for(history)
+                if busy:
+                    prompt = OTHER_PARTY_SYSTEM + FREE_BUSY_NOTE % (FREE_BUSY_DAYS, busy)
+            builder = lambda provider: prompt  # noqa: E731
         reply, _ = _generate_agent(
-            msgs, session_ctx={"origin": "phone", "authenticated": False},
-            system_builder=lambda provider: _gated_system_prompt(provider, keywords=last),
+            msgs, session_ctx=ctx, system_builder=builder,
             workspace="chat", max_tokens=400)
         return reply or ""
+
+    def _free_busy_for(self, history: list) -> str:
+        """The owner's busy times, once the call has talked about times; read once
+        per call and kept for five minutes. "" before that, or when unreadable."""
+        # What the other person said, and the call's purpose without Friday's own name
+        # (which is also a weekday): Friday's own lines do not count.
+        said = " ".join(str(h.get("text") or "") for h in (history or [])[-12:]
+                        if h.get("who") == "caller")
+        purpose = re.sub(r"\bfriday\b", " ", str((getattr(self, "params", None) or {}).get("opening") or ""),
+                         flags=re.I)
+        if not _TIME_TALK.search(said + " " + purpose):
+            return ""
+        cached = getattr(self, "_busy_cache", None)
+        now = time.monotonic()
+        if cached and now - cached[0] < 300:
+            return cached[1]
+        try:
+            text = free_busy_text()
+        except Exception as e:  # noqa: BLE001
+            _log.warning("free/busy for a call not read: %s", e)
+            text = ""
+        self._busy_cache = (now, text)
+        return text
+
+    def _pin_turn(self, text: str) -> bool:
+        """On a call from the owner's cell before the PIN, every turn is answered here by
+        the bridge, not the model; a PIN attempt is checked. The digits never reach the
+        model or the history. True when the turn was handled here."""
+        if str((getattr(self, "params", None) or {}).get("direction") or "").lower() != "inbound":
+            return False
+        state = getattr(self, "pin_state", None)
+        if state in ("verified", "not_required"):
+            return False
+        # Before the PIN nothing the caller says reaches the model: a PIN said in a way
+        # this does not read as one ("four oh seven...", split over two breaths) would
+        # otherwise go to it. Words with a number in them are not kept either.
+        from agent_friday.phone import call_pin
+        digits = call_pin.digits_in(text)
+        if state in ("failed", "unset", "") or digits is None:
+            self.history.append({"who": "caller", "text": "[said a number]"
+                                 if call_pin.has_number(text) else text})
+            if state == "unset":
+                reply = ("No call PIN is set up yet, so I can't open anything of yours on this "
+                         "call. You can set one in Friday's phone settings on your computer.")
+            elif state == "failed":
+                reply = "Your records stay closed on this call."
+            elif call_pin.has_number(text):
+                reply = "Please say just your call PIN, digit by digit."
+            else:
+                reply = "Before I open anything of yours, please say your call PIN."
+        elif call_pin.verify(digits):
+            self.pin_state = "verified"
+            self.history.append({"who": "caller", "text": "[said the call PIN]"})
+            reply = "Thanks, that's you. What can I do?"
+        else:
+            self.pin_tries = int(getattr(self, "pin_tries", 0) or 0) + 1
+            self.history.append({"who": "caller", "text": "[said a call PIN that did not match]"})
+            if self.pin_tries >= call_pin.TRIES_PER_CALL or call_pin.locked():
+                self.pin_state = "failed"
+                reply = "That didn't match. I'll keep your records closed on this call."
+            else:
+                reply = "That PIN didn't match. Please say it again."
+        self.history.append({"who": "friday", "text": reply})
+        self.say(reply)
+        return True
 
     def poll_asks(self) -> None:
         """Tell the caller once the owner has decided something asked for."""
@@ -331,6 +552,8 @@ class CallBridge:
     def _turn(self, pcm16k: bytes) -> None:
         text = (self.engine.transcribe(pcm16k) or "").strip()
         if not text:
+            return
+        if self._pin_turn(text):
             return
         self.history.append({"who": "caller", "text": text})
         try:
@@ -358,7 +581,32 @@ class CallBridge:
             st = msg.get("start") or {}
             self.stream_sid = st.get("streamSid") or msg.get("streamSid") or ""
             self.call_sid = st.get("callSid") or ""
-            self.params = st.get("customParameters") or {}
+            self.params = dict(st.get("customParameters") or {})
+            # "inbound" only with the single-use ticket this call's own TwiML carried;
+            # otherwise the call is treated as one with someone else.
+            claimed = str(self.params.get("direction") or "").lower()
+            # An inbound ticket is bound to its call's SID; an outbound one (minted before
+            # Twilio has a SID) to the approved card it places the call for.
+            bound = self.call_sid if claimed == "inbound" else str(self.params.get("approval_id") or "")
+            if claimed in ("inbound", "outbound") \
+                    and (not bound or ticket_direction(self.params.get("ticket") or "", bound) != claimed):
+                self.params["direction"] = "unverified"
+            self.params.pop("ticket", None)
+            # A call from the owner's cell starts with its records closed until the call
+            # PIN is said (owner ruling 8; on unless switched off at the PC).
+            self.pin_state, self.pin_tries = "", 0
+            if self.params.get("direction") == "inbound":
+                try:
+                    from agent_friday.phone import call_pin
+                    if not call_pin.required():
+                        self.pin_state = "not_required"
+                    elif not call_pin.is_set():
+                        self.pin_state = "unset"
+                    else:
+                        self.pin_state = "needed"
+                except Exception as e:  # noqa: BLE001 - unsure means closed
+                    _log.warning("call PIN state not read: %s", e)
+                    self.pin_state = "unset"
             opening = self.params.get("opening") or ""
             if opening:
                 self.history.append({"who": "friday", "text": opening})

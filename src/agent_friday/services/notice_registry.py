@@ -251,6 +251,10 @@ _ALL = [
     _e("E81", "routes/chat.py:stream", "stream_trace", RECEIPTS, "", route=STREAM, ledger=False),
     _e("E82", "core.py:process_register", "process_orb", ACTIVITY, "", route=AMBIENT,
        ledger=False),
+    # A wrong spoken call PIN on a call from the owner's cell (owner ruling 8): the owner is told
+    # each time; a locked PIN says how to set it again.
+    _e("CP1", "phone/call_pin.py:_tell_owner", "call_pin_wrong", NEEDS_YOU, "call-pin-wrong",
+       source="phone", safety=True),
     # A crash in the middle of an outward action (north star §34.16-1): an approved card whose
     # action began and never recorded its end, and a task whose first outward step was in flight.
     # Whether it happened is not known; nothing is retried; the owner is told once.
