@@ -20,9 +20,11 @@ owns the rules those obey, so each rule is stated once:
 * **No progress (§17.10).** An attempt that produces the same result as an
   earlier one, the same critique, or the same blocker again, stops the
   milestone with a `no_progress` blocker that says what was tried, instead of
-  trying again or failing generically. Within a run, step records (§30.9)
-  that keep reaching no new distinct_progress_key stop it the same way
-  (`stalled_steps`).
+  trying again or failing generically. Within a run, attempts whose
+  attempt-level step record (§30.9, milestone_run) keeps repeating an earlier
+  attempt's distinct_progress_key stop it the same way (`stalled_attempts`);
+  repeated tool-call steps inside attempts are reported (`stalled_steps`),
+  never a reason to stop.
 
 Pure functions over goal dicts; no I/O.
 """
@@ -486,22 +488,58 @@ def repeated(marks: Iterable[Dict[str, Any]], *, output: str = "", critique: str
     return None
 
 
-#: Steps in a row that reached no new distinct_progress_key (§17.10, §30.9):
-#: the same limit as the same blocker in a row.
+#: Steps (or attempts) in a row that reached no new distinct_progress_key
+#: (§17.10, §30.9): the same limit as the same blocker in a row.
 NO_NEW_PROGRESS_LIMIT = SAME_BLOCKER_LIMIT
+
+
+def stalled_attempts(steps: Iterable[Dict[str, Any]], *,
+                     limit: int = NO_NEW_PROGRESS_LIMIT) -> Optional[str]:
+    """Why a goal milestone's run is no progress, or None: the only
+    step-record check that stops a run.
+
+    Only attempt-level steps count (kind ``milestone_run``: one per attempt,
+    its key made of the attempt's result and the set of keys its own steps
+    reached). The run stalls when `limit` attempts in a row each produce an
+    attempt key already seen in this run. The tool calls and subagents inside
+    an attempt never stop it: a retry that re-reads the same files as the
+    first attempt and then produces something different is progress. An
+    attempt without a fingerprinted outcome (no ``result:`` or ``progress:``
+    ref: no fingerprint key was available) neither counts nor resets."""
+    seen: set = set()
+    run = 0
+    for s in steps or ():
+        s = s or {}
+        if s.get("kind") != "milestone_run":
+            continue
+        key = s.get("distinct_progress_key")
+        refs = s.get("output_refs") or []
+        if not key or not any(str(r).startswith(("result:", "progress:")) for r in refs):
+            continue
+        if key in seen:
+            run += 1
+            if run >= limit:
+                return (f"its last {run} attempts came back exactly like an earlier one "
+                        "(the same result from the same work)")
+        else:
+            seen.add(key)
+            run = 0
+    return None
 
 
 def stalled_steps(steps: Iterable[Dict[str, Any]], *,
                   limit: int = NO_NEW_PROGRESS_LIMIT) -> Optional[str]:
-    """Why a run of step records is no progress, or None.
+    """Why a run of step records looks like no progress, or None. Reported
+    (GET /api/tasks/<id>/steps), never a reason to stop a goal: that is
+    `stalled_attempts`, on the attempt-level key only.
 
     Walks the steps in order keeping the distinct_progress_keys seen so far
-    (services/step_records says what a key is made of). A step whose key was
-    already seen made no new progress; a step with a new key resets the count.
-    `limit` such steps in a row anywhere in the run is no progress: repeated
-    identical calls, and cycles (A, B, A, B, ...) once they come round again.
-    A step without a key (older records) neither counts nor resets: for those
-    the attempt-level fingerprints (`repeated`) remain the check."""
+    (services/step_records says what a key is made of: a tool call's key
+    includes its arguments' fingerprint). A step whose key was already seen
+    made no new progress; a step with a new key resets the count. `limit`
+    such steps in a row anywhere in the run: repeated identical calls, and
+    cycles (A, B, A, B, ...) once they come round again. A step without a key
+    (older records) neither counts nor resets."""
     seen: set = set()
     run = 0
     for s in steps or ():

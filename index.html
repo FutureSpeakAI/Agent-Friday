@@ -50492,8 +50492,10 @@ function TaskTimeline({
     setGaps([]);
     const tick = () => fetch('/api/tasks/' + encodeURIComponent(taskId) + '/journal?since=' + cursor.current).then(r => r.ok ? r.json() : null).then(d => {
       if (!alive || !d) return;
+      /* A tool call's step record (§30.9) is never drawn (its tool_call row is): leave it out before keeping the last 400. */
       if (Array.isArray(d.events) && d.events.length) {
-        setEvents(prev => prev.concat(d.events).slice(-400));
+        const shown = d.events.filter(e => !(e && e.kind === 'step' && e.step_kind === 'tool_call'));
+        setEvents(prev => prev.concat(shown).slice(-400));
         cursor.current = d.last_seq || cursor.current;
       }
       if (Array.isArray(d.gaps) && d.gaps.length) setGaps(prev => prev.concat(d.gaps));

@@ -7869,7 +7869,7 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             _opened = _journal().step(
                 "subagent", "running", name=scope or "subagent",
                 output_refs=[_sr.make_ref("task", task_id),
-                             _sr.make_ref("delegation", _sr.fingerprint(_sr.normalize_outcome(prompt or "")))],
+                             _sr.make_ref("delegation", _sr.fingerprint(_sr.normalize_outcome(_sr.capped_outcome(prompt or ""))))],
                 started_at=TASKS[task_id]['created'], task_id=parent_task_id)
             if _opened:
                 # Closed with the child's end state by _task_set (_close_subagent_step).
@@ -17102,21 +17102,6 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
         result = _lib_env.keep_out_of_records(name, result)
     except Exception:
         pass
-    # The artifact manifest (§34.12-2): a file a creating tool made is linked
-    # to its task, its turn and the receipt that allowed the call, with its
-    # hash and structural check. Only a call that went through counts.
-    try:
-        from agent_friday.services import artifact_manifest as _am
-        if name in _am.CREATING_TOOLS:
-            from agent_friday.services import completion_receipts as _cr
-            _went = (_tool_call_status(result) == "ok" and isinstance(result, str)
-                     and not result.lstrip().startswith(_cr.FAILURE_SENTINELS))
-            # Recorded on a background thread: a long video's hash or a big
-            # PDF's check never holds up the conversation.
-            _am.submit(name, args, result, task_id=_journal().current_task(), ok=_went,
-                       started_at=_time.time() - float(duration_ms or 0) / 1000.0)
-    except Exception:
-        pass
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
                           duration_ms=int(duration_ms or 0))
     try:
@@ -17143,17 +17128,42 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
                       wrote=bool(_ok and name in _tl.WRITTEN_PATH_ARGS))
     except Exception:
         pass
+    # The step record beside it (§30.9) holds ids only: the keyed fingerprint
+    # of the arguments (hashed as the gate hashes them), the full result's
+    # and those of the files this call wrote. Worked out on its own: a ref
+    # that cannot be made never keeps the tool_call event from being written.
+    _step_in, _step_out, _step_hashes = [], [], {}
     try:
-        # The step record beside it (§30.9) holds ids only: the arguments'
-        # hash (the one the gate's receipt carries), the full result's
-        # fingerprint and the fingerprints of files this call wrote.
-        _step_in, _step_out = [], []
-        if _journal().current_task():
+        _step_task = _journal().current_task()
+        if _step_task:
             from agent_friday.services import artifact_manifest as _am_ref
             from agent_friday.services import step_records as _sr
-            _ah = _am_ref.args_hash(args)
-            _step_in = [_sr.make_ref("args", _ah[:16])] if _ah else []
-            _step_out = _sr.artifact_refs(name, args, result) if _ok else []
+            _fk = _sr.fp_key()
+            _ah = _am_ref.args_hash(args) if _fk else None
+            _args_ref = _sr.make_ref("args", _sr.fingerprint(_ah, _fk)) if _ah else None
+            _step_in = [_args_ref] if _args_ref else []
+            _step_out = (_sr.artifact_refs(name, args, result, task_id=_step_task, key=_fk,
+                                           hashes=_step_hashes) if (_ok and _fk) else [])
+    except Exception:
+        _step_in, _step_out, _step_hashes = [], [], {}
+    # The artifact manifest (§34.12-2): a file a creating tool made is linked
+    # to its task, its turn and the receipt that allowed the call, with its
+    # hash and structural check. Only a call that went through counts. The
+    # hashes the step just took are handed over, not taken again.
+    try:
+        from agent_friday.services import artifact_manifest as _am
+        if name in _am.CREATING_TOOLS:
+            from agent_friday.services import completion_receipts as _cr
+            _went = (_tool_call_status(result) == "ok" and isinstance(result, str)
+                     and not result.lstrip().startswith(_cr.FAILURE_SENTINELS))
+            # Recorded on a background thread: a long video's hash or a big
+            # PDF's check never holds up the conversation.
+            _am.submit(name, args, result, task_id=_journal().current_task(), ok=_went,
+                       started_at=_time.time() - float(duration_ms or 0) / 1000.0,
+                       known_sha256=_step_hashes)
+    except Exception:
+        pass
+    try:
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
                              ok=_ok, duration_ms=int(duration_ms or 0),
