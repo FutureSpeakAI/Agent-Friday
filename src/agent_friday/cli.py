@@ -2187,6 +2187,8 @@ def cmd_bundle(args):
         return 1
     print("Made and verified %s (%d files) at %s." % (m["bundle_id"], len(m["files"]), dest))
     print("Keep the passphrase: without it the bundle cannot be opened.")
+    for line in fb.PROTECTION_LINES[:2]:
+        print(line)
     return 0
 
 
