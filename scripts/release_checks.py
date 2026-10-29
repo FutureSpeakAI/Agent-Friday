@@ -12,16 +12,20 @@ Runs services/outward_audit over the ledger of the Friday home named by
 ``--strict`` also refuses a duplicate terminal receipt and a task marked done
 too early (false_done). Only signed ledger lines are read, so a ledger the
 ledger's own check cannot vouch for refuses (exit 3), never passes empty: no
-governance key on the machine (none is created), records signed with
-another key, or records of which none verify.
+governance key on the machine (none is created), no ledger folder, any open
+break the ledger's own check reports (a changed, deleted or out-of-chain
+line, even one), records signed with another key, or an empty ledger (unless
+``--allow-empty``).
 
-Counts, action ids and keys only. Read-only: it creates no key and writes nothing.
+Counts, action ids and keys only. Read-only: it creates no key, and a missing
+ledger folder is refused before anything could create it.
 Exit codes: 0 clean, 1 refused, 3 usage error or the ledger could not be read.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -45,15 +49,20 @@ _UNVERIFIED = ("signature does not match", "signed with a key this device does n
                "changed after it was written", "cannot be read as a record")
 
 
-def _ledger_checkable(L) -> str:
+def _ledger_checkable(L, *, allow_empty: bool = False) -> str:
     """'' when the ledger's own check (action_ledger.verify, read-only) can
     vouch for the lines the audit reads; else why not. The governance key is
     looked for WITHOUT creating one (doctor._governance_key_present): a release
-    check never mints a key, which would sign nothing and pass empty."""
+    check never mints a key, which would sign nothing and pass empty. A
+    missing ledger folder refuses before verify runs, so nothing creates it.
+    Any open break refuses: one changed or deleted line in the middle hides
+    the records it carried from the audit, which would then pass short."""
     from agent_friday.services import doctor
     present, _where = doctor._governance_key_present()
     if not present:
         return "no governance key on this machine"
+    if not Path(L.ledger_dir()).is_dir():
+        return "no ledger folder at %s" % L.ledger_dir()
     r = L.verify(force=True, migrate=False)
     if not r.get("key_available"):
         return "the governance key could not be read"
@@ -64,20 +73,29 @@ def _ledger_checkable(L) -> str:
            if any(s in str(p.get("reason") or "") for s in _UNVERIFIED)}
     if records > 0 and len(bad) >= records:
         return "none of the %d record(s) verify" % records
+    open_n = int(r.get("open_problem_count") or 0)
+    if not r.get("ok") or open_n > 0:
+        return "the ledger's own check found %d open break(s)" % max(open_n, 1)
+    if records == 0 and not allow_empty:
+        return "the ledger is empty (pass --allow-empty if that is expected)"
     return ""
 
 
-def run(*, days: float = 30.0, settled: bool = False, strict: bool = False) -> tuple[int, dict]:
+def run(*, days: float = 30.0, settled: bool = False, strict: bool = False,
+        allow_empty: bool = False) -> tuple[int, dict]:
     """(exit code, report) for the ledger of the Friday home in the
     environment. `settled`: judge every decision as past its grace period
     (a ledger from a finished run, such as CI's). Read-only: creates no key
-    and writes nothing; a ledger it cannot vouch for is exit 3, never clean."""
+    and no ledger folder; a ledger it cannot vouch for, or an empty one
+    without `allow_empty`, is exit 3, never clean."""
+    if not (isinstance(days, (int, float)) and math.isfinite(float(days)) and float(days) > 0):
+        return 3, {"error": "days must be a finite number above 0"}
     if str(ROOT / "src") not in sys.path:
         sys.path.insert(0, str(ROOT / "src"))
     from agent_friday.services import action_ledger as L
     from agent_friday.services import outward_audit
     try:
-        why = _ledger_checkable(L)
+        why = _ledger_checkable(L, allow_empty=allow_empty)
     except Exception as e:  # noqa: BLE001 - an unreadable ledger never passes empty
         why = type(e).__name__
     if why:
@@ -99,15 +117,22 @@ def main(argv: list[str] | None = None) -> int:
                     help="the run is over: no decision is still inside its grace period")
     ap.add_argument("--strict", action="store_true",
                     help="also refuse duplicate terminal receipts and false done")
+    ap.add_argument("--allow-empty", action="store_true",
+                    help="an empty ledger is clean (otherwise it refuses, exit 3)")
     ap.add_argument("--json", action="store_true", help="print the report as JSON")
-    a = ap.parse_args(argv)
-    if a.days <= 0:
-        print("release checks: --days must be positive", flush=True)
+    try:
+        a = ap.parse_args(argv)
+    except SystemExit as e:
+        # argparse exits 2 on a usage error (and 0 for --help): a usage error is 3 here
+        return 0 if e.code in (0, None) else 3
+    if not (math.isfinite(a.days) and a.days > 0):
+        print("release checks: --days must be a finite number above 0", flush=True)
         return 3
     if a.home:
         os.environ["FRIDAY_HOME"] = str(Path(a.home).expanduser())
     try:
-        code, report = run(days=a.days, settled=a.settled, strict=a.strict)
+        code, report = run(days=a.days, settled=a.settled, strict=a.strict,
+                           allow_empty=a.allow_empty)
     except Exception as e:  # noqa: BLE001
         print("release checks: REFUSED, the audit could not run: %s" % type(e).__name__, flush=True)
         return 3

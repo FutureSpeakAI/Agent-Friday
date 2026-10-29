@@ -636,7 +636,9 @@ def test_a_takedown_leaves_one_decision_and_one_terminal_outcome(client, gate_op
     decs, outs = _takedown_receipts()
     assert len(decs) == 1
     d = decs[0]
-    assert d["class"] == gate_open.OUTWARD and d["surface"] == "owner_route"
+    # the surface is the request's derived origin (owner_route when verified as the owner's)
+    assert d["class"] == gate_open.OUTWARD and d["surface"] in ("owner_route", "route")
+    assert d["surface"] == (d.get("envelope") or {}).get("origin", d["surface"])
     assert d["target"] == "mock:mock-take-rcpt"
     assert len(outs) == 1
     assert outs[0]["action_id"] == d["action_id"]
@@ -722,6 +724,30 @@ def test_a_failed_takedown_is_kept_and_a_retry_takes_down_only_what_is_left(
     tried.clear()
     body = client.delete(f"/api/content/posts/{post['id']}?takedown=1").get_json()
     assert body["ok"] and tried == [] and body.get("already_taken_down") == [tid]
+
+
+def test_a_taken_down_target_is_marked_and_not_deleted_again_without_the_log(
+        client, gate_open, monkeypatch):
+    """A takedown that worked is recorded on the target (taken_down_at), so a
+    retry skips it even when the rotating publish log no longer has the line."""
+    adapter, post = _published_on_mock(client, "mock-take-mark")
+    tid = client.get(f"/api/content/posts/{post['id']}").get_json()["post"]["targets"][0]["id"]
+    tried = []
+    monkeypatch.setattr(adapter, "delete", lambda pid: tried.append(pid) or {"ok": True})
+    body = client.delete(f"/api/content/posts/{post['id']}?takedown=1").get_json()
+    assert body["ok"] and tried == ["mock-take-mark"]
+    t = cp.get_target(tid)["target"]
+    assert t["taken_down_at"], t
+    # the publish log rotated away: the target's own record still says so
+    monkeypatch.setattr(cp, "read_publish_log", lambda *a, **k: {"ok": True, "entries": []})
+    tried.clear()
+    body = client.delete(f"/api/content/posts/{post['id']}?takedown=1").get_json()
+    assert body["ok"] and tried == [], "not deleted again"
+    assert body.get("already_taken_down") == [tid]
+    assert "takedowns" not in body
+    # a composer patch cannot set or clear the record
+    assert cp._TARGET_RECORD_KEYS == ("taken_down_at",)
+    assert "taken_down_at" not in cp._TARGET_PAYLOAD_KEYS
 
 
 # ═════════════════════════════════════════════════════════════════════════════

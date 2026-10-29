@@ -463,9 +463,10 @@ def test_a_one_shot_send_repeated_in_one_task_is_refused(monkeypatch, tool):
                                           ("denied", G.DENIED), ("error", G.FAILED),
                                           ("failed", G.FAILED)])
 def test_a_handler_dict_that_did_not_run_is_not_executed_and_a_retry_runs(monkeypatch, status, word):
-    """A handler's {"status": "waiting"} (or refused, denied, error, failed) is
-    recorded as that outcome, never executed, so a retry of the same one-shot
-    request in the same task is not refused as already done."""
+    """A handler's {"status": "waiting"} (or refused, denied, error, failed)
+    from an outward tool that is not one-shot is recorded as that outcome,
+    never executed, and a retry in the same task runs. (A one-shot tool's own
+    dict answer is never downgraded: see the test below.)"""
     import agent_friday.services.agent as agent
     from agent_friday.services import taint
     agent._PENDING_CONFIRMATIONS.clear()
@@ -473,7 +474,8 @@ def test_a_handler_dict_that_did_not_run_is_not_executed_and_a_retry_runs(monkey
     monkeypatch.setattr(G, "_decide",
                         lambda tool, klass, why, ctx, *a, **k: G.Verdict("allow", klass, "test"))
     tool = "save_google_contact"
-    assert G.is_one_shot(tool)
+    monkeypatch.setattr(G, "ONE_SHOT_ACTIONS", G.ONE_SHOT_ACTIONS - {tool})
+    assert not G.is_one_shot(tool)
     calls = []
 
     def handler(inp):
@@ -493,6 +495,71 @@ def test_a_handler_dict_that_did_not_run_is_not_executed_and_a_retry_runs(monkey
     assert words == [word, word], words
     assert G.EXECUTED not in words
     taint.reset()
+
+
+@pytest.mark.parametrize("status", ["queued", "waiting", "failed"])
+def test_a_one_shot_tools_own_dict_answer_is_not_downgraded(monkeypatch, status):
+    """A one-shot send whose handler answers {"status": "queued"} (or any other
+    status) has gone: it is recorded as executed, and the same request asked
+    again in the task is refused as already done, never sent twice."""
+    import agent_friday.services.agent as agent
+    from agent_friday.services import taint
+    agent._PENDING_CONFIRMATIONS.clear()
+    taint.reset()
+    monkeypatch.setattr(G, "_decide",
+                        lambda tool, klass, why, ctx, *a, **k: G.Verdict("allow", klass, "test"))
+    tool = "save_google_contact"
+    assert G.is_one_shot(tool)
+    assert agent._dict_outcome(tool, {"status": status}) is None
+    assert agent._dict_outcome("probe_not_one_shot", {"status": "queued"}) is None, \
+        "queued is not a waiting status"
+    calls = []
+
+    def handler(inp):
+        calls.append(inp)
+        return {"status": status}
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, tool, handler)
+    ctx = {"is_background_task": True, "task_id": "t-a8-oneshot-dict-%s" % status}
+    args = _args_for(agent, tool)
+    for _ in range(2):
+        agent._hooks.reset_rate_limiter()
+        agent._call_verifier.reset(ctx)
+        agent._execute_tool(tool, dict(args), session_ctx=ctx)
+    assert len(calls) == 1, "the repeat was refused as already done"
+    decs = [d for d in _decisions(tool) if (d.get("envelope") or {}).get("origin") == "task"]
+    words = [o["outcome"] for o in _outcomes(decs[0]["action_id"])]
+    assert words and G.WAITING not in words and G.FAILED not in words, words
+    assert decs[-1]["decision"] == "deny" and decs[-1]["detail"] == "duplicate_key"
+    taint.reset()
+
+
+def test_a_browser_connector_tool_repeated_in_one_task_is_not_refused(monkeypatch):
+    """A browser or UI-automation connector tool (a click, a keypress) is not
+    one-shot: the same click twice in one task runs twice."""
+    _allow_outward(monkeypatch)
+    for t in ("mcp_playwright_browser_click", "mcp_playwright_browser_type",
+              "mcp_puppeteer_navigate", "mcp_playwright_browser_file_upload",
+              "mcp_github_list_issues"):
+        assert not G.is_one_shot(t), t
+    tool = "mcp_playwright_browser_click"
+    ctx = {"is_background_task": True, "task_id": "t-a8-browser-click"}
+    for _ in range(2):
+        v = G.authorize(tool, {"ref": "e12"}, ctx, via="tool_call")
+        assert v.action == "allow", v.reason
+        G.record_outcome(tool, G.LAST_RECEIPT.get(), "ok")
+
+
+def test_a_connector_send_repeated_in_one_task_is_refused(monkeypatch):
+    _allow_outward(monkeypatch)
+    for t in ("mcp_slack_send_message", "mcp_slack_sendMessage", "mcp_gmail_reply",
+              "mcp_calendar_create_event", "mcp_x_publish_post"):
+        assert G.is_one_shot(t), t
+    tool = "mcp_slack_send_message"
+    ctx = {"is_background_task": True, "task_id": "t-a8-slack-send"}
+    assert G.authorize(tool, {"to": "a"}, ctx, via="tool_call").action == "allow"
+    G.record_outcome(tool, G.LAST_RECEIPT.get(), "ok")
+    v = G.authorize(tool, {"to": "a"}, ctx, via="tool_call")
+    assert v.action == "deny" and v.reason == G.ALREADY_DONE_REASON
 
 
 # ── 5. one integrity view ───────────────────────────────────────────────────

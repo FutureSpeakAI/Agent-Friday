@@ -381,21 +381,27 @@ def content_post_delete(post_id):
     `takedown_status: TAKEDOWN_FAILED` with the failed target ids
     (`takedown_failed`); each attempt is in the publish log, so the owner
     retries with the same DELETE ?takedown=1, which takes down only the
-    targets not already taken down (`already_taken_down`)."""
+    targets not already taken down (`already_taken_down`): a target whose
+    takedown worked carries `taken_down_at` (store.mark_taken_down), and the
+    publish log is read too, for a takedown recorded before that field."""
     # Snapshot the confirmed targets before the erase sweeps their statuses.
     got = store.get_post(post_id)
     confirmed = [t for t in ((got.get("post") or {}).get("targets") or [])
                  if t.get("status") == "CONFIRMED" and t.get("platform_post_id")]
     from agent_friday.governance import action_gate as _gate
     takedown = request.args.get("takedown") in ("1", "true", "yes")
-    already = _taken_down(post_id) if (takedown and confirmed) else set()
+    already = set()
+    if takedown and confirmed:
+        already = {t.get("id") for t in confirmed if t.get("taken_down_at")} | _taken_down(post_id)
     confirmed = [t for t in confirmed if t.get("id") not in already]
     decision = None
     if takedown and confirmed:
         target = ",".join("%s:%s" % (t.get("platform") or "?", t["platform_post_id"])
                           for t in confirmed)[:300]
         try:
-            decision = _gate.record_external("content:takedown", surface="owner_route",
+            # the surface is the request's own derived origin: owner_route only
+            # when the request is verified as the owner's, else route
+            decision = _gate.record_external("content:takedown", surface=_gate.derive_origin(),
                                              target=target)
         except _gate.Held as e:
             return jsonify({"ok": False, "status": "error", "held": True,
@@ -425,6 +431,13 @@ def content_post_delete(post_id):
                 res = {"ok": False, "error": error_text(e, "Couldn't take the post down")}
             res = res if isinstance(res, dict) else {"ok": False}
             takedowns.append({"target_id": t["id"], **res})
+            if res.get("ok"):
+                # on the target itself, so a retry skips it even after the
+                # rotating publish log has dropped this line
+                try:
+                    store.mark_taken_down(t["id"])
+                except Exception:  # noqa: BLE001 - the publish log below still records it
+                    pass
             store.append_publish_log({
                 "event": "takedown", "post_id": post_id,
                 "target_id": t["id"], "platform": t.get("platform"),

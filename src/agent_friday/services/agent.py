@@ -14240,9 +14240,10 @@ def _handler_outcome(name, result):
 
 #: A handler's dict result whose "status" says the action did not run (yet),
 #: as (outcome status, outcome word): it is never recorded as executed, so a
-#: retry is never refused as already done.
+#: retry is never refused as already done. Not "queued": a send that was
+#: queued at the other end has gone, and is never retried as if it had not.
 _DICT_STATUS_WAITING = frozenset({"waiting", "pending", "pending_approval", "awaiting_approval",
-                                  "needs_approval", "approval_required", "queued"})
+                                  "needs_approval", "approval_required"})
 _DICT_STATUS_DENIED = frozenset({"refused", "denied", "rejected", "declined", "blocked"})
 _DICT_STATUS_FAILED = frozenset({"error", "failed"})
 
@@ -14251,10 +14252,15 @@ def _dict_outcome(name, result):
     """(status, outcome word) for a handler's dict result that says it is
     waiting (ok, waiting), was refused (refused, denied) or failed (error,
     failed); else None. Friday's own handlers only (a connector's reply is the
-    service's words, as for `_handler_outcome`). Never raises."""
+    service's words, as for `_handler_outcome`), and never a one-shot tool
+    (action_gate.is_one_shot): a one-shot send's own dict answer is never
+    downgraded, so a retry of it is refused rather than sent twice. Never
+    raises."""
     try:
         from agent_friday.governance import action_gate as _g
         if not isinstance(result, dict) or str(name or "").strip().lower().startswith("mcp_"):
+            return None
+        if _g.is_one_shot(name):
             return None
         s = str(result.get("status") or "").strip().lower()
         if s in _DICT_STATUS_WAITING:
