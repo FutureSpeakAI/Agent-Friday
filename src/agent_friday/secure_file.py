@@ -42,8 +42,16 @@ def harden(path: Path) -> bool:
         except Exception:
             ok = False
     if not ok:
-        _log.warning("could not restrict a protected file to this user (%s)", path.name)
+        _log.warning("could not restrict a protected file to this user")
     return ok
+
+
+def _flush(fh) -> None:
+    """fsync a written file, except under the test suite (as the action
+    ledger does: FRIDAY_TESTING without FRIDAY_LEDGER_FSYNC)."""
+    if os.environ.get("FRIDAY_TESTING") == "1" and os.environ.get("FRIDAY_LEDGER_FSYNC") != "1":
+        return
+    os.fsync(fh.fileno())
 
 
 def create_exclusive(path: Path, data: bytes, *, harden_file: bool = True,
@@ -67,7 +75,7 @@ def create_exclusive(path: Path, data: bytes, *, harden_file: bool = True,
         tmp.write_bytes(data)
         try:
             with open(tmp, "r+b") as fh:          # a writable handle: fsync needs one on Windows
-                os.fsync(fh.fileno())
+                _flush(fh)
         except Exception:
             pass
         if harden_file:
@@ -96,7 +104,7 @@ def create_exclusive(path: Path, data: bytes, *, harden_file: bool = True,
                     with os.fdopen(fd, "wb") as fh:
                         fh.write(data)
                         fh.flush()
-                        os.fsync(fh.fileno())
+                        _flush(fh)
                 except BaseException:
                     # never leave a half-written key where a reader would find it
                     try:

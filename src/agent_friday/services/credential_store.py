@@ -478,7 +478,7 @@ def harden_permissions(path: Path) -> bool:
     if not ok:
         import logging
         logging.getLogger("friday.credential_store").warning(
-            "could not restrict a protected file to this user (%s)", path.name)
+            "could not restrict a protected file to this user")
     return ok
 
 
