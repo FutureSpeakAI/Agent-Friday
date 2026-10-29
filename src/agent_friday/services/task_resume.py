@@ -226,6 +226,12 @@ def mark_tool_pending(task_id, tool_name, tool_use_id=None) -> None:
 
 
 def clear_tool_pending(task_id) -> None:
+    """The tool RETURNED. Its marker is not dropped here: the tool's result reaches the disk only
+    with the round's checkpoint (``checkpoint`` writes ``pending_tool: None``), and a crash before
+    that left a transcript with no trace of the call, so a resume asked the model again and it
+    re-issued the same outward call (NS-33.6-2 c). The marker is kept, marked finished, and the
+    tool joins ``round_done`` (every tool that finished since the last checkpoint), so the resume
+    path knows a tool ran whose result was not saved. Never raises."""
     if not task_id or not enabled():
         return
     try:
@@ -233,10 +239,38 @@ def clear_tool_pending(task_id) -> None:
             blob = _journal().read_blob(task_id, BLOB)
             if not blob or not blob.get("pending_tool"):
                 return
-            blob["pending_tool"] = None
+            pt = dict(blob["pending_tool"])
+            if not pt.get("finished"):
+                done = list(blob.get("round_done") or [])
+                done.append(pt.get("name") or "?")
+                blob["round_done"] = done[-50:]
+            pt["finished"] = True
+            blob["pending_tool"] = pt
             _journal().write_blob(task_id, BLOB, blob)
     except Exception:
         pass
+
+
+def _unsaved_effects(blob: Dict[str, Any]) -> Tuple[List[str], str]:
+    """(tools that are not replay-safe and finished since the last checkpoint, the one in flight
+    if it is not replay-safe or "")."""
+    done = [n for n in (blob.get("round_done") or []) if n and not replay_safe(n)]
+    pt = blob.get("pending_tool") or {}
+    running = ""
+    if pt and not pt.get("finished") and not replay_safe(pt.get("name") or ""):
+        running = pt.get("name") or "?"
+    return list(dict.fromkeys(done)), running
+
+
+def _unsaved_words(done: List[str], running: str) -> str:
+    parts = []
+    if done:
+        parts.append("%s finished, but %s result was not saved before the process stopped"
+                     % (", ".join("'%s'" % n for n in done), "its" if len(done) == 1 else "their"))
+    if running:
+        parts.append("'%s' was running when the process stopped, and nothing on disk can say "
+                     "whether it finished" % running)
+    return "; ".join(parts)
 
 
 def read(task_id) -> Optional[Dict[str, Any]]:
@@ -298,6 +332,11 @@ def resumability(task_id) -> Dict[str, Any]:
     ledger_verdict = _ledger_resumability(task_id, int(verdict.get("attempts") or 0))
     if not ledger_verdict.get("resumable"):
         return verdict
+    if verdict.get("may_have_acted"):
+        # An outward step ran (or was running) and its result was never saved in the transcript:
+        # the ledger may pick the task up, but only once the owner says so (NS-33.6-2 c).
+        ledger_verdict["needs_confirmation"] = True
+        ledger_verdict["reason"] = verdict["reason"] + " " + ledger_verdict["reason"]
     if verdict.get("unreadable"):
         ledger_verdict["reason"] = ("the transcript checkpoint cannot be read (most likely "
                                     "written under a previous vault passphrase); resuming "
@@ -372,14 +411,17 @@ def _checkpoint_resumability(task_id) -> Dict[str, Any]:
         return {**out, "resumable": False,
                 "reason": f"checkpoint format v{blob.get('version')} is not v{VERSION}"}
     if blob.get("first_step"):
-        pt = blob.get("pending_tool") or {}
-        name = pt.get("name") or ""
-        if pt and not replay_safe(name):
+        done, running = _unsaved_effects(blob)
+        if done or running:
+            if running and not done:
+                why = (f"'{running}' was running when the process stopped, and no "
+                       f"transcript was saved to resume from. Whether it took effect "
+                       f"is not known. Check before starting the task again.")
+            else:
+                why = (_unsaved_words(done, running) + ", and no transcript was saved to resume "
+                       "from. It may have taken effect. Check before starting the task again.")
             return {**out, "resumable": False, "may_have_acted": True,
-                    "announced": bool(blob.get("announced_at")),
-                    "reason": (f"'{name}' was running when the process stopped, and no "
-                               f"transcript was saved to resume from. Whether it took effect "
-                               f"is not known. Check before starting the task again.")}
+                    "announced": bool(blob.get("announced_at")), "reason": why}
         return {**out, "resumable": False, "reason": "no checkpoint was written"}
     # Which loop wrote this. Only the Anthropic one can be re-entered today,
     # and resuming an OpenAI-shaped transcript through _call_claude_agent
@@ -403,17 +445,24 @@ def _checkpoint_resumability(task_id) -> Dict[str, Any]:
                 "reason": "the saved transcript has a tool call with no result - "
                           "it would be rejected by the API"}
     pt = blob.get("pending_tool")
-    if pt:
+    done, running = _unsaved_effects(blob)
+    if running and not done:
+        out["needs_confirmation"] = True
+        out["reason"] = (
+            f"'{running}' was running when the process stopped, and nothing on "
+            f"disk can say whether it finished. Resuming re-runs it. If it "
+            f"had already taken effect, it will take effect twice.")
+    elif done:
+        # A tool that changes things finished after the last save: the saved transcript does not
+        # show it, so a resume would ask for it again and it would take effect twice.
+        out["needs_confirmation"] = True
+        out["reason"] = (_unsaved_words(done, running) + ". Resuming would run "
+                         + ("it" if len(done) + bool(running) == 1 else "them")
+                         + " again, so anything that already took effect would take effect twice.")
+    elif pt:
         name = pt.get("name") or "?"
-        if replay_safe(name):
-            out["reason"] = (f"'{name}' was running when the process stopped. "
-                             f"It only reads, so re-running it changes nothing.")
-        else:
-            out["needs_confirmation"] = True
-            out["reason"] = (
-                f"'{name}' was running when the process stopped, and nothing on "
-                f"disk can say whether it finished. Resuming re-runs it. If it "
-                f"had already taken effect, it will take effect twice.")
+        out["reason"] = (f"'{name}' {'had finished, unsaved,' if pt.get('finished') else 'was running'} "
+                         f"when the process stopped. It only reads, so re-running it changes nothing.")
     else:
         out["reason"] = (f"{out['iteration']} step(s) of work are saved and will "
                          f"not be redone.")
@@ -505,6 +554,14 @@ def resume(task_id, *, confirm_pending: bool = False,
         return _resume_from_ledger(task_id, verdict)
 
     blob = read(task_id) or {}
+    unsaved, _running = _unsaved_effects(blob)
+    if unsaved:
+        # The owner said go on, but the saved transcript does not show these finished calls, so the
+        # model would ask for them again. The task ledger recorded them with their results: continue
+        # from it when it can; otherwise the transcript is told, before anything runs.
+        ledger_verdict = _ledger_resumability(task_id, int(verdict.get("attempts") or 0))
+        if ledger_verdict.get("resumable"):
+            return _resume_from_ledger(task_id, ledger_verdict)
     from agent_friday.services import cloud_mode_policy as _cmp
     _pinned = bool((session_ctx or {}).get("cloud_pin")
                    or (blob.get("run_context") or {}).get("cloud_pin"))
@@ -525,6 +582,15 @@ def resume(task_id, *, confirm_pending: bool = False,
     from agent_friday.services.compaction import strip_thinking
     convo = strip_thinking(blob.get("convo") or [])
     tool_trace = blob.get("tool_trace") or []
+    if unsaved and convo and convo[-1].get("role") == "user":
+        note = ("[Friday restarted. Before it stopped, these calls already ran and their results "
+                "were not saved: %s. Do NOT call them again; carry on from what they did, and say "
+                "if you cannot tell whether they worked.]" % ", ".join(unsaved))
+        last = dict(convo[-1])
+        content = last.get("content")
+        last["content"] = (list(content) + [{"type": "text", "text": note}] if isinstance(content, list)
+                           else (str(content or "") + "\n\n" + note))
+        convo = convo[:-1] + [last]
 
     ctx = dict(session_ctx or {})
     # Only the stored invocation supplies grant/owner context after a restart.
@@ -694,8 +760,8 @@ def announce_may_have_acted(items: List[Dict[str, Any]]) -> None:
         return
     names = ", ".join((r.get("name") or r["task_id"])[:40] for r in items[:5])
     more = f" and {len(items) - 5} more" if len(items) > 5 else ""
-    body = (f"{names}{more} stopped while doing something outward (such as sending) as "
-            f"its first step. Whether it happened is not known, and Friday will not "
+    body = (f"{names}{more} stopped while, or just after, doing something outward (such as "
+            f"sending) as its first step. It may have happened, and Friday will not "
             f"repeat it on its own. Check before starting {'it' if len(items) == 1 else 'them'} again.")
     try:
         import agent_friday.notifications_engine as ne
@@ -746,8 +812,8 @@ def announce(resumable: List[Dict[str, Any]], resumed: Optional[List[str]] = Non
         if resumed:
             body += f" {len(resumed)} of them are already being resumed."
     if gated:
-        body += (f" {len(gated)} had a tool running at the moment of the crash "
-                 f"and will ask before re-running it.")
+        body += (f" {len(gated)} had a tool running at the moment of the crash, or one that "
+                 f"finished without its result being saved, and will ask before running it again.")
     try:
         import agent_friday.notifications_engine as ne
         ne.push(title=f"{len(items)} interrupted task"
