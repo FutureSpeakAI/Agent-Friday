@@ -64,7 +64,9 @@ class TelegramBridge(ChannelAdapter):
         try:
             r = self._call("sendMessage",
                           {"chat_id": chat_id, "text": text[:4096]})
-            return {"ok": bool(r.get("ok"))}
+            sent = r.get("result") if isinstance(r.get("result"), dict) else {}
+            return {"ok": bool(r.get("ok")),
+                    **({"message_id": sent["message_id"]} if r.get("ok") and sent.get("message_id") else {})}
         except Exception as e:
             self._last_error = exception_text(e)
             from agent_friday.services.channels.base import send_unsure

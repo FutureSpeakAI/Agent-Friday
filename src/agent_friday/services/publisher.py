@@ -1290,10 +1290,15 @@ def request_publish_approval(post_id: str) -> Dict[str, Any]:
                 if latest is None or latest.get("consumed") or latest.get("status") == "expired":
                     _ensure_decision_hook()
                     _note_card_due(target, post)
-                    action_gate.authorize_external(
+                    v = action_gate.authorize_external(
                         PUBLISH_ACTION, detail, requested_by="publisher",
                         **_card_words(target, post, texts, False))
                     latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
+                    # Raising cards publishes nothing. Should the check have found and used an
+                    # approved card for exactly this target, that decision was not carried out
+                    # here: its outcome says so (dispatch decides again, _authorize_publish).
+                    action_gate.close_external(action_gate.decision_ref_of(v), False,
+                                               detail="not_sent_when_armed")
                 stale = bool(latest and fresh_after is not None
                              and latest.get("status") == "approved"
                              and not latest.get("consumed")

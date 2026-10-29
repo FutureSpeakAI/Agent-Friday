@@ -241,9 +241,21 @@ def _records(site, folder, pattern):
     return sorted(rows, key=lambda row: row.get("created_at", 0), reverse=True)
 
 
+#: Internal fields of an operation record that never leave in a public view (the kept decision is the
+#: ledger's to read; a caller never sees or hands it back).
+_PRIVATE_OPERATION_FIELDS = ("decision_ref",)
+
+
+def _public_operation(operation):
+    """An operation record as a public view shows it: without its internal fields."""
+    if not isinstance(operation, dict):
+        return operation
+    return {k: v for k, v in operation.items() if k not in _PRIVATE_OPERATION_FIELDS}
+
+
 def _overview(site):
     builds = _records(site, "builds", "build-*/build.json")
-    operations = _records(site, "operations", "op-*.json")
+    operations = [_public_operation(row) for row in _records(site, "operations", "op-*.json")]
     deployments = [row for row in operations if row["action"] == "publish"]
     last_verified = next((row for row in deployments if row.get("verified_at")), None)
     current = copy.deepcopy(last_verified)
@@ -397,6 +409,8 @@ def register():
     from agent_friday.services import approvals
     approvals.register_decision_hook(KIND, _on_decision)
     _REGISTERED = True
+    # decisions a publication left waiting on its record whose final state nobody found out
+    _expire_in_background()
 
 
 def _matches_card(record, operation):
@@ -473,6 +487,7 @@ def _perform(record):
         build = _build(site, operation["build_id"])
         if operation["action"] == "build":
             decision = action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=site["codebase_id"])
+            _keep_decision(operation, decision)
             result = site_builds.execute_build(site, build)
             from agent_friday.services import conversations
             with LOCK, conversations._LOCK:
@@ -480,8 +495,8 @@ def _perform(record):
                 build.update(result, finished_at=time.time())
                 _write(site_builds.build_dir(site["site_id"], build["build_id"]) / "build.json", build)
                 operation.update(status=build["status"], error=build.get("error"), build_id=build["build_id"], finished_at=time.time())
+                _settle_decision(decision, operation)
                 _save_operation(operation)
-                _close_decision(decision, operation)
                 return
         else:
             from agent_friday.services import site_hosting, conversations
@@ -504,13 +519,15 @@ def _perform(record):
                 stack.enter_context(conversations._LOCK)
                 _approved_operation(record)
                 decision = action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=operation["connection"]["connection_id"])
+                # kept on the record before anything is sent, so the later inspect can close it
+                _keep_decision(operation, decision)
                 remote_started = True
                 receipt = publish_adapters.publish_site(bundle, connection, hostname=(site.get("domain") or {}).get("hostname", ""),
                                                         privacy_generation=operation["privacy_generation"])
                 operation.update(receipt)
                 operation["finished_at"] = time.time()
+                _settle_decision(decision, operation)
                 _save_operation(operation)
-                _close_decision(decision, operation)
                 return
     except Exception:
         # Provider errors may contain credential echoes. No exception text is persisted or returned.
@@ -518,7 +535,7 @@ def _perform(record):
                          error="The provider outcome is uncertain. Inspect this operation before any new publish." if remote_started else
                                "The operation could not complete. Check ownership, source, connection and the build output before preparing it again.")
     operation["finished_at"] = time.time()
-    _close_decision(decision, operation)
+    _settle_decision(decision, operation)
     try:
         with LOCK:
             _save_operation(operation)
@@ -537,10 +554,142 @@ def _perform(record):
 
 
 #: An operation's status after it ran, as an outcome word (governance/action_gate.OUTCOMES).
-#: provider_pending and unknown stay unconfirmed: the later reconcile (inspect) does not carry the
-#: decision, so the audit lists them for the owner to check.
+#: provider_accepted, provider_pending, partial and unknown are unconfirmed (not terminal): the
+#: decision stays on the operation record (`decision_ref`) and the later reconcile
+#: (deployment_status, `_close_reconciled`) closes it once the final state is known, or the
+#: expiry (`expire_decisions`) closes it when nobody ever finds out.
 _STATUS_OUTCOME = {"built": "executed", "failed": "failed", "refused": "failed",
                    "provider_ready": "executed", "provider_pending": "unconfirmed", "unknown": "unconfirmed"}
+
+#: A reconciled publication's final state, as an outcome word: live and matching -> completed_verified;
+#: the provider's build failed -> failed. Anything else is not final yet.
+_RECONCILED_OUTCOME = {"verified_live": "completed_verified", "failed": "failed", "provider_failed": "failed"}
+
+#: Statuses that say the provider built the deployment (its content or certificate not yet proven live).
+_PROVIDER_READY = frozenset({"provider_ready", "content_pending", "certificate_pending", "verification_pending"})
+
+#: How long a decision may wait on its record for the final state before it is closed on expiry.
+DECISION_EXPIRE_S = 7 * 86400.0
+
+
+def _keep_decision(operation, decision):
+    """Keep the decision on the operation record before anything leaves, so a reconcile after a
+    restart can still close it. A failure to keep it never stops the operation."""
+    try:
+        from agent_friday.governance import action_gate
+        keep = action_gate.portable_ref(decision)
+        if keep:
+            operation["decision_ref"] = keep
+            _save_operation(operation)
+    except Exception:  # noqa: BLE001 - a receipt never changes the operation
+        pass
+
+
+def _settle_decision(decision, operation):
+    """Close the decision from the operation's status (`_close_decision`); while it is still
+    unconfirmed it stays on the record (`decision_ref`) for the reconcile, else it is dropped.
+    Changes only the in-memory record (the caller saves it). Never raises."""
+    if decision is None:
+        return
+    _close_decision(decision, operation)
+    try:
+        from agent_friday.governance import action_gate
+        keep = None if decision.get("_closed") else action_gate.portable_ref(decision)
+        if keep:
+            operation["decision_ref"] = keep
+        else:
+            operation.pop("decision_ref", None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _close_reconciled(operation):
+    """After a reconcile changed `operation` (in memory, before it is saved): when its final state
+    is known, take its kept decision off the record and return a function that closes it (call it
+    after the save). None when there is nothing to close yet. Never raises."""
+    try:
+        ref = operation.get("decision_ref")
+        word = _RECONCILED_OUTCOME.get(str(operation.get("status") or ""))
+        if not isinstance(ref, dict) or not word:
+            return None
+        operation.pop("decision_ref", None)
+        status = str(operation.get("status") or "")
+
+        def close():
+            try:
+                from agent_friday.governance import action_gate
+                action_gate.close_persisted(ref, word != "failed", outcome=word,
+                                            verified=word == "completed_verified",
+                                            detail="site_reconciled_" + status[:30], expected_tool=KIND)
+            except Exception:  # noqa: BLE001 - a receipt never changes the reconcile's answer
+                pass
+        return close
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def expire_decisions(now=None, max_age=DECISION_EXPIRE_S):
+    """Close every kept decision whose final state nobody found out within `max_age`: a
+    publication the provider built (its live content unproven) -> executed; anything else ->
+    failed, with the reason. Returns how many were closed. Never raises."""
+    from agent_friday.governance import action_gate
+    now = time.time() if now is None else float(now)
+    closed = 0
+    try:
+        paths = list(_root().glob("site-*/operations/op-*.json"))
+    except Exception:  # noqa: BLE001
+        return 0
+    for path in paths:
+        try:
+            # check and close under the store's lock: a reconcile racing this expiry either sees the
+            # decision gone from the record or has already closed it (the ledger check), never both
+            with LOCK:
+                operation = _read(path)
+                ref = (operation or {}).get("decision_ref")
+                if not isinstance(ref, dict) or now - float(ref.get("t") or 0) < max_age:
+                    continue
+                if operation.get("status") in ("applying", "awaiting_approval") \
+                        and operation.get("executor_instance") == _INSTANCE:
+                    continue                # still running here
+                status = str(operation.get("status") or "")
+                operation.pop("decision_ref", None)
+                try:
+                    _save_operation(operation)
+                except Exception:  # noqa: BLE001 - the ledger check below prevents a second outcome
+                    pass
+                provider_built = status in _PROVIDER_READY
+                # nobody ever confirmed what became of it: the detail says so, and names the last status
+                closed += bool(action_gate.close_persisted(
+                    ref, provider_built, outcome="executed" if provider_built else "failed",
+                    detail=("outcome_never_confirmed_site_" + (status or "unknown"))[:60],
+                    expected_tool=KIND))
+        except Exception:  # noqa: BLE001
+            continue
+    return closed
+
+
+#: One expiry pass at a time: a pass already running makes a second request a no-op.
+_EXPIRY_RUNNING = threading.Lock()
+
+
+def _expire_once():
+    try:
+        expire_decisions()
+    finally:
+        _EXPIRY_RUNNING.release()
+
+
+def _expire_in_background():
+    """Start an expiry pass in the background unless one is already running. True when one was
+    started. Never raises."""
+    if not _EXPIRY_RUNNING.acquire(blocking=False):
+        return False
+    try:
+        threading.Thread(target=_expire_once, daemon=True, name="site-decision-expiry").start()
+        return True
+    except Exception:  # noqa: BLE001
+        _EXPIRY_RUNNING.release()
+        return False
 
 
 def _close_decision(decision, operation):
@@ -624,7 +773,7 @@ def _execute(action, args, caller):
         if operation["status"] in {"awaiting_approval", "denied", "expired", "blocked", "refused", "failed"}:
             raise UserFacingValueError("This publication has not started. Inspect its review before checking the provider.")
         if operation["status"] == "applying":
-            return {"status": "ok", "operation": operation, "operation_id": operation["operation_id"]}
+            return {"status": "ok", "operation": _public_operation(operation), "operation_id": operation["operation_id"]}
         observed_revision = operation.get("record_revision", 0)
         connection = _connection(site, operation["connection"], allow_reconnected=True)
         # Read-back belongs to this fresh call; it never renews mutation authority.
@@ -660,8 +809,13 @@ def _execute(action, args, caller):
                 # Discard the stale whole observation, never its newer receipt.
                 operation = latest
             else:
+                # the final state, once known, closes the decision the publish left unconfirmed
+                close = _close_reconciled(operation)
                 _save_operation(operation, generation=generation)
-    return {"status": "ok", "operation": operation, "operation_id": operation["operation_id"]}
+                if close is not None:
+                    close()
+        _expire_in_background()
+    return {"status": "ok", "operation": _public_operation(operation), "operation_id": operation["operation_id"]}
 
 
 def execute(action, args=None, context=None):

@@ -365,13 +365,22 @@ def api_computer_open():
                                if waiting else v.reason)),
             }), 403
         decided = "external:open_path"
+        ref = _gate.decision_ref_of(v)
     token = _gate.DECIDED.set(decided)
     try:
         # A known application, or a friendly name, opens through the same
         # helper the tool uses; it judges the target again before opening.
         result = _perform_open(resolved or path)
+    except BaseException:
+        if decided:
+            _gate.close_external(ref, False, detail="open_error")
+        raise
     finally:
         _gate.DECIDED.reset(token)
+    if decided:
+        # the open's own answer closes the card's decision: only "Done" opened it
+        opened = isinstance(result, str) and result.startswith("Done")
+        _gate.close_external(ref, opened, detail="opened" if opened else "not_opened")
     if result is None:
         return jsonify(public_result({"status": "error", "message": f"Could not resolve {path!r}"}, "Couldn't open that")), 404
     return jsonify(public_result({"status": "ok", "message": result}, "Couldn't open that"))

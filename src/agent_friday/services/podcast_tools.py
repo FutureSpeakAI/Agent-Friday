@@ -226,6 +226,17 @@ def _tool_make_podcast(inp):
     })
 
 
+def _held_reply(held: str) -> str:
+    """What a podcast tool says when the setting hold answered instead of letting it write. When the hold
+    re-ran this very tool (an approved card was used), its answer is already this tool's JSON reply, so it
+    goes back as it is, not wrapped a second time."""
+    if held.lstrip().startswith("{"):
+        return held
+    status = ("needs_yes" if held.startswith("SETTING_NEEDS_YES") else
+              "error" if held.startswith("SETTING_FAIL") else "ok")
+    return json.dumps({"status": status, "message": held})
+
+
 def _change_podcast_host_name(inp):
     """Name a host for every episode: "a" (her) or "b" (the co-host). A blank
     name puts the default back. Held for the owner's yes like every setting."""
@@ -249,7 +260,7 @@ def _change_podcast_host_name(inp):
     except Exception as e:  # noqa: BLE001 - a setting is never written without its check
         return json.dumps({"status": "error", "message": "The change could not be put to you: %s" % e})
     if held:
-        return json.dumps({"status": "needs_yes" if held.startswith("SETTING_NEEDS_YES") else "ok", "message": held})
+        return _held_reply(held)
     try:
         names = pe.set_host_names(**{host: new})
     except pe.PodcastRefused as e:
@@ -280,7 +291,7 @@ def _tool_podcast_format(inp):
         except Exception:
             held = None
         if held:
-            return json.dumps({"status": "needs_yes" if held.startswith("SETTING_NEEDS_YES") else "ok", "message": held})
+            return _held_reply(held)
         try:
             ask = pe.set_format(routine if routine != "any" else "", fmt)
         except pe.PodcastRefused as e:
@@ -333,8 +344,7 @@ def _tool_podcast_length(inp):
     except Exception as e:  # noqa: BLE001 - a setting is never written without its check
         return json.dumps({"status": "error", "message": "The change could not be put to you: %s" % e})
     if held:
-        return json.dumps({"status": "needs_yes" if held.startswith("SETTING_NEEDS_YES") else "ok",
-                           "message": held})
+        return _held_reply(held)
     try:
         pe.set_length(routine, length)
     except pe.PodcastRefused as e:

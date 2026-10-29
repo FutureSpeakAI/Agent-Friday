@@ -1599,7 +1599,16 @@ def publish(card_id: str, requested_by: str = "user") -> Dict[str, Any]:
         return {"status": "error", "message": exception_text(e, "The approval gate is unavailable: %s")}
     act = getattr(v, "action", "deny")
     if act == "allow":
-        return complete_publish(card_id, approval_id=None)
+        # the publish's own result closes the card's decision
+        ref = action_gate.decision_ref_of(v)
+        try:
+            res = complete_publish(card_id, approval_id=None)
+        except BaseException:
+            action_gate.close_external(ref, False, detail="publish_error")
+            raise
+        ok = isinstance(res, dict) and res.get("status") == "ok"
+        action_gate.close_external(ref, ok, detail="published" if ok else "not_published")
+        return res
     if act == "deny":
         return {"status": "denied", "message": getattr(v, "reason", "") or "Refused."}
     aid = _find_card_id(detail)
