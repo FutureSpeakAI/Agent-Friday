@@ -17636,10 +17636,13 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
-                # Cleared on the SUCCESS path only, deliberately not in a
+                # Marked FINISHED on the success path only, deliberately not in a
                 # `finally`. If _execute_tool raised, the tool's side effect is
                 # exactly as unknown as it is after a process death, and a
-                # `finally` would erase the one marker that says so.
+                # `finally` would erase the one marker that says so. Finished is
+                # not saved: the marker stays until this round's checkpoint below
+                # holds the result, so a crash in between does not resume into
+                # the model asking for the same call again (NS-33.6-2 c).
                 _resume_unmark(session_ctx)
                 _crew_denial = _host_action_denial(tu.name, session_ctx)
                 if _crew_denial:
