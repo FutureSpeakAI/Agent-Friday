@@ -621,15 +621,8 @@ def _ask(env: Env, ctx: dict, task: str, order: dict, docs: List[str]) -> str:
 
 
 def _parse_json_object(raw: str) -> Optional[dict]:
-    raw = str(raw or "").strip()
-    m = re.search(r"\{.*\}", raw, re.S)
-    if not m:
-        return None
-    try:
-        d = json.loads(m.group(0))
-    except ValueError:
-        return None
-    return d if isinstance(d, dict) else None
+    from agent_friday.services.reply_json import last_object
+    return last_object(str(raw or ""))
 
 
 def _step_extract(env: Env, ctx: dict, step: dict, order: dict) -> None:

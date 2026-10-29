@@ -514,8 +514,8 @@ def api_calendar_quick_add():
             raw = _generate_text([{"role": "user", "content": prompt}],
                                  system="You turn one sentence into one calendar event as JSON.",
                                  max_tokens=300, workspace='calendar')
-            m = re.search(r"\{.*\}", raw or "", re.S)
-            model = json.loads(m.group(0)) if m else {}
+            from agent_friday.services.reply_json import last_object
+            model = last_object(raw, keys=("title", "start_time", "end_time", "location")) or {}
         except Exception:
             model = {}
         for k in ("title", "start_time", "end_time", "location"):
