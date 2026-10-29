@@ -151,6 +151,18 @@ def run_pending_trials() -> dict:
             trials.weekly_digest()
         except Exception:
             pass
+    # The decision heads' nightly replay (services/decision_replay, DM6): CPU only,
+    # no seat, seconds of work. Same window rules: on AC power, inside tonight's
+    # testing time (its seconds count against it), and never a reason for the
+    # trials below not to run.
+    try:
+        if trials.on_ac_power() and trials.night_seconds_used() < trials.NIGHT_CAP_SECONDS:
+            from agent_friday.services import decision_replay
+            dr = decision_replay.run_nightly()
+            out["decision_replay"] = dr
+            trials._spend_night(float(dr.get("seconds") or 0.0))
+    except Exception as e:  # noqa: BLE001
+        out["decision_replay"] = {"skipped": "failed (%s)" % type(e).__name__}
     pending = trials.candidates("queued") + trials.candidates("running")
     # R0, the one-off experiment that decides whether the candidate writer is
     # worth building, schedules itself once and runs here, after the queued
