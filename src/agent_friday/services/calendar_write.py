@@ -605,6 +605,10 @@ def create_event(*, title: str, start: str, end: str = "", location: str = "",
            "start": start, "end": end, "guests": len(body.get("attendees") or [])}
     if already:
         out["already_made"] = "This event was already made by this same request; it was not made twice."
+    # Read it back from Google (NS-4.6-1): the reply naming an id is not proof the event is there.
+    _co.reread("calendar", ev.get("id"),
+               lambda: svc.events().get(calendarId=_cal(calendar_id), eventId=ev["id"]).execute(),
+               lambda r: isinstance(r, dict) and r.get("id") == ev.get("id") and r.get("status") != "cancelled")
     return out
 
 
@@ -758,6 +762,11 @@ def delete_event(event_id: str, *, calendar_id: str = "primary", account_id=None
         return {"error": "could not delete the event. " + _co.failed(
             e, "Google Calendar", account_id=got["account_id"])}
     _drop_calendar_cache()
+    from agent_friday.services import connector_outcome as _co
+    _co.reread("calendar_delete", got["id"],
+               lambda: svc.events().get(calendarId=cal, eventId=got["id"]).execute(),
+               lambda r: (_co._status(r) in (404, 410)) if isinstance(r, BaseException)
+               else (isinstance(r, dict) and r.get("status") == "cancelled"))
     guests = int(got["before"].get("guests") or 0)
     return {"ok": True, "id": got["id"], "title": got["before"]["title"], "account_id": got["account_id"],
             "calendar_id": cal, "guests_notified": bool(tell and guests), "notify_guests": tell,
@@ -838,6 +847,10 @@ def update_event(event_id: str, *, title=None, start=None, end=None,
     _drop_calendar_cache()
     if not _co.confirmed(ev):
         return _fail("not_confirmed", _co.not_done("unconfirmed", "Google Calendar"), unconfirmed=True)
+    _co.reread("calendar", ev.get("id"),
+               lambda: svc.events().get(calendarId=_cal(calendar_id), eventId=ev["id"]).execute(),
+               lambda r: isinstance(r, dict) and r.get("id") == ev.get("id") and r.get("status") != "cancelled"
+               and all(r.get(k) == v for k, v in patch.items() if k in ("summary", "location")))
     return {"ok": True, "id": ev.get("id"), "title": ev.get("summary"),
             "account_id": aid, "calendar_id": _cal(calendar_id), "set": patch,
             "undo_before": _undo_fields(before),
