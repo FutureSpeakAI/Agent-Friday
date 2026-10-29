@@ -7,8 +7,9 @@ FutureSpeak.AI · Asimov's Mind
 in routes/workflows.py stay untouched (Ideas tab).
 
 All responses are JSON envelopes ({ok|status, ...}) with errors in-body at
-HTTP 200 (creations-route convention). The single exception is the OAuth
-loopback callback, which is a browser redirect back into the app.
+HTTP 200 (creations-route convention). The exceptions are the OAuth
+loopback callback, which is a browser redirect back into the app, and a
+takedown the action checkpoint holds (DELETE ...?takedown=1: 409).
 
 | Route                                        | Method            |
 |----------------------------------------------|-------------------|
@@ -365,21 +366,58 @@ def content_post_delete(post_id):
     already-CONFIRMED targets via ?takedown=1, §12.6 erase). The local
     delete runs FIRST — irreversible platform-side takedowns must never fire
     for a post the store then refuses to erase (the old order could delete
-    the remote copies and still answer ok:false with status=PUBLISHED)."""
+    the remote copies and still answer ok:false with status=PUBLISHED).
+
+    A takedown deletes the owner's published posts on other services, so even
+    on the owner's own press it passes the action checkpoint first
+    (governance/action_gate.record_external, `content:takedown`): Stop, the
+    cLaws check and every outward hold apply, and a signed decision names the
+    platform posts. Held: 409 with the reason, and nothing is deleted, here or
+    there. The decision's terminal outcome is the platforms' answers
+    (close_external): executed when every takedown worked, failed when none
+    did, executed with detail `partial:<ok>/<all>` when some did.
+
+    A takedown that failed for some or all targets answers
+    `takedown_status: TAKEDOWN_FAILED` with the failed target ids
+    (`takedown_failed`); each attempt is in the publish log, so the owner
+    retries with the same DELETE ?takedown=1, which takes down only the
+    targets not already taken down (`already_taken_down`)."""
     # Snapshot the confirmed targets before the erase sweeps their statuses.
     got = store.get_post(post_id)
     confirmed = [t for t in ((got.get("post") or {}).get("targets") or [])
                  if t.get("status") == "CONFIRMED" and t.get("platform_post_id")]
+    from agent_friday.governance import action_gate as _gate
+    takedown = request.args.get("takedown") in ("1", "true", "yes")
+    already = _taken_down(post_id) if (takedown and confirmed) else set()
+    confirmed = [t for t in confirmed if t.get("id") not in already]
+    decision = None
+    if takedown and confirmed:
+        target = ",".join("%s:%s" % (t.get("platform") or "?", t["platform_post_id"])
+                          for t in confirmed)[:300]
+        try:
+            decision = _gate.record_external("content:takedown", surface="owner_route",
+                                             target=target)
+        except _gate.Held as e:
+            return jsonify({"ok": False, "status": "error", "held": True,
+                            "error": "Nothing was deleted: the action checkpoint held the "
+                                     "takedown (%s)." % e}), 409
     out = store.delete_post(post_id)
     if not out.get("ok"):
+        if decision is not None:
+            # the store refused the erase: no takedown was tried
+            _gate.close_external(decision, False, detail="local_delete_refused",
+                                 outcome=_gate.DENIED)
         return jsonify(public_result(out, "Couldn't delete the post"))
     takedowns: List[Dict[str, Any]] = []
-    if request.args.get("takedown") in ("1", "true", "yes"):
+    if takedown:
         for t in confirmed:
             adapter = platform_registry.get_adapter(t.get("platform") or "")
             if adapter is None:
                 takedowns.append({"target_id": t["id"], "ok": False,
                                   "error": "adapter unavailable"})
+                store.append_publish_log({
+                    "event": "takedown", "post_id": post_id,
+                    "target_id": t["id"], "platform": t.get("platform"), "ok": False})
                 continue
             try:
                 res = adapter.delete(t["platform_post_id"])
@@ -391,9 +429,43 @@ def content_post_delete(post_id):
                 "event": "takedown", "post_id": post_id,
                 "target_id": t["id"], "platform": t.get("platform"),
                 "ok": bool(res.get("ok"))})
+    if decision is not None:
+        done = sum(1 for td in takedowns if td.get("ok"))
+        if done == len(takedowns):
+            _gate.close_external(decision, True, detail="takedown_all")
+        elif done == 0:
+            _gate.close_external(decision, False, detail="takedown_none")
+        else:
+            # no word for "some of it": it ran, and the detail says how much
+            _gate.close_external(decision, True,
+                                 detail="partial:%d/%d" % (done, len(takedowns)))
     if takedowns:
         out["takedowns"] = takedowns
+        failed = [td["target_id"] for td in takedowns if not td.get("ok")]
+        if failed:
+            # kept, so the owner can retry them (the same DELETE ?takedown=1)
+            out["takedown_status"] = "TAKEDOWN_FAILED"
+            out["takedown_failed"] = failed
+    if already:
+        out["already_taken_down"] = sorted(already)
     return jsonify(public_result(out, "Couldn't delete the post"))
+
+
+def _taken_down(post_id) -> set:
+    """Target ids of this post whose latest takedown in the publish log
+    worked: a retry does not take them down again. Never raises."""
+    try:
+        log = store.read_publish_log(limit=store.PUBLISH_LOG_KEEP, post_id=post_id)
+    except Exception:  # noqa: BLE001 - unknown: every confirmed target is tried
+        return set()
+    seen, done = set(), set()
+    for rec in log.get("entries") or []:            # newest first
+        if rec.get("event") != "takedown" or rec.get("target_id") in seen:
+            continue
+        seen.add(rec.get("target_id"))
+        if rec.get("ok"):
+            done.add(rec.get("target_id"))
+    return done
 
 
 # ═════════════════════════════════════════════════════════════════════════════

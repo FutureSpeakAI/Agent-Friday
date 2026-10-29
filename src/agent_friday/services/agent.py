@@ -14434,6 +14434,36 @@ def _handler_outcome(name, result):
         return None
 
 
+#: A handler's dict result whose "status" says the action did not run (yet),
+#: as (outcome status, outcome word): it is never recorded as executed, so a
+#: retry is never refused as already done.
+_DICT_STATUS_WAITING = frozenset({"waiting", "pending", "pending_approval", "awaiting_approval",
+                                  "needs_approval", "approval_required", "queued"})
+_DICT_STATUS_DENIED = frozenset({"refused", "denied", "rejected", "declined", "blocked"})
+_DICT_STATUS_FAILED = frozenset({"error", "failed"})
+
+
+def _dict_outcome(name, result):
+    """(status, outcome word) for a handler's dict result that says it is
+    waiting (ok, waiting), was refused (refused, denied) or failed (error,
+    failed); else None. Friday's own handlers only (a connector's reply is the
+    service's words, as for `_handler_outcome`). Never raises."""
+    try:
+        from agent_friday.governance import action_gate as _g
+        if not isinstance(result, dict) or str(name or "").strip().lower().startswith("mcp_"):
+            return None
+        s = str(result.get("status") or "").strip().lower()
+        if s in _DICT_STATUS_WAITING:
+            return "ok", _g.WAITING
+        if s in _DICT_STATUS_DENIED:
+            return "refused", _g.DENIED
+        if s in _DICT_STATUS_FAILED:
+            return "error", _g.FAILED
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
@@ -14696,6 +14726,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         if _crew_denial:
             _outcome("ok", "ran; the crew host withheld the result")
             return _crew_denial
+        # a handler's dict that says it is waiting, was refused or failed is
+        # that outcome, never executed (read before it becomes text)
+        _dict_word = _dict_outcome(name, result)
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
@@ -14721,6 +14754,16 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, detail=_nd)
         _outcome("error", _nd)
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
+    elif _dict_word is not None:
+        _status, _word = _dict_word
+        if _status == "ok":
+            _receipts.record(name, ok=True)
+        else:
+            _receipts.record(name, ok=False, denied=_status == "refused", detail="handler: %s" % _word)
+        try:
+            _outcome(_status, "handler_status", _word)
+        except Exception:  # noqa: BLE001
+            pass
     else:
         _receipts.record(name, ok=True)
         # the handler returned; a line of Friday's own saying it was not done
@@ -15462,7 +15505,8 @@ def _hook_governance(ctx):
     try:
         v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
                             tainted=(d.action == "ask"), clean=_clean,
-                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call")
+                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call",
+                            provenance=getattr(d, "origins", None))
         # this call's own decision, for its outcome receipt (_outcome_recorder)
         ctx.meta["decision_receipt"] = _gate.LAST_RECEIPT.get()
     finally:

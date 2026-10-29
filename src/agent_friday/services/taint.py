@@ -994,6 +994,13 @@ class Decision:
     action: str = "allow"     # allow | ask | deny
     flags: List[Flag] = field(default_factory=list)
     reasons: List[str] = field(default_factory=list)
+    #: How many checked values came from each origin kind (Origin.kind:
+    #: user, own, content, sender, model). Counts only, never a value: the
+    #: action envelope's provenance_summary. Decides nothing.
+    origins: Dict[str, int] = field(default_factory=dict)
+
+    def _count(self, kind: str) -> None:
+        self.origins[kind] = self.origins.get(kind, 0) + 1
 
     @property
     def warn(self) -> List[Flag]:
@@ -1067,6 +1074,7 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
         if role in ("fetch_url", "open_url", "post_url"):
             for url in _atoms(role, value):
                 act, o, why = _url_decision(key, role, url)
+                d._count(o.kind if o is not None else "model")
                 if o is not None and o.kind in ("content", "sender", "own"):
                     sev = "warn" if o.kind == "content" else "info"
                     d.flags.append(Flag(arg, role, _short(url), o.kind, o.source, sev,
@@ -1084,6 +1092,7 @@ def evaluate(key: str, tool_name: str, tool_input: Optional[dict]) -> Decision:
                   and owner_local_path(value) and not _shapes_behaviour(value))
         for atom in (_atoms(role, value) if not free else [value if isinstance(value, str) else json.dumps(value, default=str)]):
             o = origin_of(key, atom, free_text=free, local_is_own=own_ok)
+            d._count(o.kind)
             if o.kind in ("user", "model"):
                 continue
             sev = "warn" if o.kind == "content" else "info"

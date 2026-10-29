@@ -33,6 +33,7 @@
   <h2 id="state-h">State of the record</h2>
   <div id="state" class="state" role="status">Checking…</div>
   <p class="muted" id="arch"></p>
+  <p id="integrity" role="status"></p>
   <p id="audit" role="status"></p>
   <button type="button" id="verify">Check every entry now</button>
   <a class="btn" id="exp-report" href="/api/ledger/export?format=report">Save the verification report</a>
@@ -186,6 +187,23 @@
         + (c.duplicate_key || 0) + ' run twice, ' + (c.false_done || 0) + ' task(s) marked done too early.';
     });
   }
+  // One view of the record (services/ledger_integrity): signatures, chain, unsigned
+  // lines, outward actions and the policy version. Counts only.
+  function integrity() {
+    api('/api/ledger/integrity').then(({ ok, d }) => {
+      const p = $('integrity');
+      const v = ok && d.integrity;
+      if (!v) { p.className = 'muted'; p.textContent = 'The record could not be checked.'; return; }
+      const s = v.signatures || {}, ch = v.chain || {}, u = v.unsigned || {}, o = v.outward || {};
+      p.className = v.ok ? 'ok' : 'bad';
+      p.textContent = 'Record, last ' + v.window_days + ' days: '
+        + (s.ok ? 'signatures hold' : (s.bad || 0) + ' signature(s) do not hold') + ', '
+        + (ch.breaks || 0) + ' break(s) and ' + (ch.gaps || 0) + ' gap(s) in the chain, '
+        + (u.lines || 0) + ' unsigned line(s); outward actions: ' + (o.open || 0) + ' open, '
+        + (o.unconfirmed || 0) + ' unconfirmed, ' + (o.duplicate || 0) + ' with two final receipts, '
+        + (o.duplicate_key || 0) + ' run twice; policy version ' + (v.policy_version || 'unknown') + '.';
+    });
+  }
   $('f').addEventListener('submit', ev => { ev.preventDefault(); lastSeq = null; load(false); });
   $('more').addEventListener('click', () => load(true));
   $('verify').addEventListener('click', () => api('/api/ledger/verify').then(({ d }) => showState(d.report)));
@@ -197,6 +215,7 @@
   });
   load(false);
   retention();
+  integrity();
   outwardAudit();
 })();
 </script>
