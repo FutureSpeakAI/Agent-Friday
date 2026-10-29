@@ -68,6 +68,7 @@ import queue
 import re
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -521,6 +522,11 @@ def reset_cache() -> None:
         h.reset()
     with _cache_lock:
         _cache.clear()
+        _pending.clear()
+        for k in _counters_cache:
+            _counters_cache[k] = 0
+    with _shadow_seen_lock:
+        _shadow_seen.clear()
 
 
 def _clip(text) -> str:
@@ -541,48 +547,129 @@ def argmax(scores: Dict[str, float]) -> Tuple[Optional[str], float]:
 
 # One-text decisions on the request path are cached by digest, so a message
 # the list shows twice (and a retry) costs one encode.
+#
+# STALE WHILE REVALIDATE (DM7 gate). Each entry keeps when it was scored and the
+# decision head's tag it was scored under. A fresh entry is used as it is. A
+# stale one (older than _CACHE_FRESH_S, or scored under another tag) is still
+# answered at once, and a fresh reading is queued on the worker, so a request
+# never waits for the refresh. The cache is an LRU, so a busy inbox evicts the
+# oldest message rather than emptying the whole cache.
 _cache_lock = threading.Lock()
-_cache: Dict[Tuple[str, str], Dict[str, float]] = {}
+_cache: "OrderedDict[Tuple[str, str], Tuple[float, Optional[str], Dict[str, float]]]" = OrderedDict()
 _CACHE_MAX = 512
+_CACHE_FRESH_S = 600.0
+_pending: set = set()
+_counters_cache = {"hit": 0, "stale": 0, "miss_inline": 0, "miss_queued": 0, "refreshed": 0}
+
+
+def cache_stats() -> dict:
+    return dict(_counters_cache)
+
+
+def _encoder_free() -> bool:
+    """Can one short encode run on this thread without waiting? The encoder must
+    be loaded and nobody may hold its lock at this moment. A test embedder is
+    always free."""
+    if _embed_override is not None:
+        return True
+    try:
+        from agent_friday.services import laya2_encoder
+        if (laya2_encoder.status() or {}).get("state") != "ready":
+            return False
+        lock = getattr(laya2_encoder, "_lock", None)
+        return not (lock is not None and lock.locked())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _store(key, name: str, scores: Dict[str, float]) -> None:
+    with _cache_lock:
+        _cache[key] = (time.monotonic(), tag(name), scores)
+        _cache.move_to_end(key)
+        while len(_cache) > _CACHE_MAX:
+            _cache.popitem(last=False)
+
+
+def _revalidate(name: str, text: str, allowed, key) -> bool:
+    """Queue a fresh reading of one text on the worker; at most one per key at a time."""
+    with _cache_lock:
+        if key in _pending:
+            return False
+        _pending.add(key)
+
+    def job():
+        try:
+            out = _heads[name].score([text], block=True, allowed=allowed)
+            if out:
+                _store(key, name, out[0])
+                _counters_cache["refreshed"] += 1
+        finally:
+            with _cache_lock:
+                _pending.discard(key)
+    if not _submit(job):
+        with _cache_lock:
+            _pending.discard(key)
+        return False
+    return True
 
 
 def _cached_score(name: str, text: str, *, allowed: Optional[Iterable[str]] = None,
-                  block: bool = False) -> Optional[Dict[str, float]]:
+                  block: bool = False, request_path: bool = False) -> Optional[Dict[str, float]]:
+    """``request_path``: an act-mode decision on a request or a push. A miss is
+    scored inline only when the encoder is free at that moment; otherwise there
+    is no reading now (the incumbent answers) and one is queued, so the next
+    sighting of the same text has it. It never waits on the encoder."""
     key = (name, digest(text) + "|" + ",".join(sorted(allowed or ())))
+    allowed = list(allowed) if allowed is not None else None
     with _cache_lock:
         hit = _cache.get(key)
+        if hit is not None:
+            _cache.move_to_end(key)
     if hit is not None:
-        return hit
+        ts, htag, scores = hit
+        if htag == tag(name) and time.monotonic() - ts < _CACHE_FRESH_S:
+            _counters_cache["hit"] += 1
+        else:
+            _counters_cache["stale"] += 1
+            _revalidate(name, text, allowed, key)
+        return scores
+    if request_path and not block and not _encoder_free():
+        _counters_cache["miss_queued"] += 1
+        _revalidate(name, text, allowed, key)
+        return None
     out = _heads[name].score([text], block=block, allowed=allowed)
     if not out:
+        if request_path:
+            _revalidate(name, text, allowed, key)
         return None
-    with _cache_lock:
-        if len(_cache) >= _CACHE_MAX:
-            _cache.clear()
-        _cache[key] = out[0]
+    _counters_cache["miss_inline"] += 1
+    _store(key, name, out[0])
     return out[0]
 
 
 def _read_core(name: str, texts: List[str], *, allowed: Optional[Iterable[str]] = None,
-               block: bool = False, cached: bool = False) -> Optional[List[Dict[str, float]]]:
+               block: bool = False, cached: bool = False,
+               request_path: bool = False) -> Optional[List[Dict[str, float]]]:
     """One {label: p} per text, or None with no reading: the head's own scoring,
     with no contract around it. services/laya's triage presets call this."""
     if cached and len(texts) == 1:
-        got = _cached_score(name, texts[0], allowed=allowed, block=block)
+        got = _cached_score(name, texts[0], allowed=allowed, block=block, request_path=request_path)
         return [got] if got else None
     return _heads[name].score(list(texts), block=block, allowed=allowed)
 
 
 def _read(name: str, texts: List[str], *, allowed: Optional[Iterable[str]] = None,
-          block: bool = False, cached: bool = False) -> Optional[List[Dict[str, float]]]:
+          block: bool = False, cached: bool = False,
+          request_path: bool = False) -> Optional[List[Dict[str, float]]]:
     """The decision calls below read through services/laya.ask (one contract,
     one receipt, a budget), and fall back to the head itself when the contract
     cannot be imported."""
     try:
         from agent_friday.services import laya
     except Exception:
-        return _read_core(name, texts, allowed=allowed, block=block, cached=cached)
-    return laya.triage_read(name, list(texts), allowed=allowed, block=block, cached=cached)
+        return _read_core(name, texts, allowed=allowed, block=block, cached=cached, request_path=request_path)
+    return laya.triage_read(name, list(texts), allowed=allowed, block=block, cached=cached,
+                            request_path=request_path)
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +794,7 @@ def _append(path: Path, rows: List[dict]) -> bool:
 
 
 _counters = {"shadow_rows": 0, "applied": 0, "dropped": 0, "failed": 0,
-             "unavailable": 0, "proposals": 0}
+             "unavailable": 0, "proposals": 0, "deduped": 0}
 
 
 def stats() -> dict:
@@ -767,6 +854,46 @@ def drain(timeout: float = 5.0) -> bool:
     return _idle.wait(timeout)
 
 
+#: SHADOW-ROW DEDUPE (DM7 gate). The same message is classified every time a
+#: list is drawn, the same notice can be pushed twice, and the same story sits
+#: in many news pools. One row per (head, text digest, incumbent, label, head
+#: tag, UTC day) is enough to compare the head with the incumbent; more would
+#: weight the comparison towards whatever is redrawn most. Bounded memory: the
+#: oldest keys are forgotten first, so after a restart a row may repeat once.
+_shadow_seen_lock = threading.Lock()
+_shadow_seen: "OrderedDict[tuple, None]" = OrderedDict()
+_SHADOW_SEEN_MAX = 8192
+
+
+def _shadow_key(row: dict) -> tuple:
+    return (row.get("head"), row.get("h"), row.get("incumbent"), row.get("label"), row.get("tag"),
+            time.strftime("%Y-%m-%d", time.gmtime(row.get("ts") or time.time())))
+
+
+def _append_shadow(rows: List[dict]) -> int:
+    """Append the rows not already logged today; returns how many were written."""
+    fresh = []
+    with _shadow_seen_lock:
+        for r in rows:
+            k = _shadow_key(r)
+            if k in _shadow_seen:
+                _shadow_seen.move_to_end(k)
+                _counters["deduped"] += 1
+                continue
+            _shadow_seen[k] = None
+            while len(_shadow_seen) > _SHADOW_SEEN_MAX:
+                _shadow_seen.popitem(last=False)
+            fresh.append(r)
+    if fresh and _append(shadow_path(), fresh):
+        return len(fresh)
+    if fresh:
+        # Not written: forget the keys so a later attempt can write them.
+        with _shadow_seen_lock:
+            for r in fresh:
+                _shadow_seen.pop(_shadow_key(r), None)
+    return 0
+
+
 def _shadow_row(head_name: str, text: str, label: Optional[str], incumbent: Optional[str],
                 p: float, **extra) -> dict:
     row = {"ts": round(time.time(), 3), "head": head_name, "mode": mode(head_name),
@@ -784,14 +911,15 @@ def mail_text(subject, snippet) -> str:
     return _clip("%s. %s" % (subject or "", snippet or ""))
 
 
-def mail_label(subject, snippet, lane_ids: Optional[Iterable[str]] = None) -> Tuple[Optional[str], float]:
+def mail_label(subject, snippet, lane_ids: Optional[Iterable[str]] = None, *,
+               request_path: bool = False) -> Tuple[Optional[str], float]:
     """(lane, p) the head would give this message, or (None, 0) with no reading.
     Never blocks; the first calls after start return no reading while it warms."""
     text = mail_text(subject, snippet)
     if len(text) < 6:
         return None, 0.0
     allowed = [l for l in (lane_ids or MAIL_SEEDS) if l in MAIL_SEEDS]
-    got = _read("mail", [text], allowed=allowed, cached=True)
+    got = _read("mail", [text], allowed=allowed, cached=True, request_path=request_path)
     return decide("mail", (got[0] if got else None) or {})
 
 
@@ -818,15 +946,14 @@ def mail_fallback(subject, snippet, *, fallback: str, lane_ids: Iterable[str],
                 _counters["unavailable"] += 1
                 return
             lane, p = decide("mail", sc[0])
-            if _append(shadow_path(), [_shadow_row("mail", text, lane, fallback, p)]):
-                _counters["shadow_rows"] += 1
+            _counters["shadow_rows"] += _append_shadow([_shadow_row("mail", text, lane, fallback, p)])
         _submit(job)
         return None
-    lane, p = mail_label(subject, snippet, lane_ids)
+    lane, p = mail_label(subject, snippet, lane_ids, request_path=True)
     if lane is None:
         _counters["unavailable"] += 1
         return None
-    _append(shadow_path(), [_shadow_row("mail", text, lane, fallback, p)])
+    _append_shadow([_shadow_row("mail", text, lane, fallback, p)])
     # Escalate-only: from a quiet fallback to an important lane, and only when
     # the head is sure. Never toward a quieter lane, never off an actionable one.
     if fallback in actionable or lane not in actionable or lane == fallback or p < threshold("mail"):
@@ -895,8 +1022,7 @@ def news_shadow(items: List[dict], incumbents: Optional[List[str]] = None) -> bo
             rows.append(_shadow_row("news", t, lab, inc_label, p,
                                     pos=idx, pos_blend=pos_blend[idx],
                                     blend=news_blend(inc_label, s)[0]))
-        if _append(shadow_path(), rows):
-            _counters["shadow_rows"] += len(rows)
+        _counters["shadow_rows"] += _append_shadow(rows)
     return _submit(job)
 
 
@@ -936,17 +1062,16 @@ def notification_tier(base: str, kind: str, source: str, priority: str,
                     _counters["unavailable"] += 1
                     return
                 lab, p = decide("notify", sc[0])
-                if _append(shadow_path(), [_shadow_row("notify", text, lab, base, p)]):
-                    _counters["shadow_rows"] += 1
+                _counters["shadow_rows"] += _append_shadow([_shadow_row("notify", text, lab, base, p)])
             _submit(job)
             return base
-        got = _read("notify", [text], cached=True)
+        got = _read("notify", [text], cached=True, request_path=True)
         sc = got[0] if got else None
         if not sc:
             _counters["unavailable"] += 1
             return base
         lab, p = decide("notify", sc)
-        _append(shadow_path(), [_shadow_row("notify", text, lab, base, p)])
+        _append_shadow([_shadow_row("notify", text, lab, base, p)])
         if lab == "needs_you" and p >= threshold("notify"):
             _counters["applied"] += 1
             return needs_you
@@ -1016,8 +1141,7 @@ def memory_pass(turns: List[dict], day: str, regex_facts: Optional[List[dict]] =
             rows.append(_shadow_row("memory", s, lab, "regex" if " ".join(s.lower().split()) in regex_hit else "none",
                                     p, day=str(day)))
         rep["candidates"] = len(cands)
-        if _append(shadow_path(), rows):
-            _counters["shadow_rows"] += len(rows)
+        _counters["shadow_rows"] += _append_shadow(rows)
         if rep["mode"] == "propose" and cands:
             from agent_friday.services import memory_proposals
             rep["proposed"] = memory_proposals.propose_from_head(cands, day)
