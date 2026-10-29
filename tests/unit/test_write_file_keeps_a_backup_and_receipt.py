@@ -64,27 +64,26 @@ def test_the_receipt_and_backup_exist_before_the_write_and_survive_a_failed_one(
     doc = store / "notes.txt"
     doc.write_text("keep me", encoding="utf-8")
     seen = {}
-    real_write_text = Path.write_text
+    from agent_friday.services import whole_file
+    real_write_whole_text = whole_file.write_whole_text
 
-    def failing_write(self, data, encoding=None, errors=None, newline=None):
-        # Only the owner's document fails; Friday's own files (the action
-        # ledger writes through Path.write_text, under the journal's lock) are
-        # written as usual.
-        if Path(self) != doc:
-            return real_write_text(self, data, encoding=encoding, errors=errors, newline=newline)
+    def failing_write(dest, text, encoding="utf-8"):
+        # Only the owner's document fails; Friday's own files are written as usual.
+        if Path(dest) != doc:
+            return real_write_whole_text(dest, text, encoding=encoding)
         # At the moment of the write the receipt and the backup already exist.
         recs = journal.recent(5)
         seen["receipt"] = recs[0] if recs else None
         seen["backup_ok"] = bool(recs) and Path(recs[0]["undo"]["file"]["backup"]).read_text(encoding="utf-8") == "keep me"
-        with open(self, "w", encoding="utf-8") as fh:
-            fh.write("half")
         raise OSError("disk full")
 
     with monkeypatch.context() as m:
-        m.setattr(Path, "write_text", failing_write)
+        m.setattr(whole_file, "write_whole_text", failing_write)
         out = _write(doc, "new")
     assert out.startswith("Write error")
     assert seen["receipt"] and seen["receipt"]["status"] == "pending" and seen["backup_ok"]
+    # The write lands whole or not at all (NS-34.16-2): a failed one leaves the document as it was.
+    assert doc.read_text(encoding="utf-8") == "keep me"
     rid = seen["receipt"]["receipt_id"]
     assert rid in out and journal.get(rid)["status"] == "partial"
     item_actions.undo(rid, by_owner=True)
