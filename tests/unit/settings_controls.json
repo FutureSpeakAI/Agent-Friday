@@ -3525,6 +3525,18 @@
  },
  {
   "section": "Privacy & Data",
+  "panel": "Stored keys",
+  "label": "Remove (stored credential)",
+  "kind": "button",
+  "keys": [],
+  "route": "POST /api/security/credentials/remove",
+  "reader_file": "src/agent_friday/services/credential_lifecycle.py",
+  "reader_needle": "def remove(name: str)",
+  "status": "ok",
+  "note": "One per stored credential; a press on this PC; revoked at the provider where the provider allows it."
+ },
+ {
+  "section": "Privacy & Data",
   "panel": "Agent workspaces",
   "label": "Allow agent workspaces / Enabled - turn off",
   "kind": "switch",

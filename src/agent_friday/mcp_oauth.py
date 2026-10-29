@@ -270,10 +270,22 @@ def clear_credentials(server_name: str) -> bool:
         try:
             if p.exists():
                 p.unlink()
+                _audit("cleared", server_name)
                 return True
         except Exception:
             pass
     return False
+
+
+def _audit(event: str, server_name: str) -> None:
+    """A fact for the credential log (services/credential_lifecycle reads where a sign-in came
+    from): the add-on's name and the event, never a token. Never raises."""
+    try:
+        from agent_friday.services import credential_store as _cs
+        _cs.audit_event("mcp_oauth", event,
+                        server=re.sub(r"[^A-Za-z0-9_-]", "_", str(server_name))[:64])
+    except Exception:
+        pass
 
 
 def has_credentials(server_name: str) -> bool:
@@ -355,9 +367,12 @@ def _store_token_reply(server_name: str, rec: dict, reply: dict) -> None:
         tokens["expires_at"] = time.time() + float(reply["expires_in"])
     if reply.get("scope"):
         tokens["scope"] = reply["scope"]
+    first = not (rec.get("tokens") or {}).get("access_token")
     rec["tokens"] = tokens
     with _RECORD_LOCK:
         _write_record(server_name, rec)
+    if first:
+        _audit("signed_in", server_name)
 
 
 # ══════════════════════════════════════════════════════════════════════════
