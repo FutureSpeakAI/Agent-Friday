@@ -1147,10 +1147,12 @@ window.addEventListener('DOMContentLoaded',function(){
             -webkit-backdrop-filter: blur(16px) saturate(1.2);
             border-left: 1px solid rgba(0,212,255,0.15);
             box-shadow: -4px 0 30px rgba(0,0,0,0.3);
-            transition: right 0.35s cubic-bezier(0.2, 0.8, 0.3, 1);
+            transition: right 0.35s cubic-bezier(0.2, 0.8, 0.3, 1), visibility 0s linear 0.35s;
             overflow-y: auto;
+            /* Closed, it is off screen: out of the Tab order and the accessibility tree too (WCAG 2.4.3, 2.4.7). */
+            visibility: hidden;
         }
-        .settings-panel.open { right: 0; }
+        .settings-panel.open { right: 0; visibility: visible; transition-delay: 0s; }
         .settings-section-title {
             font-family: 'Orbitron', sans-serif; font-size: 11px; color: rgba(0,212,255,0.95);
             letter-spacing: 0.12em; margin-bottom: 10px; text-transform: uppercase;
