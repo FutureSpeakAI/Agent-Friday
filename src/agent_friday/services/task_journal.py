@@ -302,6 +302,17 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
             for k, v in fields.items():
                 if v is not None:
                     ev[k] = v
+            if "correlation_id" not in ev:
+                # The request that wrote this event (a start, a steer, a stop): its
+                # id joins the event to that request's log lines, egress rows and
+                # decision receipts (NS-26.17-2). Work on a task's own thread has none.
+                try:
+                    from agent_friday.services import correlation as _corr
+                    _cid = _corr.current()
+                    if _cid:
+                        ev["correlation_id"] = _cid
+                except Exception:
+                    pass
             p = task_dir(task_id) / "journal.jsonl"
             p.parent.mkdir(parents=True, exist_ok=True)
             _append_line(p, _encode_line(ev))

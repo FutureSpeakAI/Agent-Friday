@@ -1103,6 +1103,16 @@ if __name__ == '__main__':
             _stream.reconfigure(encoding='utf-8', errors='replace')
         except Exception:
             pass
+    # print() and stray tracebacks pass the same secret redactor as the log lines.
+    try:
+        from agent_friday.services import log_redaction as _log_redaction
+        _log_redaction.install_streams()
+    except Exception as _e:  # noqa: BLE001 - say it once; the server still starts
+        try:
+            sys.stderr.write("[FRIDAY] stdout/stderr redaction could not be installed (%s)\n"
+                             % type(_e).__name__)
+        except Exception:
+            pass
 
     # Single-instance guard — FIRST, before anything else can hang or race.
     _instance_lock_fh = _acquire_single_instance_lock()
