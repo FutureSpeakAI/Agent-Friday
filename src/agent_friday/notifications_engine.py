@@ -639,6 +639,29 @@ def visible(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def groups(limit: int = 200) -> List[Dict[str, Any]]:
     """The tray's cards grouped by job, then kind, then source: needs-you
+    groups first, each with its cards. (See below.)"""
+    return _groups(limit)
+
+
+def _with_live_detail(n: Dict[str, Any]) -> Dict[str, Any]:
+    """A memory proposal's words, read from its waiting card for this answer only: the
+    stored notice carries none (owner ruling 5). A card no longer waiting shows none."""
+    meta = n.get("meta") or {}
+    aid = meta.get("approval_id") or n.get("approval_id")
+    if not aid:
+        return n
+    try:
+        from agent_friday.services import approvals as _ap
+        rec = _ap.get_approval(str(aid)) or {}
+    except Exception:  # noqa: BLE001
+        return n
+    if rec.get("status") != "pending":
+        return n
+    return dict(n, meta=dict(meta, detail=str(rec.get("action_description") or "")[:300]))
+
+
+def _groups(limit):
+    """The tray's cards grouped by job, then kind, then source: needs-you
     groups first, each with its cards. A memory-proposal group lists each
     proposal as its own item to keep or skip."""
     from agent_friday.services import notification_policy as _pol
@@ -659,6 +682,7 @@ def groups(limit: int = 200) -> List[Dict[str, Any]]:
             grp["tier"] = _pol.NEEDS_YOU
     for grp in out.values():
         if grp["memory"]:
+            grp["items"] = [_with_live_detail(n) for n in grp["items"]]
             k = len(grp["items"])
             grp["title"] = "%d memory proposal%s to keep or skip" % (k, "" if k == 1 else "s")
     return sorted(out.values(), key=lambda g: g["tier"] != _pol.NEEDS_YOU)
