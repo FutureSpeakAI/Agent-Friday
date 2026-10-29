@@ -20,7 +20,9 @@ def _lines():
 
 def test_the_three_sentences_name_who_can_read_what():
     folder, bundle, scheduled = _lines()
-    assert "Windows account" in folder and "administrator" in folder
+    assert "Windows account" in folder and "administrator" in folder and "can read all of it" in folder
+    assert "need more" not in folder                         # nothing in the folder asks more of you
+    assert "only the bundle's date" in bundle
     assert "passphrase" in bundle and "not even someone signed in as you" in bundle
     assert "credential store" in scheduled and "can open those" in scheduled
 
