@@ -3303,7 +3303,7 @@ def chat():
         # Decision models, evidence.supports (shadow): does each footnote's passage
         # support its sentence? Read afterwards on the head's own worker; nothing
         # here waits for it or changes. Not for a turn that began off the record.
-        if not settings.get('off_record'):
+        if not _turn_off_record:
             try:
                 from agent_friday.services import citation_heads as _cite_head
                 _cite_head.shadow_reply(reply, tool_trace, surface="chat", start=_cite_start)
@@ -4184,7 +4184,7 @@ def chat_send():
         # Decision models, evidence.supports (shadow): does each footnote's passage
         # support its sentence? Read afterwards on the head's own worker; nothing
         # here waits for it or changes. Not for a turn that began off the record.
-        if not settings.get('off_record'):
+        if not _turn_off_record:
             try:
                 from agent_friday.services import citation_heads as _cite_head
                 _cite_head.shadow_reply(reply, tool_trace, surface="chat_send", start=_cite_start)
