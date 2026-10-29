@@ -1820,18 +1820,53 @@ ONE_SHOT_ACTIONS = frozenset({
 })
 #: A connector (MCP) tool; an outward one is a write at the connected service.
 ONE_SHOT_CONNECTOR_PREFIX = "mcp_"
+#: The verbs (a word of the tool name) that make a connector tool one-shot:
+#: its second run is a second message, post, invite, booking or file at the
+#: other end. A connector tool without one of these is not refused on repeat.
+ONE_SHOT_CONNECTOR_VERBS = frozenset({
+    "send", "create", "post", "publish", "reply", "forward", "schedule", "book",
+    "invite", "upload", "write", "submit", "share", "comment", "tweet",
+})
+#: Words naming browser or UI automation in a connector tool's name: such a
+#: tool (a click, a keypress, a page load) is rightly repeated within one
+#: task and is never one-shot, whatever else its name says.
+CONNECTOR_AUTOMATION_WORDS = frozenset({
+    "browser", "playwright", "puppeteer", "selenium", "computer",
+    "click", "dblclick", "type", "press", "keyboard", "mouse", "navigate", "goto",
+    "fill", "scroll", "hover", "drag", "select", "screenshot", "snapshot",
+    "wait", "evaluate", "resize",
+})
+
+
+def _name_words(t: str) -> list[str]:
+    """The words of a tool name: split on non-alphanumerics and camelCase."""
+    t = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", t)
+    return [w for w in re.split(r"[^a-z0-9]+", t.lower()) if w]
+
+
+def _is_connector_write_name(t: str) -> bool:
+    words = _name_words(t[len(ONE_SHOT_CONNECTOR_PREFIX):])
+    if any(w in CONNECTOR_AUTOMATION_WORDS for w in words):
+        return False
+    forms = {v + s for v in ONE_SHOT_CONNECTOR_VERBS for s in ("", "s", "d", "ed", "ing")}
+    return any(w in forms for w in words)
 
 
 def is_one_shot(tool_name: Any) -> bool:
     """Whether a repeat of this outward tool call is refused as already done:
-    ONE_SHOT_ACTIONS, or a connector write (not a desktop-control connector,
-    which is judged per click like Friday's own). Never raises."""
+    ONE_SHOT_ACTIONS, or a connector write: an mcp_ tool whose name carries
+    a send/create/post-type verb (ONE_SHOT_CONNECTOR_VERBS) and no browser or
+    UI-automation word (CONNECTOR_AUTOMATION_WORDS), and is not a
+    desktop-control connector (judged per click like Friday's own). Never
+    raises."""
     t = str(tool_name or "")
     if t in ONE_SHOT_ACTIONS:
         return True
     if t in SELF_GATED or not t.lower().startswith(ONE_SHOT_CONNECTOR_PREFIX):
         return False
     try:
+        if not _is_connector_write_name(t):
+            return False
         from agent_friday.services import desktop_grants as _dg
         return not _dg.is_desktop_tool(t)
     except Exception:  # noqa: BLE001 - not known to be a connector write: refuses nothing

@@ -222,6 +222,80 @@ def test_with_no_governance_key_it_refuses_and_creates_none(tmp_path, monkeypatc
     assert minted == [] and stored == [] and not key_file.exists()
 
 
+def _three_closed_actions():
+    for i in range(3):
+        _decision("act_rel_tamper_%d" % i)
+        _outcome("act_rel_tamper_%d" % i)
+
+
+def _rewrite_live(change):
+    lines = L.live_path().read_text(encoding="utf-8").splitlines()
+    L.live_path().write_text("\n".join(change(lines)) + "\n", encoding="utf-8")
+    L.reset_caches()
+
+
+def test_one_changed_line_among_good_ones_refuses():
+    """A single changed line (not every record bad) still refuses: the audit
+    would otherwise read the ledger short and pass."""
+    rc = _release_checks()
+    _three_closed_actions()
+    assert rc.run(settled=True)[0] == 0
+
+    def change(lines):
+        e = json.loads(lines[2])
+        e["rec"]["tool"] = "probe_other"
+        lines[2] = json.dumps(e)
+        return lines
+    _rewrite_live(change)
+    code, report = rc.run(settled=True)
+    assert code == 3 and "open break" in report["error"], report
+    assert rc.main(["--settled"]) == 3
+
+
+def test_a_deleted_middle_line_refuses():
+    rc = _release_checks()
+    _three_closed_actions()
+    _rewrite_live(lambda lines: lines[:2] + lines[3:])
+    code, report = rc.run(settled=True)
+    assert code == 3 and "cannot be checked" in report["error"], report
+
+
+def test_an_empty_ledger_refuses_unless_allowed(monkeypatch):
+    from agent_friday.services import doctor
+    rc = _release_checks()
+    monkeypatch.setattr(doctor, "_governance_key_present", lambda: (True, "file"))
+    code, report = rc.run(settled=True)
+    assert code == 3 and "empty" in report["error"], report
+    assert rc.main(["--settled"]) == 3
+    code, report = rc.run(settled=True, allow_empty=True)
+    assert code == 0, report
+    assert rc.main(["--settled", "--allow-empty"]) == 0
+
+
+def test_a_missing_ledger_folder_refuses_and_is_not_created(tmp_path, monkeypatch):
+    from agent_friday.services import doctor
+    rc = _release_checks()
+    monkeypatch.setattr(doctor, "_governance_key_present", lambda: (True, "file"))
+    gone = tmp_path / "no-ledger-here"
+    monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(gone))
+    L.reset_caches()
+    code, report = rc.run(settled=True, allow_empty=True)
+    assert code == 3 and "no ledger folder" in report["error"], report
+    assert not gone.exists()
+
+
+@pytest.mark.parametrize("argv", [["--days", "nan"], ["--days", "inf"], ["--days", "-1"],
+                                  ["--days", "0"], ["--days", "abc"], ["--no-such-flag"]])
+def test_bad_arguments_are_a_usage_error(argv):
+    assert _release_checks().main(argv) == 3
+
+
+def test_run_refuses_a_days_that_is_not_finite_and_positive():
+    rc = _release_checks()
+    for d in (float("nan"), float("inf"), 0.0, -5.0):
+        assert rc.run(days=d, settled=True)[0] == 3
+
+
 def test_a_ledger_signed_with_another_key_refuses(monkeypatch):
     """Records signed with a key this machine does not hold are not read by
     the audit, so the check would pass empty: it refuses instead (exit 3)."""
