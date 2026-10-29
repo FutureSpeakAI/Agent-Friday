@@ -22826,7 +22826,7 @@ function GoogleAccountsPanel(){
   const reconnectWithSending=(acc)=>apiFetch('/api/google/accounts/mailbox-scopes?account='+encodeURIComponent(acc.id)).then(r=>r.json()).then(d=>setMailboxAsk({account:acc,scopes:d.scopes||[]})).catch(()=>setMsg('Could not load the permission list.'));
   const removeAccount=async(id,email)=>{
     if(!window.confirm('Remove '+email+'? This revokes access.'))return;
-    try{await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});setAccounts(a=>a.filter(x=>x.id!==id));setMsg('Removed.');}
+    try{const r=await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});const d=await r.json().catch(()=>({}));if(!r.ok){setMsg(d.message||'Error.');return;}setAccounts(a=>a.filter(x=>x.id!==id));setMsg(d.message||'Removed.');}
     catch(e){setMsg('Error.');}
   };
   const toggleSvc=async(id,svc,current)=>{
@@ -22904,7 +22904,24 @@ function GoogleAccountsPanel(){
       <button aria-label="Refresh" className="settings-btn" style={{padding:'6px 10px'}} onClick={refresh} title="Refresh">↻ Refresh</button>
     </div>
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:8}}>{msg}</div>}
+    <GoogleConnectorCard/>
   </div>;
+}
+// The Google connection's card (BD-06, NS-8.9-2): what it lets Friday do, the permissions it asks
+// for (reading and changing apart), what runs without a card, what Google receives, what is kept
+// on this PC, the limits and how to remove it. Read from /api/google/accounts/contract, which
+// tests tie to the code (services/connector_contracts.google_card).
+function GoogleConnectorCard(){
+  const[card,setCard]=useState(null);
+  useEffect(()=>{apiFetch('/api/google/accounts/contract').then(r=>r.json()).then(d=>{const c=d&&d.contract&&d.contract.card;if(Array.isArray(c))setCard(c)}).catch(()=>{})},[]);
+  if(!card)return null;
+  return <details className="google-connector-card" style={{marginTop:10,fontSize:11,color:'rgba(255,255,255,0.78)'}}>
+    <summary style={{cursor:'pointer',color:'#00d4ff'}}>What this connection does</summary>
+    {card.map(sec=><div key={sec.heading} style={{marginTop:6}}>
+      <div style={{fontWeight:600,color:'#fff'}}>{sec.heading}</div>
+      <ul style={{margin:'2px 0 0 16px',padding:0}}>{(sec.lines||[]).map((l,i)=><li key={i}>{l}</li>)}</ul>
+    </div>)}
+  </details>;
 }
 // ─── Settings → Connections — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),
