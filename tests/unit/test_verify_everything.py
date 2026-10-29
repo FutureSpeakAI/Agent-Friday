@@ -5,8 +5,11 @@
     (files, bytes, time) and partial past a cap; never a path in the result;
   * outward effects without a decision receipt: an approved card an outward
     executor carried out, and an approved batch run, must name a decision the
-    ledger holds; sends the egress ledger records carry no action id and are
-    counted as not linkable;
+    ledger holds; a send the egress ledger records names the action id of
+    the decision that authorised it (texts, chat channels, mail, site
+    publishes, posts), matched like a batch run's; a send whose row has none
+    is counted as not linkable; a post keeps its decision's id in the publish
+    log;
   * edited lines and decisions with no final outcome, labelled;
   * the integrity view, the route, the Doctor (code within 160 characters,
     a failure is unverified, never a crash) and the Ledger page show them.
@@ -178,6 +181,152 @@ def test_sends_with_no_action_id_are_counted_not_linkable_by_channel():
     u = VE.unlinked_outward()
     assert u["not_linkable"] == {"total": 2, "by_channel": {"mail": 1, "sms": 1}}, u
     assert u["problems"] == 0, "not linkable is counted, never guessed to be a problem"
+
+
+# ── 2b. sends that name the decision that authorised them ──────────────────
+
+def _write_egress(rows) -> None:
+    from agent_friday.services import egress_gate
+    with open(egress_gate._DEFAULT_LOG, "a", encoding="utf-8") as f:
+        f.write("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def _send_row(channel: str, call_id: str, action_id=None, *, ago: float = 60.0) -> dict:
+    row = {"ts": time.time() - ago, "kind": "call", "call_id": call_id, "via": "service:" + channel,
+           "channel": channel, "result": "sent"}
+    if action_id is not None:
+        row["action_id"] = action_id
+    return row
+
+
+def test_a_send_whose_action_id_names_a_decision_is_linked():
+    from agent_friday.services import verify_everything as VE
+    ref = G.record_external("phone:sms", surface="phone", target="probe")
+    G.close_external(ref, True)
+    assert ref.get("action_id"), ref
+    _write_egress([_send_row("sms", "eg-a10-linked", ref["action_id"])])
+    u = VE.unlinked_outward()
+    assert u["sends"] == {"checked": 1, "linked": 1, "no_decision": 0}, u
+    assert u["not_linkable"]["total"] == 0 and u["problems"] == 0 and u["linked"] >= 1
+
+
+def test_a_send_whose_action_id_names_no_decision_is_reported():
+    from agent_friday.services import policy_version
+    from agent_friday.services import verify_everything as VE
+    _write_egress([_send_row("chat_channel", "eg-a10-nodec", policy_version.new_action_id())])
+    u = VE.unlinked_outward()
+    assert u["sends"] == {"checked": 1, "linked": 0, "no_decision": 1}, u
+    assert u["problems"] == 1
+    assert [(i["source"], i["ref"], i["by"], i["problem"]) for i in u["items"]] == [
+        ("send", "eg-a10-nodec", "chat_channel", "no_decision")]
+
+
+def test_only_a_send_without_an_action_id_is_not_linkable():
+    from agent_friday.services import verify_everything as VE
+    ref = G.record_external("gmail:send", surface="mail", target="probe")
+    G.close_external(ref, True)
+    _write_egress([_send_row("mail", "eg-a10-old"), _send_row("mail", "eg-a10-new", ref["action_id"])])
+    u = VE.unlinked_outward()
+    assert u["not_linkable"] == {"total": 1, "by_channel": {"mail": 1}}, u
+    assert u["sends"]["linked"] == 1 and u["problems"] == 0
+
+
+@pytest.fixture
+def _quiet_egress(monkeypatch):
+    """A real egress row, without the kept text or the context manifest (not under test here)."""
+    from agent_friday.services import context_manifest, egress_gate
+    monkeypatch.setattr(egress_gate, "_fingerprint", lambda obj: (None, 0, ""))
+    monkeypatch.setattr(egress_gate, "_off_record_now", lambda **k: False)
+    monkeypatch.setattr(context_manifest, "write", lambda *a, **k: None)
+
+
+def _decisions_made(monkeypatch) -> list:
+    """Every decision record_external returns, as the send path got it."""
+    made = []
+    real = G.record_external
+
+    def spy(*a, **k):
+        ref = real(*a, **k)
+        made.append(ref)
+        return ref
+    monkeypatch.setattr(G, "record_external", spy)
+    return made
+
+
+def _egress_calls() -> list:
+    from agent_friday.services import egress_gate
+    p = egress_gate._DEFAULT_LOG
+    rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()] if p.exists() else []
+    return [r for r in rows if r.get("kind") == "call"]
+
+
+def test_a_text_to_the_owner_records_its_decisions_action_id(monkeypatch, _quiet_egress):
+    from agent_friday.phone import config, service
+    from agent_friday.services import spend_guard
+    from agent_friday.services import verify_everything as VE
+    owner = "+15550000001"
+
+    class _Client:                      # Twilio, stubbed: nothing reaches a network
+        def send_sms(self, **kw):
+            return {"sid": "sid-a10-probe", "status": "queued", "num_segments": 1}
+    monkeypatch.setattr(config, "load", lambda: {"enabled": True, "phone_number": "+15550000000",
+                                                 "owner_sms_per_hour": 10, "owner_sms_per_day": 10})
+    monkeypatch.setattr(config, "api_credentials", lambda: True)
+    monkeypatch.setattr(config, "verified_owner_cell", lambda: owner)
+    monkeypatch.setattr(spend_guard, "check", lambda *a, **k: None)
+    monkeypatch.setattr(service.spool, "ledger_rows", lambda **k: [])
+    monkeypatch.setattr(service.spool, "ledger_add", lambda **k: None)
+    monkeypatch.setattr(service, "_client", lambda: _Client())
+    monkeypatch.setattr(service, "_status_url", lambda p: "")
+    monkeypatch.setattr(service, "_gate_text", lambda text: text)
+    made = _decisions_made(monkeypatch)
+    service.text_owner("A synthetic alert", reason="alert")
+    assert len(made) == 1 and made[0].get("action_id"), made
+    row = [r for r in _egress_calls() if r.get("channel") == "sms"][-1]
+    assert row["action_id"] == made[0]["action_id"]
+    assert "synthetic alert" not in json.dumps(row)
+    u = VE.unlinked_outward()
+    assert u["sends"] == {"checked": 1, "linked": 1, "no_decision": 0}, u
+
+
+def test_a_chat_channel_send_records_its_decisions_action_id(monkeypatch, _quiet_egress):
+    from agent_friday.services.channels import base
+    monkeypatch.setattr(base, "_gate_channel_text", lambda text, channel: text)
+    made = _decisions_made(monkeypatch)
+
+    class _Telegram(base.ChannelAdapter):
+        name = "telegram"
+
+        def _send_raw(self, chat_id, text):      # the platform, stubbed
+            return {"ok": True, "message_id": 7}
+    _Telegram().send("chat-a10", "A synthetic reply")
+    assert len(made) == 1 and made[0].get("action_id"), made
+    row = [r for r in _egress_calls() if r.get("channel") == "chat_channel"][-1]
+    assert row["action_id"] == made[0]["action_id"]
+
+
+def test_a_send_never_carries_anything_but_a_well_formed_action_id(_quiet_egress):
+    from agent_friday.services import egress_gate
+    egress_gate.record_service_send("mail", "gmail", content="body", action_id="not an id: words")
+    egress_gate.record_service_send("mail", "gmail", content="body", action_id=None)
+    assert all("action_id" not in r for r in _egress_calls())
+    from agent_friday.services import policy_version
+    aid = policy_version.new_action_id()
+    assert egress_gate.action_id_of({"envelope": {"action_id": aid}}) == aid
+    assert egress_gate.action_id_of({"action_id": "act_with words"}) is None
+
+
+def test_a_post_keeps_its_decisions_action_id_in_the_publish_log(monkeypatch):
+    from agent_friday.services import publisher
+    ref = G.record_external(publisher.PUBLISH_ACTION, surface="publisher", target="probe")
+    lines = []
+    monkeypatch.setattr(publisher.store, "append_publish_log", lambda line: lines.append(line))
+    monkeypatch.setitem(publisher._DECISIONS, "tgt-a10", ref)
+    publisher._log_attempt({"id": "tgt-a10", "post_id": "post-a10", "platform": "probe"}, "confirmed")
+    assert lines[-1]["action_id"] == ref["action_id"]
+    publisher._DECISIONS.pop("tgt-a10", None)
+    publisher._log_attempt({"id": "tgt-a10", "post_id": "post-a10", "platform": "probe"}, "failed")
+    assert "action_id" not in lines[-1]
 
 
 # ── 3. edits and missing final outcomes, labelled ───────────────────────────
