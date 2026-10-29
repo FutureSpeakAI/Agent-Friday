@@ -414,6 +414,10 @@ def _ensure_defaults() -> None:
     # the memory card and its review queue; the transcript and action receipts are listed as kept.
     from agent_friday.services import forget_derived as _forget_derived
     _forget_derived.register()
+    # "Don't suggest things like this" rules keep a suggestion's words (or keyed hashes of a meeting's): a rule
+    # carrying a token of the person's name goes.
+    from agent_friday.services import memory_suppress as _memory_suppress
+    register_store("memory_suppressions", _memory_suppress.people_find, _memory_suppress.people_purge)
 
 
 def _norm(s: str) -> str:

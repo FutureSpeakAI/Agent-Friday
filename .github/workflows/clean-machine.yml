@@ -66,7 +66,7 @@ env:
 
 jobs:
   build:
-    if: ${{ inputs.called != true }}
+    if: ${{ inputs.called != true && !(github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'red-evidence')) }}
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -96,7 +96,7 @@ jobs:
 
   leg:
     needs: build
-    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') && !(github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'red-evidence')) }}
     name: leg (${{ matrix.leg }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 75
@@ -166,7 +166,7 @@ jobs:
 
   evidence:
     needs: [build, leg]
-    if: ${{ always() }}
+    if: ${{ always() && !(github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'red-evidence')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

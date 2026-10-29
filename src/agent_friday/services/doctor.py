@@ -168,6 +168,18 @@ def _c_settings():
     return ("degraded", "unknown_keys") if unknown else ("healthy", "ok")
 
 
+def _c_settings_read():
+    """Whether this process is serving the last good settings because
+    settings.json could not be read (§28.4-2: never a silent reset). The
+    file is not touched, and saves are refused until it reads again. It
+    reflects the last read: after the file is mended it turns healthy at the
+    next read."""
+    from agent_friday import core
+    if core._settings_read_degraded():
+        return "degraded", "settings_unreadable_last_good_served"
+    return "healthy", "ok"
+
+
 def _defaults() -> dict:
     from agent_friday import core
     return dict(getattr(core, "DEFAULT_SETTINGS", {}) or {})
@@ -346,6 +358,23 @@ def _c_models():
     return "healthy", "local_model_files:%d" % n
 
 
+def _c_local_brain():
+    """Whether the local model is serving (§32.2-4). When it is installed and
+    not serving, the Doctor page offers its repairs (services/local_repair)."""
+    from agent_friday.services import capability_state as cs, local_repair
+    s = local_repair.brain()
+    if s["state"] == "unknown":
+        return "unverified", "local_model_state_unreadable"
+    if s["state"] == cs.WORKING:
+        return "healthy", "serving"
+    if s["down"]:
+        from agent_friday.services import safe_mode
+        if safe_mode.active():
+            return "blocked_by_policy", "not_started_in_safe_mode"
+        return "broken", "installed_not_serving_repair_offered"
+    return "unavailable_by_configuration", "no_local_model"
+
+
 def _c_crashes():
     from agent_friday.services import crash_forensics
     n = crash_forensics.crash_count()
@@ -410,6 +439,7 @@ def _c_boot():
 CHECKS = (
     ("app_files", "application files", _c_versions),
     ("settings", "settings schema", _c_settings),
+    ("settings_read", "settings schema", _c_settings_read),
     ("vault", "vault accessibility", _c_vault),
     ("governance_key", "key and credential availability", _c_governance_key),
     ("receipt_chain", "receipt chains", _c_ledger),
@@ -428,6 +458,7 @@ CHECKS = (
     ("recall", "memory and search indexes", _c_recall),
     ("search_index", "memory and search indexes", _c_search_index),
     ("model_files", "model files and checksums", _c_models),
+    ("local_brain", "GPU and resource state", _c_local_brain),
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
     ("update_signature", "update status", _c_update_signature),
@@ -567,6 +598,15 @@ def _versions() -> dict:
     return out
 
 
+def _known_issues() -> dict:
+    """How many known issues this release lists, by section (§36.0-7)."""
+    try:
+        from agent_friday.services import known_issues
+        return known_issues.summary()
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "error": type(e).__name__}
+
+
 def _stores() -> dict:
     """Every store with its version, size and place in the data folder
     (services/store_inventory.py, §37.3-1). Store names and locations are
@@ -600,6 +640,7 @@ def build() -> dict:
     report["summary"] = {s: sum(1 for c in report["checks"] if c["state"] == s)
                          for s in STATES if any(c["state"] == s for c in report["checks"])}
     report["build_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    report["known_issues"] = _known_issues()
     report = _clean(report, _private_markers())
     # rebuilt from Friday's own constants and numbers (store_inventory.public),
     # so the general filter above, which could blank a store whose name holds
@@ -631,6 +672,13 @@ def render_text(report: dict) -> str:
         d.get("settings_unknown_key_count"))]
     p = report.get("performance") or {}
     lines += ["", "Performance: " + json.dumps(p, sort_keys=True)]
+    ki = report.get("known_issues") or {}
+    if ki.get("available"):
+        lines += ["", "Known issues in this release: %s, listed on the Doctor page (%s)" % (
+            ki.get("count"), "; ".join("%s: %s" % (s.get("section"), s.get("count"))
+                                       for s in ki.get("by_section") or []))]
+    elif "known_issues" in report:
+        lines += ["", "Known issues: the list is not in this install."]
     inv = report.get("stores")
     if isinstance(inv, dict) and isinstance(inv.get("stores"), list):
         from agent_friday.services import store_inventory
