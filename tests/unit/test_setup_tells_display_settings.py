@@ -7,6 +7,8 @@ stronger text had no way to learn that Friday follows the system settings.
 Now, whichever way they answer, Friday says it once, in plain words, and what
 she says is true of the page: reduced motion stops the decorative loops, and a
 contrast theme strengthens dim text and the focus outline.
+The note says motion "calms down", not "stops": on this base (AX1) the scene
+slows rather than stops; AX2 stops the decorative loops.
 """
 from __future__ import annotations
 
@@ -49,7 +51,8 @@ def test_skipping_talk_or_type_still_hears_it(home):
 
 def test_the_note_names_where_the_settings_are_in_plain_words():
     note = _note() or ""
-    assert "Visual effects" in note and "Contrast themes" in note
+    # Windows 10 and 11 name the pages differently, so the note names the settings, not a path.
+    assert "animations" in note and "contrast theme" in note and "accessibility settings" in note
     assert "nothing to set here" in note
     assert len(note) < 420, "short enough to hear once"
 
