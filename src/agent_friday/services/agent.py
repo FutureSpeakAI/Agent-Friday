@@ -2024,8 +2024,8 @@ def _summarize_multi_account_errors(result):
         if entry["status"] not in ("error", "needs_reauth"):
             entry["status"] = "partial"
             entry["error"] = "; ".join(x for x in (entry.get("error"), e.get("why")) if x)
-            if e.get("estimate"):
-                entry["estimate"] = e.get("estimate")
+            if e.get("estimated_total"):
+                entry["estimated_total"] = e.get("estimated_total")
     return list(by_id.values())
 
 
@@ -2074,7 +2074,8 @@ def _mark_partial(payload, accounts_status, what):
     if partly:
         # Read in part (more than was fetched): not a failure, but never a total.
         payload["incomplete"] = [{"account": a.get("label"), "reason": a.get("error"),
-                                  **({"about": a["estimate"]} if a.get("estimate") else {})} for a in partly]
+                                  **({"estimated_total": a["estimated_total"]}
+                                     if a.get("estimated_total") else {})} for a in partly]
         payload["incomplete_note"] = (
             "Not everything was read for %s (%s). Say there may be more; do not present this as "
             "all of them or the count as a total." % (
