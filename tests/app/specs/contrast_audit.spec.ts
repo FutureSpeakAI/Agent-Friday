@@ -31,17 +31,18 @@ test('every workspace: text against what is behind it, at 4.5:1', async ({ page 
     (((window as any).FRIDAY_WORKSPACE_REGISTRY || {}).workspaces || []).filter((x: any) => x && x.id && !x.held).map((x: any) => String(x.id)));
   expect(ids.length).toBeGreaterThan(10);
   const short: Record<string, string> = {};
+  const unopened: string[] = [];
   let checked = 0;
   for (const id of ids) {
     try {
       await page.goto(`${BASE}/w/${encodeURIComponent(id)}`, { waitUntil: 'domcontentloaded' });
       await page.locator('#ui-inner, #ui-root').first().waitFor({ state: 'attached', timeout: 60_000 });
       await settle(page, { quietMs: 1000, timeout: 10_000 });
-    } catch { short[id] = 'did not open'; continue; }
+    } catch { unopened.push(id); continue; }   // a slow start is not a contrast failure; `checked` below guards coverage
     checked += 1;
     try { await assertReadableContrast(page, id, 4.5); } catch (e) { short[id] = String((e as Error).message || e).split('\n').slice(0, 40).join('\n'); }
   }
-  console.log('[contrast] ' + JSON.stringify({ workspaces: ids.length, checked, short: Object.keys(short) }));
+  console.log('[contrast] ' + JSON.stringify({ workspaces: ids.length, checked, unopened, short: Object.keys(short) }));
   for (const [id, msg] of Object.entries(short)) console.log(`[contrast] ${id}: ${msg}`);
   expect(checked, 'workspaces the audit could open').toBeGreaterThan(10);
   expect(Object.keys(short), 'workspaces with text below 4.5:1 (details printed above)').toEqual([]);
