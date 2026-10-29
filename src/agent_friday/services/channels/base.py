@@ -180,33 +180,66 @@ class ChannelAdapter:
         if _held:
             return {"ok": False, "error": "route_not_chosen", "detail": _held}
         gated = _gate_channel_text(text, self.name)
-        if not self._checkpoint(chat_id):
+        passed, decision = self._checkpoint_ref(chat_id)
+        if not passed:
             return {"ok": False, "error": "held by the action checkpoint"}
-        res = self._send_raw(chat_id, gated)
+        from agent_friday.governance import action_gate as _gate
+        try:
+            res = self._send_raw(chat_id, gated)
+        except Exception:
+            _gate.close_external(decision, False, detail="transport_error")
+            raise
         ok = bool(isinstance(res, dict) and res.get("ok"))
         unsure = bool(isinstance(res, dict) and res.get("unsure"))
+        self.report_outbound(decision, ok, unsure)
         record_channel_send(self.name, chat_id, gated[:self.max_chars] if self.max_chars else gated,
                             ok, unsure)
         return res
 
-    def prepare_outbound(self, chat_id: str, text: str):
-        """What may leave on this channel, for an adapter that sends on its
-        own (a gateway's reply): the egress gate's text after the action
-        checkpoint's receipt, or None when the checkpoint holds it."""
+    @staticmethod
+    def report_outbound(decision, ok: bool, unsure: bool = False) -> None:
+        """The send's outcome for its checkpoint decision: sent -> executed; not
+        sent -> failed; a send the transport could not confirm either way ->
+        unconfirmed (not terminal, and never counted as done)."""
+        from agent_friday.governance import action_gate as _gate
+        if unsure:
+            _gate.close_external(decision, True, detail="unsure", outcome=_gate.UNCONFIRMED)
+        else:
+            _gate.close_external(decision, ok, detail="sent" if ok else "not_sent")
+
+    def prepare_outbound_ref(self, chat_id: str, text: str):
+        """(text, decision) for an adapter that sends on its own (a gateway's
+        reply): the egress gate's text after the action checkpoint's receipt,
+        or (None, None) when the checkpoint holds it. The adapter reports the
+        send with `report_outbound(decision, ok, unsure)`."""
         gated = _gate_channel_text(text, self.name)
-        return gated if self._checkpoint(chat_id) else None
+        passed, decision = self._checkpoint_ref(chat_id)
+        return (gated, decision) if passed else (None, None)
+
+    def prepare_outbound(self, chat_id: str, text: str):
+        """`prepare_outbound_ref` for a caller that cannot report the send: its
+        decision is marked unconfirmed at once (nobody will say what became of
+        it), so it is never left open nor counted as done."""
+        gated, decision = self.prepare_outbound_ref(chat_id, text)
+        if gated is not None:
+            from agent_friday.governance import action_gate as _gate
+            _gate.close_external(decision, True, detail="not_reported", outcome=_gate.UNCONFIRMED)
+        return gated
 
     def _checkpoint(self, chat_id: str) -> bool:
         """The action checkpoint's signed receipt for this send
         (action_gate.record_external: the cLaws intact, no hold)."""
+        return self._checkpoint_ref(chat_id)[0]
+
+    def _checkpoint_ref(self, chat_id: str):
+        """`_checkpoint` as (passed, the decision for the send's outcome)."""
         try:
             from agent_friday.governance import action_gate as _gate
-            _gate.record_external("channel:%s:send" % self.name, surface="channel",
-                                  target=_mask_chat(chat_id))
-            return True
+            return True, _gate.record_external("channel:%s:send" % self.name, surface="channel",
+                                               target=_mask_chat(chat_id))
         except Exception as e:  # Held, or the receipt could not be written
             self._last_error = "held: %s" % e
-            return False
+            return False, None
 
     # ── inbound dispatch (adapters call this per received message) ────────────
     def _dispatch(self, chat_id: str, text: str) -> None:

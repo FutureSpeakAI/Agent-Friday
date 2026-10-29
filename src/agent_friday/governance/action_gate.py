@@ -40,7 +40,7 @@ import threading
 import time
 import uuid
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -1224,13 +1224,17 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
          "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
          "max_uses": int(max_uses), "uses_left": int(max_uses), "created_by": created_by,
-         "note": note[:200], "created_at": time.time()}
+         "note": note[:200], "created_at": time.time(),
+         # the governing policy version it was issued under (NS-30.19-1)
+         "policy_version": _policy_version_id()}
     key = _governance_key()
     g["sig"] = _grant_sig(g, key)
     with _LOCK:
         gs = [x for x in _read_grants(key) if x.get("expires_at", 0) > time.time()]
         gs.append(g)
         _write_grants(gs)
+    _grant_event("grant.created", g["grant_id"], tools=g["tools"], scope=g["scope"],
+                 expires_at=round(g["expires_at"]), max_uses=g["max_uses"])
     return dict(g)
 
 
@@ -1247,6 +1251,8 @@ def revoke_all_grants() -> list:
         for gid in ids:
             action_ledger.append("grant_revoke", {"grant": gid}, durable=True)
         _write_grants([])
+    for gid in ids:
+        _grant_event("grant.revoked", gid)
     return ids
 
 
@@ -1255,6 +1261,17 @@ def all_grant_ids() -> list:
     take back (list_grants shows only the live ones)."""
     return [str(g.get("grant_id")) for g in _read_raw_grants()
             if isinstance(g, dict) and g.get("grant_id")]
+
+
+def _grant_event(kind: str, grant_id: str, **payload) -> None:
+    """NS-31.7-1: a grant made or taken back is in the canonical event log (ids, tool names and
+    limits; never a note's words). Never raises."""
+    try:
+        from agent_friday.services import events
+        events.record_critical(kind, source="action_gate", payload=payload,
+                               related_ids={"grant": grant_id})
+    except Exception:
+        pass
 
 
 def list_grants() -> list:
@@ -1292,6 +1309,8 @@ def revoke_grant(grant_id: str) -> bool:
         action_ledger.append("grant_revoke", {"grant": str(grant_id)}, durable=True)
         keep = [g for g in gs if not (isinstance(g, dict) and g.get("grant_id") == grant_id)]
         _write_grants(keep)
+    if found:
+        _grant_event("grant.revoked", grant_id)
     return found
 
 
@@ -1349,16 +1368,20 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
             except Exception:
                 return None
             live["uses_left"] = int(live["uses_left"]) - 1
-            # The file's count is for display only.
+            # the policy version this use was made under (NS-30.19-1); the
+            # decision receipt that names the grant carries it too
+            live["last_used_policy_version"] = _policy_version_id()
+            # The file's count and version are records only: the ledger holds the count.
             try:
                 raw = _read_raw_grants()
                 for x in raw:
                     if isinstance(x, dict) and x.get("grant_id") == g.get("grant_id"):
                         x["uses_left"] = live["uses_left"]
+                        x["last_used_policy_version"] = live["last_used_policy_version"]
                 _write_grants(raw)
             except OSError:
-                pass                      # display only: the ledger holds the count
-            return live
+                pass
+            return dict(live, used_policy_version=live["last_used_policy_version"])
     return None
 
 
@@ -1371,16 +1394,216 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
 #: target, or hash of the arguments (a hash of a short message can be guessed).
 _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
                             "grant", "task_id", "tainted", "chosen_by",
-                            "plan_version")
+                            "plan_version", "action_id", "policy_version", "envelope",
+                            "outcome")
 
 
-def _receipt(entry: dict) -> dict:
+def _policy_version_id() -> Optional[str]:
+    """The governing policy version now (services/policy_version). Records
+    only: nothing here reads it to decide. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        return _pv.current_id()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@dataclass(frozen=True)
+class ActionEnvelope:
+    """The single action envelope (NS-36.3-1, BD-11a): built once per decision
+    on the gate path (`authorize`; `_receipt` builds it for any other decision
+    receipt) and carried to the receipts. Ids, labels and hashes only.
+
+    action_id          ``act_`` + 20 hex: the action every receipt names
+    principal          who the action is for (action_ledger.PRINCIPAL)
+    tool               the tool or executor action
+    args_hash          SHA-256 of the canonical arguments (None when there are none)
+    idempotency_key    ``idk_`` + 24 hex: the same request (same tool, arguments
+                       and turn or task) gets the same key; a caller-supplied
+                       ``idempotency_key`` in the session context is hashed in
+                       instead. Never the arguments themselves.
+    verification_plan  what checks the decision and what record it must leave
+    policy_version     the governing policy version (services/policy_version)
+    claws_state        {"hash", "status"}: the cLaws as this action found them
+    created_at         unix seconds
+    """
+    action_id: str
+    principal: str
+    tool: str
+    args_hash: Optional[str]
+    idempotency_key: Optional[str]
+    verification_plan: dict
+    policy_version: Optional[str]
+    claws_state: dict
+    created_at: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+ENVELOPE_FIELDS = tuple(f.name for f in fields(ActionEnvelope))
+
+
+def _verification_plan(klass, decision, via=None) -> dict:
+    """Labels: the checks the decision passes and the record it must leave."""
+    checks = ["signed_receipt"]
+    if klass == OUTWARD:
+        checks += ["claws_pin", "outward_hold"]
+    if decision == "card":
+        checks.append("approval_card")
+    elif decision == "confirm":
+        checks.append("chat_confirmation")
+    expects = klass in (OUTWARD, OBSERVE) and decision not in ("deny", None)
+    return {"checks": checks, "outcome": "outcome_receipt" if expects else "none",
+            "via": str(via)[:40] if via else None}
+
+
+def _idempotency_key(tool, args_hash, ctx, principal) -> Optional[str]:
+    c = ctx if isinstance(ctx, dict) else {}
+    supplied = str(c.get("idempotency_key") or "").strip()
+    if supplied:
+        basis = "client|%s|%s" % (principal, supplied)
+    elif args_hash:
+        scope = next((str(c[k]) for k in ("turn_id", "task_id", "run_id", "schedule_id",
+                                          "session_id") if c.get(k)), "") or (_turn_id() or "")
+        basis = "derived|%s|%s|%s|%s" % (principal, tool, args_hash, scope)
+    else:
+        return None
+    return "idk_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+
+
+def _current_pv() -> Optional[dict]:
+    """The governing policy version now ({"id", "parts"}), or None when the
+    module cannot be used. Read once per decision and passed along. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        v = _pv.current()
+        return v if isinstance(v, dict) and v.get("id") else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _given_pv(pv: Any) -> Optional[dict]:
+    return pv if isinstance(pv, dict) and pv.get("id") else None
+
+
+#: The policy version `authorize` read for the decision it is recording, so
+#: `_receipt` does not read it again (set only around that one call).
+_DECISION_PV: ContextVar = ContextVar("friday_decision_policy_version", default=None)
+
+
+def build_envelope(tool, *, args_hash: Optional[str] = None, ctx: Optional[dict] = None,
+                   klass=None, decision=None, via=None, action_id: Optional[str] = None,
+                   key: Optional[bytes] = None, pv: Optional[dict] = None) -> ActionEnvelope:
+    """The envelope for one action; records only. `pv`: the policy version
+    the caller already read (else it is read here)."""
+    from agent_friday.services import policy_version as _pv
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    pvd = _given_pv(pv) or _current_pv()
+    principal = str((ctx or {}).get("principal") or _principal)[:40]
+    aid = action_id if _pv.valid_action_id(action_id) else _pv.new_action_id()
+    tool = str(tool or "")[:120]
+    return ActionEnvelope(
+        action_id=aid, principal=principal, tool=tool,
+        args_hash=str(args_hash) if args_hash else None,
+        idempotency_key=_idempotency_key(tool, args_hash, ctx, principal),
+        verification_plan=_verification_plan(klass, decision, via),
+        policy_version=(pvd or {}).get("id"), claws_state=_pv.claws_state(key, pv=pvd),
+        created_at=time.time())
+
+
+def _envelope_of(entry: dict, key: Optional[bytes], pv: Optional[dict] = None) -> dict:
+    """The envelope a receipt carries: the one the gate built (`authorize`
+    puts it in the entry), else one built now, with the cLaws status read
+    under the signing key and the policy version as of this receipt (`pv`)."""
+    from agent_friday.services import policy_version as _pv
+    pvd = _given_pv(pv) or _current_pv()
+    env = entry.get("envelope") if isinstance(entry.get("envelope"), dict) else None
+    if env is None or not _pv.valid_action_id(env.get("action_id")):
+        env = build_envelope(entry.get("tool"), args_hash=entry.get("args_hash"),
+                             klass=entry.get("class"), decision=entry.get("decision"),
+                             via=entry.get("via"), action_id=entry.get("action_id"),
+                             key=key, pv=pvd).to_dict()
+    else:
+        env = {k: env.get(k) for k in ENVELOPE_FIELDS}
+        env["claws_state"] = _pv.claws_state(key, pv=pvd)
+    env["policy_version"] = (pvd or {}).get("id") or env.get("policy_version")
+    return env
+
+
+#: The policy version a receipt names when the version could not be read.
+PV_UNAVAILABLE = "pv_unavailable"
+_LOCAL_ACTION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{3,79}")
+
+
+def _fallback_envelope(entry: dict) -> dict:
+    """The envelope when the policy version module cannot be used: the
+    action id the entry already names (else a local ``act_`` id) and
+    PV_UNAVAILABLE. Still recorded; never holds a decision. Never raises."""
+    given = entry.get("envelope") if isinstance(entry.get("envelope"), dict) else {}
+    aid = next((a for a in (given.get("action_id"), entry.get("action_id"))
+                if isinstance(a, str) and _LOCAL_ACTION_ID.fullmatch(a)), None)
+    try:
+        plan = _verification_plan(entry.get("class"), entry.get("decision"), entry.get("via"))
+    except Exception:  # noqa: BLE001
+        plan = {"checks": ["signed_receipt"], "outcome": "none", "via": None}
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    idk = given.get("idempotency_key")
+    ah = entry.get("args_hash")
+    return {"action_id": aid or "act_" + uuid.uuid4().hex[:20],
+            "principal": str(given.get("principal") or _principal)[:40],
+            "tool": str(entry.get("tool") or "")[:120],
+            "args_hash": str(ah) if ah else None,
+            "idempotency_key": idk if isinstance(idk, str) else None,
+            "verification_plan": plan, "policy_version": PV_UNAVAILABLE,
+            "claws_state": {"hash": None, "status": "unavailable"},
+            "created_at": time.time()}
+
+
+def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
     """Sign and append; returns the ledger entry. Raises on failure, so the
-    caller can hold the action."""
+    caller can hold the action.
+
+    Every decision receipt carries its action envelope (`envelope`, and its
+    `action_id` and `policy_version` at the top), and the policy version it
+    names is on record in the ledger first (policy_version.ensure_recorded).
+    The ledger refuses a receipt without an action id.
+
+    `pv`: the policy version the caller already read for this decision
+    (`authorize` passes it through _DECISION_PV); else it is read once here.
+    The envelope never holds a decision: if it cannot be built, a fallback
+    with a local action id and PV_UNAVAILABLE is recorded instead."""
+    key = _governance_key()
+    pvd = _given_pv(pv) or _given_pv(_DECISION_PV.get()) or _current_pv()
+    try:
+        env = _envelope_of(entry, key, pvd)
+        if not (isinstance(env, dict) and isinstance(env.get("action_id"), str)):
+            raise ValueError("no action id")
+    except Exception as e:  # noqa: BLE001 - the envelope records; it never holds
+        _log.warning("action envelope fell back: %s", type(e).__name__)
+        env = _fallback_envelope(entry)
+    if not env.get("policy_version"):
+        env["policy_version"] = PV_UNAVAILABLE
+    entry = dict(entry, envelope=env, action_id=env["action_id"],
+                 policy_version=env["policy_version"])
+    if pvd is not None and env["policy_version"] == pvd["id"]:
+        try:
+            from agent_friday.services import policy_version as _pvm
+            _pvm.ensure_recorded(pvd)
+        except Exception:  # noqa: BLE001 - recording the version never holds a decision
+            pass
     try:
         from agent_friday.services import off_record as _off
         if _off.active():
             entry = {k: entry.get(k) for k in _OFF_RECORD_RECEIPT_KEYS if k in entry}
+            # no hash of the arguments off the record (a short message can be guessed)
+            entry["envelope"] = dict(env, args_hash=None, idempotency_key=None)
             entry["off_record"] = True
     except ImportError:
         pass
@@ -1394,7 +1617,7 @@ def _receipt(entry: dict) -> dict:
     except ImportError:
         pass
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
-    entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()
+    entry["hmac"] = _hmac.new(key, canonical, hashlib.sha256).hexdigest()
     # One store for what Friday did (services/action_ledger.py): the decision
     # is an entry in the hash-chained ledger, written to disk (fsync) before
     # the action runs. The entry keeps its own HMAC as well, so a decision can
@@ -1408,33 +1631,255 @@ def _receipt(entry: dict) -> dict:
 #: exact decision it carried out (north star §18.9, NS-34.17-7).
 LAST_RECEIPT: ContextVar = ContextVar("friday_last_decision_receipt", default=None)
 
-#: Outcome statuses an outcome entry may carry.
-OUTCOMES = ("ok", "error", "refused", "held")
+#: Statuses an outcome entry may carry: how the call ended, as its caller saw it.
+OUTCOME_STATUSES = ("ok", "error", "refused", "held")
+
+# ── The outcome vocabulary (NS-31.5-2, BD-11a) ──────────────────────────────
+#
+# One word for what became of an action, on every verdict, decision receipt
+# and outcome receipt. Labels only: no decision reads them.
+#
+#   executed            it runs (a verdict), or it ran (an outcome)
+#   approval_required   it waits for the owner's yes (a card or a chat question)
+#   denied              the owner said no, or the handler refused it
+#   forbidden           a rule or a hold stopped it (forbidden class, safe mode,
+#                       a revocation, a ledger break, a later check)
+#   waiting             a card for it is already open, or everything is stopped
+#   failed              it was tried and did not work, or the check itself failed
+#   completed_verified  it ran and the service confirmed it (an id came back)
+#   unconfirmed         nobody knows yet: the request that carried it out
+#                       answered, but its executor never said what became of it
+#                       (settle_request_externals), or a send the gateway could
+#                       not confirm. Not terminal: a later outcome may close it.
+
+EXECUTED = "executed"
+APPROVAL_REQUIRED = "approval_required"
+DENIED = "denied"
+FORBIDDEN = "forbidden"
+WAITING = "waiting"
+FAILED = "failed"
+COMPLETED_VERIFIED = "completed_verified"
+UNCONFIRMED = "unconfirmed"
+OUTCOMES = (EXECUTED, APPROVAL_REQUIRED, DENIED, FORBIDDEN, WAITING, FAILED, COMPLETED_VERIFIED,
+            UNCONFIRMED)
+#: After one of these nothing more happens to the action: its terminal receipt.
+TERMINAL_OUTCOMES = frozenset({EXECUTED, FAILED, COMPLETED_VERIFIED, DENIED, FORBIDDEN})
+#: An outcome entry's status as an outcome word.
+STATUS_OUTCOME = {"ok": EXECUTED, "error": FAILED, "refused": DENIED, "held": FORBIDDEN}
+#: A task's state (services/task_states.derive) as an outcome word.
+TASK_STATE_OUTCOME = {
+    "completed_verified": COMPLETED_VERIFIED, "completed_unverified": EXECUTED,
+    "failed": FAILED, "recovered_after_crash": FAILED, "cancelled": DENIED,
+    "waiting_for_approval": WAITING, "waiting_for_input": WAITING,
+    "waiting_for_external_event": WAITING,
+}
+
+
+def verdict_outcome(action: str, klass: str = "", reason: str = "") -> str:
+    """The outcome word for a checkpoint verdict (allow/confirm/card/deny)."""
+    if action == "allow":
+        return EXECUTED
+    if action in ("confirm", "card"):
+        return APPROVAL_REQUIRED
+    why = str(reason or "").strip().lower()
+    if klass == "forbidden" or why.startswith(("not allowed", "held")):
+        return FORBIDDEN
+    if why.startswith("declined"):
+        return DENIED
+    return FAILED                       # the check itself failed: nothing ran
+
+
+def outcome_of_status(status: str) -> str:
+    """An outcome entry's status (ok/error/refused/held), or a task status, as
+    an outcome word. Unknown words are `failed`, never `executed`."""
+    s = str(status or "").strip().lower()
+    if s in STATUS_OUTCOME:
+        return STATUS_OUTCOME[s]
+    if s in OUTCOMES:
+        return s
+    try:
+        from agent_friday.services import task_states
+        return TASK_STATE_OUTCOME.get(task_states.derive({"status": s}), FAILED)
+    except Exception:  # noqa: BLE001
+        return FAILED
 
 
 def record_outcome(tool: str, decision: Optional[dict], status: str, *,
                    approval: Optional[str] = None, duration_ms: Optional[float] = None,
-                   detail: str = "") -> None:
+                   detail: str = "", outcome: Optional[str] = None) -> None:
     """The terminal receipt of an outward or reading action: what happened
     after the decision (it ran: ok or error; the handler refused; a later
     check held it), linked to the decision's seq and hash. `detail` is a
-    fixed code, never free text, and is left out off the record. Never raises."""
+    fixed code, never free text, and is left out off the record. Never raises.
+
+    `outcome`: the outcome word (OUTCOMES), else the status's (STATUS_OUTCOME).
+    `completed_verified` stands only on a status of ok. A `decision` dict
+    passed in is marked closed (`_closed`), so it is not settled twice."""
     try:
+        st = status if status in OUTCOME_STATUSES else "error"
+        oc = outcome if outcome in OUTCOMES else STATUS_OUTCOME[st]
+        if oc in (EXECUTED, COMPLETED_VERIFIED) and st != "ok":
+            oc = STATUS_OUTCOME[st]
         from agent_friday.services import action_ledger
+        from agent_friday.services import policy_version as _pv
         try:
             from agent_friday.services import off_record as _off
             if _off.active():
                 detail = ""
         except Exception:
             pass
+        # The action this outcome belongs to: the one its decision names. An
+        # outcome with no decision to name (a call that ran on an approved
+        # card before the checkpoint) gets an action id of its own, marked so.
+        aid = (decision or {}).get("action_id")
+        minted = not _pv.valid_action_id(aid)
+        if minted:
+            aid = _pv.new_action_id()
         action_ledger.try_append("outcome", {
-            "tool": tool, "status": status if status in OUTCOMES else "error",
+            "action_id": aid,
+            **({"action_id_origin": "outcome"} if minted else {}),
+            "policy_version": _policy_version_id(),
+            "decision_policy_version": (decision or {}).get("policy_version"),
+            "tool": tool, "status": st, "outcome": oc, "terminal": oc in TERMINAL_OUTCOMES,
             "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
             "approval": approval or (decision or {}).get("approval"),
             "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
             "detail": str(detail or "")[:120]})
+        if isinstance(decision, dict) and oc in TERMINAL_OUTCOMES:
+            decision["_closed"] = True
     except Exception:
         pass
+
+
+# ── Outcomes for executors outside a tool call ──────────────────────────────
+
+def _external_ref(out: Any, tool: str, approval_id: Optional[str]) -> dict:
+    """The decision as an outcome names it (seq, hash, action id), returned
+    for `close_external` and kept in a request's list for
+    `settle_request_externals`."""
+    out = out if isinstance(out, dict) else {}
+    rec = out.get("rec") if isinstance(out.get("rec"), dict) else {}
+    ref = {"seq": out.get("seq"), "hash": out.get("hash"), "tool": tool, "class": OUTWARD,
+           "decision": "allow", "action_id": rec.get("action_id"),
+           "policy_version": rec.get("policy_version"), "approval": approval_id,
+           "t": time.time()}
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            g._friday_externals = (getattr(g, "_friday_externals", None) or []) + [ref]
+    except Exception:  # noqa: BLE001 - outside Flask: the executor closes it itself
+        pass
+    return ref
+
+
+def close_external(ref: Optional[dict], ok: bool = True, *, detail: str = "",
+                   verified: bool = False, outcome: Optional[str] = None) -> bool:
+    """Write the terminal outcome of an action decided by `record_external`
+    (or an allowing `authorize_external`), given the decision it returned:
+    `ok` executed, else failed; `verified` (the service confirmed it, an id
+    came back) completed_verified; `outcome` names another word. Once per
+    decision; anything but a decision it returned is ignored. True when an
+    outcome was written. Never raises.
+
+    `outcome=UNCONFIRMED` is not terminal: it is written at most once and the
+    decision stays open for the real outcome."""
+    try:
+        r = ref
+        # a decision the ledger did not keep (no action id) has nothing to close
+        if not (isinstance(r, dict) and r.get("class") == OUTWARD and r.get("action_id")) \
+                or r.get("_closed"):
+            return False
+        oc = outcome if outcome in OUTCOMES else (
+            COMPLETED_VERIFIED if ok and verified else EXECUTED if ok else FAILED)
+        if oc == UNCONFIRMED and r.get("_unconfirmed"):
+            return False
+        record_outcome(str(r.get("tool") or ""), r, "ok" if ok else "error",
+                       approval=r.get("approval"), detail=detail, outcome=oc)
+        if oc in TERMINAL_OUTCOMES:
+            r["_closed"] = True
+        else:
+            r["_unconfirmed"] = oc == UNCONFIRMED or bool(r.get("_unconfirmed"))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def answer_outcome(resp) -> Optional[str]:
+    """The outcome word a route's own answer gives for the change it made
+    itself (the route is the executor, and builds its answer from the change's
+    result): failed for an error status or an error body, unconfirmed for a
+    partial or streamed answer, else executed. None when it cannot be read."""
+    try:
+        if resp.status_code >= 400:
+            return FAILED
+        if resp.is_streamed or resp.direct_passthrough or not resp.is_json:
+            return UNCONFIRMED
+        body = resp.get_json(silent=True)
+        if not isinstance(body, dict):
+            return UNCONFIRMED
+        st = str(body.get("status") or "").lower()
+        if st in ("error", "conflict", "denied", "failed") or body.get("ok") is False:
+            return FAILED
+        if st in ("partial", "unsure", "pending", "queued") or resp.status_code == 202:
+            return UNCONFIRMED
+        return EXECUTED
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def close_on_answer(ref: Optional[dict], detail: str = "route_answer") -> Optional[dict]:
+    """For a route that carries out the change itself, inside this request:
+    close `ref` from the route's own answer (`answer_outcome`) as the answer
+    leaves. Outside a request this does nothing (the caller closes it).
+    Returns `ref`."""
+    if not isinstance(ref, dict):
+        return ref
+    try:
+        from flask import after_this_request, has_request_context
+        if not has_request_context():
+            return ref
+
+        @after_this_request
+        def _close(resp):
+            oc = answer_outcome(resp)
+            if oc is not None:
+                close_external(ref, oc in (EXECUTED, UNCONFIRMED), detail=detail, outcome=oc)
+            return resp
+    except Exception:  # noqa: BLE001
+        pass
+    return ref
+
+
+def defer_external(ref: Optional[dict]) -> Optional[dict]:
+    """Mark a decision as one its executor closes later, outside this request
+    (a scheduled publish closes when the publish finishes): the request's
+    settlement leaves it alone. Returns `ref`."""
+    if isinstance(ref, dict):
+        ref["_deferred"] = True
+    return ref
+
+
+def settle_request_externals(ok: bool, detail: str = "") -> int:
+    """At the end of a request: every decision `record_external` wrote in it
+    that its executor neither closed nor deferred is marked `unconfirmed` (not
+    terminal), with a fixed code saying how the request ended (`ok`: it answered
+    without an error). The request's answer is not evidence of what became of
+    the action, so settlement never writes executed or failed. Returns how
+    many. Never raises."""
+    try:
+        from flask import g, has_request_context
+        if not has_request_context():
+            return 0
+        refs = getattr(g, "_friday_externals", None) or []
+        g._friday_externals = []
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    for r in refs:
+        if isinstance(r, dict) and not r.get("_closed") and not r.get("_deferred"):
+            n += bool(close_external(r, ok, outcome=UNCONFIRMED,
+                                     detail=detail or ("request_ok" if ok else "request_error")))
+    return n
 
 
 def receipts_path() -> Path:
@@ -1488,6 +1933,13 @@ class Verdict:
     reason: str
     grant: Optional[dict] = None
     detail: dict = field(default_factory=dict)
+    #: The outcome word (OUTCOMES); derived from action, class and reason
+    #: (verdict_outcome) unless the checkpoint names it.
+    outcome: str = ""
+
+    def __post_init__(self):
+        if self.outcome not in OUTCOMES:
+            self.outcome = verdict_outcome(self.action, self.klass, self.reason)
 
 
 #: The owner's decision behind the tool call running now: an approved card's
@@ -1556,13 +2008,33 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
+        _args_hash = hashlib.sha256(json.dumps(args or {}, sort_keys=True,
+                                               default=str).encode()).hexdigest()
+        # The single action envelope (NS-36.3-1), built once here and carried
+        # to the decision receipt and, through LAST_RECEIPT, to the outcome.
+        # Records only: nothing reads it to decide. The policy version is read
+        # once and passed on to the receipt.
+        _pvd = _current_pv()
+        try:
+            _env = build_envelope(tool_name, args_hash=_args_hash, ctx=ctx, klass=v.klass,
+                                  decision=v.action, via=via or None, pv=_pvd).to_dict()
+        except Exception as e:  # noqa: BLE001 - _receipt builds one instead
+            _log.warning("action envelope not built here: %s", type(e).__name__)
+            _env = None
+        # (through a context variable, not an argument: callers and tests
+        # replace _receipt with one-argument callables)
+        _pv_token = _DECISION_PV.set(_pvd)
+        try:
+            _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
+                  # what became of it as the checkpoint sees it (OUTCOMES); a
+                  # deny is its own terminal receipt
+                  "outcome": v.outcome,
                   # "tool_call": the governance hook of _execute_tool, whose
                   # call writes an outcome (services/receipt_audit expects one)
                   "via": via or None,
-                  "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
-                                                         default=str).encode()).hexdigest(),
+                  "args_hash": _args_hash,
+                  **({"envelope": _env, "action_id": _env["action_id"]} if _env else {}),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
                                                      "background" if ctx.get("is_background_task") else "other"),
                   "grant": (v.grant or {}).get("grant_id"),
@@ -1573,9 +2045,15 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "chosen_by": _chosen_by(ctx),
                   "plan_version": _plan_version(),
                   "turn_id": _turn_id()})
+        finally:
+            _DECISION_PV.reset(_pv_token)
         _out = _out if isinstance(_out, dict) else {}
+        _orec = _out.get("rec") if isinstance(_out.get("rec"), dict) else {}
         LAST_RECEIPT.set({"seq": _out.get("seq"), "hash": _out.get("hash"), "tool": tool_name,
-                          "class": v.klass, "decision": v.action})
+                          "class": v.klass, "decision": v.action,
+                          "action_id": _orec.get("action_id") or (_env or {}).get("action_id"),
+                          "policy_version": _orec.get("policy_version")
+                          or (_env or {}).get("policy_version")})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
@@ -1812,7 +2290,7 @@ class Held(RuntimeError):
 
 
 def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
-                    target: str = "") -> Optional[dict]:
+                    target: str = "") -> dict:
     """The checkpoint's integrity check and signed receipt, for an executor
     that carries out an already-decided action outside a tool call (an
     approved email, an approved text).
@@ -1820,8 +2298,13 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     The decision itself (the card) is the caller's to verify. This adds the
     two steps every tool call gets in `authorize`: the cLaws are intact, and
     a signed receipt of the action is written. Raises `Held` if either fails,
-    so the caller stops before anything leaves the machine. Returns the decision's ledger entry
-    (its seq and hash), so the caller's outcome receipt can name the decision it carried out.
+    so the caller stops before anything leaves the machine.
+
+    Returns the decision as an outcome names it; the executor writes the
+    action's terminal outcome with `close_external` (inside a request, one it
+    leaves open is marked unconfirmed: settle_request_externals). The
+    decision receipt carries no outcome word: nothing has run yet, and what
+    became of the action is its outcome receipt's to say.
     """
     import agent_friday.core as _core_gs
     if _core_gs.GLOBAL_STOP.is_set():
@@ -1837,13 +2320,13 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     if hold:
         raise Held(hold)
     try:
-        entry = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
-                          "surface": surface,
-                          "reason": "approved card" if approval_id else surface,
-                          "approval": approval_id, "target": target})
+        out = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
+                        "surface": surface,
+                        "reason": "approved card" if approval_id else surface,
+                        "approval": approval_id, "target": target})
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
-    return entry if isinstance(entry, dict) else None
+    return _external_ref(out, action, approval_id)
 
 
 def external_subject(action: str, detail: dict) -> str:
@@ -1879,7 +2362,8 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         if _core_gs.GLOBAL_STOP.is_set():
             # Stop everything (services/global_stop): held, and the card is not used up.
             # "card", not "deny": callers wait (as for a card) instead of recording a decline.
-            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
+            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)",
+                           outcome=WAITING)
     except Exception:
         pass
     try:
@@ -1903,23 +2387,33 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
                 rec = named
         if rec is None:
             rec = _ap.find_for_subject("external_action", subject, "governed_action")
+        card_id = (rec or {}).get("approval_id")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
             _ap.mark_used(rec["approval_id"], requested_by)
             v = Verdict("allow", OUTWARD, "approved on a card")
         elif rec and rec.get("status") in ("denied", "blocked"):
-            v = Verdict("deny", OUTWARD, "declined on a card")
+            v = Verdict("deny", OUTWARD, "declined on a card", outcome=DENIED)
         else:
             if rec is None or rec.get("status") == "expired" or rec.get("consumed"):
-                _ap.create_approval(
+                made = _ap.create_approval(
                     kind="governed_action", subject_type="external_action",
                     subject_id=subject + (f":{uuid.uuid4().hex[:6]}" if rec else ""),
                     title=title or f"Allow {action}",
                     description=description or json.dumps(detail, default=str)[:600],
                     action_description=action_description or action, force_gate=True,
                     payload=detail, requested_by=requested_by)
-            v = Verdict("card", OUTWARD, "waiting for the owner's decision")
-        _receipt({"tool": action, "class": OUTWARD, "decision": v.action,
-                  "reason": v.reason, "surface": requested_by})
+                card_id = (made or {}).get("approval_id") if isinstance(made, dict) else None
+                v = Verdict("card", OUTWARD, "waiting for the owner's decision",
+                            outcome=APPROVAL_REQUIRED)
+            else:
+                # its card is already open: the action waits on it
+                v = Verdict("card", OUTWARD, "waiting for the owner's decision", outcome=WAITING)
+        out = _receipt({"tool": action, "class": OUTWARD, "decision": v.action,
+                        "reason": v.reason, "surface": requested_by, "outcome": v.outcome,
+                        **({"approval": card_id} if card_id else {})})
+        if v.action == "allow":
+            # the caller carries it out next: its outcome closes this decision
+            v.detail["decision_ref"] = _external_ref(out, action, card_id)
         return v
     except Exception as e:
         return Verdict("deny", OUTWARD, f"governance check failed ({e})")

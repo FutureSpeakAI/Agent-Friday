@@ -465,13 +465,14 @@ def _perform(record):
     site = get_site(payload["site_id"])
     operation = _operation(site, payload["operation_id"])
     remote_started = False
+    decision = None
     try:
         sites_privacy.require_operation(operation.get("privacy_generation"), operation.get("privacy_boot"))
         _durable()
         site, operation = _approved_operation(record)
         build = _build(site, operation["build_id"])
         if operation["action"] == "build":
-            action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=site["codebase_id"])
+            decision = action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=site["codebase_id"])
             result = site_builds.execute_build(site, build)
             from agent_friday.services import conversations
             with LOCK, conversations._LOCK:
@@ -480,6 +481,7 @@ def _perform(record):
                 _write(site_builds.build_dir(site["site_id"], build["build_id"]) / "build.json", build)
                 operation.update(status=build["status"], error=build.get("error"), build_id=build["build_id"], finished_at=time.time())
                 _save_operation(operation)
+                _close_decision(decision, operation)
                 return
         else:
             from agent_friday.services import site_hosting, conversations
@@ -501,13 +503,14 @@ def _perform(record):
                 # The owner cannot move while a bounded external mutation is in flight.
                 stack.enter_context(conversations._LOCK)
                 _approved_operation(record)
-                action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=operation["connection"]["connection_id"])
+                decision = action_gate.record_external(KIND, surface="approval_card", approval_id=record["approval_id"], target=operation["connection"]["connection_id"])
                 remote_started = True
                 receipt = publish_adapters.publish_site(bundle, connection, hostname=(site.get("domain") or {}).get("hostname", ""),
                                                         privacy_generation=operation["privacy_generation"])
                 operation.update(receipt)
                 operation["finished_at"] = time.time()
                 _save_operation(operation)
+                _close_decision(decision, operation)
                 return
     except Exception:
         # Provider errors may contain credential echoes. No exception text is persisted or returned.
@@ -515,6 +518,7 @@ def _perform(record):
                          error="The provider outcome is uncertain. Inspect this operation before any new publish." if remote_started else
                                "The operation could not complete. Check ownership, source, connection and the build output before preparing it again.")
     operation["finished_at"] = time.time()
+    _close_decision(decision, operation)
     try:
         with LOCK:
             _save_operation(operation)
@@ -530,6 +534,31 @@ def _perform(record):
     except ValueError:
         # A privacy transition invalidates delayed public receipts too.
         return
+
+
+#: An operation's status after it ran, as an outcome word (governance/action_gate.OUTCOMES).
+#: provider_pending and unknown stay unconfirmed: the later reconcile (inspect) does not carry the
+#: decision, so the audit lists them for the owner to check.
+_STATUS_OUTCOME = {"built": "executed", "failed": "failed", "refused": "failed",
+                   "provider_ready": "executed", "provider_pending": "unconfirmed", "unknown": "unconfirmed"}
+
+
+def _close_decision(decision, operation):
+    """Close the checkpoint's decision for this build or publish from the operation's own status
+    (a provider_ready publish the provider confirmed is completed_verified). Never raises."""
+    if decision is None:
+        return
+    try:
+        from agent_friday.governance import action_gate
+        status = str((operation or {}).get("status") or "")
+        word = _STATUS_OUTCOME.get(status, "unconfirmed")
+        verified = word == "executed" and status == "provider_ready" and bool(operation.get("verified"))
+        if verified:
+            word = "completed_verified"
+        action_gate.close_external(decision, word != "failed", detail="site_" + (status or "unknown")[:40],
+                                   outcome=word, verified=verified)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def preview_file(site_id, build_id, rel, *, generation):

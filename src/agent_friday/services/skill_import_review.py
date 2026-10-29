@@ -345,8 +345,9 @@ def install_approved(record: dict) -> dict:
             return out
         from agent_friday.governance import action_gate as _gate
         try:
-            _gate.record_external("skill:import", surface="approval_card",
-                                  approval_id=record["approval_id"], target=staged["fields"]["name"][:200])
+            decision = _gate.record_external("skill:import", surface="approval_card",
+                                             approval_id=record["approval_id"],
+                                             target=staged["fields"]["name"][:200])
         except _gate.Held as e:
             # The card and the notice carry a fixed sentence; the exception's own text (which can
             # quote a file path or an OS error) stays in the log.
@@ -361,6 +362,7 @@ def install_approved(record: dict) -> dict:
         if _refused(now_replaces) or now_replaces != staged.get("replaces"):
             out = {"ok": False, "why": "what this install would replace has changed since the card was raised; "
                                        "nothing was installed. Import the package again to see the new card"}
+            _gate.close_external(decision, False, detail="changed_since_card", outcome=_gate.FORBIDDEN)
             ap.mark_used(record["approval_id"], KIND, out)
             _tell("The skill was not installed", out["why"], record["approval_id"])
             return out
@@ -374,9 +376,11 @@ def install_approved(record: dict) -> dict:
                 actor="import")
         except Exception as e:  # noqa: BLE001 - the owner is told; the card records it
             out = {"ok": False, "why": "the skill could not be written (%s); nothing was installed" % type(e).__name__}
+            _gate.close_external(decision, False, detail="write_failed")
             ap.mark_used(record["approval_id"], KIND, out)
             _tell("The skill was not installed", out["why"], record["approval_id"])
             return out
+        _gate.close_external(decision, True, detail="installed")
         _drop_staged(staged["stage_id"])
         out = {"ok": True, "installed": f["name"], "path": str(folder)}
         ap.mark_used(record["approval_id"], KIND, out)

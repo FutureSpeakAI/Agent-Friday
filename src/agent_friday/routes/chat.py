@@ -1635,6 +1635,14 @@ def chat():
         # Source Production Mode — when true, Friday cites every factual claim
         # inline. Falls back to the persisted settings toggle so the preference
         # survives across turns even if the client omits the flag.
+        # Off the record and the private-memory generation at the turn's very start,
+        # for the shadow decision heads: a reading of this turn is written only if
+        # the turn began on the record and the generation has not moved since.
+        try:
+            from agent_friday.services import citation_heads as _cite_head_start
+            _cite_start = _cite_head_start.turn_start()
+        except Exception:
+            _cite_start = (True, None)
         settings_early = _load_settings()
         _pilot = _start_pilot(message, settings_early)
         cite_sources = bool(data.get('cite_sources',
@@ -3292,6 +3300,16 @@ def chat():
         # returned the block, and gone if its source was forgotten meanwhile.
         reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
 
+        # Decision models, evidence.supports (shadow): does each footnote's passage
+        # support its sentence? Read afterwards on the head's own worker; nothing
+        # here waits for it or changes. Not for a turn that began off the record.
+        if not _turn_off_record:
+            try:
+                from agent_friday.services import citation_heads as _cite_head
+                _cite_head.shadow_reply(reply, tool_trace, surface="chat", start=_cite_start)
+            except Exception:
+                pass
+
         # ── Fact-check: flag low-trust news citations. ──
         # When Friday cites a news outlet, consult its Source Trust Graph score
         # and append a verify-independently warning for anything below 0.5.
@@ -3753,6 +3771,14 @@ def chat_send():
         if not message.strip():
             return jsonify({"status": "error", "message": "Empty message"}), 400
 
+        # Off the record and the private-memory generation at the turn's very start,
+        # for the shadow decision heads: a reading of this turn is written only if
+        # the turn began on the record and the generation has not moved since.
+        try:
+            from agent_friday.services import citation_heads as _cite_head_start
+            _cite_start = _cite_head_start.turn_start()
+        except Exception:
+            _cite_start = (True, None)
         _pilot = _start_pilot(message, _load_settings())
 
         # Vision capture (Gemini, designer role). Accept either `screenshot`
@@ -4154,6 +4180,16 @@ def chat_send():
             'workspace': workspace,
         }
         reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+
+        # Decision models, evidence.supports (shadow): does each footnote's passage
+        # support its sentence? Read afterwards on the head's own worker; nothing
+        # here waits for it or changes. Not for a turn that began off the record.
+        if not _turn_off_record:
+            try:
+                from agent_friday.services import citation_heads as _cite_head
+                _cite_head.shadow_reply(reply, tool_trace, surface="chat_send", start=_cite_start)
+            except Exception:
+                pass
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
         friday_msg = {
             'id': str(uuid.uuid4()),

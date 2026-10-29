@@ -33,6 +33,7 @@
   <h2 id="state-h">State of the record</h2>
   <div id="state" class="state" role="status">Checking…</div>
   <p class="muted" id="arch"></p>
+  <p id="audit" role="status"></p>
   <button type="button" id="verify">Check every entry now</button>
   <a class="btn" id="exp-report" href="/api/ledger/export?format=report">Save the verification report</a>
 </section>
@@ -170,6 +171,21 @@
         : 'Nothing is archived yet.';
     });
   }
+  // Every outward action: its decision and one terminal receipt (services/outward_audit).
+  function outwardAudit() {
+    api('/api/ledger/audit').then(({ ok, d }) => {
+      const p = $('audit');
+      if (!ok || !d.audit) { p.className = 'muted'; p.textContent = 'Outward actions could not be checked.'; return; }
+      const c = d.audit.counts || {};
+      const problems = (c.open || 0) + (c.duplicate || 0) + (c.duplicate_key || 0) + (c.false_done || 0);
+      p.className = problems ? 'bad' : 'ok';
+      p.textContent = 'Outward actions, last ' + d.audit.window_days + ' days: ' + (c.decisions || 0) + ' decided, '
+        + (c.closed || 0) + ' with their final receipt, ' + (c.waiting || 0) + ' waiting for you, '
+        + (c.unconfirmed || 0) + ' unconfirmed (nobody said whether it happened), '
+        + (c.open || 0) + ' with no final receipt, ' + (c.duplicate || 0) + ' with more than one, '
+        + (c.duplicate_key || 0) + ' run twice, ' + (c.false_done || 0) + ' task(s) marked done too early.';
+    });
+  }
   $('f').addEventListener('submit', ev => { ev.preventDefault(); lastSeq = null; load(false); });
   $('more').addEventListener('click', () => load(true));
   $('verify').addEventListener('click', () => api('/api/ledger/verify').then(({ d }) => showState(d.report)));
@@ -181,6 +197,7 @@
   });
   load(false);
   retention();
+  outwardAudit();
 })();
 </script>
 </body>

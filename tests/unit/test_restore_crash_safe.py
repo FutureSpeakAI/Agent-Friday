@@ -116,8 +116,10 @@ def machines(tmp_path, monkeypatch):
                       "wiki/page.md": "# A page\n"}.items():
         (a / rel).parent.mkdir(parents=True, exist_ok=True)
         (a / rel).write_text(text, encoding="utf-8")
-    from agent_friday.services import action_ledger
-    action_ledger.append("decision", {"tool": "probe_send", "decision": "allow"}, durable=True)
+    from agent_friday.services import action_ledger, policy_version
+    # a decision receipt names the action it belongs to (NS-30.19-1)
+    action_ledger.append("decision", {"tool": "probe_send", "decision": "allow",
+                                      "action_id": policy_version.new_action_id()}, durable=True)
     from agent_friday.privacy import vault_crypto as vc
     from agent_friday.services import friday_bundle as fb
     bundle = tmp_path / "out" / "a.fridaybundle"

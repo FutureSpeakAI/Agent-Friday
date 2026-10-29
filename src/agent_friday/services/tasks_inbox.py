@@ -40,6 +40,7 @@ record.
 """
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import hmac as _hmac
 import json
@@ -545,16 +546,33 @@ def _gate(text: str, field: str) -> Optional[str]:
     return gated if gated == text else None
 
 
+#: The decision the last `_checkpoint` in this context wrote, for `_settle`.
+_DECISION: contextvars.ContextVar = contextvars.ContextVar("tasks_inbox_decision", default=None)
+
+
 def _checkpoint(action: str, approval_id: Optional[str]) -> bool:
     """The cLaws check and a signed receipt before anything leaves (action_gate.record_external)."""
+    _DECISION.set(None)
     try:
         from agent_friday.governance import action_gate
-        action_gate.record_external(action, surface="tasks_inbox", approval_id=None,
-                                    target="google_tasks" + (":%s" % approval_id if approval_id else ""))
+        _DECISION.set(action_gate.record_external(
+            action, surface="tasks_inbox", approval_id=None,
+            target="google_tasks" + (":%s" % approval_id if approval_id else "")))
         return True
     except Exception as e:
         _log.info("tasks inbox: the checkpoint held %s (%s)", action, e)
         return False
+
+
+def _settle(ok: bool, detail: str = "") -> None:
+    """The terminal outcome of the change the last `_checkpoint` let through (BD-11a)."""
+    decision = _DECISION.get()
+    _DECISION.set(None)
+    try:
+        from agent_friday.governance import action_gate
+        action_gate.close_external(decision, ok, detail=detail)
+    except Exception:  # noqa: BLE001 - a receipt never stops the sync
+        pass
 
 
 def _words_out(title: str, notes: str, fallback_title: str) -> Optional[Tuple[str, str]]:
@@ -604,7 +622,9 @@ def enable(account_id: str, text_level: str) -> dict:
             try:
                 made = svc.tasklists().insert(body={"title": list_title()}).execute()
             except Exception as e:
+                _settle(False, "provider_refused")
                 return {"ok": False, "message": "Google did not create the list (%s)." % type(e).__name__}
+            _settle(True, "list_created")
             list_id = made.get("id")
             _append("list", account_id=account_id, list_id=list_id)
         cfg = _write_config({"enabled": True, "account_id": account_id, "list_id": list_id,
@@ -648,6 +668,7 @@ def disable(remove_list: bool = False) -> dict:
                     removed = True
                 except Exception as e:
                     _log.info("tasks inbox: the list was not removed (%s)", type(e).__name__)
+                _settle(removed, "list_removed" if removed else "provider_refused")
         keep = {k: cur.get(k) for k in ("account_id", "list_id", "text_level")}
         keep.update(enabled=False, disabled_at=_now(), list_removed=removed)
         _write_config(keep)
@@ -702,8 +723,13 @@ def _post_one(svc, cfg: dict, level: str, rec: dict, parent_item: Optional[dict]
     if not _checkpoint("tasks_inbox_post", rec.get("approval_id")):
         return None
     iid = "ti_" + uuid.uuid4().hex[:12]
-    made = _insert(svc, cfg["list_id"], {"title": title, "notes": notes},
-                   parent=(parent_item or {}).get("gid"))
+    try:
+        made = _insert(svc, cfg["list_id"], {"title": title, "notes": notes},
+                       parent=(parent_item or {}).get("gid"))
+    except Exception:
+        _settle(False, "provider_refused")
+        raise
+    _settle(True, "posted")
     line = _append("posted", item_id=iid, role="card", approval_id=rec.get("approval_id"),
                    task_key=(parent_item or {}).get("task_key") or "", parent_item=(parent_item or {}).get("item_id"),
                    account_id=cfg["account_id"], list_id=cfg["list_id"], gid=made.get("id"),
@@ -731,7 +757,12 @@ def _post_group(svc, cfg: dict, level: str, task_key: str) -> Optional[dict]:
     if not _checkpoint("tasks_inbox_post", None):
         return None
     iid = "ti_" + uuid.uuid4().hex[:12]
-    made = _insert(svc, cfg["list_id"], {"title": title, "notes": notes})
+    try:
+        made = _insert(svc, cfg["list_id"], {"title": title, "notes": notes})
+    except Exception:
+        _settle(False, "provider_refused")
+        raise
+    _settle(True, "posted")
     _append("posted", item_id=iid, role="group", approval_id="", task_key=task_key, parent_item="",
                    account_id=cfg["account_id"], list_id=cfg["list_id"], gid=made.get("id"),
                    etag=made.get("etag"), status=made.get("status") or "needsAction",

@@ -14098,14 +14098,64 @@ def _outcome_recorder(name, decision, ctx):
         wanted = False                    # the decision itself says nothing ran
     done = []
 
-    def _write(status, detail=""):
+    def _write(status, detail="", outcome=None):
         if done or not wanted:
             return
         done.append(status)
         t0 = ctx.meta.get("t_start")
         _g.record_outcome(name, decision, status, approval=approval,
-                          duration_ms=((_time.time() - t0) * 1000.0) if t0 else None, detail=detail)
+                          duration_ms=((_time.time() - t0) * 1000.0) if t0 else None, detail=detail,
+                          outcome=outcome)
     return _write
+
+
+#: Friday's own lines about a call, by what they mean for the action (the
+#: outcome vocabulary, governance/action_gate.OUTCOMES). Prefixes as in
+#: completion_receipts.FAILURE_SENTINELS.
+_OUTCOME_DENIED_PREFIXES = ("[DECLINED]", "[CONFIRMATION DENIED]")
+_OUTCOME_ASKED_PREFIXES = ("[APPROVAL CARD RAISED]", "[CONFIRMATION REQUIRED]",
+                           "[CONFIRMATION ESCALATED]", "[CONFIRMATION UNRESOLVED]",
+                           "[CONFIRMATION ON THE CARD]")
+
+
+def _line_outcome(text, default=None):
+    """The outcome word for a refusal line or a handler's result: denied (the
+    owner said no), approval_required (it waits for the owner), failed (any
+    other line that says it was not done), else `default`."""
+    from agent_friday.governance import action_gate as _g
+    if not isinstance(text, str):
+        return default
+    s = text.lstrip()
+    if s.startswith(_OUTCOME_DENIED_PREFIXES):
+        return _g.DENIED
+    if s.startswith(_OUTCOME_ASKED_PREFIXES):
+        return _g.APPROVAL_REQUIRED
+    try:
+        from agent_friday.services.completion_receipts import FAILURE_SENTINELS as _fs
+        if s.startswith(_fs):
+            return default if default in (_g.FORBIDDEN,) else _g.FAILED
+    except Exception:  # noqa: BLE001
+        pass
+    return default
+
+
+def _result_is_fridays(name, result) -> bool:
+    """Whether a handler's result is Friday's own words, so `_line_outcome` may read it: a
+    FridaysWords line, or the result of one of Friday's own handlers. A connector (mcp_) tool's
+    result is the remote service's text: a reply that starts "[DECLINED]" is the service's
+    words, never Friday's decision about the action."""
+    if isinstance(result, _untrusted.FridaysWords):
+        return True
+    return not str(name or "").strip().lower().startswith("mcp_")
+
+
+def _handler_outcome(name, result):
+    """The outcome word for a handler that returned, or None (the status's own word). Never
+    raises: the action has already run, and labelling it must not turn that into an error."""
+    try:
+        return _line_outcome(result) if _result_is_fridays(name, result) else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 @_web_task_scope
@@ -14264,7 +14314,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         return _own(_crew_denial)
     if verdict.action == "deny":
         _receipts.record(name, ok=False, denied=True, detail=verdict.reason)
-        _outcome("held", "pre_hook")              # a later check held what the checkpoint allowed
+        # a later check held what the checkpoint allowed (or asked the owner)
+        _outcome("held", "pre_hook", _line_outcome(verdict.reason, "forbidden"))
         return _own(verdict.reason)
 
     # Say what is about to happen BEFORE it happens, and only once it will
@@ -14396,7 +14447,13 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
     else:
         _receipts.record(name, ok=True)
-        _outcome("ok", "")
+        # the handler returned; a line of Friday's own saying it was not done
+        # (its own card, a refusal) is that outcome, not "executed". A connector's
+        # reply is never read for it. Labelling never raises after the action ran.
+        try:
+            _outcome("ok", "", _handler_outcome(name, result))
+        except Exception:  # noqa: BLE001
+            pass
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
@@ -15085,6 +15142,12 @@ def _hook_governance(ctx):
         if _ok:
             ctx.meta["approved_card"] = _card_id
             ctx.meta["owner_decided"] = _card_id
+            # the executor's own decision receipt for this card (record_external),
+            # so this call's outcome closes that action (BD-11a)
+            _dref = (ctx.session_ctx or {}).get("approved_card_decision")
+            if (isinstance(_dref, dict) and _dref.get("approval") == _card_id
+                    and _dref.get("tool") == ctx.tool_name):
+                ctx.meta["decision_receipt"] = _dref
             return _hooks.ALLOW
         return _hooks.DENY(
             f"[NOT RUN] '{ctx.tool_name}' was offered as an approved action but "
@@ -15389,8 +15452,10 @@ def _run_card_claim(ctx, rec):
         from agent_friday.governance import action_gate as _gate
         inp = ctx.input or {}
         try:
-            _gate.record_external(ctx.tool_name, surface="approval_card", approval_id=aid,
-                                  target=str(inp.get("title") or inp.get("task_id") or ""))
+            # this call's outcome closes the decision written here (BD-11a)
+            ctx.meta["decision_receipt"] = _gate.record_external(
+                ctx.tool_name, surface="approval_card", approval_id=aid,
+                target=str(inp.get("title") or inp.get("task_id") or ""))
         except Exception as e:
             _appr.mark_used(aid, f"tool:{ctx.tool_name}",
                             detail={"ok": False, "error": "held: %s" % e})
@@ -16939,7 +17004,10 @@ def _call_claude_agent(*args, **kwargs):
     """Tool-using Claude loop (always a cloud provider). See _call_claude_agent_run."""
     _tok = _LOOP_PROVIDER.set("anthropic")
     try:
-        return _call_claude_agent_run(*args, **kwargs)
+        _rec = _off_record_at_start()
+        out = _call_claude_agent_run(*args, **kwargs)
+        _shadow_loop_head(out, "agent.claude", resumed=len(kwargs.get("resumed_tool_trace") or []), started=_rec)
+        return out
     finally:
         _LOOP_PROVIDER.reset(_tok)
 
@@ -17811,10 +17879,41 @@ def _oai_agentic_loop(convo, oai_tools, send_fn, *, provider, model, **kw):
     _oai_agentic_loop_run."""
     _tok = _LOOP_PROVIDER.set("local" if kw.get("seat") == "local" else provider)
     try:
-        return _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
-                                     model=model, **kw)
+        _rec = _off_record_at_start()
+        out = _oai_agentic_loop_run(convo, oai_tools, send_fn, provider=provider,
+                                    model=model, **kw)
+        _shadow_loop_head(out, "agent.local" if kw.get("seat") == "local" else "agent.oai", started=_rec)
+        return out
     finally:
         _LOOP_PROVIDER.reset(_tok)
+
+
+def _off_record_at_start():
+    """(was off the record, private-memory generation) when a tool loop starts, so
+    a turn run off the record leaves nothing even if it ends after the owner is
+    back on the record (services/off_record bumps the generation then)."""
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.active()), int(_off.generation())
+    except Exception:
+        return True, None                      # unknown: treat as off the record
+
+
+def _shadow_loop_head(result, surface: str, resumed: int = 0, started=None) -> None:
+    """After a tool loop has returned: hand its trace to the loop no-progress head
+    (services/loop_heads, DM5), which replays it on its own worker in shadow and
+    leaves one receipt. The turn is over; this never changes or delays it beyond
+    a cached mode read. Rows resumed from an earlier run are not counted again.
+    ``started`` is (was off the record, generation) taken when the loop began."""
+    try:
+        if isinstance(result, tuple) and len(result) >= 2 and isinstance(result[1], list):
+            was_off, gen = started if started else (False, None)
+            if was_off:
+                return
+            from agent_friday.services import loop_heads
+            loop_heads.shadow_turn(result[1], surface=surface, resumed=resumed, gen=gen)
+    except Exception:
+        pass
 
 
 def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,

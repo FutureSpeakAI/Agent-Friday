@@ -196,11 +196,16 @@ def apply_approved(approval_id: str, actor: str = "owner") -> dict:
     rule = (rec.get("payload") or {}).get("rule") or {}
     if rule.get("kind") not in KINDS or not rule.get("outlet"):
         raise ValueError("the card's rule is malformed; nothing was applied")
-    action_gate.record_external("news:media_diet_rule", surface="media_diet",
-                                approval_id=approval_id, target=_spoken(rule))
-    rs = [r for r in rules() if not (r.get("outlet") == rule["outlet"])]
-    rs.append(dict(rule, approval_id=approval_id, approved_at=time.strftime("%Y-%m-%dT%H:%M:%S")))
-    _save(rs)
+    decision = action_gate.record_external("news:media_diet_rule", surface="media_diet",
+                                           approval_id=approval_id, target=_spoken(rule))
+    try:
+        rs = [r for r in rules() if not (r.get("outlet") == rule["outlet"])]
+        rs.append(dict(rule, approval_id=approval_id, approved_at=time.strftime("%Y-%m-%dT%H:%M:%S")))
+        _save(rs)
+    except Exception:
+        action_gate.close_external(decision, False, detail="save_failed")
+        raise
+    action_gate.close_external(decision, True, detail="rule_saved")
     ap.mark_used(approval_id, actor, {"rule": _spoken(rule)})
     return rule
 

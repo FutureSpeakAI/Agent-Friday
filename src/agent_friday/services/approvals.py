@@ -331,7 +331,19 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
 _OFF_RECORD_CARDS: Dict[str, dict] = {}
 _RECEIPT_KEYS = ("approval_id", "kind", "subject_type", "policy_class", "gated",
                  "status", "consumed", "created_at", "expires_at", "decided_at",
-                 "decided_by", "decided_source", "decided_check", "used_at", "off_record")
+                 "decided_by", "decided_source", "decided_check", "used_at", "off_record",
+                 "policy_version", "decided_policy_version")
+
+
+def _policy_version_id() -> Optional[str]:
+    """The governing policy version now (services/policy_version, NS-30.19-1):
+    stamped on a card when it is raised and when it is decided. Records only;
+    no decision here reads it. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        return _pv.current_id()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _disk_view(record: dict) -> dict:
@@ -575,7 +587,11 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
         "decided_source": (None if status == "pending" else
                            ("law1_block" if status == "blocked" else "auto_policy")),
         "decision_note": "",
+        "policy_version": _policy_version_id(),
     }
+    if status != "pending":
+        # raised already decided (by the policy table or Law 1): decided under it too
+        record["decided_policy_version"] = record["policy_version"]
     try:
         from agent_friday.services import off_record as _off
         if _off.skip("approvals"):
@@ -627,7 +643,9 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
         "decided_source": "law1_block" if law1_blocked else "standing_grant",
         "decision_note": "" if law1_blocked else "pre-approved by you in Settings",
         "pre_approved": str(grant_id),
+        "policy_version": _policy_version_id(),
     }
+    record["decided_policy_version"] = record["policy_version"]
     _upsert(record)
     return record
 
@@ -708,7 +726,8 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
             rec["decided_source"] = "typed"
         rec.update(status="approved", consumed=True, executing_at=now,
                    used_at=now, used_by="chat_confirmation", decided_at=now,
-                   decided_by="owner", decision_note="answered in chat")
+                   decided_by="owner", decision_note="answered in chat",
+                   decided_policy_version=_policy_version_id())
         _write_store(recs)
         out = dict(rec)
     _feed("card_resolved", out)
@@ -862,6 +881,7 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
         rec["decided_source"] = source
+        rec["decided_policy_version"] = _policy_version_id()
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
@@ -1264,6 +1284,20 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     """Tell every open Friday page (services/approval_feed.py). Best-effort:
     a page that misses this picks the card up from the pending list when it
     reconnects, and nothing here can fail an approval."""
+    if name == "card_resolved" and not record.get("off_record"):
+        # NS-31.7-1: the decision (or expiry, or withdrawal) is in the event log before any page
+        # or the tray hears of it. Ids and kinds only. A record that fails is logged; the
+        # decision itself is already saved and still reaches the owner.
+        try:
+            from agent_friday.services import events as _ev
+            _ev.record_critical(
+                "approval.resolved", source="approvals",
+                payload={"status": str(record.get("status") or "")[:20],
+                         "kind": str(record.get("kind") or "")[:40],
+                         "decided_by": str(record.get("decided_by") or "")[:40]},
+                related_ids={"approval": record.get("approval_id")})
+        except Exception:
+            pass
     try:
         from agent_friday.services import approval_feed
         if name == "card_pending":
