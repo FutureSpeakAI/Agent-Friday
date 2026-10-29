@@ -121,8 +121,10 @@ function Get-Sha256 {
 }
 
 function Test-FileHash {
-    param([Parameter(Mandatory)][string] $Path, [Parameter(Mandatory)][string] $ExpectedSha256)
-    if (-not $ExpectedSha256) { return $true }
+    <#  True only when the file matches a pin. No pin is not a match: a file
+        nothing was checked against has not been shown to be the file. #>
+    param([Parameter(Mandatory)][string] $Path, [AllowEmptyString()][string] $ExpectedSha256 = '')
+    if (-not $ExpectedSha256) { return $false }
     $actual = Get-Sha256 $Path
     return ($actual -eq $ExpectedSha256.ToUpperInvariant())
 }
@@ -137,15 +139,14 @@ function Assert-FileHash {
     #>
     param(
         [Parameter(Mandatory)][string] $Path,
-        [Parameter(Mandatory)][string] $ExpectedSha256,
+        [AllowEmptyString()][string] $ExpectedSha256 = '',
         [string] $What = 'a downloaded file'
     )
-    if (-not $ExpectedSha256) {
-        Add-InstallWarning "No SHA-256 pin available for $What ($Path) - contents were NOT verified."
-        return
-    }
+    # No pin refuses exactly like a wrong file: setup never runs something it
+    # could not check (sources.json pins every artefact setup executes).
     $actual = Get-Sha256 $Path
-    if ($actual -ne $ExpectedSha256.ToUpperInvariant()) {
+    if (-not $ExpectedSha256 -or $actual -ne $ExpectedSha256.ToUpperInvariant()) {
+        if (-not $ExpectedSha256) { Write-Log "NO PIN for $What ($Path): refusing to use an unchecked file" 'FAIL' }
         Write-Log "HASH MISMATCH for $Path : expected $ExpectedSha256, got $actual" 'FAIL'
         Say-Problem -What ("A file that setup downloaded is not the file it was expecting. " +
                            "Setup has stopped rather than use it. This usually means the " +

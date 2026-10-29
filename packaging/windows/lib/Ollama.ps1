@@ -127,7 +127,7 @@ function Install-Ollama {
         remove Ollama if WE put it there.
     #>
     param(
-        [string] $InstallerUrl = 'https://ollama.com/download/OllamaSetup.exe',
+        [Parameter(Mandatory)][string] $InstallerUrl,
         [string] $CacheDir     = $env:TEMP,
         [string] $ExpectedSha256 = ''
     )
@@ -163,15 +163,22 @@ function Install-Ollama {
 
     # --- 2. Direct installer, both known silent-switch dialects ---------
     $setup = Join-Path $CacheDir 'OllamaSetup.exe'
+    # A cached installer from an earlier run that is not the pinned build is
+    # discarded and fetched again, never used.
+    if ((Test-Path -LiteralPath $setup) -and -not (Test-FileHash -Path $setup -ExpectedSha256 $ExpectedSha256)) {
+        Write-Log 'A cached Ollama installer does not match the pin; discarding it.' 'WARN'
+        Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue
+    }
     if (-not (Test-Path -LiteralPath $setup)) {
-        Say-Working 'Downloading the part that runs models on this laptop (about 700 MB).'
+        Say-Working 'Downloading the part that runs models on this laptop (about 1.6 GB).'
         if (-not (Get-RemoteFile -Uri $InstallerUrl -OutFile $setup -FriendlyName 'the local model engine')) {
             Write-Log 'Could not download the Ollama installer.' 'WARN'
             return $outcome
         }
     }
-    if ($ExpectedSha256) { Assert-FileHash -Path $setup -ExpectedSha256 $ExpectedSha256 -What 'the Ollama installer' }
-    else { Add-InstallWarning "The Ollama installer was NOT hash-verified - upstream publishes no stable per-release hash at a fixed URL, so there is nothing to pin against. It was fetched over TLS from ollama.com." }
+    # Pinned to one release asset and its SHA-256 (sources.json, from GitHub's
+    # published digest). No pin, or a different file, stops here.
+    Assert-FileHash -Path $setup -ExpectedSha256 $ExpectedSha256 -What 'the Ollama installer'
 
     # Inno Setup dialect, then NSIS dialect. We verify after each rather than
     # trusting the exit code, because a silent installer that does nothing at

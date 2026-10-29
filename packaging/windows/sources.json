@@ -6,10 +6,9 @@
     "artifact, or downloaded by install.ps1 on the target machine. Anything we",
     "then EXECUTE must carry a sha256 where upstream makes one possible.",
     "",
-    "Where sha256 is empty, that is a deliberate, documented gap rather than an",
-    "oversight - see the _why field next to it. The installer reports an unpinned",
-    "artefact as a warning in the maintainer's install report; it does not pretend it",
-    "was verified."
+    "Every entry carries a sha256. An empty one refuses: Assert-FileHash stops",
+    "setup and Test-FileHash answers no (lib/Download.ps1), so an unpinned file",
+    "is never run. tests/unit/test_installer_pins.py keeps it that way."
   ],
 
   "python": {
@@ -34,36 +33,37 @@
   },
 
   "get_pip": {
-    "url": "https://bootstrap.pypa.io/get-pip.py",
-    "sha256": "",
-    "_why_no_hash": [
-      "bootstrap.pypa.io/get-pip.py is a moving target - it is regenerated",
-      "upstream and there is no stable published hash for the 'latest' URL.",
-      "Pinning a hash here would mean the installer breaks silently every time",
-      "PyPA regenerates it.",
-      "",
-      "Mitigations actually in place: it is fetched over TLS 1.2/1.3 from a",
-      "PyPA-controlled host, and the installer records an explicit warning in",
-      "the install report saying it was NOT hash-verified. We would rather say",
-      "'we did not check this' than imply we did.",
-      "",
-      "If you want this pinned properly, use the versioned path",
-      "https://bootstrap.pypa.io/pip/<version>/get-pip.py, download it once,",
-      "record its hash here, and delete this note."
+    "url": "https://raw.githubusercontent.com/pypa/get-pip/f6f644156f23dfe9acc06e7b9ca75eee311f2e37/public/get-pip.py",
+    "sha256": "FB24E693BAB954209A063D90953621412CCAD4A500905A726286E038F508DDF6",
+    "size_bytes": 2230488,
+    "pip_version": "26.2.1",
+    "_why_this_pin": [
+      "bootstrap.pypa.io/get-pip.py is regenerated in place, so it cannot be",
+      "pinned. The same file is published in the pypa/get-pip repository; a",
+      "URL at one commit (f6f6441, pip 26.2.1, 2026-08-04) never changes.",
+      "sha256 computed from two downloads on 2026-10-21; they matched.",
+      "To bump: pick a newer commit of pypa/get-pip, download public/get-pip.py",
+      "twice, record the hash and size, and change the commit in the URL."
     ]
   },
 
   "ollama": {
-    "url": "https://ollama.com/download/OllamaSetup.exe",
-    "sha256": "",
-    "_why_no_hash": [
-      "Ollama publishes a single unversioned URL that always serves the latest",
-      "build, and no hash alongside it. Any hash recorded here is wrong within",
-      "days.",
+    "version": "v0.40.7",
+    "url": "https://github.com/ollama/ollama/releases/download/v0.40.7/OllamaSetup.exe",
+    "sha256": "6394E61DAEDC2DE736C9F76CBC58F30F9241BA1EB4C2F79EF75E833168DB8A60",
+    "size_bytes": 1657983656,
+    "_why_this_pin": [
+      "ollama.com/download/OllamaSetup.exe always serves the latest build and",
+      "cannot be pinned. Each GitHub release asset is fixed, and GitHub",
+      "publishes its SHA-256 digest; the value above is that digest for",
+      "v0.40.7 (released 2026-10-18, read 2026-10-21).",
+      "To bump: gh api repos/ollama/ollama/releases/tags/<tag> and copy the",
+      "OllamaSetup.exe digest and size.",
       "",
-      "The installer therefore does not pin it, records that fact as a warning,",
-      "and - more usefully - does not trust the installer's exit code either.",
-      "It runs the thing and then goes looking for a working ollama binary."
+      "The winget route installs whatever winget's manifest names; winget",
+      "checks that installer against the manifest's own SHA-256.",
+      "The installer still does not trust Ollama's exit code: after running",
+      "it, it goes looking for a working ollama binary."
     ],
     "silent_switches": {
       "_comment": [

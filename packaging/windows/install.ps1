@@ -773,7 +773,12 @@ $null = Invoke-Step -Id 'python.pip' -Title 'Getting ready to install Friday''s 
         $getPip = Join-Path $CacheDir 'get-pip.py'
         $shipped = Join-Path $Here 'python\get-pip.py'
         if (Test-Path -LiteralPath $shipped) { Copy-Item -LiteralPath $shipped -Destination $getPip -Force }
-        elseif (-not (Test-Path -LiteralPath $getPip)) {
+        # A cached copy from an earlier, unpinned release is discarded, never used.
+        if ((Test-Path -LiteralPath $getPip) -and -not (Test-FileHash -Path $getPip -ExpectedSha256 $script:Sources.get_pip.sha256)) {
+            Write-Log 'A cached get-pip.py does not match the pin; discarding it.' 'WARN'
+            Remove-Item -LiteralPath $getPip -Force -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-Path -LiteralPath $getPip)) {
             if (-not (Get-RemoteFile -Uri $script:Sources.get_pip.url -OutFile $getPip -FriendlyName 'a setup tool')) {
                 throw 'The download did not complete.'
             }
@@ -970,7 +975,7 @@ if (-not $localWanted) {
     Say-Step 'Setting up the part that runs AI on this laptop'
     Say-Detail 'This is what lets Friday work without sending anything to the internet.'
 
-    $ollamaOutcome = Install-Ollama -CacheDir $CacheDir -InstallerUrl $script:Sources.ollama.url
+    $ollamaOutcome = Install-Ollama -CacheDir $CacheDir -InstallerUrl $script:Sources.ollama.url -ExpectedSha256 $script:Sources.ollama.sha256
 
     if ($ollamaOutcome.Installed) {
         Say-Ok 'Ready.'
