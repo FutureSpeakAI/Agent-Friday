@@ -2003,6 +2003,14 @@ def api_settings():
             _routing_via = ('settings' if (data.get('routing_surface') == 'settings_models'
                                            and _screen_click_rm.screen_session(request))
                             else 'unverified')
+        # Ruling 12: a write that turns off the record on says which services keep
+        # their own records (the on-screen switches confirm first; this is not blocked).
+        _off_before = None
+        if isinstance(new_settings, dict) and new_settings.get('off_record'):
+            try:
+                _off_before = dict(_load_settings() or {})
+            except Exception:
+                _off_before = {}
         merged = _save_settings(
             new_settings,
             owner_routing_change=_routing_owner,
@@ -2069,12 +2077,21 @@ def api_settings():
                     "status": "error",
                     "message": saved.get("error") or "Couldn't save the personality",
                 }, "Couldn't save the personality")), 400
-        return jsonify({
+        _out = {
             "status": "ok",
             "settings": merged,
             "effective": _effective_guarded(merged),
             "personality": _load_agent_personality(),
-        })
+        }
+        if _off_before is not None:
+            try:
+                from agent_friday.services import off_record_external as _ore
+                _said = _ore.reply(_off_before, merged)
+                if _said:
+                    _out["off_record_external"] = _said
+            except Exception:
+                pass
+        return jsonify(_out)
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't save the settings")

@@ -920,12 +920,21 @@ def grants() -> dict:
 _REMOTE_GROUPS = ("phone", "messaging", "network")
 
 
-def services() -> dict:
-    """Connected services and what each may do; phones and remote channels."""
+def _checklist_items() -> Optional[list]:
+    """The connection checklist's items, or None when it could not be read."""
     try:
         from agent_friday.services import setup_connections
-        items = setup_connections.checklist().get("items") or []
+        return list(setup_connections.checklist().get("items") or [])
     except Exception:
+        return None
+
+
+def services(items: Optional[list] = None) -> dict:
+    """Connected services and what each may do; phones and remote channels.
+    `items` is the already-read connection checklist (read here when None)."""
+    if items is None:
+        items = _checklist_items()
+    if items is None:
         return {"readable": False, "connected": [], "remote": []}
     connected, remote = [], []
     for it in items:
@@ -983,13 +992,22 @@ OFF_RECORD_WORDS = (
     "asked to do.")
 
 
-def off_record() -> dict:
+def off_record(items: Optional[list] = None) -> dict:
+    """Off the record now, and what it does not cover. `items` is the
+    already-read connection checklist, passed on so it is not built twice."""
     try:
         from agent_friday.services import off_record as off
         on = bool(off.active())
     except Exception:
         on = None
-    return {"on": on, "words": OFF_RECORD_WORDS}
+    out = {"on": on, "words": OFF_RECORD_WORDS}
+    # What off the record does not cover, from what is connected now (NS-15.8-3).
+    try:
+        from agent_friday.services import off_record_external
+        out["external"] = off_record_external.view(items=items)
+    except Exception as e:
+        _log.warning("privacy map: off-the-record external records could not be read: %s", e)
+    return out
 
 
 # ── the whole map ─────────────────────────────────────────────────────────────
@@ -1016,6 +1034,9 @@ def view(now: Optional[float] = None) -> dict:
             _log.warning("privacy map: %s could not be read: %s", getattr(fn, "__name__", "?"), e)
             return fallback
 
+    # Built once: the services list and the off-the-record lines read the
+    # same connection checklist.
+    items = _checklist_items()
     return {
         "generated_at": now,
         "stores": safe(stores, []),
@@ -1023,9 +1044,10 @@ def view(now: Optional[float] = None) -> dict:
                             "not_recorded": list(NOT_RECORDED)}),
         "mail": safe(mail, {"sent": 0, "failed": 0, "recipients": []}),
         "grants": safe(grants, {"actions": None, "files": None}),
-        "services": safe(services, {"readable": False, "connected": [], "remote": []}),
+        "services": safe(lambda: services(items),
+                         {"readable": False, "connected": [], "remote": []}),
         "vault_access": safe(lambda: vault_access(now), {"allowed_7_days": None, "refused_7_days": None}),
-        "off_record": safe(off_record, {"on": None, "words": OFF_RECORD_WORDS}),
+        "off_record": safe(lambda: off_record(items), {"on": None, "words": OFF_RECORD_WORDS}),
         "sent_text": safe(_sent_text_status, {"mode": None, "keep": None,
                                               "words": "I couldn't tell whether the full text is kept."}),
         "export": _EXPORT_ALL, "erase": _ERASE_ALL,

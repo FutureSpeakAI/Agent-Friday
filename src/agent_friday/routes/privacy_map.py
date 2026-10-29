@@ -2,6 +2,7 @@
 
     GET /api/privacy/map                 what Friday holds, where, how long; what left and to whom
     GET /api/privacy/map/left?to=<id>    the egress log's own rows for one destination (its receipts)
+    GET /api/off-record/external         what off the record does not cover (records other services keep)
 
 Read-only, and only for the person at this PC: the same gate as the Locks
 page (the local owner principal, a local request). Nothing here deletes,
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 from flask import Blueprint, g, jsonify, request
 
+from agent_friday.core import login_required
 from agent_friday.services import privacy_map
 from agent_friday.routes._errors import api_error
 
@@ -36,6 +38,16 @@ def _gate():
 @privacy_map_bp.route("/api/privacy/map", methods=["GET"])
 def privacy_map_view():
     return jsonify({"ok": True, **privacy_map.view()})
+
+
+@privacy_map_bp.route("/api/off-record/external", methods=["GET"])
+@login_required
+def off_record_external_view():
+    """What off the record does not cover: the records services Friday is
+    connected to keep on their own (NS-15.8-3). Same owner-only gate as the
+    map (this blueprint's before_request)."""
+    from agent_friday.services import off_record_external
+    return jsonify({"ok": True, **off_record_external.view()})
 
 
 @privacy_map_bp.route("/api/privacy/map/left", methods=["GET"])
