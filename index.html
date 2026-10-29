@@ -10912,7 +10912,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 const TK = window.FridayTracking;
                 const pStr = TK.cfg.parallax_strength;
                 const windowMode = isHologramMode || !!TK.head.debug;
-                const ct = windowMode ? 0 : elapsed;
+                const ct = (windowMode || SceneMotion.reduced()) ? 0 : elapsed;   // reduced motion: the camera holds (AX21)
                 if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(ct*0.2)*2, 18); targetCamLook.set(0, 5, 0); }
                 else if (targetStructure === 'GRID' && window.FridayHolographicWorkspace?.stageRect) { targetCamPos.set(0, 22, 28); targetCamLook.set(0, 0, 0); }
                 else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(ct*0.2)*1, 15 - 10 * (1 - Math.abs((ct * 0.2) % 2 - 1))); targetCamLook.set(0, 1, 0); }
@@ -11076,8 +11076,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 astrolabeRings.forEach((ring, i) => {
                     if (ring && ring.rotation && ring.userData) {
                         const a = FridayAvatarMotion.sample('ASTROLABE', i, 0, avatarArticulation);
-                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta;
-                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta;
+                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta * (ambient ? 1 : 0);
+                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta * (ambient ? 1 : 0);
                         ring.rotation.z = a.lift;
                         if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3 + a.scale);
                     }

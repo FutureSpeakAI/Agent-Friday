@@ -6293,8 +6293,8 @@
                 astrolabeRings.forEach((ring, i) => {
                     if (ring && ring.rotation && ring.userData) {
                         const a = FridayAvatarMotion.sample('ASTROLABE', i, 0, avatarArticulation);
-                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta;
-                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta;
+                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta * (ambient ? 1 : 0);
+                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta * (ambient ? 1 : 0);
                         ring.rotation.z = a.lift;
                         if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3 + a.scale);
                     }

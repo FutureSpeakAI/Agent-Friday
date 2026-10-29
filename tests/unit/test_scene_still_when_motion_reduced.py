@@ -58,6 +58,14 @@ def test_every_ambient_spin_and_drift_uses_it(rel):
         assert found, "ambient move not found (renamed?): " + pat
         assert set(found) == {"ambient"}, "still spins under reduced motion: %s uses %s" % (pat, found)
     assert re.search(r"starField\.rotation\.y \+= 0\.0001 \* \(ambient \? 1 : 0\);", src), "the stars still turn"
+    rings = re.findall(r"ring\.rotation\.[xy] \+= ring\.userData\.r[xy]Speed[^;]*;", src)
+    assert len(rings) == 2 and all(r.endswith("* (ambient ? 1 : 0);") for r in rings), rings
+
+
+def test_the_camera_holds_under_reduced_motion():
+    # The cinematic drift is a function of `ct`; reduced motion pins it at 0, as head tracking does.
+    # (Served page only: the scene mirror has no camera-drift block.)
+    assert "const ct = (windowMode || SceneMotion.reduced()) ? 0 : elapsed;" in _page("index.html")
 
 
 @pytest.mark.parametrize("rel", PAGES)
@@ -67,8 +75,9 @@ def test_glow_and_opacity_still_follow_idle_so_the_scene_is_not_dimmed(rel):
     assert re.search(r"line\.material\.opacity = \([^;]*\) \* idleFactor;", src)
 
 
-def test_no_new_rotation_in_the_loop_ignores_reduced_motion():
-    # Any continuous rotation that scales with idleFactor must use `ambient` instead.
+def test_no_rotation_scaled_by_idle_factor_is_left():
+    # Narrow guard: a continuous rotation scaled by idleFactor must use `ambient` instead.
+    # (Motion driven straight by `elapsed` is not caught here; see the HANDOFF's AX21 gaps.)
     src = _page("index.html")
     offenders = re.findall(r"rotation\.[xyz]\s*[+-]=[^;\n]*\bidleFactor\b", src)
     assert offenders == [], offenders
