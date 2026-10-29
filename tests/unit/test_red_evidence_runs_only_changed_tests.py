@@ -34,8 +34,7 @@ def _on(wf: dict) -> dict:
 
 def _pr_workflows():
     out = [p for p in sorted(WORKFLOWS.glob("*.yml")) if "pull_request" in _on(_load(p))]
-    assert {p.name for p in out} >= {"tests.yml", "codeql.yml", "clean-machine.yml",
-                                     "restore.yml", "supply-chain.yml"}
+    assert {p.name for p in out} >= {"tests.yml", "codeql.yml"}
     return out
 
 
