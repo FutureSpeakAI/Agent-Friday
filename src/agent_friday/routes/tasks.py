@@ -448,9 +448,11 @@ def task_steps(task_id):
     """The task's step records (north star §30.9): kind, state, input and
     output refs (ids only), distinct_progress_key and timing, oldest first,
     the newest `limit` of them (at most task_journal.STEPS_SERVED_MAX).
-    `progress` says whether the steps stopped finding anything new
-    (goal_state.stalled_steps). Read-only, and only for the owner: an
-    observer gets 403, not a sealed copy."""
+    `progress` reports whether the steps stopped finding anything new
+    (goal_state.stalled_steps: reported only) and whether the goal attempts
+    among them did (goal_state.stalled_attempts: the check that stops a
+    goal's run). Read-only, and only for the owner: an observer gets 403, not
+    a sealed copy."""
     if _principal() != "user":
         return jsonify({"error": "step records are only served to the owner"}), 403
     from agent_friday.services import task_journal as _tj
@@ -460,10 +462,12 @@ def task_steps(task_id):
     if not every and _tj.read_state(task_id) is None and not _tj.read(task_id, limit=1):
         return jsonify({"error": "Task not found"}), 404
     why = _gs.stalled_steps(every)
+    attempts_why = _gs.stalled_attempts(every)
     shown = every[-limit:]
     return jsonify({"task_id": task_id, "steps": shown, "count": len(every),
                     "truncated": len(shown) < len(every),
                     "progress": {"stalled": bool(why), "why": why,
+                                 "attempts_stalled": bool(attempts_why), "attempts_why": attempts_why,
                                  "limit": _gs.NO_NEW_PROGRESS_LIMIT}})
 
 

@@ -925,9 +925,10 @@ def tool_call(*, name, args=None, result=None, ok=None, duration_ms=None, sessio
               outcome=_NO_OUTCOME, input_refs=None, output_refs=None, ended_at=None):
     """The tool_call event, and the call's step record (§30.9) beside it.
 
-    `outcome` is the full result, used only for its fingerprint (never
-    stored); without it the stored summary is fingerprinted. `input_refs` /
-    `output_refs` are ids only (services/step_records)."""
+    `outcome` is the full result, used only for its keyed fingerprint (never
+    stored; at most its first step_records.RESULT_FP_MAX_CHARS plus its
+    length are read); without it the stored summary is fingerprinted.
+    `input_refs` / `output_refs` are ids only (services/step_records)."""
     if ok is None:
         r = str(result or "")
         ok = not (r.startswith("[VAULT") or r.startswith("[Error") or r.lower().startswith("error"))
@@ -939,7 +940,7 @@ def tool_call(*, name, args=None, result=None, ok=None, duration_ms=None, sessio
             end = float(ended_at) if ended_at is not None else time.time()
             begin = end - float(duration_ms or 0) / 1000.0
             outs = list(output_refs or [])
-            rref = _sr.result_ref(result if outcome is _NO_OUTCOME else outcome)
+            rref = _sr.result_ref(result if outcome is _NO_OUTCOME else outcome, _sr.fp_key())
             if rref:
                 outs.insert(0, rref)
             step("tool_call", "done" if ok else "failed", name=name, input_refs=input_refs,
@@ -1156,6 +1157,11 @@ _SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reas
 
 WITHHELD = "[withheld by the privacy gate]"
 
+# Fields an observer never receives at all: a step record's input and output
+# refs (§30.9) are fingerprints of what the task handled, which only the
+# owner's own /api/tasks/<id>/steps serves.
+_OBSERVER_DROPPED_FIELDS = ("input_refs", "output_refs")
+
 
 def seal_for_principal(obj, principal: str, provider: str = "observer") -> tuple:
     """Run every free-text field of a journal payload through the egress gate
@@ -1163,7 +1169,8 @@ def seal_for_principal(obj, principal: str, provider: str = "observer") -> tuple
     journal is the most sensitive text in the product; serving it to a
     cloud-backed agent is an egress, and is gated like any tool result.
     Returns (sealed_copy, redacted_count, withheld_count). Fails CLOSED: if
-    the gate cannot be reached, every text field is withheld."""
+    the gate cannot be reached, every text field is withheld. Step refs
+    (_OBSERVER_DROPPED_FIELDS) are left out of the copy altogether."""
     if principal == "user":
         return obj, 0, 0
     counts = {"redacted": 0, "withheld": 0}
@@ -1193,7 +1200,7 @@ def seal_for_principal(obj, principal: str, provider: str = "observer") -> tuple
 
     def _walk(node, field=None):
         if isinstance(node, dict):
-            return {k: (_walk(v, k)) for k, v in node.items()}
+            return {k: (_walk(v, k)) for k, v in node.items() if k not in _OBSERVER_DROPPED_FIELDS}
         if isinstance(node, list):
             return [_walk(v, field) for v in node]
         if isinstance(node, str) and field in _SEALED_FIELDS and node:
