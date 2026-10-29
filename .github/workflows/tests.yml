@@ -151,7 +151,9 @@ jobs:
     # Windows, the platform Friday ships on: the scratch server calls Windows
     # tools (PowerShell) that a Linux runner does not have.
     runs-on: windows-latest
-    timeout-minutes: 60
+    # The specs take about 45 minutes on a Windows runner and grow with every lane's
+    # spec; the first-run walk runs after them in the same job. 60 left it cut off.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
