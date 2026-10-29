@@ -704,11 +704,18 @@ def test_a_waiting_task_whose_card_outcome_is_unknown_ends_outcome_unknown_not_f
         assert cards == [aid] and approvals.get_approval(aid)["outcome"] == "unknown"
         agent.sweep_waiting_tasks(force=True)                   # known now: no 30-minute wait
     else:
+        # this process's start cannot be known, so which process claimed it cannot either
+        monkeypatch.setattr(agent, "_process_started", lambda: (None, 0.0))
         agent.sweep_waiting_tasks(force=True)                   # claimed a minute ago: still running
         assert agent.TASKS[tid]["status"] == agent.WAITING_APPROVAL
         monkeypatch.setattr(agent, "_SETTLE_STALE_S", 0)        # it never reported back
         agent.sweep_waiting_tasks(force=True)
     t = agent.TASKS[tid]
+    said = " ".join(t.get("log") or [])
+    if how == "recovered":
+        assert "Friday stopped while" in said
+    else:                                                       # its own words: not "Friday stopped"
+        assert "never reported how it ended" in said and "Friday stopped" not in said
     assert t["status"] == agent.OUTCOME_UNKNOWN == "outcome_unknown"
     assert not t["status"].startswith("failed") and t["verified"] is False
     assert "outcome unknown — check before retrying" in t["verification_evidence"]
@@ -759,3 +766,231 @@ def test_the_boot_path_runs_the_sweep():
     import inspect
     from agent_friday.services import agent
     assert "settle_interrupted_decisions" in inspect.getsource(agent._restore_tasks_from_journal)
+
+
+# ── review fixes: a claim this process holds, late reports, end states ──────
+
+def _waiting_on_a_claimed_card(monkeypatch, tid, claimed_at):
+    """A task waiting on an approved card the executor claimed at `claimed_at` and has not
+    reported back on (no executing_by: card_recovery does not judge it)."""
+    from agent_friday.services import agent
+    rec = approvals.create_approval(kind="tainted_action", subject_type="tool", subject_id="send_email-" + tid,
+                                    title="Send the invoice to the client", description="synthetic",
+                                    force_gate=True,
+                                    payload={"tool": "send_email", "task_id": tid,
+                                             "input": {"to": "a@example.invalid", "title": "Invoice 42"}})
+    approvals._patch(rec["approval_id"], status="approved", decided_at=claimed_at - 1, executing_at=claimed_at)
+    monkeypatch.setitem(agent.TASKS, tid, {"task_id": tid, "name": "Send the invoice",
+                                           "status": agent.WAITING_APPROVAL, "created": time.time(),
+                                           "log": []})
+    return rec["approval_id"]
+
+
+def test_a_card_this_process_is_still_running_keeps_its_task_waiting_however_long(boot, monkeypatch):
+    """Claimed by the executor in this process: it always records its end, so it is still
+    running after 30 minutes. The task keeps waiting (said once), never outcome unknown."""
+    from agent_friday.services import agent
+    now = time.time()
+    monkeypatch.setattr(agent, "_process_started", lambda: (now - 7200, 2.0))
+    tid = "task-r2-long"
+    _waiting_on_a_claimed_card(monkeypatch, tid, now - 3600)    # an hour ago, in this process
+    for _ in range(3):
+        agent.sweep_waiting_tasks(force=True)
+        assert agent.TASKS[tid]["status"] == agent.WAITING_APPROVAL
+    notes = [line for line in agent.TASKS[tid]["log"] if line.startswith("Still running")]
+    assert len(notes) == 1 and "keeps waiting" in notes[0]
+    assert agent.settle_waiting_task(tid) is None
+
+
+def test_a_claim_from_before_this_process_ends_outcome_unknown_saying_friday_stopped(boot, monkeypatch):
+    from agent_friday.services import agent
+    now = time.time()
+    monkeypatch.setattr(agent, "_process_started", lambda: (now, 2.0))
+    tid = "task-r2-before"
+    _waiting_on_a_claimed_card(monkeypatch, tid, now - 60)      # claimed by a process that is gone
+    agent.sweep_waiting_tasks(force=True)                       # no 30-minute wait: it cannot report
+    t = agent.TASKS[tid]
+    assert t["status"] == agent.OUTCOME_UNKNOWN and t["verified"] is False
+    assert any("Friday stopped while" in line for line in t["log"])
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_a_late_report_moves_an_outcome_unknown_task_on_and_its_workflow_with_it(boot, monkeypatch, ok):
+    """The executor reports after the task ended outcome unknown: the report wins. Ran ->
+    complete (a workflow continues with its next step); did not go through -> failed."""
+    from agent_friday.services import agent
+    monkeypatch.setattr(agent, "_process_started", lambda: (None, 0.0))
+    monkeypatch.setattr(agent, "_SETTLE_STALE_S", 0)
+    tid = "task-r2-late-%s" % ok
+    aid = _waiting_on_a_claimed_card(monkeypatch, tid, time.time() - 60)
+    assert agent.settle_waiting_task(tid) == agent.OUTCOME_UNKNOWN
+    assert agent.settle_waiting_task(tid) is None               # nothing new: it stays as it is
+    advanced = []
+    monkeypatch.setattr(agent, "_advance_task_chain", lambda task_id, result: advanced.append(task_id))
+    approvals.mark_used(aid, "approval_executor", {"ok": ok, "took_ms": 5, "result": "synthetic"})
+    want = "complete" if ok else "failed"
+    assert agent.settle_waiting_task(tid) == want
+    t = agent.TASKS[tid]
+    assert t["status"] == want and t["verified"] is ok
+    assert advanced == ([tid] if ok else [])
+    assert any("reported back after this task had ended" in line for line in t["log"])
+    assert agent.settle_waiting_task(tid) is None               # settled once
+
+
+def test_a_workflow_whose_step_ended_outcome_unknown_ends_the_scheduled_run_without_a_retry(monkeypatch):
+    from agent_friday.services import agent
+    from agent_friday.services import scheduler
+    st = {"state": "outcome_unknown", "run_id": "wfr_r2", "conversation_id": "conv-r2", "project_id": None,
+          "schedule_id": "sch-r2", "verification": {"status": "pending"}, "outputs": [],
+          "delivery": {"status": "pending"},
+          "steps": [{"index": 0, "name": "Send", "status": "outcome_unknown", "result_tail": ""}]}
+    patched = []
+    monkeypatch.setattr(agent, "run_workflow_chain", lambda slug, **k: "task-r2-wf")
+    monkeypatch.setattr(agent, "_task_run_context", lambda tid: {})
+    monkeypatch.setattr(agent, "chain_run_status", lambda slug, run_id=None: dict(st, run_id=run_id))
+    monkeypatch.setattr(scheduler, "_patch_record", lambda sid, **f: patched.append(f))
+    out =scheduler._run_workflow({"id": "sch-r2", "_active_run_id": "wfr_r2"}, {"ref": "send-invoice"})
+    assert isinstance(out, scheduler.WorkflowRunResult)         # returned, not raised: never retried
+    assert out.status == "outcome_unknown" and out.run_id == "wfr_r2"
+    assert patched[-1]["last_workflow_context"]["run_id"] == "wfr_r2"
+
+
+def test_outcome_unknown_is_an_end_state_everywhere_a_task_or_run_is_listed():
+    import inspect
+    from agent_friday.routes import tasks as task_routes
+    from agent_friday.services import desktop_card_sources, heartbeat, workflow_overview
+    assert "outcome_unknown" in heartbeat._TERMINAL
+    assert "outcome_unknown" in task_routes.ORB_TERMINAL_STATES
+    assert workflow_overview._RESULT["outcome_unknown"] == "outcome unknown"
+    last = workflow_overview._chain_last({"state": "outcome_unknown", "steps": [
+        {"index": 0, "name": "Send", "status": "outcome_unknown", "ended": time.time(),
+         "reason": "check before retrying"}]})
+    assert last["status"] == "outcome unknown" and "Step 1 (Send)" in last["summary"]
+    assert inspect.getsource(desktop_card_sources.automatic).count('"outcome_unknown"') == 2
+
+
+def test_notice_registry_ids_are_unique_and_card_recovery_has_its_own():
+    from agent_friday.services import notice_registry as reg
+    ids = [e.id for e in reg._ALL]
+    assert len(ids) == len(set(ids)), sorted(i for i in ids if ids.count(i) > 1)
+    assert reg.get("CR1").kind == "calendar_reminder"
+    for eid, where in (("CU1", "card_recovery.py:_announce"), ("CU2", "card_recovery.py:_announce_batches")):
+        em = reg.get(eid)
+        assert em is not None and em.where.endswith(where) and em.kind == "approval_outcome_unknown"
+
+
+def test_card_recovery_pushes_under_its_own_emitters_and_keys(boot):
+    from agent_friday.services import notice_registry as reg
+    card_recovery._announce([{"approval_id": "ap-r2-x", "title": "Send the invoice"}])
+    card_recovery._announce_batches([{"run_id": "brun_r2", "domain": "email", "count": 2}])
+    cards, batches = boot.pushed[-2:]
+    assert (cards["emitter"], batches["emitter"]) == ("CU1", "CU2")
+    assert cards["dedupe_key"] == reg.get("CU1").key.format(approval_ids="ap-r2-x")
+    assert batches["dedupe_key"] == reg.get("CU2").key.format(run_ids="brun_r2")
+
+
+def _batch_detail():
+    from agent_friday.services import item_actions as ia
+    return {"handler": ia.HANDLER, "domain": "email", "action": "archive", "thread_ids": ["t1"],
+            "conversation_id": ""}
+
+
+def _quiet_batches(monkeypatch, told=None):
+    from agent_friday.services import item_actions as ia
+    for name in ("_post_back", "_tell_call", "_tell_pages", "_tell_held"):
+        monkeypatch.setattr(ia, name, lambda *a, **k: None)
+    monkeypatch.setattr(ia, "_notify", lambda *a, **k: (told.append(a) if told is not None else None))
+    return ia
+
+
+def test_a_batch_whose_started_marker_cannot_be_written_does_not_start(boot, monkeypatch):
+    told, ran = [], []
+    ia = _quiet_batches(monkeypatch, told)
+    monkeypatch.setattr(ia, "_execute", lambda detail, approval_id: ran.append(approval_id) or
+                        {"status": "complete", "summary": "Archived.", "receipt_id": "rcpt-no"})
+    real = L.append
+
+    def append(kind, rec, **kw):
+        if kind == ia.RUN_KIND:
+            raise L.LedgerError("disk full")
+        return real(kind, rec, **kw)
+    monkeypatch.setattr(L, "append", append)
+    card = approvals.create_approval(kind="governed_action", subject_type="external_action",
+                                     subject_id="r2-nomark", title="Archive 1 conversation",
+                                     description="synthetic", payload=_batch_detail(), force_gate=True)
+    aid = card["approval_id"]
+    ref = G.record_external("probe:batch", surface="test", approval_id=aid)
+    assert ia._start(_batch_detail(), aid, ref).wait(10)
+    assert ran == []                                             # nothing was touched
+    assert _words(ref["action_id"]) == [G.FAILED]                # its decision closed failed
+    used = approvals.get_approval(aid)
+    assert used.get("used_at") and used["used_detail"]["ok"] is False
+    assert told and told[-1][0] == "Not done" and "did not start" in told[-1][1]
+    assert ia.wait_for(aid, 0)["status"] == "failed"
+
+
+def test_a_batch_writes_finished_only_after_its_decision_and_card_are_closed(boot, monkeypatch):
+    ia = _quiet_batches(monkeypatch)
+    order = []
+    monkeypatch.setattr(ia, "_execute", lambda detail, approval_id:
+                        {"status": "complete", "summary": "Archived.", "receipt_id": "rcpt-order"})
+    real_mark, real_close = ia._run_mark, ia._close_batch
+    monkeypatch.setattr(ia, "_run_mark", lambda state, *a, **k: order.append(state) or real_mark(state, *a, **k))
+    monkeypatch.setattr(ia, "_close_batch", lambda *a, **k: order.append("close") or real_close(*a, **k))
+    real_used = approvals.mark_used
+    monkeypatch.setattr(approvals, "mark_used", lambda *a, **k: order.append("used") or real_used(*a, **k))
+    assert ia._start(_batch_detail(), "ap-r2-order", None).wait(10)
+    assert order == ["started", "close", "used", "finished"]
+
+
+def _started_marker(ia, rid, aid="", ref=None, **extra):
+    rec = {"run_id": rid, "state": "started", "approval_id": aid, "domain": "email", "action": "archive",
+           "count": 1, "at": time.time(), **extra}
+    if ref:
+        rec["decision_ref"] = {k: ref.get(k) for k in ia._RUN_REF_KEYS}
+    L.append(ia.RUN_KIND, rec, durable=True)
+
+
+def _marks(ia, rid):
+    return [e["rec"]["state"] for e in L.entries([ia.RUN_KIND], newest_first=False)
+            if e["rec"].get("run_id") == rid]
+
+
+def test_a_run_that_recorded_its_end_but_not_its_finished_marker_is_never_told(boot):
+    """Killed between closing the card and the finished marker: it finished. Marked so, once."""
+    from agent_friday.services import item_actions as ia
+    card = approvals.create_approval(kind="governed_action", subject_type="external_action",
+                                     subject_id="r2-ended", title="Archive 1 conversation",
+                                     description="synthetic", payload=_batch_detail(), force_gate=True)
+    aid = card["approval_id"]
+    ref = G.record_external("probe:batch", surface="test", approval_id=aid)
+    G.close_external(ref, True)
+    approvals.mark_used(aid, "item_actions", {"ok": True})
+    _started_marker(ia, "brun_r2_ended", aid, ref)
+    assert card_recovery.settle_interrupted_batches(started_at=time.time() + 5) == []
+    assert _marks(ia, "brun_r2_ended") == ["started", "finished"]
+    assert not approvals.get_approval(aid).get("outcome")
+    assert _words(ref["action_id"]) == [G.EXECUTED]
+    assert not [p for p in boot.pushed if p.get("kind") == "approval_outcome_unknown"]
+
+
+def test_a_run_whose_process_is_still_alive_is_not_called_interrupted(boot):
+    psutil = pytest.importorskip("psutil")
+    import os
+    from agent_friday.services import item_actions as ia
+    me = psutil.Process()
+    _started_marker(ia, "brun_r2_alive", pid=os.getpid(), pid_started=me.create_time())
+    _started_marker(ia, "brun_r2_reused", pid=os.getpid(), pid_started=me.create_time() - 3600)
+    assert card_recovery.settle_interrupted_batches(started_at=time.time() + 5) == ["brun_r2_reused"]
+    assert _marks(ia, "brun_r2_alive") == ["started"]             # left to the process running it
+    assert _marks(ia, "brun_r2_reused") == ["started", "interrupted"]
+
+
+def test_the_ledger_page_names_an_approved_change_run():
+    from agent_friday.routes import ledger as page
+    assert page.KIND_LABELS["item_batch_run"] == "Approved change run"
+    line = page.plain_line({"kind": "item_batch_run", "rec": {"run_id": "brun_r2", "state": "interrupted",
+                                                              "domain": "email", "count": 2}})
+    assert line.startswith("Approved email change (2 items)") and "cut off" in line
+    failed = page.plain_line({"kind": "item_batch_run", "rec": {"state": "finished", "ok": False, "count": 1}})
+    assert failed == "Approved change (1 item) finished without going through."

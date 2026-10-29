@@ -223,6 +223,26 @@ _BATCH_NOUNS = {"email": ("conversation", "conversations"), "email_undo": ("conv
                 "calendar": ("event", "events"), "calendar_undo": ("event", "events")}
 
 
+#: How far a live process's start time may be from the one a run marker recorded and
+#: still be the same process (create_time is read twice, rounding).
+PID_START_MATCH_S = 1.0
+
+
+def _still_running(rec: Dict[str, Any]) -> bool:
+    """True when the process that wrote a ``started`` marker is still alive: its recorded
+    pid is running and started when the marker says it did (so a reused pid is not it).
+    Without psutil, or with no recorded start time, it is never taken as alive."""
+    try:
+        pid, began = rec.get("pid"), rec.get("pid_started")
+        if not pid or began is None:
+            return False
+        import psutil
+        p = psutil.Process(int(pid))
+        return p.is_running() and abs(float(p.create_time()) - float(began)) <= PID_START_MATCH_S
+    except Exception:
+        return False
+
+
 def settle_interrupted_batches(started_at: Optional[float] = None, *,
                                announce: bool = True) -> List[str]:
     """NS-34.16-4 for approved item_actions batches. A batch's card is claimed
@@ -230,7 +250,11 @@ def settle_interrupted_batches(started_at: Optional[float] = None, *,
     between leaves nothing the card checks above can judge. The batch writes a
     ``started`` marker before it can touch anything and a ``finished`` one when
     it ends (item_actions.RUN_KIND); a run started before this process (less
-    the clock margin) that never finished was interrupted. For each: its
+    the clock margin) that never finished was interrupted, unless the process
+    that started it is still alive (`_still_running`: another Friday process
+    on the same folder is still carrying it out). A run whose card and
+    decision already recorded its end finished (it is marked so, never told).
+    For each interrupted run: its
     decision is marked ``unconfirmed`` unless something already closed or
     marked it, its card ``outcome: "unknown"`` (spent, so it can never run the
     batch again), the run ``interrupted`` (so it is judged once), and the owner
@@ -254,7 +278,7 @@ def settle_interrupted_batches(started_at: Optional[float] = None, *,
                 continue
             if rec.get("state") == "started":
                 t = e.get("t")
-                if isinstance(t, (int, float)) and t < cutoff:
+                if isinstance(t, (int, float)) and t < cutoff and not _still_running(rec):
                     began.setdefault(str(rid), rec)
             else:                                      # finished, or already found interrupted
                 ended.add(str(rid))
@@ -272,12 +296,20 @@ def settle_interrupted_batches(started_at: Optional[float] = None, *,
         for rid, rec in stopped:
             ref = rec.get("decision_ref") if isinstance(rec.get("decision_ref"), dict) else None
             aid = str((ref or {}).get("action_id") or "")
+            card_id = str(rec.get("approval_id") or "")
+            card = (approvals.get_approval(card_id) or {}) if card_id else {}
+            if card.get("used_at") and (not ref or not aid or aid in said):
+                # The batch recorded its end (its card is used, its decision closed) and the
+                # process stopped before its last marker: it finished. Judged once, never told.
+                L.try_append(IA.RUN_KIND, {"run_id": rid, "state": "finished", "approval_id": card_id,
+                                           "domain": rec.get("domain") or "", "action": rec.get("action") or "",
+                                           "count": rec.get("count") or 0, "end": "recorded",
+                                           "at": time.time()}, durable=True)
+                continue
             if ref and aid and aid not in said:
                 G.close_external(dict(ref, **{"class": G.OUTWARD, "decision": "allow"}), True,
                                  outcome=G.UNCONFIRMED, detail=INTERRUPTED_DETAIL)
-            card_id = str(rec.get("approval_id") or "")
             if card_id:
-                card = approvals.get_approval(card_id) or {}
                 if card and not card.get("used_at") and not card.get("outcome"):
                     approvals._patch(card_id, outcome="unknown", outcome_note=BATCH_NOTE,
                                      outcome_found_at=time.time(), consumed=True)
@@ -315,7 +347,7 @@ def _announce_batches(runs: List[Dict[str, Any]]) -> None:
         ne.push(title="An approved change may not have finished" if n == 1
                 else "%d approved changes may not have finished" % n,
                 body=body, priority="high", source="card-recovery", kind="approval_outcome_unknown",
-                emitter="CR1",
+                emitter="CU2",
                 dedupe_key="approval_outcome_unknown:" + ",".join(sorted(str(r.get("run_id")) for r in runs)),
                 target={"workspace": "system", "tab": "approvals"})
     except Exception as e:
@@ -335,7 +367,7 @@ def _announce(cards: List[Dict[str, Any]]) -> None:
         ne.push(title="An approved action may not have finished" if n == 1
                 else "%d approved actions may not have finished" % n,
                 body=body, priority="high", source="card-recovery", kind="approval_outcome_unknown",
-                emitter="CR1",
+                emitter="CU1",
                 dedupe_key="approval_outcome_unknown:" + ",".join(sorted(c["approval_id"] for c in cards)),
                 target={"workspace": "system", "tab": "approvals"})
     except Exception as e:

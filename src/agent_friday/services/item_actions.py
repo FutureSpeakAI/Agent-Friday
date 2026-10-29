@@ -2214,19 +2214,29 @@ def batch_count(detail: dict) -> int:
 
 
 def _run_mark(state: str, run_id: str, approval_id: str | None, detail: dict,
-              decision_ref: dict | None = None, **extra) -> None:
-    """Write one run marker. Never raises: a marker never changes the batch."""
+              decision_ref: dict | None = None, **extra) -> bool:
+    """Write one run marker; True when it was written. Never raises. A ``started`` marker
+    also records when this process started, so a later start can tell this process (still
+    running the batch) from a gone one that reused its pid."""
     try:
         from agent_friday.services import action_ledger
         rec = {"run_id": run_id, "state": state, "approval_id": approval_id or "",
                "domain": str((detail or {}).get("domain") or "")[:20],
                "action": str((detail or {}).get("action") or "")[:20],
                "count": batch_count(detail), "pid": os.getpid(), "at": time.time(), **extra}
-        if state == "started" and isinstance(decision_ref, dict):
-            rec["decision_ref"] = {k: decision_ref.get(k) for k in _RUN_REF_KEYS}
+        if state == "started":
+            try:
+                from agent_friday.services import card_recovery
+                rec["pid_started"] = card_recovery.process_started()
+            except Exception:  # noqa: BLE001
+                rec["pid_started"] = None
+            if isinstance(decision_ref, dict):
+                rec["decision_ref"] = {k: decision_ref.get(k) for k in _RUN_REF_KEYS}
         action_ledger.append(RUN_KIND, rec, durable=state == "started")
+        return True
     except Exception as e:  # noqa: BLE001
         _log.warning("approved batch: the %s marker could not be written (%s)", state, type(e).__name__)
+        return False
 
 
 def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = None) -> threading.Event:
@@ -2242,7 +2252,28 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
     # that started and never finished, which the next start finds and tells the owner about
     # (card_recovery.settle_interrupted_batches). The card itself is only claimed until then.
     run_id = journal.new_id().replace("rcpt_", "brun_", 1)
-    _run_mark("started", run_id, approval_id, detail, decision_ref)
+    if not _run_mark("started", run_id, approval_id, detail, decision_ref):
+        # Without its started marker a crash mid-batch could never be found and told: the
+        # batch does not start. Its decision closes failed, the card is spent, the owner is told.
+        text = ("You approved it, but Friday could not record that it was starting, so it did "
+                "not start. Nothing changed. Ask again to retry.")
+        _close_batch(decision_ref, None, False)
+        if approval_id:
+            try:
+                from agent_friday.services import approvals as ap
+                ap.mark_used(approval_id, "item_actions",
+                             {"ok": False, "error": "run marker not written", "summary": text})
+            except Exception:  # noqa: BLE001
+                pass
+        _post_back(detail.get("conversation_id"), text, approval_id)
+        _notify("Not done", text, "warning")
+        _tell_held(detail, "declined", card_id=approval_id or "")
+        with _RUNS_LOCK:
+            run = _RUNS.get(approval_id or "")
+            if run is not None:
+                run["receipt"] = {"status": "failed", "summary": text}
+        ev.set()
+        return ev
 
     def work():
         from agent_friday.services import approvals as ap
@@ -2268,8 +2299,6 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
                     run["receipt"] = {"status": "failed", "summary": "The approved change was interrupted."}
             ev.set()
             raise
-        _run_mark("finished", run_id, approval_id, detail, ok=bool(ok),
-                  status=str((rec or {}).get("status") or ("complete" if ok else "failed"))[:20])
         _close_batch(decision_ref, rec, ok)
         if approval_id:
             try:
@@ -2278,6 +2307,10 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
                               "summary": text[:300]})
             except Exception:
                 pass
+        # last: a process killed before this leaves a run a later start finds (its decision
+        # and card are already closed then, and are left as they are)
+        _run_mark("finished", run_id, approval_id, detail, ok=bool(ok),
+                  status=str((rec or {}).get("status") or ("complete" if ok else "failed"))[:20])
         _post_back(detail.get("conversation_id"), text, approval_id)
         _tell_call(detail.get("conversation_id"), rec, ok)
         _notify("Done" if ok else "Not done", text, "info" if ok else "warning")

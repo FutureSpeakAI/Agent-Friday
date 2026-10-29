@@ -2137,7 +2137,8 @@ def _run_workflow(rec, task):
         st = _agent.chain_run_status(slug, run_id=run_id) or {}
         state = st.get("state")
         steps = st.get("steps") or []
-        if state in ("completed", "completed_unverified", "cancelled", "interrupted", "failed"):
+        if state in ("completed", "completed_unverified", "cancelled", "interrupted", "failed",
+                     "outcome_unknown"):
             _patch_record(rec.get("id"), last_workflow_run_id=run_id,
                 last_workflow_context={key: st.get(key) for key in (
                     "run_id", "workflow_revision", "conversation_id", "project_id",
@@ -2149,6 +2150,11 @@ def _run_workflow(rec, task):
                 changed=(st.get("delivery") or {}).get("changed", True))
         if state in ("cancelled", "interrupted"):
             return WorkflowRunResult(f"Workflow {state}.", status=state, run_id=run_id)
+        if state == "outcome_unknown":
+            # An end state: a step's approved action may or may not have happened. Never
+            # retried (it could do the action twice) and never a stall; the owner checks.
+            return WorkflowRunResult("Workflow ended with a step's outcome unknown: check before "
+                                     "retrying.", status="outcome_unknown", run_id=run_id)
         if state == "failed":
             # A failed step may be about to retry itself; only a failure that
             # is still there on the next read ends the run.
