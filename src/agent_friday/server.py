@@ -1490,6 +1490,13 @@ if __name__ == '__main__':
         _ir.check_after_boot()
     except Exception as _ir_err:
         print(f"  Data integrity: check unavailable ({_ir_err})")
+    # Friday's own safeguards, re-checked a little after start and every few
+    # hours (services/self_verify); a problem is said the same way.
+    try:
+        from agent_friday.services import self_verify as _sv
+        _sv.start_periodic()
+    except Exception as _sv_err:
+        print(f"  Safeguard checks: not started ({_sv_err})")
     if _diag is not None:
         _diag.mark("boot_checks")
     # Migration receipts were written to the data folder at the top of start;

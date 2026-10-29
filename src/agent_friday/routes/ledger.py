@@ -69,6 +69,7 @@ KIND_LABELS = {
     "gate_event": "Checkpoint settings changed",
     "file_grant": "File access granted, denied or revoked",
     "setting_change": "A setting changed (with Undo)",
+    "self_check": "Friday checked her own safeguards",
 }
 
 _LAST_FULL = [0.0]

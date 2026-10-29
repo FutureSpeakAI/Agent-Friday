@@ -23,8 +23,9 @@ never a record's content, a memory key, a file's text, a key or a passphrase.
 A probe that raises is itself a problem ("could not be checked"), never a
 silent pass.
 
-This file is shared by fix/cogmem-chain-fork and fix/vault-key-split; keep
-the two copies identical so either merges first.
+A store that is fine again is forgotten, so if it breaks again it gets a new
+card (the periodic safeguard sweep, services/self_verify, announces every few
+hours).
 """
 from __future__ import annotations
 
@@ -70,6 +71,8 @@ def announce() -> list:
 
     Returns the problems. Never raises."""
     found = problems()
+    with _LOCK:                          # a store that is fine again gets a new card if it breaks again
+        _ANNOUNCED.intersection_update({str(p["store"]) for p in found})
     for p in found:
         _log.error("DATA INTEGRITY: %s: %s", p["store"], p["message"])
         store = str(p["store"])
