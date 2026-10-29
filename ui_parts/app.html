@@ -17240,6 +17240,8 @@ function TaskTimeline({taskId,live,fallback}){
     if(k==='reasoning')return showReasoning?<div {...base} style={{color:'#bbb',fontStyle:'italic',whiteSpace:'pre-wrap'}}>💭 {ev.text||''}{ev.thinking?<div style={{color:'#777'}}>(thinking) {ev.thinking}</div>:null}</div>:null;
     if(k==='halt')return <div {...base} style={{color:'#ff0080'}}>■ {ev.cause}: {ev.detail}{ev.resume_hint?' · '+ev.resume_hint:''}</div>;
     if(k==='steer')return <div {...base} style={{color:'#f59e0b'}}>→ steer ({ev.source}): {ev.message}</div>;
+    /* Step records (§30.9): a tool call's step already shows as its tool_call row. */
+    if(k==='step'&&ev.step_kind!=='tool_call')return <div {...base} style={{color:'#888'}}>◦ {ev.step_kind==='subagent'?'subagent':ev.step_kind==='milestone_run'?'goal attempt':String(ev.step_kind||'step')} · {String(ev.state||'')}{ev.duration_ms!=null?' · '+ev.duration_ms+'ms':''}</div>;
     if(k==='started'||k==='ended'||k==='created')return <div {...base} style={{color:'#888'}}>• {k}{ev.status?' · '+ev.status:''}{ev.model?' · '+ev.model:''}</div>;
     return null;};
   /* An orb-backed row has no journal but DOES carry its own log and step

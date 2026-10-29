@@ -1470,6 +1470,9 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
 
     marks = list(milestone.get("progress_marks") or [])
     no_progress_why = ""
+    # §30.9: every step this run took (its attempts' tool calls and subagents,
+    # then each attempt itself), for the distinct-progress check.
+    run_steps: List[Dict[str, Any]] = []
 
     while attempt <= max_retries:
         if attempt > 0:
@@ -1533,6 +1536,9 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
             _reconcile_milestone(goal_id, milestone_id, background=True, force=True)
             return {"ok": False, "status": "interrupted", "task_id": work.get("task_id")}
 
+        run_steps.extend(_attempt_steps(goal_id, milestone_id, work.get("task_id") or attempt_task_id,
+                                        work, _attempt_began))
+
         if not work.get("ok"):
             last_text = ""
             err = str(work.get("error") or "execution failed")
@@ -1551,6 +1557,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
                     break
             critique_hint = (f"The previous attempt failed to even run: "
                             f"{work.get('error')}. Try a different, more robust approach.")
+            why = goal_state.stalled_steps(run_steps)
+            if why:
+                no_progress_why = why
+                break
             continue
 
         last_text = work.get("text") or ""
@@ -1615,6 +1625,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         if not verdict.get("passed"):
             why = goal_state.repeated(marks[:-1], critique=str(verdict.get("critique") or ""))
             marks[-1]["critique"] = goal_state.fingerprint(verdict.get("critique") or "")
+            if why:
+                no_progress_why = why
+                break
+            why = goal_state.stalled_steps(run_steps)
             if why:
                 no_progress_why = why
                 break
@@ -1907,6 +1921,32 @@ def _note_run(goal_id: Optional[str], milestone_id: Optional[str], **fields) -> 
         _mutate_goal(goal_id, _fn)
     except Exception as e:
         _log.warning("goal %s: could not record its run: %s", goal_id, e)
+
+
+def _attempt_steps(goal_id: str, milestone_id: str, task_id: str, work: Dict[str, Any],
+                   began: float) -> List[Dict[str, Any]]:
+    """One attempt's step records (§30.9): the steps its task recorded, then
+    the attempt itself as a milestone_run step in that task's journal. The
+    attempt's outcome refs are its result's fingerprint (or its error's) and
+    one fingerprint of the set of progress keys its steps reached. Ids only.
+    Never raises; an unreadable record gives no steps (the attempt-level
+    fingerprints still apply)."""
+    try:
+        from agent_friday.services import step_records as _sr
+        from agent_friday.services import task_journal as tj
+        own = tj.steps(task_id)
+        keys = sorted({s.get("distinct_progress_key") for s in own if s.get("distinct_progress_key")})
+        ok = bool(work.get("ok"))
+        rec = tj.step("milestone_run", "done" if ok else "failed", name=milestone_id,
+                      input_refs=[_sr.make_ref("goal", goal_id), _sr.make_ref("milestone", milestone_id)],
+                      output_refs=[_sr.make_ref("task", task_id),
+                                   _sr.result_ref(work.get("text") if ok else work.get("error")),
+                                   _sr.make_ref("progress", _sr.fingerprint(keys))],
+                      started_at=began, ended_at=time.time(), task_id=task_id)
+        return own + ([_sr.public(rec)] if rec else [])
+    except Exception as e:
+        _log.warning("goal %s: could not record the attempt's steps: %s", goal_id, type(e).__name__)
+        return []
 
 
 def _closed_run(goal_id: str, milestone_id: str) -> Dict[str, Any]:

@@ -443,6 +443,30 @@ def task_journal_events(task_id):
                                  reasoning=any(e.get("kind") == "reasoning" for e in res["events"])))
 
 
+@tasks_bp.route('/api/tasks/<task_id>/steps')
+def task_steps(task_id):
+    """The task's step records (north star §30.9): kind, state, input and
+    output refs (ids only), distinct_progress_key and timing, oldest first,
+    the newest `limit` of them (at most task_journal.STEPS_SERVED_MAX).
+    `progress` says whether the steps stopped finding anything new
+    (goal_state.stalled_steps). Read-only, and only for the owner: an
+    observer gets 403, not a sealed copy."""
+    if _principal() != "user":
+        return jsonify({"error": "step records are only served to the owner"}), 403
+    from agent_friday.services import task_journal as _tj
+    from agent_friday.services import goal_state as _gs
+    limit = max(1, min(_int_arg('limit', 200), _tj.STEPS_SERVED_MAX))
+    every = _tj.steps(task_id)
+    if not every and _tj.read_state(task_id) is None and not _tj.read(task_id, limit=1):
+        return jsonify({"error": "Task not found"}), 404
+    why = _gs.stalled_steps(every)
+    shown = every[-limit:]
+    return jsonify({"task_id": task_id, "steps": shown, "count": len(every),
+                    "truncated": len(shown) < len(every),
+                    "progress": {"stalled": bool(why), "why": why,
+                                 "limit": _gs.NO_NEW_PROGRESS_LIMIT}})
+
+
 @tasks_bp.route('/api/tasks/<task_id>/digest')
 def task_digest(task_id):
     """A compact view sized for a prompt: status, cost, model and seat, the

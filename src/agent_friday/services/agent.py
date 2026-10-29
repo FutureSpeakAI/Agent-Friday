@@ -5590,10 +5590,35 @@ def _task_set(task_id, **fields):
         tj.write_state(task_id, snap)
     except Exception:
         pass
+    if new_status != prev_status and _is_terminal_status(new_status) and snap.get('subagent_step'):
+        _close_subagent_step(snap, new_state)
     with TASKS_LOCK:
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+
+
+#: A child's North Star end state as its parent's subagent step state (§30.9).
+_SUBAGENT_STEP_STATE = {"completed_verified": "done", "completed_unverified": "done",
+                        "failed": "failed", "cancelled": "cancelled",
+                        "waiting_for_approval": "waiting"}
+
+
+def _close_subagent_step(snap, end_state):
+    """The subagent step its parent recorded at spawn, closed with how the
+    child ended and its result's fingerprint (ids only). Never raises."""
+    try:
+        from agent_friday.services import step_records as _sr
+        opened = snap.get('subagent_step') or {}
+        _journal().step("subagent", _SUBAGENT_STEP_STATE.get(end_state or "", "unknown"),
+                        name=opened.get('name'), step_id=opened.get('step_id'),
+                        output_refs=list(opened.get('output_refs') or [])
+                        + [_sr.result_ref(snap.get('result'))],
+                        started_at=opened.get('started_at'),
+                        ended_at=snap.get('ended') or _time.time(),
+                        task_id=snap.get('parent_task_id'))
+    except Exception:
+        pass
 
 
 def _task_state_sync(task_id):
@@ -7835,6 +7860,25 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             with TASKS_LOCK:
                 TASKS.pop(task_id, None)
             raise
+    # §30.9: a subagent is a step of the task that started it. Ids only: the
+    # child's task id, and the delegated instruction's fingerprint (the same
+    # work delegated again is not new progress; the child's id is not counted).
+    if parent_task_id and not _continuation:
+        try:
+            from agent_friday.services import step_records as _sr
+            _opened = _journal().step(
+                "subagent", "running", name=scope or "subagent",
+                output_refs=[_sr.make_ref("task", task_id),
+                             _sr.make_ref("delegation", _sr.fingerprint(_sr.normalize_outcome(prompt or "")))],
+                started_at=TASKS[task_id]['created'], task_id=parent_task_id)
+            if _opened:
+                # Closed with the child's end state by _task_set (_close_subagent_step).
+                with TASKS_LOCK:
+                    if task_id in TASKS:
+                        TASKS[task_id]['subagent_step'] = {
+                            k: _opened.get(k) for k in ("step_id", "name", "output_refs", "started_at")}
+        except Exception:
+            pass
     # A task spawned by a tool call in a conversation or task that has read
     # outside content, or that continues such a task (a chain step, a retry,
     # a follow-up), starts flagged: its goal may paraphrase what was read, so
@@ -17100,9 +17144,20 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
     except Exception:
         pass
     try:
+        # The step record beside it (§30.9) holds ids only: the arguments'
+        # hash (the one the gate's receipt carries), the full result's
+        # fingerprint and the fingerprints of files this call wrote.
+        _step_in, _step_out = [], []
+        if _journal().current_task():
+            from agent_friday.services import artifact_manifest as _am_ref
+            from agent_friday.services import step_records as _sr
+            _ah = _am_ref.args_hash(args)
+            _step_in = [_sr.make_ref("args", _ah[:16])] if _ah else []
+            _step_out = _sr.artifact_refs(name, args, result) if _ok else []
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
-                             ok=_ok, duration_ms=int(duration_ms or 0))
+                             ok=_ok, duration_ms=int(duration_ms or 0),
+                             outcome=result, input_refs=_step_in, output_refs=_step_out)
     except Exception:
         pass
     if not orb_id:

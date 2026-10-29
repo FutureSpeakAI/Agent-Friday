@@ -918,12 +918,80 @@ def reasoning(*, text=None, thinking=None, iteration=None, model=None, session_c
                  text=_cap(text, _TEXT_CAP), thinking=_cap(thinking, _TEXT_CAP))
 
 
-def tool_call(*, name, args=None, result=None, ok=None, duration_ms=None, session_ctx=None, task_id=None):
+_NO_OUTCOME = object()
+
+
+def tool_call(*, name, args=None, result=None, ok=None, duration_ms=None, session_ctx=None, task_id=None,
+              outcome=_NO_OUTCOME, input_refs=None, output_refs=None, ended_at=None):
+    """The tool_call event, and the call's step record (§30.9) beside it.
+
+    `outcome` is the full result, used only for its fingerprint (never
+    stored); without it the stored summary is fingerprinted. `input_refs` /
+    `output_refs` are ids only (services/step_records)."""
     if ok is None:
         r = str(result or "")
         ok = not (r.startswith("[VAULT") or r.startswith("[Error") or r.lower().startswith("error"))
-    return _emit("tool_call", session_ctx, task_id, name=name, args=_cap(args, _ARGS_CAP),
-                 ok=bool(ok), duration_ms=duration_ms, result_summary=_cap(result, _SUMMARY_CAP * 2))
+    seq = _emit("tool_call", session_ctx, task_id, name=name, args=_cap(args, _ARGS_CAP),
+                ok=bool(ok), duration_ms=duration_ms, result_summary=_cap(result, _SUMMARY_CAP * 2))
+    if seq is not None:
+        try:
+            from agent_friday.services import step_records as _sr
+            end = float(ended_at) if ended_at is not None else time.time()
+            begin = end - float(duration_ms or 0) / 1000.0
+            outs = list(output_refs or [])
+            rref = _sr.result_ref(result if outcome is _NO_OUTCOME else outcome)
+            if rref:
+                outs.insert(0, rref)
+            step("tool_call", "done" if ok else "failed", name=name, input_refs=input_refs,
+                 output_refs=outs, started_at=begin, ended_at=end,
+                 session_ctx=session_ctx, task_id=task_id)
+        except Exception:
+            pass
+    return seq
+
+
+# ── step records (north star §30.9, NS-30.9-2) ───────────────────────────────
+# Written to the same journal as everything else the task did, so off-record,
+# encryption at rest, forgetting, retention and deletion all apply unchanged.
+# A step record carries ids and fingerprints only (services/step_records).
+
+def step(kind: str, state: str, *, name=None, input_refs=None, output_refs=None,
+         started_at=None, ended_at=None, step_id=None, session_ctx=None, task_id=None) -> Optional[dict]:
+    """Record one step. Returns the record (with its seq), or None when there
+    is no task or the write failed. Off the record nothing is written (append)."""
+    tid = resolve_task_id(session_ctx, task_id)
+    if not tid:
+        return None
+    from agent_friday.services import step_records as _sr
+    rec = _sr.record(kind, state, name=name, input_refs=input_refs, output_refs=output_refs,
+                     started_at=started_at, ended_at=ended_at, step_id=step_id)
+    seq = append(tid, "step", **rec)
+    if seq is None:
+        return None
+    return dict(rec, seq=seq, task_id=tid)
+
+
+STEPS_SERVED_MAX = 500
+
+
+def steps(task_id: str, since: int = 0, limit: Optional[int] = None) -> List[dict]:
+    """The task's step records, oldest first, in the §30.9 shape. A step
+    recorded more than once (the same step_id) is shown as its latest record."""
+    from agent_friday.services import step_records as _sr
+    out: List[dict] = []
+    where: Dict[str, int] = {}
+    for ev in read(task_id, since=since, kind="step"):
+        rec = _sr.public(ev)
+        sid = rec.get("id")
+        if sid and sid in where:
+            out[where[sid]] = rec
+            continue
+        if sid:
+            where[sid] = len(out)
+        out.append(rec)
+    if limit:
+        out = out[-int(limit):]
+    return out
 
 
 def decision(point: str, chosen, *, reason=None, alternatives=None, session_ctx=None, task_id=None):
