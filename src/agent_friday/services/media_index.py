@@ -1710,9 +1710,59 @@ def _on_decision(record: Dict[str, Any]) -> None:
         aid = record.get("approval_id")
         if not ap.claim_for_execution(aid):
             return
-        res = complete_publish(payload.get("card"), approval_id=aid)
+        # the approved card's decision, closed by the publish's own result. One
+        # that cannot be written stops the publish, as in publish_web's hook:
+        # the card is spent (claimed, marked used with the reason), nothing runs,
+        # no outcome is written, and the owner is told why.
+        ref, why = _record_card_decision(aid, payload.get("card"))
+        if why is not None:
+            ap.mark_used(aid, "media", {"ok": False, "error": why})
+            _notify('I could not publish "%s": %s. Nothing was published.'
+                    % (payload.get("title") or "the card", why), str(payload.get("card") or ""))
+            return
+        try:
+            res = complete_publish(payload.get("card"), approval_id=aid)
+        except BaseException:
+            _close_card_decision(ref, False, "publish_error")
+            raise
+        ok = isinstance(res, dict) and res.get("status") == "ok"
+        _close_card_decision(ref, ok, "published" if ok else "not_published")
         ap.mark_used(aid, "media", {"ok": res.get("status") == "ok", "message": res.get("message")})
     except Exception:
+        pass
+
+
+def _record_card_decision(approval_id: Optional[str], card_id: Any) -> Tuple[Optional[dict], Optional[str]]:
+    """The decision for a publish the owner approved on its card (record_external),
+    for the hook to close from the publish's own result: (ref, None).
+
+    Never raises, and fails closed: when the decision cannot be written the
+    publish must not run, so this returns (None, why). `action_gate.Held`
+    (Stop pressed, the cLaws check failed, an outward hold, the receipt could
+    not be written) gives its own reason, as publish_web's hook reports it.
+    Any other error is treated the same way (conservatively: an approved
+    action with no decision on record does not run); it is logged and the
+    reason names the error id."""
+    try:
+        from agent_friday.governance import action_gate
+    except Exception as e:  # noqa: BLE001
+        return None, "the decision could not be recorded (error %s)" % log_failure(e, "Media publish decision")
+    try:
+        return (action_gate.record_external(PUBLISH_ACTION, surface="approval_card",
+                                            approval_id=approval_id, target=str(card_id or "")[:300]), None)
+    except action_gate.Held as e:
+        return None, "held: %s" % e
+    except Exception as e:  # noqa: BLE001
+        return None, "the decision could not be recorded (error %s)" % log_failure(e, "Media publish decision")
+
+
+def _close_card_decision(ref: Optional[dict], ok: bool, detail: str) -> None:
+    """Close the card's decision: executed or failed (nothing a provider confirms
+    with an id comes back from a publish here). Never raises."""
+    try:
+        from agent_friday.governance import action_gate
+        action_gate.close_external(ref, ok, detail=detail)
+    except Exception:  # noqa: BLE001
         pass
 
 

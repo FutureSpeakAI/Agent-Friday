@@ -288,8 +288,8 @@ def _tool_podcast_format(inp):
                             label="who hosts %s" % (routine or "the shows"),
                             consequence="A show with two hosts takes longer to make." if fmt == "duo" else
                             "A show with one host is quicker to make.")
-        except Exception:
-            held = None
+        except Exception as e:  # noqa: BLE001 - a setting is never written without its check
+            return json.dumps({"status": "error", "message": "The change could not be put to you: %s" % e})
         if held:
             return _held_reply(held)
         try:
