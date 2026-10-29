@@ -652,10 +652,11 @@ def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
             **({"pre_approval_withheld": withheld} if withheld else {})}
 
 
-def _record_egress(payload: dict, raw: str, result: str) -> None:
+def _record_egress(payload: dict, raw: str, result: str, decision=None) -> None:
     """The send in the egress ledger and on the privacy map (§26.7): to Gmail,
     how many recipients (Bcc included), and the message itself fingerprinted
-    and, by default (A20), kept encrypted with the receipt."""
+    and, by default (A20), kept encrypted with the receipt. `decision`: the
+    checkpoint's decision for the send; the row names its action id (A10)."""
     try:
         from agent_friday.services import egress_gate as _eg
         from email.utils import getaddresses
@@ -668,7 +669,8 @@ def _record_egress(payload: dict, raw: str, result: str) -> None:
             else:
                 n += len([a for _name, a in getaddresses([str(v)]) if "@" in a])
         _eg.record_service_send("mail", "gmail", destination="gmail.googleapis.com", content=raw,
-                                result=result, recipients=n, part="message")
+                                result=result, recipients=n, part="message",
+                                action_id=_eg.action_id_of(decision))
     except Exception:
         pass
 
@@ -842,7 +844,7 @@ def send(approval_id: str) -> dict:
                 pass
         unconfirmed = outcome != "failed"
         _outbox_record(appr, ok=False, error=str(e)[:500], unconfirmed=unconfirmed)
-        _record_egress(payload, raw, outcome)
+        _record_egress(payload, raw, outcome, decision_ref)
         code = log_failure(e, "Gmail send failed")
         if unconfirmed:
             err = SendRefused(
@@ -855,7 +857,7 @@ def send(approval_id: str) -> dict:
         raise SendRefused("Gmail refused the message (error %s)." % code,
                           detail="Gmail refused the message: %s" % str(e)[:300])
 
-    _record_egress(payload, raw, "sent")
+    _record_egress(payload, raw, "sent", decision_ref)
     # Gmail's message id is the service's confirmation that it was sent
     _gate.close_external(decision_ref, True, detail="sent", verified=bool((sent or {}).get("id")))
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),

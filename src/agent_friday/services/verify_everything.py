@@ -23,10 +23,15 @@
                 batch_runs  an approved batch's `started` marker
                             (item_actions.RUN_KIND) names its decision's
                             action id, which must be a decision in the ledger
+                sends       a send the egress ledger records (mail, texts,
+                            calls, chat channels, posts, site publishes)
+                            whose row names the action id of the decision
+                            that authorised it must name a decision in the
+                            ledger
               `no_decision` (the id names no decision) and `missing_id` (the
-              record names none) are problems. Sends the egress ledger records
-              (mail, texts, calls, chat channels, posts, site publishes) carry
-              no action id at all: they are counted per channel as
+              record names none) are problems. A send whose row carries no
+              action id (rows written before sends named one, and the paths
+              that still have no decision to name) is counted per channel as
               `not_linkable`, never guessed at.
 
 Read-only and fail-safe: each returns counts and short references, never a
@@ -275,8 +280,9 @@ def _unlinked_key(window: float) -> Optional[tuple]:
 
 def unlinked_outward(window: float = WINDOW_S, *, now: Optional[float] = None) -> dict:
     """Outward effects in the last `window` seconds whose record names no
-    decision, or one the ledger does not hold; and how many sends carry no
-    id to match. Raises only if the ledger module cannot be loaded."""
+    decision, or one the ledger does not hold (a send's row naming an action
+    id is matched like a batch run's); and how many sends carry no id to
+    match. Raises only if the ledger module cannot be loaded."""
     key = _unlinked_key(window) if now is None else None
     hit = _cached("unlinked", key)
     if hit is not None:
@@ -360,21 +366,34 @@ def unlinked_outward(window: float = WINDOW_S, *, now: Optional[float] = None) -
                       "by": str(c.get("used_by"))[:20], "problem": "no_decision"})
 
     by_channel: Dict[str, int] = {}
+    sd = {"checked": 0, "linked": 0, "no_decision": 0}
     egress, cut = _egress_rows(_egress_log(), since)
     partial = partial or cut
     for e in egress:
         if e.get("kind") != "call" or not str(e.get("via") or "").startswith("service:"):
             continue
         ch = e.get("channel")
-        if ch in OUTWARD_CHANNELS and e.get("result") in _LEFT:
+        if ch not in OUTWARD_CHANNELS or e.get("result") not in _LEFT:
+            continue
+        aid = e.get("action_id")
+        if not aid:
+            # an older row, or a path that still records no decision: never guessed at
             by_channel[ch] = by_channel.get(ch, 0) + 1
+            continue
+        sd["checked"] += 1
+        if str(aid) in action_ids:
+            sd["linked"] += 1
+        else:
+            sd["no_decision"] += 1
+            note({"source": "send", "ref": str(e.get("call_id") or "")[:40],
+                  "by": str(ch)[:20], "problem": "no_decision"})
 
-    problems = br["no_decision"] + br["missing_id"] + cd["no_decision"]
+    problems = br["no_decision"] + br["missing_id"] + cd["no_decision"] + sd["no_decision"]
     out = {"window_days": round(float(window) / 86400.0, 2),
            "problems": problems,
-           "linked": br["linked"] + cd["linked"],
-           "checked": br["checked"] + cd["checked"],
-           "batch_runs": br, "cards": cd,
+           "linked": br["linked"] + cd["linked"] + sd["linked"],
+           "checked": br["checked"] + cd["checked"] + sd["checked"],
+           "batch_runs": br, "cards": cd, "sends": sd,
            "not_linkable": {"total": sum(by_channel.values()), "by_channel": by_channel},
            "partial": partial, "items": items}
     _keep("unlinked", key, out)

@@ -793,10 +793,12 @@ def _post_back(record: dict, text: str) -> None:
         pass
 
 
-def _record_egress(adapter: str, label: str, bundle: "Bundle", result: str, url: str = "") -> None:
+def _record_egress(adapter: str, label: str, bundle: "Bundle", result: str, url: str = "",
+                   decision=None) -> None:
     """The page in the egress ledger and on the privacy map (§26.7): where it
     went and what it held (text files as text; other files by size and hash),
-    fingerprinted and kept encrypted by default (A20)."""
+    fingerprinted and kept encrypted by default (A20). `decision`: the
+    checkpoint's decision for the publish; the row names its action id (A10)."""
     try:
         from agent_friday.services import egress_gate as _eg
         files = {}
@@ -806,7 +808,8 @@ def _record_egress(adapter: str, label: str, bundle: "Bundle", result: str, url:
             except Exception:
                 files[path] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         _eg.record_service_send("web_publish", ("publish-web:" + adapter)[:80], destination=label + (f" ({url})" if url else ""),
-                                content={"slug": bundle.slug, "files": files}, result=result, part="page")
+                                content={"slug": bundle.slug, "files": files}, result=result, part="page",
+                                action_id=_eg.action_id_of(decision))
     except Exception:
         pass
 
@@ -852,10 +855,10 @@ def _on_decision(record: dict) -> None:
     except Exception as e:
         _gate.close_external(decision, False, detail="publish_failed")
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": str(e)})
-        _record_egress(adapter, label, bundle, "failed")
+        _record_egress(adapter, label, bundle, "failed", decision=decision)
         _post_back(record, 'Publishing "%s" via %s failed: %s. Nothing is up.' % (title, label, e))
         return
-    _record_egress(adapter, label, bundle, "sent", url)
+    _record_egress(adapter, label, bundle, "sent", url, decision=decision)
     _gate.close_external(decision, True, detail="published")
     with _LOCK:
         items = [i for i in _read_index() if i.get("slug") != bundle.slug]
