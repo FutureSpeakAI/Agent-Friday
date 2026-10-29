@@ -127,7 +127,10 @@ def boot(restart, monkeypatch):  # noqa: F811
         cards = card_recovery.reconcile_at_boot(started_at=started, since=0)
         settle = getattr(card_recovery, "settle_interrupted_decisions", None)
         settled = settle(started_at=started) if settle else []
+        # after the sweep, as at boot: an approved batch's run that started and never finished
+        run.batches = card_recovery.settle_interrupted_batches(started_at=started)
         return cards, settled
+    run.batches = []
     run.pushed = restart
     return run
 
@@ -617,13 +620,106 @@ def test_an_approved_batch_killed_mid_run_is_not_run_again(tmp_path, boot, monke
     monkeypatch.setattr(ia, "_execute", lambda detail, approval_id: _reach(tmp_path, "batch:" + approval_id)
                         or {"status": "complete", "summary": "Archived.", "receipt_id": "rcpt-again"})
     _cards, settled = boot()
-    d = _interrupted(ia._action_name("email", "archive"), kill)
+    d = _interrupted(ia._action_name("email", "archive"), kill)   # unconfirmed once, never twice
     assert settled == [d["action_id"]]
+
+    # The batch's own run markers: started on disk, never finished, so the restart found it.
+    marks = [e["rec"] for e in L.entries([ia.RUN_KIND], newest_first=False)
+             if e["rec"].get("approval_id") == aid]
+    assert [m["state"] for m in marks] == ["started", "interrupted"]
+    assert boot.batches == [marks[0]["run_id"]]
+    assert marks[0]["decision_ref"]["action_id"] == d["action_id"] and marks[0]["count"] == 2
+    card = approvals.get_approval(aid)
+    assert card["outcome"] == "unknown" and card["consumed"] and not card.get("used_at")
+    told = [p for p in boot.pushed if p.get("kind") == "approval_outcome_unknown"]
+    assert len(told) == 1                                       # the owner is told once
+    assert "2 conversations" in told[0]["body"] and "may have" in told[0]["body"]
+    assert "Archive" not in told[0]["body"] + told[0]["title"]  # counts only: never the card's words
+    # A second start finds nothing more: no second notice, no second outcome.
+    assert card_recovery.settle_interrupted_batches(started_at=time.time() + 5) == []
+    assert len([p for p in boot.pushed if p.get("kind") == "approval_outcome_unknown"]) == 1
+    assert _words(d["action_id"]) == [G.UNCONFIRMED]
+
     assert approvals.decide(aid, "approve")["status"] == "approved"
     ia._on_decision(approvals.get_approval(aid))                # the hook fired again: the claim refuses
     assert ia.wait_for(aid, 0) is None
     assert _reached(tmp_path) == (Counter({"batch:" + aid: 1}) if kill == "after" else Counter())
     _invariants(tmp_path)
+
+
+def test_an_interrupted_batch_whose_decision_was_not_swept_is_marked_unconfirmed_by_its_markers(
+        tmp_path, boot, monkeypatch):
+    """The batch's own markers close its decision when nothing else has (the decision sweep
+    looks back only so far): unconfirmed, once, never executed."""
+    from agent_friday.services import item_actions as ia
+    aid = _run_killed(tmp_path, _BATCH, "after")
+    monkeypatch.setattr(card_recovery, "settle_interrupted_decisions", lambda **k: [])
+    _cards, settled = boot()
+    assert settled == [] and len(boot.batches) == 1
+    d = _interrupted(ia._action_name("email", "archive"), "after")
+    assert approvals.get_approval(aid)["outcome"] == "unknown"
+    assert card_recovery.settle_interrupted_batches(started_at=time.time() + 5) == []
+    assert _words(d["action_id"]) == [G.UNCONFIRMED]
+    assert _reached(tmp_path) == Counter({"batch:" + aid: 1})
+
+
+def test_a_batch_that_finished_is_never_reported_interrupted(boot, monkeypatch):
+    from agent_friday.services import item_actions as ia
+    for name in ("_post_back", "_tell_call", "_notify", "_tell_pages", "_tell_held"):
+        monkeypatch.setattr(ia, name, lambda *a, **k: None)
+    monkeypatch.setattr(ia, "_execute", lambda detail, approval_id:
+                        {"status": "complete", "summary": "Archived.", "receipt_id": "rcpt-ok"})
+    detail = {"handler": ia.HANDLER, "domain": "email", "action": "archive", "thread_ids": ["t1"],
+              "conversation_id": ""}
+    assert ia._start(detail, "ap-r2-finished", None).wait(10)
+    marks = [e["rec"]["state"] for e in L.entries([ia.RUN_KIND], newest_first=False)
+             if e["rec"].get("approval_id") == "ap-r2-finished"]
+    assert marks == ["started", "finished"]
+    assert card_recovery.settle_interrupted_batches(started_at=time.time() + 5) == []
+    assert not [p for p in boot.pushed if p.get("kind") == "approval_outcome_unknown"]
+
+
+# ── a task waiting on a card whose outcome is not known ─────────────────────
+
+@pytest.mark.parametrize("how", ["recovered", "stale"])
+def test_a_waiting_task_whose_card_outcome_is_unknown_ends_outcome_unknown_not_failed(boot, monkeypatch, how):
+    """Its approved action may have happened: the task is neither failed nor done. It ends
+    'outcome unknown - check before retrying', and the audit never counts it as done."""
+    from agent_friday.services import agent
+    from agent_friday.services import task_states
+    tid = "task-r2-unknown-" + how
+    rec = approvals.create_approval(kind="tainted_action", subject_type="tool", subject_id="send_email-" + tid,
+                                    title="Send the invoice to the client", description="synthetic",
+                                    force_gate=True,
+                                    payload={"tool": "send_email", "task_id": tid,
+                                             "input": {"to": "a@example.invalid", "title": "Invoice 42"}})
+    aid = rec["approval_id"]
+    approvals._patch(aid, status="approved", decided_at=time.time() - 120, executing_at=time.time() - 60,
+                     **({"executing_by": "approval_executor"} if how == "recovered" else {}))
+    monkeypatch.setitem(agent.TASKS, tid, {"task_id": tid, "name": "Send the invoice",
+                                           "status": agent.WAITING_APPROVAL, "created": time.time(),
+                                           "log": []})
+    if how == "recovered":
+        cards, _settled = boot()                                # Friday stopped mid-run
+        assert cards == [aid] and approvals.get_approval(aid)["outcome"] == "unknown"
+        agent.sweep_waiting_tasks(force=True)                   # known now: no 30-minute wait
+    else:
+        agent.sweep_waiting_tasks(force=True)                   # claimed a minute ago: still running
+        assert agent.TASKS[tid]["status"] == agent.WAITING_APPROVAL
+        monkeypatch.setattr(agent, "_SETTLE_STALE_S", 0)        # it never reported back
+        agent.sweep_waiting_tasks(force=True)
+    t = agent.TASKS[tid]
+    assert t["status"] == agent.OUTCOME_UNKNOWN == "outcome_unknown"
+    assert not t["status"].startswith("failed") and t["verified"] is False
+    assert "outcome unknown — check before retrying" in t["verification_evidence"]
+    assert "did not go through" not in t["verification_evidence"]
+    assert t["status"] not in outward_audit.DONE_STATUSES
+    assert task_states.derive(t) == "outcome_unknown" and "outcome_unknown" in task_states.TERMINAL_STATES
+    assert G.outcome_of_status(t["status"]) == G.UNCONFIRMED      # never executed
+    assert tj.is_terminal(t["status"])                           # a restart never runs it again
+    r = outward_audit.audit(now=time.time(), tasks=[t])
+    assert r["counts"]["false_done"] == 0
+    assert agent.settle_waiting_task(tid) is None                # ended once
 
 
 # ── the recovery pieces themselves ──────────────────────────────────────────

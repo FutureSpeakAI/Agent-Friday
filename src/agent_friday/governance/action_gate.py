@@ -1406,6 +1406,7 @@ TASK_STATE_OUTCOME = {
     "failed": FAILED, "recovered_after_crash": FAILED, "cancelled": DENIED,
     "waiting_for_approval": WAITING, "waiting_for_input": WAITING,
     "waiting_for_external_event": WAITING,
+    "outcome_unknown": UNCONFIRMED,     # it may or may not have happened: never executed
 }
 
 

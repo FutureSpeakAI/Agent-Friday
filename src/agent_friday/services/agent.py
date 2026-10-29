@@ -5661,6 +5661,13 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 summary['decisions_unconfirmed'] = _cards2.settle_interrupted_decisions()
             except Exception:
                 pass
+            # An approved item_actions batch the last run started and never finished: its card
+            # is spent with outcome unknown and the owner is told once, in counts. Never re-run.
+            try:
+                from agent_friday.services import card_recovery as _cards3
+                summary['batches_interrupted'] = _cards3.settle_interrupted_batches()
+            except Exception:
+                pass
         try:
             removed = tj.apply_retention()
             if removed:
@@ -6055,6 +6062,12 @@ def _evidence_verdict(tool_trace):
 WAITING_APPROVAL = 'waiting_approval'
 #: Every card the task waited on was declined or expired: nothing it asked for ran.
 DECLINED = 'declined'
+#: An approved card the task waited on began and never said how it ended (Friday stopped
+#: mid-run, card_recovery marked it outcome unknown, or it stopped reporting): whether its
+#: action happened is not known. Never done, never retried on its own; the owner checks.
+OUTCOME_UNKNOWN = 'outcome_unknown'
+#: What the owner reads for a task that ended OUTCOME_UNKNOWN.
+OUTCOME_UNKNOWN_WORDS = 'outcome unknown — check before retrying'
 
 
 def settle_waiting_task(task_id, *, from_worker=False):
@@ -6064,6 +6077,10 @@ def settle_waiting_task(task_id, *, from_worker=False):
     names this task. With a card still pending, nothing changes. Then:
       * every card approved and its action ran -> 'complete', verified by those runs,
         and a workflow continues with its next step;
+      * any approved action whose outcome is not known (Friday stopped while carrying it
+        out: card_recovery marked the card outcome unknown, or its run stopped reporting for
+        _SETTLE_STALE_S) -> OUTCOME_UNKNOWN, 'outcome unknown - check before retrying', never
+        'failed' (it may have happened) and never done;
       * any approved action that did not go through -> 'failed', with why;
       * otherwise (declined or expired) -> DECLINED: nothing it asked for ran.
     Returns the new status, or None when the task is not waiting or still has a card.
@@ -6089,7 +6106,7 @@ def settle_waiting_task(task_id, *, from_worker=False):
             return None
 
         def _outcome(r):
-            """'pending' | 'running' | 'ran' | 'ran_unchecked' | 'failed' | 'not_approved'."""
+            """'pending' | 'running' | 'ran' | 'ran_unchecked' | 'failed' | 'unknown' | 'not_approved'."""
             st = r.get('status')
             if st == 'pending':
                 return 'pending'
@@ -6098,11 +6115,16 @@ def settle_waiting_task(task_id, *, from_worker=False):
             detail = r.get('used_detail') or {}
             if 'ok' in detail:                  # the executor ran it and recorded how it went
                 return 'ran' if detail.get('ok') is True else 'failed'
+            if r.get('outcome') == 'unknown':
+                # Friday stopped while carrying it out (services/card_recovery): it may or may
+                # not have happened, so it is neither a failure nor done
+                return 'unknown'
             started = r.get('executing_at')
             if started:
                 # claimed by the executor and not reported back: running, unless far too long ago
-                # (a restart mid-run), which is said as a failure rather than waited on forever
-                return 'running' if _time.time() - float(started) < _SETTLE_STALE_S else 'failed'
+                # (a restart mid-run), which ends as outcome unknown rather than waited on forever:
+                # it may have happened, so it is never said to have failed
+                return 'running' if _time.time() - float(started) < _SETTLE_STALE_S else 'unknown'
             # used without the executor (the task's own identical call went through on the
             # approved card) or about to be claimed by it
             return 'ran_unchecked' if r.get('consumed') else 'running'
@@ -6113,9 +6135,14 @@ def settle_waiting_task(task_id, *, from_worker=False):
         ran = [r for r, o in outcomes if o == 'ran']
         unchecked = [r for r, o in outcomes if o == 'ran_unchecked']
         failed = [r for r, o in outcomes if o == 'failed']
+        unknown = [r for r, o in outcomes if o == 'unknown']
         tools = lambda rows: ', '.join(dict.fromkeys(str((r.get('payload') or {}).get('tool') or '?')
                                                      for r in rows[:10]))
-        if failed:
+        if unknown:
+            status, verified = OUTCOME_UNKNOWN, False
+            summary = '%s: %s%s' % (OUTCOME_UNKNOWN_WORDS, tools(unknown),
+                                    ('; did not go through: ' + tools(failed)) if failed else '')
+        elif failed:
             status, verified = 'failed', False
             summary = 'approved but did not go through: ' + tools(failed)
         elif ran and len(ran) == len(mine):
@@ -6133,7 +6160,12 @@ def settle_waiting_task(task_id, *, from_worker=False):
             summary = 'not approved (declined, expired or blocked): ' + tools(mine)
         _task_set(task_id, status=status, verified=verified, verification_evidence=summary,
                   settled=_time.time())
-    _task_log(task_id, 'Your decision closed this task: %s (%s).' % (status, summary))
+    if status == OUTCOME_UNKNOWN:
+        _task_log(task_id, 'Friday stopped while carrying out the action you approved, so whether it '
+                           'happened is not known. This task ended: %s (%s). Friday will not do it '
+                           'again on its own.' % (OUTCOME_UNKNOWN_WORDS, summary))
+    else:
+        _task_log(task_id, 'Your decision closed this task: %s (%s).' % (status, summary))
     if from_worker:
         return status                   # the worker reports and continues the run itself
     if rec.get('run_id'):
@@ -6185,7 +6217,8 @@ def sweep_waiting_tasks(*, force=False):
 _SETTLE_KINDS = ('tainted_action', 'tool_confirm')
 _SETTLE_LOCK = threading.Lock()
 #: An approved card claimed for running this long ago with no outcome recorded did not
-#: report back (a restart mid-run): the task is closed as failed rather than left waiting.
+#: report back (a restart mid-run): the task is closed as OUTCOME_UNKNOWN rather than left
+#: waiting (never as failed: the action may have happened).
 _SETTLE_STALE_S = 1800
 
 
@@ -7087,7 +7120,7 @@ def _report_workflow_completion(task_id, name, status, result_text):
         # A step waiting on a card holds the run there (the next step starts only once the
         # owner decides), so the owner hears about it now, not when a later step finishes.
         if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout',
-                                                     WAITING_APPROVAL):
+                                                     WAITING_APPROVAL, OUTCOME_UNKNOWN):
             _task_set(task_id, delivery={'status': 'deferred', 'reason': 'Next workflow step owns delivery.'})
             return
         if (status in ('failed', 'error') and index < len(steps) and not rec.get('settled')
@@ -7106,7 +7139,8 @@ def _report_workflow_completion(task_id, name, status, result_text):
                          and baseline.get('fingerprint') == rec.get('result_fingerprint')
                          and baseline.get('fingerprint'))
         if mode in ('never', 'silent') or (mode == 'on_change' and unchanged
-                and status not in ('failed', 'error', 'cancelled', 'timeout', 'completed_unverified')):
+                and status not in ('failed', 'error', 'cancelled', 'timeout', 'completed_unverified',
+                                   OUTCOME_UNKNOWN)):
             _task_set(task_id, delivery={'status': 'suppressed',
                       'reason': 'Unchanged result.' if unchanged else 'Completion notices are off.',
                       'changed': not unchanged})
@@ -7118,7 +7152,10 @@ def _report_workflow_completion(task_id, name, status, result_text):
         label = {'completed_unverified': 'finished; output checks are incomplete',
                  'cancelled': 'stopped', 'stopped': 'stopped', 'failed': 'failed', 'timeout': 'timed out',
                  'waiting': 'is waiting for your decision on an approval card',
-                 WAITING_APPROVAL: 'is waiting for your decision on an approval card'}.get(aggregate, 'finished')
+                 WAITING_APPROVAL: 'is waiting for your decision on an approval card',
+                 OUTCOME_UNKNOWN: 'ended with its ' + OUTCOME_UNKNOWN_WORDS}.get(aggregate, 'finished')
+        if status == OUTCOME_UNKNOWN:
+            label = 'ended with its ' + OUTCOME_UNKNOWN_WORDS
         if status == DECLINED:
             label = 'stopped: you did not approve its card'
         body = str(result_text or '').strip() or '(no output)'
@@ -8154,6 +8191,8 @@ def chain_run_status(name, run_id=None):
                 x['reason'] = "you declined an earlier step's approval card"
     elif statuses & {'failed', 'error', 'timeout'}:
         state = 'failed'
+    elif OUTCOME_UNKNOWN in statuses:
+        state = OUTCOME_UNKNOWN          # a step's approved action may or may not have happened
     elif 'cancelled' in statuses:
         state = 'cancelled'
     elif 'interrupted' in statuses:
@@ -8506,6 +8545,12 @@ def _advance_task_chain_once(task_id, result_text):
         _chain_sync(task_id)
         return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
+        return None
+    if t.get('status') == OUTCOME_UNKNOWN:
+        # Friday stopped while carrying out the action the step's card approved: whether it
+        # happened is not known, so nothing that may depend on it starts.
+        _task_log(task_id, 'Whether the action you approved happened is not known (Friday stopped while '
+                           'carrying it out): the next step did not start. Check before retrying.')
         return None
     if t.get('status') in (WAITING_APPROVAL, DECLINED) or (t.get('settled') and t.get('status') == 'failed'):
         # The step raised a card: what follows may depend on it, so the next step does not

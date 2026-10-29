@@ -17,6 +17,10 @@ North Star's states a task is in, from its status and the facts recorded beside 
     failed                      ended with an error or a timeout
     completed_unverified        finished, but without evidence the work was done
     completed_verified          finished with evidence
+    outcome_unknown             an action it waited on was approved and began, and Friday stopped
+                                before it said how it ended: it may or may not have happened.
+                                Never done, never failed; check before retrying
+                                (agent.settle_waiting_task)
     recovered_after_crash       Friday stopped while it was running (closed or crashed: the
                                 record's `exit` says which); its record was recovered at the next
                                 start (task_journal.reconcile_on_boot)
@@ -29,9 +33,9 @@ from typing import Any, Dict, Optional
 
 STATES = ("queued", "planning", "running", "waiting_for_approval", "waiting_for_input",
           "waiting_for_external_event", "paused", "cancel_requested", "cancelled", "failed",
-          "completed_unverified", "completed_verified", "recovered_after_crash")
+          "completed_unverified", "completed_verified", "recovered_after_crash", "outcome_unknown")
 TERMINAL_STATES = frozenset({"cancelled", "failed", "completed_unverified", "completed_verified",
-                             "recovered_after_crash"})
+                             "recovered_after_crash", "outcome_unknown"})
 
 _WAITING = {"approval": "waiting_for_approval", "input": "waiting_for_input",
             "external": "waiting_for_external_event"}
@@ -47,6 +51,8 @@ def derive(rec: Optional[Dict[str, Any]], *, stop_requested: bool = False) -> st
         return "completed_verified" if verified else "completed_unverified"
     if status == "completed_unverified":
         return "completed_unverified"
+    if status == "outcome_unknown":
+        return "outcome_unknown"        # before the journal's terminal fallback: never a finish
     if status.startswith("failed") or status in ("timeout", "error", "killed"):
         return "failed"
     if status in ("cancelled", "canceled", "superseded", "stopped", "skipped", "deleted",

@@ -2188,6 +2188,47 @@ def _close_batch(decision_ref, rec, ok: bool) -> None:
         pass
 
 
+#: The action-ledger kind of an approved batch's run markers (NS-34.16-4): ``started`` is
+#: written (durably) before the batch can touch anything, ``finished`` when it ends either
+#: way, and ``interrupted`` when a later start finds a run that never finished
+#: (card_recovery.settle_interrupted_batches). Counts and codes only: never a name, a
+#: subject, an address or a path.
+RUN_KIND = "item_batch_run"
+#: What of the batch's decision a ``started`` marker keeps, so a later start can close it.
+_RUN_REF_KEYS = ("seq", "hash", "tool", "class", "decision", "action_id", "policy_version", "approval")
+
+
+def batch_count(detail: dict) -> int:
+    """How many things an approved batch changes (its ops, or the conversations it names)."""
+    detail = detail or {}
+    try:
+        if detail.get("count") is not None:
+            return max(0, int(detail.get("count")))
+    except (TypeError, ValueError):
+        pass
+    for k in ("ops", "thread_ids", "refs"):
+        v = detail.get(k)
+        if isinstance(v, (list, tuple)) and v:
+            return len(v)
+    return 0
+
+
+def _run_mark(state: str, run_id: str, approval_id: str | None, detail: dict,
+              decision_ref: dict | None = None, **extra) -> None:
+    """Write one run marker. Never raises: a marker never changes the batch."""
+    try:
+        from agent_friday.services import action_ledger
+        rec = {"run_id": run_id, "state": state, "approval_id": approval_id or "",
+               "domain": str((detail or {}).get("domain") or "")[:20],
+               "action": str((detail or {}).get("action") or "")[:20],
+               "count": batch_count(detail), "pid": os.getpid(), "at": time.time(), **extra}
+        if state == "started" and isinstance(decision_ref, dict):
+            rec["decision_ref"] = {k: decision_ref.get(k) for k in _RUN_REF_KEYS}
+        action_ledger.append(RUN_KIND, rec, durable=state == "started")
+    except Exception as e:  # noqa: BLE001
+        _log.warning("approved batch: the %s marker could not be written (%s)", state, type(e).__name__)
+
+
 def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = None) -> threading.Event:
     from agent_friday.governance import action_gate
     # the batch runs on its own thread: its result closes the decision, not a request
@@ -2197,6 +2238,11 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
         _RUNS[approval_id or ""] = {"event": ev, "receipt": None}
         for old in list(_RUNS)[:-100]:
             _RUNS.pop(old, None)
+    # On disk before anything can be touched: a process killed from here on leaves a run
+    # that started and never finished, which the next start finds and tells the owner about
+    # (card_recovery.settle_interrupted_batches). The card itself is only claimed until then.
+    run_id = journal.new_id().replace("rcpt_", "brun_", 1)
+    _run_mark("started", run_id, approval_id, detail, decision_ref)
 
     def work():
         from agent_friday.services import approvals as ap
@@ -2214,6 +2260,7 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
         except BaseException:
             # the thread is being torn down (SystemExit, KeyboardInterrupt): its decision still
             # closes, failed, and whoever waits on the run is let go; then it goes on as before
+            _run_mark("finished", run_id, approval_id, detail, ok=False, end="torn_down")
             _close_batch(decision_ref, None, False)
             with _RUNS_LOCK:
                 run = _RUNS.get(approval_id or "")
@@ -2221,6 +2268,8 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
                     run["receipt"] = {"status": "failed", "summary": "The approved change was interrupted."}
             ev.set()
             raise
+        _run_mark("finished", run_id, approval_id, detail, ok=bool(ok),
+                  status=str((rec or {}).get("status") or ("complete" if ok else "failed"))[:20])
         _close_batch(decision_ref, rec, ok)
         if approval_id:
             try:
@@ -2245,6 +2294,7 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
     try:
         threading.Thread(target=work, name="item-batch", daemon=True).start()
     except BaseException:
+        _run_mark("finished", run_id, approval_id, detail, ok=False, end="not_started")
         action_gate.close_external(decision_ref, False, detail="batch_not_started")
         raise
     return ev

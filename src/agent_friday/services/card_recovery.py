@@ -14,6 +14,11 @@ At start-up, before any executor can have claimed anything in this process,
 when it was found, and tells the owner once, naming them: check whether it
 happened (Sent mail, the calendar) before asking for it again. Nothing is
 retried. Never raises.
+
+An approved item_actions batch is judged by its own run markers instead
+(`settle_interrupted_batches`): a run that started before this process and
+never finished is marked interrupted, its decision unconfirmed and its card
+outcome unknown, and the owner is told once, in counts.
 """
 from __future__ import annotations
 
@@ -207,6 +212,114 @@ def settle_interrupted_decisions(started_at: Optional[float] = None, *,
     except Exception as e:
         _log.warning("settling interrupted decisions at boot failed: %s", e)
         return []
+
+
+#: What an approved batch's card says when the run it started never finished.
+BATCH_NOTE = ("Friday stopped while carrying out this approved change, so how much of it happened "
+              "(all, some or none) is not known. Check before asking for it again.")
+#: How a batch's things are counted when the owner is told (counts only, never names).
+_BATCH_NOUNS = {"email": ("conversation", "conversations"), "email_undo": ("conversation", "conversations"),
+                "files": ("item", "items"), "wiki": ("page", "pages"), "media": ("card", "cards"),
+                "calendar": ("event", "events"), "calendar_undo": ("event", "events")}
+
+
+def settle_interrupted_batches(started_at: Optional[float] = None, *,
+                               announce: bool = True) -> List[str]:
+    """NS-34.16-4 for approved item_actions batches. A batch's card is claimed
+    before the batch runs and burned only when it ends, so a process killed in
+    between leaves nothing the card checks above can judge. The batch writes a
+    ``started`` marker before it can touch anything and a ``finished`` one when
+    it ends (item_actions.RUN_KIND); a run started before this process (less
+    the clock margin) that never finished was interrupted. For each: its
+    decision is marked ``unconfirmed`` unless something already closed or
+    marked it, its card ``outcome: "unknown"`` (spent, so it can never run the
+    batch again), the run ``interrupted`` (so it is judged once), and the owner
+    is told once, in counts. Nothing is retried. Returns the run ids. Never
+    raises."""
+    started_at = process_started() if started_at is None else started_at
+    if started_at is None:
+        return []
+    try:
+        from agent_friday.governance import action_gate as G
+        from agent_friday.services import action_ledger as L
+        from agent_friday.services import approvals
+        from agent_friday.services import item_actions as IA
+        cutoff = float(started_at) - CLOCK_MARGIN_S
+        began: Dict[str, Dict[str, Any]] = {}
+        ended = set()
+        for e in L.entries([IA.RUN_KIND], newest_first=False, verified=True):
+            rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
+            rid = rec.get("run_id")
+            if not rid:
+                continue
+            if rec.get("state") == "started":
+                t = e.get("t")
+                if isinstance(t, (int, float)) and t < cutoff:
+                    began.setdefault(str(rid), rec)
+            else:                                      # finished, or already found interrupted
+                ended.add(str(rid))
+        stopped = [(rid, rec) for rid, rec in began.items() if rid not in ended]
+        if not stopped:
+            return []
+        want = {str((r.get("decision_ref") or {}).get("action_id")) for _rid, r in stopped
+                if isinstance(r.get("decision_ref"), dict) and (r.get("decision_ref") or {}).get("action_id")}
+        said = set()
+        if want:
+            said = {str((e.get("rec") or {}).get("action_id"))
+                    for e in L.entries(["outcome"], newest_first=False, verified=True,
+                                       where=lambda e: str((e.get("rec") or {}).get("action_id")) in want)}
+        out, told = [], []
+        for rid, rec in stopped:
+            ref = rec.get("decision_ref") if isinstance(rec.get("decision_ref"), dict) else None
+            aid = str((ref or {}).get("action_id") or "")
+            if ref and aid and aid not in said:
+                G.close_external(dict(ref, **{"class": G.OUTWARD, "decision": "allow"}), True,
+                                 outcome=G.UNCONFIRMED, detail=INTERRUPTED_DETAIL)
+            card_id = str(rec.get("approval_id") or "")
+            if card_id:
+                card = approvals.get_approval(card_id) or {}
+                if card and not card.get("used_at") and not card.get("outcome"):
+                    approvals._patch(card_id, outcome="unknown", outcome_note=BATCH_NOTE,
+                                     outcome_found_at=time.time(), consumed=True)
+            if L.try_append(IA.RUN_KIND, {"run_id": rid, "state": "interrupted", "approval_id": card_id,
+                                          "domain": rec.get("domain") or "", "action": rec.get("action") or "",
+                                          "count": rec.get("count") or 0, "at": time.time()},
+                            durable=True) is None:
+                _log.warning("card recovery: an interrupted batch could not be marked; it is told again "
+                             "at the next start")
+            out.append(rid)
+            told.append(rec)
+        if told and announce:
+            _announce_batches(told)
+        return out
+    except Exception as e:
+        _log.warning("settling interrupted batches at boot failed: %s", e)
+        return []
+
+
+def _announce_batches(runs: List[Dict[str, Any]]) -> None:
+    """Tell the owner once, in counts only: how many approved changes were cut
+    off and how many things each would have changed."""
+    def part(r):
+        n = int(r.get("count") or 0)
+        one, many = _BATCH_NOUNS.get(str(r.get("domain") or ""), ("item", "items"))
+        return "%d %s" % (n, one if n == 1 else many) if n else "an unknown number of items"
+    n = len(runs)
+    sizes = ", ".join(part(r) for r in runs[:5]) + (" and %d more" % (n - 5) if n > 5 else "")
+    body = ("Friday stopped while carrying out %s you approved (%s). All, some or none of %s may have "
+            "happened, and Friday will not run %s again on its own. Check what changed before asking "
+            "again." % ("a change" if n == 1 else "%d changes" % n, sizes,
+                        "it" if n == 1 else "each", "it" if n == 1 else "them"))
+    try:
+        import agent_friday.notifications_engine as ne
+        ne.push(title="An approved change may not have finished" if n == 1
+                else "%d approved changes may not have finished" % n,
+                body=body, priority="high", source="card-recovery", kind="approval_outcome_unknown",
+                emitter="CR1",
+                dedupe_key="approval_outcome_unknown:" + ",".join(sorted(str(r.get("run_id")) for r in runs)),
+                target={"workspace": "system", "tab": "approvals"})
+    except Exception as e:
+        _log.warning("card recovery: batch announcement failed (%s)", e)
 
 
 def _announce(cards: List[Dict[str, Any]]) -> None:
