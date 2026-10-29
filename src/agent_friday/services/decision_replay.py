@@ -24,7 +24,7 @@ What each head's logged p means differs, so each head has an entry in HEADS
 know is reported with its counts only.
 
 Gold outcomes are never a head's own word (DM-E11). They come only from
-``record_outcome`` with a source in GOLD_SOURCES and a reference (the card,
+``record_gold`` with a source in GOLD_SOURCES and a reference (the card,
 approval or answer-key id that makes it gold). A test keeps the heads and Laya
 from calling it.
 
@@ -65,13 +65,15 @@ _lock = threading.Lock()
 #:   noul        p is P(True); True at or above act, False below abstain.
 #:   rules       no p: the logged label is the decision (the loop head).
 HEADS: Dict[str, dict] = {
-    "triage.mail": {"kind": "label_conf", "action": None},
-    "triage.news": {"kind": "label_conf", "action": None},
+    # mail acts only by moving a message INTO an actionable lane (message_triage)
+    "triage.mail": {"kind": "label_conf", "action": "actionable_lanes"},
+    # news is shadow only and has no actuator: counts, never miss or wrong
+    "triage.news": {"kind": "label_conf", "action": "never"},
     "triage.memory": {"kind": "label_conf", "action": None},
     "triage.notify": {"kind": "label_conf", "action": "needs_you"},
     "evidence.sufficient": {"kind": "band", "high": "sufficient", "low": "search_more", "action": "search_more"},
     "evidence.supports": {"kind": "band", "high": "supports", "low": "does_not_address",
-                          "action": "does_not_address"},
+                          "action": "does_not_address", "action_gold": ("does_not_address", "contradicts")},
     "evidence.holds": {"kind": "noul", "action": True},
     "loop.no_progress": {"kind": "rules", "action": "stalled"},
 }
@@ -134,10 +136,10 @@ def _valid_gold(head: str, gold) -> bool:
         labels = (decision_heads.shipped(head) or {}).get("labels") or []
     except Exception:  # noqa: BLE001
         return False
-    return isinstance(gold, str) and gold in labels
+    return isinstance(gold, str) and gold in labels and gold not in ABSTAIN
 
 
-def record_outcome(receipt_id: str, head: str, gold, source: str, ref: str) -> bool:
+def record_gold(receipt_id: str, head: str, gold, source: str, ref: str) -> bool:
     """Record the true answer for one head's decision in one receipt. Refused
     unless the source is in GOLD_SOURCES, ``ref`` names what makes it gold (a
     card, approval or answer-key id), and ``gold`` is one of the head's own
@@ -169,11 +171,12 @@ def _gold() -> Dict[tuple, object]:
     for line in p.read_text("utf-8", errors="replace").splitlines():
         try:
             r = json.loads(line)
-        except ValueError:
+            g = r.get("gold")
+            if (r.get("source") in GOLD_SOURCES and r.get("ref") and isinstance(g, (str, bool))
+                    and isinstance(r.get("receipt_id"), str) and _valid_gold(str(r.get("head")), g)):
+                out[(r["receipt_id"], r.get("head"))] = g
+        except (ValueError, AttributeError, TypeError):
             continue
-        g = r.get("gold")
-        if r.get("source") in GOLD_SOURCES and r.get("ref") and isinstance(g, (str, bool)):
-            out[(r.get("receipt_id"), r.get("head"))] = g
     return out
 
 
@@ -193,49 +196,76 @@ class Stopped(Exception):
 
 
 def rows(since: float, until: float, heads: Optional[Iterable[str]] = None,
-         should_stop: Optional[Callable[[], bool]] = None) -> List[dict]:
+         should_stop: Optional[Callable[[], bool]] = None,
+         gold_ids: Optional[set] = None) -> List[dict]:
     """One row per (receipt, head question) with since < at <= until. Lines are
-    prefiltered on the receipt dates and head ids before any JSON is parsed.
-    A request-path reading logged again for the same text (same head and
-    text_sha) keeps only its latest row, so a message shown often does not
-    weigh more."""
+    prefiltered on the receipt dates and on a head question before any JSON is
+    parsed; a line that is not a well-formed receipt is skipped. A request-path
+    reading logged again for the same text (same head and text_sha) keeps one
+    row, so a message shown often does not weigh more: the latest, unless an
+    earlier one carries gold (``gold_ids``), which is kept instead.
+
+    evidence.holds is never asked on its own: its rows are derived from the
+    evidence.sufficient receipts, whose p is the best passage's P(holds)."""
+    import datetime as _dt
     from agent_friday.services import decision_heads
     wanted = set(heads) if heads is not None else set(decision_heads.head_ids())
+    derive_holds = "evidence.holds" in wanted
+    asked = set(wanted) | ({"evidence.sufficient"} if derive_holds else set())
     path = _receipt_path()
     if not path.exists() or not wanted:
         return []
-    days, t = set(), since
-    while t <= until + 86400:
-        days.add('"at": "%s' % time.strftime("%Y-%m-%d", time.localtime(t)))
-        t += 86400
-    names = ['"%s"' % h for h in wanted]
+    days, d = set(), _dt.date.fromtimestamp(since)
+    while d <= _dt.date.fromtimestamp(until):
+        days.add('"at": "%s' % d.isoformat())
+        d += _dt.timedelta(days=1)
+    # A question key is followed by its dict; a version tag by a string.
+    names = ['"%s": {' % h for h in asked]
+    gold_ids = gold_ids or set()
     by_key: Dict[tuple, dict] = {}
     plain: List[dict] = []
+
+    def keep(key, row):
+        old = by_key.get(key)
+        if old is not None and old["receipt_id"] in gold_ids and row["receipt_id"] not in gold_ids:
+            return
+        by_key[key] = row
+
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for i, line in enumerate(f):
             if should_stop and i % STOP_CHECK_EVERY == 0 and should_stop():
                 raise Stopped()
-            if not any(d in line for d in days) or not any(n in line for n in names):
+            if not any(x in line for x in days) or not any(n in line for n in names):
                 continue
             try:
                 rec = json.loads(line)
-            except ValueError:
-                continue
-            at = _parse_at(rec.get("at"))
-            if at is None or not (since < at <= until):
-                continue
-            vheads = ((rec.get("versions") or {}).get("heads") or {})
-            for name, q in (rec.get("questions") or {}).items():
-                if name not in wanted:
+                if not isinstance(rec, dict) or not isinstance(rec.get("questions"), dict):
                     continue
-                row = {"receipt_id": rec.get("receipt_id"), "head": name, "value": q.get("value"),
-                       "p": q.get("p"), "layer": q.get("layer"), "latency_ms": rec.get("latency_ms"),
-                       "tag": vheads.get(name)}
-                sha = rec.get("text_sha")
-                if sha:
-                    by_key[(name, sha)] = row
-                else:
-                    plain.append(row)
+                at = _parse_at(rec.get("at"))
+                if at is None or not (since < at <= until):
+                    continue
+                versions = rec.get("versions") if isinstance(rec.get("versions"), dict) else {}
+                vheads = versions.get("heads") if isinstance(versions.get("heads"), dict) else {}
+                rid, sha = rec.get("receipt_id"), rec.get("text_sha")
+                for name, q in rec["questions"].items():
+                    if name not in asked or not isinstance(q, dict):
+                        continue
+                    out = []
+                    if name in wanted:
+                        out.append({"receipt_id": rid, "head": name, "value": q.get("value"), "p": q.get("p"),
+                                    "layer": q.get("layer"), "latency_ms": rec.get("latency_ms"),
+                                    "tag": vheads.get(name)})
+                    if derive_holds and name == "evidence.sufficient":
+                        out.append({"receipt_id": rid, "head": "evidence.holds", "value": None, "p": q.get("p"),
+                                    "layer": q.get("layer"), "latency_ms": rec.get("latency_ms"),
+                                    "tag": vheads.get("evidence.holds"), "derived": True})
+                    for row in out:
+                        if sha:
+                            keep((row["head"], sha), row)
+                        else:
+                            plain.append(row)
+            except (ValueError, AttributeError, TypeError):
+                continue
     return plain + list(by_key.values())
 
 
@@ -283,15 +313,40 @@ def decide(row: dict, head: str, thresholds: dict, labels: Optional[List[str]]) 
         return {"state": "degraded", "label": None, "conf": None}
     if (abstain_label is not None and v == abstain_label) or p < abstain:
         return {"state": "abstain", "label": abstain_label, "conf": None}
-    takes = (v == spec["action"]) if spec.get("action") else (v not in ABSTAIN)
-    return {"state": "act" if takes and p >= act else "hold", "label": v, "conf": p}
+    return {"state": "act" if _takes(head, v) and p >= act else "hold", "label": v, "conf": p}
 
 
-def _is_action(head: str, label) -> bool:
+_ACTIONABLE_DEFAULT = frozenset({"career", "finance", "futurespeak", "family"})
+
+
+def _actionable_lanes() -> frozenset:
+    try:
+        from agent_friday.services import message_triage
+        got = frozenset(message_triage._actionable_lane_ids())
+        return got or _ACTIONABLE_DEFAULT
+    except Exception:  # noqa: BLE001
+        return _ACTIONABLE_DEFAULT
+
+
+def _takes(head: str, label) -> bool:
+    """Is deciding `label` this head taking its action?"""
     spec = HEADS.get(head) or {"action": None}
-    if spec.get("action") is None:
-        return label is not None and label not in ABSTAIN
-    return label == spec["action"]
+    a = spec.get("action")
+    if label is None or label in ABSTAIN or a == "never":
+        return False
+    if a is None:
+        return True
+    if a == "actionable_lanes":
+        return label in _actionable_lanes()
+    return label == a
+
+
+def _is_action(head: str, gold) -> bool:
+    """Does gold say this head's action was due?"""
+    spec = HEADS.get(head) or {}
+    if spec.get("action_gold"):
+        return gold in spec["action_gold"]
+    return _takes(head, gold)
 
 
 def ece(probs: List[float], correct: List[bool], bins: int = 10) -> Optional[float]:
@@ -341,7 +396,7 @@ def replay_head(hrows: List[dict], head: str, thresholds: dict, labels: Optional
             if g is not None and _is_action(head, g) and d["state"] != "degraded":
                 miss += 1                               # the action was due; the head held back
             continue
-        right = d["label"] == g
+        right = d["label"] == g or (d["state"] == "act" and spec.get("action_gold") and g in spec["action_gold"])
         verdict["pass" if right else "fail"] += 1
         if d["state"] == "act" and not right:
             wrong += 1
@@ -356,14 +411,15 @@ def replay_head(hrows: List[dict], head: str, thresholds: dict, labels: Optional
             "ece": ece(probs, correct), "n_gold_scored": len(probs), "fail_ids": fail_ids}
 
 
-def _candidate_refusal(head: str, shipped_th: dict, cand: dict) -> Optional[str]:
+def _candidate_refusal(head: str, logged_abstain: float, cand: dict) -> Optional[str]:
     """A triage receipt already holds the abstain label where p was under the
-    abstain threshold in force then; the label it would have given is not
-    logged, so a candidate that LOOSENS abstain cannot be replayed honestly."""
+    abstain threshold in force then (`logged_abstain`: the higher of what
+    ships and what was in force); the label it would have given is not logged,
+    so a candidate that LOOSENS abstain below that cannot be replayed honestly."""
     if (HEADS.get(head) or {}).get("kind") == "rules":
         return "the loop head decides by rules; there are no thresholds to replay"
     if (HEADS.get(head) or {}).get("kind") == "label_conf" and \
-            float(cand.get("abstain", 0.0)) < float(shipped_th.get("abstain", 0.0)):
+            float(cand.get("abstain", logged_abstain)) < float(logged_abstain):
         return "a lower abstain threshold cannot be replayed from these receipts"
     return None
 
@@ -373,7 +429,8 @@ def _candidate_refusal(head: str, shipped_th: dict, cand: dict) -> Optional[str]
 # --------------------------------------------------------------------------
 
 def _nightly_reports() -> List[dict]:
-    """One report per night (forced reruns, named <night>-<n>.json, left out)."""
+    """One report per night (forced reruns, named <night>-<n>.json, left out).
+    A file that cannot be read, or is not a report, is skipped."""
     d = bench_dir()
     out = []
     if not d.exists():
@@ -382,8 +439,11 @@ def _nightly_reports() -> List[dict]:
         if len(f.stem) != 10:
             continue
         try:
-            out.append(json.loads(f.read_text("utf-8")))
-        except ValueError:
+            r = json.loads(f.read_text("utf-8"))
+            if isinstance(r, dict) and isinstance(r.get("heads", {}), dict):
+                r["until"] = float(r.get("until") or 0.0)
+                out.append(r)
+        except (ValueError, TypeError, OSError):
             continue
     return out
 
@@ -395,13 +455,23 @@ def report(now: Optional[float] = None, candidates: Optional[Dict[str, dict]] = 
     from agent_friday.services import decision_heads
     now = now or time.time()
     night = night_key(now)
+    # Receipts are written by a queue a little after they are stamped: read up
+    # to five minutes ago, after asking the writer to finish, so a late write is
+    # read tomorrow instead of falling between two windows.
+    until = math.floor(now) - 300
+    try:
+        from agent_friday.services import laya
+        if hasattr(laya, "flush"):
+            laya.flush()
+    except Exception:  # noqa: BLE001
+        pass
     earlier = [r for r in _nightly_reports() if r.get("night", "") < night]
     last_until = max((float(r.get("until") or 0) for r in earlier), default=0.0)
-    since = max(last_until, now - MAX_SPAN_S) if last_until else now - WINDOW_S
+    since = max(last_until, until - MAX_SPAN_S) if last_until else until - WINDOW_S
     # Receipts older than MAX_SPAN_S that no report covered are not replayed: said, not hidden.
-    shortfall = round(max(0.0, (now - MAX_SPAN_S) - last_until), 0) if last_until else 0
-    all_rows = rows(since, now, should_stop=should_stop)
+    shortfall = round(max(0.0, (until - MAX_SPAN_S) - last_until), 0) if last_until else 0
     gold = _gold()
+    all_rows = rows(since, until, should_stop=should_stop, gold_ids={k[0] for k in gold})
     week = [r for r in earlier if r.get("night", "") >= night_key(now - 7 * 86400)]
     heads_out: Dict[str, dict] = {}
     for hid in decision_heads.head_ids():
@@ -418,10 +488,17 @@ def report(now: Optional[float] = None, candidates: Optional[Dict[str, dict]] = 
         if eff.get("source") == "override":
             sets["in_force"] = eff.get("thresholds") or {}
         by_set = {name: replay_head(hrows, hid, th, labels, gold) for name, th in sets.items()}
+        logged_abstain = max(float(shipped_th.get("abstain", 0.0)),
+                             float((sets.get("in_force") or {}).get("abstain", 0.0)))
+        if (HEADS.get(hid) or {}).get("kind") == "label_conf" and \
+                logged_abstain > float(shipped_th.get("abstain", 0.0)):
+            # Rows under the in-force abstain were logged as abstaining: the shipped
+            # replay cannot recover them, so its take rate is a lower bound.
+            by_set["shipped"]["lower_bound"] = True
         if candidates and hid in candidates:
-            why = _candidate_refusal(hid, shipped_th, candidates[hid])
+            why = _candidate_refusal(hid, logged_abstain, candidates[hid])
             by_set["candidate"] = ({"refused": why} if why else
-                                   replay_head(hrows, hid, dict(candidates[hid]), labels, gold))
+                                   replay_head(hrows, hid, {**shipped_th, **dict(candidates[hid])}, labels, gold))
         lat = [_num(r.get("latency_ms")) for r in hrows]
         prev = [w.get("heads", {}).get(hid, {}) for w in week]
         prev_rates = [p.get("by_set", {}).get("shipped", {}).get("take_rate") for p in prev]
@@ -439,7 +516,7 @@ def report(now: Optional[float] = None, candidates: Optional[Dict[str, dict]] = 
             "drift": {"take_rate_vs_week": drift, "decisions_in_week": week_n,
                       "flag": bool(drift is not None and abs(drift) >= DRIFT_POINTS and week_n >= DRIFT_MIN_WEEK)},
         }
-    return {"night": night, "since": round(since, 0), "until": round(now, 0),
+    return {"night": night, "since": round(since, 0), "until": until,
             "shortfall_s": shortfall, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "rows": len(all_rows), "heads": heads_out,
             "note": "counts and receipt ids only; gold from owner corrections, confirmed choices and answer keys"}

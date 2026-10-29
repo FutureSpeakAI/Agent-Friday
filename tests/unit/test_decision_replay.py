@@ -28,6 +28,7 @@ def dr(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_friday_dir", lambda: tmp_path)
     monkeypatch.setattr(laya, "log_path", lambda: tmp_path / "runtime" / "laya2" / "ask.jsonl")
     monkeypatch.setattr(off_record, "active", lambda: False)
+    monkeypatch.setattr(mod, "_actionable_lanes", lambda: frozenset({"career", "finance"}))
     decision_heads._reset_caches_for_tests()
     yield mod
     decision_heads._reset_caches_for_tests()
@@ -71,6 +72,8 @@ def _row(rid, value, p, layer="t1"):
     ("loop.no_progress", "stalled", None, "act", "stalled"),
     ("loop.no_progress", "progressing", None, "hold", "progressing"),
     ("triage.mail", None, None, "degraded", None),
+    ("triage.mail", "noise", 0.9, "hold", "noise"),          # mail acts only INTO an actionable lane
+    ("triage.news", "hard", 0.9, "hold", "hard"),            # news has no action at all
 ])
 def test_each_head_is_decided_from_what_its_receipt_means(dr, head, value, p, state, label):
     from agent_friday.services import decision_heads
@@ -116,9 +119,17 @@ def test_ece_uses_the_probability_each_head_logs(dr):
 
 
 def test_a_candidate_that_loosens_abstain_on_a_triage_head_is_refused(dr):
-    assert dr._candidate_refusal("triage.mail", {"abstain": 0.3}, {"act": 0.5, "abstain": 0.1})
-    assert dr._candidate_refusal("triage.mail", {"abstain": 0.3}, {"act": 0.8, "abstain": 0.4}) is None
-    assert dr._candidate_refusal("loop.no_progress", {}, {"act": 0.4})
+    assert dr._candidate_refusal("triage.mail", 0.3, {"act": 0.5, "abstain": 0.1})
+    assert dr._candidate_refusal("triage.mail", 0.3, {"act": 0.8, "abstain": 0.4}) is None
+    assert dr._candidate_refusal("triage.mail", 0.3, {"act": 0.8}) is None        # abstain unchanged
+    assert dr._candidate_refusal("loop.no_progress", 0.0, {"act": 0.4})
+
+
+def test_flagging_a_contradicted_footnote_is_the_right_action(dr):
+    gold = {("a", "h"): "contradicts", ("b", "h"): "contradicts"}
+    rows = [_row("a", "does_not_address", 0.1), _row("b", "unsure", 0.5)]
+    r = dr.replay_head(rows, "evidence.supports", {"act": 0.99, "abstain": 0.32}, None, gold)
+    assert r["verdict"]["pass"] == 1 and (r["wrong"], r["miss"]) == (0, 1)
 
 
 # -- receipts, gold and the report ------------------------------------------------
@@ -136,25 +147,60 @@ def test_only_head_questions_inside_the_window_are_read_once_per_text(dr, tmp_pa
 
 def test_gold_needs_an_allowed_source_a_reference_and_a_real_label(dr, monkeypatch):
     from agent_friday.services import off_record
-    assert dr.record_outcome("r1", "triage.mail", "career", "owner_correction", "card-1")
-    assert not dr.record_outcome("r1", "triage.mail", "career", "owner_correction", "")      # no reference
-    assert not dr.record_outcome("r1", "triage.mail", "career", "head", "x")                  # never the head
-    assert not dr.record_outcome("r1", "triage.mail", "the owner's own words", "answer_key", "t1")
-    assert not dr.record_outcome("r1", "evidence.holds", "yes", "answer_key", "t1")          # a yes/no head: a bool
+    assert dr.record_gold("r1", "triage.mail", "career", "owner_correction", "card-1")
+    assert not dr.record_gold("r1", "triage.mail", "career", "owner_correction", "")      # no reference
+    assert not dr.record_gold("r1", "triage.mail", "career", "head", "x")                  # never the head
+    assert not dr.record_gold("r1", "triage.mail", "the owner's own words", "answer_key", "t1")
+    assert not dr.record_gold("r1", "evidence.holds", "yes", "answer_key", "t1")          # a yes/no head: a bool
     monkeypatch.setattr(off_record, "active", lambda: True)
-    assert not dr.record_outcome("r2", "triage.mail", "career", "answer_key", "t1")          # off the record
+    assert not dr.record_gold("r2", "triage.mail", "career", "answer_key", "t1")          # off the record
     assert dr._gold() == {("r1", "triage.mail"): "career"}
 
 
 def test_no_head_and_not_laya_ever_writes_gold():
-    root = Path(__file__).resolve().parents[2] / "src" / "agent_friday" / "services"
-    for f in [root / "laya.py", root / "decision_heads.py"] + sorted(root.glob("*_heads.py")):
-        assert "record_outcome" not in f.read_text(encoding="utf-8"), f.name
+    # Gold is written only through record_gold, and only by owner and answer-key
+    # paths. No head, no Laya module and nothing else here writes it today.
+    root = Path(__file__).resolve().parents[2] / "src" / "agent_friday"
+    for f in sorted(root.rglob("*.py")):
+        if f.name == "decision_replay.py":
+            continue
+        text = f.read_text(encoding="utf-8", errors="replace")
+        assert "record_gold" not in text and "outcomes.jsonl" not in text, f
+    services = root / "services"
+    for f in [services / "laya.py", services / "decision_heads.py"] + sorted(services.glob("*_heads.py")):
+        assert "decision_replay" not in f.read_text(encoding="utf-8"), f.name
+
+
+def test_holds_rows_come_from_the_sufficiency_receipts(dr, tmp_path):
+    _write_receipts(tmp_path, [_receipt("r1", "evidence.sufficient", "search_more", 0.1)])
+    got = sorted((r["head"], r["p"]) for r in dr.rows(NOW - 86400, NOW))
+    assert got == [("evidence.holds", 0.1), ("evidence.sufficient", 0.1)]
+
+
+def test_dedupe_keeps_the_receipt_that_has_gold(dr, tmp_path):
+    _write_receipts(tmp_path, [_receipt("r1", "triage.mail", "career", 0.8, sha="s1"),
+                               _receipt("r1b", "triage.mail", "career", 0.9, sha="s1", at="2026-10-29T11:30:00")])
+    got = dr.rows(NOW - 86400, NOW, gold_ids={"r1"})
+    assert [r["receipt_id"] for r in got] == ["r1"]
+
+
+def test_a_malformed_line_or_report_is_skipped_not_fatal(dr, tmp_path):
+    _write_receipts(tmp_path, [_receipt("r1", "triage.mail", "career", 0.8)])
+    p = tmp_path / "runtime" / "laya2" / "ask.jsonl"
+    with p.open("a", encoding="utf-8") as f:
+        f.write('[1, 2, "at": "2026-10-29 "triage.mail": {]\n')
+        f.write(json.dumps({"at": "2026-10-29T11:00:00", "questions": {"triage.mail": "x"}}) + "\n")
+        f.write(json.dumps([{"at": "2026-10-29T11:00:00", "triage.mail": {}}]) + "\n")
+    d = dr.bench_dir()
+    d.mkdir(parents=True)
+    (d / "2026-10-28.json").write_text("[not a report", encoding="utf-8")
+    rep = dr.report(now=NOW)
+    assert rep["heads"]["triage.mail"]["n"] == 1
 
 
 def test_the_report_holds_counts_and_ids_never_words(dr, tmp_path):
     _write_receipts(tmp_path, [_receipt("r%d" % i, "triage.mail", "career", 0.8) for i in range(4)])
-    dr.record_outcome("r0", "triage.mail", "finance", "owner_correction", "card-9")
+    dr.record_gold("r0", "triage.mail", "finance", "owner_correction", "card-9")
     rep = dr.report(now=NOW)
     h = rep["heads"]["triage.mail"]
     assert h["n"] == 4 and h["by_set"]["shipped"]["take_rate"] == 1.0
