@@ -151,6 +151,16 @@ def test_every_reconfirm_names_the_rules_whatever_the_state(client, gov):
     assert r.status_code == 200 and r.get_json()["state"] == "intact"
 
 
+def test_a_pin_without_a_signature_is_a_mismatch_the_owner_can_resolve(client, gov):
+    _pin({"claws_text": CLAWS_TEXT})
+    assert _outward().action == "deny"
+    st = _status(client)
+    assert st["state"] == "mismatch" and st["holds_outward"] is True, "the page agrees with the gate"
+    r = client.post("/api/governance/claws/repin", json={"confirm": True, "text_sha256": st["text_sha256"]},
+                    headers=_token())
+    assert r.status_code == 200 and _outward().action != "deny"
+
+
 def test_intact_rules_carry_no_changes(client, gov):
     assert action_gate.verify_claws()[0]
     st = _status(client)
