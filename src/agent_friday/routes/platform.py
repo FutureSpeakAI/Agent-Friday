@@ -568,6 +568,11 @@ def api_provider_key(name):
     the credential store. The key is hot-reloaded into the running process and is
     NEVER echoed back — only a connected/missing status is returned."""
     from agent_friday.services import credential_store as cs
+    if str(name).lower().startswith("channel_"):
+        # A message channel's token is changed only in Settings > Message channels, with a
+        # press on this PC (routes/channels): never through this generic key route.
+        return jsonify({"ok": False, "error": "change a channel's token in Settings > Message "
+                                              "channels, on the computer Friday runs on"}), 403
     if request.method == "DELETE":
         removed = cs.delete_provider_key(name)
         cs.clear_provider_key_live(name)
