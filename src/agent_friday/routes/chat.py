@@ -1785,7 +1785,9 @@ def chat():
                     from google import genai
                     from google.genai import types
                     gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-                    img_bytes = base64.b64decode(screenshot_b64)
+                    from agent_friday.services.image_egress import strip_metadata
+                    img_bytes, _img_meta = strip_metadata(base64.b64decode(screenshot_b64))
+                    _img_len = len(img_bytes)
                     vision_resp = gclient.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=[
@@ -1795,7 +1797,8 @@ def chat():
                     )
                     vision_description = vision_resp.text
                     _record('gemini', 'allow',
-                            'routing mode %s permits cloud vision' % _routing_mode)
+                            'routing mode %s permits cloud vision; image metadata: %s'
+                            % (_routing_mode, _img_meta))
                     _vision_events.append({
                         "kind": "vision_cloud",
                         "text": "👁 %s went to Google (Gemini) to be described. "
@@ -3723,7 +3726,9 @@ def chat_send():
                     from google import genai
                     from google.genai import types
                     gclient = genai.Client(api_key=core.GEMINI_API_KEY)  # pragma: allowlist secret
-                    img_bytes = base64.b64decode(screenshot_b64)
+                    from agent_friday.services.image_egress import strip_metadata
+                    img_bytes, _img_meta = strip_metadata(base64.b64decode(screenshot_b64))
+                    _img_len = len(img_bytes)
                     mime = 'image/jpeg' if data.get('image') else 'image/png'
                     vision_resp = gclient.models.generate_content(
                         model='gemini-2.5-flash',
@@ -3733,7 +3738,8 @@ def chat_send():
                         ],
                     )
                     vision_description = vision_resp.text
-                    _record_send('allow', 'routing mode %s permits cloud vision' % _routing_mode)
+                    _record_send('allow', 'routing mode %s permits cloud vision; image metadata: %s'
+                                 % (_routing_mode, _img_meta))
                 except Exception as ve:
                     vision_description = f"[Vision unavailable: {ve}]"
                     _record_send('error', f'cloud vision failed: {ve}')

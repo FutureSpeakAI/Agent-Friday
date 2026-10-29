@@ -273,9 +273,10 @@ def evaluate_image(image_path: str, intent: str) -> Dict[str, Any]:
         # Use a text/reasoning model for evaluation, never an image-gen model.
         from agent_friday.services import visible_jobs as _vj
         _vj.note_inference("gemini-2.5-flash", local=False)
+        from agent_friday.services.image_egress import strip_metadata
         resp = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=[types.Part.from_bytes(data=data, mime_type=mime), prompt],
+            contents=[types.Part.from_bytes(data=strip_metadata(data)[0], mime_type=mime), prompt],
         )
         raw = getattr(resp, "text", "") or ""
     except Exception as e:
