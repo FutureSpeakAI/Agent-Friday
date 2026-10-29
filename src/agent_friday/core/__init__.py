@@ -5288,6 +5288,12 @@ def _idempotency_begin():
                    "that cannot be sent again. It was not run again."),
         "mismatch": ("idempotency_key_reused", 422,
                      "This Idempotency-Key was already used for a different request. Nothing was run."),
+        "handled": ("idempotency_used", 409,
+                    "A request with this Idempotency-Key was already handled (before Friday restarted, or "
+                    "long enough ago that its answer was not kept). It was not run again."),
+        "restarted": ("idempotency_may_have_run", 409,
+                      "A request with this Idempotency-Key was still running when Friday stopped, so it may "
+                      "have run. It was not run again: check before trying with a new key."),
     }[decision]
     return jsonify({"status": "error", "code": words[0], "message": words[2]}), words[1]
 

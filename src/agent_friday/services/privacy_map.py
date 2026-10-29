@@ -450,7 +450,9 @@ def _stores() -> List[dict]:
          "paths": ["actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl", "mail_outbox",
                    "activity_ledger.jsonl", "vault/egress-log.jsonl", "vault/context-manifests.jsonl",
                    "vault/access-log.jsonl",
-                   "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl"],
+                   "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl",
+                   # which Idempotency-Keys were already handled (keyed digests only, 24 hours)
+                   "idempotency_keys.json"],
          "enc": _enc("no", "Readable on this disk; each is signed or chained so a change shows."),
          "ret": lambda: ("Kept until you delete them, so the record stays whole. The activity record rotates at "
                          "about 20 MB; the list of what went into each send keeps its newest 40 MB or so."),
