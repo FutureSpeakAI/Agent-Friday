@@ -78,14 +78,9 @@ class RedactingFilter(logging.Filter):
     string has to know about it). Always lets the record through."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if getattr(record, "_friday_redacted", False):
-            return True                       # a second handler: already done
-        try:
-            self._redact(record)
-        except Exception:  # noqa: BLE001 - never raise into the code that logged; never leak
-            record.msg, record.args = WITHHELD, None
-            record.exc_info, record.exc_text, record.stack_info = None, None, None
-        record._friday_redacted = True
+        if _already_redacted(record):
+            return True                       # a second handler, or made by the factory: done
+        _redact_once(record)
         return True
 
     @staticmethod
@@ -119,6 +114,24 @@ class RedactingFilter(logging.Filter):
             record.stack_info = redact(record.stack_info)
 
 
+def _already_redacted(record) -> bool:
+    """True when this record's message is still the one the redactor wrote. The mark is
+    that message itself, so a record whose message or arguments were set after it was
+    made (logging.makeLogRecord, a filter that rewrites it) is redacted again."""
+    done = getattr(record, "_friday_redacted", None)
+    return (isinstance(done, str) and record.msg is done and not record.args
+            and not record.exc_info)
+
+
+def _redact_once(record) -> None:
+    try:
+        RedactingFilter._redact(record)
+    except Exception:  # noqa: BLE001 - never raise into the code that logged; never leak
+        record.msg, record.args = WITHHELD, None
+        record.exc_info, record.exc_text, record.stack_info = None, None, None
+    record._friday_redacted = record.msg
+
+
 _FILTER = RedactingFilter()
 
 
@@ -144,14 +157,8 @@ def install(*loggers) -> None:
 def _redacting_factory(base):
     def factory(*args, **kwargs):
         record = base(*args, **kwargs)
-        if getattr(record, "_friday_redacted", False):
-            return record
-        try:
-            RedactingFilter._redact(record)
-        except Exception:  # noqa: BLE001 - never raise into the code that logged; never leak
-            record.msg, record.args = WITHHELD, None
-            record.exc_info, record.exc_text, record.stack_info = None, None, None
-        record._friday_redacted = True
+        if not _already_redacted(record):
+            _redact_once(record)
         return record
     factory._friday_redacting = True
     return factory
@@ -175,8 +182,37 @@ def install_everywhere() -> None:
 # print() and tracebacks written straight to sys.stderr (a thread's uncaught
 # exception, a library that prints) bypass logging entirely. The server wraps
 # its two streams once at start: each complete line is redacted before it is
-# written. A line still open when the stream is flushed is redacted as it
-# stands; a very long line without a newline is checked in pieces of _MAX.
+# written.
+#
+#   * Each thread keeps its own open line, so another thread's flush never
+#     sends half of this thread's line (print() writes its arguments one call
+#     at a time), and two threads' text never merges into one line.
+#   * A line still open when its thread flushes is redacted as it stands; the
+#     rest are redacted at exit.
+#   * A line longer than _MAX is checked in pieces cut at whitespace (a key has
+#     none), so a value is not split between two checks.
+#   * No lock is held while redacting, and a write made from inside the
+#     redactor (a warning while it imports) goes out redacted at once instead
+#     of waiting on itself.
+#
+# Not covered: bytes written to `.buffer` or straight to the file descriptors
+# (faulthandler, child processes that inherit them), and anything printed
+# before the server wraps its streams.
+
+def _pieces(text: str):
+    """`text` in pieces of at most _MAX characters, cut at whitespace where it can be."""
+    while len(text) > _MAX:
+        cut = max(text.rfind(" ", 0, _MAX), text.rfind("\t", 0, _MAX))
+        cut = cut + 1 if cut > 0 else _MAX
+        yield text[:cut]
+        text = text[cut:]
+    if text:
+        yield text
+
+
+def _redact_long(text: str) -> str:
+    return "".join(redact(p) for p in _pieces(text))
+
 
 class RedactingStream:
     """A text stream that redacts every line before passing it to `inner`. Everything
@@ -187,37 +223,63 @@ class RedactingStream:
     def __init__(self, inner):
         import threading
         self._inner = inner
-        self._pending = ""
-        self._lock = threading.Lock()
+        self._open = {}                       # thread id -> that thread's open line
+        self._local = threading.local()
+        self._get_ident = threading.get_ident
 
     def write(self, s) -> int:
         text = s if isinstance(s, str) else str(s)
-        with self._lock:
-            self._pending += text
+        if getattr(self._local, "busy", False):
+            self._inner.write(_redact_long(text))      # from inside the redactor itself
+            return len(text)
+        self._local.busy = True
+        try:
+            tid = self._get_ident()
+            pending = self._open.pop(tid, "") + text
             out = []
-            while True:
-                cut = self._pending.find("\n")
-                if cut < 0:
-                    break
-                out.append(redact(self._pending[:cut]) + "\n")
-                self._pending = self._pending[cut + 1:]
-            while len(self._pending) > _MAX:
-                out.append(redact(self._pending[:_MAX]))
-                self._pending = self._pending[_MAX:]
+            cut = pending.rfind("\n")
+            if cut >= 0:
+                for line in pending[:cut].split("\n"):
+                    out.append(_redact_long(line) + "\n")
+                pending = pending[cut + 1:]
+            if len(pending) > _MAX:
+                pieces = list(_pieces(pending))
+                out.extend(redact(p) for p in pieces[:-1])
+                pending = pieces[-1]
+            if pending:
+                self._open[tid] = pending
             if out:
                 self._inner.write("".join(out))
+        finally:
+            self._local.busy = False
         return len(text)
 
     def writelines(self, lines) -> None:
         for line in lines:
             self.write(line)
 
+    def _send(self, pending: str) -> None:
+        if pending:
+            self._local.busy = True
+            try:
+                self._inner.write(_redact_long(pending))
+            finally:
+                self._local.busy = False
+
     def flush(self) -> None:
-        with self._lock:
-            if self._pending:
-                self._inner.write(redact(self._pending))
-                self._pending = ""
+        """Send this thread's open line (redacted as it stands), then flush."""
+        if not getattr(self._local, "busy", False):
+            self._send(self._open.pop(self._get_ident(), ""))
         self._inner.flush()
+
+    def flush_all(self) -> None:
+        """Every thread's open line, redacted (at exit)."""
+        try:
+            for tid in list(self._open):
+                self._send(self._open.pop(tid, ""))
+            self._inner.flush()
+        except Exception:  # noqa: BLE001 - at exit the stream may already be closed
+            pass
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
@@ -232,9 +294,14 @@ def wrap_stream(stream):
 
 def install_streams() -> None:
     """Wrap sys.stdout and sys.stderr (the server calls this once, at start)."""
+    import atexit
     import sys
-    sys.stdout = wrap_stream(sys.stdout)
-    sys.stderr = wrap_stream(sys.stderr)
+    for name in ("stdout", "stderr"):
+        current = getattr(sys, name)
+        wrapped = wrap_stream(current)
+        if wrapped is not current:
+            setattr(sys, name, wrapped)
+            atexit.register(wrapped.flush_all)
 
 
 # -- what an error answer says ---------------------------------------------------
