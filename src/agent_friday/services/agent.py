@@ -72,6 +72,7 @@ from collections import deque as _deque
 
 _log = logging.getLogger("friday.agent")
 from functools import wraps
+from contextlib import contextmanager as _ctxlib_contextmanager
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 from agent_friday.core.os_mode import is_os_mode
@@ -5518,6 +5519,12 @@ def _task_set(task_id, **fields):
             t.update(fields)
 
 
+#: The cancelled statuses only the owner's own stop sets (a cancel, stop after
+#: this step, stop everything). Any other status that ends a task cancelled
+#: (services/task_states) is Friday's, except 'declined' (the owner's no).
+_OWNER_STOP_STATUSES = frozenset({'cancelled', 'canceled'})
+
+
 def _journal_lifecycle(tj, task_id, prev_state, new_state, prev_status, new_status, snap):
     """The journal's paused / resumed / stopped events (NS-29.4-1, slice G10),
     with who did it and a reason code, from the state change `_task_set` is
@@ -5535,10 +5542,12 @@ def _journal_lifecycle(tj, task_id, prev_state, new_state, prev_status, new_stat
             # the owner's spending cap paused it at its next paid call (north-star A17)
             tj.lifecycle(task_id, "paused", who="system", reason_code="spend_cap")
         elif new_state == 'cancelled' and prev_state != 'cancelled':
-            if str(new_status) == 'superseded':
-                who, why = "system", "superseded"
-            elif str(new_status) == 'declined':
-                who, why = "owner", "declined"
+            if str(new_status) == 'declined':
+                who, why = "owner", "declined"        # the owner said no on the task's card
+            elif str(new_status) not in _OWNER_STOP_STATUSES:
+                # superseded / stopped / skipped / deleted: set by Friday's own
+                # paths (a new run replaced it, a sweep closed it), not the owner
+                who, why = "system", (str(new_status) or "stopped")
             else:
                 try:
                     import agent_friday.core as _core_gs
@@ -14255,6 +14264,53 @@ def _note_gate_action(name, decision):
         pass
 
 
+def _clear_gate_action():
+    """Forget the gate's action id noted on this thread. Never raises."""
+    try:
+        _journal().clear_action()
+    except Exception:
+        pass
+
+
+#: True only while an agent loop (the Claude loop, the OpenAI-shape loop) runs
+#: one of its own tool calls through _execute_tool: that call's tool_call event
+#: is written by the loop just after (_orb_tool_trace), so its note is kept.
+_LOOP_TOOL_CALL: ContextVar = ContextVar("friday_loop_tool_call", default=False)
+
+
+@_ctxlib_contextmanager
+def _loop_tool_call():
+    """Mark the _execute_tool call made inside this block as the agent loop's
+    own (its gate note is left for the loop's tool_call event)."""
+    tok = _LOOP_TOOL_CALL.set(True)
+    try:
+        yield
+    finally:
+        _LOOP_TOOL_CALL.reset(tok)
+
+
+def _forgets_gate_note(fn):
+    """_execute_tool's exit: a call that was not the agent loop's own (the
+    approval executor's run on a request thread, a helper calling a tool), or
+    that ran with no current task, leaves no note behind for a later event on
+    this thread. A call nested inside a tool is never the loop's own."""
+    @wraps(fn)
+    def run(*a, **kw):
+        in_loop = _LOOP_TOOL_CALL.get()
+        tok = _LOOP_TOOL_CALL.set(False)
+        try:
+            return fn(*a, **kw)
+        finally:
+            _LOOP_TOOL_CALL.reset(tok)
+            try:
+                keep = in_loop and bool(_journal().current_task())
+            except Exception:
+                keep = False
+            if not keep:
+                _clear_gate_action()
+    return run
+
+
 def _outcome_recorder(name, decision, ctx):
     """The outcome receipt for one call: written once, only for a call whose
     checkpoint decided an outward or reading action (or that runs on the
@@ -14371,6 +14427,7 @@ def _dict_outcome(name, result):
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
+@_forgets_gate_note
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -17792,6 +17849,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             tool_results = []
             _tools_grew = False
             for tu in tool_uses:
+                # No gate note from anything before this call (an earlier call, a
+                # helper's tool run on this thread) reaches this call's tool_call
+                # event, including on the paths below that never run the tool (G10).
+                _clear_gate_action()
                 _crew_denial = _host_action_denial(tu.name, session_ctx)
                 if _crew_denial:
                     return _crew_denial, tool_trace
@@ -17917,7 +17978,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     from agent_friday.privacy.public_query import for_tool_call as _pq_call
                     with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
                                   str(kwargs.get("model") or model or ""), _pq_name, tu.input):
-                        result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
+                        # the loop's own call: its gate note waits for its tool_call event (G10)
+                        with _loop_tool_call():
+                            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Cleared on the SUCCESS path only, deliberately not in a
@@ -18562,6 +18625,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             pass
 
         for tc in tool_calls:
+            # No gate note from before this call reaches its tool_call event,
+            # including on the paths below that never run the tool (G10).
+            _clear_gate_action()
             fn = tc.get("function") or {}
             tname = fn.get("name") or ""
             tcid = tc.get("id") or ""
@@ -18806,8 +18872,10 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                       else _ctxlib.nullcontext()), \
                         _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
                                  model or "", _pq_name, targs):
-                    result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                           session_ctx=_zt_ctx)
+                    # the loop's own call: its gate note waits for its tool_call event (G10)
+                    with _loop_tool_call():
+                        result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
+                                               session_ctx=_zt_ctx)
             finally:
                 _CURRENT_MODEL.reset(_mtok)
             _crew_denial = _host_action_denial(tname, session_ctx)

@@ -595,8 +595,9 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     if _before_publish is not None:
         _before_publish()
     _upsert(record)
-    _journal_card(record, "raised" if record["status"] == "pending" else
-                  ("decided" if record["status"] == "blocked" else None))
+    # raised pending, or raised already decided: auto_approved by the policy
+    # table or blocked by Law 1 (both decided by the system, at creation)
+    _journal_card(record, "raised" if record["status"] == "pending" else "decided")
     if record["status"] == "pending":
         if _before_publish is not None:
             _before_publish()
@@ -716,7 +717,8 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
                 != json.dumps(tool_input, sort_keys=True)):
             return False
         now = time.time()
-        if rec.get("status") == "pending":
+        was_pending = rec.get("status") == "pending"
+        if was_pending:
             # The owner's typed yes in chat on this PC (agent.prepare_confirmation_ctx admits
             # it only from the app's page with a verified press: owner_surface).
             rec["decided_source"] = "typed"
@@ -727,6 +729,9 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
         _write_store(recs)
         out = dict(rec)
     _feed("card_resolved", out)
+    if was_pending:
+        # a card already approved was journaled when it was approved: no second line
+        _journal_card(out, "decided")
     return True
 
 
@@ -884,6 +889,7 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         _write_store(recs)
         out = dict(rec)
     _feed("card_resolved", out)
+    _journal_card(out, "decided")
     _fire_hook(out)
     return out, True
 
@@ -1068,6 +1074,7 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
             _write_store(recs)
     for rec in withdrawn:
         _feed("card_resolved", rec)
+        _journal_card(rec, "decided")
     return len(withdrawn)
 
 
@@ -1094,6 +1101,7 @@ def expire_matching(match, by: str, note: str = "") -> int:
             _write_store(recs)
     for rec in expired:
         _feed("card_resolved", rec)
+        _journal_card(rec, "decided")
         _fire_hook(rec)
     return len(expired)
 
@@ -1133,6 +1141,7 @@ def _expire_due(now: float, notify: bool = True) -> List[Dict[str, Any]]:
             _write_store(recs)
     for rec in expired:
         _feed("card_resolved", rec)
+        _journal_card(rec, "decided")
         _fire_hook(rec)
     if notify:
         _announce_expired(expired)
@@ -1306,7 +1315,9 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     except Exception as e:
         _log.warning("approval feed unavailable: %s", e)
     if name == "card_resolved":
-        _journal_card(record, "decided")
+        # The task journal's "decided" event is written by each caller that
+        # made a decision (G10), not here: a card resolved again (an approved
+        # card spent by a chat yes) is not a second decision.
         try:
             from agent_friday.services import interruption_policy as _ip
             _ip.forget("approval:%s" % record.get("approval_id"))
