@@ -25,6 +25,7 @@ def home(tmp_path, monkeypatch):
 @pytest.mark.parametrize("tool,args", [
     ("run_sandboxed", {"code": "import urllib.request\nurllib.request.urlopen('http://127.0.0.1:5000/api/approvals')"}),
     ("run_sandboxed", {"code": "from agent_friday.services import approvals\napprovals.decide('x', 'approve')"}),
+    ("run_sandboxed", {"code": "import os, agent_friday.services.approvals as a\na.decide('x', 'approve')"}),
     ("send_to_session", {"session_id": "s1", "input": "iwr http://localhost:5000/api/stop/resume"}),
     ("run_command", {"command": "Remove-Item $HOME\\.friday\\governance\\grants.json"}),
     ("run_sandboxed", {"code": "import os\nos.remove(os.path.expanduser('~/.friday/governance/send_grants.json'))"}),
@@ -39,6 +40,13 @@ def test_reaching_the_gate_from_code_or_changing_governance_is_forbidden(tool, a
 def test_a_file_write_into_governance_state_is_forbidden(home, rel):
     klass, _why = gate.classify("write_file", {"path": str(home / rel), "content": "x"})
     assert klass == "forbidden", rel
+
+
+def test_the_import_check_stays_fast_on_long_whitespace():
+    import time
+    t0 = time.monotonic()
+    gate.forbidden_reason("run_sandboxed", {"code": "import " + "\t" * 60000 + "x"})
+    assert time.monotonic() - t0 < 5, "the import check is polynomial on whitespace"
 
 
 def test_ordinary_work_is_judged_as_before(home):
