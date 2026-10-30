@@ -31,6 +31,9 @@ def isolated(tmp_path, monkeypatch):
     with agent.TASKS_LOCK:
         saved = dict(agent.TASKS)
     yield
+    with agent._SETTLE_GUARD:
+        agent._SETTLE_DIRTY.clear()
+        agent._SETTLER["active"] = False
     with agent.TASKS_LOCK:
         agent.TASKS.clear()
         agent.TASKS.update(saved)
@@ -165,7 +168,7 @@ def test_a_resumed_task_gets_a_receipt_for_its_new_ending(isolated):
 
 
 def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
-    """Two endings arriving together: only the call that claimed the record writes."""
+    """The same ending set twice at once: one entry (the second finds it written)."""
     import threading
     _running("t-end-7")
     gate = threading.Barrier(2)
