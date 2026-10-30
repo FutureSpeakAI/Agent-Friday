@@ -17,6 +17,7 @@ whatever actually answered. Thread-local: one chat turn == one thread.
 from __future__ import annotations
 
 import threading
+import time
 
 from agent_friday.user_errors import clip
 
@@ -27,6 +28,66 @@ def reset():
     _tls.generation = None
     _tls.chain = []
     _tls.cloud_intents = []
+    _tls.routes = []
+
+
+def note_route(record: dict):
+    """A routing decision this turn (services/route_record). Several can land in one
+    turn (the chat route's own, the agent ladder's); route_record() picks the one
+    that matches the model that actually answered."""
+    if not isinstance(record, dict):
+        return
+    rows = getattr(_tls, "routes", None)
+    if rows is None:
+        rows = []
+        _tls.routes = rows
+    # The chat route rebuilds its record when its decision changes later in the
+    # turn (one-key swap, a local fallback): the newer one replaces the older,
+    # keeping the time the turn was first routed so latency stays honest.
+    if record.get("source") == "chat":
+        for i, (t0, old) in enumerate(rows):
+            if old.get("source") == "chat":
+                rows[i] = (t0, dict(record))
+                return
+    rows.append((time.monotonic(), dict(record)))
+    del rows[:-10]
+
+
+def route_record():
+    """The route record for this turn's reply, or None: the last decision whose model
+    is the one that generated (else the last decision), with latency_ms from that
+    decision to now, and ``answered_by`` when something else answered."""
+    rows = list(getattr(_tls, "routes", []) or [])
+    if not rows:
+        return None
+    gen = getattr(_tls, "generation", None) or {}
+    gm = str(gen.get("model") or "")
+    pick = None
+    if gm:
+        # The chat route's own decision first (it carries the turn's overrides),
+        # then any other decision for the model that answered.
+        for want_chat in (True, False):
+            for t0, rec in reversed(rows):
+                if want_chat and rec.get("source") != "chat":
+                    continue
+                if str(rec.get("model") or "") == gm:
+                    pick = (t0, rec)
+                    break
+            if pick:
+                break
+    if pick is None:
+        chat = [(t0, rec) for t0, rec in rows if rec.get("source") == "chat"]
+        pick = chat[-1] if chat else rows[-1]
+    t0, rec = pick
+    out = dict(rec)
+    out["latency_ms"] = int((time.monotonic() - t0) * 1000)
+    if gm and gm != str(out.get("model") or ""):
+        out["answered_by"] = gm
+        out["substituted"] = True
+    if not gm:
+        # Nothing recorded a generation: this is the decision, not a confirmed answer.
+        out["verified"] = False
+    return out
 
 
 def note_fallback(step: str):
