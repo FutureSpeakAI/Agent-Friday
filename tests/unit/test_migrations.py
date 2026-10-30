@@ -462,3 +462,99 @@ def test_the_copy_is_readable_by_this_account_only(home, monkeypatch):
     assert mg.run_pending(home)["ok"]
     copy = home.parent / _siblings(home, ".pre-migration-")[0]
     assert copy.stat().st_mode & 0o077 == 0
+
+
+# ── §37.3-8: the history an upgrade carries forward is checked ───────────────
+
+def _prov(home: Path, lines: list) -> None:
+    import hashlib
+    d = home / "provenance"
+    d.mkdir(exist_ok=True)
+    prev, out = "0" * 64, []
+    for i, bad in enumerate(lines):
+        line = json.dumps({"ts": "t", "content_hash": "sha256:%d" % i, "prev": "f" * 64 if bad else prev})
+        out.append(line)
+        prev = hashlib.sha256(line.encode("utf-8")).hexdigest()
+    (d / "ledger.jsonl").write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def _flush(mg, home, monkeypatch, report):
+    from agent_friday.services import action_ledger
+    got = []
+    monkeypatch.setattr(action_ledger, "try_append", lambda kind, rec, **k: got.append((kind, rec)) or {})
+    monkeypatch.setattr(action_ledger, "verify", lambda **k: report)
+    assert mg.flush_receipts(home) == 1
+    return got[0][1]
+
+
+def test_an_upgrades_receipt_carries_the_checked_history(home, monkeypatch):
+    mg = _mg()
+    assert hasattr(mg, "history_check"), "an upgrade never checks the history it carries forward"
+    _prov(home, [False, False, False])
+    mg.run_pending(home)
+    rec = _flush(mg, home, monkeypatch, {"ok": True, "records": 12, "problems": []})
+    assert rec["history"] == {"receipts": {"records": 12, "open_problems": 0},
+                              "provenance": {"entries": 3, "broken_links": 0, "unreadable": 0}}
+    from agent_friday.services import upgrade_review
+    assert not [i for i in upgrade_review.listing(home) if i["code"].startswith("history_")]
+
+
+def test_a_broken_history_is_said_on_home_and_nothing_is_changed(home, monkeypatch):
+    mg = _mg()
+    assert hasattr(mg, "history_check"), "an upgrade never checks the history it carries forward"
+    _prov(home, [False, True, False])
+    with open(home / "provenance" / "ledger.jsonl", "a", encoding="utf-8") as f:
+        f.write("{not json\n")
+    before = (home / "provenance" / "ledger.jsonl").read_bytes()
+    mg.run_pending(home)
+    rec = _flush(mg, home, monkeypatch, {"ok": False, "records": 5,
+                                         "problems": [{"acknowledged": True}, {"acknowledged": False}]})
+    assert rec["history"]["receipts"] == {"records": 5, "open_problems": 1}
+    assert rec["history"]["provenance"] == {"entries": 4, "broken_links": 1, "unreadable": 1}
+    assert (home / "provenance" / "ledger.jsonl").read_bytes() == before          # read only
+    from agent_friday.services import upgrade_review
+    codes = sorted(i["code"] for i in upgrade_review.listing(home) if i["code"].startswith("history_"))
+    assert codes == ["history_provenance", "history_receipts"]
+    assert "sha256:" not in json.dumps(rec["history"])                             # counts only
+
+
+def test_a_history_that_cannot_be_checked_is_said_and_checked_once(home, monkeypatch):
+    mg = _mg()
+    assert hasattr(mg, "history_check"), "an upgrade never checks the history it carries forward"
+    mg.run_pending(home)
+    from agent_friday.services import action_ledger
+
+    def boom(**k):
+        raise RuntimeError("no key")
+    monkeypatch.setattr(action_ledger, "verify", boom)
+    monkeypatch.setattr(action_ledger, "try_append", lambda *a, **k: None)          # the ledger is not ready
+    assert mg.flush_receipts(home) == 0
+    ran = []
+    monkeypatch.setattr(action_ledger, "verify", lambda **k: ran.append(1) or {"records": 0, "problems": []})
+    monkeypatch.setattr(action_ledger, "try_append", lambda kind, rec, **k: {})
+    assert mg.flush_receipts(home) == 1 and ran == []                               # not checked twice
+    rec = _receipts(home, "receipt-0-to-*.json")[0]
+    assert rec["history"]["receipts"] == {"unchecked": "RuntimeError"}
+
+
+def test_the_open_problem_count_is_the_ledgers_own_and_no_key_is_unchecked(home, monkeypatch):
+    mg = _mg()
+    assert hasattr(mg, "history_check"), "an upgrade never checks the history it carries forward"
+    from agent_friday.services import action_ledger
+    monkeypatch.setattr(action_ledger, "verify", lambda **k: {"records": 900, "problems": [{}] * 50,
+                                                              "open_problem_count": 75, "key_available": True})
+    assert mg.history_check(home)["receipts"] == {"records": 900, "open_problems": 75}    # not the 50 listed
+    monkeypatch.setattr(action_ledger, "verify", lambda **k: {"records": 0, "problems": [{"segment": "key"}],
+                                                              "key_available": False})
+    assert mg.history_check(home)["receipts"] == {"unchecked": "no_key"}
+
+
+def test_a_provenance_line_still_being_written_is_not_judged(home, monkeypatch):
+    mg = _mg()
+    assert hasattr(mg, "history_check"), "an upgrade never checks the history it carries forward"
+    from agent_friday.services import action_ledger
+    monkeypatch.setattr(action_ledger, "verify", lambda **k: {"records": 0, "problems": []})
+    _prov(home, [False, False])
+    with open(home / "provenance" / "ledger.jsonl", "a", encoding="utf-8") as f:
+        f.write('{"ts": "t", "prev": "')                                         # no newline yet
+    assert mg.history_check(home)["provenance"] == {"entries": 2, "broken_links": 0, "unreadable": 0}
