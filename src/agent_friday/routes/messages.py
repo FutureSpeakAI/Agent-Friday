@@ -387,23 +387,28 @@ def api_messages_classify():
 
     if _corr is not None:
         try:
+            # The owner's move is the right answer for the mail head's last decision
+            # on this message, made before this move: gold for the nightly replay
+            # (services/decision_replay). Only on the owner's own press (an agent
+            # tool moving mail is not the owner's word), before the head reads the
+            # message again below, on the text the classifier read (its subject
+            # and snippet normalised as calendar_engine does). Labels and ids only,
+            # nothing off the record or for a lane the head does not know.
+            from agent_friday.services import decision_replay, mail_owner, triage_heads
+            if mail_owner.pressed(request):
+                _subj = _corr[0] or "(no subject)"
+                _snip = str(_corr[1] or "").strip()[:400]
+                decision_replay.gold_for_text("triage.mail", triage_heads.mail_text(_subj, _snip), lane,
+                                              "owner_correction", "reclassify:%s" % mid)
+        except Exception:
+            pass
+        try:
             # The correction is also a DAgger row for the triage lane head (hashes
             # and labels only). It returns at once when the head is off or the
             # owner is off the record, and otherwise reads on the head's own
             # worker: nothing is encoded on this request.
             from agent_friday.services import triage_heads
             triage_heads.note_mail_correction(_corr[0], _corr[1], owner_lane=lane, previous_lane=_corr[2], ref=mid)
-        except Exception:
-            pass
-        try:
-            # The owner's move is also the right answer for the mail head's last
-            # decision on this message: gold for the nightly replay
-            # (services/decision_replay). Labels and ids only, searched on a
-            # background thread, nothing off the record or for a lane the head
-            # does not know.
-            from agent_friday.services import decision_replay, triage_heads
-            decision_replay.gold_for_text("triage.mail", triage_heads.mail_text(_corr[0], _corr[1]), lane,
-                                          "owner_correction", "reclassify:%s" % mid)
         except Exception:
             pass
     learned = None
@@ -661,6 +666,14 @@ def api_messages_restore():
         state = _load_message_state()
         for mid, st in list(states.items())[:500]:
             clean = {k: v for k, v in (st or {}).items() if k in allowed}
+            if (state.get(str(mid)) or {}).get("lane_override") != clean.get("lane_override"):
+                # A lane move undone: its gold for the mail head goes too, so a
+                # misclick never stays a right answer (services/decision_replay).
+                try:
+                    from agent_friday.services import decision_replay
+                    decision_replay.retract_gold("reclassify:%s" % mid)
+                except Exception:
+                    pass
             if clean:
                 state[str(mid)] = clean
             else:
