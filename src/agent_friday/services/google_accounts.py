@@ -1076,7 +1076,7 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None,
     instead of the fixed unread/recent-window default -- Gmail does the
     matching, not a local substring filter over a tiny fetched window."""
     _migrate_legacy_if_needed()
-    messages, errors, used = [], [], []
+    messages, errors, used, incomplete = [], [], [], []
     for rec in _accounts_with("gmail"):
         aid = rec["id"]
         creds = credentials_for(aid)
@@ -1093,6 +1093,11 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None,
             continue
         used.append(_public_record(rec))
         for m in _gmail_for_creds(creds, limit_per_account, days=days, query=query):
+            if m.get("more_available"):
+                incomplete.append({"account_id": aid, "label": rec.get("label"),
+                                   "estimated_total": m.get("estimate") or 0,
+                                   "why": "this account has more matching mail than was read"})
+                continue
             if "error" in m:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": m["error"],
                                "kind": m.get("error_kind", "other"), "partial": bool(m.get("partial"))})
@@ -1103,7 +1108,7 @@ def merged_gmail(limit_per_account: int = 15, days: int | None = None,
             m["account_color"] = _account_color(rec)
             messages.append(m)
     messages.sort(key=lambda m: m.get("timestamp", ""), reverse=True)
-    return {"accounts": used, "messages": messages, "errors": errors}
+    return {"accounts": used, "messages": messages, "errors": errors, "incomplete": incomplete}
 
 
 def _gmail_for_creds(creds, limit: int, days: int | None = None,
@@ -1132,7 +1137,7 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
         else:
             window = "newer_than:%dd" % _gmail_window_days(days)
             queries = (f"is:unread {window}", window)
-        ids = []
+        ids, more, estimate = [], False, 0
         for qs in queries:
             resp = gmail_api.execute(svc.users().messages().list(userId="me", q=qs, maxResults=limit))
             for ref in resp.get("messages", []):
@@ -1140,8 +1145,14 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
                 if mid and mid not in seen:
                     seen.add(mid)
                     ids.append(mid)
+            # Gmail's own word that the list goes on: what was read is not the total.
+            if resp.get("nextPageToken"):
+                more = True
+                estimate = max(estimate, int(resp.get("resultSizeEstimate") or 0))
             if len(ids) >= limit:
                 break
+        if len(ids) > limit:
+            more = True
         ids = ids[:limit]
         got, failed = gmail_api.batch_get(
             svc, ids, fmt="metadata",
@@ -1178,12 +1189,17 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
                 # format has no part list, so this is the cheap signal
                 "has_attachment": ctype.startswith("multipart/mixed"),
             })
+        # A message deleted between the list and the read is gone, not a failed read.
+        failed = [f for f in (failed or []) if f.get("kind") != "not_found"]
+        if more:
+            out.append({"more_available": True, "estimate": estimate})
         if failed:
             kinds = {f.get("kind") for f in failed}
             out.append({"error": "%d of %d messages could not be read: %s"
                                  % (len(failed), len(ids), failed[0].get("message")),
                         "error_kind": "rate_limited" if "rate_limited" in kinds else failed[0].get("kind", "other"),
-                        "partial": True})
+                        # partial only when some mail WAS read; none read is a failed search
+                        "partial": any("gmail_id" in m for m in out)})
         return out
     except gmail_api.GmailError as e:
         return out + [{"error": e.message, "error_kind": e.kind, "partial": bool(out)}]
@@ -1192,11 +1208,16 @@ def _gmail_for_creds(creds, limit: int, days: int | None = None,
         return out + [{"error": d["message"], "error_kind": d["kind"], "partial": bool(out)}]
 
 
+#: The most pages one account's list is read to (each page up to Google's own maximum).
+#: Beyond that the answer says there was more, never that it was all (NS-34.11-1).
+MAX_LIST_PAGES = 4
+
+
 def merged_calendar(days: int = 2) -> dict:
     """Events across all calendar-enabled accounts for [today, today+days),
     each event colored/tagged with its source account."""
     _migrate_legacy_if_needed()
-    events, errors, used = [], [], []
+    events, errors, used, incomplete = [], [], [], []
     now = datetime.now().astimezone()
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=max(1, days))
@@ -1208,6 +1229,10 @@ def merged_calendar(days: int = 2) -> dict:
             continue
         used.append(_public_record(rec))
         for ev in _calendar_for_creds(creds, start, end):
+            if ev.get("more_available"):
+                incomplete.append({"account_id": aid, "label": rec.get("label"),
+                                   "why": "this account has more events than were read"})
+                continue
             if "error" in ev:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": ev["error"]})
                 continue
@@ -1217,7 +1242,8 @@ def merged_calendar(days: int = 2) -> dict:
             ev["account_color"] = _account_color(rec)
             events.append(ev)
     events.sort(key=lambda e: e.get("start_time", ""))
-    return {"accounts": used, "events": events, "errors": errors}
+    # `incomplete`: accounts read in part (more than was fetched); not an error, never a total.
+    return {"accounts": used, "events": events, "errors": errors, "incomplete": incomplete}
 
 
 def _calendar_for_creds(creds, start, end) -> list:
@@ -1227,12 +1253,19 @@ def _calendar_for_creds(creds, start, end) -> list:
         return [{"error": ExceptionText(f"google-api-python-client not installed: {e}")}]
     try:
         svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
-        resp = svc.events().list(
-            calendarId="primary", timeMin=start.isoformat(), timeMax=end.isoformat(),
-            singleEvents=True, orderBy="startTime", maxResults=50,
-        ).execute()
+        items, token = [], None
+        for _page in range(MAX_LIST_PAGES):
+            kw = dict(calendarId="primary", timeMin=start.isoformat(), timeMax=end.isoformat(),
+                      singleEvents=True, orderBy="startTime", maxResults=250)
+            if token:
+                kw["pageToken"] = token
+            resp = svc.events().list(**kw).execute()
+            items.extend(resp.get("items", []))
+            token = resp.get("nextPageToken")
+            if not token:
+                break
         out = []
-        for ev in resp.get("items", []):
+        for ev in items:
             s, e = ev.get("start", {}), ev.get("end", {})
             out.append({
                 "id": ev.get("id", ""),
@@ -1243,6 +1276,8 @@ def _calendar_for_creds(creds, start, end) -> list:
                 "attendees": [a.get("email", "") for a in ev.get("attendees", []) if a.get("email")],
                 "description": (ev.get("description") or "").strip()[:500],
             })
+        if token:
+            out.append({"more_available": True})      # read up to MAX_LIST_PAGES pages; there is more
         return out
     except Exception as e:
         return [{"error": ExceptionText(f"Calendar fetch failed: {e}")}]
@@ -1412,7 +1447,7 @@ def merged_tasks(max_results: int = 50) -> dict:
     """Open tasks across every tasks-enabled account, each badged with its
     source account and task list."""
     _migrate_legacy_if_needed()
-    tasks, errors, used = [], [], []
+    tasks, errors, used, incomplete = [], [], [], []
     for rec in _accounts_with("tasks"):
         aid = rec["id"]
         creds = credentials_for(aid)
@@ -1421,6 +1456,10 @@ def merged_tasks(max_results: int = 50) -> dict:
             continue
         used.append(_public_record(rec))
         for t in _tasks_for_creds(creds, max_results):
+            if t.get("more_available"):
+                incomplete.append({"account_id": aid, "label": rec.get("label"),
+                                   "why": "this account has more open tasks than were read"})
+                continue
             if "error" in t:
                 errors.append({"account_id": aid, "label": rec.get("label"), "error": t["error"]})
                 continue
@@ -1428,7 +1467,7 @@ def merged_tasks(max_results: int = 50) -> dict:
             t["account_label"] = rec.get("label")
             t["account_email"] = rec.get("email")
             tasks.append(t)
-    return {"accounts": used, "tasks": tasks, "errors": errors}
+    return {"accounts": used, "tasks": tasks, "errors": errors, "incomplete": incomplete}
 
 
 def _tasks_for_creds(creds, max_results: int) -> list:
@@ -1438,14 +1477,33 @@ def _tasks_for_creds(creds, max_results: int) -> list:
         return [{"error": ExceptionText(f"google-api-python-client not installed: {e}")}]
     try:
         svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
-        lists_resp = svc.tasklists().list(maxResults=10).execute()
+        lists, token = [], None
+        for _page in range(MAX_LIST_PAGES):          # every list, not the first ten
+            kw = {"maxResults": 100}
+            if token:
+                kw["pageToken"] = token
+            lists_resp = svc.tasklists().list(**kw).execute()
+            lists.extend(lists_resp.get("items", []))
+            token = lists_resp.get("nextPageToken")
+            if not token:
+                break
         out = []
-        for tl in lists_resp.get("items", []):
+        for tl in lists:
+            if len(out) > max_results:
+                break        # enough read: the marker below says there is more (no further calls)
             if _inbox_fenced(None, tl.get("id")):
                 continue
-            resp = svc.tasks().list(tasklist=tl["id"], showCompleted=False,
-                                    maxResults=max_results).execute()
-            for t in resp.get("items", []):
+            items, ttoken = [], None
+            for _page in range(MAX_LIST_PAGES):
+                kw = {"tasklist": tl["id"], "showCompleted": False, "maxResults": 100}
+                if ttoken:
+                    kw["pageToken"] = ttoken
+                resp = svc.tasks().list(**kw).execute()
+                items.extend(resp.get("items", []))
+                ttoken = resp.get("nextPageToken")
+                if not ttoken:
+                    break
+            for t in items:
                 out.append({
                     "id": t.get("id"),
                     "title": t.get("title", "(untitled)"),
@@ -1459,8 +1517,10 @@ def _tasks_for_creds(creds, max_results: int) -> list:
                     # to re-fetch tasklists() to find it.
                     "tasklist_id": tl.get("id", ""),
                 })
-                if len(out) >= max_results:
-                    return out
+        if len(out) > max_results:
+            out = out[:max_results] + [{"more_available": True}]
+        elif token:
+            out.append({"more_available": True})       # more lists than were read
         return out
     except Exception as e:
         return [{"error": ExceptionText(f"Tasks fetch failed: {e}")}]

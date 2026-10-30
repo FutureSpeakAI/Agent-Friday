@@ -124,7 +124,8 @@ def _more(n: int) -> str:
 def _total(data: dict, listed: int) -> int:
     """The tool's own total when it reports one larger than the list."""
     try:
-        return max(listed, int(data.get("count") or 0))
+        # `total` is the whole when the tool showed only part (query_calendar's first 20).
+        return max(listed, int(data.get("total") or 0), int(data.get("count") or 0))
     except (TypeError, ValueError):
         return listed
 
@@ -204,13 +205,29 @@ def event_finished(start, end, now: datetime) -> bool:
     return (e if e is not None else s) <= now
 
 
-def _incomplete(data: dict) -> bool:
+def _failed_accounts(data: dict) -> bool:
     return bool(data.get("error") or data.get("degraded") or data.get("not_searched")
                 or any(str((a or {}).get("status") or "") in ("error", "needs_reauth")
                        for a in (data.get("accounts") or []) if isinstance(a, dict)))
 
 
+def _read_in_part(data: dict) -> bool:
+    """More than was read (a page limit, the first 20 of a day): not a failure, not all."""
+    return bool(data.get("incomplete") or data.get("truncated")
+                or any(str((a or {}).get("status") or "") == "partial"
+                       for a in (data.get("accounts") or []) if isinstance(a, dict)))
+
+
+def _incomplete(data: dict) -> bool:
+    return _failed_accounts(data) or _read_in_part(data)
+
+
 _PARTIAL = "Some of your accounts couldn't be read, so that may not be everything."
+_MORE = "There was more than I read, so that may not be everything."
+
+
+def _partial_text(data: dict) -> str:
+    return _PARTIAL if _failed_accounts(data) else _MORE
 
 
 def _calendar(data: dict, now: datetime, asked: str = "") -> str | None:
@@ -260,7 +277,7 @@ def _calendar(data: dict, now: datetime, asked: str = "") -> str | None:
             return "Everything I could see on your calendar has already happened, " \
                    "and I couldn't see the rest of today just now."
         return "Nothing more on your calendar today or tomorrow." + (
-            " " + _PARTIAL if _incomplete(data) else "")
+            " " + _partial_text(data) if _incomplete(data) else "")
     spoken, left, told = [], SPOKEN_ITEMS, 0
     for key in sorted(days):
         if left <= 0:
@@ -275,7 +292,7 @@ def _calendar(data: dict, now: datetime, asked: str = "") -> str | None:
         spoken.append("You also have %s." % _join(extra))
     out = " ".join(spoken + [_more(total - told)]).strip()
     if _incomplete(data):
-        out += " " + _PARTIAL
+        out += " " + _partial_text(data)
     return out
 
 
@@ -402,7 +419,7 @@ def _email(data: dict, tool: str) -> str | None:
     if _offline(data):
         out += " That's from my offline copy, so it may be out of date."
     elif _incomplete(data):
-        out += " " + _PARTIAL
+        out += " " + _partial_text(data)
     return out
 
 
