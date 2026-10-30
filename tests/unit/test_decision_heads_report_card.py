@@ -21,6 +21,8 @@ def dr(tmp_path, monkeypatch):
     if not hasattr(decision_replay, "report_card"):
         pytest.fail("decision_replay has no report_card")
     monkeypatch.setattr(decision_replay, "_friday_dir", lambda: tmp_path)
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("FRIDAY_TRIAL", raising=False)
     decision_heads._reset_caches_for_tests()
     yield decision_replay
     decision_heads._reset_caches_for_tests()
@@ -31,7 +33,7 @@ def test_before_any_nightly_report_every_head_has_a_row_and_nothing_measured(dr)
     card = dr.report_card()
     assert card["night"] is None
     assert [r["id"] for r in card["rows"]] == decision_heads.head_ids()
-    assert all(r["decisions"] is None and r["take_rate"] is None for r in card["rows"])
+    assert all(r["decisions"] is None and r["take_rate_pct"] is None for r in card["rows"])
     assert all(r["mode"] in ("off", "shadow") for r in card["rows"])          # nothing ships acting
 
 
@@ -49,8 +51,9 @@ def test_the_newest_nightly_report_fills_the_rows(dr):
     card = dr.report_card()
     row = next(r for r in card["rows"] if r["id"] == "loop.no_progress")
     assert card["night"] == "2026-10-29"
-    assert (row["decisions"], row["take_rate"], row["pass"], row["fail"], row["uncertain"]) == (6, 0.5, 2, 1, 3)
-    assert (row["miss"], row["wrong"], row["p95_ms"], row["drift"], row["drift_flag"]) == (1, 0, 2.5, 0.2, True)
+    # a percent, as the tab's pct() shows it: 0.5 of decisions is 50.0
+    assert (row["decisions"], row["take_rate_pct"], row["pass"], row["fail"], row["uncertain"]) == (6, 50.0, 2, 1, 3)
+    assert (row["miss"], row["wrong"], row["drift"], row["drift_flag"]) == (1, 0, 0.2, True)
     assert row["name"] == "Is a task stuck?"
 
 
@@ -67,4 +70,16 @@ def test_the_report_card_carries_the_rows_and_never_waits_on_them(dr, monkeypatc
 def test_both_pages_show_the_decision_head_rows(page):
     html = (ROOT / page).read_text(encoding="utf-8")
     assert "const dh = rep.decision_heads;" in html
-    assert "'data-laya-head': r.id" in html and "Her decision heads (watch only)" in html
+    assert "'data-laya-head': r.id" in html and 'title: "Her decision heads"' in html
+    assert "pct(r.take_rate_pct)" in html and "pct(r.take_rate)" not in html
+
+
+def test_a_corrupt_newest_report_falls_back_and_bad_shapes_do_not_break_the_card(dr):
+    d = dr.bench_dir()
+    d.mkdir(parents=True)
+    (d / "2026-10-28.json").write_text(json.dumps({"night": "2026-10-28", "heads": {
+        "loop.no_progress": {"n": 2, "by_set": ["not", "a", "dict"], "drift": 5}}}), encoding="utf-8")
+    (d / "2026-10-29.json").write_text("{not json", encoding="utf-8")
+    card = dr.report_card()
+    row = next(r for r in card["rows"] if r["id"] == "loop.no_progress")
+    assert card["night"] == "2026-10-28" and row["decisions"] == 2 and row["take_rate_pct"] is None

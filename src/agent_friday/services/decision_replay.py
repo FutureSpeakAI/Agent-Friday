@@ -570,33 +570,57 @@ HEAD_NAMES = {
 }
 
 
+def _dict(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def _newest_report() -> Optional[dict]:
+    """The newest one-per-night report that reads as a report (reruns, named
+    <night>-<n>.json, left out); an unreadable newest falls back to the one
+    before. Reads one file in the usual case."""
+    d = bench_dir()
+    if not d.exists():
+        return None
+    for f in sorted((p for p in d.glob("*.json") if len(p.stem) == 10), reverse=True):
+        try:
+            r = json.loads(f.read_text("utf-8"))
+        except (ValueError, OSError):
+            continue
+        if isinstance(r, dict) and isinstance(r.get("heads", {}), dict) and isinstance(r.get("night"), str):
+            return r
+    return None
+
+
 def report_card() -> dict:
     """One row per decision head for Settings > Laya: its mode and version, and
-    what the latest nightly report found (shipped thresholds). Read-only: it
-    reads the head files and the newest report, runs nothing, and holds counts
-    only. ``night`` is None before the first report."""
+    what the newest nightly report found under the thresholds that ship. Read
+    only: it reads the head files and one report, runs nothing, and holds
+    counts only. ``night`` is None before the first report."""
     from agent_friday.services import decision_heads
-    reports = _nightly_reports()
-    latest = max(reports, key=lambda r: r.get("night", "")) if reports else None
-    heads = (latest or {}).get("heads") or {}
+    latest = _newest_report()
+    heads = _dict((latest or {}).get("heads"))
     rows = []
     for st in decision_heads.status():
         hid = st.get("id")
-        h = heads.get(hid) if isinstance(heads.get(hid), dict) else {}
-        s = ((h.get("by_set") or {}).get("shipped") or {}) if h else {}
-        v = s.get("verdict") or {}
+        h = _dict(heads.get(hid))
+        s = _dict(_dict(h.get("by_set")).get("shipped"))
+        v = _dict(s.get("verdict"))
+        drift = _dict(h.get("drift"))
+        tr = s.get("take_rate")
         rows.append({
             "id": hid, "name": HEAD_NAMES.get(hid, hid), "mode": st.get("mode"), "source": st.get("source"),
             "tag": st.get("tag"), "usable": bool(st.get("usable")), "problem": st.get("problem") or "",
-            "decisions": h.get("n") if h else None, "take_rate": s.get("take_rate"),
+            "decisions": h.get("n") if h else None,
+            # a percent, as the tab's pct() expects; "at least" when an override hid some rows
+            "take_rate_pct": round(float(tr) * 100.0, 1) if isinstance(tr, (int, float)) else None,
+            "lower_bound": bool(s.get("lower_bound")),
             "pass": v.get("pass"), "fail": v.get("fail"), "uncertain": v.get("uncertain"),
-            "miss": s.get("miss"), "wrong": s.get("wrong"), "ece": s.get("ece"),
-            "p95_ms": ((h.get("latency_ms") or {}).get("p95") if h else None),
-            "drift": ((h.get("drift") or {}).get("take_rate_vs_week") if h else None),
-            "drift_flag": bool((h.get("drift") or {}).get("flag")) if h else False,
+            "miss": s.get("miss"), "wrong": s.get("wrong"),
+            "drift": drift.get("take_rate_vs_week"), "drift_flag": bool(drift.get("flag")),
         })
     return {"night": (latest or {}).get("night"), "shortfall_s": (latest or {}).get("shortfall_s") or 0,
             "rows": rows,
-            "note": ("Every decision the heads made since the last night's report, replayed on this PC from the "
-                     "labels and scores they logged. Counts only. Pass and fail need a right answer you gave "
-                     "(a correction or a confirmation); without one a decision is uncertain.")}
+            "note": ("The numbers are every decision the heads made in the period the last nightly report "
+                     "covered, replayed on this PC from the labels and scores they logged, counts only. Right "
+                     "and wrong need an answer you gave (a correction or a confirmation); without one a "
+                     "decision is not known yet.")}
