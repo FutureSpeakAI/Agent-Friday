@@ -246,7 +246,8 @@ def _still_running(rec: Dict[str, Any]) -> bool:
 def settle_interrupted_batches(started_at: Optional[float] = None, *,
                                announce: bool = True) -> List[str]:
     """NS-34.16-4 for approved item_actions batches. A batch's card is claimed
-    before the batch runs and burned only when it ends, so a process killed in
+    and burned by the checkpoint that allows it before the batch runs, and
+    names the batch as its user only when it ends, so a process killed in
     between leaves nothing the card checks above can judge. The batch writes a
     ``started`` marker before it can touch anything and a ``finished`` one when
     it ends (item_actions.RUN_KIND); a run started before this process (less
@@ -298,7 +299,11 @@ def settle_interrupted_batches(started_at: Optional[float] = None, *,
             aid = str((ref or {}).get("action_id") or "")
             card_id = str(rec.get("approval_id") or "")
             card = (approvals.get_approval(card_id) or {}) if card_id else {}
-            if card.get("used_at") and (not ref or not aid or aid in said):
+            # The checkpoint that allowed the batch already burned its card (used_at, used_by
+            # the requester) before it ran, so used_at alone says nothing about its end. Only the
+            # batch's own end names it (used_by item_actions.END_ACTOR).
+            recorded_end = bool(card.get("used_at")) and card.get("used_by") == IA.END_ACTOR
+            if recorded_end and (not ref or not aid or aid in said):
                 # The batch recorded its end (its card is used, its decision closed) and the
                 # process stopped before its last marker: it finished. Judged once, never told.
                 L.try_append(IA.RUN_KIND, {"run_id": rid, "state": "finished", "approval_id": card_id,
@@ -310,7 +315,7 @@ def settle_interrupted_batches(started_at: Optional[float] = None, *,
                 G.close_external(dict(ref, **{"class": G.OUTWARD, "decision": "allow"}), True,
                                  outcome=G.UNCONFIRMED, detail=INTERRUPTED_DETAIL)
             if card_id:
-                if card and not card.get("used_at") and not card.get("outcome"):
+                if card and not recorded_end and not card.get("outcome"):
                     approvals._patch(card_id, outcome="unknown", outcome_note=BATCH_NOTE,
                                      outcome_found_at=time.time(), consumed=True)
             if L.try_append(IA.RUN_KIND, {"run_id": rid, "state": "interrupted", "approval_id": card_id,
