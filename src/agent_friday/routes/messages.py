@@ -395,6 +395,17 @@ def api_messages_classify():
             triage_heads.note_mail_correction(_corr[0], _corr[1], owner_lane=lane, previous_lane=_corr[2], ref=mid)
         except Exception:
             pass
+        try:
+            # The owner's move is also the right answer for the mail head's last
+            # decision on this message: gold for the nightly replay
+            # (services/decision_replay). Labels and ids only, searched on a
+            # background thread, nothing off the record or for a lane the head
+            # does not know.
+            from agent_friday.services import decision_replay, triage_heads
+            decision_replay.gold_for_text("triage.mail", triage_heads.mail_text(_corr[0], _corr[1]), lane,
+                                          "owner_correction", "reclassify:%s" % mid)
+        except Exception:
+            pass
     learned = None
     if learn and sender:
         try:

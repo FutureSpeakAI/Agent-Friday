@@ -624,3 +624,74 @@ def report_card() -> dict:
                      "covered, replayed on this PC from the labels and scores they logged, counts only. Right "
                      "and wrong need an answer you gave (a correction or a confirmation); without one a "
                      "decision is not known yet.")}
+
+
+# --------------------------------------------------------------------------
+#  owner corrections become gold
+# --------------------------------------------------------------------------
+
+#: How far back in the receipt log a correction looks for the decision it corrects.
+TAIL_BYTES = 4 * 1024 * 1024
+
+
+def _latest_receipt(head: str, sha: str) -> Optional[str]:
+    """The newest receipt in which ``head`` answered (not degraded) for the text
+    whose laya digest is ``sha``: Laya's recent receipts in memory first, then
+    the tail of the receipt log. None when none is found."""
+    from agent_friday.services import laya
+    with laya._lock:
+        recent = list(laya._ring.values())
+    for rec in reversed(recent):
+        q = (rec.get("questions") or {}).get(head) if isinstance(rec, dict) else None
+        if rec.get("text_sha") == sha and isinstance(q, dict) and q.get("layer") != "degraded":
+            return rec.get("receipt_id")
+    path = _receipt_path()
+    if not path.exists():
+        return None
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - TAIL_BYTES))
+        tail = f.read().decode("utf-8", errors="replace")
+    key = '"%s": {' % head
+    for line in reversed(tail.splitlines()):
+        if sha not in line or key not in line:
+            continue
+        try:
+            rec = json.loads(line)
+            q = rec["questions"][head]
+            if rec.get("text_sha") == sha and isinstance(q, dict) and q.get("layer") != "degraded":
+                return rec.get("receipt_id")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return None
+
+
+def gold_for_text(head: str, text: str, gold, source: str, ref: str, *, background: bool = True) -> bool:
+    """The owner's correction of what ``head`` would decide for ``text`` (a mail
+    moved to another lane, say) becomes gold for the head's latest decision on
+    that text. Called only from the owner's own paths (a guard test keeps
+    every head and Laya from calling it). Nothing is written off the record,
+    for an invalid label, or when no decision of the head on that text is
+    found. With ``background`` the search runs on a daemon thread, so the
+    owner's request never waits on it. True when it was started (or, inline,
+    when gold was written)."""
+    if source not in GOLD_SOURCES or _off_record() or not _valid_gold(head, gold) or not text:
+        return False
+    import hashlib
+    from agent_friday.services import laya
+    sha = laya._sha(text)
+    ref = "%s:%s" % (str(ref or "").split(":")[0][:24] or "owner",
+                     hashlib.sha256(str(ref or "").encode("utf-8", "replace")).hexdigest()[:12])
+
+    def work() -> bool:
+        try:
+            rid = _latest_receipt(head, sha)
+            return bool(rid) and record_gold(rid, head, gold, source, ref)
+        except Exception as e:  # noqa: BLE001
+            _log.debug("gold not recorded: %s", e)
+            return False
+    if background:
+        threading.Thread(target=work, name="decision-gold", daemon=True).start()
+        return True
+    return work()
