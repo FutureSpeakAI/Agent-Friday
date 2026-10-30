@@ -644,6 +644,10 @@ def render_text(report: dict) -> str:
             for r in rs if isinstance(rs, list) else []:
                 lines.append("  %-16s %s%s" % (cid, r.get("label"),
                                                (" (this page: %s)" % r["where"]) if r.get("where") else ""))
+                fl = r.get("flow") if isinstance(r.get("flow"), dict) else {}
+                for st in ("preview", "backup", "verify", "rollback", "receipt"):
+                    if fl.get(st):
+                        lines.append("  %-16s   %s: %s" % ("", st, fl[st]))
     au = report.get("after_upgrade")
     if isinstance(au, dict):
         un = au.get("unresolved") if isinstance(au.get("unresolved"), dict) else {}

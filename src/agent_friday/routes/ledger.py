@@ -50,7 +50,7 @@ KIND_LABELS = {
     "web_site": "Website trust",
     "inbox_cleanup": "Inbox cleanup",
     "media_diet": "Media diet",
-    "migration": "Old receipts brought in",
+    "migration": "Old receipts brought in, or the data folder upgraded",
     "integrity_ack": "You reviewed a ledger break",
     "truncation_detected": "Records missing from the end",
     "torn_tail": "An unfinished write was set aside",
@@ -60,7 +60,7 @@ KIND_LABELS = {
     "legacy_reappeared": "An old receipt file appeared again",
     "migration_complete": "Old receipts all brought in",
     "setting_changed": "You changed a ledger setting",
-    "backup": "Scheduled backup",
+    "backup": "Backup made or rehearsed",
     "export": "Export",
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
@@ -70,6 +70,7 @@ KIND_LABELS = {
     "file_grant": "File access granted, denied or revoked",
     "setting_change": "A setting changed (with Undo)",
     "self_check": "Friday checked her own safeguards",
+    "rebuild": "An index was rebuilt",
 }
 
 _LAST_FULL = [0.0]

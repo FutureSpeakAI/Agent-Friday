@@ -142,3 +142,65 @@ def test_the_doctor_page_links_each_repair_to_its_section():
     blk = html[i - 600:i + 900]
     assert "rep.repairs" in blk and "a.href = r.where" in blk and "textContent = r.label" in blk
     assert "innerHTML" not in blk
+
+
+# ── §28.1-2: each repair says what it does at each step ─────────────────────
+
+MINE = {"agent_friday.services.diagnostic_start", "agent_friday.services.derived_rebuild",
+        "agent_friday.services.upgrade_review"}
+
+
+def test_every_repair_answers_each_step_after_detect_explain_propose():
+    dr = _dr()
+    assert hasattr(dr, "FLOW"), "a repair never says whether it previews, backs up, verifies, rolls back or records"
+    assert dr.STEPS == ("preview", "backup", "verify", "rollback", "receipt")
+    for rs in dr.REPAIRS.values():
+        for r in rs:
+            if r.get("needs") and r["needs"] not in MINE:
+                continue                      # another lane's repair: shown as "not described" until it is
+            f = dr.FLOW.get(r["id"])
+            assert f, "repair %s has no flow" % r["id"]
+            for st in dr.STEPS:
+                state, words = f[st]
+                assert state in dr.STATES and words.strip(), (r["id"], st)
+
+
+def test_the_gaps_stay_visible_and_each_offered_repair_carries_its_flow():
+    dr = _dr()
+    assert hasattr(dr, "FLOW"), "a repair never says whether it previews, backs up, verifies, rolls back or records"
+    gaps = {(rid, st) for rid, f in dr.FLOW.items() for st, (state, _w) in f.items() if state == "not yet"}
+    assert ("restore_authority", "verify") in gaps and ("mark_sorted", "rollback") in gaps
+    out = dr.offered([{"id": "migrations", "state": "broken", "code": "upgrade_failed_safe_mode_held"}])
+    for r in out["migrations"]:
+        assert set(r["flow"]) == set(dr.STEPS)
+    assert dr.flow("someone_elses_repair")["verify"].startswith("not described")
+
+
+def test_the_report_text_and_page_show_each_repairs_steps(home, monkeypatch):
+    dr = _dr()
+    assert hasattr(dr, "FLOW"), "a repair never says whether it previews, backs up, verifies, rolls back or records"
+    from agent_friday.services import doctor, upgrade_review
+    upgrade_review.add("rebuild_failed", "library", "could not", home=home)
+    txt = doctor.render_text(doctor.build())
+    assert "receipt: partly: the ask and the result, each in the action ledger" in txt
+    html = (ROOT / "static" / "doctor.html").read_text(encoding="utf-8")
+    i = html.index("repair-flow")
+    assert "textContent = st + ': ' + r.flow[st]" in html[i:i + 500] and "innerHTML" not in html[i - 200:i + 500]
+
+
+def test_a_rebuild_records_its_result_and_a_bundle_made_here_records_itself(home, monkeypatch):
+    dr = _dr()
+    assert hasattr(dr, "FLOW"), "a repair never says whether it previews, backs up, verifies, rolls back or records"
+    from agent_friday.services import action_ledger, derived_rebuild
+    got = []
+    monkeypatch.setattr(action_ledger, "try_append", lambda kind, rec, **k: got.append((kind, rec)) or {})
+    monkeypatch.setitem(derived_rebuild.INDEXES, "library", ("the Library", lambda: {"ok": True}))
+    derived_rebuild.request(["library"], "asked on the Doctor page", home)
+    derived_rebuild.run_pending(home, only="library")
+    rb = [r for k, r in got if k == "rebuild"]
+    assert rb and rb[0]["index"] == "library" and rb[0]["ok"] is True
+    src = (ROOT / "src" / "agent_friday" / "routes" / "doctor.py").read_text(encoding="utf-8")
+    i = src.index("def bundle_create")
+    blk = src[i:src.index("def bundle_status", i)]
+    assert 'try_append("backup"' in blk and '"event": "bundle_made"' in blk and '"event": "bundle_failed"' in blk
+    assert "dest.unlink()" in blk                                  # a bundle that does not check is not left
