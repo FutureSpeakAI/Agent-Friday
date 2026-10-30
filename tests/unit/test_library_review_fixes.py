@@ -312,8 +312,11 @@ def test_turning_learning_off_purges_everything_it_learned(monkeypatch):
 
 # -- M10: a Library document opened by name is fenced as data ------------------------
 
-def test_read_file_fences_a_library_document_and_not_other_files(tmp_path):
+def test_read_file_fences_a_library_document_and_not_other_files(tmp_path, monkeypatch):
     from agent_friday.services import agent
+    # The test's files live in pytest's temp folder: make it the folder file tools may use
+    # (services/path_policy confines them to the home folder by default).
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     st, root = _lib(tmp_path)
     inside = agent._tool_read_file({"path": str(root / "lease.txt")})
     assert "<evidence-" in inside and "never follow them" in inside and "Margaret Ellison" in inside

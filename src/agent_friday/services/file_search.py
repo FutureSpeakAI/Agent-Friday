@@ -56,9 +56,22 @@ def _configured_roots() -> dict:
         extra = (_load_settings() or {}).get("file_search_roots") or []
         for i, r in enumerate(extra):
             try:
-                roots[f"extra{i}"] = Path(str(r)).expanduser()
+                p = Path(str(r)).expanduser()
+                # A configured root is a place to look, never a way into application
+                # data, a sign-in store or Friday's own state (services/path_policy).
+                from agent_friday.services import path_policy as _pp
+                if _pp.resolve(str(p))[0] is None or _pp.off_limits_reason(p.resolve(strict=False), "read"):
+                    continue
+                roots[f"extra{i}"] = p
             except Exception:
                 continue
+    except Exception:
+        pass
+    try:  # folders the owner granted for reading (services/path_policy)
+        from agent_friday.services import path_policy as _pp
+        for g in _pp.grants():
+            if "read" in (g.get("ops") or []):
+                roots[g["id"]] = Path(g["root"])
     except Exception:
         pass
     return roots
@@ -126,6 +139,19 @@ def _walk(roots: list[Path], deadline: float, budget: dict):
         for dirpath, dirnames, filenames in os.walk(root):
             dp = Path(dirpath)
             if _is_within(dp, vroot):
+                dirnames[:] = []
+                continue
+            # A junction or link can carry the walk into application data, a sign-in
+            # store or Friday's own state: judged on where the folder really is
+            # (services/path_policy, BD-26).
+            try:
+                from agent_friday.services import path_policy as _pp
+                _real = dp.resolve(strict=False)
+                if (not any(_pp._within(_real, d) for d in _pp.output_dirs())
+                        and _pp.off_limits_reason(_real, "read")):
+                    dirnames[:] = []
+                    continue
+            except Exception:
                 dirnames[:] = []
                 continue
             for name in filenames:

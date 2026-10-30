@@ -334,8 +334,10 @@ class TestRegistrationOrderVsPiiScrub:
     this bug, because it bypasses the hook ordering entirely."""
 
     def test_a_granted_paragraph_containing_a_phone_number_still_passes_end_to_end(
-            self, tmp_path):
+            self, tmp_path, monkeypatch):
         from agent_friday.services.agent import _execute_tool
+        # The resume lives in tmp_path; read_file's folder confinement is pointed there.
+        monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
 
         body = ("Reach the candidate directly at 555-201-9834 for scheduling. "  # pragma: allowlist secret
                  "Sanofi pivot analysis: strong candidate fit for the senior role.")

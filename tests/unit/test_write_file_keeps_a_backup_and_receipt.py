@@ -30,6 +30,9 @@ def store(tmp_path, monkeypatch):
     if fwr is not None:
         monkeypatch.setattr(fwr, "backups_root", lambda: tmp_path / "backups")
     monkeypatch.setattr(journal, "home_trash", lambda rid: tmp_path / "trash" / rid)
+    # The documents stand for ones in the owner's folders: write_file reaches only those
+    # (services/path_policy, BD-26), so this test's folder is the sandbox root.
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     journal.reset()
     yield tmp_path
     journal.reset()
