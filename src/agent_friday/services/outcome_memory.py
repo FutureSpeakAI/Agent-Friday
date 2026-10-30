@@ -18,7 +18,9 @@ record with provenance and validity, never as free text:
 ``revisit_at``     when it is worth another look (REVISIT_DAYS by outcome);
 ``stale_after``    when it may no longer be true (STALE_DAYS by kind);
 ``status``         open | resolved as stored; ``stale`` is computed on read
-                   (``view``), never written back.
+                   (``view``), never written back;
+``match_terms``    the words of the owner's names for the work (goal title,
+                   step name) that recall matches on; never Friday's own words.
 
 Written when a goal milestone ends (passed, failed its check, accepted by the
 owner), when a goal ends (met, failed, ended by the owner), and when an
@@ -31,7 +33,11 @@ under a lock. If nothing can encrypt it, nothing is written (never plain text).
 Bounded: RECORDS_MAX records, resolved ones dropped oldest first.
 
 Recall (``context_block``) shows ids, the summary, the "as of" date and the stale
-flag, and says in words that this is memory, not the current state. Home gets
+flag, and says in words that this is memory, not the current state; the lines
+ride inside the data envelope, and the chat routes gate the block like their
+other memory blocks (slice "memory", ledger name "past_outcomes"). A store that
+does not decrypt, or decrypts to the wrong shape, is unreadable: reads see
+nothing and every write is refused (never overwritten). Home gets
 one quiet item when revisits are due (desktop_card_sources). The owner sees,
 corrects, resolves and forgets records at /api/outcomes (routes/goals.py).
 Forgetting a goal, an action, a task or one record removes its records and
@@ -98,6 +104,12 @@ class _NotWritable(Exception):
     pass
 
 
+class _Unreadable(_NotWritable):
+    """The store exists but cannot be read as records (it does not decrypt, or
+    it decrypts to the wrong shape). Every write is refused so nothing
+    overwrites it, and every read sees nothing."""
+
+
 def _protect(raw: bytes) -> bytes:
     from agent_friday.services import credential_store as cs
     try:
@@ -124,12 +136,16 @@ def _load() -> Dict[str, Any]:
         return {"version": 1, "records": {}}
     try:
         data = json.loads(_unprotect(blob).decode("utf-8"))
-        if isinstance(data, dict) and isinstance(data.get("records"), dict):
-            return data
     except Exception as e:
         _log.warning("outcome memory could not be read (%s)", type(e).__name__)
-        raise
-    return {"version": 1, "records": {}}
+        raise _Unreadable(type(e).__name__) from None
+    recs = data.get("records") if isinstance(data, dict) else None
+    if not isinstance(recs, dict) or not all(isinstance(r, dict) for r in recs.values()):
+        # It decrypted, but it is not the store's shape: treat it as unreadable
+        # (an empty store here would let the next write replace it).
+        _log.warning("outcome memory could not be read (wrong shape)")
+        raise _Unreadable("wrong shape")
+    return data
 
 
 def _save(data: Dict[str, Any]) -> None:
@@ -139,11 +155,20 @@ def _save(data: Dict[str, Any]) -> None:
     d.mkdir(parents=True, exist_ok=True)
     p = _path()
     tmp = p.with_name(p.name + ".%s.tmp" % uuid.uuid4().hex[:8])
-    with open(tmp, "wb") as fh:
-        fh.write(blob)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, p)
+    done = False
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(blob)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, p)
+        done = True
+    finally:
+        if not done:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _off_record() -> bool:
@@ -232,10 +257,13 @@ def _trim(records: Dict[str, Any]) -> None:
 def record(*, kind: str, subject: Dict[str, Any], decision_ref: Any, decision_summary: Any,
            outcome: str, verified: bool, evidence_refs: Iterable[Any] = (),
            attempts: int = 0, attempt_refs: Iterable[Any] = (),
-           unresolved: Iterable[Any] = (), now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+           unresolved: Iterable[Any] = (), match_terms: Iterable[Any] = (),
+           now: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """Write (or update) the record for `subject`. One open record per subject:
     a later end of the same milestone, goal or action updates it (evidence and
     attempt refs are kept, corrections are kept, the revisit date moves).
+    `match_terms` are the owner's own names for the work (the goal's title,
+    the step's name); recall matches a message against their words only.
     Returns the stored record, or None off the record or when nothing could
     be written. Never raises."""
     if kind not in KINDS or outcome not in OUTCOMES:
@@ -261,6 +289,9 @@ def record(*, kind: str, subject: Dict[str, Any], decision_ref: Any, decision_su
             unres = _unresolved(unresolved)
             rec["subject"] = dict(rec.get("subject") or {}, **subj)
             rec["decision"] = {"ref": _ref(decision_ref), "summary": _short(decision_summary)}
+            terms = _match_terms(match_terms) or list(rec.get("match_terms") or [])
+            if terms:
+                rec["match_terms"] = terms
             rec["evidence_refs"] = _refs(list(rec.get("evidence_refs") or []) + list(evidence_refs or []))
             prior = rec.get("attempts") or {}
             rec["attempts"] = {"count": max(int(attempts or 0), 0),
@@ -438,20 +469,59 @@ def due_revisits(now: Optional[float] = None, *, limit: int = 20) -> List[Dict[s
 
 _WORD = re.compile(r"[^\W_]{4,}", re.UNICODE)
 
+#: Words that never make a match: the words of Friday's own summary templates
+#: ("Step … of goal …", "Outward action … in a background task", "met,
+#: checked", "ended by you") and a few common words of four letters or more. A
+#: message saying "goal" or "step" is not about any one record.
+_TEMPLATE_WORDS = frozenset((
+    "step", "steps", "goal", "goals", "outward", "action", "actions", "background", "task",
+    "tasks", "checked", "judgment", "failed", "ended", "check", "outcome", "outcomes",
+))
+_COMMON_WORDS = frozenset((
+    "about", "after", "again", "also", "been", "before", "could", "does", "done", "from",
+    "have", "here", "into", "just", "last", "like", "make", "more", "much", "need", "only",
+    "over", "said", "should", "some", "than", "that", "their", "them", "then", "there",
+    "these", "they", "this", "those", "very", "want", "were", "what", "when", "where",
+    "which", "while", "will", "with", "would", "your", "yours", "please", "thanks",
+))
+_STOP_WORDS = _TEMPLATE_WORDS | _COMMON_WORDS
+MATCH_TERMS_MAX = 40
+
 
 def _words(s: Any) -> set:
-    return {w.casefold() for w in _WORD.findall(str(s or ""))}
+    return {w.casefold() for w in _WORD.findall(str(s or ""))} - _STOP_WORDS
+
+
+def _match_terms(values: Iterable[Any]) -> List[str]:
+    """The words of the owner's names for the work, in order, once each."""
+    out: List[str] = []
+    for v in values or []:
+        for w in _WORD.findall(_short(v)):
+            w = w.casefold()
+            if w not in _STOP_WORDS and w not in out:
+                out.append(w)
+    return out[:MATCH_TERMS_MAX]
+
+
+def _record_terms(r: Dict[str, Any]) -> set:
+    """What a record matches on: its stored owner words; a record written
+    before those were stored falls back to its summary less Friday's words."""
+    terms = r.get("match_terms")
+    if isinstance(terms, list) and terms:
+        return {str(t).casefold() for t in terms} - _STOP_WORDS
+    return _words((r.get("decision") or {}).get("summary"))
 
 
 def recall(message: str, now: Optional[float] = None, *, top: int = RECALL_TOP) -> List[Dict[str, Any]]:
-    """The records whose summary shares words with the message, as recall
-    items: id, summary, outcome, as of, stale. Never the current state."""
+    """The records whose owner words (the goal's title, the step's name) the
+    message shares, as recall items: id, summary, outcome, as of, stale.
+    Never the current state."""
     want = _words(message)
     if not want:
         return []
     scored = []
     for r in _all():
-        hit = len(want & _words((r.get("decision") or {}).get("summary")))
+        hit = len(want & _record_terms(r))
         if hit:
             scored.append((hit, _ts(r.get("updated_at")) or 0, r))
     scored.sort(key=lambda x: (-x[0], -x[1]))
@@ -469,14 +539,18 @@ RECALL_HEADER = ("Past outcomes (memory as of the date shown, not the current st
 
 
 def context_block(message: str, now: Optional[float] = None) -> str:
-    """The recall lines for a turn's context, or "" when nothing applies."""
+    """The recall lines for a turn's context, or "" when nothing applies.
+
+    The header is Friday's; the item lines carry the owner's names for the
+    work, so they ride inside the data envelope (services/untrusted_input),
+    as a posted result does in replayed history."""
     try:
         items = recall(message, now)
     except Exception:
         return ""
     if not items:
         return ""
-    lines = ["", "", RECALL_HEADER]
+    lines = []
     for it in items:
         how = it["outcome"] + (" (checked)" if it["verified"] else
                                " (your correction)" if it["source"] == "owner" else " (not checked)")
@@ -484,7 +558,12 @@ def context_block(message: str, now: Optional[float] = None) -> str:
         if it["stale"]:
             line += " STALE: this may no longer be true."
         lines.append(line)
-    return "\n".join(lines) + "\n"
+    try:
+        from agent_friday.services.untrusted_input import wrap
+        body = wrap("\n".join(lines))
+    except Exception:
+        return ""
+    return "\n\n" + RECALL_HEADER + "\n" + body + "\n"
 
 
 # ── forgetting ───────────────────────────────────────────────────────────────
@@ -543,13 +622,20 @@ def forget_subject(kind: str, ident: str, *, milestone_id: Optional[str] = None)
 
 def forget_record(rid: str) -> Dict[str, Any]:
     rid = _ref(rid) or ""
-    if not get(rid):
+    try:
+        with _LOCK:
+            known = rid in _load()["records"]
+    except Exception:
+        # An unreadable store is not an empty one: say it cannot be changed.
+        return {"ok": False, "error": "not_writable", "removed": 0}
+    if not known:
         return {"ok": False, "error": "not_found", "removed": 0}
     return _purge(lambda r: r.get("id") == rid, "record:" + rid)
 
 
 def _texts(r: Dict[str, Any]) -> str:
-    parts = [(r.get("decision") or {}).get("summary") or ""]
+    parts = [(r.get("decision") or {}).get("summary") or "",
+             " ".join(str(t) for t in r.get("match_terms") or [])]
     parts += list(r.get("unresolved") or [])
     for c in r.get("corrections") or []:
         for k in ("after", "before", "note"):
@@ -641,7 +727,8 @@ def on_milestone_receipt(goal: Optional[Dict[str, Any]], receipt: Dict[str, Any]
             outcome=result, verified=verified,
             evidence_refs=[receipt.get("receipt_id")] + ([m.get("approval_id")] if m.get("approval_id") else []),
             attempts=int(m.get("attempts") or 0), attempt_refs=_task_refs(m),
-            unresolved=unresolved)
+            unresolved=unresolved,
+            match_terms=[goal.get("title"), m.get("name") or receipt.get("milestone_name")])
     except Exception as e:
         _log.warning("outcome memory: milestone hook failed (%s)", type(e).__name__)
         return None
@@ -679,7 +766,8 @@ def on_goal_end(goal: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
                            if r.get("kind") in MILESTONE_END_KINDS],
             attempts=sum(int(m.get("attempts") or 0) for m in ms),
             attempt_refs=[m.get("milestone_id") for m in ms],
-            unresolved=["“%s” is not done" % _short(m.get("name") or "a step", 60) for m in left])
+            unresolved=["“%s” is not done" % _short(m.get("name") or "a step", 60) for m in left],
+            match_terms=[goal.get("title")])
     except Exception as e:
         _log.warning("outcome memory: goal hook failed (%s)", type(e).__name__)
         return None
@@ -703,15 +791,33 @@ def _current_task_id() -> Optional[str]:
     return None
 
 
+#: The task -> (goal, step) index of the last scan, reused for a few seconds
+#: when it knows the task (a burst of actions closing in one goal's step reads
+#: the goals once). A task it does not know is always looked up afresh, so a
+#: step started a moment ago is never missed.
+TASK_INDEX_TTL = 5.0
+_TASK_INDEX: Dict[str, Any] = {"at": 0.0, "where": None, "map": {}}
+
+
 def _goal_for_task(task_id: str):
     try:
         from agent_friday.services import goals
+        where = str(getattr(goals, "GOALS_DIR", ""))
+        with _LOCK:
+            idx = _TASK_INDEX
+            fresh = idx["where"] == where and time.monotonic() - idx["at"] < TASK_INDEX_TTL
+            if fresh and task_id in idx["map"]:
+                return idx["map"][task_id]
+        found: Dict[str, Any] = {}
         for g in goals.list_goals():
             if g.get("status") in ("archived",):
                 continue
             for m in g.get("milestones") or []:
-                if task_id in _task_refs(m):
-                    return g, m
+                for tid in _task_refs(m):
+                    found.setdefault(tid, (g, m))
+        with _LOCK:
+            _TASK_INDEX.update(at=time.monotonic(), where=where, map=found)
+        return found.get(task_id, (None, None))
     except Exception:
         pass
     return None, None
@@ -746,7 +852,8 @@ def on_action_closed(*, tool: str, action_id: Optional[str], outcome_word: str,
             outcome="succeeded" if ok else "failed", verified=ok,
             evidence_refs=[action_id] + ([approval] if approval else []),
             attempts=1, attempt_refs=[tid],
-            unresolved=[] if ok else ["“%s” did not go through" % tool_words])
+            unresolved=[] if ok else ["“%s” did not go through" % tool_words],
+            match_terms=([g.get("title"), m.get("name")] if g is not None else [tool]))
     except Exception as e:
         _log.warning("outcome memory: action hook failed (%s)", type(e).__name__)
         return None

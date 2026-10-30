@@ -1515,12 +1515,12 @@ _RECALL_MARKER = "== RELEVANT PAST CONVERSATIONS"
 _RECALL_WHY = "this turn's prompt carried recalled past conversations"
 
 
-def _note_recall_turn(session_id, conversation_id):
+def _note_recall_turn(session_id, conversation_id, why=_RECALL_WHY):
     try:
         from agent_friday.governance import outside_content as _oc
         key = f"conversation:{conversation_id}" if conversation_id else session_id
         _oc.note_turn({"taint_key": key, "session_id": session_id,
-                       "conversation_id": conversation_id}, _RECALL_WHY)
+                       "conversation_id": conversation_id}, why)
     except Exception:
         pass
 
@@ -2425,6 +2425,9 @@ def chat():
         # What the household capture did with this message (set once the turn's
         # context exists, below); its note rides in this turn's tail.
         _household_note = {"text": ""}
+        # Set when a preparation of this turn's prompt carried past outcomes
+        # (services/outcome_memory): a recall turn, read below.
+        _outcome_recall = {"hit": False}
 
         def _prep_for(provider, model=None):
             """The system prompt for `provider`, in two parts.
@@ -2535,10 +2538,15 @@ def chat():
             except Exception:
                 pass
             # Past outcomes this message is about (services/outcome_memory):
-            # ids, summary, "as of" and stale, never as the current state.
+            # ids, summary, "as of" and stale, never as the current state;
+            # wrapped as data and gated as memory. The PII scrub of the whole
+            # tail below covers it for a guarded cloud turn.
             try:
-                from agent_friday.services import outcome_memory as _om
-                tail = tail + _om.context_block(message)
+                _oc_block, _oc_recalled = _outcome_block_for(
+                    provider, message, _slicer, scrub=False)
+                if _oc_recalled:
+                    _outcome_recall["hit"] = True
+                tail = tail + _oc_block
             except Exception:
                 pass
             if _household_note["text"]:
@@ -2671,6 +2679,10 @@ def chat():
             # this turn and cannot vouch for: no pre-approved send this turn
             # (governance/outside_content).
             _sess_ctx["outside_in_prompt"] = _RECALL_WHY
+        elif _outcome_recall["hit"]:
+            # Remembered past outcomes carry the owner's names for the work,
+            # read back from a store: the same rule as recalled conversations.
+            _sess_ctx["outside_in_prompt"] = _OUTCOME_RECALL_WHY
         _confirmed_response = _confirmed_action_response(message, _sess_ctx)
         if _confirmed_response is not None:
             return _confirmed_response
@@ -3755,6 +3767,30 @@ def _screen_block_for(provider_name, conversation_id):
     return block
 
 
+#: Why a turn whose prompt carried remembered past outcomes counts as a recall
+#: turn (no pre-approved send in it; governance/outside_content).
+_OUTCOME_RECALL_WHY = "this turn's prompt carried remembered past outcomes"
+
+
+def _outcome_block_for(provider_name, message, slicer, *, scrub=True):
+    """(block, recalled) for the past outcomes this message is about
+    (services/outcome_memory): the item lines inside the data envelope, PII
+    scrubbed for a guarded cloud turn when `scrub` (as the ON SCREEN block is;
+    /api/chat scrubs its whole tail itself and passes False), then gated like
+    the other memory blocks, so it is a row in the turn's context manifest and
+    is sliced for a cloud seat. `recalled` is True when any record was found."""
+    from agent_friday.services import outcome_memory as _om
+    block = _om.context_block(message)
+    if not block:
+        return "", False
+    if scrub and provider_name != 'local':
+        from agent_friday.services.egress_gate import is_unrestricted_cloud
+        if not is_unrestricted_cloud():
+            block, _sub = _scrub_pii(block)
+    return slicer.gate_block("memory", block, name="past_outcomes",
+                             marker=_om.RECALL_HEADER), True
+
+
 @chat_bp.route('/api/chat/send', methods=['POST'])
 @_stop_everything_gate
 @_cloud_fallback_choice
@@ -3991,10 +4027,14 @@ def chat_send():
                 prompt = prompt + _plans.context_block(_conversation_id)
             except Exception:
                 pass
-            # Past outcomes this message is about (services/outcome_memory).
+            # Past outcomes this message is about (services/outcome_memory):
+            # wrapped as data, scrubbed for a guarded cloud seat, gated as
+            # memory; a turn that carried them is a recall turn.
             try:
-                from agent_friday.services import outcome_memory as _om
-                prompt = prompt + _om.context_block(message)
+                _oc_block, _oc_recalled = _outcome_block_for(provider_name, message, _slicer)
+                if _oc_recalled:
+                    _note_recall_turn(_session_id, _conversation_id, _OUTCOME_RECALL_WHY)
+                prompt = prompt + _oc_block
             except Exception:
                 pass
             try:
