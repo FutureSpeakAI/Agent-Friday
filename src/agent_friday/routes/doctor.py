@@ -468,13 +468,35 @@ def bundle_create():
         from agent_friday.paths import friday_home
         dest_dir = fb.documents_dir() / "Friday Bundles"
         dest = dest_dir / ("friday-%s%s" % (_t.strftime("%Y%m%d-%H%M%S"), fb.SUFFIX))
+        made = False
         try:
             m = fb.create(dest, pw, categories=cats)
+            made = True
             v = fb.verify(dest, pw)
             fb._remember(_P(friday_home()), dest, m["bundle_id"], verified=v["ok"])
+            try:                         # a bundle made here is a receipt too (doctor_repairs.FLOW)
+                from agent_friday.services import action_ledger
+                action_ledger.try_append("backup", {"event": "bundle_made", "surface": "doctor",
+                                                    "bundle_id": m["bundle_id"], "file": dest.name,
+                                                    "files": len(m["files"]), "verified": bool(v["ok"]),
+                                                    "categories": sorted(cats)})
+            except Exception:  # noqa: BLE001 - backups/last_bundle.json keeps it either way
+                pass
             _BUNDLE_JOB.update(state="done", bundle_id=m["bundle_id"], file=dest.name,
                                files=len(m["files"]), verified=v["ok"])
         except Exception as e:  # noqa: BLE001
+            if made:                     # made but it does not check: deleted, as a scheduled one is
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+            try:
+                from agent_friday.services import action_ledger
+                action_ledger.try_append("backup", {"event": "bundle_failed", "surface": "doctor",
+                                                    "stage": "verify" if made else "make",
+                                                    "error": type(e).__name__})
+            except Exception:  # noqa: BLE001
+                pass
             _BUNDLE_JOB.update(state="failed", error=str(e) if isinstance(e, fb.BundleError)
                                else "The bundle could not be made (%s)." % type(e).__name__)
     _threading.Thread(target=_run, name="friday-bundle", daemon=True).start()

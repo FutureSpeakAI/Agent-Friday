@@ -242,6 +242,13 @@ def run_pending(home: Optional[Path] = None, *, only: Optional[str] = None) -> d
                    "seconds": round(time.monotonic() - t0, 2), "why": row.get("why") or [],
                    "off": (out or {}).get("off") if isinstance(out, dict) else None}
             _result(home, res)
+            try:                         # the result, not only the ask (doctor_repairs.FLOW)
+                from agent_friday.services import action_ledger
+                action_ledger.try_append("rebuild", {"index": n, "ok": ok, "error": err,
+                                                     "attempts": int(row.get("attempts") or 0),
+                                                     "seconds": res["seconds"]})
+            except Exception:  # noqa: BLE001 - the result file above keeps it either way
+                pass
             if ok:
                 try:
                     from agent_friday.services import upgrade_review

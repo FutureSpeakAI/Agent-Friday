@@ -409,6 +409,14 @@
         } else {
           li.appendChild(document.createTextNode(r.label));
         }
+        if (r.flow && typeof r.flow === 'object') {     // §28.1-2: what it does at each step
+          const steps = document.createElement('ul'); steps.className = 'repair-flow';
+          ['preview', 'backup', 'verify', 'rollback', 'receipt'].forEach(st => {
+            if (typeof r.flow[st] !== 'string') return;
+            const s = document.createElement('li'); s.textContent = st + ': ' + r.flow[st]; steps.appendChild(s);
+          });
+          li.appendChild(steps);
+        }
         ul.appendChild(li);
       }));
       out.appendChild(ul);
