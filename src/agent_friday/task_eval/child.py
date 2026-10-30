@@ -144,6 +144,29 @@ def run(job: dict) -> dict:
             return real_execute(name, tool_input, pii_lookup=pii_lookup, session_ctx=session_ctx,
                                 handler=handler)
         agent._execute_tool = recording_execute
+        # Every decision-head answer the episode produces (spec decision_models
+        # section 6.4 (3)): which head, which label, after how many model rounds,
+        # and its receipt id. Labels and ids only; the grader judges them in a
+        # column of their own.
+        rec["heads"] = []
+        try:
+            from agent_friday.services import decision_heads as _dh, laya as _laya
+            _head_ids = set(_dh.head_ids())
+            _real_store = _laya._store
+
+            def recording_store(r, persist):
+                try:
+                    for _name, _q in (r.get("questions") or {}).items():
+                        if _name in _head_ids and isinstance(_q, dict):
+                            rec["heads"].append({"head": _name, "label": _q.get("value"), "p": _q.get("p"),
+                                                 "layer": _q.get("layer"), "round": rec["rounds"],
+                                                 "receipt_id": r.get("receipt_id")})
+                except Exception:
+                    pass
+                return _real_store(r, persist)
+            _laya._store = recording_store
+        except Exception as _e:  # noqa: BLE001 - a build without decision heads records none
+            rec["heads_error"] = f"{type(_e).__name__}: {_e}"
 
         system = _get_friday_system_prompt(keywords=task["prompt"], workspace="", provider="local",
                                            vault_control=None)
@@ -216,6 +239,14 @@ def run(job: dict) -> dict:
         if th.is_alive() and time.time() - t0 > wall:
             break
     rec["wall_seconds"] = round(time.time() - (state["t0"] or started), 2)
+    if not th.is_alive():
+        # Shadow heads read a finished turn on their own workers: let them finish
+        # (bounded) so what they said is in the record.
+        for _mod in ("loop_heads", "evidence_heads", "citation_heads", "triage_heads"):
+            try:
+                __import__("agent_friday.services." + _mod, fromlist=["drain"]).drain(3.0)
+            except Exception:
+                pass
     rec["executed"] = list(world.calls)
     rec["state"] = world.snapshot()
     rec["effects"] = list(world.effects)
