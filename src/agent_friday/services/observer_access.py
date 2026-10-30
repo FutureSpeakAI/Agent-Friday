@@ -30,7 +30,8 @@ from typing import Optional
 
 HEADER = "X-Friday-Observer"
 
-# GET-only. Prefix match on the path; anything else is refused.
+# The two route FAMILIES the observer reads from (for the operator doc). What decides
+# is READ_ONLY_RULES below: an exact list of route rules, GET only.
 #
 # Every route here must seal free text for the observer principal
 # (routes/tasks._serve_sealed) or serve none. /api/processes and the
@@ -93,11 +94,31 @@ def verify(token: Optional[str]) -> bool:
     return hmac.compare_digest(stored, _digest(token.strip()))
 
 
-def is_read_allowed(method: str, path: str) -> bool:
+#: The read routes an observer may use, as Flask route RULES, each of which seals its
+#: free text for the observer principal (routes/tasks._serve_sealed) or serves none.
+#: A rule, not a path prefix: a route added later under /api/tasks (a scoped-agent
+#: list, a resumability reason) is refused to the observer until it is put here,
+#: after it seals (NS-34.8-1, NS-34.17-2). tests/api/test_principal_isolation.py
+#: walks every rule the app has and checks this.
+READ_ONLY_RULES = frozenset({
+    "/api/tasks",                          # list (sealed)
+    "/api/tasks/<task_id>",                # detail (sealed)
+    "/api/tasks/<task_id>/journal",        # journal (sealed, ledgered)
+    "/api/tasks/<task_id>/digest",         # digest (sealed)
+    "/api/tasks/<task_id>/events",         # events (sealed)
+    "/api/tasks/retention",                # the retention setting (a number)
+    "/api/activity",                       # the activity ledger (whitelisted metadata)
+})
+
+
+def is_read_allowed(method: str, path: str, rule: Optional[str] = None) -> bool:
+    """GET on one of READ_ONLY_RULES. `rule` is the matched Flask route rule; without
+    one (no route matched) nothing is allowed."""
     if (method or "").upper() != "GET":
         return False
-    return any(path == pre or path.startswith(pre + "/") or path.startswith(pre + "?")
-               for pre in READ_ONLY_PREFIXES)
+    if rule is None:
+        return False
+    return str(rule) in READ_ONLY_RULES
 
 
 def presented(headers) -> Optional[str]:
