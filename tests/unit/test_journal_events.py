@@ -43,7 +43,7 @@ def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(tj, "settings", lambda: {"retention_days": 0, "capture_reasoning": True,
                                                  "encrypt_at_rest": False})
     tj.reset_for_tests()
-    tj.note_action("", None)            # no gate decision carried over from another test
+    tj.clear_action()                   # no gate decision carried over from another test
     import agent_friday.notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **kw: kw)
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
@@ -191,6 +191,46 @@ def test_a_decided_card_is_journaled_approved_denied_or_expired_by_ids_only():
     assert WORDS not in raw and "Synthetic card" not in raw, "ids only, never the card's words"
 
 
+def test_an_auto_approved_card_is_journaled_decided_by_the_system():
+    from agent_friday.services import taint
+    taint.reset()                       # nothing read earlier marks this card's details
+    rec = approvals.create_approval(
+        kind="tainted_action", subject_type="tool_action", subject_id="taint:g10:auto",
+        title="Synthetic card", action_description="synthetic internal step",
+        action_class="internal", payload={"tool": "create_calendar_event", "task_id": TID},
+        requested_by="taint_gate")
+    assert rec["status"] == "auto_approved", rec["status"]
+    evs = [e for e in _events("approval") if e["approval_id"] == rec["approval_id"]]
+    assert len(evs) == 1
+    assert (evs[0]["phase"], evs[0]["outcome"], evs[0]["by"]) == ("decided", "auto_approved", "system")
+
+
+def test_an_approved_card_resolved_again_is_not_journaled_approved_twice():
+    tool = "create_calendar_event"
+    inp = {"title": WORDS}
+    rec = approvals.create_approval(
+        kind="tool_confirm", subject_type="tool_action", subject_id="confirm:g10:twice",
+        title="Synthetic card", action_description="%s %s" % (tool, json.dumps(inp)),
+        force_gate=True, payload={"tool": tool, "input": inp, "task_id": TID},
+        requested_by="confirmation")
+    approvals.decide(rec["approval_id"], "approve", decided_by="owner")
+    # the chat's yes then spends the already-approved card: card_resolved fires again
+    assert approvals.claim_chat_confirmation(rec["approval_id"], tool, inp) is True
+    decided = [e for e in _events("approval")
+               if e["approval_id"] == rec["approval_id"] and e.get("phase") == "decided"]
+    assert len(decided) == 1 and decided[0]["outcome"] == "approved"
+    # a pending card answered in chat is decided there, once
+    rec2 = approvals.create_approval(
+        kind="tool_confirm", subject_type="tool_action", subject_id="confirm:g10:chat",
+        title="Synthetic card", action_description="%s %s" % (tool, json.dumps(inp)),
+        force_gate=True, payload={"tool": tool, "input": inp, "task_id": TID},
+        requested_by="confirmation")
+    assert approvals.claim_chat_confirmation(rec2["approval_id"], tool, inp) is True
+    decided2 = [e for e in _events("approval")
+                if e["approval_id"] == rec2["approval_id"] and e.get("phase") == "decided"]
+    assert len(decided2) == 1 and decided2[0]["by"] == "owner"
+
+
 def test_an_approved_card_run_by_the_executor_journals_its_decision_and_receipt(monkeypatch):
     from agent_friday.services import approval_executor as ex
     calls = []
@@ -214,6 +254,33 @@ def test_an_approved_card_run_by_the_executor_journals_its_decision_and_receipt(
     assert receipts[0]["outcome"] == G.EXECUTED
 
 
+def test_a_card_decided_on_another_task_s_thread_journals_its_receipt_to_the_card_s_task(monkeypatch):
+    """An approved card decided synchronously from a thread running another
+    task (a task's own tool call approving it): the executor's receipt belongs
+    to the task that raised the card, not to the task on the thread."""
+    from agent_friday.services import approval_executor as ex
+    calls = []
+
+    def fake_run(name, args, **kw):
+        calls.append(kw.get("session_ctx") or {})
+        return "created: ok"
+    monkeypatch.setattr(ex, "_run_tool", fake_run)
+    monkeypatch.setattr(approvals, "_HOOKS", {ex.KIND: [ex._on_decision]})
+    other = "g10-events-task-0004"
+    tj.append(other, "created", name="synthetic task")
+    rec = _card("taint:g10:cross-thread")
+    tj.push_task(other)
+    try:
+        approvals.decide(rec["approval_id"], "approve", decided_by="owner")
+    finally:
+        tj.pop_task()
+    assert len(calls) == 1
+    aid = calls[0]["approved_card_decision"]["action_id"]
+    assert [e for e in _events("receipt") if e.get("action_id") == aid], "the card's task holds it"
+    assert not [e for e in _events("receipt", other) if e.get("action_id") == aid], \
+        "the task running on the deciding thread does not"
+
+
 # ── tool_call carries its action id; receipt on outcome close ────────────
 
 def test_the_tool_call_names_its_action_id_and_the_outcome_is_a_receipt(monkeypatch):
@@ -226,7 +293,8 @@ def test_the_tool_call_names_its_action_id_and_the_outcome_is_a_receipt(monkeypa
     args = _args_for(tool)
     tj.push_task(TID)
     try:
-        result = ag._execute_tool(tool, args, session_ctx=ctx)
+        with ag._loop_tool_call():      # the task loop's own call, as the loops make it
+            result = ag._execute_tool(tool, args, session_ctx=ctx)
         ag._orb_tool_trace(None, tool, args, result, 5)
     finally:
         tj.pop_task()
@@ -255,6 +323,89 @@ def test_a_note_for_one_call_never_names_another():
     calls = _events("tool_call")
     assert "action_id" not in calls[0]
     assert "action_id" not in calls[1], "a note is taken once, by the next call, or dropped"
+
+
+def test_a_note_left_by_a_call_outside_the_loop_never_reaches_a_task_s_events(monkeypatch):
+    """The approval executor's _run_tool (or any helper) runs _execute_tool on
+    a reused request thread, outside every task loop. Its gate decision's
+    action id never shows up on a later task's tool_call or card event."""
+    tool = _outward_tool()
+    monkeypatch.setattr(G, "_decide",
+                        lambda tool_, klass, why, ctx, *a, **k: G.Verdict("allow", klass, "test"))
+    monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, tool, lambda inp: "sent")
+    ctx = {"is_background_task": True}
+    args = _args_for(tool)
+    # 1. no task on the thread (a request thread)
+    _fresh_call_state(ctx)
+    ag._execute_tool(tool, args, session_ctx=ctx)
+    stale = _decisions(tool)[-1]["rec"]["action_id"]
+    assert getattr(tj._CURRENT, "action", None) is None, "the call's exit forgets its note"
+    # 2. a task on the thread, but not the loop's own call
+    _fresh_call_state(ctx)
+    tj.push_task(TID)
+    try:
+        ag._execute_tool(tool, args, session_ctx=ctx)
+        assert getattr(tj._CURRENT, "action", None) is None
+        stale2 = _decisions(tool)[-1]["rec"]["action_id"]
+        # the loop then writes a tool_call for the same tool name, and a card is raised
+        tj.tool_call(name=tool, args={}, result="ok", ok=True)
+        _card("taint:g10:stale-note", tool=tool)
+    finally:
+        tj.pop_task()
+    call = _events("tool_call")[-1]
+    assert call.get("action_id") is None
+    raised = [e for e in _events("approval") if e.get("phase") == "raised"]
+    assert raised and raised[-1].get("action_id") is None
+    assert stale not in _raw(), "a call made outside every task leaves nothing in a task's journal"
+    # the second call's own receipt names it (it ran for this task); nothing else does
+    assert all(e.get("action_id") != stale2 for e in tj.read(TID) if e["kind"] != "receipt")
+
+
+def test_a_note_made_for_one_task_never_attaches_to_another_on_the_same_thread():
+    other = "g10-events-task-0003"
+    tj.append(other, "created", name="synthetic task")
+    tool = "search_web"
+    aid = _new_action_id()
+    # task OTHER's call noted its action id; the thread then runs task TID
+    tj.push_task(other)
+    tj.note_action(tool, aid)
+    tj.pop_task()
+    tj.push_task(TID)
+    try:
+        tj.tool_call(name=tool, args={}, result="ok", ok=True)
+    finally:
+        tj.pop_task()
+    assert _events("tool_call")[-1].get("action_id") is None
+    # a card raised for TID while OTHER's note is on the thread
+    tj.push_task(other)
+    tj.note_action(tool, aid)
+    tj.pop_task()
+    _card("taint:g10:cross-task", tool=tool)
+    raised = [e for e in _events("approval") if e.get("phase") == "raised"]
+    assert raised and raised[-1].get("action_id") is None
+    assert aid not in _raw()
+    # control: the note is read by its own task and tool
+    tj.push_task(other)
+    try:
+        tj.note_action(tool, aid)
+        tj.tool_call(name=tool, args={}, result="ok", ok=True)
+    finally:
+        tj.pop_task()
+    assert _events("tool_call", other)[-1]["action_id"] == aid
+
+
+def test_each_loop_forgets_the_last_note_before_each_tool_call():
+    """The early-return paths (a vault deny, a held search, bad arguments)
+    write a tool_call without running _execute_tool: the note is cleared at
+    the top of each call in both loops, and only the loop's own call is
+    marked as such."""
+    import inspect
+    for fn in (ag._call_claude_agent_run, ag._oai_agentic_loop_run):
+        src = inspect.getsource(fn)
+        head = src.index("for tu in tool_uses:") if "for tu in tool_uses:" in src \
+            else src.index("for tc in tool_calls:")
+        assert src.index("_clear_gate_action()", head) < src.index("_orb_tool_trace(", head)
+        assert src.count("with _loop_tool_call():") == 1
 
 
 # ── verification: a goal check ran ───────────────────────────────────────
@@ -350,6 +501,23 @@ def test_the_spending_cap_pause_and_a_timeout_are_friday_s():
     assert (s["who"], s["reason_code"]) == ("system", "timeout")
 
 
+def test_only_the_owner_s_own_stops_are_the_owner_s():
+    """cancelled (the owner's stop) and declined (the owner's no) are the
+    owner's; a task superseded, stopped, skipped or deleted by Friday's own
+    paths ended cancelled too, but Friday did it."""
+    expect = {"cancelled": ("owner", "owner_cancel"), "declined": ("owner", "declined"),
+              "superseded": ("system", "superseded"), "stopped": ("system", "stopped"),
+              "skipped": ("system", "skipped"), "deleted": ("system", "deleted")}
+    for i, (status, want) in enumerate(sorted(expect.items())):
+        tid = "g10-stop-who-%04d" % i
+        tj.append(tid, "created", name="synthetic task")
+        _running_task(tid)
+        ag._task_set(tid, status=status, ended=time.time(), result="[%s]" % status)
+        s = _events("stopped", tid)
+        assert len(s) == 1, (status, s)
+        assert (s[0]["who"], s[0]["reason_code"]) == want, status
+
+
 # ── the journal -> ledger cross-check ────────────────────────────────────
 
 def test_links_count_the_journal_action_ids_found_and_missing_in_the_ledger(monkeypatch):
@@ -362,7 +530,8 @@ def test_links_count_the_journal_action_ids_found_and_missing_in_the_ledger(monk
     args = _args_for(tool)
     tj.push_task(TID)
     try:
-        result = ag._execute_tool(tool, args, session_ctx=ctx)
+        with ag._loop_tool_call():
+            result = ag._execute_tool(tool, args, session_ctx=ctx)
         ag._orb_tool_trace(None, tool, args, result, 5)
     finally:
         tj.pop_task()
@@ -373,6 +542,16 @@ def test_links_count_the_journal_action_ids_found_and_missing_in_the_ledger(monk
     assert tj.ledger_links(TID) == {"checked": 2, "found": 1, "missing": 1}
     body = _client(["user"]).get(f"/api/tasks/{TID}/journal").get_json()
     assert body["links"] == {"checked": 2, "found": 1, "missing": 1}
+
+
+def test_an_unreadable_ledger_reports_unreadable_not_every_id_missing(monkeypatch):
+    tj.receipt({"seq": 5, "rec": {"action_id": _new_action_id(), "outcome": "executed"}},
+               task_id=TID)
+
+    def unreadable():
+        raise OSError("synthetic: the ledger cannot be read")
+    monkeypatch.setattr(L, "_reader_segments", unreadable)
+    assert tj.ledger_links(TID) == {"checked": 1, "found": None, "missing": None, "unreadable": True}
 
 
 # ── off the record: nothing is written ───────────────────────────────────

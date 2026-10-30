@@ -933,8 +933,9 @@ def tool_call(*, name, args=None, result=None, ok=None, duration_ms=None, sessio
         r = str(result or "")
         ok = not (r.startswith("[VAULT") or r.startswith("[Error") or r.lower().startswith("error"))
     # G10 (NS-29.4-2): the action id the gate gave this call, when its decision
-    # is known on this thread (note_action); taken once, whatever happens next.
-    action_id = _take_action(name)
+    # is known on this thread (note_action) for this tool and this task; taken
+    # once, whatever happens next.
+    action_id = _take_action(name, resolve_task_id(session_ctx, task_id))
     seq = _emit("tool_call", session_ctx, task_id, name=name, args=_cap(args, _ARGS_CAP),
                 ok=bool(ok), duration_ms=duration_ms, result_summary=_cap(result, _SUMMARY_CAP * 2),
                 action_id=action_id)
@@ -1025,7 +1026,7 @@ def steer(message: str, source: str = "user", *, session_ctx=None, task_id=None)
 
 #: The receipt id of a ledger entry: its sequence number in the action ledger.
 RECEIPT_PREFIX = "lgr_"
-APPROVAL_OUTCOMES = {"approved": "approved", "auto_approved": "approved", "denied": "denied",
+APPROVAL_OUTCOMES = {"approved": "approved", "auto_approved": "auto_approved", "denied": "denied",
                      "blocked": "denied", "expired": "expired"}
 VERIFICATION_RESULTS = ("passed", "failed", "unknown")
 LIFECYCLE_KINDS = ("paused", "resumed", "stopped")
@@ -1078,17 +1079,31 @@ def receipt_id(seq) -> Optional[str]:
 def note_action(name, action_id=None) -> None:
     """The action id the gate decided for the tool call running now on this
     thread (agent._execute_tool, after its governance hook), so the call's
-    tool_call event names it. Each call replaces the last one's note."""
-    _CURRENT.action = (str(name or ""), action_id if _valid_action_id(action_id) else None)
+    tool_call event names it. The note holds the tool's name and the thread's
+    current task when it was made; only an event for that same tool AND that
+    same task reads it (a call made outside any task never lends its id to
+    one). Each call replaces the last one's note."""
+    _CURRENT.action = (str(name or ""), current_task(),
+                       action_id if _valid_action_id(action_id) else None)
 
 
-def _peek_action(name) -> Optional[str]:
+def clear_action() -> None:
+    """Forget the note (a tool call ended outside the task loop, or the loop
+    moved on to its next call), so nothing later on this thread reads it."""
+    _CURRENT.action = None
+
+
+def _peek_action(name, task_id) -> Optional[str]:
     note = getattr(_CURRENT, "action", None)
-    return note[1] if note and note[0] == str(name or "") else None
+    if not note or len(note) != 3 or not note[1] or not task_id:
+        return None
+    if note[0] != str(name or "") or note[1] != str(task_id):
+        return None
+    return note[2]
 
 
-def _take_action(name) -> Optional[str]:
-    aid = _peek_action(name)
+def _take_action(name, task_id) -> Optional[str]:
+    aid = _peek_action(name, task_id)
     _CURRENT.action = None
     return aid
 
@@ -1118,7 +1133,7 @@ def approval(record, phase: str) -> Optional[int]:
     card's payload names, else the thread's current task. Ids only: the
     card's id, its kind code, who decided (owner or system) and, when the
     card was raised for a tool call whose gate decision is known on this
-    thread, that decision's action id."""
+    thread for that tool and that task, that decision's action id."""
     try:
         rec = record if isinstance(record, dict) else {}
         payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
@@ -1136,8 +1151,11 @@ def approval(record, phase: str) -> Optional[int]:
                             or rec.get("decided_source") in ("system", "auto_policy", "law1_block")
                             else "grant" if by.startswith("grant:") else "owner")
         tool = payload.get("tool")
-        if tool:
-            fields["action_id"] = _peek_action(tool)
+        if tool and (phase == "raised" or rec.get("decided_source") in ("auto_policy", "law1_block")):
+            # only the call that raised it (a card raised pending, or decided as
+            # it was raised): a card decided later, on whatever thread, never
+            # borrows the action id of a call running there now
+            fields["action_id"] = _peek_action(tool, tid)
         return _linked_append(tid, "approval", **fields)
     except Exception:
         return None
@@ -1198,14 +1216,16 @@ def lifecycle(task_id, kind: str, *, who: str, reason_code=None) -> Optional[int
 def receipt(entry, *, approval_id=None, task_id=None) -> Optional[int]:
     """The outcome receipt the action ledger just wrote (`entry`, as
     action_ledger.append returned it), in the journal of the task it belongs
-    to: the explicit task, else the thread's current task, else the task an
-    executor acts for (acting_for). Action id, receipt id, the decision's
-    receipt id and the outcome word."""
+    to: the explicit task, else the task an executor acts for (acting_for:
+    an approved card run from whatever thread decided it belongs to the
+    card's task, not to a task that thread happens to be running), else the
+    thread's current task. Action id, receipt id, the decision's receipt id
+    and the outcome word."""
     try:
         e = entry if isinstance(entry, dict) else {}
         rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
         aid = rec.get("action_id")
-        tid = task_id or current_task() or getattr(_ACTING, "task", None)
+        tid = task_id or getattr(_ACTING, "task", None) or current_task()
         if not tid or not _valid_action_id(aid):
             return None
         return _linked_append(tid, "receipt", action_id=aid, receipt_id=receipt_id(e.get("seq")),
@@ -1232,7 +1252,11 @@ def ledger_links(task_id: str) -> Dict[str, Any]:
     try:
         from agent_friday.services import action_ledger as _al
         seen = set()
-        for e in _al.entries(["decision", "outcome"], newest_first=False, archive=True,
+        # strict: a ledger (or its archive, or its key) that cannot be read
+        # raises, so it reports unreadable rather than every id missing. No
+        # gate: an open break still lets the counts be read.
+        for e in _al.entries(["decision", "outcome"], newest_first=False, strict=True,
+                             gate=False, archive=True,
                              where=lambda e: (e.get("rec") or {}).get("action_id") in ids):
             seen.add((e.get("rec") or {}).get("action_id"))
         found = len(ids & seen)
