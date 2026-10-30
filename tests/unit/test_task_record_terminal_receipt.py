@@ -58,7 +58,7 @@ def test_a_task_record_carries_its_origin_and_model_policy(isolated):
     tid = agent._spawn_task("a synthetic task", "do the synthetic thing", runner=runner,
                             goal_ancestry={"goal_id": "goal_synthetic"})
     th = agent.TASK_THREADS.get(tid)
-    if th is not None:
+    if th is not None and th.ident is not None:
         th.join(timeout=15)            # its ending lands in this test's ledger, not a later one's
     with agent.TASKS_LOCK:
         rec = dict(agent.TASKS[tid])
@@ -190,6 +190,42 @@ def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
     finally:
         action_ledger.try_append = real
     assert len(_rows_for("t-end-7")) == 1
+
+
+def test_a_different_ending_arriving_mid_write_is_not_lost(isolated):
+    """The worker writes 'complete' while a stop sets 'cancelled'. Whatever status
+    the record is left with, its last receipt names that status (superseding)."""
+    import threading
+    _running("t-end-8")
+    from agent_friday.services import action_ledger
+    real = action_ledger.try_append
+    first_in, release = threading.Event(), threading.Event()
+
+    def slow(kind, rec, **kw):
+        if kind == "task_end" and not first_in.is_set():
+            first_in.set()
+            release.wait(timeout=10)
+        return real(kind, rec, **kw)
+    action_ledger.try_append = slow
+    try:
+        a = threading.Thread(target=agent._task_set, args=("t-end-8",),
+                             kwargs={"status": "complete", "ended": 3.0})
+        a.start()
+        assert first_in.wait(timeout=10)
+        agent._task_set("t-end-8", status="cancelled", ended=3.1)   # arrives mid-write
+        release.set()
+        a.join(timeout=10)
+    finally:
+        action_ledger.try_append = real
+    rows = _rows_for("t-end-8")
+    with agent.TASKS_LOCK:
+        rec = dict(agent.TASKS["t-end-8"])
+    statuses = [r["status"] for r in rows]
+    assert "complete" in statuses and "cancelled" in statuses, "neither ending is lost"
+    assert rows[-1]["status"] == rec["status"], "the last receipt names the status the record kept"
+    assert rec["terminal_receipt"]["status"] == rec["status"]
+    assert all(r.get("supersedes") is not None for r in rows[1:])
+    assert "t-end-8" not in agent._RECEIPT_INFLIGHT
 
 
 def test_a_running_task_has_no_receipt_yet(isolated):
