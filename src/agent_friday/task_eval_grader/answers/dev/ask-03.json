@@ -22,5 +22,13 @@
     }
    ]
   }
+ ],
+ "heads": [
+  {
+   "check": "head_not_said",
+   "head": "loop.no_progress",
+   "says": "stalled",
+   "label": "the loop head never called this must-ask task stalled"
+  }
  ]
 }
