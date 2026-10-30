@@ -80,6 +80,10 @@
     <tbody id="u-rows"></tbody>
   </table>
   <button type="button" id="u-more" hidden>Older records</button>
+  <div id="u-why-box" hidden>
+    <h3 id="u-why-h" style="font-size:14px;margin:12px 0 4px">Why?</h3>
+    <pre id="u-why" role="status" aria-live="polite" aria-labelledby="u-why-h"></pre>
+  </div>
 </section>
 
 <section aria-labelledby="r-h">
@@ -289,6 +293,26 @@
   // the family and id the first page was read with: "Older records" pages
   // that list, not whatever the form says now
   let unifiedQuery = { family: '', id: '' };
+  // Why? (services/explain, A13): what Friday did for one action or task, why,
+  // which model, what information, what left this PC, on whose authority, what
+  // it cost and what changed, as plain text set with textContent only.
+  function explainShow(kind, id) {
+    const box = $('u-why-box'), out = $('u-why');
+    box.hidden = false;
+    out.textContent = 'Reading…';
+    const p = new URLSearchParams();
+    p.set(kind === 'task' ? 'task_id' : 'action_id', id);
+    api('/api/ledger/explain?' + p.toString()).then(({ ok, d }) => {
+      out.textContent = ok ? String(d.text || '') : ((d && d.error) || 'This could not be explained right now.');
+    }).catch(() => { out.textContent = 'This could not be explained right now.'; });
+  }
+  function whyButton(kind, id) {
+    const b = el('button', 'Why?');
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Why? Explain ' + kind + ' ' + id);
+    b.addEventListener('click', () => explainShow(kind, id));
+    return b;
+  }
   function unifiedRender(rows, append) {
     const body = $('u-rows');
     if (!append) body.textContent = '';
@@ -304,6 +328,9 @@
       tr.appendChild(el('td', r.chained ? 'yes' : 'no', r.chained ? 'ok' : 'muted'));
       const ids = el('td');
       Object.entries(r.ids || {}).forEach(([k, v]) => ids.appendChild(el('div', k.replace(/_/g, ' ') + ' ' + v)));
+      const rid = r.ids || {};
+      if (rid.action_id) ids.appendChild(whyButton('action', rid.action_id));
+      else if (rid.task_id) ids.appendChild(whyButton('task', rid.task_id));
       tr.appendChild(ids);
       body.appendChild(tr);
     });

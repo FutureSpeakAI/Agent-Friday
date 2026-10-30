@@ -33,7 +33,13 @@
                                  Read-only. One read at a time (429 "busy"
                                  when another holds it); the plain first page
                                  is kept 15 s.
-  GET  /api/ledger/retention    the retention period and the archive (A22)
+  GET  /api/ledger/explain       why Friday did it (A13, services/explain):
+                                 ?action_id= or ?task_id=; what, why, which
+                                 model, what information, egress, authority,
+                                 cost, what changed and linked records, each
+                                 "not recorded" when missing. Ids, names and
+                                 counts only. Read-only; one at a time (429).
+  GET  /api/ledger/retention   the retention period and the archive (A22)
   POST /api/ledger/retention     {"days": n}: change it (0 = off, at least 30);
                                  on this PC only. Archives at once; never deletes.
   POST /api/ledger/acknowledge   the owner has looked at the breaks shown;
@@ -419,6 +425,36 @@ def api_ledger_unified():
         return jsonify({"status": "ok", **out})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The records could not be read together.")
+
+
+@ledger_bp.route("/api/ledger/explain", methods=["GET"])
+@login_required
+def api_ledger_explain():
+    """Why did Friday do that (services/explain, A13, NS-29.1-1): for one
+    ?action_id= or one ?task_id=, what it was, why, which model, what
+    information, what left this PC, on whose authority, what it cost and what
+    changed, each section saying "not recorded" when nothing is kept for it.
+    Ids, names of models and tools, counts and fixed codes only: never
+    content, a path, a recipient or a destination. Owner only, as the rest of
+    the ledger (the session; not on the observer's list). Reads; writes
+    nothing. The id is only compared with what the stores hold."""
+    try:
+        from agent_friday.services import explain as _explain
+        try:
+            out = _explain.explain(action_id=request.args.get("action_id") or None,
+                                   task_id=request.args.get("task_id") or None)
+        except _explain.BadId:
+            return jsonify({"status": "error", "code": "bad_id",
+                            "error": "Name one action id or one task id."}), 400
+        except _explain.Busy:
+            resp = jsonify({"status": "error", "code": "busy",
+                            "error": "Another explanation is being read. Try again in a moment."})
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "2"
+            return resp
+        return jsonify({"status": "ok", **out})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "This could not be explained right now.")
 
 
 @ledger_bp.route("/api/ledger/acknowledge", methods=["POST"])
