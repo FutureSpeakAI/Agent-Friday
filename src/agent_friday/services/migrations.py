@@ -37,7 +37,11 @@ before Friday uses its data folder:
 4. after each step its check runs, then schema.json moves to its number;
 5. a receipt file goes into ``<home>/migrations/`` at once, and into the
    action ledger after the start (flush_receipts), so the ledger and its key
-   are not touched before Friday is up;
+   are not touched before Friday is up. Before an upgrade's receipt goes in,
+   the history it carries forward is checked (§37.3-8, history_check): the
+   action ledger in full and the provenance ledger's hash chain. The counts go
+   into the receipt, and a problem becomes an item on Home saying where to
+   look; nothing is changed or repaired;
 6. a step that fails, or whose check fails, puts the copied files back
    (journaled first, so a stop in the middle is finished at the next start),
    leaves schema.json where it was, and this start is safe mode. If the files
@@ -415,6 +419,87 @@ def _receipt(home: Path, rec: dict) -> None:
                 dict(rec, ledgered=False))
 
 
+def _provenance_chain(path: Path) -> dict:
+    """Walk services/provenance's ledger: each line's "prev" must be the
+    sha256 of the line before it (the first: 64 zeros). Counts only."""
+    out = {"entries": 0, "broken_links": 0, "unreadable": 0}
+    try:
+        fh = open(path, "r", encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return out
+    except OSError as e:
+        return {"unchecked": type(e).__name__}
+    prev = "0" * 64
+    try:
+        with fh:
+            text = fh.read()
+    except OSError as e:
+        return {"unchecked": type(e).__name__}
+    lines = text.split("\n")
+    if lines and not text.endswith("\n"):
+        lines = lines[:-1]                       # a line still being written is not judged
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        out["entries"] += 1
+        try:
+            rec = json.loads(line)
+            if not isinstance(rec, dict):
+                raise ValueError
+        except ValueError:
+            out["unreadable"] += 1
+        else:
+            if rec.get("prev") != prev:
+                out["broken_links"] += 1
+        prev = hashlib.sha256(line.encode("utf-8")).hexdigest()
+    return out
+
+
+def history_check(home: Path) -> dict:
+    """The receipt and provenance history an upgrade carries forward
+    (§37.3-8): {"receipts": {records, open_problems} | {unchecked},
+    "provenance": {entries, broken_links, unreadable} | {unchecked}}. Read
+    only. Called once Friday is up, since the action ledger needs its key."""
+    out: dict = {}
+    try:
+        from agent_friday.services import action_ledger
+        r = action_ledger.verify(force=True, migrate=False)
+        if r.get("key_available") is False:
+            out["receipts"] = {"unchecked": "no_key"}      # its problems cannot be read or acknowledged yet
+        else:
+            n = r.get("open_problem_count")
+            if not isinstance(n, int):
+                n = sum(1 for p in (r.get("problems") or []) if not p.get("acknowledged"))
+            out["receipts"] = {"records": int(r.get("records") or 0), "open_problems": n}
+    except Exception as e:  # noqa: BLE001 - a history that cannot be checked is said, not fatal
+        out["receipts"] = {"unchecked": type(e).__name__}
+    out["provenance"] = _provenance_chain(home / "provenance" / "ledger.jsonl")
+    return out
+
+
+def _history_items(home: Path, to, hist: dict) -> None:
+    rc, pv = hist.get("receipts") or {}, hist.get("provenance") or {}
+    store = "migration-%s" % to
+    if rc.get("unchecked"):
+        _unresolved(home, "history_receipts", store,
+                    "After the upgrade, Friday's record of what it did (the action ledger) could not be "
+                    "checked. Outward actions wait while it cannot be checked.",
+                    "Run friday diagnose; the Doctor page's receipt check says what is missing.")
+    elif rc.get("open_problems"):
+        _unresolved(home, "history_receipts", store,
+                    "After the upgrade, Friday's record of what it did (the action ledger) has %d problem(s) "
+                    "nobody has looked at yet (counted when Friday started)." % rc["open_problems"],
+                    "Open Activity and review the ledger's breaks; outward actions wait until you do.")
+    if pv.get("unchecked") or pv.get("broken_links") or pv.get("unreadable"):
+        _unresolved(home, "history_provenance", store,
+                    "After the upgrade, the record of where Friday's creations came from (the provenance "
+                    "ledger) %s." % ("could not be read" if pv.get("unchecked") else
+                                     "has %d broken link(s) and %d unreadable line(s)"
+                                     % (pv.get("broken_links", 0), pv.get("unreadable", 0))),
+                    "Make a Friday Bundle so the record as it is now is kept, then run friday diagnose.")
+
+
 def flush_receipts(home: Optional[Path] = None) -> int:
     """Put each receipt not yet in the action ledger there (called once
     Friday is up). Returns how many went in."""
@@ -429,6 +514,13 @@ def flush_receipts(home: Optional[Path] = None) -> int:
             continue
         if not isinstance(rec, dict) or rec.get("ledgered"):
             continue
+        if rec.get("event") == "migrated" and "history" not in rec:
+            try:
+                rec["history"] = history_check(home)
+                _history_items(home, rec.get("to"), rec["history"])
+                _write_json(p, rec)                      # checked once, even if the ledger is not ready
+            except Exception as e:  # noqa: BLE001 - never stops a receipt going in
+                rec.setdefault("history", {"unchecked": type(e).__name__})
         body = {k: v for k, v in rec.items() if k != "ledgered"}
         if action_ledger.try_append("migration", body) is not None:
             rec["ledgered"] = True
