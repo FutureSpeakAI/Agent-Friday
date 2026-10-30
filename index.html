@@ -49881,6 +49881,20 @@ function fmtElapsed(sec) {
 // The drawer under a task card reads the task's own journal — the same record
 // the orchestrator's query surface reads — and tails it by seq cursor while
 // the task runs. A gap in the sequence is shown, never hidden.
+/* The task journal's linked events (approval, check, file, blocker, pause/resume/stop, receipt) as
+   plain words. Ids and codes only reach here; nothing the task handled. */
+const JOURNAL_LINKED_KINDS = ['approval', 'verification', 'artifact', 'blocker', 'paused', 'resumed', 'stopped', 'receipt'];
+function journalLinkedLine(ev) {
+  const k = ev.kind;
+  const words = s => String(s || '').replace(/_/g, ' ');
+  if (k === 'approval') return ev.phase === 'raised' ? 'approval card raised' : 'approval ' + words(ev.outcome || 'decided') + (ev.by === 'system' ? ' by Friday' : ev.by === 'grant' ? ' by your standing approval' : ev.by ? ' by you' : '');
+  if (k === 'verification') return 'check ' + words(ev.result || 'unknown');
+  if (k === 'artifact') return 'file made' + (ev.tool ? ' by ' + words(ev.tool) : '') + (ev.qa_ok === false ? ' \xB7 its check found problems' : '');
+  if (k === 'blocker') return 'blocked: ' + words(ev.code || ev.category || 'unknown');
+  if (k === 'paused' || k === 'resumed' || k === 'stopped') return k + ' by ' + (ev.who === 'owner' ? 'you' : 'Friday') + (ev.reason_code ? ' \xB7 ' + words(ev.reason_code) : '');
+  if (k === 'receipt') return 'receipt: ' + words(ev.outcome || 'recorded');
+  return words(k);
+}
 function TaskTimeline({
   taskId,
   live,
@@ -49971,6 +49985,12 @@ function TaskTimeline({
         color: '#888'
       }
     }), "\u2022 ", k, ev.status ? ' \xB7 ' + ev.status : '', ev.model ? ' \xB7 ' + ev.model : '');
+    /* Linked events (NS-29.4-1): one plain line each, from ids and codes only. */
+    if (JOURNAL_LINKED_KINDS.includes(k)) return /*#__PURE__*/React.createElement("div", Object.assign({}, base, {
+      style: {
+        color: '#888'
+      }
+    }), "\u2022 ", journalLinkedLine(ev));
     return null;
   };
   /* An orb-backed row has no journal but DOES carry its own log and step

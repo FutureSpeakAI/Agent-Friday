@@ -932,8 +932,12 @@ def tool_call(*, name, args=None, result=None, ok=None, duration_ms=None, sessio
     if ok is None:
         r = str(result or "")
         ok = not (r.startswith("[VAULT") or r.startswith("[Error") or r.lower().startswith("error"))
+    # G10 (NS-29.4-2): the action id the gate gave this call, when its decision
+    # is known on this thread (note_action); taken once, whatever happens next.
+    action_id = _take_action(name)
     seq = _emit("tool_call", session_ctx, task_id, name=name, args=_cap(args, _ARGS_CAP),
-                ok=bool(ok), duration_ms=duration_ms, result_summary=_cap(result, _SUMMARY_CAP * 2))
+                ok=bool(ok), duration_ms=duration_ms, result_summary=_cap(result, _SUMMARY_CAP * 2),
+                action_id=action_id)
     if seq is not None:
         try:
             from agent_friday.services import step_records as _sr
@@ -1008,6 +1012,234 @@ def decision(point: str, chosen, *, reason=None, alternatives=None, session_ctx=
 
 def steer(message: str, source: str = "user", *, session_ctx=None, task_id=None):
     return _emit("steer", session_ctx, task_id, message=_cap(message, _TEXT_CAP // 4), source=source)
+
+
+# ── linked events (NS-29.4-1 / NS-29.4-2, slice G10) ────────────────────────
+# approval, verification, artifact, blocker, paused / resumed / stopped and
+# receipt events. Each carries ids and fixed codes only, never text, a path
+# or content. An event that relates to a gate decision names its action id
+# (and the ledger receipt, where there is one), so the journal is linked to
+# the action ledger (`ledger_links` checks that link). Every emitter here is
+# fail-safe: it never raises into the work it records. Off the record nothing
+# is written (`append`).
+
+#: The receipt id of a ledger entry: its sequence number in the action ledger.
+RECEIPT_PREFIX = "lgr_"
+APPROVAL_OUTCOMES = {"approved": "approved", "auto_approved": "approved", "denied": "denied",
+                     "blocked": "denied", "expired": "expired"}
+VERIFICATION_RESULTS = ("passed", "failed", "unknown")
+LIFECYCLE_KINDS = ("paused", "resumed", "stopped")
+LINKED_KINDS = ("approval", "verification", "artifact", "blocker") + LIFECYCLE_KINDS + ("receipt",)
+
+_ACTING = threading.local()
+_CODE_CAP = 64
+
+
+def _code(v) -> Optional[str]:
+    """A fixed code (a category, a reason, a status word): short, and only
+    letters, digits, '_', '-', ':', '+' and '.'. Anything else is not written."""
+    s = str(v or "").strip()[:_CODE_CAP]
+    if not s or not all((c.isascii() and c.isalnum()) or c in "_-:.+" for c in s):
+        return None
+    return s
+
+
+def _linked_append(task_id, kind: str, **fields) -> Optional[int]:
+    """append(), only for a task that already has a record: a linked event is
+    never the thing that creates one (a goal check or a receipt naming a task
+    id this machine never journaled leaves nothing)."""
+    tid = str(task_id)
+    try:
+        d = task_dir(tid)
+    except ValueError:
+        return None
+    if tid not in _SEQ and not ((d / "journal.jsonl").exists() or (d / "state.json").exists()):
+        return None
+    return append(tid, kind, **fields)
+
+
+def _valid_action_id(aid) -> bool:
+    try:
+        from agent_friday.services.policy_version import valid_action_id
+        return bool(valid_action_id(aid))
+    except Exception:
+        return False
+
+
+def receipt_id(seq) -> Optional[str]:
+    """The id of an action-ledger entry, from its sequence number."""
+    try:
+        n = int(seq)
+    except (TypeError, ValueError):
+        return None
+    return f"{RECEIPT_PREFIX}{n}" if n > 0 else None
+
+
+def note_action(name, action_id=None) -> None:
+    """The action id the gate decided for the tool call running now on this
+    thread (agent._execute_tool, after its governance hook), so the call's
+    tool_call event names it. Each call replaces the last one's note."""
+    _CURRENT.action = (str(name or ""), action_id if _valid_action_id(action_id) else None)
+
+
+def _peek_action(name) -> Optional[str]:
+    note = getattr(_CURRENT, "action", None)
+    return note[1] if note and note[0] == str(name or "") else None
+
+
+def _take_action(name) -> Optional[str]:
+    aid = _peek_action(name)
+    _CURRENT.action = None
+    return aid
+
+
+class acting_for:
+    """While an executor carries out, outside the task's own worker, an action
+    a task asked for (the approval executor running an approved card), the
+    receipt it writes is linked to that task. Only `receipt` reads this."""
+
+    def __init__(self, task_id):
+        self.task_id = str(task_id) if task_id else None
+        self._prev = None
+
+    def __enter__(self):
+        self._prev = getattr(_ACTING, "task", None)
+        _ACTING.task = self.task_id
+        return self
+
+    def __exit__(self, *exc):
+        _ACTING.task = self._prev
+        return False
+
+
+def approval(record, phase: str) -> Optional[int]:
+    """An approval card raised for a task (phase 'raised'), or decided
+    (phase 'decided': approved, denied or expired). The task is the one the
+    card's payload names, else the thread's current task. Ids only: the
+    card's id, its kind code, who decided (owner or system) and, when the
+    card was raised for a tool call whose gate decision is known on this
+    thread, that decision's action id."""
+    try:
+        rec = record if isinstance(record, dict) else {}
+        payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+        tid = str(payload.get("task_id") or "") or current_task()
+        if not tid or not rec.get("approval_id") or rec.get("off_record"):
+            return None                 # a card raised off the record leaves no line either
+        fields = {"approval_id": str(rec.get("approval_id"))[:80], "phase": _code(phase),
+                  "card_kind": _code(rec.get("kind"))}
+        if phase == "decided":
+            fields["outcome"] = APPROVAL_OUTCOMES.get(str(rec.get("status") or ""))
+            if not fields["outcome"]:
+                return None
+            by = str(rec.get("decided_by") or "")
+            fields["by"] = ("system" if by.startswith(("system", "friday", "auto"))
+                            or rec.get("decided_source") in ("system", "auto_policy", "law1_block")
+                            else "grant" if by.startswith("grant:") else "owner")
+        tool = payload.get("tool")
+        if tool:
+            fields["action_id"] = _peek_action(tool)
+        return _linked_append(tid, "approval", **fields)
+    except Exception:
+        return None
+
+
+def verification(task_id, check_id, result, *, basis=None) -> Optional[int]:
+    """A check ran on a task's work: passed, failed or unknown (it could not
+    run, or only the owner can judge it). `check_id` names the check."""
+    try:
+        if not task_id:
+            return None
+        res = result if result in VERIFICATION_RESULTS else "unknown"
+        return _linked_append(task_id, "verification", check_id=str(check_id or "")[:120] or None,
+                              result=res, basis=_code(basis))
+    except Exception:
+        return None
+
+
+def artifact(task_id, artifact_id, *, tool=None, qa_ok=None, action_id=None) -> Optional[int]:
+    """A file a task's creating tool made, by its artifact-manifest reference
+    (never its path or content), with the tool's name, whether its check
+    passed and the action id of the gate decision that allowed the call."""
+    try:
+        if not task_id or not artifact_id:
+            return None
+        return _linked_append(task_id, "artifact", artifact_id=str(artifact_id)[:80], tool=_code(tool),
+                              qa_ok=(bool(qa_ok) if qa_ok is not None else None),
+                              action_id=action_id if _valid_action_id(action_id) else None)
+    except Exception:
+        return None
+
+
+def blocker(task_id, code, *, category=None) -> Optional[int]:
+    """A typed blocker (services/goal_state) stopped the work this task did."""
+    try:
+        if not task_id:
+            return None
+        c = _code(code) or _code(category)
+        if not c:
+            return None
+        return _linked_append(task_id, "blocker", code=c, category=_code(category))
+    except Exception:
+        return None
+
+
+def lifecycle(task_id, kind: str, *, who: str, reason_code=None) -> Optional[int]:
+    """paused / resumed / stopped, with who did it (owner or system) and a
+    reason code."""
+    try:
+        if not task_id or kind not in LIFECYCLE_KINDS:
+            return None
+        return _linked_append(task_id, kind, who="owner" if who == "owner" else "system",
+                              reason_code=_code(reason_code))
+    except Exception:
+        return None
+
+
+def receipt(entry, *, approval_id=None, task_id=None) -> Optional[int]:
+    """The outcome receipt the action ledger just wrote (`entry`, as
+    action_ledger.append returned it), in the journal of the task it belongs
+    to: the explicit task, else the thread's current task, else the task an
+    executor acts for (acting_for). Action id, receipt id, the decision's
+    receipt id and the outcome word."""
+    try:
+        e = entry if isinstance(entry, dict) else {}
+        rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
+        aid = rec.get("action_id")
+        tid = task_id or current_task() or getattr(_ACTING, "task", None)
+        if not tid or not _valid_action_id(aid):
+            return None
+        return _linked_append(tid, "receipt", action_id=aid, receipt_id=receipt_id(e.get("seq")),
+                              decision_receipt_id=receipt_id(rec.get("decision_seq")),
+                              outcome=_code(rec.get("outcome")), terminal=rec.get("terminal"),
+                              approval_id=(str(approval_id or rec.get("approval") or "")[:80] or None))
+    except Exception:
+        return None
+
+
+def ledger_links(task_id: str) -> Dict[str, Any]:
+    """The journal -> ledger cross-check: every action id the task's journal
+    names, and how many of them the action ledger holds a decision or an
+    outcome for. Counts only: {checked, found, missing}. When the ledger
+    cannot be read, found and missing are None and `unreadable` is set."""
+    ids = set()
+    for ev in read(task_id):
+        aid = ev.get("action_id")
+        if isinstance(aid, str) and aid:
+            ids.add(aid)
+    out: Dict[str, Any] = {"checked": len(ids), "found": 0, "missing": 0}
+    if not ids:
+        return out
+    try:
+        from agent_friday.services import action_ledger as _al
+        seen = set()
+        for e in _al.entries(["decision", "outcome"], newest_first=False, archive=True,
+                             where=lambda e: (e.get("rec") or {}).get("action_id") in ids):
+            seen.add((e.get("rec") or {}).get("action_id"))
+        found = len(ids & seen)
+    except Exception:
+        return dict(out, found=None, missing=None, unreadable=True)
+    out.update(found=found, missing=len(ids) - found)
+    return out
 
 
 # ── heartbeat (TV7) ──────────────────────────────────────────────────────────
@@ -1159,8 +1391,11 @@ WITHHELD = "[withheld by the privacy gate]"
 
 # Fields an observer never receives at all: a step record's input and output
 # refs (§30.9) are fingerprints of what the task handled, which only the
-# owner's own /api/tasks/<id>/steps serves.
-_OBSERVER_DROPPED_FIELDS = ("input_refs", "output_refs")
+# owner's own /api/tasks/<id>/steps serves. An artifact event's reference
+# (G10) is taken from the keyed signature of a manifest line that holds the
+# file's hash, so it goes the same way. Action, receipt and approval ids stay:
+# they are random or sequence ids, derived from nothing the task handled.
+_OBSERVER_DROPPED_FIELDS = ("input_refs", "output_refs", "artifact_id")
 
 
 def seal_for_principal(obj, principal: str, provider: str = "observer") -> tuple:

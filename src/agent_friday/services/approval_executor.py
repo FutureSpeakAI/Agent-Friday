@@ -226,6 +226,16 @@ def _decide(record: dict) -> None:
            "surface": "approval_card", "confirm_bypass": True,
            "conversation_id": payload.get("conversation_id") or "",
            "approved_card_decision": decision_ref}
+    # The receipts this run writes belong to the task that raised the card:
+    # its journal names them (task_journal.receipt, NS-29.4-2).
+    _acting = None
+    if task_id:
+        try:
+            from agent_friday.services import task_journal as _tjx
+            _acting = _tjx.acting_for(task_id)
+            _acting.__enter__()
+        except Exception:  # noqa: BLE001 - the link records; it never holds the action
+            _acting = None
     started = time.time()
     try:
         # An approved search card (privacy/public_query): exactly the strings
@@ -252,7 +262,11 @@ def _decide(record: dict) -> None:
 
     took = int((time.time() - started) * 1000)
     # a no-op when the call's own outcome closed it
-    _gate.close_external(decision_ref, ok, detail="approval_executor")
+    try:
+        _gate.close_external(decision_ref, ok, detail="approval_executor")
+    finally:
+        if _acting is not None:
+            _acting.__exit__(None, None, None)
     _ap.mark_used(aid, "approval_executor",
                   detail={"ok": ok, "took_ms": took,
                           "result": str(result)[:800]})

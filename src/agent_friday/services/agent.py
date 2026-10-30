@@ -5490,6 +5490,7 @@ def _task_set(task_id, **fields):
         tj = _journal()
         if new_state and new_state != prev_state:
             tj.append(task_id, "state", state=new_state, was=prev_state)
+        _journal_lifecycle(tj, task_id, prev_state, new_state, prev_status, new_status, snap)
         if new_status != prev_status or first_start:
             if new_status == 'running':
                 tj.append(task_id, "started", model=snap.get('model'),
@@ -5515,6 +5516,45 @@ def _task_set(task_id, **fields):
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+
+
+def _journal_lifecycle(tj, task_id, prev_state, new_state, prev_status, new_status, snap):
+    """The journal's paused / resumed / stopped events (NS-29.4-1, slice G10),
+    with who did it and a reason code, from the state change `_task_set` is
+    recording. Never raises."""
+    try:
+        result = str(snap.get('result') or '')
+        if new_state == 'paused' and prev_state != 'paused':
+            tj.lifecycle(task_id, "paused", who="owner", reason_code="owner_pause")
+        elif (prev_state == 'paused' and new_state and new_state != 'paused'
+              and new_state not in ('cancel_requested', 'cancelled', 'failed')):
+            tj.lifecycle(task_id, "resumed", who="owner", reason_code="owner_resume")
+        if new_status == prev_status:
+            return
+        if new_status == 'failed' and result.startswith(SPEND_CAP_PAUSE_MARK):
+            # the owner's spending cap paused it at its next paid call (north-star A17)
+            tj.lifecycle(task_id, "paused", who="system", reason_code="spend_cap")
+        elif new_state == 'cancelled' and prev_state != 'cancelled':
+            if str(new_status) == 'superseded':
+                who, why = "system", "superseded"
+            elif str(new_status) == 'declined':
+                who, why = "owner", "declined"
+            else:
+                try:
+                    import agent_friday.core as _core_gs
+                    everything = _core_gs.GLOBAL_STOP.is_set()
+                except Exception:
+                    everything = False
+                who = "owner"
+                why = ("stop_everything" if everything else
+                       "stop_after_step" if prev_state == 'cancel_requested' else "owner_cancel")
+            tj.lifecycle(task_id, "stopped", who=who, reason_code=why)
+        elif str(new_status) == 'timeout' or str(new_status).startswith('failed:'):
+            # Friday stopped it: its time ran out, or the watchdog ended it
+            why = "timeout" if str(new_status) == 'timeout' else str(new_status).split(':', 1)[1]
+            tj.lifecycle(task_id, "stopped", who="system", reason_code=why)
+    except Exception:
+        pass
 
 
 #: A child's North Star end state as its parent's subagent step state (§30.9).
@@ -14205,6 +14245,16 @@ def _web_task_scope(fn):
     return dispatch
 
 
+def _note_gate_action(name, decision):
+    """Tell the task journal which action id the gate gave the call running on
+    this thread (or none), so its tool_call and card events name it. Never raises."""
+    try:
+        aid = decision.get("action_id") if isinstance(decision, dict) else None
+        _journal().note_action(name, aid)
+    except Exception:
+        pass
+
+
 def _outcome_recorder(name, decision, ctx):
     """The outcome receipt for one call: written once, only for a call whose
     checkpoint decided an outward or reading action (or that runs on the
@@ -14340,6 +14390,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
     # to the model as Friday's words, outside the data envelope (services/untrusted_input).
     _own = _untrusted.FridaysWords
+    # The task journal's tool_call event names the gate decision's action id
+    # (G10, NS-29.4-2): forget the last call's, under the name the loop knows.
+    _asked_name = name
+    _note_gate_action(_asked_name, None)
     # Stop everything (services/global_stop): while stopped no tool runs, from any
     # surface. Only another stop may pass, so "stop everything" said twice still works.
     from agent_friday.services import global_stop as _global_stop
@@ -14463,6 +14517,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # call's outcome receipt names it (governance/action_gate.record_outcome).
     verdict = _hooks.run_pre_hooks(ctx)
     _outcome = _outcome_recorder(name, ctx.meta.get("decision_receipt"), ctx)
+    _note_gate_action(_asked_name, ctx.meta.get("decision_receipt"))
     # Trusted hooks can restore a deferred Crew task's identity. Handlers and
     # subsequent checks use that scope, while the original host origin stays fixed.
     if _host_scoped:
@@ -15354,6 +15409,8 @@ def _hook_governance(ctx):
         ctx.meta["decision_receipt"] = _gate.LAST_RECEIPT.get()
     finally:
         _gate.LAST_RECEIPT.reset(_lr)
+    # known before a card is raised for it, so the card's journal event names it (G10)
+    _note_gate_action(ctx.tool_name, ctx.meta.get("decision_receipt"))
     ctx.meta["governance"] = v
     if v.action == "allow" and _waiting_cards:
         _prior = _run_card_supersede(ctx, _waiting_cards, v.grant)

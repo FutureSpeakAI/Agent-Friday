@@ -595,6 +595,8 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     if _before_publish is not None:
         _before_publish()
     _upsert(record)
+    _journal_card(record, "raised" if record["status"] == "pending" else
+                  ("decided" if record["status"] == "blocked" else None))
     if record["status"] == "pending":
         if _before_publish is not None:
             _before_publish()
@@ -1274,6 +1276,18 @@ def _may_interrupt(record: Dict[str, Any]) -> bool:
         return True
 
 
+def _journal_card(record: Dict[str, Any], phase: Optional[str]) -> None:
+    """The task journal's approval event (NS-29.4-1) for a card a task raised:
+    its id and how it was decided, never its words. Best-effort."""
+    if not phase:
+        return
+    try:
+        from agent_friday.services import task_journal as _tj
+        _tj.approval(record, phase)
+    except Exception:
+        pass
+
+
 def _feed(name: str, record: Dict[str, Any]) -> None:
     """Tell every open Friday page (services/approval_feed.py). Best-effort:
     a page that misses this picks the card up from the pending list when it
@@ -1292,6 +1306,7 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     except Exception as e:
         _log.warning("approval feed unavailable: %s", e)
     if name == "card_resolved":
+        _journal_card(record, "decided")
         try:
             from agent_friday.services import interruption_policy as _ip
             _ip.forget("approval:%s" % record.get("approval_id"))

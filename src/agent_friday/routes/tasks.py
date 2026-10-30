@@ -450,6 +450,13 @@ def task_journal_events(task_id):
     payload = {"task_id": task_id, "events": res["events"], "state": state,
                "last_seq": res["last_seq"], "journal_last_seq": res["journal_last_seq"],
                "gaps": res["gaps"], "cursor_ahead": res["cursor_ahead"], "complete": res["complete"]}
+    # NS-29.4-2: the journal's action ids checked against the action ledger
+    # (counts only). Read on the first page, not on every poll of the tail.
+    if not since:
+        try:
+            payload["links"] = _tj.ledger_links(task_id)
+        except Exception:
+            payload["links"] = {"checked": None, "found": None, "missing": None, "unreadable": True}
     return jsonify(_serve_sealed(payload, task_id, "journal", events=len(res["events"]),
                                  reasoning=any(e.get("kind") == "reasoning" for e in res["events"])))
 
