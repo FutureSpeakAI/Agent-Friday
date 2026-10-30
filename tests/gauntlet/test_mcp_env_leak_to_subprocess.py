@@ -48,6 +48,10 @@ class _FakePopen:
 
 def _spawn_and_capture(monkeypatch, sp: MCPServerProcess) -> dict:
     monkeypatch.setattr(mc.subprocess, "Popen", _FakePopen)
+    # Not a real process: nothing for the Windows job to hold.
+    monkeypatch.setattr(mc, "_REAL_POPEN", _FakePopen)
+    from agent_friday.services import code_sandbox as _sbx
+    monkeypatch.setattr(_sbx, "contain_helper", lambda p, **k: None)
     monkeypatch.setattr(mc.threading, "Thread",
                         lambda *a, **k: type("T", (), {"start": lambda self: None})())
     from agent_friday.services import connector_secrets as cse
