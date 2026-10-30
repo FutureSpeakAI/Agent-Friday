@@ -16,9 +16,20 @@ before Friday uses its data folder:
 1. under a lock beside the data folder, and never while a restore holds its
    lock; a touched path that is a link or a junction stops it (nothing is
    copied through a link);
-2. the files the pending migrations may change are copied beside the folder
-   (``<folder>.pre-migration-<to>-<stamp>``) before the first step; the newest
-   three such copies are kept;
+2. the whole data folder is copied beside it
+   (``<folder>.pre-migration-<to>-<stamp>``) before the first step (§37.3-2):
+   every store and every name the store list does not know, leaving out what
+   store_inventory declares not durable (downloads such as models and
+   runtimes, caches, logs, this run's temporary files) and anything that is a
+   link, a junction or another reparse point (a cloud placeholder file is
+   one): those are never followed, and the receipt counts them. The copy is
+   checked against the free disk first: too little room, or a copy that fails
+   part way (its partial folder is deleted, and any partial folder a stop left
+   is deleted at the next run), and nothing is changed, the start is safe
+   mode and the owner is told how much room the copy needs. The copy is made
+   readable by this account only (0700; on Windows an owner-only access list
+   its files inherit), since it holds Friday's keys. The newest two finished
+   copies are kept, never the one this run made;
 3. each step is journaled (``<folder>.migration-journal.json``) with a
    fingerprint of the touched files; a start that finds a journal resumes at
    the step the schema reached, and only if the touched files are as that
@@ -46,6 +57,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -57,7 +69,9 @@ JOURNAL_SUFFIX = ".migration-journal.json"
 LOCK_SUFFIX = ".migration.lock"
 BACKUP_INFIX = ".pre-migration-"
 MARKER_REASON = "migration_failed"      # safe_mode's marker: left only by a press on the PC
-KEEP_BACKUPS = 3
+KEEP_BACKUPS = 2
+#: Room the full copy must leave free on the disk beyond its own size.
+FREE_MARGIN_BYTES = 256 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -95,6 +109,10 @@ def _m1_apply(home: Path) -> None:
     _write_json(home / SCHEMA_FILE, cur)
 
 
+#: Items a later migration that runs to the end settles.
+SETTLED_BY_A_RUN = ("migration_failed", "migration_no_room", "migration_copy_failed")
+
+
 def _settle_failed(home: Path) -> None:
     """A migration that failed before and has now run is sorted, unless Friday
     is still held in safe mode for it: then the item stays until the owner's
@@ -104,7 +122,7 @@ def _settle_failed(home: Path) -> None:
         if safe_mode.marker_reason() == safe_mode.MIGRATION_FAILED:
             return
         for it in upgrade_review.listing(home):
-            if it["code"] == "migration_failed":
+            if it["code"] in SETTLED_BY_A_RUN:
                 upgrade_review.resolve(it["id"], home)
     except Exception:  # noqa: BLE001
         pass
@@ -233,9 +251,109 @@ def _fingerprint(home: Path, touches: list) -> str:
     return h.hexdigest()
 
 
+def _not_durable() -> dict:
+    """Top-level names in the data folder that store_inventory declares not
+    durable (downloads, caches, logs, this run's state) -> their store name.
+    An unreadable store list leaves nothing out: copying too much is safe."""
+    try:
+        from agent_friday.services import store_inventory
+        return {st.location.rstrip("/"): st.name for st in store_inventory.STORES
+                if not st.durable and "/" not in st.location.rstrip("/")}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _full_set(home: Path) -> tuple:
+    """(relative paths to copy, store names left out, links left out): the
+    whole data folder at its top level, folders ending in "/"."""
+    skip = _not_durable()
+    copy, left, links = [], [], 0
+    for p in sorted(home.iterdir(), key=lambda q: q.name):
+        if p.name in skip:
+            left.append(skip[p.name])
+        elif _is_link(p):
+            links += 1
+        else:
+            copy.append(p.name + "/" if p.is_dir() else p.name)
+    return copy, sorted(left), links
+
+
+def _size(home: Path, rels: list) -> int:
+    """Bytes in these paths, never through a link."""
+    total = 0
+    stack = [home / r.rstrip("/") for r in rels]
+    while stack:
+        p = stack.pop()
+        if _is_link(p):
+            continue
+        try:
+            if p.is_dir():
+                stack.extend(p.iterdir())
+            else:
+                total += p.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _skip_links(folder, names) -> list:
+    """For shutil.copytree: never copy through a link or a junction."""
+    out = [n for n in names if _is_link(Path(folder) / n)]
+    _SKIPPED[0] += len(out)
+    return out
+
+
+_SKIPPED = [0]
+
+
+def _gb(n: int) -> str:
+    if n < 1e6:
+        return "less than 1 MB"
+    return "%.1f GB" % (n / 1e9) if n >= 1e8 else "%d MB" % round(n / 1e6)
+
+
+PARTIAL = ".partial"
+
+
+def _rmtree(p: Path) -> None:
+    """Delete a folder, read-only files included (Windows refuses those)."""
+    def again(fn, path, _exc):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            fn(path)
+        except OSError as e:
+            print("  Migrations: could not delete %s (%s)" % (path, type(e).__name__))
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(p, onexc=again)
+    else:
+        shutil.rmtree(p, onerror=again)
+
+
+def _owner_only_dir(dest: Path) -> None:
+    """Make `dest` readable by this account only, before anything is copied
+    into it (its files take its access list). Raises when that fails."""
+    dest.mkdir(mode=0o700)
+    if os.name == "nt":
+        import subprocess
+        user = os.environ.get("USERNAME") or ""
+        r = subprocess.run(["icacls", str(dest), "/inheritance:r", "/grant:r", "%s:(OI)(CI)F" % user],
+                           capture_output=True, timeout=30, check=False) if user else None
+        if r is None or r.returncode != 0:
+            raise PermissionError("the copy's folder could not be made private")
+    else:
+        os.chmod(dest, 0o700)
+
+
+def _drop_partials(home: Path) -> None:
+    for p in home.parent.iterdir():
+        if p.name.startswith(home.name + BACKUP_INFIX) and p.name.endswith(PARTIAL) and not _is_link(p):
+            _rmtree(p)
+
+
 def _copy_aside(home: Path, touches: list, dest: Path) -> list:
-    """Copy each touched file or folder that exists into `dest`; returns the
-    relative paths copied (absent ones are recorded as absent)."""
+    """Copy each listed file or folder that exists into `dest`, never through
+    a link; returns the relative paths copied (absent ones are recorded as
+    absent)."""
     copied = []
     for rel in touches:
         src = home / rel.rstrip("/")
@@ -245,7 +363,7 @@ def _copy_aside(home: Path, touches: list, dest: Path) -> list:
         tgt = dest / rel.rstrip("/")
         tgt.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
-            shutil.copytree(src, tgt)
+            shutil.copytree(src, tgt, ignore=_skip_links)
         else:
             shutil.copy2(src, tgt)
         copied.append(rel)
@@ -277,12 +395,16 @@ def _put_back(home: Path, touches: list, copied: list, dest: Path) -> None:
             cur.unlink()
 
 
-def _prune_backups(home: Path) -> None:
+def _prune_backups(home: Path, keep: Optional[Path] = None) -> None:
+    def made(p: Path) -> tuple:                 # <to>-<YYYYmmdd>-<HHMMSS>-<rand>: by when, not by name
+        parts = p.name[len(home.name + BACKUP_INFIX):].split("-")
+        return (parts[1:3], p.stat().st_mtime) if len(parts) >= 4 else ([], 0.0)
     olds = sorted((p for p in home.parent.iterdir()
-                   if p.is_dir() and p.name.startswith(home.name + BACKUP_INFIX) and not _is_link(p)),
-                  key=lambda p: p.name)
-    for p in olds[:-KEEP_BACKUPS]:
-        shutil.rmtree(p, ignore_errors=True)
+                   if p.is_dir() and p.name.startswith(home.name + BACKUP_INFIX)
+                   and not p.name.endswith(PARTIAL) and not _is_link(p) and p != keep),
+                  key=made)
+    for p in olds[:max(0, len(olds) - (KEEP_BACKUPS - (1 if keep else 0)))]:
+        _rmtree(p)
 
 
 def _receipt(home: Path, rec: dict) -> None:
@@ -388,6 +510,15 @@ def run_pending(home: Optional[Path] = None) -> Optional[dict]:
             return _run_locked(home)
 
 
+def _no_copy(home: Path, want: int, code: str, said: str, todo: str, why: str) -> dict:
+    """The folder could not be copied first: nothing changed, safe mode until
+    the owner leaves it, and the owner told what to do."""
+    _unresolved(home, code, "migration-%d" % want, said + " Friday stays in safe mode until you leave it "
+                "on the Doctor page.", todo)
+    _keep_safe_mode()
+    return {"ok": False, "safe_mode": True, "why": why + "; nothing was changed"}
+
+
 def _keep_safe_mode() -> None:
     """Safe mode from now until the owner leaves it with a press on the PC.
     The marker is written under friday_home(), the folder run_pending works on
@@ -483,12 +614,46 @@ def _run_locked(home: Path) -> dict:
                            "changed" % ", ".join(bad)}
         backup = home.parent / ("%s%s%d-%s-%s" % (home.name, BACKUP_INFIX, want, time.strftime("%Y%m%d-%H%M%S"),
                                                   uuid.uuid4().hex[:6]))
-        copied = _copy_aside(home, touches, backup)                          # step 2
+        whole, left_out, links = _full_set(home)                             # step 2: the whole folder
+        need = _size(home, whole)
+        try:
+            free = shutil.disk_usage(str(home.parent)).free
+        except OSError:
+            free = None
+        if free is not None and free < need + FREE_MARGIN_BYTES:
+            return _no_copy(home, want, "migration_no_room",
+                            "There is not enough free disk beside Friday's data folder to copy it before "
+                            "the upgrade (the copy needs about %s, %s is free), so the upgrade did not "
+                            "run and nothing was changed." % (_gb(need + FREE_MARGIN_BYTES), _gb(free)),
+                            "Free about %s on that disk, then restart Friday; the upgrade runs then."
+                            % _gb(need + FREE_MARGIN_BYTES - free),
+                            "not enough free disk to copy the data folder first (needs about %s)"
+                            % _gb(need + FREE_MARGIN_BYTES))
+        _SKIPPED[0] = 0
+        partial = backup.with_name(backup.name + PARTIAL)
+        try:
+            _drop_partials(home)                     # what a stop during an earlier copy left
+            _owner_only_dir(partial)
+            copied = _copy_aside(home, sorted(set(touches) | set(whole)), partial)
+            if copied:
+                _replace(partial, backup)            # whole, or not at all
+            else:
+                _rmtree(partial)
+        except Exception as e:  # noqa: BLE001 - a copy that fails part way is no copy
+            if partial.exists():
+                _rmtree(partial)
+            return _no_copy(home, want, "migration_copy_failed",
+                            "Friday could not copy its data folder before the upgrade (%s), so the "
+                            "upgrade did not run and nothing was changed." % type(e).__name__,
+                            "Check the disk has room and Friday's folder can be read, then restart "
+                            "Friday; the upgrade runs then.",
+                            "the data folder could not be copied first (%s)" % type(e).__name__)
         jr = {"v": 1, "state": "running", "from": have, "to": want,
               "backup": str(backup) if copied else None, "touches": touches, "copied": copied,
+              "scope": "full", "left_out": left_out, "links_left_out": links + _SKIPPED[0],
               "step": "backed_up", "fingerprint": _fingerprint(home, touches)}
         _journal(home, jr)
-        _prune_backups(home)
+        _prune_backups(home, keep=backup if copied else None)
     checks = {}
     for m in pending:
         if m.number <= current(home):
@@ -512,6 +677,8 @@ def _run_locked(home: Path) -> dict:
            "resumed": resumed,
            "checks": {str(k): v for k, v in checks.items()},
            "backup": Path(jr["backup"]).name if jr.get("backup") else None,
+           "backup_scope": jr.get("scope", "touched"), "left_out": list(jr.get("left_out") or []),
+           "links_left_out": int(jr.get("links_left_out") or 0),
            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     _receipt(home, rec)                                                       # step 5
     rebuilds = sorted({ix for m in MIGRATIONS if jr["from"] < m.number <= want for ix in m.rebuilds})

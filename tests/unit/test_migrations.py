@@ -334,3 +334,131 @@ def test_the_server_settles_migrations_before_it_uses_the_data_folder():
     assert src.index("recover_interrupted_restore()") < i            # an interrupted restore first
     assert "SystemExit(3)" in src[i:i + 1200]                         # files not put back: no start
     assert "flush_receipts" in src
+
+
+# ── §37.3-2: the whole data folder is copied before a migration ──────────────
+
+def _fill(home: Path) -> None:
+    (home / "memory").mkdir()
+    (home / "memory" / "facts.jsonl").write_text('{"v":1}\n', encoding="utf-8")
+    (home / "owners-own-file.txt").write_text("hers", encoding="utf-8")       # a name no store list knows
+    for d in ("models", "cache", "logs"):                                     # not durable
+        (home / d).mkdir()
+        (home / d / "big.bin").write_bytes(b"x" * 1024)
+    (home / "friday.log").write_text("log", encoding="utf-8")
+
+
+def test_the_whole_folder_is_copied_first_except_what_is_not_durable(home, monkeypatch):
+    mg = _mg()
+    _fill(home)
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg))
+    r = mg.run_pending(home)
+    assert r["ok"]
+    copy = home.parent / _siblings(home, ".pre-migration-")[0]
+    names = sorted(p.relative_to(copy).as_posix() for p in copy.rglob("*") if p.is_file())
+    assert names == ["memory/facts.jsonl", "notes.txt", "owners-own-file.txt", "settings.json"], names
+    rec = _receipts(home, "receipt-0-to-2-*.json")[0]
+    assert rec.get("backup_scope") == "full"
+    assert {"models", "cache", "logs", "friday_log"} <= set(rec.get("left_out") or [])
+    assert "owners-own-file.txt" not in json.dumps(rec)                       # store names only
+
+
+def test_a_failed_step_still_puts_back_only_what_it_touched(home, monkeypatch, asked):
+    mg = _mg()
+    _fill(home)
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg, fail_at=2))
+    (home / "owners-own-file.txt").write_text("hers", encoding="utf-8")
+    r = mg.run_pending(home)
+    assert r["safe_mode"] and (home / "notes.txt").read_text(encoding="utf-8") == "before"
+    copy = home.parent / _siblings(home, ".pre-migration-")[0]
+    assert (copy / "memory" / "facts.jsonl").is_file()                        # the whole folder was copied
+    assert (home / "models" / "big.bin").is_file()                            # and nothing else was replaced
+
+
+def test_too_little_free_disk_changes_nothing_and_says_how_much_room(home, monkeypatch, asked):
+    mg = _mg()
+    _fill(home)
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg))
+    import shutil as _sh
+    monkeypatch.setattr(_sh, "disk_usage", lambda p: _sh._ntuple_diskusage(10**12, 10**12 - 1000, 1000))
+    r = mg.run_pending(home)
+    assert r["ok"] is False and r["safe_mode"] is True and "free disk" in r["why"]
+    assert mg.current(home) == 0 and (home / "notes.txt").read_text(encoding="utf-8") == "before"
+    assert not _siblings(home, ".pre-migration-") and not _siblings(home, ".migration-journal")
+    assert asked == [(True, "migration_failed")]
+    from agent_friday.services import upgrade_review
+    items = [it for it in upgrade_review.listing(home) if it["code"] == "migration_no_room"]
+    assert items and ("MB" in json.dumps(items) or "GB" in json.dumps(items))
+
+
+def test_a_copy_that_fails_part_way_is_removed_and_changes_nothing(home, monkeypatch, asked):
+    mg = _mg()
+    _fill(home)
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg))
+    import shutil as _sh
+    real, calls = _sh.copy2, []
+
+    def flaky(src, dst, *a, **k):
+        calls.append(src)
+        if len(calls) == 2:
+            raise OSError("disk full")
+        return real(src, dst, *a, **k)
+    monkeypatch.setattr(_sh, "copy2", flaky)
+    r = mg.run_pending(home)
+    assert r["ok"] is False and r["safe_mode"] is True and len(calls) >= 2
+    assert not _siblings(home, ".pre-migration-") and mg.current(home) == 0
+    assert asked == [(True, "migration_failed")]
+    from agent_friday.services import upgrade_review
+    assert any(it["code"] == "migration_copy_failed" for it in upgrade_review.listing(home))
+
+
+def test_a_link_inside_the_folder_is_left_out_of_the_copy_and_counted(home, monkeypatch, tmp_path):
+    mg = _mg()
+    _fill(home)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "not-hers.txt").write_text("x", encoding="utf-8")
+    try:
+        (home / "memory" / "through").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("this machine does not let a test make a link")
+    monkeypatch.setattr(mg, "MIGRATIONS", [mg.Migration(1, "one", ("notes.txt",), lambda h: None, lambda h: True)])
+    r = mg.run_pending(home)
+    assert r["ok"]
+    copy = home.parent / _siblings(home, ".pre-migration-")[0]
+    assert not (copy / "memory" / "through").exists() and (copy / "memory" / "facts.jsonl").is_file()
+    assert _receipts(home, "receipt-0-to-1-*.json")[0].get("links_left_out") == 1
+
+
+def test_the_newest_two_copies_are_kept(home, monkeypatch):
+    mg = _mg()
+    for n in range(1, 5):
+        monkeypatch.setattr(mg, "MIGRATIONS", [mg.Migration(i, "m%d" % i, ("notes.txt",), lambda h: None,
+                                                            lambda h: True) for i in range(1, n + 1)])
+        assert mg.run_pending(home)["ok"]
+    assert len(_siblings(home, ".pre-migration-")) == 2
+
+
+def test_this_runs_copy_is_never_pruned_and_a_partial_copy_is_cleared(home, monkeypatch):
+    mg = _mg()
+    for name in ("9-20991231-235959-aaaaaa", "8-20991231-235958-bbbbbb"):    # made "later" by name
+        (home.parent / (home.name + mg.BACKUP_INFIX + name)).mkdir()
+    left = home.parent / (home.name + mg.BACKUP_INFIX + "10-20260101-000000-cccccc.partial")
+    left.mkdir()
+    (left / "settings.json").write_text("half", encoding="utf-8")
+    monkeypatch.setattr(mg, "MIGRATIONS", [mg.Migration(10, "ten", ("notes.txt",), lambda h: None,
+                                                        lambda h: True)])
+    r = mg.run_pending(home)
+    assert r["ok"] and r["backup"] and (home.parent / r["backup"]).is_dir()   # the copy this run made
+    assert not left.exists()
+    assert len(_siblings(home, mg.BACKUP_INFIX)) == mg.KEEP_BACKUPS == 2
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX modes; Windows gets an owner-only access list")
+def test_the_copy_is_readable_by_this_account_only(home, monkeypatch):
+    mg = _mg()
+    os.chmod(home / "settings.json", 0o644)
+    monkeypatch.setattr(mg, "MIGRATIONS", _fakes(mg))
+    assert mg.run_pending(home)["ok"]
+    copy = home.parent / _siblings(home, ".pre-migration-")[0]
+    assert copy.stat().st_mode & 0o077 == 0
