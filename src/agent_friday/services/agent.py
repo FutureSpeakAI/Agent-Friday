@@ -5420,6 +5420,30 @@ def _task_log(task_id, line):
     _journal_state(task_id)
 
 
+def _task_terminal_receipt(task_id, snap):
+    """Write the signed 'task_end' entry for a task that just ended and return
+    {"seq", "hash"} of it, or None when it could not be written. Ids, status,
+    origin and times only: never the task's name, prompt or result. Off the
+    record it says only that a task ended and how."""
+    try:
+        from agent_friday.services import action_ledger
+        if snap.get('off_record'):
+            rec = {"task_id": task_id, "status": snap.get('status'), "off_record": True}
+        else:
+            rec = {"task_id": task_id, "status": snap.get('status'),
+                   "origin": snap.get('origin'), "principal": snap.get('principal'),
+                   "parent_task_id": snap.get('parent_task_id'),
+                   "schedule_id": snap.get('schedule_id'),
+                   "created": snap.get('created'), "started": snap.get('started'),
+                   "ended": snap.get('ended'), "verified": snap.get('verified')}
+        entry = action_ledger.try_append("task_end", rec)
+        if entry and entry.get("seq") is not None:
+            return {"seq": entry["seq"], "hash": entry.get("hash")}
+    except Exception:
+        pass
+    return None
+
+
 def _task_set(task_id, **fields):
     with TASKS_LOCK:
         t = TASKS.get(task_id)
@@ -5470,6 +5494,14 @@ def _task_set(task_id, **fields):
                     _tl.save(task_id, _led)
         except Exception:
             pass
+    if ('status' in fields and new_status != prev_status and _is_terminal_status(new_status)
+            and not prev_snap.get('terminal_receipt')):
+        # §30.9 (NS-30.9-1): the task's terminal receipt, once, signed in the
+        # action ledger, and named on the record so the record points at it.
+        _receipt = _task_terminal_receipt(task_id, snap)
+        if _receipt:
+            snap['terminal_receipt'] = _receipt
+            fields = dict(fields, terminal_receipt=_receipt)
     # Disk BEFORE memory (TV1: the journal is the source of truth, TASKS is
     # its cache). This used to update TASKS first and write afterwards, so a
     # reader polling /api/tasks could see a terminal status that state.json
@@ -6849,6 +6881,43 @@ _JOB_KEY_LOCK = threading.RLock()
 _JOB_KEY_LOCAL = threading.local()
 
 
+#: Where a task can come from (north star §30.9, NS-30.9-1), first match wins.
+TASK_ORIGINS = ("schedule", "workflow", "crew", "subagent", "goal", "local_job",
+                "conversation", "internal")
+
+
+def _task_origin(*, schedule_id=None, workflow_context=None, crew_context=None,
+                 parent_task_id=None, goal_ancestry=None, job=None, conversation_id=None) -> str:
+    """How this task came to exist, from the arguments it was spawned with only:
+    never from its name, prompt or a description a model wrote."""
+    if schedule_id:
+        return "schedule"
+    if (workflow_context or {}).get("run_id"):
+        return "workflow"
+    if crew_context:
+        return "crew"
+    if parent_task_id:
+        return "subagent"
+    if goal_ancestry:
+        return "goal"
+    if job:
+        return "local_job"
+    if conversation_id:
+        return "conversation"
+    return "internal"
+
+
+def _model_policy(rec) -> dict:
+    """The model policy a task runs under, in one place (north star §30.9): the
+    model asked for, the seat it was admitted to, and the pins that bind it."""
+    return {"model": rec.get("model"), "seat": rec.get("seat"),
+            "seat_is_local": bool(rec.get("seat_is_local")),
+            "pinned_to_seat": bool(rec.get("pin_to_seat")),
+            "local_only": bool(rec.get("local_only")),
+            "cloud_pinned": bool(rec.get("cloud_pin")),
+            "local_only_result": bool(rec.get("local_only_result"))}
+
+
 def _queue_job_fields(job, *, runner=None, prompt=''):
     """The TASKS fields that describe a task in the Local AI queue."""
     import hashlib as _hl
@@ -7542,7 +7611,15 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # on the spawning thread; the worker thread has no context of its own.
             'trace_id': "tr_" + uuid.uuid4().hex[:16],
             'parent_trace_id': _rtrace.current(),
+            # §30.9: how it came to exist; its model policy is added below; the
+            # signed receipt of how it ended is added when it ends (_task_set).
+            'origin': _task_origin(schedule_id=schedule_id, workflow_context=workflow_context,
+                                   crew_context=crew_context, parent_task_id=parent_task_id,
+                                   goal_ancestry=goal_ancestry or _parent_rec.get('goal_ancestry'),
+                                   job=job, conversation_id=conversation_id),
+            'terminal_receipt': None,
         }
+        TASKS[task_id]['model_policy'] = _model_policy(TASKS[task_id])
     # The scope is registered once the record exists and before the worker
     # thread starts (never for a duplicate or a refused spawn, which return
     # above): no window in which the task's first tool call runs unscoped.
@@ -7568,7 +7645,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                    model=model, run_id=(workflow_context or {}).get('run_id'),
                    conversation_id=conversation_id, schedule_id=schedule_id,
                    principal=TASKS[task_id]['principal'], goal_ancestry=TASKS[task_id]['goal_ancestry'],
-                   parent_task_id=parent_task_id, scope=scope)
+                   parent_task_id=parent_task_id, scope=scope,
+                   origin=TASKS[task_id]['origin'], model_policy=TASKS[task_id]['model_policy'])
         _tj.index_put(task_id, name, 'queued', TASKS[task_id]['created'])
         stored = _tj.write_state(task_id, TASKS[task_id])
         if workflow_context and not stored and not TASKS[task_id].get('off_record'):

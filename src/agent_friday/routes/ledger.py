@@ -64,6 +64,7 @@ KIND_LABELS = {
     "export": "Export",
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
+    "task_end": "A task ended",
     "authority": "Action authority revoked or restored",
 }
 
