@@ -5420,11 +5420,39 @@ def _task_log(task_id, line):
     _journal_state(task_id)
 
 
-def _task_terminal_receipt(task_id, snap):
+#: Terminal statuses that are not the task's ending: the worker is done but the
+#: owner's card still decides it (settle_waiting_task writes the real ending).
+_NOT_AN_ENDING = frozenset({"waiting_approval"})
+
+
+def _ends_task(status) -> bool:
+    return _is_terminal_status(status) and str(status) not in _NOT_AN_ENDING
+
+
+def _claim_terminal_receipt(t, fields, prev_status, new_status):
+    """Under TASKS_LOCK: what this status change does to the terminal receipt.
+    None (nothing), "reset" (a resumed task: its next ending gets its own), True
+    (write the first one) or the current receipt (write one that supersedes it).
+    A claim marks the record so a racing call (a stop while the worker finishes)
+    cannot write a second entry for the same change."""
+    if 'status' not in fields or new_status == prev_status:
+        return None
+    current = t.get('terminal_receipt') or None
+    if not _ends_task(new_status):
+        if current and _is_terminal_status(prev_status) and not _is_terminal_status(new_status):
+            return "reset"
+        return None
+    if t.get('_receipt_writing') or (current and current.get('status') == new_status):
+        return None
+    t['_receipt_writing'] = True
+    return current or True
+
+
+def _task_terminal_receipt(task_id, snap, supersedes=None):
     """Write the signed 'task_end' entry for a task that just ended and return
-    {"seq", "hash"} of it, or None when it could not be written. Ids, status,
-    origin and times only: never the task's name, prompt or result. Off the
-    record it says only that a task ended and how."""
+    {"seq", "hash", "status"} of it, or None when it could not be written. Ids,
+    status, origin and times only: never the task's name, prompt or result. Off
+    the record it says only that a task ended and how."""
     try:
         from agent_friday.services import action_ledger
         if snap.get('off_record'):
@@ -5436,9 +5464,11 @@ def _task_terminal_receipt(task_id, snap):
                    "schedule_id": snap.get('schedule_id'),
                    "created": snap.get('created'), "started": snap.get('started'),
                    "ended": snap.get('ended'), "verified": snap.get('verified')}
+        if supersedes is not None:
+            rec["supersedes"] = supersedes
         entry = action_ledger.try_append("task_end", rec)
         if entry and entry.get("seq") is not None:
-            return {"seq": entry["seq"], "hash": entry.get("hash")}
+            return {"seq": entry["seq"], "hash": entry.get("hash"), "status": snap.get('status')}
     except Exception:
         pass
     return None
@@ -5458,6 +5488,7 @@ def _task_set(task_id, **fields):
         name = snap.get('name')
         created = snap.get('created')
         ended = snap.get('ended')
+        _receipt_claim = _claim_terminal_receipt(t, fields, prev_status, new_status)
     # The North Star state (services/task_states, NS-17.7-1) is kept on the record and each
     # change is journaled, beside the status transitions below.
     try:
@@ -5494,11 +5525,28 @@ def _task_set(task_id, **fields):
                     _tl.save(task_id, _led)
         except Exception:
             pass
-    if ('status' in fields and new_status != prev_status and _is_terminal_status(new_status)
-            and not prev_snap.get('terminal_receipt')):
-        # §30.9 (NS-30.9-1): the task's terminal receipt, once, signed in the
-        # action ledger, and named on the record so the record points at it.
-        _receipt = _task_terminal_receipt(task_id, snap)
+    if _receipt_claim == "reset":
+        # Resumed: the earlier ending is history; the next one gets its own receipt.
+        _old = prev_snap.get('terminal_receipt')
+        _hist = (list(prev_snap.get('previous_terminal_receipts') or []) + [_old])[-10:]
+        snap.update(terminal_receipt=None, previous_terminal_receipts=_hist)
+        fields = dict(fields, terminal_receipt=None, previous_terminal_receipts=_hist)
+    elif _receipt_claim:
+        # §30.9 (NS-30.9-1): the task's terminal receipt, signed in the action
+        # ledger and named on the record. A later, different ending (complete,
+        # then failed) supersedes it with a new entry that names the old one.
+        _receipt = None
+        try:
+            _receipt = _task_terminal_receipt(task_id, snap,
+                                              supersedes=(_receipt_claim.get('seq')
+                                                          if _receipt_claim is not True else None))
+        finally:
+            with TASKS_LOCK:
+                _t = TASKS.get(task_id)
+                if _t is not None:
+                    _t.pop('_receipt_writing', None)
+                    if _receipt:
+                        _t['terminal_receipt'] = _receipt
         if _receipt:
             snap['terminal_receipt'] = _receipt
             fields = dict(fields, terminal_receipt=_receipt)
