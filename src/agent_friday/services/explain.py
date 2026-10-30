@@ -9,17 +9,20 @@ the stores Friday already keeps and gives back one section per question:
   what         the tool, the checkpoint's decision and the outcome word, with
                their times (a task: its actions, tools and outcomes counted,
                and its status code)
-  why          the decision's reason as a fixed code (never its text), the
-               envelope's origin and risk class, its provenance counts (owner,
-               content, sender, model), the checks it named, who chose it
+  why          the decision's reason and detail as fixed codes (never their
+               text), the envelope's origin and risk class, its provenance
+               counts (owner, content, sender, model), the checks it named,
+               who chose it
   model        model, provider and seat names from the turn's
                model_invocation rows (activity, by turn id) or, else, the
-               task's (activity rows and the task journal's model_call
-               events, by task id); `linked_by` says which
-  information  the context manifests of the action's sends (and of its turn):
-               sensitivity classes, gate actions and part counts, withheld
-               count, estimated tokens; the turn's prompt sections counted by
-               tier. Never a section's name, a part's content or a destination
+               task's: the task journal's model_call events when it has any,
+               else the activity rows by task id (never both: they record the
+               same calls); `linked_by` and `counted_from` say which
+  information  the context manifests of the action's own sends, and apart
+               from them this turn's (named by the turn id only): sensitivity
+               classes, gate actions and part counts, withheld count,
+               estimated tokens; the turn's prompt sections counted by tier.
+               Never a section's name, a part's content or a destination
   egress       the egress ledger's call rows that name the action (A10), and
                the turn's model calls: counted by channel and result, with
                their call and manifest ids. Never a destination
@@ -28,8 +31,10 @@ the stores Friday already keeps and gives back one section per question:
                that limit it, never their values), whether the request came
                verified from the owner (owner_route), the policy version
   cost         the cost the task journal recorded for the task's model calls;
-               a card's cost estimate; else "not recorded" (tokens counted
-               are said, never priced here)
+               a card's cost estimate (the card named by approval or
+               approval_id); else "not recorded" (tokens counted are said,
+               from the task journal's model calls when it has any, else the
+               activity rows, never both; never priced here)
   changed      the outcome receipts (keyed ids), changes to the owner's things
                (receipt ids), files made (keyed artifact ids), the task
                journal's receipts and the outcome-memory record id
@@ -43,11 +48,22 @@ models and tools (_name), and fixed codes only; never content, a path, a
 recipient, a section name or a destination.
 
 Bounded: one explanation at a time (another waits BUSY_WAIT_S, then Busy);
-every read stops at its own deadline (SECTION_BUDGET_S, never past
-TOTAL_BUDGET_S from the start), and no section starts once the total is
-spent. Files are read from their end (unified_ledger.TAIL_BYTES), a task
+every read that goes line by line stops at its own deadline
+(SECTION_BUDGET_S, never past TOTAL_BUDGET_S from the start), the deadline
+is checked before each costly read, and no section starts once the total is
+spent. Each store is read once per explanation: the task index, the
+approvals store (cards found by id in that one read) and the grants
+included. Files are read from their end (unified_ledger.TAIL_BYTES), a task
 journal within unified_ledger's per-task byte and line caps. The links
-section is the unified ledger's own trace, under its own lock and budget.
+section is the unified ledger's own trace, under its own lock and budget,
+and is started only while LINKS_MIN_S of the total remain.
+
+Worst case (WORST_CASE_S): BUSY_WAIT_S waiting for the lock, the links
+section started at most TOTAL_BUDGET_S - LINKS_MIN_S in, then the unified
+ledger's own wait and budget (U.BUSY_WAIT_S + U.TOTAL_BUDGET_S): 3 + 5 + 3
++ 6 = 17 s with today's values; past that only a single-file read already
+begun (the task index, the approvals store, the grants, the outcome
+memory) when a deadline passed, since those are not read line by line.
 
 No path is ever built from what a caller sends: the ids are only compared
 with values read from the stores, and a task's journal is opened by the name
@@ -91,6 +107,11 @@ MAX_CARDS = 5
 MAX_GRANTS = 5
 #: The most trace rows listed under links.
 LINK_ROWS_MAX = 50
+#: The links section is not started with less than this left of the total
+#: (the unified ledger's trace has its own budget, larger than this).
+LINKS_MIN_S = 1.0
+#: The longest one explanation can take, as the module docstring adds it up.
+WORST_CASE_S = BUSY_WAIT_S + (TOTAL_BUDGET_S - LINKS_MIN_S) + U.BUSY_WAIT_S + U.TOTAL_BUDGET_S
 
 #: A model, provider, seat or tool name: letters, digits and _ . : / + -
 #: only (a model may be "vendor/model"), at most 80 characters, never "..",
@@ -114,12 +135,23 @@ _REASON_CODES = (
 
 #: Where a request came from, as the envelope names it (action_gate.ORIGINS).
 _ORIGINS = ("chat", "voice", "task", "schedule", "channel", "card", "owner_route", "route", "other")
+#: A decision's detail as a fixed code (action_gate writes "duplicate_key"
+#: for a refused repeat); any other detail is "other", never its words.
+_DETAIL_CODES = {"duplicate_key": "duplicate_key"}
+#: The card fields the authority and cost sections use (nothing else of a
+#: card is kept from the one read of the approvals store).
+_CARD_FIELDS = ("status", "decided_source", "policy_class", "policy_version",
+                "decided_policy_version")
 _PROVENANCE_KEYS = ("owner", "content", "sender", "model")
 _CARD_COST_KEY = "cost_estimate_mψ"
 
 
 class BadId(ValueError):
     """Not one action id or one task id of the right shape."""
+
+
+class OutOfTime(Exception):
+    """A costly read was not started: the explanation's total was spent."""
 
 
 Busy = U.Busy
@@ -220,6 +252,16 @@ def reason_code(reason: Any, surface: Any = None) -> Optional[str]:
     return "other"
 
 
+def detail_code(detail: Any) -> Optional[str]:
+    """A decision's detail as a fixed code (_DETAIL_CODES), "other" for any
+    other detail, None when there is none. Never a word of the detail."""
+    if detail is None or detail == "" or detail == {}:
+        return None
+    if isinstance(detail, str):
+        return _DETAIL_CODES.get(detail.strip().lower(), "other")
+    return "other"
+
+
 class _Stop:
     """Asked before each line: True once its deadline has passed."""
 
@@ -254,6 +296,19 @@ class _Run:
 
     def stop(self) -> _Stop:
         return _Stop(_clock() + max(0.0, min(SECTION_BUDGET_S, self.left())))
+
+    def spent(self, store: str) -> bool:
+        """Asked before a costly read: True (and the store named as partly
+        read) once the total is spent."""
+        if self.left() <= 0:
+            self.partial.add(store)
+            return True
+        return False
+
+    def check(self, store: str) -> None:
+        """As spent(), but raises OutOfTime so the read is not started."""
+        if self.spent(store):
+            raise OutOfTime(store)
 
     def note(self, name: str, stop: _Stop, flag: Optional[_Flag] = None) -> None:
         if stop.hit:
@@ -290,6 +345,7 @@ def _read_ledger(run: _Run) -> dict:
     """The decisions, outcomes and change receipts of the action (or of the
     task's actions: its decisions, and every action its journal names)."""
     from agent_friday.services import action_ledger
+    run.check("action_ledger")
     got: Dict[Any, dict] = {}
 
     def keep(rows: Iterable[dict]) -> None:
@@ -316,7 +372,7 @@ def _read_ledger(run: _Run) -> dict:
         if len(aids) > MAX_ACTIONS:
             run.truncated.add("actions")
             aids = set(sorted(aids)[:MAX_ACTIONS])
-    if aids:
+    if aids and not run.spent("action_ledger"):
         stop = run.stop()
 
         def of_action(e: dict) -> bool:
@@ -360,18 +416,26 @@ def _tasks(run: _Run) -> List[str]:
     return out[:3]
 
 
-def _task_on_disk(want: str) -> Tuple[Optional[str], dict]:
+def _read_task_index(run: _Run) -> dict:
+    """The task index, read once per explanation (every task looked up in
+    it shares the one read)."""
+    from agent_friday.services import task_journal as tj
+    run.check("task_index")
+    idx = tj.index_read() or {}
+    return idx if isinstance(idx, dict) else {}
+
+
+def _task_on_disk(run: _Run, want: str) -> Tuple[Optional[str], dict]:
     """The task's own name as the disk gives it (the index, else its folder),
     and its index row; (None, {}) when this PC keeps no journal for it. The
     journal is opened by that name, never by the one asked for."""
     from agent_friday.services import task_journal as tj
-    try:
-        idx = tj.index_read() or {}
-    except Exception:  # noqa: BLE001
-        idx = {}
+    idx = run.maybe("task_index", _read_task_index, {})
     for t, row in idx.items():
         if t == want:
             return t, (row if isinstance(row, dict) else {})
+    if run.spent("task_journal"):
+        return None, {}
     try:
         for n, d in enumerate(tj.tasks_dir().iterdir()):
             if n >= 20 * U.MAX_TASKS:
@@ -393,8 +457,10 @@ def _read_journal(run: _Run) -> dict:
     except Exception:  # noqa: BLE001 - no decision to name a task: no journal to read
         tasks = []
     for want in tasks:
-        name, row = _task_on_disk(want)
-        if not name:
+        if run.spent("task_journal"):
+            break
+        name, row = _task_on_disk(run, want)
+        if not name or run.spent("task_journal"):
             continue
         out["tasks"].append(name)
         st = U._code(row.get("status"))
@@ -439,6 +505,7 @@ def _read_models(run: _Run) -> List[dict]:
         tasks = set()
     if not turns and not tasks:
         return []
+    run.check("activity")
     stop = run.stop()
 
     def match(e: dict) -> bool:
@@ -459,6 +526,7 @@ def _read_egress(run: _Run) -> List[dict]:
     turns = _turns(run)
     if not aids and not turns:
         return []
+    run.check("egress")
     flag = _Flag()
     stop = run.stop()
     out: List[dict] = []
@@ -486,9 +554,11 @@ def _read_egress(run: _Run) -> List[dict]:
     return out
 
 
-def _read_manifests(run: _Run) -> List[dict]:
-    """The context manifests of the action's sends and of its turn (whole
-    lines, read here only to be counted)."""
+def _read_manifests(run: _Run) -> List[Tuple[str, dict]]:
+    """The context manifests of the action's own sends ("send": named by an
+    egress row of the action) and, apart from them, of its turn ("turn":
+    named by the turn id only), as (link, whole line), read here only to be
+    counted."""
     from agent_friday.services import context_manifest as cm
     eg = run.maybe("egress", _read_egress, [])
     mids = {r["ids"]["manifest_id"] for r in eg if r["ids"].get("manifest_id")}
@@ -496,10 +566,11 @@ def _read_manifests(run: _Run) -> List[dict]:
     needles = [n.encode("utf-8") for n in sorted(mids | turns)]
     if not needles:
         return []
+    run.check("context_manifest")
     p = Path(cm.path())
     flag = _Flag()
     stop = run.stop()
-    out: List[dict] = []
+    out: List[Tuple[str, dict]] = []
     for f in (p, p.with_name(p.name + ".1")):
         for raw in U._tail_lines(f, U.TAIL_BYTES, flag):
             if stop() or len(out) >= MAX_ROWS:
@@ -510,8 +581,10 @@ def _read_manifests(run: _Run) -> List[dict]:
             if not e:
                 continue
             mid, t = e.get("manifest_id"), e.get("turn_id")
-            if (isinstance(mid, str) and mid in mids) or (isinstance(t, str) and t in turns):
-                out.append(e)
+            if isinstance(mid, str) and mid in mids:
+                out.append(("send", e))
+            elif isinstance(t, str) and t in turns:
+                out.append(("turn", e))
     run.note("context_manifest", stop, flag)
     return out
 
@@ -523,6 +596,7 @@ def _read_sections(run: _Run) -> List[dict]:
     turns = _turns(run)
     if not turns:
         return []
+    run.check("retrieval_ledger")
     flag = _Flag()
     stop = run.stop()
     needles = [t.encode("utf-8") for t in sorted(turns)]
@@ -555,7 +629,7 @@ def _read_artifacts(run: _Run) -> List[str]:
     for ev in jr.get("events", []):
         if ev.get("kind") == "artifact":
             _add(out, U._id(U._artifact_view_id(ev.get("artifact_id"))))
-    if not drefs and not run.task_id:
+    if (not drefs and not run.task_id) or run.spent("artifact_manifest"):
         return out
     flag = _Flag()
     stop = run.stop()
@@ -571,6 +645,33 @@ def _read_artifacts(run: _Run) -> List[str]:
             _add(out, ids.get("artifact_id"))
     run.note("artifact_manifest", stop, flag)
     return out
+
+
+def _read_cards(run: _Run) -> Dict[str, dict]:
+    """The approvals store, read once per explanation: each card by its id,
+    with only the fields the authority and cost sections use."""
+    from agent_friday.services import approvals
+    run.check("approvals")
+    out: Dict[str, dict] = {}
+    for c in approvals.list_approvals() or []:
+        cid = U._id(c.get("approval_id")) if isinstance(c, dict) else None
+        if cid and cid not in out:
+            keep = {k: c.get(k) for k in _CARD_FIELDS}
+            keep[_CARD_COST_KEY] = c.get(_CARD_COST_KEY)
+            out[cid] = keep
+    return out
+
+
+def _task_model_rows(run: _Run, activity: List[dict]) -> Tuple[List[dict], Optional[str]]:
+    """The task's model calls, counted once: the task journal's model_call
+    events when it holds any for the task, else the activity rows that name a
+    task. Never both (they record the same calls)."""
+    jr = run.maybe("journal", _read_journal, {})
+    calls = list(jr.get("model_calls") or [])
+    if calls:
+        return calls, "task_journal"
+    rows = [r for r in activity if r.get("task_id")]
+    return rows, ("activity" if rows else None)
 
 
 # ── the sections ─────────────────────────────────────────────────────────────
@@ -645,7 +746,7 @@ def _why_one(rec: dict) -> dict:
         "action_id": _aid_of(rec),
         "decision": U._word(rec.get("decision"), U.DECISION_WORDS),
         "reason_code": reason_code(rec.get("reason"), rec.get("surface")),
-        "detail": U._code(rec.get("detail")),
+        "detail": detail_code(rec.get("detail")),
         "origin": env.get("origin") if env.get("origin") in _ORIGINS else None,
         "risk_class": U._code(env.get("risk_class") or rec.get("class")),
         "provenance": ({k: _int(prov.get(k)) for k in _PROVENANCE_KEYS}
@@ -695,12 +796,11 @@ def _why(run: _Run) -> dict:
 def _model(run: _Run) -> dict:
     turns = _turns(run)
     rows = run.once("models", _read_models)
-    jr = run.maybe("journal", _read_journal, {})
     by_turn = [r for r in rows if str(r.get("turn_id") or "") in turns]
     if by_turn:
-        use, linked = by_turn, "turn"
+        use, linked, source = by_turn, "turn", "activity"
     else:
-        use = [r for r in rows if r.get("task_id")] + list(jr.get("model_calls") or [])
+        use, source = _task_model_rows(run, rows)
         linked = "task" if use else None
     if not use:
         return _nr("model")
@@ -718,14 +818,12 @@ def _model(run: _Run) -> dict:
         a["seat"] or NOT_RECORDED, a["calls"], "" if a["calls"] == 1 else "s") for a in models]
     said = "Which model: %s; linked by %s." % ("; ".join(parts),
                                                 "this turn" if linked == "turn" else "its task")
-    return {"linked_by": linked, "models": models, "said": said}
+    return {"linked_by": linked, "counted_from": source, "models": models, "said": said}
 
 
-def _information(run: _Run) -> dict:
-    ms = run.once("manifests", _read_manifests)
-    secs = run.maybe("sections", _read_sections, [])
-    if not ms and not secs:
-        return _nr("information")
+def _manifest_counts(ms: List[dict]) -> dict:
+    """Context manifests counted: ids, classes, gate actions, parts, withheld
+    and estimated tokens. Never a part's name or content."""
     classes: Dict[str, int] = {}
     actions: Dict[str, int] = {}
     ids: List[str] = []
@@ -741,26 +839,51 @@ def _information(run: _Run) -> dict:
                 _count(actions, _cls(s.get("action")), n)
         withheld += _int(m.get("withheld"))
         tokens += _int(m.get("estimated_tokens"))
+    return {"count": len(ms), "manifest_ids": ids, "sensitivity_classes": classes,
+            "gate_actions": actions, "parts": parts, "withheld": withheld, "estimated_tokens": tokens}
+
+
+def _manifest_words(c: dict) -> str:
+    return "classes %s; %d part%s (%s); %d withheld; about %d tokens" % (
+        _counts_words(c["sensitivity_classes"]) or NOT_RECORDED, c["parts"], "" if c["parts"] == 1 else "s",
+        _counts_words(c["gate_actions"]) or NOT_RECORDED, c["withheld"], c["estimated_tokens"])
+
+
+def _information(run: _Run) -> dict:
+    tagged = run.once("manifests", _read_manifests)
+    secs = run.maybe("sections", _read_sections, [])
+    if not tagged and not secs:
+        return _nr("information")
+    sends = _manifest_counts([m for link, m in tagged if link == "send"])
+    turn = _manifest_counts([m for link, m in tagged if link == "turn"])
+    total = _manifest_counts([m for _link, m in tagged])
     tiers: Dict[str, int] = {}
     sent = 0
     for s in secs:
         _count(tiers, "tier_" + s["tier"])
         sent += 1 if s["sent"] else 0
+    own = "this action's" if run.action_id else "this task's"
+    turn_of = "this turn's" if run.action_id else "its turns'"
     bits = []
-    if ms:
-        bits.append("%d send%s' context manifest%s: classes %s; %d part%s (%s); %d withheld; "
-                    "about %d tokens" % (len(ms), "" if len(ms) == 1 else "s", "" if len(ms) == 1 else "s",
-                                         _counts_words(classes) or NOT_RECORDED, parts,
-                                         "" if parts == 1 else "s", _counts_words(actions) or NOT_RECORDED,
-                                         withheld, tokens))
+    if sends["count"]:
+        bits.append("%d context manifest%s of %s own sends: %s" % (
+            sends["count"], "" if sends["count"] == 1 else "s", own, _manifest_words(sends)))
     else:
-        bits.append("no send's context manifest was found")
+        bits.append("no context manifest of %s own sends was found" % own)
+    if turn["count"]:
+        bits.append("%s context manifest%s (%d), named by the turn and not by a send of %s: %s" % (
+            turn_of, "" if turn["count"] == 1 else "s", turn["count"],
+            "this action" if run.action_id else "this task", _manifest_words(turn)))
     if secs:
-        bits.append("the turn assembled %d prompt section%s (%s), %d sent" % (
+        bits.append("%s prompt: %d section%s assembled (%s), %d sent" % (
+            "this turn's" if run.action_id else "its turns'",
             len(secs), "" if len(secs) == 1 else "s", _counts_words(tiers), sent))
-    return {"manifests": len(ms), "manifest_ids": ids, "sensitivity_classes": classes,
-            "gate_actions": actions, "parts": parts, "withheld": withheld,
-            "estimated_tokens": tokens,
+    return {"manifests": total["count"], "manifest_ids": total["manifest_ids"],
+            "sensitivity_classes": total["sensitivity_classes"], "gate_actions": total["gate_actions"],
+            "parts": total["parts"], "withheld": total["withheld"],
+            "estimated_tokens": total["estimated_tokens"],
+            "by_link": {"send": sends["count"], "turn": turn["count"]},
+            "sends": sends, "turn": turn,
             "turn_sections": {"count": len(secs), "by_tier": tiers, "sent": sent} if secs else None,
             "said": "What information: " + "; ".join(bits) + ". Never their content."}
 
@@ -813,9 +936,13 @@ def _limiting_fields(g: dict) -> List[str]:
     return [f for f in FIELD_ORDER if on.get(f)]
 
 
-def _grant_view(gid: str, cache: dict) -> Optional[dict]:
+def _grant_view(run: _Run, gid: str, cache: dict) -> Optional[dict]:
+    """The grant's id, kind, status and the names of the fields that limit
+    it (never their values, nor how often it was used). The grant stores are
+    read once per explanation (`cache`), each only while time is left."""
     from agent_friday.governance import grant_record as gr
     if "scoped" not in cache:
+        run.check("grants")
         try:
             from agent_friday.governance import action_gate
             cache["scoped"] = [gr.from_scoped(g).to_dict() for g in action_gate._read_grants()
@@ -825,6 +952,7 @@ def _grant_view(gid: str, cache: dict) -> Optional[dict]:
     hit = next((g for g in cache["scoped"] if g.get("id") == gid), None)
     if hit is None:
         if "all" not in cache:
+            run.check("grants")
             cache["all"] = (gr.all_records() or {}).get("records") or []
         hit = next((g for g in cache["all"] if g.get("id") == gid), None)
     if hit is None:
@@ -832,13 +960,13 @@ def _grant_view(gid: str, cache: dict) -> Optional[dict]:
     subj = hit.get("subject") if isinstance(hit.get("subject"), dict) else {}
     return {"grant_id": gid, "found": True, "kind": U._code(hit.get("kind")),
             "status": U._code(hit.get("status")), "subject_kind": U._code(subj.get("kind")),
-            "limited_by": _limiting_fields(hit), "used": _int(hit.get("used_count")),
-            "max_uses": _int(hit.get("max_uses")) if hit.get("max_uses") is not None else None}
+            "limited_by": _limiting_fields(hit)}
 
 
-def _card_view(cid: str) -> dict:
-    from agent_friday.services import approvals
-    c = approvals.get_approval(cid)
+def _card_view(run: _Run, cid: str) -> dict:
+    """The card's status, who decided it and its policy versions, from the
+    one read of the approvals store."""
+    c = run.once("approvals", _read_cards).get(cid)
     if not isinstance(c, dict):
         return {"card_id": cid, "found": False}
     return {"card_id": cid, "found": True, "status": U._code(c.get("status")),
@@ -874,25 +1002,31 @@ def _authority(run: _Run) -> dict:
     card_views = []
     for cid in cards[:MAX_CARDS]:
         try:
-            card_views.append(_card_view(cid))
+            card_views.append(_card_view(run, cid))
+        except OutOfTime:
+            card_views.append({"card_id": cid, "found": None, "out_of_time": True})
         except Exception as e:  # noqa: BLE001 - the card store failing hides nothing else
             card_views.append({"card_id": cid, "found": None, "error": type(e).__name__})
     cache: dict = {}
     grant_views = []
     for gid in grants[:MAX_GRANTS]:
         try:
-            grant_views.append(_grant_view(gid, cache))
+            grant_views.append(_grant_view(run, gid, cache))
+        except OutOfTime:
+            grant_views.append({"grant_id": gid, "found": None, "out_of_time": True})
         except Exception as e:  # noqa: BLE001
             grant_views.append({"grant_id": gid, "found": None, "error": type(e).__name__})
     owner_route = bool(origins.get("owner_route"))
     bits = []
     for c in card_views:
-        bits.append("card %s (%s%s)" % (c["card_id"], (c.get("status") or NOT_RECORDED).replace("_", " "),
+        bits.append("card %s (%s%s)" % (c["card_id"], (c.get("status") or (
+            "not read, out of time" if c.get("out_of_time") else NOT_RECORDED)).replace("_", " "),
                                         (", decided by " + c["decided_by"].replace("_", " "))
                                         if c.get("decided_by") else ""))
     for g in grant_views:
         bits.append("grant %s (%s%s)" % (
-            g["grant_id"], ((g.get("kind") or "") + " " + (g.get("status") or "")).strip() or NOT_RECORDED,
+            g["grant_id"], ((g.get("kind") or "") + " " + (g.get("status") or "")).strip()
+            or ("not read, out of time" if g.get("out_of_time") else NOT_RECORDED),
             ("; limited by " + ", ".join(f.replace("_", " ") for f in g["limited_by"]))
             if g.get("limited_by") else ""))
     if not cards and not grants:
@@ -914,17 +1048,18 @@ def _cost(run: _Run) -> dict:
     led = run.maybe("ledger", _read_ledger, {"decisions": []})
     cards: List[str] = []
     for e in led.get("decisions", []):
-        _add(cards, U._id(_rec(e).get("approval")))
+        rec = _rec(e)
+        _add(cards, U._id(rec.get("approval") or rec.get("approval_id")))   # as authority finds them
     if cards:
-        from agent_friday.services import approvals
+        store = run.maybe("approvals", _read_cards, {})
         for cid in cards[:MAX_CARDS]:
-            try:
-                c = approvals.get_approval(cid) or {}
-            except Exception:  # noqa: BLE001
-                c = {}
-            estimate += _int(c.get(_CARD_COST_KEY))
+            estimate += _int((store.get(cid) or {}).get(_CARD_COST_KEY))
+    # tokens: the task journal's calls when it holds any (the calls a price
+    # is recorded for), else the activity rows; never both (same calls)
+    activity = run.maybe("models", _read_models, [])
+    counted = calls if calls else activity
     tok_in = tok_out = 0
-    for r in run.maybe("models", _read_models, []) + calls:
+    for r in counted:
         tok_in += _int(r.get("tokens_in"))
         tok_out += _int(r.get("tokens_out"))
     tokens = {"in": tok_in, "out": tok_out} if (tok_in or tok_out) else None
@@ -972,6 +1107,8 @@ def _changed(run: _Run) -> dict:
     try:
         from agent_friday.services import outcome_memory as om
         refs = {"action:%s" % a for a in _aids(run)}
+        if refs and run.spent("outcome_memory"):
+            refs = set()
         for r in om._all() if refs else []:
             if isinstance(r, dict) and r.get("subject_ref") in refs and len(memory) < MAX_IDS:
                 eff = om.effective(r)
@@ -1008,6 +1145,11 @@ def _changed(run: _Run) -> dict:
 
 def _links(run: _Run) -> dict:
     want = run.action_id or run.task_id
+    if run.left() < LINKS_MIN_S:
+        # the trace runs on its own budget: started this late it would run
+        # well past this explanation's total
+        return {"status": "out_of_time",
+                "said": "%s: not read this time (out of time)." % SECTION_LABELS["links"]}
     try:
         out = U.unified(id=want, limit=U.PAGE_MAX)
     except U.Busy:
@@ -1044,6 +1186,8 @@ def _section(run: _Run, name: str, fn: Callable[[_Run], dict]) -> dict:
         return {"status": "out_of_time", "said": "%s: not read this time (out of time)." % label}
     try:
         out = fn(run)
+    except OutOfTime:
+        return {"status": "out_of_time", "said": "%s: not read this time (out of time)." % label}
     except U.Busy:
         return {"status": "busy", "said": "%s: the records were busy; try again in a moment." % label}
     except Exception as e:  # noqa: BLE001 - one section failing never hides the others
@@ -1103,16 +1247,18 @@ def explain(action_id: Optional[str] = None, task_id: Optional[str] = None) -> d
         _RUN_LOCK.release()
     order = [n for n, _f in SECTIONS]
     head = ("Action %s" % aid) if aid else ("Task %s" % tid)
+    out_of_time = bool(run.partial) or any(s.get("status") == "out_of_time" for s in sections.values())
     if not found:
-        head += ": nothing Friday keeps names this id."
+        head += (": the records could not be read in time." if out_of_time
+                 else ": nothing Friday keeps names this id.")
     lines = [head] + [sections[n].get("said", "") for n in order]
     if run.partial:
         lines.append("Some stores ran out of time (%s), so older records may be missing."
                      % ", ".join(sorted(n.replace("_", " ") for n in run.partial)))
     return {"subject": {"action_id": aid} if aid else {"task_id": tid}, "found": found,
             "order": order, "sections": sections, "text": "\n".join(lines),
-            "out_of_time": bool(run.partial) or any(s.get("status") == "out_of_time"
-                                                     for s in sections.values()),
+            "out_of_time": out_of_time,
             "partial": sorted(run.partial), "truncated": sorted(run.truncated),
             "bounded": {"total_seconds": TOTAL_BUDGET_S, "read_seconds": SECTION_BUDGET_S,
+                        "links_min_seconds": LINKS_MIN_S, "worst_case_seconds": WORST_CASE_S,
                         "actions": MAX_ACTIONS, "rows": MAX_ROWS, "tail_bytes": U.TAIL_BYTES}}

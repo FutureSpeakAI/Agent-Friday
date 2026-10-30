@@ -296,15 +296,23 @@
   // Why? (services/explain, A13): what Friday did for one action or task, why,
   // which model, what information, what left this PC, on whose authority, what
   // it cost and what changed, as plain text set with textContent only.
+  // each press is numbered: an answer that comes back after a newer press
+  // was made is dropped, so it never overwrites the newer one
+  let explainSeq = 0;
   function explainShow(kind, id) {
     const box = $('u-why-box'), out = $('u-why');
+    const mine = ++explainSeq;
     box.hidden = false;
     out.textContent = 'Reading…';
     const p = new URLSearchParams();
     p.set(kind === 'task' ? 'task_id' : 'action_id', id);
     api('/api/ledger/explain?' + p.toString()).then(({ ok, d }) => {
+      if (mine !== explainSeq) return;
       out.textContent = ok ? String(d.text || '') : ((d && d.error) || 'This could not be explained right now.');
-    }).catch(() => { out.textContent = 'This could not be explained right now.'; });
+    }).catch(() => {
+      if (mine !== explainSeq) return;
+      out.textContent = 'This could not be explained right now.';
+    });
   }
   function whyButton(kind, id) {
     const b = el('button', 'Why?');

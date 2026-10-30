@@ -14,7 +14,15 @@
   * an id that is not one action id or one task id is refused before any
     store is read; one explanation at a time; out of time is said, never
     raised;
-  * the Ledger page's "Why?" sets the answer with textContent only.
+  * a decision's detail is a fixed code, never a word of it;
+  * a task's model calls are counted once (the task journal's when it has
+    any, else the activity rows), tokens likewise; the task index and the
+    approvals store are read once per explanation; a card is found by
+    approval or approval_id; the links trace is not started with under
+    LINKS_MIN_S left, and no costly read starts once the total is spent;
+  * this turn's context manifests are told apart from the action's own sends;
+  * the Ledger page's "Why?" sets the answer with textContent only, and a
+    late answer never overwrites a newer one.
 Synthetic records only; ids are made at run time.
 """
 from __future__ import annotations
@@ -197,6 +205,7 @@ def test_a_seeded_outward_action_answers_every_question_with_ids_and_counts_only
     g = au["grants"][0]
     assert g["grant_id"] == ids["grant_id"] and g["found"] is True and g["status"] == "active"
     assert g["limited_by"] == ["expires_at", "max_uses", "tools", "destination_scope"]
+    assert "used" not in g and "max_uses" not in g, "names of the limiting fields only, never values"
     assert au["policy_versions"] and au["origins"] == {"task": 1} and au["owner_route"] is False
     # cost: what the task journal recorded, and the card's estimate
     c = s["cost"]
@@ -334,7 +343,152 @@ def test_reason_codes_never_carry_the_reasons_words():
     assert E.reason_code("mail_send", "mail_send") == "carried_out_by_executor"
 
 
-# ── 5. the Ledger page ───────────────────────────────────────────────────────
+def test_a_decisions_detail_is_a_fixed_code_never_a_word_of_it(tmp_path):
+    word = "a13_probe_detail_word"            # a code-shaped word: _code would have echoed it
+    assert E.detail_code("duplicate_key") == "duplicate_key"
+    assert E.detail_code(word) == "other" and E.detail_code(WORDS) == "other"
+    assert E.detail_code({"k": word}) == "other"
+    assert E.detail_code(None) is None and E.detail_code("") is None
+    assert E._why_one({"detail": word})["detail"] == "other"
+    dec = G._receipt({"tool": "probe:a13_detail", "class": "outward", "decision": "allow",
+                      "surface": "test", "detail": word})
+    out = E.explain(action_id=dec["rec"]["action_id"])
+    assert out["sections"]["why"]["decision"]["detail"] in (None, "other")
+    assert word not in _dump(out)
+
+
+# ── 5. counted once, read once, bounded ──────────────────────────────────────
+
+def test_a_task_with_journal_and_activity_model_rows_counts_each_call_once(tmp_path):
+    from agent_friday.services import activity_ledger
+    tid = "a13-explain-task-0002"
+    tj.append(tid, "created", name=WORDS)
+    tj.index_put(tid, WORDS, "running", time.time())
+    # the same call, as the activity record and as the task journal keep it
+    activity_ledger.record("model_invocation", model="probe-model-a13", provider="probe-provider",
+                           seat="cloud", tokens_in=120, tokens_out=30, task_id=tid)
+    tj.model_call(model="probe-model-a13", provider="probe-provider", seat="cloud", tokens_in=120,
+                  tokens_out=30, cost_usd=0.0042, task_id=tid)
+    out = E.explain(task_id=tid)
+    m = out["sections"]["model"]
+    assert m["linked_by"] == "task" and m["counted_from"] == "task_journal"
+    assert [(x["calls"], x["tokens_in"], x["tokens_out"]) for x in m["models"]] == [(1, 120, 30)]
+    c = out["sections"]["cost"]
+    assert c["tokens"] == {"in": 120, "out": 30} and c["model_calls"] == 1 and c["priced_calls"] == 1
+    _no_content(out, tmp_path)
+
+
+def test_a_task_with_activity_rows_only_counts_them(tmp_path):
+    from agent_friday.services import activity_ledger
+    tid = "a13-explain-task-0003"
+    tj.append(tid, "created", name=WORDS)
+    tj.index_put(tid, WORDS, "running", time.time())
+    activity_ledger.record("model_invocation", model="probe-model-a13", provider="probe-provider",
+                           seat="cloud", tokens_in=50, tokens_out=5, task_id=tid)
+    out = E.explain(task_id=tid)
+    m = out["sections"]["model"]
+    assert m["status"] == "recorded" and m["linked_by"] == "task" and m["counted_from"] == "activity"
+    assert [(x["calls"], x["tokens_in"], x["tokens_out"]) for x in m["models"]] == [(1, 50, 5)]
+    assert out["sections"]["cost"]["tokens"] == {"in": 50, "out": 5}
+
+
+def test_the_links_section_is_not_started_with_under_a_second_left(tmp_path, monkeypatch):
+    ids = _seed(tmp_path)
+    started = []
+
+    def trace(**kw):
+        started.append(kw)
+        raise AssertionError("the trace is not started this late")
+    monkeypatch.setattr(U, "unified", trace)
+    monkeypatch.setattr(E._Run, "left", lambda self: E.LINKS_MIN_S / 2)
+    out = E.explain(action_id=ids["action_id"])
+    assert started == []
+    assert out["sections"]["links"]["status"] == "out_of_time"
+    assert out["out_of_time"] is True
+    assert out["sections"]["what"]["status"] == "recorded", "the other sections are still read"
+    assert E.WORST_CASE_S == E.BUSY_WAIT_S + E.TOTAL_BUDGET_S - E.LINKS_MIN_S + U.BUSY_WAIT_S + U.TOTAL_BUDGET_S
+    assert out["bounded"]["worst_case_seconds"] == E.WORST_CASE_S
+
+
+def test_a_costly_read_is_not_started_once_the_total_is_spent(tmp_path, monkeypatch):
+    ids = _seed(tmp_path)
+    run = E._Run(ids["action_id"], None)
+    monkeypatch.setattr(E._Run, "left", lambda self: 0.0)
+    with pytest.raises(E.OutOfTime):
+        E._read_cards(run)
+    with pytest.raises(E.OutOfTime):
+        E._read_task_index(run)
+    assert {"approvals", "task_index"} <= run.partial
+
+
+def test_the_task_index_and_the_approvals_store_are_read_once_per_explanation(tmp_path, monkeypatch):
+    ids = _seed(tmp_path)
+    tid2 = "a13-explain-task-0004"
+    tj.append(tid2, "created", name=WORDS)
+    tj.index_put(tid2, WORDS, "running", time.time())
+    # the same action decided again under a second task: two tasks to look up
+    G._receipt({"tool": TOOL, "class": "outward", "decision": "allow", "surface": "test",
+                "action_id": ids["action_id"], "task_id": tid2, "approval": CARD})
+    reads = {"index": 0, "approvals": 0}
+    real_index, real_store = tj.index_read, approvals._read_store
+
+    def index_read():
+        reads["index"] += 1
+        return real_index()
+
+    def read_store():
+        reads["approvals"] += 1
+        return real_store()
+    monkeypatch.setattr(tj, "index_read", index_read)
+    monkeypatch.setattr(approvals, "_read_store", read_store)
+    monkeypatch.setattr(U, "unified", lambda **kw: {"rows": []})   # the trace reads on its own
+    out = E.explain(action_id=ids["action_id"])
+    s = out["sections"]
+    assert s["what"]["status"] == "recorded" and s["authority"]["cards"][0]["card_id"] == CARD
+    assert s["cost"]["card_estimate_mpsi"] == 7, "the card is found in the one read"
+    assert reads == {"index": 1, "approvals": 1}, reads
+
+
+def test_the_cost_section_finds_a_card_named_by_approval_id(tmp_path):
+    card = "apr_a13_probe_0002"
+    approvals.APPROVALS_FILE.write_text(json.dumps([{
+        "approval_id": card, "kind": "send_email", "subject_type": "task", "subject_id": TID,
+        "title": WORDS, "status": "pending", "cost_estimate_mψ": 5, "created_at": time.time()}]),
+        encoding="utf-8")
+    dec = G._receipt({"tool": "probe:a13_card", "class": "outward", "decision": "allow",
+                      "surface": "test", "approval_id": card})
+    out = E.explain(action_id=dec["rec"]["action_id"])
+    s = out["sections"]
+    assert [c["card_id"] for c in s["authority"]["cards"]] == [card]
+    assert s["cost"]["card_estimate_mpsi"] == 5
+    _no_content(out, tmp_path)
+
+
+def test_this_turns_manifests_are_told_apart_from_the_actions_own_sends(tmp_path):
+    from agent_friday.services import context_manifest as cm
+    ids = _seed(tmp_path)
+    turn_mid = "ctx_a13_turn_probe_0001"
+    p = Path(cm.path())
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"manifest_id": turn_mid, "turn_id": TURN, "ts": time.time(),
+                            "sensitivity_classes": ["MEMORY"],
+                            "sources": [{"action": "allow", "count": 2, "part": WORDS}],
+                            "withheld": 1, "estimated_tokens": 40}) + "\n")
+    out = E.explain(action_id=ids["action_id"])
+    info = out["sections"]["information"]
+    assert info["by_link"] == {"send": 1, "turn": 1}
+    assert info["sends"]["manifest_ids"] == [ids["manifest_id"]]
+    assert info["turn"]["manifest_ids"] == [turn_mid]
+    assert info["turn"]["sensitivity_classes"] == {"MEMORY": 1} and info["turn"]["parts"] == 2
+    assert info["sends"]["sensitivity_classes"] == {"SERVICE": 1}
+    said = info["said"]
+    assert "1 context manifest of this action's own sends" in said
+    assert "this turn's context manifest (1), named by the turn and not by a send of this action" in said
+    _no_content(out, tmp_path, ids)
+
+
+# ── 6. the Ledger page ───────────────────────────────────────────────────────
 
 def test_the_ledger_page_asks_why_and_shows_the_answer_with_textcontent_only():
     html = (ROOT / "static" / "ledger.html").read_text(encoding="utf-8")
@@ -343,6 +497,10 @@ def test_the_ledger_page_asks_why_and_shows_the_answer_with_textcontent_only():
     body = html[start:html.index("function unifiedRender", start)]
     assert "/api/ledger/explain?" in body and "textContent" in body
     assert "action_id" in body and "task_id" in body
+    # a late answer never overwrites a newer one: each press is numbered and
+    # both the answer and the failure check the number before writing
+    assert "let explainSeq = 0;" in html and "const mine = ++explainSeq;" in body
+    assert body.count("if (mine !== explainSeq) return;") == 2
     render = html[html.index("function unifiedRender"):html.index("function unifiedLoad")]
     assert "whyButton('action', rid.action_id)" in render and "whyButton('task', rid.task_id)" in render
     for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
