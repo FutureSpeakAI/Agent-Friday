@@ -162,10 +162,14 @@ def _write(path, content, mode="write"):
     return _tool_write_file({"path": str(path), "content": content, "mode": mode})
 
 
-def test_a_second_write_records_the_prior_version_and_its_backup(home):
+def test_a_second_write_records_the_prior_version_and_its_backup(home, tmp_path_factory, monkeypatch):
     import re
     from agent_friday.services import artifact_manifest as am
-    p = home / "plan.md"
+    # The file tools never write inside Friday's own folder (services/path_policy):
+    # the file lives in a work folder of its own, made the folder they may use.
+    work = tmp_path_factory.mktemp("work")
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(work))
+    p = work / "plan.md"
     first = _write(p, "first version")
     assert am.written_paths("write_file", {"path": str(p)}, first) == [p.resolve()]
     line1 = am.record_call("write_file", {"path": str(p), "content": "first version"}, first,

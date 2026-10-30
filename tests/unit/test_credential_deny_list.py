@@ -96,9 +96,12 @@ def test_read_file_refuses_and_does_not_leak(friday_dir):
         probe.unlink(missing_ok=True)
 
 
-def test_read_file_still_reads_ordinary_files(friday_dir):
+def test_read_file_still_reads_ordinary_files(friday_dir, tmp_path, monkeypatch):
     import agent_friday.services.agent as agent
-    doc = friday_dir / "documents" / "note.txt"
+    # An ordinary file is one outside Friday's own folder, which the file tools never
+    # read (services/path_policy); the folder it is in is the one they may use.
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
+    doc = tmp_path / "documents" / "note.txt"
     doc.parent.mkdir(parents=True, exist_ok=True)
     doc.write_text("ordinary content 4471", encoding="utf-8")
     out = agent._tool_read_file({"path": str(doc)})
