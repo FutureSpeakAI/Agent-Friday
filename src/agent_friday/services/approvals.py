@@ -325,7 +325,50 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
 _OFF_RECORD_CARDS: Dict[str, dict] = {}
 _RECEIPT_KEYS = ("approval_id", "kind", "subject_type", "policy_class", "gated",
                  "status", "consumed", "created_at", "expires_at", "decided_at",
-                 "decided_by", "decided_source", "decided_check", "used_at", "off_record")
+                 "decided_by", "decided_source", "decided_check", "used_at", "off_record",
+                 "action_fingerprint", "decided_device", "withdrawn")
+
+
+# ── The record's own identity, its lifecycle and who decided it, from where (NS-30.11-1) ─────────
+
+def _action_fp(rec: Dict[str, Any]) -> str:
+    """What the card authorises, as one digest: its kind, subject and payload. Written when the
+    card is made (and again when this module itself changes the payload); a card whose payload no
+    longer matches it was changed outside this module and is never spent."""
+    import hashlib
+    blob = json.dumps({"k": rec.get("kind"), "t": rec.get("subject_type"), "s": rec.get("subject_id"),
+                       "p": rec.get("payload") or {}}, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
+
+
+def fingerprint_holds(rec: Dict[str, Any]) -> bool:
+    """The card is what it was when it was made (or it predates the fingerprint)."""
+    fp = (rec or {}).get("action_fingerprint")
+    return not fp or fp == _action_fp(rec)
+
+
+#: Where a decision was made, from its channel (decided_source).
+_DEVICE_OF_SOURCE = {"desktop_press": "this_pc", "typed": "this_pc", "voice": "this_pc",
+                     "chat": "this_pc", "owner": "this_pc", "sms": "owner_phone", "text": "owner_phone",
+                     "google_tasks_tick": "google_tasks", "standing_grant": "pre_approved_in_settings",
+                     "auto_policy": "policy", "law1_block": "policy", "system": "friday"}
+
+
+def decided_device(source: Optional[str]) -> str:
+    return _DEVICE_OF_SOURCE.get(str(source or ""), str(source or "unknown"))
+
+
+def lifecycle(rec: Dict[str, Any]) -> str:
+    """pending | approved | consumed | denied | expired | revoked | blocked | auto_approved: one word
+    for where a card stands. Revoked: an approval taken back unused (the owner revoked Friday's
+    authority); consumed: its one action was spent."""
+    rec = rec or {}
+    st = str(rec.get("status") or "")
+    if rec.get("withdrawn"):
+        return "revoked"
+    if st in ("approved", "auto_approved") and rec.get("consumed"):
+        return "consumed"
+    return st or "pending"
 
 
 def _disk_view(record: dict) -> dict:
@@ -406,7 +449,11 @@ def _patch(approval_id: str, **fields) -> Optional[dict]:
         recs = _read_store()
         for r in recs:
             if r.get("approval_id") == approval_id:
+                stale = not fingerprint_holds(r)
                 r.update(fields)
+                if any(k in fields for k in ("payload", "subject_id", "kind", "subject_type")) \
+                        and r.get("action_fingerprint") and not stale:
+                    r["action_fingerprint"] = _action_fp(r)      # a change made here, on purpose
                 _write_store(recs)
                 return dict(r)
     return None
@@ -416,7 +463,7 @@ def get_approval(approval_id: str) -> Optional[dict]:
     with _LOCK:
         for r in _read_store():
             if r.get("approval_id") == approval_id:
-                return dict(r)
+                return dict(r, lifecycle=lifecycle(r))
     return None
 
 
@@ -424,7 +471,7 @@ def list_approvals(*, status: Optional[str] = None,
                     subject_type: Optional[str] = None,
                     kind: Optional[str] = None) -> List[dict]:
     with _LOCK:
-        recs = [dict(r) for r in _read_store()]
+        recs = [dict(r, lifecycle=lifecycle(r)) for r in _read_store()]
     if status:
         recs = [r for r in recs if r.get("status") == status]
     if subject_type:
@@ -570,6 +617,9 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
                            ("law1_block" if status == "blocked" else "auto_policy")),
         "decision_note": "",
     }
+    record["action_fingerprint"] = _action_fp(record)
+    if record["decided_source"]:
+        record["decided_device"] = decided_device(record["decided_source"])
     try:
         from agent_friday.services import off_record as _off
         if _off.skip("approvals"):
@@ -622,6 +672,9 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
         "decision_note": "" if law1_blocked else "pre-approved by you in Settings",
         "pre_approved": str(grant_id),
     }
+    record["action_fingerprint"] = _action_fp(record)
+    if not law1_blocked:
+        record["decided_device"] = decided_device("standing_grant")
     _upsert(record)
     return record
 
@@ -652,6 +705,9 @@ def spend_once(approval_id: str, actor: str, detail: Optional[dict] = None) -> b
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
         if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
+            return False
+        if not fingerprint_holds(rec):
+            _log.error("approval %s was changed after it was made; it is not used", approval_id)
             return False
         now = time.time()
         rec.update(consumed=True, consumed_at=now, used_by=actor, used_at=now,
@@ -684,6 +740,9 @@ def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
             if r.get("status") != "approved":
                 return False
             if r.get("consumed") or r.get("executing_at"):
+                return False
+            if not fingerprint_holds(r):
+                _log.error("approval %s was changed after it was made; it is not run", approval_id)
                 return False
             r["executing_at"] = time.time()
             if by:
@@ -718,6 +777,7 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
             # The owner's typed yes in chat on this PC (agent.prepare_confirmation_ctx admits
             # it only from the app's page with a verified press: owner_surface).
             rec["decided_source"] = "typed"
+            rec["decided_device"] = decided_device("typed")
         rec.update(status="approved", consumed=True, executing_at=now,
                    used_at=now, used_by="chat_confirmation", decided_at=now,
                    decided_by="owner", decision_note="answered in chat")
@@ -738,7 +798,8 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     with _LOCK:
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval.get("approval_id")), None)
-        if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
+        if rec is None or rec.get("status") != "approved" or rec.get("consumed") \
+                or not fingerprint_holds(rec):
             return (dict(rec) if rec else approval), False
         # When it was burned: a crash after this and before mark_used is judged
         # from this moment (services/card_recovery), never from the decision.
@@ -890,6 +951,7 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
         rec["decided_source"] = source
+        rec["decided_device"] = decided_device(source)
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
