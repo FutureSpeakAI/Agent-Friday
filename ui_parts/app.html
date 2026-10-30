@@ -21901,10 +21901,35 @@ function PreApprovedSendsList() {
 // an approval card. Email is covered only by Pre-approved sends (SendGrantsPanel).
 // Enforced in governance/action_gate.py; this screen only lists, creates and
 // revokes grants through /api/governance/grants.
+// One grant record (governance/grant_record.py), every kind, in plain words.
+// Read-only: the owner's view of who a grant is for, what it may do, where,
+// how often, until when, and what it does in quiet hours and from a remote channel.
+function grantRecordWords(r){
+  const t=s=>new Date(s*1000).toLocaleString();
+  const kinds={scoped:'Scheduled job or task',run:'One run',send:'Pre-approved send',file:'File access',library:'Library',desktop:'Computer Control app',crew:'Crew agent folder'};
+  const subj=r.subject||{};
+  const list=(a,none)=>(a||[]).length?a.join(', '):none;
+  const rules=Object.keys(r.arg_constraints||{});
+  const out=[
+    (kinds[r.kind]||r.kind)+' \xB7 '+({active:'in force',revoked:'revoked',expired:'expired',spent:'used up'}[r.status]||r.status),
+    'For: '+(r.principal==='owner'?'you':r.principal)+(subj.kind&&subj.kind!=='owner'?' \xB7 '+subj.kind+' '+subj.id:''),
+    'May use: '+list(r.tools,'no named tools'),
+    'Argument rules: '+(rules.length?rules.map(k=>k+' '+JSON.stringify(r.arg_constraints[k])).join('; '):'none'),
+    'Data: '+list(r.data_scope,'no limit'),
+    'Where to: '+list(r.destination_scope,'no limit'),
+    'Uses: '+(r.used_count||0)+(r.max_uses==null?' (no limit)':' of '+r.max_uses),
+    'From '+(r.starts_at?t(r.starts_at):'when it was made')+(r.expires_at==null?', no end date':' until '+t(r.expires_at)),
+    'Money cap: '+(r.money_cap==null?'none':r.money_cap+' (spent '+(r.money_spent||0)+')'),
+    'Time cap: '+(r.time_cap_s==null?'none':Math.round(r.time_cap_s/60)+' min'),
+    'Quiet hours: '+({allow:'works in quiet hours',respect:'waits for you in quiet hours',deny:'never in quiet hours'}[r.quiet_hours]||r.quiet_hours),
+    'From a remote channel: '+(r.remote_allowed?'allowed':'not allowed')];
+  if(r.revoked_at)out.push('Revoked '+t(r.revoked_at));
+  return out;
+}
 function GovernanceGrantsPanel(){
-  const[grants,setGrants]=useState([]);const[jobs,setJobs]=useState([]);const[tools,setTools]=useState([]);
+  const[grants,setGrants]=useState([]);const[jobs,setJobs]=useState([]);const[tools,setTools]=useState([]);const[records,setRecords]=useState([]);
   const[job,setJob]=useState('');const[picked,setPicked]=useState([]);const[days,setDays]=useState(7);const[uses,setUses]=useState(10);const[msg,setMsg]=useState('');
-  const load=()=>apiFetch('/api/governance/grants').then(r=>r.json()).then(d=>setGrants(Array.isArray(d&&d.grants)?d.grants:[])).catch(()=>{});
+  const load=()=>apiFetch('/api/governance/grants').then(r=>r.json()).then(d=>{setGrants(Array.isArray(d&&d.grants)?d.grants:[]);setRecords(Array.isArray(d&&d.records)?d.records:[]);}).catch(()=>{});
   useEffect(()=>{
     load();
     apiFetch('/api/schedules').then(r=>r.json()).then(d=>setJobs(Array.isArray(d&&d.schedules)?d.schedules:[])).catch(()=>{});
@@ -21947,6 +21972,13 @@ function GovernanceGrantsPanel(){
       <button className="settings-btn" style={{fontSize:11}} onClick={create}>Grant</button>
     </div>
     {msg&&<div role="status" style={{...muted,marginTop:6,color:'#9fd'}}>{msg}</div>}
+    <details data-testid="grant-records" style={{marginTop:12}}>
+      <summary style={{fontSize:12,color:'#ccc',cursor:'pointer'}}>{'Every grant, in full ('+records.length+')'}</summary>
+      <div style={{...muted,marginTop:6}}>Every standing permission Friday holds, of every kind. Read-only. A grant that does not fit an action never blocks it: the action asks you instead.</div>
+      {records.map(r=><div key={r.kind+':'+r.id} className="card" style={{padding:8,marginTop:6,fontSize:11,color:'#bbb',lineHeight:1.5}}>
+        {grantRecordWords(r).map((w,i)=><div key={i}>{w}</div>)}
+      </div>)}
+    </details>
   </div>;
 }
 function LayaPilotPanel({s, save}) {

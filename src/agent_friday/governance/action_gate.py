@@ -1257,8 +1257,20 @@ _GRANT_SIGNED = ("grant_id", "tools", "scope", "expires_at", "max_uses", "create
 _GRANTS_MARK = "grants.signed-v1"
 
 
+#: The grant record's limit fields (governance/grant_record.new_fields, A11):
+#: signed too when a grant carries them, so a limit cannot be loosened or
+#: taken off by editing the file. A grant written before them carries none
+#: and its signature is unchanged. Its use counters (used_count,
+#: first_used_at, money_spent) are not signed: the ledger holds them.
+_GRANT_LIMITS_SIGNED = ("principal", "subject", "arg_constraints", "data_scope",
+                        "destination_scope", "starts_at", "money_cap", "time_cap_s",
+                        "quiet_hours", "remote_allowed")
+
+
 def _grant_sig(g: dict, key: Optional[bytes] = None) -> str:
-    body = json.dumps({k: g.get(k) for k in _GRANT_SIGNED}, sort_keys=True, default=str)
+    signed = {k: g.get(k) for k in _GRANT_SIGNED}
+    signed.update({k: g[k] for k in _GRANT_LIMITS_SIGNED if k in g})
+    body = json.dumps(signed, sort_keys=True, default=str)
     return _hmac.new(key or _governance_key(), b"agent-friday/grant/v1\0" + body.encode("utf-8"),
                      hashlib.sha256).hexdigest()
 
@@ -1341,7 +1353,8 @@ def _migrate_grants_locked(gs: list) -> list:
 
 
 def _grant_events() -> dict:
-    """{grant_id: [uses recorded, revoked?]} from the action ledger, in one read.
+    """{grant_id: [uses recorded, revoked?, first use at, money spent]} from the
+    action ledger, in one read (the last two are the grant record's counters, A11).
     Raises when the ledger cannot be read, has a break, or a matching line's signature
     does not hold (a strict read, archive included): no grant is then used."""
     from agent_friday.services import action_ledger
@@ -1356,12 +1369,57 @@ def _grant_events() -> dict:
         gid = str((e.get("rec") or {}).get("grant") or "")
         if not gid:
             continue
-        slot = out.setdefault(gid, [0, False])
+        slot = out.setdefault(gid, [0, False, None, 0.0])
         if e.get("kind") == "grant_use":
             slot[0] += 1
+            rec = e.get("rec") or {}
+            at = rec.get("at") or e.get("t")
+            if isinstance(at, (int, float)) and not isinstance(at, bool):
+                slot[2] = float(at) if slot[2] is None else min(slot[2], float(at))
+            spend = rec.get("spend")
+            if isinstance(spend, (int, float)) and not isinstance(spend, bool) and spend > 0:
+                slot[3] += float(spend)
         else:
             slot[1] = True
     return out
+
+
+def _ledger_row(g: dict, events: dict) -> dict:
+    """The grant's file row with what the ledger holds laid over it (A11): uses
+    left counted from the ledger, revoked when the ledger says so, and the
+    record's counters never below the ledger's (a counter edited down in the
+    file does not loosen a limit; one that cannot be read is kept as it is, so
+    the record is marked invalid). For governance/grant_record. Never raises."""
+    row = dict(g)
+    try:
+        ev = events.get(str(g.get("grant_id"))) or [0, False, None, 0.0]
+        uses, revoked = int(ev[0]), bool(ev[1])
+        first = ev[2] if len(ev) > 2 else None
+        spent = float(ev[3]) if len(ev) > 3 else 0.0
+        if float(g.get("created_at") or 0) <= float(events.get("*revoked_all_at") or 0):
+            revoked = True
+    except Exception:  # noqa: BLE001 - nothing known from the ledger: covers nothing
+        return dict(row, revoked_at=time.time())
+
+    def _num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    if isinstance(g.get("max_uses"), int) and not isinstance(g.get("max_uses"), bool):
+        row["uses_left"] = int(g["max_uses"]) - uses
+    if g.get("used_count") is None or (isinstance(g.get("used_count"), int)
+                                        and not isinstance(g.get("used_count"), bool)):
+        row["used_count"] = max(uses, int(g.get("used_count") or 0))
+    if first is not None:
+        if g.get("first_used_at") is None:
+            row["first_used_at"] = first
+        elif _num(g.get("first_used_at")):
+            row["first_used_at"] = min(float(g["first_used_at"]), first)
+    if g.get("money_spent") is None:
+        row["money_spent"] = spent
+    elif _num(g.get("money_spent")) and g["money_spent"] >= 0:
+        row["money_spent"] = max(float(g["money_spent"]), spent)
+    if revoked and not row.get("revoked_at"):
+        row["revoked_at"] = time.time()
+    return row
 
 
 def _live_view(g: dict, events: Optional[dict] = None,
@@ -1381,7 +1439,19 @@ def _live_view(g: dict, events: Optional[dict] = None,
     left = int(g.get("max_uses") or 0) - uses
     if revoked or left <= 0:
         return None
-    return dict(g, uses_left=left)
+    # the grant record's counters (A11) as the ledger has them
+    return dict(_ledger_row(g, events), uses_left=left)
+
+
+def ledger_grant_rows() -> list:
+    """Every signed grant (live or not) as the ledger has it (`_ledger_row`): its
+    uses, revocation and counters. For the grant record view
+    (governance/grant_record.all_records). Raises when the key or the ledger
+    cannot be read."""
+    key = _governance_key()
+    gs = _read_grants(key)
+    events = _grant_events() if gs else {}
+    return [_ledger_row(g, events) for g in gs]
 
 
 def _read_grants(key: Optional[bytes] = None) -> list:
@@ -1397,22 +1467,41 @@ def _read_grants(key: Optional[bytes] = None) -> list:
 
 
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
-                 max_uses: int = 1, created_by: str = "owner", note: str = "") -> dict:
+                 max_uses: int = 1, created_by: str = "owner", note: str = "",
+                 limits: Optional[dict] = None) -> dict:
     """Pre-approve named outward tools for one scheduled job or task.
 
     `scope` is the schedule id or task id the grant belongs to. Nothing else
     can use it, and it stops working at `expires_in_seconds` or after
     `max_uses`, whichever comes first. Owner-only: callers are the owner's
     authenticated routes, never a tool.
+
+    `limits`: the grant record's further fields (governance/grant_record
+    `new_fields`: principal, argument rules, data and destination scope,
+    start, money and time caps, quiet hours, remote). Left out, each is what a
+    grant did before them. A bad value raises UserFacingValueError.
     """
-    if not tools or not scope or expires_in_seconds <= 0 or max_uses < 1:
+    import math
+    try:
+        finite = math.isfinite(float(expires_in_seconds))
+    except (TypeError, ValueError):
+        finite = False
+    if not tools or not scope or not finite or expires_in_seconds <= 0 or max_uses < 1:
         raise ValueError("a grant needs tools, a scope, a positive expiry and uses")
+    from agent_friday.governance import grant_record as _gr
+    lim = dict(limits or {})
+    now = time.time()
+    subject = _gr.subject_of_scope(scope)
+    extra = _gr.new_fields(subject_kind=lim.pop("subject_kind", None) or subject["kind"],
+                           subject_id=str(scope), now=now, **lim)
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
-         "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
-         "max_uses": int(max_uses), "uses_left": int(max_uses), "created_by": created_by,
-         "note": note[:200], "created_at": time.time(),
+         "scope": str(scope), "expires_at": now + float(expires_in_seconds),
+         "uses_left": int(max_uses), "created_by": created_by, "note": note[:200],
+         "created_at": now,
          # the governing policy version it was issued under (NS-30.19-1)
-         "policy_version": _policy_version_id()}
+         "policy_version": _policy_version_id(),
+         # the grant record's own fields (NS-18.4-4, NS-30.12-1); its limits are signed
+         "max_uses": int(max_uses), **extra}
     key = _governance_key()
     g["sig"] = _grant_sig(g, key)
     with _LOCK:
@@ -1515,10 +1604,35 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
     return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
-def _grant_covers(tool_name: str, ctx: dict) -> bool:
+def _grant_excluded_by(g: dict, tool_name: str, scopes: set, now: float,
+                       args=None, ctx=None) -> str:
+    """The grant record field that keeps this grant from covering the call
+    ("subject" when it belongs to another job or task), or "" when it covers
+    (governance/grant_record.exclusion: status, start, expiry, uses, principal,
+    tool, argument rules, data and destination scope, money and time caps,
+    quiet hours, remote). A check that cannot run covers nothing. `g`: the
+    row as the ledger has it (`_ledger_row` / `_live_view`)."""
+    if not isinstance(g, dict) or g.get("scope") not in scopes:
+        return "subject"
+    try:
+        from agent_friday.governance import grant_record as _gr
+        return _gr.exclusion(_gr.from_scoped(g, now), tool=tool_name, args=args,
+                             ctx=ctx, now=now)
+    except Exception as e:  # noqa: BLE001 - not covered: the normal path decides
+        _log.warning("grant %s could not be checked (%s); it covers nothing",
+                     g.get("grant_id"), type(e).__name__)
+        return "status"
+
+
+def _grant_live(g: dict, tool_name: str, scopes: set, now: float,
+                args=None, ctx=None) -> bool:
+    return not _grant_excluded_by(g, tool_name, scopes, now, args, ctx)
+
+
+def _grant_covers(tool_name: str, ctx: dict, args=None) -> bool:
     """Whether `_use_grant` would find a live grant for this call (the same
-    hold, signature, ledger-counted uses and revocations). Spends nothing.
-    Never raises."""
+    hold, signature, ledger-counted uses and revocations, and every grant
+    record field). Spends nothing. Never raises."""
     scopes = _scopes(ctx)
     if not scopes:
         return False
@@ -1526,18 +1640,53 @@ def _grant_covers(tool_name: str, ctx: dict) -> bool:
         if outward_hold():
             return False
         key = _governance_key()
+        now = time.time()
         with _LOCK:
             gs = [g for g in _read_grants(key)
                   if g.get("scope") in scopes and tool_name in (g.get("tools") or [])]
             if not gs:
                 return False
             events = _grant_events()
-            return any(_live_view(g, events, key) is not None for g in gs)
+            for g in gs:
+                live = _live_view(g, events, key)
+                if live is not None and _grant_live(live, tool_name, scopes, now, args, ctx):
+                    return True
+            return False
     except Exception:  # noqa: BLE001 - not known to be covered: refuses nothing here
         return False
 
 
-def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
+def grant_exclusion(tool_name: str, ctx: dict, args=None) -> dict:
+    """When no grant covers this call but one is scoped to its job or task:
+    which grant, and the name of the field that kept it out
+    ({"grant_excluded": id, "grant_excluded_by": field}). A grant naming the
+    tool is preferred over one that does not. {} when no grant is in scope.
+    Records only: the call goes to its card either way. Signed grants only,
+    read as the ledger has them (uses, revocation, counters)."""
+    scopes = _scopes(ctx or {})
+    if not scopes:
+        return {}
+    now = time.time()
+    best = None
+    try:
+        key = _governance_key()
+        with _LOCK:
+            gs = _read_grants(key)
+        events = _grant_events() if gs else {}
+    except Exception:  # noqa: BLE001 - records only
+        return {}
+    for g in gs:
+        if not isinstance(g, dict) or g.get("scope") not in scopes:
+            continue
+        why = _grant_excluded_by(_ledger_row(g, events), tool_name, scopes, now, args, ctx)
+        if not why:
+            return {}
+        if best is None or (best[1] == "tools" and why != "tools"):
+            best = (g.get("grant_id"), why)
+    return {"grant_excluded": best[0], "grant_excluded_by": best[1]} if best else {}
+
+
+def _use_grant(tool_name: str, ctx: dict, args=None) -> Optional[dict]:
     scopes = _scopes(ctx)
     if not scopes:
         return None
@@ -1562,30 +1711,48 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
             events = _grant_events()
         except Exception:
             return None
+        now = time.time()
         for g in gs:
             live = _live_view(g, events, key)
             if live is None:
                 continue
+            # every grant record field must allow the call (governance/grant_record)
+            if not _grant_live(live, tool_name, scopes, now, args, ctx):
+                continue
+            spend = None
+            if live.get("money_cap") is not None:
+                from agent_friday.governance import grant_record as _gr
+                spend = _gr.action_cost(ctx)     # server-set context only, never args
             # The use is a durable ledger entry BEFORE anything runs: no entry, no use.
+            # It carries the record's counters (when, and what it cost), so a counter
+            # edited in the file does not loosen a time or money cap.
             try:
                 from agent_friday.services import action_ledger
-                action_ledger.append("grant_use", {"grant": str(g.get("grant_id")),
-                                                   "tool": str(tool_name)[:80],
-                                                   "scope": str(g.get("scope"))[:120]},
-                                     durable=True)
+                use = {"grant": str(g.get("grant_id")), "tool": str(tool_name)[:80],
+                       "scope": str(g.get("scope"))[:120], "at": now}
+                if spend is not None:
+                    use["spend"] = spend
+                action_ledger.append("grant_use", use, durable=True)
             except Exception:
                 return None
             live["uses_left"] = int(live["uses_left"]) - 1
+            # the record's own count, first use and spend (grant_record)
+            live["used_count"] = int(live.get("used_count") or 0) + 1
+            if not live.get("first_used_at"):
+                live["first_used_at"] = now
+            if spend is not None:
+                live["money_spent"] = float(live.get("money_spent") or 0.0) + spend
             # the policy version this use was made under (NS-30.19-1); the
             # decision receipt that names the grant carries it too
             live["last_used_policy_version"] = _policy_version_id()
-            # The file's count and version are records only: the ledger holds the count.
+            # The file's counters and version are records only: the ledger holds them.
             try:
                 raw = _read_raw_grants()
                 for x in raw:
                     if isinstance(x, dict) and x.get("grant_id") == g.get("grant_id"):
-                        x["uses_left"] = live["uses_left"]
-                        x["last_used_policy_version"] = live["last_used_policy_version"]
+                        for k in ("uses_left", "used_count", "first_used_at", "money_spent",
+                                  "last_used_policy_version"):
+                            x[k] = live.get(k)
                 _write_grants(raw)
             except OSError:
                 pass
@@ -2734,6 +2901,17 @@ def _send_grant(tool_name, args, ctx) -> Optional[dict]:
         return None
 
 
+def _send_grant_exclusion(tool_name, args, ctx) -> dict:
+    """{"grant_excluded", "grant_excluded_by"} for a pre-approved send that
+    names this send's recipients but a grant record field keeps out, else {}.
+    Records only; never raises."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return _sg.exclusion_for_tool(tool_name, args or {}, ctx)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 #: In safe mode these run nothing at all: a command or program can reach the
 #: network or another machine in ways no socket guard in this process sees
 #: (git remotes, \\host paths, -ComputerName).
@@ -2849,26 +3027,38 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             _log.warning("could not record a withheld pre-approval: %s", e)
             withheld = {"grant_withheld": sg.get("grant_id"),
                         "withheld_why": "the pre-approval check could not finish (%s)" % e}
+    if sg is None:
+        # A pre-approval that names this send but a grant record field keeps
+        # out (governance/grant_record): which one, by field name, for the record.
+        withheld = dict(withheld, **_send_grant_exclusion(tool_name, args, ctx))
     if tool_name in SELF_GATED and not tainted:
         return Verdict("allow", klass, "its own approval card is the gate", detail=withheld)
     if tool_name in SELF_GATED:
         return Verdict("allow", klass, "its own approval card is the gate (with provenance)",
                        detail=withheld)
+    excluded: dict = {}
     if not tainted and not _interactive(ctx):
         # Idempotent execute (NS-36.3-5) before a grant use is spent: a request
         # the grant would let run, already carried out, is refused here (as
         # `authorize` would refuse it after) and the grant keeps its use.
         # One-shot sends and writes only (is_one_shot), as in `authorize`.
-        if is_one_shot(tool_name) and _grant_covers(tool_name, ctx):
+        if is_one_shot(tool_name) and _grant_covers(tool_name, ctx, args):
             done = _duplicate_of(tool_name, args, ctx)
             if done:
                 return _already_done_verdict(klass, done)
-        g = _use_grant(tool_name, ctx)
+        g = _use_grant(tool_name, ctx, args)
         if g is not None:
             return Verdict("allow", klass, f"pre-approved grant {g['grant_id']}", grant=g)
+        # No grant covers it: the card decides, as with no grant at all. When
+        # a grant for this job or task was kept out, the decision names the
+        # field that kept it out (grant_record.FIELD_ORDER), never a deny.
+        try:
+            excluded = grant_exclusion(tool_name, ctx, args)
+        except Exception:  # noqa: BLE001 - records only
+            excluded = {}
     if _interactive(ctx) and not tainted and tool_name not in CARD_ONLY_WHEN_OUTWARD:
         return Verdict("confirm", klass, why)
-    return Verdict("card", klass, why)
+    return Verdict("card", klass, why, detail=excluded)
 
 
 def outward_hold() -> Optional[str]:

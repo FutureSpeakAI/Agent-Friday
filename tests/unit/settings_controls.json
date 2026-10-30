@@ -3437,7 +3437,7 @@
   "keys": [],
   "route": "DELETE /api/governance/grants/<id>",
   "reader_file": "src/agent_friday/governance/action_gate.py",
-  "reader_needle": "g = _use_grant(tool_name, ctx)",
+  "reader_needle": "g = _use_grant(tool_name, ctx, args)",
   "status": "ok",
   "note": ""
  },
@@ -3497,7 +3497,7 @@
   "keys": [],
   "route": "POST /api/governance/grants",
   "reader_file": "src/agent_friday/governance/action_gate.py",
-  "reader_needle": "g = _use_grant(tool_name, ctx)",
+  "reader_needle": "g = _use_grant(tool_name, ctx, args)",
   "status": "ok",
   "note": ""
  },
