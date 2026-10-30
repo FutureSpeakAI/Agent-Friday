@@ -651,6 +651,7 @@ def _on_welcome(st, transcript, value, text):
     _heard(transcript, dict(copy.TALK_CHIPS)[choice] if how == "you" else copy.SKIP, "welcome")
     _say(transcript, {"talk": copy.TALK_OK, "type": copy.TYPE_OK,
                       "screen_reader": copy.SCREEN_READER_OK}[choice], "welcome")
+    _say(transcript, copy.DISPLAY_NOTE, "welcome")
     record.append("welcome", choice, how)
     _enter(st, transcript, "offer")
 
