@@ -78,6 +78,11 @@ podcast or media, voice preferences, stop a running task, undo). Friday runs it
 and the fast responder only speaks the answer. A look-up turn speaks a short
 acknowledgement first.
 
+- **Say that again.** "Say that again", "repeat that", "what did you say?" or
+  "pardon?" on its own makes Friday say her last reply again, word for word, with
+  no model call, in an on-device voice call and on the phone (in a Gemini Live call
+  the cloud model answers it, as before). "What did you say
+  about the budget?" is a question about the past and searches your conversations.
 - Anything that changes the world outside Friday (send, reply, delete, create an
   event) goes to the full agent and through the usual approval card.
 - A web or news search that Friday guessed at asks before it searches.
