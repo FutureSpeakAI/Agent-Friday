@@ -5461,16 +5461,25 @@ def _settle_terminal_receipt(task_id):
         if _SETTLER["active"]:
             return
         _SETTLER["active"] = True
-    while True:
-        with _SETTLE_GUARD:
-            if not _SETTLE_DIRTY:
+    done = False
+    try:
+        while True:
+            with _SETTLE_GUARD:
+                if not _SETTLE_DIRTY:
+                    _SETTLER["active"] = False
+                    done = True
+                    return
+                tid = _SETTLE_DIRTY.pop()
+            try:
+                _settle_one(tid)
+            except Exception:
+                pass
+    finally:
+        if not done:
+            # Left abnormally (an interrupt in this thread): never leave the
+            # settler marked busy, or every later receipt would be skipped.
+            with _SETTLE_GUARD:
                 _SETTLER["active"] = False
-                return
-            tid = _SETTLE_DIRTY.pop()
-        try:
-            _settle_one(tid)
-        except Exception:
-            pass
 
 
 def _settle_one(task_id):
@@ -5630,10 +5639,18 @@ def _task_set(task_id, **fields):
         tj.write_state(task_id, snap)
     except Exception:
         pass
+    _receipt_moved = None
     with TASKS_LOCK:
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+            if (t.get('terminal_receipt') != snap.get('terminal_receipt')
+                    or t.get('previous_terminal_receipts') != snap.get('previous_terminal_receipts')):
+                # The receipt settler moved the pointer after this call took its
+                # snapshot: the state file this call wrote lacks it, so write it again.
+                _receipt_moved = dict(t)
+    if _receipt_moved is not None:
+        _write_state_quietly(task_id, _receipt_moved)
     if 'status' in fields:
         _settle_terminal_receipt(task_id)
 
