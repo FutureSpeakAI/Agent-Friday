@@ -170,3 +170,6 @@ conversation*.json
 *screenshot*.jpg
 *.ps1.bak
 *~
+
+# launch_script_keys rewrite in flight (holds the script's other lines)
+*.friday-tmp
