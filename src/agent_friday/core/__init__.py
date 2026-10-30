@@ -1135,6 +1135,15 @@ def _install_log_redaction() -> None:
     try:
         from agent_friday.services import log_redaction
         log_redaction.install(logging.getLogger("friday"))
+        # Modules that log as "agent_friday.<module>" (getLogger(__name__)) are not under
+        # "friday": their warnings went to Python's unfiltered last-resort stderr. They now
+        # write through the same (filtered) handlers, at the level they were seen at before.
+        _af = logging.getLogger("agent_friday")
+        if not _af.handlers:
+            for _h in logging.getLogger("friday").handlers:
+                _af.addHandler(_h)
+            _af.setLevel(logging.WARNING)
+            _af.propagate = False
     except Exception as e:  # noqa: BLE001
         try:
             sys.stderr.write("[FRIDAY] the log redaction filter could not be installed (%s)\n"

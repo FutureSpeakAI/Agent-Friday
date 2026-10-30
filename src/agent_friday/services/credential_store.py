@@ -730,7 +730,17 @@ def set_provider_key(provider: str, key: str) -> str:
     The key value is never logged, printed, or echoed back."""
     method = write_secret(_provider_key_path(provider), (key or "").encode("utf-8"))
     audit_event("provider_key", "set", provider=provider, method=method, present=bool(key))
+    _values_changed()
     return method
+
+
+def _values_changed() -> None:
+    """The set of values the log filter takes out of text is read again (services/secret_values)."""
+    try:
+        from agent_friday.services import secret_values
+        secret_values.invalidate()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def get_provider_key(provider: str, *, use: bool = True) -> str | None:
@@ -776,6 +786,7 @@ def delete_provider_key(provider: str) -> bool:
         except Exception:
             return False
         audit_event("provider_key", "delete", provider=provider)
+        _values_changed()
         return True
     return False
 
