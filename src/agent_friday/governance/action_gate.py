@@ -754,7 +754,9 @@ _LOOPBACK = re.compile(r"(?:\blocalhost\b|\b127(?:\.\d+){1,3}\b|\b0\.0\.0\.0\b|\
                        r"\b0x7f[0-9a-f]{0,6}\b|\[::1\]|(?<![\w:])::1(?![\w:])|\bagent\.friday\b)", re.I)
 #: ...and what makes a loopback address Friday's own API, not the owner's own dev server on it.
 _FRIDAY_API_HINT = re.compile(r"/api/|\bFRIDAY_PORT\b|\bagent\.friday\b|X-Friday", re.I)
-_IMPORTS_FRIDAY = re.compile(r"(?:\bimport\s+[\w\s,.]*\bagent_friday\b|\bfrom\s+agent_friday\b|"
+# (Linear: the names before agent_friday are separated by a required comma, so no two parts of the
+# pattern can match the same run of spaces; CodeQL polynomial-regex alert on #640.)
+_IMPORTS_FRIDAY = re.compile(r"(?:\bimport\s+(?:[\w.]+[ \t]*,[ \t]*)*agent_friday\b|\bfrom\s+agent_friday\b|"
                              r"__import__\(\s*['\"]agent_friday|import_module\(\s*['\"]agent_friday|"
                              r"-m\s+agent_friday\b)")
 #: Tools that run text as a program or a shell session.
