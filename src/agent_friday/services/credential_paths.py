@@ -144,6 +144,9 @@ _NAME_GLOBS: tuple[tuple[str, str], ...] = (
     ("start.bat", "a launcher that holds your API keys in plain text"),
     ("launch_now.bat", "a launcher that holds your API keys in plain text"),
     ("friday_startup.*", "a launcher that holds your API keys in plain text"),
+    ("friday.log.*", "my log, which is mine to read, not a tool's"),
+    ("server_stderr.log*", "my console log, which is mine to read, not a tool's"),
+    (".settings-*.tmp", "my settings, which can hold API keys"),
 )
 
 #: Names that are key material only when the file is one: a certificate .pem

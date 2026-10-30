@@ -2103,7 +2103,7 @@ def api_settings():
                 }, "Couldn't save the personality")), 400
         return jsonify({
             "status": "ok",
-            "settings": merged,
+            "settings": _masked_settings(merged),
             "effective": _effective_guarded(merged),
             "personality": _load_agent_personality(),
         })

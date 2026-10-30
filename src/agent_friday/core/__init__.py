@@ -1128,6 +1128,20 @@ def _setup_friday_logging() -> None:
     _install_log_redaction()
 
 
+def route_module_loggers(src: "logging.Logger", dst: "logging.Logger") -> bool:
+    """Modules that log as "agent_friday.<module>" (getLogger(__name__)) are not under
+    "friday": their warnings went to Python's unfiltered last-resort stderr. They write
+    through the same (filtered) handlers, at the level they were seen at before (WARNING).
+    Nothing changes while `src` has no handlers (tests), so pytest's capture is untouched."""
+    if not src.handlers or dst.handlers:
+        return False
+    for h in src.handlers:
+        dst.addHandler(h)
+    dst.setLevel(logging.WARNING)
+    dst.propagate = False
+    return True
+
+
 def _install_log_redaction() -> None:
     """Every handler of the "friday" logger passes the one redaction filter (secrets out,
     the request's correlation id in: services/log_redaction). A filter that cannot be
@@ -1135,15 +1149,9 @@ def _install_log_redaction() -> None:
     try:
         from agent_friday.services import log_redaction
         log_redaction.install(logging.getLogger("friday"))
-        # Modules that log as "agent_friday.<module>" (getLogger(__name__)) are not under
-        # "friday": their warnings went to Python's unfiltered last-resort stderr. They now
-        # write through the same (filtered) handlers, at the level they were seen at before.
-        _af = logging.getLogger("agent_friday")
-        if not _af.handlers:
-            for _h in logging.getLogger("friday").handlers:
-                _af.addHandler(_h)
-            _af.setLevel(logging.WARNING)
-            _af.propagate = False
+        if not os.environ.get("FRIDAY_TESTING"):
+            # (not under tests: their loggers are pytest's, and routing is process-wide)
+            route_module_loggers(logging.getLogger("friday"), logging.getLogger("agent_friday"))
     except Exception as e:  # noqa: BLE001
         try:
             sys.stderr.write("[FRIDAY] the log redaction filter could not be installed (%s)\n"
@@ -4212,6 +4220,11 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_room_approvals_change: bool = False,
                    owner_fallback_order_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
+    try:      # a key saved in settings is taken out of logs from now on (services/secret_values)
+        from agent_friday.services import secret_values as _sv
+        _sv.invalidate()
+    except Exception:
+        pass
     with _SETTINGS_WRITE_LOCK:
         return _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,

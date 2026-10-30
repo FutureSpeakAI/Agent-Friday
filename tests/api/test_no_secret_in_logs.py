@@ -52,6 +52,10 @@ def store(tmp_path, monkeypatch):
         pass
     yield home
     ks._reset_cache_for_tests()
+    try:
+        _sv().invalidate()            # the next test reads its own values
+    except AssertionError:
+        pass
 
 
 def test_a_stored_key_with_no_shape_is_taken_out_of_a_log_line(store):
@@ -62,11 +66,18 @@ def test_a_stored_key_with_no_shape_is_taken_out_of_a_log_line(store):
 
 def test_module_loggers_write_through_the_filter(store):
     import agent_friday.core as core
-    core._install_log_redaction()
     from agent_friday.services.log_redaction import RedactingFilter
-    lg = logging.getLogger("agent_friday")
-    assert lg.handlers and all(any(isinstance(f, RedactingFilter) for f in h.filters) for h in lg.handlers), \
-        "agent_friday.* warnings go to an unfiltered handler"
+    route = getattr(core, "route_module_loggers", None)
+    assert route is not None, "agent_friday.* warnings go to Python's unfiltered last-resort stderr"
+    src, dst = logging.Logger("t-friday"), logging.Logger("t-agent-friday")
+    h = logging.StreamHandler(io.StringIO())
+    h.addFilter(RedactingFilter())
+    src.addHandler(h)
+    assert route(src, dst) is True
+    assert dst.handlers == [h] and dst.propagate is False and dst.level == logging.WARNING
+    # with nothing configured (tests), nothing changes: pytest's capture keeps working
+    bare, other = logging.Logger("t-bare"), logging.Logger("t-other")
+    assert route(bare, other) is False and other.propagate is True and not other.handlers
 
 
 def test_the_console_is_redacted(store):
@@ -85,7 +96,8 @@ def test_a_tool_result_never_carries_a_stored_key(store):
 
 def test_tools_cannot_read_the_settings_or_the_logs(store):
     from agent_friday.services import credential_paths
-    for name in ("settings.json", "friday.log", "server_stderr.log", "google_token.json"):
+    for name in ("settings.json", "friday.log", "friday.log.1", "server_stderr.log",
+                 "server_stderr.log.2", "google_token.json"):
         assert credential_paths.check(store / name), "a tool may read %s" % name
 
 
@@ -93,15 +105,24 @@ def test_settings_show_a_stored_key_as_stored_and_keep_it_on_save(client, store,
     import agent_friday.core as core
     settings = store / "settings.json"
     store.mkdir(parents=True, exist_ok=True)
-    settings.write_text(json.dumps({"brave_api_key": ODD_KEY, "theme": "dark"}), encoding="utf-8")
+    settings.write_text(json.dumps({"elevenlabs_api_key": ODD_KEY, "elevenlabs_model": "m-one"}),
+                        encoding="utf-8")
     monkeypatch.setattr(core, "SETTINGS_FILE", settings, raising=False)
     core._invalidate_settings_cache()
     got = client.get("/api/settings").get_json()["settings"]
-    assert got.get("theme") == "dark"
+    assert got.get("elevenlabs_model") == "m-one"
     assert ODD_KEY not in json.dumps(got), "GET /api/settings returned a stored key"
-    mask = got.get("brave_api_key")
-    client.post("/api/settings", json={"settings": {"brave_api_key": mask, "theme": "light"}})
+    mask = got.get("elevenlabs_api_key")
+    r = client.post("/api/settings", json={"settings": {"elevenlabs_api_key": mask, "elevenlabs_model": "m-two"}})
+    assert ODD_KEY not in r.get_data(as_text=True), "saving settings answered with the stored key"
     core._invalidate_settings_cache()
     saved = json.loads(settings.read_text(encoding="utf-8"))
-    assert saved.get("brave_api_key") == ODD_KEY, "saving what GET showed overwrote the stored key"
-    assert saved.get("theme") == "light"
+    assert saved.get("elevenlabs_api_key") == ODD_KEY, "saving what GET showed overwrote the stored key"
+    assert saved.get("elevenlabs_model") == "m-two"
+
+
+def test_a_key_saved_in_settings_is_known_at_once(store):
+    sv = _sv()
+    import agent_friday.core as core
+    core._save_settings({"elevenlabs_api_key": "Zx9Lm2Qp7Rt4Vw8N"})   # pragma: allowlist secret
+    assert "Zx9Lm2Qp7Rt4Vw8N" not in sv.redact_known("voice failed with Zx9Lm2Qp7Rt4Vw8N")

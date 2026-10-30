@@ -227,7 +227,16 @@ def set_secret(name: str, value: str) -> str:
     from agent_friday.services import credential_store as cs
     method = cs.write_secret(_secret_path(name), value.encode("utf-8"))
     cs.audit_event("phone", "secret_set", name=name, method=method)
+    _values_changed()
     return method
+
+
+def _values_changed() -> None:
+    try:
+        from agent_friday.services import secret_values
+        secret_values.invalidate()
+    except Exception:
+        pass
 
 
 def get_secret(name: str) -> Optional[str]:
@@ -265,6 +274,7 @@ def delete_secret(name: str) -> bool:
         cs.audit_event("phone", "secret_deleted", name=name)
     except Exception:
         pass
+    _values_changed()
     return True
 
 
