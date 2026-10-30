@@ -1875,6 +1875,34 @@ def _effective_guarded(settings):
         return {}
 
 
+SECRET_MASK = "[stored]"
+
+
+def _masked_settings(d, depth: int = 0):
+    """settings.json as GET shows it: every credential field's value replaced by SECRET_MASK
+    (services/secret_values.SECRET_SETTING names them)."""
+    from agent_friday.services.secret_values import SECRET_SETTING
+    if not isinstance(d, dict) or depth > 3:
+        return d
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            out[k] = _masked_settings(v, depth + 1)
+        elif isinstance(v, str) and v and SECRET_SETTING.search(str(k)):
+            out[k] = SECRET_MASK
+        else:
+            out[k] = v
+    return out
+
+
+def _without_masks(d, depth: int = 0):
+    """A settings write with every SECRET_MASK value left out (the stored key stays)."""
+    if not isinstance(d, dict) or depth > 3:
+        return d
+    return {k: (_without_masks(v, depth + 1) if isinstance(v, dict) else v)
+            for k, v in d.items() if v != SECRET_MASK}
+
+
 @core_bp.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """GET: return current agent settings + personality.
@@ -1884,7 +1912,8 @@ def api_settings():
         _cur = _load_settings()
         return jsonify({
             "status": "ok",
-            "settings": _cur,
+            # A key kept in settings.json is shown as stored, never as its value (NS-23.3-3).
+            "settings": _masked_settings(_cur),
             "effective": _effective_guarded(_cur),
             "personality": _load_agent_personality(),
             "default_personality": DEFAULT_AGENT_PERSONALITY,
@@ -1892,6 +1921,9 @@ def api_settings():
     try:
         data = request.get_json(silent=True) or {}
         new_settings = data.get('settings') or {}
+        if isinstance(new_settings, dict):
+            # A page that sends back what GET showed must not overwrite a stored key with the mask.
+            new_settings = _without_masks(new_settings)
         if isinstance(new_settings, dict) and 'meeting_archive' in new_settings:
             # Whether meetings are searchable is chosen only at /api/meetings/archive (on, from the
             # Friday window); the generic settings write is not a way to say yes for the owner.
@@ -2071,7 +2103,7 @@ def api_settings():
                 }, "Couldn't save the personality")), 400
         return jsonify({
             "status": "ok",
-            "settings": merged,
+            "settings": _masked_settings(merged),
             "effective": _effective_guarded(merged),
             "personality": _load_agent_personality(),
         })

@@ -94,6 +94,10 @@ def _deny_files() -> list[tuple[Path, str]]:
         (f / "vault" / ".governance-key", "the governance signing key"),
         (f / "vault" / "sent-text-choice.json", "your choice to keep only fingerprints of what left this PC"),
         (f / "runtime" / "laya_safe_writes" / "salt", "the key that keys Laya's log hashes"),
+        (f / "settings.json", "my settings, which can hold API keys"),
+        (f / "google_token.json", "an older Google sign-in file"),
+        (f / "friday.log", "my log, which is mine to read, not a tool's"),
+        (f / "server_stderr.log", "my console log, which is mine to read, not a tool's"),
         (a / ".env", "the API keys an earlier release kept beside the app"),
         (a / "secrets.yaml", "the API keys an earlier release kept beside the app"),
     ]
@@ -140,6 +144,9 @@ _NAME_GLOBS: tuple[tuple[str, str], ...] = (
     ("start.bat", "a launcher that holds your API keys in plain text"),
     ("launch_now.bat", "a launcher that holds your API keys in plain text"),
     ("friday_startup.*", "a launcher that holds your API keys in plain text"),
+    ("friday.log.*", "my log, which is mine to read, not a tool's"),
+    ("server_stderr.log*", "my console log, which is mine to read, not a tool's"),
+    (".settings-*.tmp", "my settings, which can hold API keys"),
 )
 
 #: Names that are key material only when the file is one: a certificate .pem
@@ -1081,8 +1088,9 @@ def redact_secrets(text: str) -> str:
     that slipped past the path checks (a key pasted inside a larger file, a
     command that listed one) does not reach the model.
     """
-    from agent_friday.services import secret_patterns
-    return secret_patterns.redact(text)
+    from agent_friday.services import secret_patterns, secret_values
+    # ...and the values Friday actually holds, whatever their shape (NS-23.3-3).
+    return secret_values.redact_known(secret_patterns.redact(text))
 
 
 _CLOSED = "Keys and credentials stay closed to me, even when you ask."

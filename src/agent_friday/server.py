@@ -509,6 +509,13 @@ def _residency_boot():
 
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
+    # The console (kept by the tray in server_stderr.log) is redacted like friday.log: a print
+    # or traceback that quoted a key never reaches the file as it was (services/log_redaction).
+    try:
+        from agent_friday.services import log_redaction as _log_redaction
+        _log_redaction.install_streams()
+    except Exception:
+        pass
     # Stop everything (services/global_stop) survives a restart: read it FIRST, before
     # anything below can start work (reconcile, publishing, the scheduler). A state that
     # cannot be read boots stopped: Resume is one press away.

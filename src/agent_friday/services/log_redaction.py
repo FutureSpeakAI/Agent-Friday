@@ -67,6 +67,9 @@ def redact(text) -> str:
         from agent_friday.services import secret_shapes, secret_patterns
         s = secret_shapes.redact(s)
         s = secret_patterns.redact(s)
+        # The values Friday actually holds, whatever their shape (services/secret_values).
+        from agent_friday.services import secret_values
+        s = secret_values.redact_known(s)
         return s
     except Exception:  # noqa: BLE001 - a line that cannot be checked is not written
         return WITHHELD
@@ -120,6 +123,35 @@ class RedactingFilter(logging.Filter):
 
 
 _FILTER = RedactingFilter()
+
+
+class RedactingStream:
+    """A text stream (the server's stdout/stderr) that redacts what is written to it. The tray
+    keeps the server's console in server_stderr.log, so a print() or traceback that quoted a key
+    would be on disk as it was; every write passes `redact` first."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, s):
+        try:
+            text = redact(s) if s and not s.isspace() else s
+        except Exception:  # noqa: BLE001
+            text = WITHHELD + "\n"
+        return self._stream.write(text)
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def install_streams() -> None:
+    """Redact the server's stdout and stderr (idempotent). Called once by the server at start;
+    tests keep their own captured streams."""
+    import sys
+    for name in ("stdout", "stderr"):
+        cur = getattr(sys, name, None)
+        if cur is not None and not isinstance(cur, RedactingStream):
+            setattr(sys, name, RedactingStream(cur))
 
 
 def install(*loggers) -> None:
