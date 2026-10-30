@@ -585,6 +585,7 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         "action": action,
         "reason": reason,
     }
+    _stamped(entry)
     try:
         from agent_friday.services import turn_plan as _tp
         _turn = _tp.current_turn_id()
@@ -635,7 +636,7 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
         dest.parent.mkdir(parents=True, exist_ok=True)
         with _LOG_LOCK:
             with open(dest, "a", encoding="utf-8") as f:
-                f.write(json.dumps(_stamped(entry)) + "\n")
+                f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
 
@@ -796,6 +797,7 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
         "fields": call["fields"], "withheld": call["withheld"],
         "grants": sorted(call["grants"]), "result": result,
     }
+    _stamped(entry)
     if call.get("channel"):
         entry["channel"] = call["channel"]
         if call.get("recipients") is not None:
@@ -833,7 +835,7 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
         dest.parent.mkdir(parents=True, exist_ok=True)
         with _LOG_LOCK:
             with open(dest, "a", encoding="utf-8") as f:
-                f.write(json.dumps(_stamped(entry)) + "\n")
+                f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
     try:
@@ -972,6 +974,7 @@ def record_binary_egress(provider: str, field: str, *, action: str,
         "reason": reason,
         "bytes": int(byte_len or 0),
     }
+    _stamped(entry)
     _call = _CALL.get()
     if _call is not None:
         entry["call_id"] = _call["call_id"]
@@ -991,7 +994,7 @@ def record_binary_egress(provider: str, field: str, *, action: str,
         dest.parent.mkdir(parents=True, exist_ok=True)
         with _LOG_LOCK:
             with open(dest, "a", encoding="utf-8") as f:
-                f.write(json.dumps(_stamped(entry)) + "\n")
+                f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
     return entry
