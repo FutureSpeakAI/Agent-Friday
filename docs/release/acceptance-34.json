@@ -71,8 +71,8 @@
    "requirement": "Update and rollback tests gate",
    "status": "open",
    "evidence": "",
-   "missing": "No update-rollback test on main: the rollback leg (verify-boot-rollback.ps1 in clean-machine.yml) exists only on PR #254 and is not on main.",
-   "checked": "2026-10-28, against main df2872452"
+   "missing": "Half met on live: the rollback leg (packaging/windows/tests/rollback/verify-boot-rollback.ps1) is green in clean-machine run 41094117529 off main. The update half, the installer.yml upgrade matrix, has not run on live code (its only green run, 39882247495, was on 4a4dee190).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-9",
@@ -86,10 +86,9 @@
    "id": "NS-34.2-10",
    "strength": "REQUIRED",
    "requirement": "Dependency review gate",
-   "status": "open",
-   "evidence": "",
-   "missing": "No dependency-review gate on main; supply-chain.yml from PR #254 was not merged.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "scripts/supply_chain.py, run by .github/workflows/supply-chain.yml job dependency-review: only findings a PR adds fail it; tests/unit/test_supply_chain.py::test_a_pull_request_fails_only_on_what_it_adds. dependency-review green in run 41094103383; unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-11",
@@ -103,19 +102,17 @@
    "id": "NS-34.2-12",
    "strength": "REQUIRED",
    "requirement": "Documentation link and example tests",
-   "status": "open",
-   "evidence": "",
-   "missing": "Documentation examples are not executed or checked in CI on main; check_doc_examples.py exists only on PR #254.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "scripts/check_doc_examples.py with tests/unit/test_doc_examples.py::test_the_docs_examples_are_real (pytest unit step) and scripts/check_doc_links.py (repository guards, Markdown links). Both green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-13",
    "strength": "REQUIRED",
    "requirement": "Settings schema tests",
-   "status": "open",
-   "evidence": "",
-   "missing": "No settings schema and no test validating settings against one on main; resources/settings.schema.json is only on PR #254.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "The checked-in settings schema (resources), src/agent_friday/services/settings_schema.py, scripts/gen_settings_schema.py; tests/unit/test_settings_schema.py::test_every_default_fits_the_schema and tests/unit/test_settings_schema.py::test_a_first_runs_settings_fit_the_schema. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-14",
@@ -137,19 +134,17 @@
    "id": "NS-34.2-16",
    "strength": "REQUIRED",
    "requirement": "Model and capability registry validation",
-   "status": "open",
-   "evidence": "",
-   "missing": "No model and capability registry validation on main; it exists only on PR #254.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "scripts/check_model_registry.py; tests/unit/test_model_registry_is_valid.py::test_the_shipped_registries_are_consistent and tests/unit/test_model_registry_is_valid.py::test_a_seat_naming_an_unknown_provider_or_model_is_caught. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-17",
    "strength": "REQUIRED",
    "requirement": "License and SBOM generation",
-   "status": "open",
-   "evidence": "",
-   "missing": "No SBOM generation or licence check on main; the CycloneDX work is only on PR #254.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "scripts/supply_chain.py (CycloneDX SBOM and licence check) in .github/workflows/supply-chain.yml; tests/unit/test_supply_chain.py::test_the_sbom_is_cyclonedx_with_exact_versions_hashes_and_purls. dependency-review green in run 41094103383; unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-18",
@@ -170,10 +165,9 @@
    "id": "NS-34.3-2",
    "strength": "MUST",
    "requirement": "Clean-machine: minimum RAM",
-   "status": "open",
-   "evidence": "",
-   "missing": "No minimum-RAM clean-machine leg on main (clean-machine.yml not merged).",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "Memory-cap leg (4096 MiB job object): packaging/windows/tests/clean-machine/verify-clean-machine.ps1 in .github/workflows/clean-machine.yml; tests/unit/test_clean_machine_matrix.py::test_the_memory_cap_is_a_job_object_and_reaching_it_is_a_failure. leg (memory-cap) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-3",
@@ -186,19 +180,17 @@
    "id": "NS-34.3-4",
    "strength": "MUST",
    "requirement": "Clean-machine: non-English locale",
-   "status": "open",
-   "evidence": "",
-   "missing": "No non-English-locale clean-machine leg on main.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "Locale leg (tr-TR): packaging/windows/tests/clean-machine/verify-clean-machine.ps1 in .github/workflows/clean-machine.yml; tests/unit/test_clean_machine_matrix.py::test_the_locale_leg_is_not_english. leg (locale) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-5",
    "strength": "MUST",
    "requirement": "Clean-machine: restricted user account",
-   "status": "open",
-   "evidence": "",
-   "missing": "No restricted-user-account clean-machine leg on main.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "packaging/windows/tests/clean-machine/run-as-standard-user.ps1 in .github/workflows/clean-machine.yml; tests/unit/test_clean_machine_matrix.py::test_the_standard_user_is_not_an_administrator_and_has_a_non_ascii_profile. leg (standard-user) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-6",
@@ -206,8 +198,8 @@
    "requirement": "Upgrade from oldest supported and immediately prior version",
    "status": "open",
    "evidence": "",
-   "missing": "Upgrade matrix on main lacks v1.2.0-beta.2, the latest published release.",
-   "checked": "2026-10-28, against main df2872452"
+   "missing": "The upgrade matrix in .github/workflows/installer.yml stops at v1.2.0-beta.1; v1.2.0-beta.2 is the latest published release, and the upgrade jobs have not run on live code.",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-7",
@@ -221,10 +213,9 @@
    "id": "NS-34.3-8",
    "strength": "MUST",
    "requirement": "Results recorded in release evidence",
-   "status": "open",
-   "evidence": "",
-   "missing": "No single release-evidence record across the legs attached to the release on main.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "scripts/clean_machine_evidence.py, the evidence job in .github/workflows/clean-machine.yml (reads every leg, even a failed one); tests/unit/test_clean_machine_matrix.py::test_the_evidence_job_reads_every_leg_even_when_one_failed and tests/unit/test_clean_machine_matrix.py::test_the_release_build_calls_it_and_the_release_waits_for_it. evidence job green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-1",
@@ -238,10 +229,9 @@
    "id": "NS-34.4-2",
    "strength": "MUST",
    "requirement": "First-run: preflight accuracy",
-   "status": "open",
-   "evidence": "",
-   "missing": "Nothing tests that the preflight reads a real machine correctly: Get-HardwareFacts (the detection) has no test, and the clean-machine run does not check preflight; tests/unit/test_preflight_is_accurate.py from the lane handoff is not on main.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "packaging/windows/installer/probe-hardware.ps1, checked on real Windows by tests/unit/test_preflight_is_accurate.py::test_the_preflight_reports_this_computers_memory_disk_and_graphics. pytest (windows-latest, py3.12) unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-3",
@@ -254,10 +244,9 @@
    "id": "NS-34.4-4",
    "strength": "MUST",
    "requirement": "First-run: setup without a model",
-   "status": "open",
-   "evidence": "",
-   "checked": "2026-10-28, against main df2872452",
-   "missing": "The installer check that sets up with no model (packaging/windows/tests/verify-clean-install.ps1) has never run against main's code: its only green run was a clean-machine run on PR #254, which did not merge. The first-run app spec does not cover setup without a model."
+   "status": "pass",
+   "evidence": "packaging/windows/tests/verify-clean-install.ps1 checks first run with no model (cloud choice, no download), zero keys and set-up-later. leg (windows-2022) and leg (windows-2025) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-5",
@@ -279,10 +268,9 @@
    "id": "NS-34.4-7",
    "strength": "MUST",
    "requirement": "First-run: connector scope display",
-   "status": "open",
-   "evidence": "",
-   "missing": "The Google card omits scopes the connect flow can request (contacts, calendar and tasks write: google_accounts.py include_contacts_write etc.); no test that every requested scope is on the card. test_connector_scopes_on_the_card.py from the handoff is not on main.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "tests/unit/test_connector_scopes_on_the_card.py::test_the_card_lists_exactly_the_scopes_google_is_asked_for and tests/api/test_read_first_google_scopes.py::test_allowing_changes_asks_for_exactly_that_on_googles_screen. pytest unit + API step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-8",
@@ -303,10 +291,9 @@
    "id": "NS-34.4-10",
    "strength": "MUST",
    "requirement": "First-run: uninstall",
-   "status": "open",
-   "evidence": "",
-   "checked": "2026-10-28, against main df2872452",
-   "missing": "The uninstall check (packaging/windows/tests/verify-clean-install.ps1) has never run against main's code: its only green run was a clean-machine run on PR #254, which did not merge, and installer.yml has never run on main or a release tag."
+   "status": "pass",
+   "evidence": "Uninstall check in packaging/windows/tests/verify-clean-install.ps1: install folder, Apps entry and shortcuts gone, ~/.friday kept byte for byte, then reinstall. leg (windows-2022) and leg (windows-2025) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.5-1",
@@ -408,8 +395,8 @@
    "requirement": "Egress tests: unstructured sensitive meaning",
    "status": "open",
    "evidence": "",
-   "missing": "No CI test shows sensitive meaning without a listed keyword is caught; the semantic layers (embeddings, layer 4) are only plumbing-tested.",
-   "checked": "2026-10-28, against main df2872452"
+   "missing": "Layers 3 and 4 are plumbing-tested only (tests/unit/test_sensitivity_classifier_layers.py stubs the embedding tier; CI installs no encoder). No green test shows sensitive meaning with no listed keyword being withheld.",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.6-3",
@@ -452,10 +439,9 @@
    "id": "NS-34.6-8",
    "strength": "MUST",
    "requirement": "Egress tests: malformed payloads",
-   "status": "open",
-   "evidence": "",
-   "missing": "No test sends a malformed payload carrying sensitive text (non-dict message, odd content/part shapes) and asserts it is withheld; a non-dict message is passed through ungated by design of _gate_messages.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "src/agent_friday/services/egress_gate.py; tests/unit/test_egress_malformed_payloads.py::test_a_malformed_message_never_carries_sensitive_text_to_a_cloud_model and tests/unit/test_egress_malformed_payloads.py::test_a_malformed_messages_field_is_gated_not_skipped. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.6-9",
@@ -565,19 +551,17 @@
    "id": "NS-34.9-3",
    "strength": "MUST",
    "requirement": "Memory tests: current-state override and freshness",
-   "status": "open",
-   "evidence": "",
-   "missing": "The M5 work (services/memory_derived.py, tests/unit/test_correction_reaches_derived.py, PR #384) is not on main, so older day summaries/graph nodes are not brought to the current state.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "src/agent_friday/services/memory_derived.py (wired into conversation memory and the graph indexer); tests/unit/test_correction_reaches_derived.py::test_a_correction_takes_the_day_s_summary_away_and_queues_it_again. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-4",
    "strength": "MUST",
    "requirement": "Memory tests: correction and supersession",
-   "status": "open",
-   "evidence": "",
-   "missing": "Corrections do not reach day summaries or graph nodes made before them: services/memory_derived.py and tests/unit/test_correction_reaches_derived.py (PR #384) are not on main.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "src/agent_friday/services/memory_derived.py; tests/unit/test_correction_reaches_derived.py::test_the_graph_drops_what_only_the_corrected_turn_said and tests/unit/test_correction_reaches_derived.py::test_a_correction_takes_the_day_s_summary_away_and_queues_it_again. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-5",
@@ -599,19 +583,17 @@
    "id": "NS-34.9-7",
    "strength": "MUST",
    "requirement": "Memory tests: import staging",
-   "status": "open",
-   "evidence": "",
-   "missing": "No staging step or test for importing outside memory sources (chat exports, accounts) into memory.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "src/agent_friday/services/import_staging.py (contacts and AI chat exports); tests/unit/test_import_staging.py::test_staging_writes_nothing_durable and tests/unit/test_ai_history_import.py::test_staging_creates_no_conversation_until_accepted. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-8",
    "strength": "MUST",
    "requirement": "Memory tests: inferred vs confirmed state",
-   "status": "open",
-   "evidence": "",
-   "missing": "The general test tests/unit/test_memory_inferred_vs_confirmed.py (M6, PR #394) is not on main; no test across user model, nightly pass, Friday's tool and recall.",
-   "checked": "2026-10-28, against main df2872452"
+   "status": "pass",
+   "evidence": "tests/unit/test_memory_inferred_vs_confirmed.py::test_every_inferring_path_stores_its_output_marked_as_waiting_for_the_owner and tests/unit/test_memory_inferred_vs_confirmed.py::test_a_recalled_guess_friday_voiced_is_labelled_hers_not_the_owners. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-9",
@@ -736,8 +718,8 @@
    "requirement": "Persona goldens: directness, dissent, uncertainty, non-sycophancy",
    "status": "open",
    "evidence": "",
-   "missing": "In CI the goldens are scored only against committed fixture transcripts; the live run against Friday's real persona/model is opt-in (FRIDAY_PERSONA_EVAL_LIVE) and not run, so a persona regression would not fail any check.",
-   "checked": "2026-10-28, against main df2872452"
+   "missing": "No workflow sets FRIDAY_PERSONA_EVAL_LIVE: the goldens are scored against committed transcripts or crafted replies, never against Friday's live persona and model.",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.13-2",

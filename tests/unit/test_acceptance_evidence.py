@@ -30,6 +30,10 @@ RUNS = {
     "40076304491": ("codeql on main df2872452", True),
     "40076304471": ("restore on main df2872452", True),
     "39882247495": ("installer dispatch on 4a4dee190, not main", False),
+    # 2026-10-30: runs on 13c3872b9, landing PR #444, whose tree is live c0853a0ab (not main).
+    "41094103402": ("tests on PR #444 13c3872b9 (== live), not main", False),
+    "41094117529": ("clean-machine on PR #444 13c3872b9 (== live), not main", False),
+    "41094103383": ("supply-chain on PR #444 13c3872b9 (== live), not main", False),
 }
 
 
@@ -56,8 +60,9 @@ def _resolve(name: str, files: list[str], names: dict) -> list[str]:
 
 
 def test_the_rows_met_on_main_are_recorded():
-    # 2026-10-28: 48 rows were checked against main df2872452 and found met. The count only grows.
-    assert len(_passed()) >= 48
+    # 2026-10-28: 48 rows were checked against main df2872452 and found met; 2026-10-30: 18 more
+    # against live c0853a0ab (PR #444). The count only grows.
+    assert len(_passed()) >= 48 + 18
 
 
 def test_every_file_and_test_a_pass_names_exists():
