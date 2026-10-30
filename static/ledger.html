@@ -65,6 +65,23 @@
   <button type="button" id="more" hidden>Older entries</button>
 </section>
 
+<section aria-labelledby="u-h">
+  <h2 id="u-h">Everything, together</h2>
+  <p class="muted">Every kind of receipt Friday keeps, in one list: checkpoint decisions, what each action did, changes to your things, goal receipts, tool calls, reasoning traces, task journal events, sends leaving this PC, files Friday made, content credentials, posts, setup choices, memory writes and skill changes. Ids and times only, never what a record says. Enter an action, goal, task or approval id to see everything that names it, across every store.</p>
+  <form id="uf">
+    <label>Family <select name="family" id="u-family"><option value="">all</option></select></label>
+    <label>Id <input name="id" id="u-id" size="28" autocomplete="off" spellcheck="false"></label>
+    <button type="submit">Show</button>
+  </form>
+  <p class="muted" id="u-count" role="status"></p>
+  <p class="muted" id="u-sources" role="status"></p>
+  <table>
+    <thead><tr><th>When (UTC)</th><th>What</th><th>Where</th><th>Signed</th><th>Chained</th><th>Ids</th></tr></thead>
+    <tbody id="u-rows"></tbody>
+  </table>
+  <button type="button" id="u-more" hidden>Older records</button>
+</section>
+
 <section aria-labelledby="r-h">
   <h2 id="r-h">How long entries stay live</h2>
   <p class="muted">After this period an entry moves into the encrypted archive. It is still kept, still in every Friday Bundle and backup, and still checked as part of the chain.</p>
@@ -265,6 +282,55 @@
       + (fb ? ', first at ' + fb.segment + ' line ' + fb.line + (fb.seq != null ? ' (record ' + fb.seq + ')' : '') + ': ' + fb.reason : '')
       + (a.partial ? '. Only the newest part was checked.' : '.');
   }
+  // Everything, together (services/unified_ledger, A12): every receipt family in
+  // one list, or everything that names one id. Every value is set with textContent.
+  const LINK_WORDS = { direct: 'names it', via_task: 'same task', via_decision: 'same decision', via_goal: 'same goal' };
+  let unifiedCursor = null;
+  function unifiedRender(rows, append) {
+    const body = $('u-rows');
+    if (!append) body.textContent = '';
+    rows.forEach(r => {
+      const tr = el('tr');
+      tr.appendChild(el('td', String(r.ts || 'undated').replace('T', ' ').replace('Z', '')));
+      const what = el('td');
+      what.appendChild(el('div', r.summary));
+      what.appendChild(el('div', r.kind + (r.link ? ' · ' + (LINK_WORDS[r.link] || r.link) : ''), 'muted'));
+      tr.appendChild(what);
+      tr.appendChild(el('td', r.where));
+      tr.appendChild(el('td', r.signed ? 'yes' : 'no', r.signed ? 'ok' : 'muted'));
+      tr.appendChild(el('td', r.chained ? 'yes' : 'no', r.chained ? 'ok' : 'muted'));
+      const ids = el('td');
+      Object.entries(r.ids || {}).forEach(([k, v]) => ids.appendChild(el('div', k.replace(/_/g, ' ') + ' ' + v)));
+      tr.appendChild(ids);
+      body.appendChild(tr);
+    });
+  }
+  function unifiedLoad(append) {
+    const p = new URLSearchParams();
+    const fam = $('u-family').value, id = $('u-id').value.trim();
+    if (fam) p.set('family', fam);
+    if (id) p.set('id', id);
+    if (append && unifiedCursor) p.set('cursor', unifiedCursor);
+    api('/api/ledger/unified?' + p.toString()).then(({ ok, d }) => {
+      if (!ok) { $('u-count').textContent = (d && d.error) || 'The records could not be read together.'; return; }
+      const sel = $('u-family');
+      if (sel.options.length === 1) Object.entries(d.families || {}).forEach(([k, v]) => { const o = el('option', v); o.value = k; sel.appendChild(o); });
+      const rows = d.rows || [];
+      unifiedRender(rows, append);
+      unifiedCursor = d.next_cursor || null;
+      $('u-more').hidden = !unifiedCursor;
+      $('u-count').textContent = (append ? 'More: ' : 'Showing ') + rows.length + ' record' + (rows.length === 1 ? '' : 's')
+        + (d.traced ? ' that name this id or share its task, decision or goal.' : ', newest first.');
+      const bad = Object.entries(d.sources || {}).filter(([, s]) => s && s.ok === false);
+      const s = $('u-sources');
+      s.className = bad.length ? 'bad' : 'muted';
+      s.textContent = bad.length
+        ? 'Could not be read this time: ' + bad.map(([n, st]) => n.replace(/_/g, ' ') + ' (' + st.error + ')').join(', ') + '. Everything else is listed.'
+        : 'Every store was read.';
+    });
+  }
+  $('uf').addEventListener('submit', ev => { ev.preventDefault(); unifiedCursor = null; unifiedLoad(false); });
+  $('u-more').addEventListener('click', () => unifiedLoad(true));
   $('f').addEventListener('submit', ev => { ev.preventDefault(); lastSeq = null; load(false); });
   $('more').addEventListener('click', () => load(true));
   $('verify').addEventListener('click', () => api('/api/ledger/verify').then(({ d }) => showState(d.report)));
@@ -275,6 +341,7 @@
     });
   });
   load(false);
+  unifiedLoad(false);
   retention();
   integrity();
   outwardAudit();
