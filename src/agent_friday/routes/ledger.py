@@ -39,7 +39,7 @@
                                  cost, what changed and linked records, each
                                  "not recorded" when missing. Ids, names and
                                  counts only. Read-only; one at a time (429).
-  GET  /api/ledger/retention   the retention period and the archive (A22)
+  GET  /api/ledger/retention     the retention period and the archive (A22)
   POST /api/ledger/retention     {"days": n}: change it (0 = off, at least 30);
                                  on this PC only. Archives at once; never deletes.
   POST /api/ledger/acknowledge   the owner has looked at the breaks shown;
