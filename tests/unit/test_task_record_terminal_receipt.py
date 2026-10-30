@@ -225,7 +225,7 @@ def test_a_different_ending_arriving_mid_write_is_not_lost(isolated):
     assert rows[-1]["status"] == rec["status"], "the last receipt names the status the record kept"
     assert rec["terminal_receipt"]["status"] == rec["status"]
     assert all(r.get("supersedes") is not None for r in rows[1:])
-    assert "t-end-8" not in agent._RECEIPT_INFLIGHT
+    assert not agent._SETTLER["active"] and "t-end-8" not in agent._SETTLE_DIRTY
 
 
 def test_a_running_task_has_no_receipt_yet(isolated):
