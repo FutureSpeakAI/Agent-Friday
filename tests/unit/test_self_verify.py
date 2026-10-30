@@ -5,6 +5,7 @@ switch. A problem is said through the data-integrity path, each sweep is in
 the action ledger, and what is not covered yet is named."""
 from __future__ import annotations
 
+import base64
 import importlib
 import importlib.util
 from pathlib import Path
@@ -63,8 +64,10 @@ def test_a_locked_key_store_is_not_a_fault(monkeypatch):
 def test_the_sweep_covers_each_safeguard_and_names_what_it_does_not():
     sv = _sv()
     ids = {cid for cid, _f, _s in sv.CHECKS}
-    assert ids >= {"receipt_chain", "rules", "egress_gate", "action_gate", "credential_store", "authority"}
-    assert set(sv.NOT_COVERED) == {"update_signatures", "connector_domains", "sandbox", "principal_invariants"}
+    assert ids >= {"receipt_chain", "rules", "egress_gate", "action_gate", "credential_store", "authority",
+                   "update_signatures", "sandbox"}
+    assert set(sv.NOT_COVERED) == {"connector_domains", "principal_invariants"}
+    assert not ids & set(sv.NOT_COVERED)
 
 
 def test_a_clean_sweep_is_recorded_and_says_nothing(healthy):
@@ -133,3 +136,85 @@ def test_start_periodic_waits_then_sweeps(monkeypatch):
     monkeypatch.setattr(ir, "register", lambda store, fn: registered.append(store))   # no probe left behind
     sv.start_periodic(interval_s=99, first_delay_s=7, sleep=sleep)
     assert done.wait(10) and slept[0] == 7 and registered == ["safeguards"]
+
+
+def _check(sv, name):
+    assert hasattr(sv, name), "the sweep has no %s check" % name
+    return getattr(sv, name)
+
+
+def test_the_update_signature_check_tells_good_from_bad(monkeypatch):
+    sv = _sv()
+    check = _check(sv, "_update_signatures")
+    assert check() == ("healthy", "verifier_ok")
+    from agent_friday.services import minisign, trust_keys
+    real = minisign.verify
+    monkeypatch.setattr(minisign, "verify", lambda *a, **k: {"meta": {}})          # accepts anything
+    assert check() == ("broken", "bad_signature_accepted")
+
+    def refuses(*a, **k):
+        raise minisign.SignatureError("no")
+    monkeypatch.setattr(minisign, "verify", refuses)
+    assert check() == ("broken", "good_signature_refused")
+
+    def ignores_comment(data, sig, keys):                                         # forgets the trusted comment
+        lines = sig.split("\n")
+        good = lines[:2] + ["trusted comment: name=self-check"] + lines[3:]
+        return real(data, "\n".join(good), keys) if "agent-friday-release" in sig else real(data, sig, keys)
+    monkeypatch.setattr(minisign, "verify", ignores_comment)
+    assert check() == ("broken", "bad_signature_accepted")
+
+    def plain_only(data, sig, keys):                                              # the prehashed branch broke
+        if base64.b64decode(sig.split("\n")[1])[:2] == b"ED":
+            return {"meta": {}}
+        return real(data, sig, keys)
+    monkeypatch.setattr(minisign, "verify", plain_only)
+    assert check() == ("broken", "bad_signature_accepted")
+    monkeypatch.setattr(minisign, "verify", real)
+    monkeypatch.setattr(trust_keys, "PUBLIC_LIST_KEYS", ("not a key",))
+    assert check() == ("broken", "trusted_key_unreadable")
+
+
+def test_once_a_release_key_exists_an_unsigned_release_must_be_refused(monkeypatch):
+    sv = _sv()
+    check = _check(sv, "_update_signatures")
+    pub, _sign = sv._minisign_pair()
+    from agent_friday.services import trust_keys, update_check
+    monkeypatch.setattr(trust_keys, "RELEASE_KEYS", (pub,))
+    assert check() == ("healthy", "verifier_ok")
+    monkeypatch.setattr(update_check, "refused_states", lambda: update_check.REFUSED_STATES)
+    assert check() == ("broken", "unsigned_release_not_refused")
+
+
+def test_the_sandbox_check_sees_its_rules_go(monkeypatch):
+    sv = _sv()
+    check = _check(sv, "_sandbox")
+    assert check() == ("healthy", "sandbox_rules_ok")
+    from agent_friday.services import code_sandbox as cs
+    with monkeypatch.context() as m:
+        m.setattr(cs, "_BOOT", cs._BOOT.replace('"getaddrinfo", ', ""))
+        assert check() == ("broken", "network_block_missing")
+    with monkeypatch.context() as m:
+        m.setattr(cs, "classify", lambda args: (cs.INTERNAL, "x"))
+        assert check() == ("broken", "host_backend_not_outward")
+    with monkeypatch.context() as m:
+        m.setattr(cs, "classify", lambda args: (cs.OUTWARD, "x"))
+        assert check() == ("broken", "unknown_backend_allowed")
+    with monkeypatch.context() as m:
+        m.setattr(cs, "_BOOT", cs._BOOT.replace("setattr(_m, _n, _no_network)", "pass"))
+        assert check() == ("broken", "network_block_missing")
+    with monkeypatch.context() as m:
+        m.setattr(cs, "_BOOT", cs._BOOT + "\nif (:\n")
+        with pytest.raises(SyntaxError):                 # the sweep records this as check_failed
+            check()
+    with monkeypatch.context() as m:
+        real_env = cs._clean_env
+        m.setattr(cs, "_clean_env", lambda w: dict(real_env(w), OPENAI_API_KEY="sk-x"))  # pragma: allowlist secret
+        assert check() == ("broken", "environment_inherited")
+    with monkeypatch.context() as m:
+        real_env = cs._clean_env
+        m.setattr(cs, "_clean_env", lambda w: dict(real_env(w), HTTPS_PROXY=""))
+        assert check() == ("broken", "proxy_not_dead")
+    with monkeypatch.context() as m:
+        m.setattr(cs, "_clean_env", lambda w: dict(real_env(w), no_proxy="*"))
+        assert check() == ("broken", "proxy_not_dead")
