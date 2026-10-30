@@ -344,3 +344,214 @@ def test_the_store_is_in_the_privacy_map_and_forget_reaches_it():
     assert fr.find_all({"pat example"}, set())["outcome_memory"] == 1
     assert fr.purge_all({"pat example"}, set())["outcome_memory"] == 1
     assert om.count() == 1 and "Pat Example" not in json.dumps(om.export())
+
+
+# ── an unreadable store is never overwritten ────────────────────────────────
+
+@pytest.mark.parametrize("how", ["not_encrypted", "decrypt_fails", "wrong_shape"])
+def test_an_unreadable_store_refuses_writes_and_reads_nothing(how, tmp_path, monkeypatch):
+    from agent_friday.services import credential_store as cs
+    r = _rec("failed", summary="Step “Book flights” of goal “Synthetic Lisbon trip”",
+             match_terms=["Synthetic Lisbon trip", "Book flights"])
+    assert r is not None
+    assert "lisbon" in om.context_block("how did the synthetic lisbon trip go?").lower()
+    store = tmp_path / "outcomes" / "records.bin"
+    if how == "not_encrypted":
+        store.write_bytes(b"synthetic bytes that are not an outcome store")
+    elif how == "decrypt_fails":
+        def _fail(blob):
+            raise ValueError("synthetic decrypt failure")
+        monkeypatch.setattr(cs, "unprotect", _fail)
+    else:
+        blob, _method = cs.protect(json.dumps({"version": 1, "records": ["not", "records"]}).encode("utf-8"))
+        store.write_bytes(blob)
+    before = store.read_bytes()
+    assert _rec("failed") is None, "a write must be refused, never replace the store"
+    assert om.records() == [] and om.count() == 0 and om.get(r["id"]) is None
+    assert om.due_revisits(now=time.time() + 999 * DAY) == []
+    assert om.context_block("how did the synthetic lisbon trip go?") == ""
+    assert om.forget_record(r["id"]) == dict(om.forget_record(r["id"]), ok=False, error="not_writable")
+    assert om.forget_subject("action", r["subject"]["action_id"])["error"] == "not_writable"
+    assert om.correct(r["id"], outcome="succeeded")["error"] == "not_writable"
+    assert om.resolve(r["id"])["error"] == "not_writable"
+    assert store.read_bytes() == before, "the unreadable store was changed"
+    assert list((tmp_path / "outcomes").glob("*.tmp")) == []
+
+
+def test_a_failed_save_leaves_no_tmp_file(tmp_path, monkeypatch):
+    _rec("failed")
+
+    def _no_replace(src, dst):
+        raise OSError("synthetic replace failure")
+    monkeypatch.setattr(om.os, "replace", _no_replace)
+    assert _rec("failed") is None
+    assert list((tmp_path / "outcomes").glob("*.tmp")) == []
+
+
+def test_forgetting_an_unknown_record_in_a_readable_store_is_not_found():
+    _rec("failed")
+    assert om.forget_record("out_nosuchrecord")["error"] == "not_found"
+
+
+# ── a failing hook never breaks the work it watches ─────────────────────────
+
+def _boom(*a, **k):
+    raise RuntimeError("synthetic outcome-memory failure")
+
+
+def test_a_raising_milestone_hook_does_not_break_the_receipt(monkeypatch):
+    monkeypatch.setattr(om, "on_milestone_receipt", _boom)
+    goals.set_executor(_executor)
+    monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdicts(True))
+    g_ = _goal()
+    assert _run(g_)["status"] == "done"
+    kinds = [r["kind"] for r in goals.get_goal(g_["goal_id"])["receipts"]]
+    assert "milestone_complete" in kinds
+    assert om.for_subject(_ms_ref(g_)) is None
+
+
+def test_a_raising_goal_hook_does_not_break_the_transition(monkeypatch):
+    monkeypatch.setattr(om, "on_goal_end", _boom)
+    g_ = _goal(milestones=[{"name": "Book the synthetic venue"}])
+    out = goals.transition_goal(g_["goal_id"], "abandoned", reason="End this goal")
+    assert out is not None
+    assert goals.get_goal(g_["goal_id"])["status"] == "abandoned"
+    assert om.for_subject("goal:" + g_["goal_id"]) is None
+
+
+def test_a_raising_action_hook_does_not_break_record_outcome(monkeypatch):
+    from agent_friday.governance import action_gate as ag
+    from agent_friday.services import policy_version as pv
+    from agent_friday.services import task_journal as tj
+    monkeypatch.setattr(om, "on_action_closed", _boom)
+    aid = pv.new_action_id()
+    decision = {"class": ag.OUTWARD, "action_id": aid, "decision": "allow"}
+    tj.push_task("synthetic-task-0002")
+    try:
+        ag.record_outcome("send_email", decision, "ok", outcome=ag.COMPLETED_VERIFIED)
+    finally:
+        tj.pop_task()
+    assert decision.get("_closed") is True
+    assert om.for_subject("action:" + aid) is None
+
+
+# ── recall matches the owner's words, not Friday's ──────────────────────────
+
+def test_recall_ignores_fridays_template_words_and_matches_the_owners():
+    r = _rec("failed", summary="Step “Book flights” of goal “Synthetic Lisbon trip”",
+             match_terms=["Synthetic Lisbon trip", "Book flights"])
+    stored = om._all()[0]
+    assert "lisbon" in stored["match_terms"] and "flights" in stored["match_terms"]
+    assert not {"step", "goal"} & set(stored["match_terms"])
+    for msg in ("how is my goal going?", "what about that step", "goal step goals steps",
+                "any outcome on the outward action in a background task?"):
+        assert om.recall(msg) == [], msg
+        assert om.context_block(msg) == "", msg
+    assert [x["id"] for x in om.recall("how did the Lisbon trip go?")] == [r["id"]]
+    assert [x["id"] for x in om.recall("did the flights get booked")] == [r["id"]]
+
+
+def test_a_record_without_owner_words_falls_back_to_its_summary_less_fridays_words():
+    r = _rec("failed", summary="Step “Synthetic step” of goal “Synthetic trip”")
+    assert "match_terms" not in om._all()[0]
+    assert om.recall("goal step") == []
+    assert [x["id"] for x in om.recall("the synthetic trip")] == [r["id"]]
+
+
+def test_records_written_by_the_goal_hooks_carry_the_owners_words(monkeypatch):
+    goals.set_executor(_executor)
+    monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdicts(True))
+    g_ = _goal()
+    _run(g_)
+    ms = om._all()
+    assert ms and all("newsletter" in (r.get("match_terms") or []) for r in ms)
+    assert om.recall("how is the goal going? and the step?") == []
+    hit = {x["id"] for x in om.recall("how did the newsletter turn out")}
+    assert hit == {r["id"] for r in ms}
+
+
+# ── the chat context: data envelope, gated as memory, scrubbed for the cloud ─
+
+ADDR = "pat.synthetic" + "@example.com"
+
+
+def _chat():
+    from agent_friday.routes import chat
+    return chat
+
+
+def _ledger(monkeypatch):
+    from agent_friday.services import retrieval_ledger as rl
+    rows = []
+    monkeypatch.setattr(rl, "record_assembly", lambda sections, **k: rows.append((sections, k)) or len(sections))
+    return rows
+
+
+def test_the_chat_block_is_wrapped_as_data_and_is_a_row_in_the_context_manifest(monkeypatch):
+    from agent_friday.services import slice_head as sh
+    from agent_friday.services import untrusted_input as ui
+    chat = _chat()
+    rows = _ledger(monkeypatch)
+    r = _rec("failed", summary="Step “Book flights” of goal “Synthetic Lisbon trip”",
+             match_terms=["Synthetic Lisbon trip", "Book flights"])
+    sl = sh.Slicer({"memory": 0.9}, conversation_id="conv-synthetic-om", turn_id="turn-synthetic-om",
+                   cloud=False, opted=False)
+    block, recalled = chat._outcome_block_for("local", "how did the lisbon trip go?", sl)
+    assert recalled is True and r["id"] in block
+    assert block.index(om.RECALL_HEADER) < block.index("[Tool output ")
+    body = block.split(om.RECALL_HEADER + "\n", 1)[1].rstrip("\n")
+    assert ui.is_wrapped(body), "the item lines ride inside the data envelope"
+    assert r["id"] in ui.split(body)[0]
+    names = [n for _s, k in rows for n in (k.get("names") or [])]
+    assert "past_outcomes" in names, "the block is a row in the turn's retrieval ledger"
+    sent = next(s for s, k in rows if "past_outcomes" in (k.get("names") or []))
+    assert om.RECALL_HEADER in sent[0][1]
+    # Nothing recalled: no block, no row, not a recall turn.
+    rows.clear()
+    assert chat._outcome_block_for("local", "something unrelated entirely", sl) == ("", False)
+    assert rows == []
+
+
+def test_a_cloud_turn_that_does_not_need_memory_gets_no_outcome_lines(monkeypatch):
+    from agent_friday.services import slice_head as sh
+    chat = _chat()
+    _ledger(monkeypatch)
+    _rec("failed", summary="Step “Book flights” of goal “Synthetic Lisbon trip”",
+         match_terms=["Synthetic Lisbon trip"])
+    sl = sh.Slicer({"memory": 0.01}, conversation_id="conv-synthetic-om2", turn_id="turn-synthetic-om2",
+                   cloud=True, opted=True)
+    block, recalled = chat._outcome_block_for("cloud", "how did the lisbon trip go?", sl)
+    assert recalled is True
+    assert om.RECALL_HEADER not in block and "Lisbon" not in block
+
+
+def test_chat_send_scrubs_the_outcome_block_for_a_restricted_cloud_seat(monkeypatch):
+    from agent_friday.services import egress_gate
+    from agent_friday.services import slice_head as sh
+    chat = _chat()
+    _ledger(monkeypatch)
+    _rec("failed", summary="Step “Write to %s” of goal “Synthetic Lisbon trip”" % ADDR,
+         match_terms=["Synthetic Lisbon trip"])
+    msg = "how did the lisbon trip go?"
+    monkeypatch.setattr(egress_gate, "is_unrestricted_cloud", lambda *a, **k: False)
+    block, _ = chat._outcome_block_for("cloud", msg, sh.Slicer(None))
+    assert om.RECALL_HEADER in block and ADDR not in block and "[PII:email:" in block
+    local, _ = chat._outcome_block_for("local", msg, sh.Slicer(None))
+    assert ADDR in local, "a local seat gets the record as it is"
+    monkeypatch.setattr(egress_gate, "is_unrestricted_cloud", lambda *a, **k: True)
+    assert ADDR in chat._outcome_block_for("cloud", msg, sh.Slicer(None))[0]
+
+
+def test_both_chat_routes_use_the_gated_block_and_treat_it_as_a_recall_turn():
+    from pathlib import Path
+    chat = _chat()
+    src = Path(chat.__file__).read_text(encoding="utf-8")
+    send = src[src.index("def chat_send("):]
+    send = send[:send.index("\n@chat_bp.route")]
+    assert "_outcome_block_for(provider_name, message, _slicer)" in send
+    assert "_note_recall_turn(_session_id, _conversation_id, _OUTCOME_RECALL_WHY)" in send
+    assert "_om.context_block(" not in send
+    main = src[src.index("def chat():"):src.index("def chat_send(")]
+    assert "_outcome_block_for(" in main and "scrub=False" in main
+    assert '_sess_ctx["outside_in_prompt"] = _OUTCOME_RECALL_WHY' in main
+    assert "_om.context_block(" not in main
