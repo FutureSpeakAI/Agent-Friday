@@ -10,9 +10,19 @@
   * an action id traces across families: its decision, its outcome, the
     task journal's receipt and the task's other events, its send in the
     egress ledger, the goal receipt of the goal its task was checked for;
+  * a goal id finds its receipt and its check rows and stops there (the
+    checked task's other events are not pulled in);
   * paging by cursor is stable while newer records arrive;
   * the Ledger page's "Everything, together" section sets text with
-    textContent only.
+    textContent only, and "Older records" pages the list it was given;
+  * bounded (review of 3ac5a4913): the action ledger read stops on its
+    deadline, a trace starts no pass once the total is spent, encrypted task
+    journals are read within a line cap, from their end, with the time
+    checked per line; `truncated` names the task cap and the tail limit;
+    one read at a time (Busy) and the plain first page is kept CACHE_S;
+  * two publish events in the same second page as two records; signatures
+    are shown only as keyed hashes and an artifact still traces by the id
+    shown or by the task journal's reference.
 Synthetic records only; ids are made at run time.
 """
 from __future__ import annotations
@@ -70,7 +80,9 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(goals, "RECEIPTS_LOG", tmp_path / "governance" / "goal_receipts.jsonl")
     idempotency_index.reset()
     outward_audit.reset_cache()
+    U.reset_cache()
     yield
+    U.reset_cache()
     idempotency_index.reset()
     outward_audit.reset_cache()
     from agent_friday.services import action_journal
@@ -146,7 +158,7 @@ def _seed(tmp_path) -> dict:
     folder = tmp_path / "skills" / ("a12-" + WORDS)
     folder.mkdir(parents=True)
     skill_registry._append_ledger(folder, "create", reason=WORDS, actor="owner")
-    return {"action_id": aid, "decision_ref": decision["rec"].get("hmac", "")[:24]}
+    return {"action_id": aid, "decision_sig": decision["rec"].get("hmac") or "", "manifest_line": line}
 
 
 def _dump(out) -> str:
@@ -247,13 +259,24 @@ def test_an_action_id_traces_its_decision_outcome_journal_send_and_goal_receipt(
     assert WORDS not in _dump(out)
 
 
-def test_a_goal_id_finds_its_receipt_and_the_task_that_was_checked_for_it(tmp_path):
+def test_a_goal_id_finds_its_receipt_and_its_check_rows_and_stops_there(tmp_path):
     ids = _seed(tmp_path)
     rows = U.unified(id=GID, limit=U.PAGE_MAX)["rows"]
     links = {(r["family"], r["link"]) for r in rows}
     assert ("goal", "direct") in links and ("journal", "direct") in links
-    assert ("decision", "via_task") in links
-    assert any(r["ids"].get("action_id") == ids["action_id"] for r in rows)
+    check = next(r for r in rows if r["family"] == "journal" and r["kind"] == "verification")
+    assert check["ids"]["task_id"] == TID and check["ids"]["goal_id"] == GID
+    # goal -> its check rows -> stop: the checked task's own events are not pulled in
+    assert not any(r["link"] == "via_task" for r in rows), links
+    assert not any(r["ids"].get("action_id") == ids["action_id"] for r in rows)
+
+
+def test_a_task_named_for_itself_is_still_followed_when_its_row_also_names_a_goal(tmp_path):
+    ids = _seed(tmp_path)
+    # tracing the action: the task comes from its receipt, not a goal check
+    rows = U.unified(id=ids["action_id"], limit=U.PAGE_MAX)["rows"]
+    assert any(r["family"] == "journal" and r["kind"] == "verification" and r["link"] == "via_task"
+               for r in rows)
 
 
 def test_an_id_that_is_not_an_id_finds_nothing_and_reads_no_store(tmp_path):
@@ -301,3 +324,233 @@ def test_the_ledger_page_shows_everything_together_with_textcontent_only():
     assert "/api/ledger/unified" in body and "textContent" in body and "el(" in body
     for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
         assert sink not in html, sink
+
+
+def test_older_records_pages_the_list_it_was_given_not_the_form_as_it_is_now():
+    html = (ROOT / "static" / "ledger.html").read_text(encoding="utf-8")
+    start = html.index("function unifiedLoad")
+    body = html[start:html.index("$('u-more').addEventListener", start)]
+    # the form is read only for a first page; "Older records" reuses that query
+    assert "if (!append) unifiedQuery = { family: $('u-family').value, id: $('u-id').value.trim() };" in body
+    assert "const fam = unifiedQuery.family, id = unifiedQuery.id;" in body
+    assert body.count("$('u-id').value") == 1 and body.count("$('u-family').value") == 1
+
+
+# ── 7. bounded: deadlines, caps, one read at a time ──────────────────────────
+
+class _Clock:
+    """A clock that moves `step` seconds each time it is read."""
+
+    def __init__(self, step: float = 0.0):
+        self.t = 1000.0
+        self.step = step
+
+    def __call__(self) -> float:
+        self.t += self.step
+        return self.t
+
+
+def test_the_action_ledger_read_stops_on_its_deadline_not_only_at_its_limit(monkeypatch):
+    for i in range(400):
+        L.append("dissent", {"event": "pushed_back", "n": i})
+    seen = [0]
+    real = U._ledger_row
+
+    def counting(e):
+        seen[0] += 1
+        return real(e)
+    monkeypatch.setattr(U, "_ledger_row", counting)
+    monkeypatch.setattr(U, "_clock", _Clock(step=0.02))      # 2 s after about 100 lines
+    # an id nothing names: before, every line of the ledger was read for it
+    out = U.unified(id="act_a12_nothing_names_this", limit=U.PAGE_MAX)
+    rep = out["sources"]["action_ledger"]
+    assert rep["out_of_time"] is True, rep
+    assert 0 < seen[0] < 200, seen[0]
+    assert out["out_of_time"] is True and out["rows"] == []
+
+
+def test_a_trace_starts_no_further_pass_once_the_total_time_is_spent(tmp_path, monkeypatch):
+    ids = _seed(tmp_path)
+    clock = _Clock()
+    monkeypatch.setattr(U, "_clock", clock)
+    real = U._read_sources
+
+    def then_late(**kw):
+        rows = real(**kw)
+        clock.t += U.TOTAL_BUDGET_S + 1.0           # the direct pass used it all
+        return rows
+    monkeypatch.setattr(U, "_read_sources", then_late)
+    out = U.unified(id=ids["action_id"], limit=U.PAGE_MAX)
+    assert out["rows"] and {r["link"] for r in out["rows"]} == {"direct"}
+    assert "via_task" in out["skipped_passes"] and out["out_of_time"] is True
+    assert out["cached"] is False
+
+
+def _encrypted(monkeypatch):
+    from agent_friday.privacy import vault_crypto as vc
+    from agent_friday.services import credential_store as cs
+    monkeypatch.setattr(tj, "settings", lambda: {"retention_days": 0, "capture_reasoning": True,
+                                                 "encrypt_at_rest": True})
+    derived = vc.derive_key("synthetic phrase for the a12 journal", b"synthetic-salt-for-a12")
+    monkeypatch.setattr(cs, "_vault_key", lambda: derived)
+
+
+def test_encrypted_task_journals_are_read_within_a_line_cap_and_from_their_end(monkeypatch):
+    _encrypted(monkeypatch)
+    tid = "a12-encrypted-0001"
+    tj.append(tid, "created", name=WORDS)
+    for _ in range(40):
+        tj.blocker(tid, "run_failed")                 # seq 2 .. 41
+    path = tj.task_dir(tid) / "journal.jsonl"
+    assert all(ln.startswith(tj._LINE_PREFIX)
+               for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip())
+    decoded = [0]
+    real = tj._decode_line
+
+    def counting(line):
+        decoded[0] += 1
+        return real(line)
+    monkeypatch.setattr(tj, "_decode_line", counting)
+    # a line cap: no more lines are decrypted than it allows
+    monkeypatch.setattr(U, "PER_TASK_LINES", 10)
+    out = U.unified(family="journal", limit=U.PAGE_MAX)
+    assert decoded[0] <= 10, decoded[0]
+    assert 0 < out["count"] <= 10
+    assert "task_journal" in out["truncated"]
+    assert out["sources"]["task_journal"]["capped"] is False, "truncated is not capped"
+    # a byte cap: the newest events, from the end of the file
+    U.reset_cache()
+    decoded[0] = 0
+    monkeypatch.setattr(U, "PER_TASK_LINES", 1000)
+    monkeypatch.setattr(U, "PER_TASK_BYTES", path.stat().st_size // 4)
+    out = U.unified(family="journal", limit=U.PAGE_MAX)
+    refs = {r["ref"] for r in out["rows"]}
+    assert "%s#41" % tid in refs and "%s#2" % tid not in refs, sorted(refs)
+    assert decoded[0] < 20 and "task_journal" in out["truncated"]
+    # and the time is checked per line: a clock that runs out stops the read
+    U.reset_cache()
+    decoded[0] = 0
+    monkeypatch.setattr(U, "PER_TASK_BYTES", 10 * 1024 * 1024)
+    monkeypatch.setattr(U, "_clock", _Clock(step=0.25))       # 2 s after about 8 reads
+    out = U.unified(family="journal", limit=U.PAGE_MAX)
+    assert decoded[0] < 41 and out["sources"]["task_journal"]["out_of_time"] is True
+    assert WORDS not in _dump(out)
+
+
+def test_truncated_names_the_task_cap_and_the_tail_limit(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    tj.append("a12-second-task-0002", "created", name=WORDS)
+    tj.blocker("a12-second-task-0002", "run_failed")
+    out = U.unified(limit=U.PAGE_MAX)
+    assert out["truncated"] == [], out["truncated"]
+    U.reset_cache()
+    monkeypatch.setattr(U, "MAX_TASKS", 1)
+    out = U.unified(family="journal", limit=U.PAGE_MAX)
+    assert out["truncated"] == ["task_journal"]
+    assert out["sources"]["task_journal"]["capped"] is False
+    U.reset_cache()
+    monkeypatch.setattr(U, "MAX_TASKS", 50)
+    monkeypatch.setattr(U, "TAIL_BYTES", 64)                   # less than one egress line
+    out = U.unified(family="egress", limit=U.PAGE_MAX)
+    assert out["truncated"] == ["egress"] and out["sources"]["egress"]["capped"] is False
+
+
+def test_concurrent_reads_run_once_and_the_plain_first_page_is_kept(monkeypatch):
+    import threading
+    calls = [0]
+    entered, release = threading.Event(), threading.Event()
+
+    def slow(ctx):
+        calls[0] += 1
+        entered.set()
+        release.wait(5)
+        return []
+    monkeypatch.setattr(U, "SOURCES", [("egress", ("egress",), slow)])
+    monkeypatch.setattr(U, "BUSY_WAIT_S", 10.0)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(U.unified())) for _ in range(2)]
+    threads[0].start()
+    assert entered.wait(5)
+    threads[1].start()
+    time.sleep(0.2)                                   # the second is waiting on the first
+    assert calls[0] == 1
+    release.set()
+    for t in threads:
+        t.join(10)
+    assert len(results) == 2 and calls[0] == 1, "the waiting read took the first one's page"
+    assert sorted(r["cached"] for r in results) == [False, True]
+    assert U.unified()["cached"] is True and calls[0] == 1
+    # a trace or a later page is never served from the cache
+    assert U.unified(id="act_a12_not_cached")["cached"] is False and calls[0] == 2
+    # and the kept page is fresh for CACHE_S only
+    clock = _Clock()
+    monkeypatch.setattr(U, "_clock", clock)
+    U.reset_cache()
+    U.unified()
+    clock.t += U.CACHE_S + 1.0
+    assert U.unified()["cached"] is False and calls[0] == 4
+
+
+def test_a_read_while_another_holds_the_list_too_long_is_told_busy(monkeypatch):
+    import threading
+    entered, release = threading.Event(), threading.Event()
+
+    def slow(ctx):
+        entered.set()
+        release.wait(5)
+        return []
+    monkeypatch.setattr(U, "SOURCES", [("egress", ("egress",), slow)])
+    monkeypatch.setattr(U, "BUSY_WAIT_S", 0.05)
+    first = threading.Thread(target=U.unified)
+    first.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(U.Busy):
+            U.unified(id="act_a12_busy_probe")
+    finally:
+        release.set()
+        first.join(10)
+
+
+# ── 8. references: same-second publish events, signatures never shown ───────
+
+def test_two_publish_events_in_the_same_second_page_as_two_records(tmp_path):
+    from agent_friday.services import content_pipeline
+    log = Path(content_pipeline.PUBLISH_LOG)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    same = "2026-10-30T10:00:00Z"
+    with open(log, "w", encoding="utf-8") as f:
+        for outcome in ("sent", "confirmed"):
+            f.write(json.dumps({"ts": same, "event": "publish", "outcome": outcome,
+                                "target_id": "tgt_a12_same"}) + "\n")
+    first = U.unified(family="publish", limit=1)
+    assert first["count"] == 1 and first["next_cursor"]
+    second = U.unified(family="publish", limit=1, cursor=first["next_cursor"])
+    assert second["count"] == 1 and second["next_cursor"] is None
+    a, b = first["rows"][0], second["rows"][0]
+    assert a["at"] == b["at"] and a["ref"] != b["ref"]
+    assert {a["summary"], b["summary"]} == {"Post publish attempt: sent", "Post publish attempt: confirmed"}
+
+
+def test_signatures_are_shown_only_as_keyed_hashes_and_an_artifact_still_traces(tmp_path):
+    ids = _seed(tmp_path)
+    line = ids["manifest_line"]
+    journal_ref = am.artifact_ref(line)
+    tj.artifact(TID, journal_ref, tool="write_file", qa_ok=True, action_id=ids["action_id"])
+    out = U.unified(limit=U.PAGE_MAX)
+    text = _dump(out)
+    for sig in (ids["decision_sig"], line["hmac"]):
+        assert sig and sig[:16] not in text, "no signature's characters reach the list"
+    assert journal_ref[len(am.ARTIFACT_REF_PREFIX):] not in text
+    art = next(r for r in out["rows"] if r["family"] == "artifact")
+    jart = next(r for r in out["rows"] if r["family"] == "journal" and r["kind"] == "artifact")
+    shown = art["ids"]["artifact_id"]
+    assert shown.startswith("art_") and shown != journal_ref and jart["ids"]["artifact_id"] == shown
+    dec = next(r for r in out["rows"]
+               if r["family"] == "decision" and r["ids"].get("action_id") == ids["action_id"])
+    assert dec["ids"]["decision_ref"] == art["ids"]["decision_ref"], "the decision and its artifact join"
+    # traced by the id shown, or by the reference the task journal keeps (G10)
+    for want in (shown, journal_ref):
+        rows = U.unified(id=want, limit=U.PAGE_MAX)["rows"]
+        got = {(r["family"], r["kind"], r["link"]) for r in rows}
+        assert ("artifact", "artifact", "direct") in got and ("journal", "artifact", "direct") in got, got
