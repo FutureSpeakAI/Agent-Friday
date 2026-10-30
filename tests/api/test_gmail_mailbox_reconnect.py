@@ -49,10 +49,18 @@ def test_the_flow_asks_for_send_and_modify_only_when_told():
     assert {ga.GMAIL_SEND, ga.GMAIL_MODIFY, ga.GMAIL_READ} <= set(both.oauth2session.scope)
 
 
+def _diff_id(client, account_id, caps):
+    """A new write permission is asked for only after its permission difference was shown
+    (tests/api/test_permission_diff.py): the caller sends back its diff_id."""
+    return client.get("/api/google/accounts/%s/permission-diff?capability=%s"
+                      % (account_id, ",".join(caps))).get_json()["diff"]["diff_id"]
+
+
 def test_reconnect_with_sending_is_one_consent_for_both(client):
     _write({"id": "a1", "email": "me@example.test", "label": "Me", "status": "connected",
             "services": {"gmail": True}, "scopes": [ga.GMAIL_READ], "enc_method": "vault"})
-    d = client.post("/api/google/accounts/connect", json={"account_id": "a1", "mailbox": True}).get_json()
+    d = client.post("/api/google/accounts/connect", json={"account_id": "a1", "mailbox": True,
+                                                          "diff_id": _diff_id(client, "a1", ["send"])}).get_json()
     assert d["status"] == "ok" and d["requesting_send"] and d["requesting_modify"]
     asked = _scopes_in(d["auth_url"])
     assert {ga.GMAIL_READ, ga.GMAIL_SEND, ga.GMAIL_MODIFY} <= asked          # one screen, all of them

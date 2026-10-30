@@ -49,15 +49,24 @@ def _scopes_in(url):
     return set(parse_qs(urlparse(url).query)["scope"][0].split())
 
 
+def _diff_id(client, account_id, caps):
+    """A new write permission is asked for only after its permission difference was shown
+    (tests/api/test_permission_diff.py): the caller sends back its diff_id."""
+    return client.get("/api/google/accounts/%s/permission-diff?capability=%s"
+                      % (account_id, ",".join(caps))).get_json()["diff"]["diff_id"]
+
+
 def test_saving_contacts_is_asked_for_only_from_its_own_button(client):
     _account([ga.CONTACTS_READ])
     plain = client.post("/api/google/accounts/connect", json={"account_id": "a1"}).get_json()
     assert ga.CONTACTS_RW not in _scopes_in(plain["auth_url"])
     mailbox = client.post("/api/google/accounts/connect",
-                          json={"account_id": "a1", "mailbox": True}).get_json()
+                          json={"account_id": "a1", "mailbox": True,
+                                "diff_id": _diff_id(client, "a1", ["send"])}).get_json()
     assert ga.CONTACTS_RW not in _scopes_in(mailbox["auth_url"])
     d = client.post("/api/google/accounts/connect",
-                    json={"account_id": "a1", "include_contacts_write": True}).get_json()
+                    json={"account_id": "a1", "include_contacts_write": True,
+                          "diff_id": _diff_id(client, "a1", ["contacts"])}).get_json()
     assert d["requesting_contacts_write"] is True
     asked = _scopes_in(d["auth_url"])
     assert ga.CONTACTS_RW in asked and ga.GMAIL_SEND not in asked

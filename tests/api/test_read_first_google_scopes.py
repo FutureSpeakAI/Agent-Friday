@@ -78,12 +78,21 @@ def test_a_reconnect_does_not_ask_for_changes_either(client):
 ], ids=["calendar", "tasks"])
 def test_allowing_changes_asks_for_exactly_that_on_googles_screen(client, flag, wanted, not_wanted):
     _write([CAL_READ, TASKS_READ])
-    d = client.post("/api/google/accounts/connect", json={"account_id": "a1", flag: True}).get_json()
+    cap = "calendar" if flag == "include_calendar_write" else "tasks"
+    d = client.post("/api/google/accounts/connect",
+                    json={"account_id": "a1", flag: True, "diff_id": _diff_id(client, "a1", [cap])}).get_json()
     asked = _scopes_in(d["auth_url"])
     assert wanted in asked and not_wanted not in asked
     assert "https://www.googleapis.com/auth/gmail.send" not in asked
     assert ra._PENDING[d["state"]][flag] is True, "the callback leg must rebuild the same request"
     assert wanted in [x["scope"] for x in d["requested_scopes"]], "the owner is shown what is asked first"
+
+
+def _diff_id(client, account_id, caps):
+    """A new write permission is asked for only after its permission difference was shown
+    (tests/api/test_permission_diff.py): the caller sends back its diff_id."""
+    return client.get("/api/google/accounts/%s/permission-diff?capability=%s"
+                      % (account_id, ",".join(caps))).get_json()["diff"]["diff_id"]
 
 
 class _Exec:
