@@ -155,6 +155,34 @@ def notice_title(rec: Dict[str, Any]) -> str:
     return str(rec.get("title") or "")
 
 
+_WAITING_WHAT = (
+    (("calendar", "event", "meeting"), "a calendar change"),
+    (("task",), "a task change"),
+    (("mail", "gmail", "email"), "an email"),
+    (("sms", "text_message", "phone", "external_message", "message"), "a message or call"),
+    (("file", "folder", "path", "library", "pdf"), "a file action"),
+    (("mcp", "connector", "add-on", "addon"), "an add-on"),
+    (("memory",), "something to remember"),
+)
+WAITING_NOTICE_BODY = "Open Friday to see what it would do, and to approve or decline it."
+
+
+def waiting_notice_title(rec: Dict[str, Any]) -> str:
+    """The title of a waiting card's notice in the tray (owner ruling 5, 2026-10-28): a
+    generic line by kind, never the card's own title, which can name an event, a task,
+    a person or a file. The card itself keeps its words, on the screen."""
+    rec = rec or {}
+    if rec.get("kind") in PRIVATE_DETAIL_KINDS:
+        return notice_title(rec)            # already generic: names only the tool
+    payload = rec.get("payload") or {}
+    key = " ".join(str(x or "") for x in (payload.get("tool"), payload.get("handler"),
+                                          rec.get("kind"), rec.get("subject_type"))).lower()
+    for words, what in _WAITING_WHAT:
+        if any(w in key for w in words):
+            return "Friday needs your approval for %s" % what
+    return "Friday needs your approval for an action"
+
+
 def notice_body(rec: Dict[str, Any]) -> str:
     """A notice's body: for a card that repeats the action's details, where to decide it, nothing more."""
     rec = rec or {}
@@ -1200,7 +1228,9 @@ def _notify_expired_while_held(rec: Dict[str, Any]) -> None:
             title = "An off-the-record approval expired before you saw it"
             body = "It was waiting in your badge and its time ran out. Nothing was done."
         else:
-            title = "An approval expired before you saw it: %s" % (rec.get("title") or "an action")
+            # Owner ruling 5: generic, never the card's own title.
+            title = "An approval expired before you saw it: %s" % (
+                waiting_notice_title(rec).replace("Friday needs your approval for ", "", 1))
             body = ("It was waiting in your badge while quiet hours, the hourly limit or Focus Assist "
                     "held it back, and its time ran out. Nothing was done. Ask again if you still want it.")
         _ne.push(title=title, body=body, priority="medium", source="approvals",
@@ -1411,18 +1441,21 @@ def _notify_pending(record: Dict[str, Any]) -> None:
         # kept or skipped by its own approval; the card is still an approval.
         if _pol.is_memory_proposal(record):
             meta["group"] = _pol.MEMORY_GROUP
-            meta["detail"] = (record.get("action_description") or "")[:300]
+            # Owner ruling 5: what Friday proposes to remember is not kept in the notice;
+            # the tray reads it from the waiting card when it is shown
+            # (notifications_engine.groups).
     except Exception:
         pass
-    body = notice_body(record)
+    # Owner ruling 5: the notice (kept in notifications.json, and shown by anything that
+    # forwards it) says that something is waiting and where to look, never what the card
+    # names. The card keeps its own words on the screen.
+    body = WAITING_NOTICE_BODY
     if (record.get("payload") or {}).get("origin") == "laya_safe_write":
-        # A card Laya raised lists subjects, sender names and addresses on its on-screen lines. The notice
-        # (and anything that forwards it) says only what was asked and where to look.
         body = "Open Friday to see which conversations, and to approve or decline it."
     try:
         _ne.push(
             meta=meta,
-            title=f"Approval needed: {notice_title(record)}",
+            title=f"Approval needed: {waiting_notice_title(record)}",
             body=body[:300],
             priority="medium", source="approvals", kind="approval_pending",
             # `target` is the shape the notification tray's click handler
