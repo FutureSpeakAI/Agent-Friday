@@ -220,10 +220,13 @@ def test_a_second_check_with_no_new_lines_reads_nothing_and_a_new_line_reads_aga
     third = al.verify_chain()
     assert reads, "an appended line is read"
     assert third["lines"] == 6 and third["chained"] == 6
-    # a different cap is its own check; reset_caches drops the kept one
+    # a different cap is its own check (one kept result: the last one asked
+    # for); asking the same again reads nothing; reset_caches drops it
     reads.clear()
     al.verify_chain(max_lines=2)
     assert reads
+    reads.clear()
+    al.verify_chain()
     reads.clear()
     al.verify_chain()
     assert reads == []
