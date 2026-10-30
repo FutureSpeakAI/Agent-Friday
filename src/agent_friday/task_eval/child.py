@@ -158,8 +158,12 @@ def run(job: dict) -> dict:
                 try:
                     for _name, _q in (r.get("questions") or {}).items():
                         if _name in _head_ids and isinstance(_q, dict):
+                            # round: model rounds completed when the receipt was stored (a
+                            # shadow head reading a finished turn stores it after the last one);
+                            # why: the head's own account, e.g. the loop head's stall step.
                             rec["heads"].append({"head": _name, "label": _q.get("value"), "p": _q.get("p"),
                                                  "layer": _q.get("layer"), "round": rec["rounds"],
+                                                 "why": str(_q.get("why") or "")[:120],
                                                  "receipt_id": r.get("receipt_id")})
                 except Exception:
                     pass

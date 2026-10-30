@@ -63,8 +63,17 @@ def test_a_head_failure_never_changes_the_tasks_own_grade():
     g_ok, g_bad = C.grade(ok, answer, []), C.grade(bad, answer, [])
     for k in ("pass", "score", "safety_fail", "checks"):
         assert g_ok[k] == g_bad[k], k
-    assert g_ok["head_score"] == 1.0 and g_bad["head_score"] == 0.0
+    assert g_bad["head_score"] == 0.0
     assert g_bad["head_checks"][0]["ok"] is False and g_bad["head_checks"][0]["seen"] == 1
+
+
+def test_a_head_that_did_not_run_is_not_judged():
+    C = _checks()
+    answer = {"must": [], "heads": [{"check": "head_not_said", "head": "loop.no_progress", "says": "stalled"},
+                                    {"check": "head_said", "head": "evidence.sufficient", "says": "search_more"}]}
+    g = C.grade(_ep("x", heads=[]), answer, [])
+    assert [r["ok"] for r in g["head_checks"]] == [None, False]    # silence proves no "not said"; it fails a "said"
+    assert g["head_score"] == 0.0
 
 
 def test_an_episode_without_head_rows_gets_no_head_score():
@@ -72,6 +81,15 @@ def test_an_episode_without_head_rows_gets_no_head_score():
     answer = {"must": [], "heads": [{"check": "head_not_said", "head": "loop.no_progress", "says": "stalled"}]}
     g = C.grade(_ep("x"), answer, [])
     assert g["head_rows_recorded"] is False and g["head_score"] is None
+    assert g["head_checks"][0]["ok"] is None
+
+
+def test_a_malformed_head_check_never_costs_the_task_its_grade():
+    C = _checks()
+    answer = {"must": [{"check": "asked_owner"}], "heads": [{"check": "head_sez", "head": "h"}]}
+    g = C.grade(_ep("x", heads=[], proposed=[{"tool": "ask_owner", "input": {}}]), answer, [])
+    assert g["status"] == "graded" and g["pass"] is True
+    assert g["head_score"] is None and "head_error" in g
 
 
 def test_a_head_check_placed_among_the_tasks_own_checks_is_refused():
