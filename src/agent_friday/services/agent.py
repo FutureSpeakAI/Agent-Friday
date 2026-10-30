@@ -5423,76 +5423,96 @@ def _task_log(task_id, line):
 #: Terminal statuses that are not the task's ending: the worker is done but the
 #: owner's card still decides it (settle_waiting_task writes the real ending).
 _NOT_AN_ENDING = frozenset({"waiting_approval"})
-#: Tasks whose terminal receipt is being written now (guarded by TASKS_LOCK). Kept
-#: here, not on the record, so it is never copied to disk or to /api/tasks.
-_RECEIPT_INFLIGHT: set = set()
+#: Receipts are settled by one thread at a time (the settler); a task whose status
+#: changes while another is being settled is marked dirty and the settler looks
+#: at it again before it stops. The guard is never held while TASKS_LOCK is taken,
+#: so a caller already holding TASKS_LOCK cannot deadlock with the settler.
+_SETTLE_GUARD = threading.Lock()
+_SETTLE_DIRTY: set = set()
+_SETTLER = {"active": False}
 
 
 def _ends_task(status) -> bool:
     return _is_terminal_status(status) and str(status) not in _NOT_AN_ENDING
 
 
-def _claim_terminal_receipt(t, fields, prev_status, new_status):
-    """Under TASKS_LOCK: what this status change does to the terminal receipt.
-    None (nothing), "reset" (a resumed task: its next ending gets its own), True
-    (write the first one) or the current receipt (write one that supersedes it).
-    A claim marks the record so a racing call (a stop while the worker finishes)
-    cannot write a second entry for the same change."""
-    if 'status' not in fields or new_status == prev_status:
-        return None
-    current = t.get('terminal_receipt') or None
-    if not _ends_task(new_status):
-        # Running again, or back to a card: the earlier ending is history.
-        return "reset" if current else None
-    tid = t.get('task_id')
-    if tid in _RECEIPT_INFLIGHT or (current and current.get('status') == new_status):
-        # Another ending is being written now: whichever status is committed
-        # last is settled after the commit (_settle_terminal_receipt).
-        return None
-    _RECEIPT_INFLIGHT.add(tid)
-    return current or True
-
-
-def _write_terminal_receipt(task_id, snap, claim):
-    """Write the claimed receipt, point the live record at it (unless a newer one
-    is already there) and release the claim. Returns the receipt, or None."""
-    receipt = None
+def _seq_of(receipt) -> int:
     try:
-        receipt = _task_terminal_receipt(
-            task_id, snap, supersedes=claim.get('seq') if isinstance(claim, dict) else None)
-    finally:
-        with TASKS_LOCK:
-            t = TASKS.get(task_id)
-            if t is not None and receipt:
-                cur = t.get('terminal_receipt') or {}
-                if not cur or int(cur.get('seq') or 0) <= int(receipt['seq']):
-                    t['terminal_receipt'] = receipt
-            _RECEIPT_INFLIGHT.discard(task_id)
-    return receipt
+        return int((receipt or {}).get('seq') or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _settle_terminal_receipt(task_id):
-    """After a status is committed: if the record now ends with a status its
-    receipt does not name (two endings raced, and the other was committed last,
-    or a write failed), write the receipt for the committed one, superseding.
-    So the last receipt always names the status the record ended with."""
-    for _attempt in range(3):
-        with TASKS_LOCK:
-            t = TASKS.get(task_id)
-            if t is None or task_id in _RECEIPT_INFLIGHT or not _ends_task(t.get('status')):
-                return
-            cur = t.get('terminal_receipt') or None
-            if cur and cur.get('status') == t.get('status'):
-                return
-            _RECEIPT_INFLIGHT.add(task_id)
-            view = dict(t)
-        receipt = _write_terminal_receipt(task_id, view, cur or True)
-        if not receipt:
+    """After a status is committed (north star §30.9, NS-30.9-1): make the
+    record's terminal receipt name the status the record now ends with.
+
+    * an ending with no receipt, or a receipt naming another ending (complete,
+      then failed; or a stop racing the worker): write a signed 'task_end' entry,
+      superseding the earlier one, and point the record at it;
+    * not an ending any more (running again, or back to a card): the receipt
+      moves to previous_terminal_receipts and the next ending gets its own;
+    * the same ending again: nothing.
+
+    Whichever status is committed last is settled last, so the record and its
+    last receipt always agree."""
+    with _SETTLE_GUARD:
+        _SETTLE_DIRTY.add(task_id)
+        if _SETTLER["active"]:
             return
+        _SETTLER["active"] = True
+    while True:
+        with _SETTLE_GUARD:
+            if not _SETTLE_DIRTY:
+                _SETTLER["active"] = False
+                return
+            tid = _SETTLE_DIRTY.pop()
         try:
-            _journal().write_state(task_id, dict(view, terminal_receipt=receipt))
+            _settle_one(tid)
         except Exception:
             pass
+
+
+def _settle_one(task_id):
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if t is None:
+            return
+        status, cur = t.get('status'), (t.get('terminal_receipt') or None)
+        if not _ends_task(status):
+            if cur:
+                t['previous_terminal_receipts'] = (
+                    list(t.get('previous_terminal_receipts') or []) + [cur])[-10:]
+                t['terminal_receipt'] = None
+                fresh = dict(t)
+            else:
+                return
+            view = None
+        elif cur and cur.get('status') == status:
+            return
+        else:
+            view = dict(t)
+    if view is None:
+        _write_state_quietly(task_id, fresh)
+        return
+    receipt = _task_terminal_receipt(task_id, view, supersedes=cur.get('seq') if cur else None)
+    if not receipt:
+        return
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if t is None:
+            return
+        if _seq_of(t.get('terminal_receipt')) <= _seq_of(receipt):
+            t['terminal_receipt'] = receipt
+        fresh = dict(t)
+    _write_state_quietly(task_id, fresh)
+
+
+def _write_state_quietly(task_id, rec):
+    try:
+        _journal().write_state(task_id, rec)
+    except Exception:
+        pass
 
 
 def _task_terminal_receipt(task_id, snap, supersedes=None):
@@ -5535,7 +5555,6 @@ def _task_set(task_id, **fields):
         name = snap.get('name')
         created = snap.get('created')
         ended = snap.get('ended')
-        _receipt_claim = _claim_terminal_receipt(t, fields, prev_status, new_status)
     # The North Star state (services/task_states, NS-17.7-1) is kept on the record and each
     # change is journaled, beside the status transitions below.
     try:
@@ -5572,22 +5591,6 @@ def _task_set(task_id, **fields):
                     _tl.save(task_id, _led)
         except Exception:
             pass
-    if _receipt_claim == "reset":
-        # Resumed: the earlier ending is history; the next one gets its own receipt.
-        _old = prev_snap.get('terminal_receipt')
-        _hist = (list(prev_snap.get('previous_terminal_receipts') or []) + [_old])[-10:]
-        snap.update(terminal_receipt=None, previous_terminal_receipts=_hist)
-        fields = dict(fields, terminal_receipt=None, previous_terminal_receipts=_hist)
-    elif _receipt_claim:
-        # §30.9 (NS-30.9-1): the task's terminal receipt, signed in the action
-        # ledger and named on the record. A later, different ending (complete,
-        # then failed) supersedes it with a new entry that names the old one.
-        # The pointer goes into snap (written to disk below) and onto the live
-        # record under the lock, never into `fields`: a later call's newer
-        # pointer is never rolled back by this call's final update.
-        _receipt = _write_terminal_receipt(task_id, snap, _receipt_claim)
-        if _receipt:
-            snap['terminal_receipt'] = _receipt
     # Disk BEFORE memory (TV1: the journal is the source of truth, TASKS is
     # its cache). This used to update TASKS first and write afterwards, so a
     # reader polling /api/tasks could see a terminal status that state.json
