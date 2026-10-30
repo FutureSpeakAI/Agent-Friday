@@ -79,7 +79,7 @@ test('the tab shows what runs, her modes and a report card, and the approval che
   await page.reload({ waitUntil: 'domcontentloaded' });
   root = await openLaya(page);
   const titles = await root.locator('section[data-st-section]').evaluateAll(es => es.map(e => e.getAttribute('data-st-section')));
-  expect(titles).toEqual(["What Laya does", "Laya's modes", "Laya's report card", "Replay test", "Confidence bars",
+  expect(titles).toEqual(["What Laya does", "Laya's modes", "Laya's report card", "Her decision heads", "Replay test", "Confidence bars",
     "Teach her a phrase", "What Laya learns about you", "Instant answers (no model)", "Laya chat pilot",
     "Safe writes (off until you turn them on)", "Coming next"]);
   await expect(root.locator('[data-laya-card="series"]')).toContainText('Series One');
