@@ -2,8 +2,9 @@
 revoked and consumed), and which device decided it (NS-30.11-1).
 
 Before: a card had no action fingerprint, so one whose payload was changed outside the approvals
-module after the owner approved it (a bug, a stray edit) could still be spent on the changed action; "revoked" and "consumed" were not states a
-reader could see; and nothing said from where a decision came. Synthetic cards only.
+module after the owner approved it (a bug, a stray edit) could still be spent on the changed
+action; "revoked" and "consumed" were not states a reader could see; and nothing said from where a
+decision came. Synthetic cards only.
 """
 from __future__ import annotations
 
