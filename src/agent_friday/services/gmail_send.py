@@ -301,6 +301,17 @@ def _pre_approval(recipients):
         return None
 
 
+def _reserve_pre_approval(grant, recipients):
+    """Take one use of the pre-approval for this message (send_grants.reserve_use),
+    or None when it has none left or may not be used now. Never raises."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return _sg.reserve_use(grant.get("grant_id"), "send_email", recipients)
+    except Exception as e:
+        _log.warning("pre-approval use could not be counted, so the send asks: %s", e)
+        return None
+
+
 #: The line on a send card for a message a cloud model wrote that has private details in it.
 CLOUD_SENSITIVE_NOTE = ("Written on a cloud model, and it has private details in it: this is exactly "
                         "what would be sent. Send, or Don't send.")
@@ -504,12 +515,17 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     # window, burn-once send, outbox and a logged use.
     grant = None if (sensitive or maybe_sent) else _pre_approval(tos + ccs + _addresses(bcc or []))
     if grant is not None:
+        # The use is checked and counted in one step under the grant store's
+        # lock (use limit, time cap, quiet hours) before the message is queued:
+        # two sends at once cannot both take the last use. Refused: the card.
+        grant = _reserve_pre_approval(grant, tos + ccs + _addresses(bcc or []))
+    if grant is not None:
         appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
         if appr.get("status") == "approved" and not appr.get("consumed"):
             from agent_friday.governance import send_grants as _sg
             ctx = _tool_context()
             _sg.record_use(grant, "send_email", tos + ccs + _addresses(bcc or []),
-                           approval_id=appr.get("approval_id"), ctx=ctx)
+                           approval_id=appr.get("approval_id"), ctx=ctx, reserved=True)
             unattended = bool(ctx.get("schedule_id") or ctx.get("is_background_task"))
             # Nobody is watching an unattended send: it waits the owner's own Undo window
             # (Settings: unattended_send_undo_s, 2 minutes unless they chose otherwise).

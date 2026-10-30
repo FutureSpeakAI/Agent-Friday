@@ -381,11 +381,47 @@ def changed(g: dict) -> str:
 
 def create(*, scope: str, recipients, actions=("send_email",), schedule_id: str = "",
            skill: str = "", created_by: str = "owner", note: str = "",
-           skill_hash: str = "") -> dict:
+           skill_hash: str = "", limits: Optional[dict] = None) -> dict:
     """Make a standing send grant. Owner-only: called from the owner's
     authenticated Settings route, never from a tool. A job grant records the
     fingerprint of the job as it is now; a skill grant that of the skill
-    (`create_for_skill` passes the one the owner's list was checked against)."""
+    (`create_for_skill` passes the one the owner's list was checked against).
+
+    `limits`: the grant record's further fields (governance/grant_record
+    `new_fields`, plus `max_uses` and `expires_in_seconds`). Left out, each
+    is what a send grant did before them: no expiry, no use limit, no cap.
+    The recipients stay its destination scope."""
+    import math
+    from agent_friday.governance import grant_record as _gr
+    raw = dict(limits or {})
+    if raw.get("money_cap") not in (None, ""):
+        # Nothing records what a send spends, so a cap could never be counted.
+        raise _Refused("a pre-approved send cannot have a money cap")
+    lim = {k: v for k, v in raw.items()
+           if k in ("principal", "arg_constraints", "data_scope", "starts_at",
+                    "time_cap_s", "quiet_hours", "remote_allowed", "max_uses",
+                    "expires_in_seconds")}
+    max_uses = lim.pop("max_uses", None)
+    expires_in = lim.pop("expires_in_seconds", None)
+    for k in ("starts_at", "time_cap_s"):
+        v = lim.get(k)
+        if (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and not math.isfinite(float(v))):
+            raise _Refused("%s is a finite number" % k.replace("_", " "))
+    record = _gr.new_fields(subject_kind={"job": "schedule", "skill": "session"}.get(scope, "owner"),
+                            subject_id=(schedule_id if scope == "job" else
+                                        ("skill:" + skill) if scope == "skill" else ""), **lim)
+    for k in ("destination_scope", "used_count"):
+        record.pop(k, None)          # its recipients and `uses` are those
+    if max_uses is not None:
+        if isinstance(max_uses, bool) or not isinstance(max_uses, int) or max_uses < 1:
+            raise _Refused("max uses is a whole number of 1 or more")
+        record["max_uses"] = max_uses
+    if expires_in is not None:
+        if (isinstance(expires_in, bool) or not isinstance(expires_in, (int, float))
+                or not math.isfinite(float(expires_in)) or expires_in <= 0):
+            raise _Refused("expires in is a number of seconds above zero")
+        record["expires_at"] = time.time() + float(expires_in)
     if scope not in SCOPES:
         raise _Refused("scope must be one of: " + ", ".join(SCOPES))
     acts = sorted({str(a) for a in actions or []})
@@ -413,7 +449,9 @@ def create(*, scope: str, recipients, actions=("send_email",), schedule_id: str 
          "created_at": time.time(), "note": str(note or "")[:200],
          "revoked_at": None, "revoked_by": None, "uses": 0, "last_used_at": None,
          **({"job_hash": job_hash} if scope == "job" else {}),
-         **({"skill_hash": skill_hash} if scope == "skill" else {})}
+         **({"skill_hash": skill_hash} if scope == "skill" else {}),
+         # the grant record's own fields (governance/grant_record, NS-30.12-1)
+         **record}
     with _LOCK:
         rows = _read()
         rows.append(dict(g, _resign=True))
@@ -432,7 +470,18 @@ class SkillChanged(_Refused):
         self.needs = needs
 
 
-def create_for_skill(name: str, seen_recipients, created_by: str = "owner") -> dict:
+#: The limits a re-approved grant carries over from the one it replaces.
+#: (No money cap: a send grant never carries one.)
+_CARRIED_LIMITS = ("principal", "arg_constraints", "data_scope", "time_cap_s",
+                   "quiet_hours", "remote_allowed", "max_uses")
+
+
+def _carried_limits(old: dict) -> dict:
+    return {k: old[k] for k in _CARRIED_LIMITS if old.get(k) is not None}
+
+
+def create_for_skill(name: str, seen_recipients, created_by: str = "owner",
+                     limits: Optional[dict] = None) -> dict:
     """Batch-approve, once, everything a skill declares it needs: only if the
     recipients the owner saw (`seen_recipients`, sent by the page) are exactly
     what the skill declares now."""
@@ -456,7 +505,7 @@ def create_for_skill(name: str, seen_recipients, created_by: str = "owner") -> d
                            % (sk.name, ", ".join(declared)), perms)
     return create(scope="skill", skill=sk.name, actions=sorted(perms), recipients=declared,
                   created_by=created_by, note="what %s declares it needs" % sk.name,
-                  skill_hash=skill_registry.fingerprint(sk))
+                  skill_hash=skill_registry.fingerprint(sk), limits=limits)
 
 
 def reapprove(grant_id: str, seen_recipients=None, by: str = "owner") -> dict:
@@ -467,11 +516,13 @@ def reapprove(grant_id: str, seen_recipients=None, by: str = "owner") -> dict:
     if old is None or old.get("revoked_at") or str(grant_id) in _revoked_in_log():
         raise _Refused("that pre-approval is not in force, so there is nothing to re-approve")
     if old.get("scope") == "skill":
-        g = create_for_skill(old.get("skill") or "", seen_recipients, created_by=by)
+        g = create_for_skill(old.get("skill") or "", seen_recipients, created_by=by,
+                             limits=_carried_limits(old))
     elif old.get("scope") == "job":
         g = create(scope="job", schedule_id=old.get("schedule_id") or "",
                    recipients=old.get("recipients"), actions=old.get("actions"),
-                   created_by=by, note="re-approved after the job changed")
+                   created_by=by, note="re-approved after the job changed",
+                   limits=_carried_limits(old))
     else:
         raise _Refused("only a job or skill pre-approval is re-approved")
     revoke(old["grant_id"], by=by)
@@ -800,18 +851,57 @@ def _in_scope(g, ctx) -> bool:
     return False
 
 
-def covering(action: str, recipients, ctx=None) -> Optional[dict]:
-    """The live grant that covers sending `action` to EVERY one of
-    `recipients` in this context, or None. Decides nothing else."""
+def _record_excluded(g: dict, tool, args, ctx) -> str:
+    """The grant record field (governance/grant_record) that keeps this live
+    grant from covering the call, or "". Its recipients, actions and scope are
+    decided above, as before; this adds start, expiry, uses, argument rules,
+    money and time caps, quiet hours and remote. A row written before those
+    fields carries none, so it covers exactly what it covered. A check that
+    cannot run covers nothing (the send gets its card)."""
+    try:
+        from agent_friday.governance import grant_record as _gr
+        return _gr.exclusion(_gr.from_send(g), tool=tool, args=args, ctx=ctx,
+                             skip=("tools", "destination_scope"))
+    except Exception as e:  # noqa: BLE001
+        _log_py.warning("send grant %s could not be checked (%s); it covers nothing",
+                        g.get("grant_id"), type(e).__name__)
+        return "status"
+
+
+def _matching(action: str, recipients, ctx=None) -> list:
+    """Live grants that name this action, are in scope and cover every recipient."""
     rcpts = [str(r).strip() for r in recipients or [] if str(r).strip()]   # _covers folds case, ASCII only
     if not rcpts or action not in SEND_ACTIONS:
-        return None
-    for g in _live_trusted():
-        if action not in (g.get("actions") or []) or not _in_scope(g, ctx):
-            continue
-        if all(_covers(g.get("recipients"), r) for r in rcpts):
+        return []
+    return [g for g in _live_trusted()
+            if action in (g.get("actions") or []) and _in_scope(g, ctx)
+            and all(_covers(g.get("recipients"), r) for r in rcpts)]
+
+
+def covering(action: str, recipients, ctx=None, *, tool=None, args=None) -> Optional[dict]:
+    """The live grant that covers sending `action` to EVERY one of
+    `recipients` in this context, or None. Decides nothing else."""
+    for g in _matching(action, recipients, ctx):
+        if not _record_excluded(g, tool, args, ctx):
             return dict(g)
     return None
+
+
+def exclusion_for_tool(tool_name: str, args, ctx=None) -> dict:
+    """When no grant covers this send but one names its recipients and a
+    grant record field keeps it out: {"grant_excluded": id,
+    "grant_excluded_by": field}. {} otherwise. Records only."""
+    got = tool_recipients(tool_name, args)
+    if not got:
+        return {}
+    first = {}
+    for g in _matching(got[0], got[1], ctx):
+        why = _record_excluded(g, tool_name, args, ctx)
+        if not why:
+            return {}
+        if not first:
+            first = {"grant_excluded": g.get("grant_id"), "grant_excluded_by": why}
+    return first
 
 
 def tool_recipients(tool_name: str, args) -> Optional[tuple]:
@@ -835,7 +925,7 @@ def covering_tool(tool_name: str, args, ctx=None) -> Optional[dict]:
     got = tool_recipients(tool_name, args)
     if not got:
         return None
-    return covering(got[0], got[1], ctx)
+    return covering(got[0], got[1], ctx, tool=tool_name, args=args)
 
 
 def verify(grant_id, action: str, recipients) -> Optional[dict]:
@@ -847,21 +937,96 @@ def verify(grant_id, action: str, recipients) -> Optional[dict]:
     rcpts = [str(r).strip() for r in recipients or [] if str(r).strip()]   # _covers folds case, ASCII only
     if not rcpts or not all(_covers(g.get("recipients"), r) for r in rcpts):
         return None
+    # still within its start and expiry, if it names them (grant_record)
+    now = time.time()
+    try:
+        exp = g.get("expires_at")
+        if exp is not None and now >= float(exp):
+            return None
+        st = g.get("starts_at")
+        if st is not None and now < float(st):
+            return None
+    except (TypeError, ValueError):
+        return None
     return g
 
 
+def _use_refused(g: dict, now: float) -> str:
+    """The grant record field that keeps one more use of this send grant
+    from going ahead now ("" when none does): its stored fields unreadable,
+    its use limit reached, its time cap run out, or the owner's quiet on for
+    a grant that respects it. Recipients, revocation, start and expiry are
+    `verify`'s."""
+    from agent_friday.governance import grant_record as _gr
+    rec = _gr.from_send(g, now)
+    if rec.status == "invalid":
+        return "status"
+    if rec.max_uses is not None and rec.used_count >= rec.max_uses:
+        return "max_uses"
+    if (rec.time_cap_s is not None and rec.first_used_at is not None
+            and now - rec.first_used_at > rec.time_cap_s):
+        return "time_cap_s"
+    if rec.quiet_hours in ("respect", "deny") and _gr.quiet_now(now):
+        return "quiet_hours"
+    return ""
+
+
+def _count_use(rows: list, grant_id: str, now: float) -> Optional[dict]:
+    """Add one use to the row in `rows` (caller holds _LOCK and writes)."""
+    hit = None
+    for g in rows:
+        if g.get("grant_id") == grant_id:
+            g["_resign"] = _signed_ok(g)
+            g["uses"] = int(g.get("uses") or 0) + 1
+            g["last_used_at"] = now
+            if g.get("time_cap_s") is not None and not g.get("first_used_at"):
+                g["first_used_at"] = now   # its time cap runs from here
+            hit = g
+    return hit
+
+
+def reserve_use(grant_id, action: str, recipients) -> Optional[dict]:
+    """Check and count one use of a send grant in one step, under the lock:
+    `verify` for these exact recipients, then its use limit, time cap and
+    quiet hours, then the use is written before anything is queued. Two sends
+    at once cannot both take the last use, and a send that fails after this
+    has still used its turn (never a lost count). Returns the grant with its
+    new count, or None (the send then gets its card). The "used" log line is
+    `record_use(..., reserved=True)` once the message is queued."""
+    gid = str(grant_id or "")
+    with _LOCK:
+        g = verify(gid, action, recipients)
+        if g is None:
+            return None
+        now = time.time()
+        try:
+            why = _use_refused(g, now)
+        except Exception as e:  # noqa: BLE001 - a check that cannot run covers nothing
+            _log_py.warning("send grant %s could not be checked (%s); the send asks",
+                            gid, type(e).__name__)
+            why = "status"
+        if why:
+            _log_py.info("send grant %s not used: %s", gid, why)
+            return None
+        rows = _read()
+        hit = _count_use(rows, gid, now)
+        if hit is None:
+            return None
+        _write(rows)
+        return dict(g, uses=hit.get("uses"), last_used_at=hit.get("last_used_at"),
+                    first_used_at=hit.get("first_used_at"))
+
+
 def record_use(grant: dict, action: str, recipients, *, approval_id: str = "",
-               ctx=None) -> None:
-    """Every use, logged: which grant, what, to whom, for which job, when."""
+               ctx=None, reserved: bool = False) -> None:
+    """Every use, logged: which grant, what, to whom, for which job, when.
+    `reserved`: the use was already counted by `reserve_use`; only log it."""
     ctx = ctx or {}
     with _LOCK:
-        rows = _read()
-        for g in rows:
-            if g.get("grant_id") == grant.get("grant_id"):
-                g["_resign"] = _signed_ok(g)
-                g["uses"] = int(g.get("uses") or 0) + 1
-                g["last_used_at"] = time.time()
-        _write(rows)
+        if not reserved:
+            rows = _read()
+            _count_use(rows, grant.get("grant_id"), time.time())
+            _write(rows)
         _log("used", grant_id=grant.get("grant_id"), by="friday", action=action,
              recipients=list(recipients or []), approval_id=approval_id or None,
              schedule_id=ctx.get("schedule_id"), task_id=ctx.get("task_id"))

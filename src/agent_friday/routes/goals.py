@@ -575,11 +575,45 @@ def approval_events_route():
 # here: named tools, one job's scope, an expiry and a use count. Everything
 # else it attempts waits on an approval card. See governance/action_gate.py.
 
+#: The grant record fields the owner may set when making a scoped grant
+#: (governance/grant_record.new_fields). Anything else in the body is ignored.
+_GRANT_LIMIT_FIELDS = ("principal", "subject_kind", "arg_constraints", "data_scope",
+                       "destination_scope", "starts_at", "money_cap", "time_cap_s",
+                       "quiet_hours", "remote_allowed")
+
+
+def _owner_principal() -> bool:
+    """The request is the owner's, not the read-only observer credential's
+    (core.check_auth sets the principal; a request it did not mark passed
+    login_required as the owner's)."""
+    from flask import g as _flask_g
+    return getattr(_flask_g, "friday_principal", "user") == "user"
+
+
 @goals_bp.route("/api/governance/grants", methods=["GET"])
 @login_required
 def list_governance_grants():
+    """The scoped grants (as before) and, for the owner on Friday's own page
+    only, every grant of every kind as one record (governance/grant_record):
+    who it is for, what it may do, where, how often, until when, and what it
+    does in quiet hours and from a remote channel. Read-only.
+
+    The records name recipients, paths and apps, so they are sent only to a
+    request carrying the page's own X-Friday-Token (as /api/governance/send-grants
+    demands). Without it the answer is the scoped list alone, as before."""
     from agent_friday.governance import action_gate
-    return jsonify({"grants": action_gate.list_grants()})
+    if not _owner_principal():
+        return jsonify({"error": "Grants are shown to the owner only."}), 403
+    import agent_friday.core as _core
+    if not _core._api_token_valid(request.headers.get("X-Friday-Token")):
+        return jsonify({"grants": action_gate.list_grants()})
+    from agent_friday.governance import grant_record
+    try:
+        view = grant_record.all_records()
+    except Exception:  # noqa: BLE001 - the list below still answers
+        view = {"records": [], "unreadable": ["all"]}
+    return jsonify({"grants": action_gate.list_grants(), "records": view["records"],
+                    "unreadable": view["unreadable"]})
 
 
 @goals_bp.route("/api/governance/grants", methods=["POST"])
@@ -595,7 +629,8 @@ def create_governance_grant():
             tools=list(body.get("tools") or []), scope=str(body.get("scope") or ""),
             expires_in_seconds=float(body.get("expires_in_seconds") or 0),
             max_uses=int(body.get("max_uses", 1)), created_by="owner",
-            note=str(body.get("note") or ""))
+            note=str(body.get("note") or ""),
+            limits={k: body[k] for k in _GRANT_LIMIT_FIELDS if k in body})
     except (TypeError, ValueError) as e:
         return api_error(e, "Couldn't create the grant", 400, shape="bare")
     return jsonify({"grant": g}), 201
@@ -701,6 +736,8 @@ def create_send_grant():
     if refused is not None:
         return refused
     body = request.get_json(silent=True) or {}
+    # the grant record's further limits (governance/grant_record), when given
+    limits = body.get("limits") if isinstance(body.get("limits"), dict) else None
     try:
         if body.get("scope") == "skill":
             # Approving a skill's needs approves exactly the list the owner
@@ -708,13 +745,15 @@ def create_send_grant():
             # declares now. A skill rewritten since the page loaded is refused
             # with its new list, never approved unseen.
             g = send_grants.create_for_skill(str(body.get("skill") or ""),
-                                             body.get("recipients"), created_by="owner")
+                                             body.get("recipients"), created_by="owner",
+                                             limits=limits)
         else:
             g = send_grants.create(
                 scope=str(body.get("scope") or "recipients"), recipients=body.get("recipients"),
                 actions=body.get("actions") or ("send_email",),
                 schedule_id=str(body.get("schedule_id") or ""),
-                created_by="owner", note=str(body.get("note") or "made in Settings"))
+                created_by="owner", note=str(body.get("note") or "made in Settings"),
+                limits=limits)
     except send_grants.SkillChanged as e:
         return jsonify({"error": e.user_message, "needs": e.needs}), 409
     except (TypeError, ValueError) as e:

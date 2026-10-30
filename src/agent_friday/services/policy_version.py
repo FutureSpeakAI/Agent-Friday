@@ -121,6 +121,15 @@ _GATE_GRANT_FIELDS = ("grant_id", "tools", "scope", "expires_at", "created_by")
 #: last use and signature (re-signed on every use) are not policy.
 _SEND_GRANT_FIELDS = ("grant_id", "scope", "actions", "recipients", "schedule_id", "skill",
                       "job_hash", "skill_hash", "revoked_at")
+#: The grant record's limits (governance/grant_record), scoped and send grants
+#: alike, plus a send grant's expiry and use limit: a change to any is a new
+#: policy. What a use changes (used_count, money_spent, first_used_at) is not.
+#: Hashed only when the row carries the field, so a row written before these
+#: fields hashes exactly as it did.
+_GRANT_LIMIT_FIELDS = ("principal", "subject", "arg_constraints", "data_scope",
+                       "destination_scope", "starts_at", "money_cap", "time_cap_s",
+                       "quiet_hours", "remote_allowed", "max_uses")
+_SEND_LIMIT_FIELDS = _GRANT_LIMIT_FIELDS + ("expires_at",)
 
 _ACTION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{3,79}")
 
@@ -242,13 +251,17 @@ def _claws(pin: Any) -> str:
     return _h({"claws_text": text, "pinned_hmac": pinned})
 
 
-def _project(rows: Any, fields: tuple) -> Any:
+def _project(rows: Any, fields: tuple, when_present: tuple = ()) -> Any:
+    """Each row's `fields` (absent ones as null), plus those of `when_present`
+    the row carries."""
     if not isinstance(rows, list):
         return rows
     out = []
     for r in rows:
         if isinstance(r, dict):
-            out.append({k: r.get(k) for k in fields})
+            p = {k: r.get(k) for k in fields}
+            p.update({k: r[k] for k in when_present if k in r and k not in p})
+            out.append(p)
         else:
             out.append({"_row": type(r).__name__})
     return sorted(out, key=lambda r: json.dumps(r, sort_keys=True, default=str))
@@ -257,8 +270,8 @@ def _project(rows: Any, fields: tuple) -> Any:
 def _grants(grants: Any, send_grants: Any, options: Any, web_sites: Any = None,
             mcp_hosts: Any = None) -> str:
     voice = options.get("voice_may_use") if isinstance(options, dict) else options
-    material = {"gate_grants": _project(grants, _GATE_GRANT_FIELDS),
-                "send_grants": _project(send_grants, _SEND_GRANT_FIELDS),
+    material = {"gate_grants": _project(grants, _GATE_GRANT_FIELDS, _GRANT_LIMIT_FIELDS),
+                "send_grants": _project(send_grants, _SEND_GRANT_FIELDS, _SEND_LIMIT_FIELDS),
                 "send_voice_may_use": voice}
     # The allow-lists are rewritten only when the owner changes them, so each
     # row counts whole (its signature too: a row that no longer verifies is

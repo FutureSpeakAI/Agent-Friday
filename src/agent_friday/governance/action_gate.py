@@ -1045,22 +1045,41 @@ def _read_grants() -> list:
 
 
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
-                 max_uses: int = 1, created_by: str = "owner", note: str = "") -> dict:
+                 max_uses: int = 1, created_by: str = "owner", note: str = "",
+                 limits: Optional[dict] = None) -> dict:
     """Pre-approve named outward tools for one scheduled job or task.
 
     `scope` is the schedule id or task id the grant belongs to. Nothing else
     can use it, and it stops working at `expires_in_seconds` or after
     `max_uses`, whichever comes first. Owner-only: callers are the owner's
     authenticated routes, never a tool.
+
+    `limits`: the grant record's further fields (governance/grant_record
+    `new_fields`: principal, argument rules, data and destination scope,
+    start, money and time caps, quiet hours, remote). Left out, each is what a
+    grant did before them. A bad value raises UserFacingValueError.
     """
-    if not tools or not scope or expires_in_seconds <= 0 or max_uses < 1:
+    import math
+    try:
+        finite = math.isfinite(float(expires_in_seconds))
+    except (TypeError, ValueError):
+        finite = False
+    if not tools or not scope or not finite or expires_in_seconds <= 0 or max_uses < 1:
         raise ValueError("a grant needs tools, a scope, a positive expiry and uses")
+    from agent_friday.governance import grant_record as _gr
+    lim = dict(limits or {})
+    now = time.time()
+    subject = _gr.subject_of_scope(scope)
+    extra = _gr.new_fields(subject_kind=lim.pop("subject_kind", None) or subject["kind"],
+                           subject_id=str(scope), now=now, **lim)
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
-         "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
+         "scope": str(scope), "expires_at": now + float(expires_in_seconds),
          "uses_left": int(max_uses), "created_by": created_by, "note": note[:200],
-         "created_at": time.time(),
+         "created_at": now,
          # the governing policy version it was issued under (NS-30.19-1)
-         "policy_version": _policy_version_id()}
+         "policy_version": _policy_version_id(),
+         # the grant record's own fields (NS-18.4-4, NS-30.12-1)
+         "max_uses": int(max_uses), **extra}
     with _LOCK:
         gs = [x for x in _read_grants() if x.get("expires_at", 0) > time.time()]
         gs.append(g)
@@ -1093,22 +1112,65 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
     return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
-def _grant_live(g: dict, tool_name: str, scopes: set, now: float) -> bool:
-    return bool(g.get("scope") in scopes and tool_name in (g.get("tools") or [])
-                and g.get("expires_at", 0) > now and int(g.get("uses_left") or 0) > 0)
+def _grant_excluded_by(g: dict, tool_name: str, scopes: set, now: float,
+                       args=None, ctx=None) -> str:
+    """The grant record field that keeps this grant from covering the call
+    ("subject" when it belongs to another job or task), or "" when it covers
+    (governance/grant_record.exclusion: status, start, expiry, uses, principal,
+    tool, argument rules, data and destination scope, money and time caps,
+    quiet hours, remote). A check that cannot run covers nothing."""
+    if not isinstance(g, dict) or g.get("scope") not in scopes:
+        return "subject"
+    try:
+        from agent_friday.governance import grant_record as _gr
+        return _gr.exclusion(_gr.from_scoped(g, now), tool=tool_name, args=args,
+                             ctx=ctx, now=now)
+    except Exception as e:  # noqa: BLE001 - not covered: the normal path decides
+        _log.warning("grant %s could not be checked (%s); it covers nothing",
+                     g.get("grant_id"), type(e).__name__)
+        return "status"
 
 
-def _grant_covers(tool_name: str, ctx: dict) -> bool:
+def _grant_live(g: dict, tool_name: str, scopes: set, now: float,
+                args=None, ctx=None) -> bool:
+    return not _grant_excluded_by(g, tool_name, scopes, now, args, ctx)
+
+
+def _grant_covers(tool_name: str, ctx: dict, args=None) -> bool:
     """Whether `_use_grant` would find a live grant for this call. Spends nothing."""
     scopes = _scopes(ctx)
     if not scopes:
         return False
     now = time.time()
     with _LOCK:
-        return any(_grant_live(g, tool_name, scopes, now) for g in _read_grants())
+        return any(_grant_live(g, tool_name, scopes, now, args, ctx) for g in _read_grants())
 
 
-def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
+def grant_exclusion(tool_name: str, ctx: dict, args=None) -> dict:
+    """When no grant covers this call but one is scoped to its job or task:
+    which grant, and the name of the field that kept it out
+    ({"grant_excluded": id, "grant_excluded_by": field}). A grant naming the
+    tool is preferred over one that does not. {} when no grant is in scope.
+    Records only: the call goes to its card either way."""
+    scopes = _scopes(ctx or {})
+    if not scopes:
+        return {}
+    now = time.time()
+    best = None
+    with _LOCK:
+        gs = _read_grants()
+    for g in gs:
+        if not isinstance(g, dict) or g.get("scope") not in scopes:
+            continue
+        why = _grant_excluded_by(g, tool_name, scopes, now, args, ctx)
+        if not why:
+            return {}
+        if best is None or (best[1] == "tools" and why != "tools"):
+            best = (g.get("grant_id"), why)
+    return {"grant_excluded": best[0], "grant_excluded_by": best[1]} if best else {}
+
+
+def _use_grant(tool_name: str, ctx: dict, args=None) -> Optional[dict]:
     scopes = _scopes(ctx)
     if not scopes:
         return None
@@ -1116,8 +1178,17 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
         gs = _read_grants()
         now = time.time()
         for g in gs:
-            if _grant_live(g, tool_name, scopes, now):
+            if _grant_live(g, tool_name, scopes, now, args, ctx):
                 g["uses_left"] = int(g["uses_left"]) - 1
+                # the record's own count, first use and spend (grant_record)
+                g["used_count"] = int(g.get("used_count") or 0) + 1
+                if not g.get("first_used_at"):
+                    g["first_used_at"] = now
+                if g.get("money_cap") is not None:
+                    from agent_friday.governance import grant_record as _gr
+                    spend = _gr.action_cost(ctx)     # server-set context only, never args
+                    if spend is not None:
+                        g["money_spent"] = float(g.get("money_spent") or 0.0) + spend
                 # the policy version this use was made under (NS-30.19-1); the
                 # decision receipt that names the grant carries it too
                 g["last_used_policy_version"] = _policy_version_id()
@@ -2274,6 +2345,17 @@ def _send_grant(tool_name, args, ctx) -> Optional[dict]:
         return None
 
 
+def _send_grant_exclusion(tool_name, args, ctx) -> dict:
+    """{"grant_excluded", "grant_excluded_by"} for a pre-approved send that
+    names this send's recipients but a grant record field keeps out, else {}.
+    Records only; never raises."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return _sg.exclusion_for_tool(tool_name, args or {}, ctx)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 #: In safe mode these run nothing at all: a command or program can reach the
 #: network or another machine in ways no socket guard in this process sees
 #: (git remotes, \\host paths, -ComputerName).
@@ -2389,26 +2471,38 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             _log.warning("could not record a withheld pre-approval: %s", e)
             withheld = {"grant_withheld": sg.get("grant_id"),
                         "withheld_why": "the pre-approval check could not finish (%s)" % e}
+    if sg is None:
+        # A pre-approval that names this send but a grant record field keeps
+        # out (governance/grant_record): which one, by field name, for the record.
+        withheld = dict(withheld, **_send_grant_exclusion(tool_name, args, ctx))
     if tool_name in SELF_GATED and not tainted:
         return Verdict("allow", klass, "its own approval card is the gate", detail=withheld)
     if tool_name in SELF_GATED:
         return Verdict("allow", klass, "its own approval card is the gate (with provenance)",
                        detail=withheld)
+    excluded: dict = {}
     if not tainted and not _interactive(ctx):
         # Idempotent execute (NS-36.3-5) before a grant use is spent: a request
         # the grant would let run, already carried out, is refused here (as
         # `authorize` would refuse it after) and the grant keeps its use.
         # One-shot sends and writes only (is_one_shot), as in `authorize`.
-        if is_one_shot(tool_name) and _grant_covers(tool_name, ctx):
+        if is_one_shot(tool_name) and _grant_covers(tool_name, ctx, args):
             done = _duplicate_of(tool_name, args, ctx)
             if done:
                 return _already_done_verdict(klass, done)
-        g = _use_grant(tool_name, ctx)
+        g = _use_grant(tool_name, ctx, args)
         if g is not None:
             return Verdict("allow", klass, f"pre-approved grant {g['grant_id']}", grant=g)
+        # No grant covers it: the card decides, as with no grant at all. When
+        # a grant for this job or task was kept out, the decision names the
+        # field that kept it out (grant_record.FIELD_ORDER), never a deny.
+        try:
+            excluded = grant_exclusion(tool_name, ctx, args)
+        except Exception:  # noqa: BLE001 - records only
+            excluded = {}
     if _interactive(ctx) and not tainted and tool_name not in CARD_ONLY_WHEN_OUTWARD:
         return Verdict("confirm", klass, why)
-    return Verdict("card", klass, why)
+    return Verdict("card", klass, why, detail=excluded)
 
 
 def outward_hold() -> Optional[str]:
