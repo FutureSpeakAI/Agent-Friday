@@ -13798,7 +13798,7 @@ function RelationshipPanel({onImported}){
   const importFile=async f=>{if(!f)return;setBusy('import');setMsg('');try{const text=await f.text();const r=await fetch('/api/contacts/import/linkedin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:text})});const d=await r.json();
     if(d.status==='ok'){const x=d.result;setMsg('LinkedIn: '+x.staged+' people staged for your review below; nothing is saved until you accept'+(x.already_decided?', '+x.already_decided+' already answered':'')+(x.skipped_count?', '+x.skipped_count+' rows skipped':'')+(x.skipped_forgotten?', '+x.skipped_forgotten+' forgotten people left out':'')+'.');if(onImported)onImported()}
     else setMsg(d.message||'Import failed.')}catch(err){setMsg('Import failed.')}setBusy('')};
-  const allowSaving=async a=>{setMsg('');try{const r=await fetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:a.id,email:a.email,include_contacts_write:true})});const d=await r.json();
+  const allowSaving=async a=>{setMsg('');try{const df=await fetchPermissionDiff(a.id,['contacts']);if(!df){setMsg('Could not load what this would add.');return;}if(!window.confirm(permissionDiffText(df)))return;const r=await fetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:a.id,email:a.email,include_contacts_write:true,diff_id:df.diff_id})});const d=await r.json();
     if(d.status==='ok'&&d.auth_url)setConsent({url:d.auth_url,brief:d.prebrief||'',email:a.email});else setMsg(d.message||'Could not start sign-in.')}catch(err){setMsg('Could not start sign-in.')}};
   const done=async id=>{try{await fetch('/api/relationships/follow-ups/'+encodeURIComponent(id)+'/done',{method:'POST'})}catch(err){}load()};
   const small={fontSize:11};const readOnly=accts.filter(a=>!a.can_save);
@@ -20410,6 +20410,39 @@ function ClawsRepinPanel(){
 // file permissions only. This panel wraps it with the vault passphrase through
 // /api/security/keystore/wrap, which answers only this page on this PC and
 // needs the passphrase typed. Nothing changes it on its own.
+// Every stored credential (BD-06, NS-23.3-4/-5): what it is for, where it came from and when,
+// last changed and used, how it is protected; where to replace it, and Remove (a press on this
+// PC; revoked at the provider where the provider allows it). /api/security/credentials.
+function CredentialsPanel(){
+  const[rows,setRows]=useState(null);
+  const[msg,setMsg]=useState('');
+  const[busy,setBusy]=useState('');
+  const load=useCallback(()=>{apiFetch('/api/security/credentials').then(r=>r.json()).then(d=>setRows(d&&d.ok?(d.credentials||[]):[])).catch(()=>setRows([]))},[]);
+  useEffect(()=>{load()},[load]);
+  const when=t=>t?String(t).replace('T',' ').slice(0,16):'never';
+  const remove=row=>{
+    if(!window.confirm('Remove '+row.kind+' ('+row['for']+')?\n\n'+((row.remove&&row.remove.note)||'')))return;
+    setBusy(row.name);setMsg('');
+    apiFetch('/api/security/credentials/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:row.name})})
+      .then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{setMsg((d&&d.message)||(ok?'Removed.':'Nothing changed.'));load();})
+      .catch(()=>setMsg('Could not reach the server.')).finally(()=>setBusy(''));
+  };
+  const muted={fontSize:11,color:'rgba(255,255,255,0.45)',lineHeight:1.6};
+  if(!rows)return <div style={muted}>Reading the stored credentials…</div>;
+  return <div data-testid="credential-list" style={{marginTop:12}}>
+    <div style={{fontSize:12,color:'#fff',marginBottom:6}}>Stored credentials</div>
+    {rows.length===0&&<div style={muted}>{fridayName()} holds no credentials.</div>}
+    {rows.map(row=><div key={row.name} style={{borderTop:'1px solid rgba(255,255,255,0.06)',padding:'6px 0'}}>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <div style={{flex:1,fontSize:12,color:'rgba(255,255,255,0.85)'}}>{row.kind}: {row['for']}</div>
+        <button className="settings-btn" style={{fontSize:11}} disabled={!!busy} onClick={()=>remove(row)}>{busy===row.name?'Removing…':'Remove'}</button>
+      </div>
+      <div style={muted}>Came from: {row.came_from}{row.first_set?' ('+when(row.first_set)+')':''}. Last changed {when(row.last_changed)}, last used {when(row.last_used)}. {row.protection}.</div>
+      {row.replace_in&&<div style={muted}>To replace it: {row.replace_in}.</div>}
+    </div>)}
+    {msg&&<div style={{fontSize:11,color:'#cfefff',marginTop:8}}>{msg}</div>}
+  </div>;
+}
 function KeystoreWrapPanel(){
   const[st,setSt]=useState(null);
   const[pw,setPw]=useState('');
@@ -21355,6 +21388,7 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="Stored keys">
       <KeystoreWrapPanel/>
+      <CredentialsPanel/>
     </StSection>
     <StSection title="Agent workspaces">
       {window.FridayAgentWorkspacePermission && <window.FridayAgentWorkspacePermission apiFetch={apiFetch}/>}
@@ -23296,6 +23330,19 @@ function TasksInboxPanel() {
     }, 'Off, and ' + fridayName() + '’s list was removed from Google Tasks.')
   }, 'Turn off and remove the list')), limit, status);
 }
+// The permission difference (BD-06, NS-23.2-2): shown before Google is asked for a new write
+// permission; the connect route refuses one without its diff_id.
+function permissionDiffText(df){
+  const adds=(df.adds||[]).map(a=>'+ '+a.what);
+  return 'This asks Google for:\n'+(adds.length?adds.join('\n'):'nothing new (already allowed)')
+    +((df.lets_friday||[]).length?'\n\nIt lets '+fridayName()+': '+df.lets_friday.join(', ')+'.':'')
+    +'\n\n'+(df.still||[]).join(' ')+'\n\nEverything else stays as it is. Continue to Google?';
+}
+async function fetchPermissionDiff(accountId,caps){
+  const r=await apiFetch('/api/google/accounts/'+encodeURIComponent(accountId)+'/permission-diff?capability='+encodeURIComponent(caps.join(',')));
+  const d=await r.json();
+  return d&&d.diff||null;
+}
 function GoogleAccountsPanel(){
   const[accounts,setAccounts]=useState([]);
   const[msg,setMsg]=useState('');
@@ -23334,6 +23381,14 @@ function GoogleAccountsPanel(){
     setLoading(true);
     try{
       const body=o.account?{account_id:o.account.id,email:o.account.email,mailbox:!!o.mailbox,include_calendar_write:!!o.calendarWrite,include_tasks_write:!!o.tasksWrite}:{label};
+      const caps=o.account?[o.mailbox&&'send',o.calendarWrite&&'calendar',o.tasksWrite&&'tasks'].filter(Boolean):[];
+      if(caps.length){
+        const df=await fetchPermissionDiff(o.account.id,caps);
+        if(!df){setMsg('Could not load what this would add.');setLoading(false);return;}
+        // "Reconnect with sending" has just shown its own permission list; the others are shown here.
+        if(!o.mailbox&&!window.confirm(permissionDiffText(df))){setLoading(false);return;}
+        body.diff_id=df.diff_id;
+      }
       const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       if(d.status==='ok'&&d.auth_url){
@@ -23352,7 +23407,7 @@ function GoogleAccountsPanel(){
   const reconnectWithSending=(acc)=>apiFetch('/api/google/accounts/mailbox-scopes?account='+encodeURIComponent(acc.id)).then(r=>r.json()).then(d=>setMailboxAsk({account:acc,scopes:d.scopes||[]})).catch(()=>setMsg('Could not load the permission list.'));
   const removeAccount=async(id,email)=>{
     if(!window.confirm('Remove '+email+'? This revokes access.'))return;
-    try{await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});setAccounts(a=>a.filter(x=>x.id!==id));setMsg('Removed.');}
+    try{const r=await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});const d=await r.json().catch(()=>({}));if(!r.ok){setMsg(d.message||'Error.');return;}setAccounts(a=>a.filter(x=>x.id!==id));setMsg(d.message||'Removed.');}
     catch(e){setMsg('Error.');}
   };
   const toggleSvc=async(id,svc,current)=>{
@@ -23430,7 +23485,24 @@ function GoogleAccountsPanel(){
       <button aria-label="Refresh" className="settings-btn" style={{padding:'6px 10px'}} onClick={refresh} title="Refresh">↻ Refresh</button>
     </div>
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:8}}>{msg}</div>}
+    <GoogleConnectorCard/>
   </div>;
+}
+// The Google connection's card (BD-06, NS-8.9-2): what it lets Friday do, the permissions it asks
+// for (reading and changing apart), what runs without a card, what Google receives, what is kept
+// on this PC, the limits and how to remove it. Read from /api/google/accounts/contract, which
+// tests tie to the code (services/connector_contracts.google_card).
+function GoogleConnectorCard(){
+  const[card,setCard]=useState(null);
+  useEffect(()=>{apiFetch('/api/google/accounts/contract').then(r=>r.json()).then(d=>{const c=d&&d.contract&&d.contract.card;if(Array.isArray(c))setCard(c)}).catch(()=>{})},[]);
+  if(!card)return null;
+  return <details className="google-connector-card" style={{marginTop:10,fontSize:11,color:'rgba(255,255,255,0.78)'}}>
+    <summary style={{cursor:'pointer',color:'#00d4ff'}}>What this connection does</summary>
+    {card.map(sec=><div key={sec.heading} style={{marginTop:6}}>
+      <div style={{fontWeight:600,color:'#fff'}}>{sec.heading}</div>
+      <ul style={{margin:'2px 0 0 16px',padding:0}}>{(sec.lines||[]).map((l,i)=><li key={i}>{l}</li>)}</ul>
+    </div>)}
+  </details>;
 }
 // ─── Settings → Connections — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),

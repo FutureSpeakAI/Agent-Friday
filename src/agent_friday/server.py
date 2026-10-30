@@ -30,7 +30,7 @@ if __name__ == '__main__':
         sys.exit(3)
     if _rr:
         print("  Restore: an interrupted restore was %s (%s)"
-              % ({"forward": "finished", "back": "rolled back"}.get(_rr.get("rolled"), "left as it was"),
+              % ({"forward": "finished", "back": "rolled back", "swept": "cleaned up"}.get(_rr.get("rolled"), "left as it was"),
                  _rr.get("bundle_id") or _rr.get("why") or ""))
         if _rr.get("stop"):
             print("  Restore: Friday is not starting on this data folder yet.")

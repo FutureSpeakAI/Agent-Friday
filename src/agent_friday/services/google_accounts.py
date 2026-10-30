@@ -145,6 +145,58 @@ def mailbox_scopes(granted=None) -> list:
             for sc in list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY]]
 
 
+#: The write capabilities an account can be given, each by its own button, and the
+#: permissions each one asks Google for (build_auth_flow's include_* flags).
+CAPABILITY_SCOPES = {
+    "send": (GMAIL_SEND, GMAIL_MODIFY),          # "Reconnect with sending": one consent for both
+    "calendar": (CALENDAR_RW,),
+    "tasks": (TASKS_RW,),
+    "contacts": (CONTACTS_RW,),
+}
+_CAPABILITY_STILL = {
+    "send": ("Sending, archive, trash, spam, mute and unsubscribe each wait for your yes on a card; "
+             "saving drafts, read/unread, star and labels change without one."),
+    "calendar": ("Each change to your calendar still waits for your yes on a card (removing the "
+                 "tentative holds Friday itself placed does not)."),
+    "tasks": ("Each change to your Google Tasks still waits for your yes on a card; in a background "
+              "run, one card covers that run's task changes."),
+    "contacts": "Each save to Google Contacts still waits for your yes on a card.",
+}
+
+
+def permission_diff(account_id: str, capabilities) -> dict:
+    """What turning on new write capabilities for an account changes (BD-06, NS-23.2-2): each
+    permission Google will be asked for that the account does not have yet, what it lets Friday
+    do, what stays as it is, and a `diff_id` the connect route requires, so a new write
+    permission is never asked for without this having been shown first."""
+    import hashlib as _h
+    caps = sorted({str(c) for c in (capabilities or [])})
+    unknown = [c for c in caps if c not in CAPABILITY_SCOPES]
+    if unknown or not caps:
+        raise ValueError("unknown capability: %s" % ", ".join(unknown or ["(none)"]))
+    rec = get_account(account_id) or {}
+    granted = set(rec.get("scopes") or [])
+    # Exactly what build_auth_flow will ask Google for (calendar asks for the full calendar
+    # permission even when calendar.events is already allowed: that is shown as added).
+    asked = [s for c in caps for s in CAPABILITY_SCOPES[c]]
+    adds = [s for s in dict.fromkeys(asked) if s not in granted]
+    try:
+        from agent_friday.services import connector_contracts as _cc
+        lets = sorted({o["tool"].replace("_", " ") for o in _cc.GOOGLE_OPERATIONS
+                       if o["access"] == "write" and set(o["scopes"]) & set(adds)})
+    except Exception:  # noqa: BLE001
+        lets = []
+    body = "%s|%s|%s" % (account_id, ",".join(caps), ",".join(sorted(adds)))
+    return {
+        "account_id": account_id, "capabilities": caps,
+        "adds": [{"scope": s, "what": _SCOPE_PLAIN.get(s, s)} for s in adds],
+        "already": [{"scope": s, "what": _SCOPE_PLAIN.get(s, s)} for s in sorted(granted)],
+        "lets_friday": lets,
+        "still": [_CAPABILITY_STILL[c] for c in caps],
+        "diff_id": _h.sha256(body.encode("utf-8")).hexdigest()[:16],
+    }
+
+
 def change_permissions(rec: dict) -> dict:
     """Whether an account may change its calendar and its Google Tasks (granted, not requested)."""
     sc = set((rec or {}).get("scopes") or [])
@@ -637,24 +689,56 @@ def set_label(account_id: str, label: str) -> dict | None:
 
 def remove_account(account_id: str) -> bool:
     """Revoke the grant at Google (best-effort), delete the encrypted token, and
-    drop the index entry. Audited."""
+    drop the index entry. Audited. False when there is no such account, or its token
+    could not be deleted (it then stays listed)."""
+    out = remove_account_detail(account_id)
+    return bool(out and out.get("removed"))
+
+
+def remove_account_detail(account_id: str):
+    """remove_account, saying what happened: None when there is no such account, else
+    {"removed", "revoked_at_google", "last_account"}. With the last account gone, the
+    record of which Google services answered goes too (connector contract, NS-23.1-6)."""
     with _LOCK:
         index = _load_index()
         accounts = index.get("accounts", [])
         rec = next((r for r in accounts if r.get("id") == account_id), None)
         if not rec:
-            return False
+            return None
         # Best-effort remote revocation before we delete the local token.
         revoked = _revoke_remote(account_id)
+        token_deleted = legacy_deleted = True
         try:
             _token_path(account_id).unlink(missing_ok=True)
         except Exception:
-            pass
+            token_deleted = False
+        if not token_deleted:
+            # The account stays listed (and its Remove button with it) while its token is
+            # still on this PC: removing it from the list would hide a token left behind.
+            cs.audit_event(_AUDIT_CATEGORY, "disconnect", account_id=account_id,
+                           remote_revoked=revoked, token_deleted=False, success=False)
+            return {"removed": None, "revoked_at_google": bool(revoked), "last_account": False,
+                    "token_deleted": False, "legacy_deleted": True}
         index["accounts"] = [r for r in accounts if r.get("id") != account_id]
         _save_index(index)
+        last = not index["accounts"]
+        if last:
+            # Nothing of Google's sign-in is left behind with the last account: the record of
+            # which services answered, and the plaintext token the older single-account
+            # connect page wrote (calendar_engine.GOOGLE_TOKEN_PATH).
+            try:
+                _SERVICE_STATE_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services.calendar_engine import GOOGLE_TOKEN_PATH as _legacy
+                _legacy.unlink(missing_ok=True)
+            except Exception:
+                legacy_deleted = False
     cs.audit_event(_AUDIT_CATEGORY, "disconnect", account_id=account_id,
-                   remote_revoked=revoked, success=True)
-    return True
+                   remote_revoked=revoked, legacy_deleted=legacy_deleted, success=True)
+    return {"removed": account_id, "revoked_at_google": bool(revoked), "last_account": last,
+            "token_deleted": True, "legacy_deleted": legacy_deleted}
 
 
 def _revoke_remote(account_id: str) -> bool:

@@ -135,6 +135,13 @@
   <p id="support-note" role="status"></p>
 </section>
 
+<section id="safetymetrics" aria-labelledby="sm-h">
+  <h2 id="sm-h">Safety and privacy, last 30 days</h2>
+  <p class="muted">Counted on this PC from Friday's own records; never sent. Each should be zero, and the self-tests and restore rehearsals should be at 100%.</p>
+  <p id="sm-sum" role="status">Checking...</p>
+  <div id="sm-out"></div>
+</section>
+
 <section id="localmodel" aria-labelledby="lm-h">
   <h2 id="lm-h">Local model</h2>
   <p id="lm-state" role="status">Checking...</p>
@@ -311,6 +318,26 @@
     const u = ['B', 'KB', 'MB', 'GB']; let i = 0; n = Number(n);
     while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
     return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+  }
+  function safetyMetrics() {
+    api('/api/doctor/safety-metrics').then(({ ok, d }) => {
+      const out = $('sm-out'); out.textContent = '';
+      if (!ok) { text($('sm-sum'), d.error || 'Could not be read.'); return; }
+      const att = (d.attention || []).length, unk = (d.unknown || []).length;
+      text($('sm-sum'), att ? att + ' need attention.' : (unk ? 'Nothing needs attention; ' + unk + ' could not be counted.' : 'All held.'));
+      const tb = document.createElement('table');
+      (d.metrics || []).forEach(m => {
+        const tr = document.createElement('tr');
+        const v = m.value == null ? 'unknown' : (m.unit === 'percent' ? m.value + '%' : String(m.value));
+        [m.label, v, m.state === 'ok' ? 'held' : (m.state === 'attention' ? 'needs attention' : 'not counted'), m.note || ''].forEach((x, i) => {
+          const td = document.createElement('td'); td.textContent = x;
+          if (i === 2) td.className = m.state === 'ok' ? 'healthy' : (m.state === 'attention' ? 'broken' : 'unverified');
+          tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      });
+      out.appendChild(tb);
+    });
   }
   const LM_WORDS = { working: 'serving', present_failing: 'installed, but not serving', absent: 'not installed' };
   function localModel() {
@@ -560,7 +587,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); history(); stores(); knownIssues(); localModel();
+  safeState(); history(); stores(); knownIssues(); localModel(); safetyMetrics();
 })();
 </script>
 </body>

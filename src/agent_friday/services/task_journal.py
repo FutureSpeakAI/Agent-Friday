@@ -1084,7 +1084,9 @@ _SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reas
                   # Saved workflow contracts and output references also carry
                   # user content when included in task snapshots.
                   "inputs", "success_criteria", "title", "path", "content",
-                  "result_tail", "log_tail", "note")
+                  "result_tail", "log_tail", "note",
+                  # a process's step list (routes/tasks.get_task fallback)
+                  "steps")
 
 WITHHELD = "[withheld by the privacy gate]"
 

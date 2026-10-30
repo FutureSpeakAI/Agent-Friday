@@ -1938,6 +1938,57 @@ def turn_liveness(turn_id, now=None):
     }
 
 
+def _task_context(task_id) -> dict:
+    """What the task record says about a process's task (BD-16 / NS-29.2-1): the goal and
+    milestone it serves (goal_ancestry), whose task it is (principal: owner or crew:<id>) and
+    the schedule it runs for. Read from services/agent.TASKS, the one place _spawn_task records
+    them (inherited by child tasks, restored after a restart). A plain dict read, no lock taken,
+    so it is safe from inside PROCESSES_LOCK. Never raises."""
+    if not task_id:
+        return {}
+    try:
+        import sys as _sys
+        agent = _sys.modules.get("agent_friday.services.agent")
+        rec = (getattr(agent, "TASKS", {}) or {}).get(task_id) if agent else None
+        if not isinstance(rec, dict):
+            return {}
+        anc = rec.get("goal_ancestry") or {}
+        return {"goal_id": anc.get("goal_id") if isinstance(anc, dict) else None,
+                "milestone_id": anc.get("milestone_id") if isinstance(anc, dict) else None,
+                "principal": rec.get("principal") or None,
+                "schedule_id": rec.get("schedule_id") or None}
+    except Exception:
+        return {}
+
+
+def _stop_capability(pid, task_id) -> str:
+    """How this process can be stopped (NS-29.2-1 'stop capability'): an image or video job is
+    cancelled at once (its job flag, then the sampler); a task Friday is running stops after its
+    current step; anything else stops with Stop everything (its cancel button only gives the
+    GPU back after a short wait, and the work itself carries on). Read-only: it changes no stop
+    path."""
+    p = str(pid)
+    if p.startswith(("image-", "video-")):
+        return "cancel_now"
+    if task_id:
+        try:
+            import sys as _sys
+            agent = _sys.modules.get("agent_friday.services.agent")
+            if agent is not None and task_id in (getattr(agent, "TASKS", {}) or {}):
+                return "after_this_step"
+        except Exception:
+            pass
+    return "stop_everything"
+
+
+def _apply_task_context(row: dict, ctx: dict) -> None:
+    for k in ("goal_id", "milestone_id", "schedule_id"):
+        if ctx.get(k) and not row.get(k):
+            row[k] = ctx[k]
+    if ctx.get("principal") and row.get("principal") in (None, "owner"):
+        row["principal"] = ctx["principal"]
+
+
 def process_register(pid, *, name="Task", label=None, category="default",
                      icon="⚡", steps=None, model=None, color=None,
                      task_id=None, eta_s=None, step_total=None):
@@ -1967,9 +2018,17 @@ def process_register(pid, *, name="Task", label=None, category="default",
                 task_id = _job.id
     except Exception:
         pass
+    _ctx = _task_context(task_id)
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
             "id": pid,
+            # NS-29.2-1 (one process registry): ancestry and principal from the task record,
+            # cost and the receipt it produced (process_update), and how it can be stopped.
+            "goal_id": None, "milestone_id": None, "schedule_id": None,
+            "principal": "owner",
+            "cost_usd": 0.0,
+            "receipt_id": None,
+            "stop_capability": _stop_capability(pid, task_id),
             "name": name,
             "label": label or name,
             "category": category,
@@ -2013,6 +2072,7 @@ def process_register(pid, *, name="Task", label=None, category="default",
             # row can expand into the reasoning behind it.
             "trace_id": _current_trace_id(),
         }
+        _apply_task_context(PROCESSES[pid], _ctx)
     turn_pet(label=label or name, model=model)
     # The lattice's background orbiter (avatar-visual-genome.md §13): a
     # scheduled run is background work from the moment it is registered.
@@ -2041,13 +2101,14 @@ def _current_trace_id():
 
 def process_update(pid, *, status=None, progress=None, label=None,
                    step=None, steps=None, task_id=None, result=None,
-                   step_n=None, step_total=None):
+                   step_n=None, step_total=None, cost_usd=None, receipt=None):
     """Update an existing process entry.
 
     `result` attaches the process's final output (e.g. a local model's reply)
     so the notification detail panel has a real process to show — a subagent
     task whose orb carries no log/result renders as an empty "nothing".
     """
+    _ctx = _task_context(task_id) if task_id is not None else {}
     with PROCESSES_LOCK:
         p = PROCESSES.get(pid)
         if not p:
@@ -2070,6 +2131,16 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["steps"] = steps
         if task_id is not None:
             p["task_id"] = task_id
+            _apply_task_context(p, _ctx)
+            if p.get("stop_capability") == "stop_everything":
+                p["stop_capability"] = _stop_capability(pid, task_id)
+        if cost_usd is not None:
+            try:
+                p["cost_usd"] = round(float(p.get("cost_usd") or 0.0) + max(0.0, float(cost_usd)), 6)
+            except (TypeError, ValueError):
+                pass
+        if receipt is not None:
+            p["receipt_id"] = str(receipt)[:120]
         if result is not None:
             p["result"] = str(result)[:4000]
         p["updated"] = _time.time()
@@ -5185,7 +5256,8 @@ def check_auth():
             pass
         if not _obs.verify(_obs_token):
             return jsonify({"error": "observer credential not recognised"}), 401
-        if not _obs.is_read_allowed(request.method, request.path):
+        _rule = getattr(getattr(request, "url_rule", None), "rule", None)
+        if not _obs.is_read_allowed(request.method, request.path, _rule):
             return jsonify({"error": "observer credential is read-only: this route is not available to it",
                             "principal": "observer"}), 403
         return None

@@ -43407,7 +43407,10 @@ function RelationshipPanel({ onImported }) {
   const allowSaving = async a => {
     setMsg('');
     try {
-      const r = await fetch('/api/google/accounts/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: a.id, email: a.email, include_contacts_write: true }) });
+      const df = await fetchPermissionDiff(a.id, ['contacts']);
+      if (!df) { setMsg('Could not load what this would add.'); return; }
+      if (!window.confirm(permissionDiffText(df))) return;
+      const r = await fetch('/api/google/accounts/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: a.id, email: a.email, include_contacts_write: true, diff_id: df.diff_id }) });
       const d = await r.json();
       if (d.status === 'ok' && d.auth_url) setConsent({ url: d.auth_url, brief: d.prebrief || '', email: a.email });
       else setMsg(d.message || 'Could not start sign-in.');
@@ -60033,6 +60036,62 @@ function ClawsRepinPanel() {
 // file permissions only. This panel wraps it with the vault passphrase through
 // /api/security/keystore/wrap, which answers only this page on this PC and
 // needs the passphrase typed. Nothing changes it on its own.
+// Every stored credential (BD-06, NS-23.3-4/-5): what it is for, where it came from and when,
+// last changed and used, how it is protected; where to replace it, and Remove (a press on this
+// PC; revoked at the provider where the provider allows it). /api/security/credentials.
+function CredentialsPanel() {
+  const [rows, setRows] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState('');
+  const load = useCallback(() => {
+    apiFetch('/api/security/credentials').then(r => r.json()).then(d => setRows(d && d.ok ? d.credentials || [] : [])).catch(() => setRows([]));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) : 'never';
+  const remove = row => {
+    if (!window.confirm('Remove ' + row.kind + ' (' + row['for'] + ')?\n\n' + (row.remove && row.remove.note || ''))) return;
+    setBusy(row.name);
+    setMsg('');
+    apiFetch('/api/security/credentials/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: row.name })
+    }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+      setMsg(d && d.message || (ok ? 'Removed.' : 'Nothing changed.'));
+      load();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(''));
+  };
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
+  if (!rows) return /*#__PURE__*/React.createElement("div", { style: muted }, "Reading the stored credentials\u2026");
+  return /*#__PURE__*/React.createElement("div", {
+    "data-testid": "credential-list",
+    style: { marginTop: 12 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 12, color: '#fff', marginBottom: 6 }
+  }, "Stored credentials"), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, fridayName() + " holds no credentials."), rows.map(row => /*#__PURE__*/React.createElement("div", {
+    key: row.name,
+    style: { borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 0' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 8, alignItems: 'center' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.85)' }
+  }, row.kind, ": ", row['for']), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: { fontSize: 11 },
+    disabled: !!busy,
+    onClick: () => remove(row)
+  }, busy === row.name ? 'Removing\u2026' : 'Remove')), /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "Came from: ", row.came_from, row.first_set ? ' (' + when(row.first_set) + ')' : '', ". Last changed ", when(row.last_changed), ", last used ", when(row.last_used), ". ", row.protection, "."), row.replace_in && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "To replace it: ", row.replace_in, "."))), msg && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 11, color: '#cfefff', marginTop: 8 }
+  }, msg));
+}
 function KeystoreWrapPanel() {
   const [st, setSt] = useState(null);
   const [pw, setPw] = useState('');
@@ -61001,7 +61060,7 @@ function SettingsTabPrivacy({
     title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"
-  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null)), React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null), /*#__PURE__*/React.createElement(CredentialsPanel, null)), React.createElement(StSection, {
     title: "Agent workspaces"
   }, window.FridayAgentWorkspacePermission && React.createElement(window.FridayAgentWorkspacePermission, {apiFetch})), /*#__PURE__*/React.createElement(StSection, {
     title: "Computer control"
@@ -63214,6 +63273,17 @@ function TasksInboxPanel() {
     }, 'Off, and ' + fridayName() + '’s list was removed from Google Tasks.')
   }, 'Turn off and remove the list')), limit, status);
 }
+// The permission difference (BD-06, NS-23.2-2): shown before Google is asked for a new write
+// permission; the connect route refuses one without its diff_id.
+function permissionDiffText(df) {
+  const adds = (df.adds || []).map(a => '+ ' + a.what);
+  return 'This asks Google for:\n' + (adds.length ? adds.join('\n') : 'nothing new (already allowed)') + ((df.lets_friday || []).length ? '\n\nIt lets ' + fridayName() + ': ' + df.lets_friday.join(', ') + '.' : '') + '\n\n' + (df.still || []).join(' ') + '\n\nEverything else stays as it is. Continue to Google?';
+}
+async function fetchPermissionDiff(accountId, caps) {
+  const r = await apiFetch('/api/google/accounts/' + encodeURIComponent(accountId) + '/permission-diff?capability=' + encodeURIComponent(caps.join(',')));
+  const d = await r.json();
+  return d && d.diff || null;
+}
 function GoogleAccountsPanel() {
   const [accounts, setAccounts] = useState([]);
   const [msg, setMsg] = useState('');
@@ -63299,6 +63369,22 @@ function GoogleAccountsPanel() {
     const include_tasks_write = !!(opts && opts.tasksWrite);
     setLoading(true);
     try {
+      let diff_id = '';
+      const caps = account ? [mailbox && 'send', include_calendar_write && 'calendar', include_tasks_write && 'tasks'].filter(Boolean) : [];
+      if (caps.length) {
+        const df = await fetchPermissionDiff(account.id, caps);
+        if (!df) {
+          setMsg('Could not load what this would add.');
+          setLoading(false);
+          return;
+        }
+        // Every new write permission is shown here before Google is asked.
+        if (!window.confirm(permissionDiffText(df))) {
+          setLoading(false);
+          return;
+        }
+        diff_id = df.diff_id;
+      }
       const r = await apiFetch('/api/google/accounts/connect', {
         method: 'POST',
         headers: {
@@ -63309,7 +63395,8 @@ function GoogleAccountsPanel() {
           email: account.email,
           mailbox,
           include_calendar_write,
-          include_tasks_write
+          include_tasks_write,
+          diff_id
         } : {
           label,
           include_send: allowSend
@@ -63336,11 +63423,16 @@ function GoogleAccountsPanel() {
   const removeAccount = async (id, email) => {
     if (!window.confirm('Remove ' + email + '? This revokes access.')) return;
     try {
-      await apiFetch('/api/google/accounts/' + id + '/remove', {
+      const r = await apiFetch('/api/google/accounts/' + id + '/remove', {
         method: 'POST'
       });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.message || 'Error.');
+        return;
+      }
       setAccounts(a => a.filter(x => x.id !== id));
-      setMsg('Removed.');
+      setMsg(d.message || 'Removed.');
     } catch (e) {
       setMsg('Error.');
     }
@@ -63672,7 +63764,36 @@ function GoogleAccountsPanel() {
       color: '#00d4ff',
       marginTop: 8
     }
-  }, msg));
+  }, msg), /*#__PURE__*/React.createElement(GoogleConnectorCard, null));
+}
+// The Google connection's card (BD-06, NS-8.9-2): what it lets Friday do, the permissions it asks
+// for (reading and changing apart), what runs without a card, what Google receives, what is kept
+// on this PC, the limits and how to remove it. Read from /api/google/accounts/contract, which
+// tests tie to the code (services/connector_contracts.google_card).
+function GoogleConnectorCard() {
+  const [card, setCard] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/google/accounts/contract').then(r => r.json()).then(d => {
+      const c = d && d.contract && d.contract.card;
+      if (Array.isArray(c)) setCard(c);
+    }).catch(() => {});
+  }, []);
+  if (!card) return null;
+  return /*#__PURE__*/React.createElement("details", {
+    className: "google-connector-card",
+    style: { marginTop: 10, fontSize: 11, color: 'rgba(255,255,255,0.78)' }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: { cursor: 'pointer', color: '#00d4ff' }
+  }, "What this connection does"), card.map(sec => /*#__PURE__*/React.createElement("div", {
+    key: sec.heading,
+    style: { marginTop: 6 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontWeight: 600, color: '#fff' }
+  }, sec.heading), /*#__PURE__*/React.createElement("ul", {
+    style: { margin: '2px 0 0 16px', padding: 0 }
+  }, (sec.lines || []).map((l, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, l))))));
 }
 // ─── Settings → Connections — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),
