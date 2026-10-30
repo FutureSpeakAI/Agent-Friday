@@ -57,6 +57,9 @@ def test_a_task_record_carries_its_origin_and_model_policy(isolated):
         return {"status": "complete", "result": "synthetic"}
     tid = agent._spawn_task("a synthetic task", "do the synthetic thing", runner=runner,
                             goal_ancestry={"goal_id": "goal_synthetic"})
+    th = agent.TASK_THREADS.get(tid)
+    if th is not None:
+        th.join(timeout=15)            # its ending lands in this test's ledger, not a later one's
     with agent.TASKS_LOCK:
         rec = dict(agent.TASKS[tid])
     assert rec["origin"] == "goal"
@@ -112,16 +115,81 @@ def test_every_way_of_ending_gets_one(isolated, status):
     assert [r["status"] for r in _rows_for(tid)] == [status]
 
 
-def test_the_receipt_is_written_once_even_if_the_status_is_set_again(isolated):
+def _receipt(tid):
+    with agent.TASKS_LOCK:
+        return dict(agent.TASKS[tid])["terminal_receipt"]
+
+
+def test_the_same_ending_set_again_writes_nothing_new(isolated):
     _running("t-end-2")
     agent._task_set("t-end-2", status="complete", ended=3.0)
+    first = _receipt("t-end-2")
+    agent._task_set("t-end-2", status="complete", ended=3.5)
+    assert _receipt("t-end-2") == first and len(_rows_for("t-end-2")) == 1
+
+
+def test_a_different_ending_supersedes_the_first(isolated):
+    _running("t-end-4")
+    agent._task_set("t-end-4", status="complete", ended=3.0)
+    first = _receipt("t-end-4")
+    agent._task_set("t-end-4", status="failed", ended=4.0)
+    second = _receipt("t-end-4")
+    rows = _rows_for("t-end-4")
+    assert [r["status"] for r in rows] == ["complete", "failed"]
+    assert rows[1]["supersedes"] == first["seq"] and second["seq"] != first["seq"]
+    assert second["status"] == "failed"
+
+
+def test_waiting_on_a_card_is_not_the_ending(isolated):
+    """The worker is done but the owner's card decides the task: its receipt is
+    written when the card is settled, with the real ending."""
+    _running("t-end-5")
+    agent._task_set("t-end-5", status="waiting_approval")
+    assert _receipt("t-end-5") is None and _rows_for("t-end-5") == []
+    agent._task_set("t-end-5", status="declined", ended=5.0)
+    assert [r["status"] for r in _rows_for("t-end-5")] == ["declined"]
+    assert _receipt("t-end-5")["status"] == "declined"
+
+
+def test_a_resumed_task_gets_a_receipt_for_its_new_ending(isolated):
+    _running("t-end-6")
+    agent._task_set("t-end-6", status="failed", ended=3.0)
+    first = _receipt("t-end-6")
+    agent._task_set("t-end-6", status="running", ended=None)
     with agent.TASKS_LOCK:
-        first = dict(agent.TASKS["t-end-2"])["terminal_receipt"]
-    agent._task_set("t-end-2", status="failed", ended=4.0)
-    with agent.TASKS_LOCK:
-        again = dict(agent.TASKS["t-end-2"])["terminal_receipt"]
-    assert first and again == first
-    assert len(_rows_for("t-end-2")) == 1
+        rec = dict(agent.TASKS["t-end-6"])
+    assert rec["terminal_receipt"] is None and rec["previous_terminal_receipts"] == [first]
+    agent._task_set("t-end-6", status="complete", ended=6.0)
+    assert _receipt("t-end-6")["status"] == "complete"
+    assert [r["status"] for r in _rows_for("t-end-6")] == ["failed", "complete"]
+
+
+def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
+    """Two endings arriving together: only the call that claimed the record writes."""
+    import threading
+    _running("t-end-7")
+    gate = threading.Barrier(2)
+    from agent_friday.services import action_ledger
+    real = action_ledger.try_append
+
+    def slow(kind, rec, **kw):
+        if kind == "task_end":
+            try:
+                gate.wait(timeout=1)
+            except threading.BrokenBarrierError:
+                pass
+        return real(kind, rec, **kw)
+    action_ledger.try_append = slow
+    try:
+        ts = [threading.Thread(target=agent._task_set, args=("t-end-7",),
+                               kwargs={"status": "complete", "ended": 3.0}) for _ in range(2)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(timeout=10)
+    finally:
+        action_ledger.try_append = real
+    assert len(_rows_for("t-end-7")) == 1
 
 
 def test_a_running_task_has_no_receipt_yet(isolated):
