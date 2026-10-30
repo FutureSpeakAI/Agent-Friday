@@ -2389,7 +2389,7 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
         minted = not _pv.valid_action_id(aid)
         if minted:
             aid = _pv.new_action_id()
-        action_ledger.try_append("outcome", {
+        _entry = action_ledger.try_append("outcome", {
             "action_id": aid,
             **({"action_id_origin": "outcome"} if minted else {}),
             "policy_version": _policy_version_id(),
@@ -2399,6 +2399,14 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
             "approval": approval or (decision or {}).get("approval"),
             "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
             "detail": str(detail or "")[:120]})
+        if _entry:
+            # The task journal's receipt event (NS-29.4-2): the task this action
+            # belongs to names the receipt, by ids only. Never holds anything.
+            try:
+                from agent_friday.services import task_journal as _tj
+                _tj.receipt(_entry, approval_id=approval or (decision or {}).get("approval"))
+            except Exception:
+                pass
         if isinstance(decision, dict) and oc in TERMINAL_OUTCOMES:
             decision["_closed"] = True
         # §4.7 (G9): an outward action that closed checked or failed inside a

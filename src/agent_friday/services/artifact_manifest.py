@@ -583,9 +583,36 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
             with _LOCK, open(mp, "a", encoding="utf-8") as f:
                 for e in lines:
                     f.write(json.dumps(e, default=str) + "\n")
+            if task_id:
+                _journal_artifacts(task_id, lines, receipt)
         return lines if lines else []
     except Exception:
         return []
+
+
+#: An artifact's reference in the task journal: this prefix and the first
+#: characters of its manifest line's signature (never its path or content).
+ARTIFACT_REF_PREFIX = "art_"
+
+
+def artifact_ref(line: dict) -> Optional[str]:
+    """The reference a task journal keeps for one manifest line."""
+    sig = (line or {}).get("hmac")
+    return ARTIFACT_REF_PREFIX + sig[:24] if isinstance(sig, str) and sig else None
+
+
+def _journal_artifacts(task_id: str, lines: List[dict], receipt: Optional[dict]) -> None:
+    """One artifact event per recorded file in the task's journal (NS-29.4-1):
+    the manifest reference, the tool, whether its check passed and the action
+    id of the decision that allowed the call. Never raises."""
+    try:
+        from agent_friday.services import task_journal as tj
+        aid = (receipt or {}).get("action_id")
+        for e in lines:
+            tj.artifact(task_id, artifact_ref(e), tool=e.get("tool"),
+                        qa_ok=(e.get("qa") or {}).get("ok"), action_id=aid)
+    except Exception:
+        pass
 
 
 # ── off the conversation's path ────────────────────────────────────────────

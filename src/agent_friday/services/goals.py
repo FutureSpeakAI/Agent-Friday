@@ -641,9 +641,18 @@ def add_milestone(goal_id: str, milestone: dict) -> Optional[Dict[str, Any]]:
 
 
 def _update_milestone(goal_id: str, milestone_id: str, **fields) -> Optional[Dict[str, Any]]:
+    stopped_task: List[str] = []
+
     def _fn(goal):
         m = _find_milestone(goal, milestone_id)
         if m is not None:
+            if isinstance(fields.get("blocker"), dict):
+                # the attempt task this blocker stopped, for its journal (G10)
+                b = fields["blocker"]
+                tid = (b.get("task_id") or (fields.get("last_run") or {}).get("task_id")
+                       or (m.get("run") or {}).get("task_id"))
+                if tid:
+                    stopped_task[:] = [str(tid)]
             last = fields.get("last_run")
             run = m.get("run")
             if last and run and run.get("started_at") == last.get("started_at"):
@@ -656,7 +665,21 @@ def _update_milestone(goal_id: str, milestone_id: str, **fields) -> Optional[Dic
                 goal["spent_runtime_s"] = round(float(goal.get("spent_runtime_s") or 0) + took, 1)
             m.update(fields)
         return goal
-    return _mutate_goal(goal_id, _fn)
+    out = _mutate_goal(goal_id, _fn)
+    if stopped_task:
+        _journal_blocker(stopped_task[0], fields["blocker"])
+    return out
+
+
+def _journal_blocker(task_id: str, blocker: Dict[str, Any]) -> None:
+    """The typed blocker (goal_state) that stopped a milestone's attempt, in
+    that task's journal (NS-29.4-1): its type and category codes, never its
+    words. Never raises."""
+    try:
+        from agent_friday.services import task_journal as tj
+        tj.blocker(task_id, blocker.get("type"), category=blocker.get("category"))
+    except Exception:
+        pass
 
 
 def transition_goal(goal_id: str, new_status: str, *, reason: str = "",
@@ -1900,8 +1923,36 @@ def _verify(goal: Dict[str, Any], milestone: Dict[str, Any], text: str, criteria
     (services/goal_evidence, §17.12)."""
     from agent_friday.services import goal_evidence
     gid = goal.get("goal_id")
-    return goal_evidence.verify(goal, milestone, text, criteria, task_id=task_id, since=since,
-                                grade=lambda t, c: qa_gates.evaluate_text(t, c, workspace=f"goal:{gid}"))
+    verdict = goal_evidence.verify(goal, milestone, text, criteria, task_id=task_id, since=since,
+                                   grade=lambda t, c: qa_gates.evaluate_text(t, c, workspace=f"goal:{gid}"))
+    _journal_check(task_id, gid, milestone, verdict)
+    return verdict
+
+
+def _check_result(verdict: Dict[str, Any]) -> str:
+    """passed / failed / unknown for one milestone check: unknown when it
+    could not run or only the owner can judge what it found."""
+    v = verdict if isinstance(verdict, dict) else {}
+    if v.get("status") not in (None, "ok") or v.get("needs_owner_confirm"):
+        return "unknown"
+    if v.get("passed") is True:
+        return "passed"
+    return "failed" if v.get("passed") is False else "unknown"
+
+
+def _journal_check(task_id: Optional[str], goal_id: Optional[str], milestone: Dict[str, Any],
+                   verdict: Dict[str, Any]) -> None:
+    """The attempt task's journal records that its check ran (NS-29.4-1): the
+    check's id (goal and milestone ids) and passed / failed / unknown. Never
+    the words it judged. Never raises."""
+    if not task_id:
+        return
+    try:
+        from agent_friday.services import task_journal as tj
+        tj.verification(task_id, f"goal:{goal_id}:{(milestone or {}).get('milestone_id')}",
+                        _check_result(verdict), basis=(verdict or {}).get("basis"))
+    except Exception:
+        pass
 
 
 def _card_subject(goal_id: str, milestone_id: str, suffix: str, milestone: Dict[str, Any]) -> str:
