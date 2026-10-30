@@ -33,6 +33,9 @@ AMBIENT_MOVES = [
     r"tesseractLines\.userData\.angleXW \+= \(0\.5 \+ audioData\.low \* 3\.0 \+ a\.lift\) \* delta \* (\w+);",
     r"tesseractLines\.userData\.angleYW \+= \(0\.3 \+ audioData\.low \* 2\.0 \+ a\.twist\) \* delta \* (\w+);",
     r"particleSystem\.rotation\.y \+= \(0\.001 \+ audioData\.mid \* 0\.01\) \* (\w+);",
+    # Each particle's own orbit. Only theta (the angle round the orbit) uses this speed;
+    # radius and phi carry structure changes by their own lerps, so a still orbit still re-forms.
+    r"let speed = \(p\.speed \+ audioData\.mid \* 0\.5\) \* moodLerpValues\.particleSpeedScale \* \(1 \+ holoAmplitude \* 2\) \* (\w+);",
 ]
 
 

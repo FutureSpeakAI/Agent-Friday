@@ -6456,7 +6456,7 @@
                 if (pData) {
                     for (let i = 0; i < pData.length; i++) {
                         const p = pData[i];
-                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * idleFactor;
+                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * ambient;
                         if (scatterIntensity > 0) { 
                             speed += scatterIntensity * 3.0; 
                             p.phi += (Math.PI/2 - p.phi) * scatterIntensity * delta * 0.5; 
