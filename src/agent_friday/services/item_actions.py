@@ -2194,6 +2194,12 @@ def _close_batch(decision_ref, rec, ok: bool) -> None:
 #: (card_recovery.settle_interrupted_batches). Counts and codes only: never a name, a
 #: subject, an address or a path.
 RUN_KIND = "item_batch_run"
+#: Who a batch's card names as its user when the batch records its own end
+#: (``approvals.mark_used(..., END_ACTOR, ...)``). The governance checkpoint already
+#: burns the card (``used_at``, ``used_by`` the requester) when it allows the batch,
+#: BEFORE it runs, so ``used_at`` alone never means the batch ended: only this actor does
+#: (card_recovery.settle_interrupted_batches).
+END_ACTOR = "item_actions"
 #: What of the batch's decision a ``started`` marker keeps, so a later start can close it.
 _RUN_REF_KEYS = ("seq", "hash", "tool", "class", "decision", "action_id", "policy_version", "approval")
 
@@ -2250,7 +2256,9 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
             _RUNS.pop(old, None)
     # On disk before anything can be touched: a process killed from here on leaves a run
     # that started and never finished, which the next start finds and tells the owner about
-    # (card_recovery.settle_interrupted_batches). The card itself is only claimed until then.
+    # (card_recovery.settle_interrupted_batches). The card is already burned by the checkpoint
+    # that allowed the batch (used_at, used_by the requester); only the batch's own end names
+    # END_ACTOR as its user.
     run_id = journal.new_id().replace("rcpt_", "brun_", 1)
     if not _run_mark("started", run_id, approval_id, detail, decision_ref):
         # Without its started marker a crash mid-batch could never be found and told: the
@@ -2261,7 +2269,7 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
         if approval_id:
             try:
                 from agent_friday.services import approvals as ap
-                ap.mark_used(approval_id, "item_actions",
+                ap.mark_used(approval_id, END_ACTOR,
                              {"ok": False, "error": "run marker not written", "summary": text})
             except Exception:  # noqa: BLE001
                 pass
@@ -2290,7 +2298,9 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
             ok = False
         except BaseException:
             # the thread is being torn down (SystemExit, KeyboardInterrupt): its decision still
-            # closes, failed, and whoever waits on the run is let go; then it goes on as before
+            # closes, failed, and whoever waits on the run is let go; then it goes on as before.
+            # A crash (a kill, os._exit, power loss) never reaches here: it leaves only the
+            # started marker, which the next start judges interrupted.
             _run_mark("finished", run_id, approval_id, detail, ok=False, end="torn_down")
             _close_batch(decision_ref, None, False)
             with _RUNS_LOCK:
@@ -2302,7 +2312,7 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
         _close_batch(decision_ref, rec, ok)
         if approval_id:
             try:
-                ap.mark_used(approval_id, "item_actions",
+                ap.mark_used(approval_id, END_ACTOR,
                              {"ok": ok, "receipt_id": (rec or {}).get("receipt_id"),
                               "summary": text[:300]})
             except Exception:
@@ -2372,7 +2382,7 @@ def _on_decision(record: dict) -> None:
     name = _action_name(detail.get("domain", ""), detail.get("action", ""))
     v = action_gate.authorize_external(name, detail, requested_by="owner approval", approval_id=aid)
     if v.action != "allow":
-        ap.mark_used(aid, "item_actions", {"ok": False, "error": v.reason})
+        ap.mark_used(aid, END_ACTOR, {"ok": False, "error": v.reason})
         _post_back(detail.get("conversation_id"),
                    "You approved it, but Friday's governance check held it: %s. Nothing changed." % v.reason,
                    aid)
