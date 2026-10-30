@@ -5,11 +5,22 @@ Synthetic records only."""
 from __future__ import annotations
 
 import json
+import threading
+
+import pytest
 
 from agent_friday.governance import action_gate
 from agent_friday.services import observer_access as obs
+from agent_friday.services import unified_ledger as U
 
 WORDS = "SYNTHETIC-A12-ROUTE-MARKER"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_page():
+    U.reset_cache()                    # the plain first page is kept CACHE_S
+    yield
+    U.reset_cache()
 
 
 def _seed():
@@ -47,3 +58,16 @@ def test_the_observer_cannot_read_everything_together(client):
 def test_a_page_link_the_list_did_not_give_out_is_refused(client):
     r = client.get("/api/ledger/unified?cursor=not-a-cursor!")
     assert r.status_code == 400 and r.get_json()["code"] == "bad_cursor"
+
+
+def test_a_read_while_another_runs_too_long_is_told_busy(client, monkeypatch):
+    held = threading.Lock()
+    held.acquire()                     # another read holds the list
+    monkeypatch.setattr(U, "_RUN_LOCK", held)
+    monkeypatch.setattr(U, "BUSY_WAIT_S", 0.01)
+    try:
+        r = client.get("/api/ledger/unified?id=act_00000000000000000000")
+        assert r.status_code == 429 and r.get_json()["code"] == "busy"
+        assert r.headers.get("Retry-After") == "2"
+    finally:
+        held.release()

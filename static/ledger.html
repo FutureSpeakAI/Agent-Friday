@@ -286,6 +286,9 @@
   // one list, or everything that names one id. Every value is set with textContent.
   const LINK_WORDS = { direct: 'names it', via_task: 'same task', via_decision: 'same decision', via_goal: 'same goal' };
   let unifiedCursor = null;
+  // the family and id the first page was read with: "Older records" pages
+  // that list, not whatever the form says now
+  let unifiedQuery = { family: '', id: '' };
   function unifiedRender(rows, append) {
     const body = $('u-rows');
     if (!append) body.textContent = '';
@@ -307,7 +310,8 @@
   }
   function unifiedLoad(append) {
     const p = new URLSearchParams();
-    const fam = $('u-family').value, id = $('u-id').value.trim();
+    if (!append) unifiedQuery = { family: $('u-family').value, id: $('u-id').value.trim() };
+    const fam = unifiedQuery.family, id = unifiedQuery.id;
     if (fam) p.set('family', fam);
     if (id) p.set('id', id);
     if (append && unifiedCursor) p.set('cursor', unifiedCursor);
@@ -324,9 +328,12 @@
       const bad = Object.entries(d.sources || {}).filter(([, s]) => s && s.ok === false);
       const s = $('u-sources');
       s.className = bad.length ? 'bad' : 'muted';
-      s.textContent = bad.length
+      const cut = (d.truncated || []).map(n => n.replace(/_/g, ' '));
+      s.className = (bad.length || d.out_of_time) ? 'bad' : 'muted';
+      s.textContent = (bad.length
         ? 'Could not be read this time: ' + bad.map(([n, st]) => n.replace(/_/g, ' ') + ' (' + st.error + ')').join(', ') + '. Everything else is listed.'
-        : 'Every store was read.';
+        : (d.out_of_time ? 'Some stores ran out of time, so older records may be missing.' : 'Every store was read.'))
+        + (cut.length ? ' Only the newest part was read of: ' + cut.join(', ') + '.' : '');
     });
   }
   $('uf').addEventListener('submit', ev => { ev.preventDefault(); unifiedCursor = null; unifiedLoad(false); });

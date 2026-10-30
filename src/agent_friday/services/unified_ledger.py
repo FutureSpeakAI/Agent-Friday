@@ -45,19 +45,31 @@ The sources (SOURCES):
   skill_ledgers      skill changes (signed and chained), never the name.
 
 Bounded and fail-safe. Each source reads at most PER_SOURCE_MAX rows (newest
-first) within SOURCE_BUDGET_S, and the whole read stops starting sources after
-TOTAL_BUDGET_S. A source that fails or runs out of time is reported in
-`sources` with an error code and the others go on. Nothing here writes.
+first) within SOURCE_BUDGET_S (the action ledger is asked to stop line by
+line; a task journal is read from its last PER_TASK_BYTES, at most
+PER_TASK_LINES lines, the time checked per line), and the whole read stops
+starting sources, and trace passes, after TOTAL_BUDGET_S. A source that fails
+or runs out of time is reported in `sources` with an error code and the
+others go on; `truncated` names the sources that left older records unread
+(the task cap, a file's tail limit), apart from `capped` (a source gave as
+many rows as it may). One read runs at a time (another waits BUSY_WAIT_S,
+then is told Busy), and the plain first page is kept CACHE_S. Nothing here
+writes.
+
+Signatures are never shown: an id made from one (an artifact's reference, a
+decision's) is a keyed hash of it (VIEW_DOMAIN, from artifact_manifest's
+derived keys), the same on both sides so a trace still joins them.
 
 Paging: rows are ordered by (at, source, ref), newest first. `next_cursor`
 names the last row of a page; the next page holds the rows after it, so a
 page does not move when newer records arrive.
 
-Tracing one id (`id=`): the rows that name it (link "direct"), then the rows
-of the tasks those rows name and of the decisions they point at ("via_task",
-"via_decision"), then the goal receipts of the goals those name ("via_goal").
-One step each, never further, so a goal never pulls in every action of every
-task it ever ran.
+Tracing one id (`id=`): the rows that name it (link "direct"); then the rows
+of the tasks those rows name ("via_task") and the artifacts made under the
+decisions they name ("via_decision"); then the goal receipts of the goals any
+of those name ("via_goal"). One step each, never further, so a goal never
+pulls in every action of every task it ever ran: a task named only by a goal
+check that names the traced id (goal -> its check rows) is not followed.
 
 No path is ever built from what a caller sends: the id and the cursor are only
 compared with values read from the stores.
@@ -66,10 +78,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextvars
+import copy
 import hashlib
+import hmac as _hmac
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -116,6 +132,16 @@ MAX_TASKS = 50
 MAX_SKILLS = 200
 #: How much of the end of a log file one read takes.
 TAIL_BYTES = 4 * 1024 * 1024
+#: How much of the end of one task's journal one read takes, and how many of
+#: its lines it decodes at most (an encrypted line costs a decryption).
+PER_TASK_BYTES = 512 * 1024
+PER_TASK_LINES = 4000
+#: How long a read waits for another one to finish before it says Busy.
+BUSY_WAIT_S = 3.0
+#: How long the plain first page (no id, no cursor) is kept.
+CACHE_S = 15.0
+#: The purpose a signature is hashed for before it is shown as an id.
+VIEW_DOMAIN = b"friday-unified-ledger-view-ref-v1"
 
 #: An id: letters, digits and _ . : + - only, at most 128 characters. Paths
 #: (slashes, backslashes, spaces), addresses (@) and sentences never pass.
@@ -169,6 +195,11 @@ ACTIVITY_FAMILY = {"tool_call": "tool", "reasoning_trace": "trace"}
 _UNDATED = 0.0
 
 
+def _clock() -> float:
+    """The clock every limit here is measured on (a test may move it)."""
+    return time.monotonic()
+
+
 class _Ctx:
     """What one source is asked for."""
 
@@ -179,11 +210,13 @@ class _Ctx:
         self.before = before
         self.match = match
         self.wanted = wanted
-        self.deadline = time.monotonic() + budget
+        self.deadline = _clock() + budget
         self.partial = False
+        #: older records were left unread (a cap or a tail limit), not for time
+        self.truncated = False
 
     def expired(self) -> bool:
-        if time.monotonic() > self.deadline:
+        if _clock() > self.deadline:
             self.partial = True
             return True
         return False
@@ -285,9 +318,10 @@ def _row(family: str, kind: Any, at: Any, ids: Dict[str, str], *, signed: bool, 
             "summary": _summary(family, word), "source": source, "ref": r}
 
 
-def _tail_lines(path: Path, max_bytes: int = TAIL_BYTES) -> List[bytes]:
+def _tail_lines(path: Path, max_bytes: int = TAIL_BYTES, ctx: Optional[_Ctx] = None) -> List[bytes]:
     """The file's last lines, NEWEST FIRST, from at most `max_bytes` of its
-    end (a first line cut in half is dropped). [] when it cannot be read."""
+    end (a first line cut in half is dropped). [] when it cannot be read.
+    A file longer than that marks `ctx` truncated."""
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -299,7 +333,43 @@ def _tail_lines(path: Path, max_bytes: int = TAIL_BYTES) -> List[bytes]:
     lines = data.split(b"\n")
     if size > max_bytes:
         lines = lines[1:]
+        if ctx is not None:
+            ctx.truncated = True
     return [ln for ln in reversed(lines) if ln.strip()]
+
+
+# The view key of one read (set by unified(); a direct call loads its own).
+_VIEW_KEY: "contextvars.ContextVar[Optional[bytes]]" = contextvars.ContextVar(
+    "unified_ledger_view_key", default=None)
+
+
+def _load_view_key() -> Optional[bytes]:
+    """A key for showing signatures as ids, derived from the governance key
+    for this purpose only (artifact_manifest.derived_key). None when it
+    cannot be had: then no id is made from a signature at all."""
+    try:
+        from agent_friday.services import artifact_manifest as am
+        return am.derived_key(VIEW_DOMAIN)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _keyed(value: Any, prefix: str) -> Optional[str]:
+    """`prefix` and a keyed hash of `value` (a signature, or a reference made
+    from one): never any of its own characters. None without a key."""
+    if not isinstance(value, str) or not value:
+        return None
+    k = _VIEW_KEY.get() or _load_view_key()
+    if not k:
+        return None
+    return prefix + _hmac.new(k, value.encode("utf-8", "replace"), hashlib.sha256).hexdigest()[:24]
+
+
+def _artifact_view_id(journal_ref: Any) -> Optional[str]:
+    """An artifact's id in this list, from the reference the task journal
+    keeps for it (artifact_manifest.artifact_ref, G10): the manifest's rows
+    and the journal's rows both come through here, so they match."""
+    return _keyed(journal_ref, "art_")
 
 
 def _json(raw: bytes) -> Optional[dict]:
@@ -360,8 +430,9 @@ def _ledger_row(e: dict) -> Optional[dict]:
               ("run_id", rec.get("run_id"))]
     if isinstance(rec.get("decision_seq"), int) and rec["decision_seq"] > 0:
         pairs.append(("decision_receipt_id", "lgr_%d" % rec["decision_seq"]))
-    if fam == "decision" and isinstance(rec.get("hmac"), str):
-        pairs.append(("decision_ref", rec["hmac"][:24]))
+    if fam == "decision":
+        # a keyed hash of the decision's signature, as the artifact rows name it
+        pairs.append(("decision_ref", _keyed(rec.get("hmac"), "dref_")))
     if fam == "trace":
         pairs += [("trace_id", rec.get("trace_id")), ("parent_trace_id", rec.get("parent_id"))]
     ids = _ids(pairs)
@@ -410,19 +481,20 @@ def _src_action_ledger(ctx: _Ctx) -> List[dict]:
     kinds = _ledger_kinds(ctx.families)
     if kinds == []:
         return []
-    out: List[dict] = []
+    out: Dict[str, dict] = {}
 
     def where(e: dict) -> bool:
-        if ctx.expired():
-            return False
         row = _ledger_row(e)
         if not ctx.keep(row):
             return False
-        out.append(row)
+        out.setdefault(row["ref"], row)       # a re-read after a seal gives a line twice
         return True
 
-    action_ledger.entries(kinds, newest_first=True, limit=ctx.limit, where=where)
-    return out[:ctx.limit]
+    # asked before every line: the read ends on its deadline, not only at
+    # `limit` matches (a trace whose id names nothing would read it all)
+    action_ledger.entries(kinds, newest_first=True, limit=ctx.limit, where=where,
+                          stop=ctx.expired)
+    return list(out.values())[:ctx.limit]
 
 
 # ── source: the task journal ─────────────────────────────────────────────────
@@ -436,7 +508,8 @@ def _journal_row(ev: dict) -> Optional[dict]:
     ids = _ids([("task_id", tid), ("action_id", ev.get("action_id")),
                 ("approval_id", ev.get("approval_id")), ("receipt_id", ev.get("receipt_id")),
                 ("decision_receipt_id", ev.get("decision_receipt_id")),
-                ("artifact_id", ev.get("artifact_id")), ("check_id", ev.get("check_id"))])
+                ("artifact_id", _artifact_view_id(ev.get("artifact_id"))),
+                ("check_id", ev.get("check_id"))])
     for k, v in _goal_of_check(ev.get("check_id")).items():
         ids.setdefault(k, v)
     if kind == "approval":
@@ -466,7 +539,10 @@ def _src_task_journal(ctx: _Ctx) -> List[dict]:
     try:
         # a task whose index row was never written still has its journal
         for n, d in enumerate(tj.tasks_dir().iterdir()):
-            if n >= 20 * MAX_TASKS or ctx.expired():
+            if n >= 20 * MAX_TASKS:
+                ctx.truncated = True
+                break
+            if ctx.expired():
                 break
             if d.name not in when and d.is_dir() and (d / "journal.jsonl").is_file():
                 when[d.name] = d.stat().st_mtime
@@ -477,16 +553,35 @@ def _src_task_journal(ctx: _Ctx) -> List[dict]:
     named = [t for t in when if t in ctx.wanted]
     newest = sorted(when, key=lambda t: -when[t])
     order = named + [t for t in newest[:MAX_TASKS] if t not in named]
+    if len(order) < len(when):
+        ctx.truncated = True                  # more tasks than one read opens
     out: List[dict] = []
     for tid in order:
         if ctx.expired() or len(out) >= ctx.limit * 4:
             break
-        for ev in tj.read(tid):
+        lines = [0]
+
+        def stop() -> bool:
+            # asked before each line is decoded: the time, and this task's cap
+            lines[0] += 1
+            return lines[0] > PER_TASK_LINES or ctx.expired()
+
+        evs = tj.read(tid, stop=stop, tail_bytes=PER_TASK_BYTES)
+        if lines[0] > PER_TASK_LINES or _journal_bytes(tj, tid) > PER_TASK_BYTES:
+            ctx.truncated = True
+        for ev in evs:
             row = _journal_row(ev) if isinstance(ev, dict) else None
             if ctx.keep(row):
                 out.append(row)
     out.sort(key=_sort_key, reverse=True)
     return out[:ctx.limit]
+
+
+def _journal_bytes(tj: Any, tid: str) -> int:
+    try:
+        return (tj.task_dir(tid) / "journal.jsonl").stat().st_size
+    except (OSError, ValueError):
+        return 0
 
 
 # ── source: the egress ledger ────────────────────────────────────────────────
@@ -517,7 +612,7 @@ def _src_egress(ctx: _Ctx) -> List[dict]:
     if ctx.families is not None and "egress" not in ctx.families:
         return []
     out: List[dict] = []
-    for raw in _tail_lines(_egress_path()):
+    for raw in _tail_lines(_egress_path(), TAIL_BYTES, ctx):
         if ctx.expired() or len(out) >= ctx.limit:
             break
         if b'"call"' not in raw:
@@ -534,18 +629,23 @@ def _src_egress(ctx: _Ctx) -> List[dict]:
 def _artifact_row(e: dict) -> Optional[dict]:
     if e.get("kind") != "artifact":
         return None
+    from agent_friday.services import artifact_manifest as am
     sig = e.get("hmac") if isinstance(e.get("hmac"), str) else ""
     receipt = e.get("receipt") if isinstance(e.get("receipt"), dict) else {}
     sha = e.get("sha256")
-    ids = _ids([("artifact_id", ("art_" + sig[:24]) if sig else None),
+    # Ids made from signatures are keyed hashes, never their characters: the
+    # artifact's from the reference the task journal keeps for it (G10's
+    # artifact_ref, so the journal's rows match), the decision's as the
+    # decision row makes it.
+    ids = _ids([("artifact_id", _artifact_view_id(am.artifact_ref(e))),
                 ("task_id", e.get("task_id")), ("turn_id", e.get("turn_id")),
-                ("decision_ref", (receipt.get("hmac") or "")[:24] or None),
+                ("decision_ref", _keyed(receipt.get("hmac"), "dref_")),
                 ("content_hash", ("sha256:" + sha) if isinstance(sha, str) and sha else None)])
     qa = e.get("qa") if isinstance(e.get("qa"), dict) else {}
     word = "ok" if qa.get("ok") is True else ("failed" if qa.get("ok") is False else None)
+    ref = ("a" + hashlib.sha256(sig.encode("utf-8", "replace")).hexdigest()[:24]) if sig else e.get("ts")
     return _row("artifact", "artifact", e.get("ts"), ids, signed=bool(sig), chained=False,
-                where="artifact manifest", word=word, source="artifact_manifest",
-                ref=sig[:24] or e.get("ts"))
+                where="artifact manifest", word=word, source="artifact_manifest", ref=ref)
 
 
 def _src_artifact_manifest(ctx: _Ctx) -> List[dict]:
@@ -553,7 +653,7 @@ def _src_artifact_manifest(ctx: _Ctx) -> List[dict]:
         return []
     from agent_friday.services import artifact_manifest as am
     out: List[dict] = []
-    for raw in _tail_lines(Path(am.manifest_path())):
+    for raw in _tail_lines(Path(am.manifest_path()), TAIL_BYTES, ctx):
         if ctx.expired() or len(out) >= ctx.limit:
             break
         e = _json(raw)
@@ -580,7 +680,7 @@ def _src_provenance(ctx: _Ctx) -> List[dict]:
         return []
     from agent_friday.services import provenance
     out: List[dict] = []
-    for raw in _tail_lines(Path(provenance.LEDGER_FILE)):
+    for raw in _tail_lines(Path(provenance.LEDGER_FILE), TAIL_BYTES, ctx):
         if ctx.expired() or len(out) >= ctx.limit:
             break
         e = _json(raw)
@@ -592,12 +692,15 @@ def _src_provenance(ctx: _Ctx) -> List[dict]:
 
 # ── source: the publish log ──────────────────────────────────────────────────
 
-def _publish_row(e: dict) -> Optional[dict]:
+def _publish_row(e: dict, raw: bytes = b"") -> Optional[dict]:
     ids = _ids([("target_id", e.get("target_id")), ("post_id", e.get("post_id")),
                 ("action_id", e.get("action_id"))])
     word = _word(e.get("outcome") or e.get("event"), PUBLISH_WORDS)
-    ref = "%s.%s.%s" % (int(_at(e.get("ts"))), ids.get("target_id", "t"),
-                        _id(e.get("attempt")) or "0")
+    # the line's own short hash too: two events in the same second for the
+    # same target (an attempt and its outcome) never share a reference
+    ref = "%s.%s.%s.%s" % (int(_at(e.get("ts"))), ids.get("target_id", "t"),
+                           _id(e.get("attempt")) or "0",
+                           hashlib.sha256(raw.strip()).hexdigest()[:12])
     return _row("publish", e.get("event") or "publish", e.get("ts"), ids, signed=False,
                 chained=False, where="publish log", word=word, source="publish_log", ref=ref)
 
@@ -607,11 +710,11 @@ def _src_publish_log(ctx: _Ctx) -> List[dict]:
         return []
     from agent_friday.services import content_pipeline
     out: List[dict] = []
-    for raw in _tail_lines(Path(content_pipeline.PUBLISH_LOG)):
+    for raw in _tail_lines(Path(content_pipeline.PUBLISH_LOG), TAIL_BYTES, ctx):
         if ctx.expired() or len(out) >= ctx.limit:
             break
         e = _json(raw)
-        row = _publish_row(e) if e else None
+        row = _publish_row(e, raw) if e else None
         if ctx.keep(row):
             out.append(row)
     return out
@@ -632,7 +735,7 @@ def _src_setup_record(ctx: _Ctx) -> List[dict]:
         return []
     from agent_friday.services import setup_record
     out: List[dict] = []
-    for raw in _tail_lines(Path(setup_record.ledger_path())):
+    for raw in _tail_lines(Path(setup_record.ledger_path()), TAIL_BYTES, ctx):
         if ctx.expired() or len(out) >= ctx.limit:
             break
         e = _json(raw)
@@ -661,7 +764,7 @@ def _src_memory_ledger(ctx: _Ctx) -> List[dict]:
     if ctx.families is not None and "memory" not in ctx.families:
         return []
     out: List[dict] = []
-    for raw in _tail_lines(_memory_ledger_path()):
+    for raw in _tail_lines(_memory_ledger_path(), TAIL_BYTES, ctx):
         if ctx.expired() or len(out) >= ctx.limit:
             break
         e = _json(raw)
@@ -682,9 +785,11 @@ def _skill_row(e: dict, skill_ref: str) -> Optional[dict]:
     mac = e.get("mac") if isinstance(e.get("mac"), str) else ""
     prev = e.get("prev") if isinstance(e.get("prev"), str) else ""
     act = _word(e.get("action"), SKILL_WORDS)
+    # the reference is a hash of the line's signature (or link), never its characters
+    tag = hashlib.sha256((mac or prev).encode("utf-8", "replace")).hexdigest()[:16] if (mac or prev) else "0"
     return _row("skill", act or "skill", e.get("ts"), {"skill_ref": skill_ref}, signed=bool(mac),
                 chained=bool(prev), where="skill ledger", word=act, source="skill_ledgers",
-                ref="%s.%s" % (skill_ref, (mac or prev)[:16] or "0"))
+                ref="%s.%s" % (skill_ref, tag))
 
 
 def _src_skill_ledgers(ctx: _Ctx) -> List[dict]:
@@ -694,16 +799,19 @@ def _src_skill_ledgers(ctx: _Ctx) -> List[dict]:
     try:
         folders = sorted((d for d in root.iterdir()
                           if d.is_dir() and not d.is_symlink() and not d.name.startswith(".")),
-                         key=lambda d: d.name)[:MAX_SKILLS]
+                         key=lambda d: d.name)
     except OSError:
         return []
+    if len(folders) > MAX_SKILLS:
+        ctx.truncated = True
+        folders = folders[:MAX_SKILLS]
     out: List[dict] = []
     for d in folders:
         if ctx.expired():
             break
         # an opaque reference: the folder's name is the owner's words
         ref = "skl_" + hashlib.sha256(d.name.encode("utf-8", "replace")).hexdigest()[:12]
-        for raw in _tail_lines(d / ".ledger.jsonl", 256 * 1024)[:ctx.limit]:
+        for raw in _tail_lines(d / ".ledger.jsonl", 256 * 1024, ctx)[:ctx.limit]:
             e = _json(raw)
             row = _skill_row(e, ref) if e else None
             if ctx.keep(row):
@@ -761,7 +869,7 @@ def _read_sources(*, limit: int, families: Optional[Set[str]], before: Optional[
         if families is not None and not (set(fams) & families):
             report.setdefault(name, {"ok": True, "rows": 0, "skipped": "family"})
             continue
-        left = TOTAL_BUDGET_S - (time.monotonic() - started)
+        left = TOTAL_BUDGET_S - (_clock() - started)
         if left <= 0:
             prev = report.get(name) or {}
             report[name] = dict(prev, ok=False, rows=prev.get("rows", 0), error="out_of_time")
@@ -776,8 +884,11 @@ def _read_sources(*, limit: int, families: Optional[Set[str]], before: Optional[
             # which can carry a path
             report[name] = dict(prev, ok=False, rows=prev.get("rows", 0), error=type(e).__name__)
             continue
+        # capped: the source gave as many rows as it may; truncated: it left
+        # older records unread (the task cap, a file's tail limit)
         report[name] = dict(prev, ok=prev.get("ok", True), rows=prev.get("rows", 0) + len(got),
                             capped=bool(prev.get("capped")) or len(got) >= limit,
+                            truncated=bool(prev.get("truncated")) or ctx.truncated,
                             out_of_time=bool(prev.get("out_of_time")) or ctx.partial)
         report[name].pop("skipped", None)
         rows.extend(got)
@@ -819,10 +930,30 @@ def _families_of(family: Any) -> Optional[Set[str]]:
     return want or set()
 
 
+#: The ids a goal check row names the goal by (task_journal verification
+#: rows: check_id "goal:<goal>:<milestone>", and the goal and milestone read
+#: from it). A task named only through these is not followed.
+_GOAL_CHECK_KEYS = frozenset({"goal_id", "milestone_id", "check_id"})
+
+
+def _only_as_goal_check(row: dict, values: Set[str]) -> bool:
+    """The row names the traced id only as a goal check (goal -> its check
+    rows -> stop): its task is not the traced id's task."""
+    ids = row.get("ids") or {}
+    if not ids.get("check_id"):
+        return False
+    hits = {k for k, v in ids.items() if v in values}
+    return bool(hits) and hits <= _GOAL_CHECK_KEYS
+
+
 def _trace(want: str, families: Optional[Set[str]], report: Dict[str, dict],
-           started: float) -> List[dict]:
-    """The rows that name `want`, then one step out through tasks and
-    decisions, then one step out through goals."""
+           started: float, skipped: List[str]) -> List[dict]:
+    """The rows that name `want` ("direct"); then the rows of the tasks those
+    rows name ("via_task"), except a task named only by a goal check that
+    names `want`, and the artifacts made under the decisions they name
+    ("via_decision"); then the goal receipts of the goals any of those name
+    ("via_goal"). A pass that would start after TOTAL_BUDGET_S is not started
+    and is named in `skipped`."""
     found: Dict[tuple, dict] = {}
 
     def add(rows: List[dict], link: str) -> None:
@@ -837,22 +968,36 @@ def _trace(want: str, families: Optional[Set[str]], report: Dict[str, dict],
     def by_key(key: str, values: Set[str]) -> Callable[[dict], bool]:
         return lambda ids: ids.get(key) in values
 
+    def time_left(name: str) -> bool:
+        if TOTAL_BUDGET_S - (_clock() - started) > 0:
+            return True
+        skipped.append(name)
+        return False
+
+    # the traced id itself, and, for an artifact reference as the task
+    # journal keeps it (G10), the id this list shows for that artifact
+    values = {want}
+    if want.startswith("art_"):
+        shown = _artifact_view_id(want)
+        if shown:
+            values.add(shown)
     lim = PER_SOURCE_MAX
-    direct = _read_sources(limit=lim, families=None, before=None, match=by_value({want}),
+    direct = _read_sources(limit=lim, families=None, before=None, match=by_value(values),
                            wanted={want}, report=report, started=started)
     add(direct, "direct")
-    tasks = {r["ids"]["task_id"] for r in direct if r["ids"].get("task_id")} - {want}
+    tasks = {r["ids"]["task_id"] for r in direct
+             if r["ids"].get("task_id") and not _only_as_goal_check(r, values)} - values
     drefs = {r["ids"]["decision_ref"] for r in direct
              if r["family"] == "decision" and r["ids"].get("decision_ref")}
-    if tasks:
+    if tasks and time_left("via_task"):
         add(_read_sources(limit=lim, families=None, before=None, match=by_key("task_id", tasks),
                           wanted=tasks, report=report, started=started), "via_task")
-    if drefs:
+    if drefs and time_left("via_decision"):
         add(_read_sources(limit=lim, families={"artifact"}, before=None,
                           match=by_key("decision_ref", drefs), wanted=set(), report=report,
                           started=started), "via_decision")
-    goals = {r["ids"]["goal_id"] for r in found.values() if r["ids"].get("goal_id")} - {want}
-    if goals:
+    goals = {r["ids"]["goal_id"] for r in found.values() if r["ids"].get("goal_id")} - values
+    if goals and time_left("via_goal"):
         add(_read_sources(limit=lim, families={"goal"}, before=None,
                           match=by_key("goal_id", goals), wanted=set(), report=report,
                           started=started), "via_goal")
@@ -860,6 +1005,41 @@ def _trace(want: str, families: Optional[Set[str]], report: Dict[str, dict],
     if families is not None:
         rows = [r for r in rows if r["family"] in families]
     return rows
+
+
+class Busy(RuntimeError):
+    """Another read of the list is running and did not finish in BUSY_WAIT_S."""
+
+
+#: One read at a time: each opens every store, so two at once only make both slow.
+_RUN_LOCK = threading.Lock()
+#: (families, limit) -> (when, page) for the plain first page.
+_CACHE: Dict[tuple, Tuple[float, dict]] = {}
+_CACHE_MAX = 32
+
+
+def reset_cache() -> None:
+    """Forget the kept first pages (tests; nothing else needs to)."""
+    _CACHE.clear()
+
+
+def _cached(key: tuple) -> Optional[dict]:
+    hit = _CACHE.get(key)
+    if hit is None:
+        return None
+    at, page = hit
+    if _clock() - at > CACHE_S:
+        _CACHE.pop(key, None)
+        return None
+    return dict(copy.deepcopy(page), cached=True)
+
+
+def _cacheable(out: dict) -> bool:
+    """Only a whole read is kept: none failed, ran out of time or was skipped."""
+    if out.get("skipped_passes"):
+        return False
+    return all(s.get("ok", True) and not s.get("out_of_time")
+               for s in (out.get("sources") or {}).values())
 
 
 def unified(*, family: Any = None, id: Optional[str] = None, limit: int = 50,
@@ -870,23 +1050,55 @@ def unified(*, family: Any = None, id: Optional[str] = None, limit: int = 50,
     selects nothing. `id`: trace this id (an action, goal, task, approval,
     receipt or call id) across every family. `limit`: 1 to PAGE_MAX.
     `cursor`: the `next_cursor` of the page before. Raises BadCursor for a
-    cursor this list did not give out; otherwise never raises: a store that
-    cannot be read is named in `sources` with an error code."""
+    cursor this list did not give out, and Busy when another read held the
+    list for BUSY_WAIT_S; otherwise never raises: a store that cannot be read
+    is named in `sources` with an error code. The plain first page (no id, no
+    cursor) is kept CACHE_S (`cached` says so)."""
     try:
         limit = max(1, min(int(limit), PAGE_MAX))
     except (TypeError, ValueError):
         limit = 50
     after = _parse_cursor(cursor)
     families = _families_of(family)
+    plain = cursor in (None, "") and id in (None, "")
+    key = ((tuple(sorted(families)) if families is not None else None), limit) if plain else None
+    if key is not None:
+        hit = _cached(key)
+        if hit is not None:
+            return hit
+    if not _RUN_LOCK.acquire(timeout=BUSY_WAIT_S):
+        raise Busy("the list is being read for another request")
+    try:
+        if key is not None:
+            hit = _cached(key)                # the read this one waited for made it
+            if hit is not None:
+                return hit
+        token = _VIEW_KEY.set(_load_view_key())
+        try:
+            out = _unified_once(families=families, id=id, limit=limit, after=after)
+        finally:
+            _VIEW_KEY.reset(token)
+        if key is not None and _cacheable(out):
+            if len(_CACHE) >= _CACHE_MAX:
+                _CACHE.clear()
+            _CACHE[key] = (_clock(), copy.deepcopy(out))
+        return out
+    finally:
+        _RUN_LOCK.release()
+
+
+def _unified_once(*, families: Optional[Set[str]], id: Optional[str], limit: int,
+                  after: Optional[tuple]) -> dict:
     want = _id(id) if id not in (None, "") else None
     report: Dict[str, dict] = {}
-    started = time.monotonic()
+    skipped: List[str] = []
+    started = _clock()
     if id not in (None, "") and want is None:
         rows: List[dict] = []                 # not an id: nothing can name it
     elif families is not None and not families:
         rows = []
     elif want is not None:
-        rows = _trace(want, families, report, started)
+        rows = _trace(want, families, report, started, skipped)
     else:
         fetch = min(PER_SOURCE_MAX, limit * 2 + 20)
         rows = _read_sources(limit=fetch, families=families,
@@ -897,9 +1109,17 @@ def unified(*, family: Any = None, id: Optional[str] = None, limit: int = 50,
         rows = [r for r in rows if _sort_key(r) < after]
     page = rows[:limit]
     more = len(rows) > limit
+    out_of_time = bool(skipped) or any(s.get("out_of_time") or s.get("error") == "out_of_time"
+                                       for s in report.values())
     return {"rows": page, "count": len(page),
             "next_cursor": _cursor_of(page[-1]) if (page and more) else None,
-            "families": FAMILY_LABELS, "sources": report,
+            "families": dict(FAMILY_LABELS), "sources": report,
+            "truncated": sorted(n for n, s in report.items() if s.get("truncated")),
+            "out_of_time": out_of_time, "skipped_passes": skipped, "cached": False,
             "traced": bool(want), "bounded": {"per_source": PER_SOURCE_MAX,
                                               "source_seconds": SOURCE_BUDGET_S,
-                                              "total_seconds": TOTAL_BUDGET_S}}
+                                              "total_seconds": TOTAL_BUDGET_S,
+                                              "tasks": MAX_TASKS,
+                                              "task_bytes": PER_TASK_BYTES,
+                                              "task_lines": PER_TASK_LINES,
+                                              "tail_bytes": TAIL_BYTES}}

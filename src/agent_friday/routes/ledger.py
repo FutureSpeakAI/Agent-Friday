@@ -30,7 +30,9 @@
                                  services/unified_ledger): ?family=, ?id= to
                                  trace one action or goal across families,
                                  ?limit=, ?cursor=. Ids and fixed words only.
-                                 Read-only.
+                                 Read-only. One read at a time (429 "busy"
+                                 when another holds it); the plain first page
+                                 is kept 15 s.
   GET  /api/ledger/retention    the retention period and the archive (A22)
   POST /api/ledger/retention     {"days": n}: change it (0 = off, at least 30);
                                  on this PC only. Archives at once; never deletes.
@@ -407,6 +409,13 @@ def api_ledger_unified():
         except unified_ledger.BadCursor:
             return jsonify({"status": "error", "code": "bad_cursor",
                             "error": "That page link is not one this list gave out. Start from the newest."}), 400
+        except unified_ledger.Busy:
+            # one read at a time: every store is opened for it
+            resp = jsonify({"status": "error", "code": "busy",
+                            "error": "The records are being read for another view. Try again in a moment."})
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "2"
+            return resp
         return jsonify({"status": "ok", **out})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The records could not be read together.")

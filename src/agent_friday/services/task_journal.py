@@ -40,7 +40,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from agent_friday.paths import contained, safe_name
 
@@ -316,11 +316,19 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
 
 
 def read(task_id: str, since: int = 0, limit: Optional[int] = None, *,
-         strict: bool = False, kind: Optional[str] = None) -> List[dict]:
+         strict: bool = False, kind: Optional[str] = None,
+         stop: Optional[Callable[[], bool]] = None,
+         tail_bytes: Optional[int] = None) -> List[dict]:
     """Events with seq > since, oldest first. `kind` keeps only that kind of
     event. `strict` raises OSError/ValueError when the journal cannot be read
     or a line cannot be decoded (a check that relies on the record must not
-    take an unreadable record for an empty one)."""
+    take an unreadable record for an empty one).
+
+    For a reader with bounds (the unified ledger), both None by default and
+    then nothing changes: `stop` is asked before each line is decoded (an
+    encrypted line costs a decryption) and ends the read when it says True;
+    `tail_bytes` reads only the file's last that many bytes (the newest
+    events; a line cut in half at the start is dropped)."""
     try:
         p = task_dir(task_id) / "journal.jsonl"
     except ValueError:
@@ -330,11 +338,30 @@ def read(task_id: str, since: int = 0, limit: Optional[int] = None, *,
     if not p.exists():
         return []
     out: List[dict] = []
+    errors = "strict" if strict else "replace"
     try:
-        with open(p, encoding="utf-8", errors="strict" if strict else "replace") as fh:
-            for line in fh:
+        if tail_bytes is not None and tail_bytes > 0:
+            fh = open(p, "rb")
+            try:
+                fh.seek(0, os.SEEK_END)
+                start = max(0, fh.tell() - int(tail_bytes))
+                if start:
+                    fh.seek(start - 1)
+                    if fh.read(1) != b"\n":
+                        fh.readline()        # the first line is cut: not a line
+            except Exception:
+                fh.close()
+                raise
+            lines = (b.decode("utf-8", errors) for b in fh)
+        else:
+            fh = open(p, encoding="utf-8", errors=errors)
+            lines = fh
+        with fh:
+            for line in lines:
                 if not line.strip():
                     continue
+                if stop is not None and stop():
+                    break
                 ev = _decode_line(line)
                 if ev is None:
                     if strict:
