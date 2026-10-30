@@ -6080,6 +6080,10 @@
             // Floor at 0.6 (was 0.2): quiet idle should still feel luminous, not dead.
             const targetIdle = _speaking ? 1.2 : (isQuiet ? 0.6 : 1.0);
             idleFactor = THREE.MathUtils.lerp(idleFactor, targetIdle, delta * (isQuiet ? 0.3 : 2.0));
+            // Reduced motion (NS-33.2-1, AX21): the ambient spin and drift below stop; the
+            // scene holds still unless the person moves it. Glow and opacity still use
+            // idleFactor, so the scene is not dimmed, only stilled.
+            const ambient = SceneMotion.reduced() ? 0 : idleFactor;
 
             // --- MOOD LERPING ---
             const moodLerp = delta * 0.5; const tMood = MOODS[currentMood];
@@ -6201,8 +6205,8 @@
                 voice: holoAmplitude, speaking: _speaking, reduced: SceneMotion.reduced() });
 
             if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON','NONE','WORMHOLE','BLACKHOLE'].includes(targetStructure)) {
-                activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
-                if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
+                activeGroup.rotation.y += moodLerpValues.rotationSpeed * ambient;
+                if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * ambient;
                 // Voice-reactive scale breathing for all structures without custom vertex displacement
                 if (!['CUBES','DOME','ASTROLABE'].includes(targetStructure) && activeGroup.scale) {
                     const breathScale = 1.0 + holoAmplitude * 0.15 + idlePulse * 0.2;
@@ -6214,8 +6218,8 @@
                 coreCubes.forEach(c => {
                     if (c && c.rotation && c.position && c.userData) {
                         const a = FridayAvatarMotion.sample('CUBES', c.userData.iy + c.userData.ix * 0.35, 0, avatarArticulation);
-                        c.rotation.x += (0.6 * c.userData.speed * idleFactor + a.twist) * delta;
-                        c.rotation.y += (0.72 * c.userData.speed * idleFactor - a.twist * 0.6) * delta;
+                        c.rotation.x += (0.6 * c.userData.speed * ambient + a.twist) * delta;
+                        c.rotation.y += (0.72 * c.userData.speed * ambient - a.twist * 0.6) * delta;
                         const organicBreathe = Math.sin(elapsed * 2.0 * c.userData.speed + c.userData.rx) * 0.15;
                         // Genesis Lattice cohesion: the voice/active drive (audio + voiceBreath +
                         // face interaction) used to blast the cubes out so far the cube-of-cubes
@@ -6240,13 +6244,13 @@
 
             if (structures['DOME'] && structures['DOME'].visible) {
                 if(abyssParticles && abyssParticles.rotation && abyssParticles.scale) {
-                    abyssParticles.rotation.y -= 0.005 * idleFactor;
+                    abyssParticles.rotation.y -= 0.005 * ambient;
                     abyssParticles.scale.setScalar(1.0 + audioData.low * 0.3 * idleFactor + voiceBreath * 0.2);
                 }
                 cathedralRings.forEach((c, i) => {
                     if(c && c.rotation && c.scale) {
                         const a = FridayAvatarMotion.sample('DOME', i, 0, avatarArticulation);
-                        c.rotation.y += (0.12 * (i%2==0?1:-1) * idleFactor + a.twist) * delta;
+                        c.rotation.y += (0.12 * (i%2==0?1:-1) * ambient + a.twist) * delta;
                         c.rotation.x = a.lift * 0.35;
                         c.scale.setScalar(1.0 + audioData.mid * 0.1 + holoAmplitude * 0.25 + idlePulse * 0.5 + a.scale);
                     }
@@ -6290,8 +6294,8 @@
                 astrolabeRings.forEach((ring, i) => {
                     if (ring && ring.rotation && ring.userData) {
                         const a = FridayAvatarMotion.sample('ASTROLABE', i, 0, avatarArticulation);
-                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta;
-                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta;
+                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta * (ambient ? 1 : 0);
+                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta * (ambient ? 1 : 0);
                         ring.rotation.z = a.lift;
                         if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3 + a.scale);
                     }
@@ -6303,8 +6307,8 @@
                 if (tessGroup && tessGroup.children.length > 1) {
                     const tessNodes = tessGroup.children[1];
                     const a = FridayAvatarMotion.sample('TESSERACT', 0, 0, avatarArticulation);
-                    tesseractLines.userData.angleXW += (0.5 + audioData.low * 3.0 + a.lift) * delta * idleFactor;
-                    tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0 + a.twist) * delta * idleFactor;
+                    tesseractLines.userData.angleXW += (0.5 + audioData.low * 3.0 + a.lift) * delta * ambient;
+                    tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0 + a.twist) * delta * ambient;
                     tessGroup.scale.setScalar(1 + a.scale);
                     const cosXW = Math.cos(tesseractLines.userData.angleXW), sinXW = Math.sin(tesseractLines.userData.angleXW);
                     const cosYW = Math.cos(tesseractLines.userData.angleYW), sinYW = Math.sin(tesseractLines.userData.angleYW);
@@ -6453,7 +6457,7 @@
                 if (pData) {
                     for (let i = 0; i < pData.length; i++) {
                         const p = pData[i];
-                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * idleFactor;
+                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * ambient;
                         if (scatterIntensity > 0) { 
                             speed += scatterIntensity * 3.0; 
                             p.phi += (Math.PI/2 - p.phi) * scatterIntensity * delta * 0.5; 
@@ -6473,7 +6477,7 @@
                 }
                 particleSystem.geometry.attributes.position.needsUpdate = true; particleSystem.geometry.attributes.color.needsUpdate = true;
                 if(particleSystem.rotation) {
-                    particleSystem.rotation.y += (0.001 + audioData.mid * 0.01) * idleFactor;
+                    particleSystem.rotation.y += (0.001 + audioData.mid * 0.01) * ambient;
                 }
             }
 
@@ -6515,7 +6519,7 @@
             
             // Processing-state gestures, after every structure has animated.
             FridayGestureScene.end(delta);
-            if (starField && starField.rotation) starField.rotation.y += 0.0001;
+            if (starField && starField.rotation) starField.rotation.y += 0.0001 * (ambient ? 1 : 0);
             // A large foreground 3D view (Studio › Files) holds the backdrop's
             // drawing while it is on screen: both share one GPU. Everything
             // above still runs, so the hand cursor keeps tracking.
