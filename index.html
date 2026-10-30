@@ -81,6 +81,9 @@ window.addEventListener('error',function(e){
 <script src="/static/js/friday_stop_everything.js" defer></script>
 <!-- Settings > Privacy > When a cloud provider fails (A6). -->
 <script src="/static/js/friday_cloud_fallback_order.js" defer></script>
+<script src="/static/js/friday_route_why.js" defer></script>
+<!-- Settings > Privacy > Folders Friday may use (BD-26). -->
+<script src="/static/js/friday_folder_grants.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -373,6 +376,10 @@ window.addEventListener('DOMContentLoaded',function(){
            told from "camera off" without a face. Green (holo-active) still
            means a face is being tracked. */
         #camera-indicator[data-status="live"]:not(.holo-active) { background: #1f6f7f; }
+        /* The camera light by shape too: off a ring, on a half-filled circle, following a face a filled circle. */
+        #camera-indicator { width: 8px; height: 8px; box-sizing: border-box; }
+        #camera-indicator:not(.holo-active):not([data-status="live"]) { background: transparent; border: 1.5px solid #666; }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: linear-gradient(90deg, #1f6f7f 50%, transparent 50%); border: 1.5px solid #1f6f7f; }
         /* What the camera is doing when it is not simply working: busy in
            another app, stopped and reconnecting, released while hidden. Empty
            and invisible while the camera is live or off. */
@@ -582,7 +589,8 @@ window.addEventListener('DOMContentLoaded',function(){
         /* A card Friday raised inside this workspace is waiting: one quiet
            dot under the label, no count and no pulse. It clears when the
            workspace is opened or the card is dismissed. */
-        .dock-btn.has-notice .dot { background: #00d4ff; }
+        /* A notice is a ring, an open window a filled dot: told apart by shape, not only by being cyan. */
+        .dock-btn.has-notice .dot { background: transparent; border: 1px solid #00d4ff; width: 5px; height: 5px; box-sizing: border-box; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -2563,6 +2571,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
         .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
         .thread-dot.error { background: #ff0080; color: #ff0080; }
+        /* A step's state by shape too: done a circle, in progress half filled, pending a ring, error a square. */
+        .thread-dot.in-progress { background: linear-gradient(90deg, #f59e0b 50%, transparent 50%); border: 2px solid #f59e0b; box-sizing: border-box; }
+        .thread-dot.pending { background: transparent; border: 2px solid #3b82f6; box-sizing: border-box; }
+        .thread-dot.error { border-radius: 2px; }
         .thread-step-content { flex: 1; min-width: 0; }
         .thread-step-text {
             font-family: 'Inter', sans-serif; font-size: 12px;
@@ -2958,10 +2970,27 @@ window.addEventListener('DOMContentLoaded',function(){
             padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
             border:1px solid rgba(255,255,255,0.07);
         }
+        /* State is never shown by colour alone (WCAG 1.4.1; north star 33.1-11). One shape per kind of
+           state: ok a filled circle, busy a half-filled circle, warn a diamond, bad a square, off a hollow
+           ring. The colour stays; the shape says the same thing to someone who cannot tell the colours apart. */
+        .fr-state { display:inline-block; width:8px; height:8px; flex-shrink:0; vertical-align:middle; box-sizing:border-box;
+            border-radius:50%; background:currentColor; }
+        .fr-state[data-state="ok"] { color:#00ff80; }
+        .fr-state[data-state="busy"] { color:#f59e0b; border:1.5px solid currentColor; background:linear-gradient(90deg, currentColor 50%, transparent 50%); }
+        .fr-state[data-state="warn"] { color:#f59e0b; border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .fr-state[data-state="bad"] { color:#ff5470; border-radius:1px; }
+        .fr-state[data-state="off"] { color:rgba(255,255,255,0.4); border:1.5px solid currentColor; background:transparent; }
+        .fr-state[data-kind="cloud"] { border-radius:1px; }
+        /* Read by a screen reader, not drawn (the page's one top-level heading, say). */
+        .fr-sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+            clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Trust by shape too: high a circle, medium a diamond, low a square. */
+        .trust-dot.yellow, .trust-obs-dot.yellow { border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .trust-dot.red, .trust-obs-dot.red { border-radius:1px; }
 
         /* ── Source-trust badge + hover tooltip (article cards) ── */
         .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
@@ -3056,6 +3085,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .sentiment-dot.positive { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .sentiment-dot.neutral { background:#7a8190; box-shadow:0 0 4px rgba(122,129,144,0.4); }
         .sentiment-dot.negative { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Tone by shape too: positive a circle, neutral a ring, negative a square. */
+        .sentiment-dot.neutral { background:transparent; border:1.5px solid #7a8190; box-sizing:border-box; }
+        .sentiment-dot.negative { border-radius:1px; }
         /* "In your wiki" connection link */
         .wiki-connect { font-size:10px; color:#9fb0c4; margin-top:7px; }
         .wiki-link { color:#00d4ff; cursor:pointer; text-decoration:none; border-bottom:1px dotted rgba(0,212,255,0.4); }
@@ -3759,7 +3791,7 @@ window.addEventListener('DOMContentLoaded',function(){
     </div>
 
     <!-- Parallax Tracker Dot -->
-    <div id="camera-indicator"></div>
+    <div id="camera-indicator" role="img" aria-label="Camera off" title="Camera off"></div>
     <div id="camera-status" role="status" aria-live="polite"></div>
     <div id="call-mode-chip" role="status" aria-live="polite"></div>
 
@@ -3780,6 +3812,9 @@ window.addEventListener('DOMContentLoaded',function(){
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
+        <!-- The page's one top-level heading: a screen reader's heading list starts here, and each open window
+             is a level-2 heading under it (north star 33.1-6). -->
+        <h1 class="fr-sr-only">Agent Friday™</h1>
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
 
@@ -4698,7 +4733,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             function render() {
                 const ind = document.getElementById('camera-indicator');
-                if (ind) ind.dataset.status = state.status;
+                if (ind) { ind.dataset.status = state.status; const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab; }
                 const s = document.getElementById('camera-status');
                 if (!s) return;
                 const show = state.wanted && state.status !== 'live' && state.status !== 'off';
@@ -5094,6 +5129,7 @@ window.addEventListener('DOMContentLoaded',function(){
             if (!ind) return;
             if (active && isHologramMode) { ind.classList.add('holo-active'); }
             else { ind.classList.remove('holo-active'); }
+            const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab;
         }
 
         // --- AESTHETIC CONFIGURATION ---
@@ -5989,7 +6025,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 // task (an image or a video render) is cancelled as a process.
                 if (o.task_id) {
                     return post('/api/tasks/' + encodeURIComponent(o.task_id) + '/stop-after-step').then(r => {
-                        if (r.status === 409) return fetch('/api/tasks/' + encodeURIComponent(o.task_id), { method: 'DELETE' });
+                        // Not running (finished meanwhile, paused, or waiting for your OK): nothing is stopped and
+                        // nothing is deleted (a DELETE here would remove a finished task's record); say so.
+                        if (r.status === 409) return r.json().catch(() => ({})).then(d => {
+                            const st = String((d && d.status) || '');
+                            note('cancel:' + o.id, Name(o) + (/^(paused|awaiting_approval)$/.test(st)
+                                ? ' is waiting, so it was not stopped. Find it in Activity.'
+                                : ' had already stopped; its record is kept.'), { ms: 4500 });
+                            return r;
+                        });
                         return r;
                     }).catch(() => {});
                 }
@@ -5999,10 +6043,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 U.tick(performance.now());
                 if (!U.keys().length) { clearInterval(undoTimer); undoTimer = 0; }
             }
+            // What became of a cancel, for anything showing it (the process panel's Cancel button).
+            function said(o, state) {
+                try { window.dispatchEvent(new CustomEvent('friday:orb-cancel', { detail: { id: o.id, state } })); } catch (_) {}
+            }
             function cancel(o) {
                 if (U.has(o.id)) return { ok: true, pending: true };
                 call('mark', o.id, 'cancelling');
-                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); }, performance.now());
+                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); said(o, 'committed'); }, performance.now());
+                said(o, 'pending');
                 note('undo:' + o.id, Name(o) + ' will stop.', { undo: () => undo(o), ms: UNDO_MS });
                 if (!undoTimer) undoTimer = setInterval(undoTick, 200);
                 return { ok: true, pending: true, undo_s: UNDO_MS / 1000 };
@@ -6010,6 +6059,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function undo(o) {
                 if (!U.undo(o.id)) return { ok: false, reason: 'nothing to undo' };
                 dropNote('undo:' + o.id);
+                said(o, 'undone');
                 call('mark', o.id, null);
                 note('undone:' + o.id, Name(o) + ' carries on.', { ms: 2500 });
                 return { ok: true };
@@ -6098,7 +6148,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 return { ok: results.every(r => r.ok !== false), results };
             }
 
-            return { attach, run, act, onScene, statusLine, note, _undo: U };
+            return { attach, run, act, onScene, statusLine, note, _undo: U, cancelOrb: o => cancel(Object.assign({}, find(o.id) || {}, o)) };
         })();
         // </orb-hands>
         // <orb-scene>
@@ -14063,6 +14113,9 @@ function renderFridayMarkdown(mdText, opts) {
   }
   body = body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi, '<a target="_blank" rel="noopener" $1>');
   body = fridaySanitizeMarkup(body);
+  // A document's headings sit under the page's h1 and the window title's level 2 (north star 33.1-6): a screen
+  // reader hears its `# Title` at level 3. Only the level read out changes; the drawn size stays.
+  body = body.replace(/<h([1-6])(?=[\s>])/gi, (m, n) => m + ' aria-level="' + Math.min(6, Number(n) + 2) + '"');
   return '<div class="friday-doc' + (compact ? ' compact' : '') + '">' + body + '</div>';
 }
 if (typeof window !== 'undefined') {
@@ -14139,16 +14192,16 @@ function ConnectorDot({
   const col = s === 'connected' ? '#00ff80' : s === 'connecting' ? '#f59e0b' : '#ff5470';
   const tip = s === 'connected' ? 'Live data source connected' : s === 'connecting' ? 'Connecting data source…' : 'Data source error — check Settings → Connections';
   return /*#__PURE__*/React.createElement("span", {
+    className: "fr-state",
+    "data-state": s === 'connected' ? 'ok' : s === 'connecting' ? 'busy' : 'bad',
+    role: "img",
+    "aria-label": tip,
     title: tip,
     style: {
-      display: 'inline-block',
+      color: col,
       width: 7,
       height: 7,
-      borderRadius: '50%',
-      background: col,
-      boxShadow: `0 0 6px ${col}`,
-      marginLeft: 7,
-      verticalAlign: 'middle'
+      marginLeft: 7
     }
   });
 }
@@ -14667,6 +14720,25 @@ function FWin({
   const LSK = 'friday_fwin_' + id;
   // The window grows out of (and folds back into) its own dock icon.
   const fwinRef = useRef(null);
+  // A workspace's own headings are read under the window's title (level 2): an h1 or h2 inside
+  // is announced at level 3, an h3 at 4, and so on (north star 33.1-6). Headings that already
+  // carry a level (a document's Markdown, read two levels down) keep it. Checked once a frame
+  // at most while the window's content changes.
+  useEffect(() => {
+    const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
+    if (!body || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const fix = () => {
+      raf = 0;
+      body.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.hasAttribute('aria-level')) h.setAttribute('aria-level', String(Math.max(3, Math.min(6, Number(h.tagName[1]) + 1))));
+      });
+    };
+    fix();
+    const mo = new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(fix); });
+    mo.observe(body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
   const [historyTop, setHistoryTop] = useState(37);
   React.useLayoutEffect(() => {
     const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');
@@ -14988,7 +15060,9 @@ function FWin({
     ws: id,
     glyph: emoji
   }), /*#__PURE__*/React.createElement("span", {
-    className: "fwin-title-text"
+    className: "fwin-title-text",
+    role: "heading",
+    "aria-level": 2
   }, title), /*#__PURE__*/React.createElement(ConnectorDot, {
     wsId: id
   }), /*#__PURE__*/React.createElement(WsCustomizedMark, {
@@ -16576,7 +16650,7 @@ function ChatSurface(props) {
       marginLeft: 3,
       color: '#f59e0b'
     }
-  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, pausePending.kind === 'privacy_hold' ? /*#__PURE__*/React.createElement(PrivacyHoldCard, {
+  }, "\u26A0") : null), m.role === 'friday' && m.route && window.FridayRouteWhy ? /*#__PURE__*/React.createElement(window.FridayRouteWhy, { route: m.route }) : null))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, pausePending.kind === 'privacy_hold' ? /*#__PURE__*/React.createElement(PrivacyHoldCard, {
     hold: pausePending.hold,
     msg: pausePending.message,
     onChoose: id => {
@@ -16729,7 +16803,10 @@ function ChatSurface(props) {
   }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…'), voiceContract && ['ear', 'mind', 'mouth'].map(k => {
     const st = voiceStages[k] && voiceStages[k].state || 'idle';
     const col = st === 'busy' ? '#38bdf8' : st === 'degraded' ? '#ffb347' : st === 'refused' ? '#ef4444' : '#3effa1';
-    return /*#__PURE__*/React.createElement("span", { key: k, title: k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : ''), style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ●');
+    // The state by its mark too, not only its colour: ● ready, ◐ busy, ▲ degraded, ✕ refused.
+    const mark = st === 'busy' ? '◐' : st === 'degraded' ? '▲' : st === 'refused' ? '✕' : '●';
+    const said = k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : '');
+    return /*#__PURE__*/React.createElement("span", { key: k, title: said, "aria-label": said, role: "img", style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ' + mark);
   }), voiceContract && voiceContract.tools && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, opacity: 0.75 } }, voiceContract.line || (voiceContract.tools.length + ' tools · KG ' + (voiceContract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (voiceContract.memory ? '✓' : '✗')))), voiceOn && voicePartial && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#8a94a6', fontStyle: 'italic', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '“' + voicePartial + '…'), voiceOn && voiceNotices.map(n => /*#__PURE__*/React.createElement("div", { key: n.code, style: { fontSize: 10, color: '#ffb347', marginBottom: 4, fontFamily: 'JetBrains Mono', lineHeight: 1.4 } }, '⚠ ', n.message)), voiceOn && voiceEgress && voiceEgress.active && /*#__PURE__*/React.createElement("div", {
     title: voiceEgress.text || '',
     style: {
@@ -17531,6 +17608,7 @@ function ConversationWindow({
           model: d.model || (d.friday_msg || {}).model,
           seat: d.seat,
           fallback_chain: d.fallback_chain || [],
+          route: d.route || (d.friday_msg || {}).route || null,
           trace_id: d.trace_id || streamTraceId || null,
           reasoning_sources: d.reasoning_sources || [],
           offer_cloud_switch: !!d.offer_cloud_switch,
@@ -20718,6 +20796,43 @@ function kgNodeHue(entity, communityIndex = 0) {
 function kgEdgeOpacity(count, focused, mode) {
   return focused ? Math.max(.07, .24 * Math.sqrt(180 / Math.max(180, count))) : Math.max(.015, .16 * Math.pow(4500 / Math.max(4500, count), .85));
 }
+// The knowledge graph as a list (north star 33.1-12: a text alternative for the 3D graph). The
+// same notes and links the galaxy draws, most connected first, each opening its page; read by a
+// screen reader, used from the keyboard, and there with 3D rendering off. Built only when opened.
+function KgAsList({ kg, stats, onOpen }) {
+  const h = React.createElement;
+  const [open, setOpen] = useState(false);
+  const rows = React.useMemo(() => {
+    if (!open || !kg || !Array.isArray(kg.entities)) return [];
+    const byId = {}, links = {};
+    kg.entities.forEach(e => { byId[e.id] = e; links[e.id] = new Set(); });
+    // Each neighbour once: a pair linked both ways, or twice, is one link; a self-link is none.
+    (kg.relationships || []).forEach(r => {
+      if (r.source === r.target) return;
+      if (links[r.source] && byId[r.target]) links[r.source].add(byId[r.target]);
+      if (links[r.target] && byId[r.source]) links[r.target].add(byId[r.source]);
+    });
+    return kg.entities.map(e => { const w = Array.from(links[e.id]); return { e, n: w.length, with: w }; })
+      .sort((a, b) => b.n - a.n || String(a.e.title || '').localeCompare(String(b.e.title || ''))).slice(0, 200);
+  }, [open, kg, stats]);
+  const total = stats ? stats.nodes : (kg && kg.entities ? kg.entities.length : 0);
+  return h('details', { className: 'kw-as-list', 'data-kg-list': '', onToggle: e => setOpen(e.currentTarget.open),
+      style: { margin: '6px 0', fontSize: 12, color: '#c7d2e2', flexShrink: 0 } },
+    h('summary', { style: { cursor: 'pointer', minHeight: 24 } },
+      'The graph as a list' + (stats ? ' (' + stats.nodes + ' notes, ' + stats.edges + ' links, ' + stats.comms + ' groups)' : '')),
+    open && h('div', null,
+      rows.length === 0 ? h('p', { style: { margin: '4px 0', color: '#8fa8c8' } }, total ? 'The list fills once the galaxy has loaded its notes (the grouped view shows groups, not notes).' : 'No notes yet.')
+        : total > rows.length && h('p', { style: { margin: '4px 0', color: '#8fa8c8' } },
+        'The ' + rows.length + ' most connected of ' + total + ' notes. Search finds any of them.'),
+      // At most a third of the window: the galaxy below keeps most of the room.
+      h('ul', { style: { margin: 0, paddingLeft: 18, maxHeight: 'min(320px, 33vh)', overflow: 'auto' } },
+        rows.map(({ e, n, with: w }) => h('li', { key: e.id, style: { margin: '3px 0' } },
+          e.type === 'soul' ? h('strong', null, e.title || e.id)        // no page of its own to open
+            : h('button', { type: 'button', className: 'ws-tab-link', onClick: () => onOpen && onOpen(e),
+              style: { minHeight: 24 } }, e.title || e.id),
+          ' \u2014 ' + (n ? 'linked to ' + w.slice(0, 5).map(x => x.title || x.id).join(', ') + (n > 5 ? ' and ' + (n - 5) + ' more' : '')
+                          : 'no links yet'))))));
+}
 function KnowledgeGraphWS(props) {
   const P = props || {};
   const embedded = !!P.embedded;
@@ -23233,9 +23348,15 @@ function KnowledgeGraphWS(props) {
       color: '#667',
       fontSize: 11
     }
-  }, h.section)))), /*#__PURE__*/React.createElement("div", {
+  }, h.section)))), /*#__PURE__*/React.createElement(KgAsList, {
+    kg: kgRef.current,
+    stats: stats,
+    onOpen: openWikiPage
+  }), /*#__PURE__*/React.createElement("div", {
     ref: mountRef,
     className: "kw-scene",
+    role: "group",
+    "aria-label": (stats ? 'Knowledge graph: ' + stats.nodes + ' notes and ' + stats.edges + ' links, drawn in 3D. The same, as a list: "The graph as a list" above.' : 'Knowledge graph'),
     style: {
       flex: 1,
       minHeight: 0,
@@ -26530,6 +26651,149 @@ function ProvenanceBar({
 // list is backend-driven via useModelCatalog() (role 'creative'), filtered by
 // modality. Posts to the unified /api/creations/generate endpoint; the process
 // orb in the 3-D scene shows progress while it renders.
+// The artifact manifest of a file Friday made (NS-24.1-2): whose work it is,
+// which goal it serves, its sensitivity level, its checks, whether it was
+// verified and delivered, and its earlier versions. Self-contained: fetches
+// /api/artifacts/manifest, and says so when Friday has no record of the file.
+function ManifestBar({
+  path
+}) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const load = () => {
+    if (!path) {
+      setData(null);
+      return Promise.resolve();
+    }
+    return apiFetch('/api/artifacts/manifest?path=' + encodeURIComponent(path)).then(r => r.json()).then(d => setData(d)).catch(() => setData(null));
+  };
+  useEffect(() => {
+    setData(null);
+    setOpen(false);
+    load();
+  }, [path]);
+  if (!path || !data) return null;
+  if (data.status !== 'ok' || !data.manifest) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#6a8b98',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 8
+    }
+  }, "Manifest: no record for this file as it is now.");
+  const m = data.manifest;
+  const st = m.verification_state || 'unverified';
+  const ga = m.goal_ancestry;
+  const sens = m.sensitivity || {};
+  const dr = m.delivery_receipt;
+  const vh = m.version_history || [];
+  const qa = m.qa || {};
+  const qaFailed = !!(qa.checked && qa.ok === false);
+  const col = {
+    qa_passed: '#00e87a',
+    owner_verified: qaFailed ? '#ffb454' : '#00ff80',
+    qa_failed: '#ff5470'
+  }[st] || '#8891a8';
+  const lbl = {
+    qa_passed: 'Checks passed',
+    qa_failed: 'Checks failed',
+    owner_verified: qaFailed ? 'Verified by you (checks failed)' : 'Verified by you',
+    unverified: 'Not verified'
+  }[st] || st;
+  const verify = async () => {
+    if (qaFailed && !window.confirm('This file failed its checks' + (qa.summary ? ': ' + qa.summary : '.') + '\n\nMark it verified anyway?')) return;
+    setBusy(true);
+    try {
+      await apiFetch('/api/artifacts/manifest/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          path
+        })
+      });
+      await load();
+    } catch (e) {}
+    setBusy(false);
+  };
+  const row = (k, v) => /*#__PURE__*/React.createElement("div", {
+    key: k,
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#6a8b98',
+      minWidth: 110
+    }
+  }, k), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#aab',
+      wordBreak: 'break-all'
+    }
+  }, v));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10,
+      padding: '8px 10px',
+      borderRadius: 8,
+      background: 'rgba(127,182,201,0.05)',
+      border: '1px solid rgba(127,182,201,0.14)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: '#7fb6c9'
+    }
+  }, "Manifest"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: col
+    }
+  }, lbl), dr && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: '#7fb6c9'
+    }
+  }, "Delivered"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 9,
+      padding: '1px 7px',
+      marginLeft: 'auto'
+    },
+    onClick: () => setOpen(!open)
+  }, open ? 'Close' : 'Manifest')), open && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 3
+    }
+  }, row('Made by', (m.tool || '?') + (m.task_id ? ' · task ' + m.task_id : '')), row('For', m.principal || 'unknown'), row('Goal', ga ? ga.goal_id + (ga.milestone_id ? ' › ' + ga.milestone_id : '') : 'none'), row('Sensitivity', sens.level || 'unknown'), row('Checks', qa.summary || (qa.checked ? 'checked' : 'not checked')), st === 'unverified' && m.verification_reason && row('Why not verified', m.verification_reason), row('Delivery receipt', dr ? (dr.channel || '') + ' · ' + String(dr.id || '').slice(0, 16) + '…' : 'not sent'), row('Versions', vh.length ? vh.length + ' earlier: ' + vh.map(v => String(v.sha256 || '').slice(0, 8) + (v.backup ? ' (backup kept)' : '')).join(', ') : 'first version'), row('SHA-256', String(m.sha256 || '').slice(0, 16) + '…'), st !== 'owner_verified' && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      marginTop: 4
+    },
+    disabled: busy,
+    onClick: verify
+  }, busy ? 'Saving…' : 'I checked it: mark verified')));
+}
 const IMG_STYLES = ['none', 'photorealistic', 'cinematic', 'digital-art', 'watercolor', 'oil-painting', 'anime', '3d-render', 'neon', 'minimalist', 'sketch'];
 function GeneratePanel({
   onCreated
@@ -29156,6 +29420,8 @@ function StudioWS() {
       }
     }, "\u2197 Open in Tab"))), /*#__PURE__*/React.createElement(ProvenanceBar, {
       filename: selected.name
+    }), /*#__PURE__*/React.createElement(ManifestBar, {
+      path: selected.path
     }), ext === 'html' && /*#__PURE__*/React.createElement("iframe", {
       src: url,
       ref: window.fridayAttachFrame,
@@ -35858,6 +36124,8 @@ function SentimentDot({
   }[s] || 'Neutral tone';
   return /*#__PURE__*/React.createElement("span", {
     className: 'sentiment-dot ' + s,
+    role: "img",
+    "aria-label": tip,
     title: tip
   });
 }
@@ -35884,7 +36152,9 @@ function TrustBadge({
     className: "trust-badge",
     tabIndex: 0
   }, /*#__PURE__*/React.createElement("span", {
-    className: 'trust-dot ' + color
+    className: 'trust-dot ' + color,
+    role: "img",
+    "aria-label": ({ green: 'Trust: high', yellow: 'Trust: medium', red: 'Trust: low' }[color] || 'Trust: medium')
   }), score != null && !compact && /*#__PURE__*/React.createElement("span", {
     className: "trust-num"
   }, score.toFixed(2)), /*#__PURE__*/React.createElement("span", {
@@ -38625,7 +38895,9 @@ function NewsWS() {
     key: oi,
     className: "trust-obs"
   }, /*#__PURE__*/React.createElement("span", {
-    className: 'trust-obs-dot ' + trustColor(o.signal)
+    className: 'trust-obs-dot ' + trustColor(o.signal),
+    role: "img",
+    "aria-label": ({ green: 'Good signal', yellow: 'Mixed signal', red: 'Poor signal' }[trustColor(o.signal)] || 'Mixed signal')
   }), /*#__PURE__*/React.createElement("span", {
     className: "trust-obs-type"
   }, o.type), /*#__PURE__*/React.createElement("span", {
@@ -49248,6 +49520,26 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
   const taskId = meta?.linked_task_id || orb.task_id || null;
   const status = meta?.status || orb.status || 'running';
   const running = /^(running|queued|paused|awaiting_approval)$/.test(status);
+  // Cancel without throwing the orb (Stephen's ruling, 2026-10-28; WCAG 2.5.7): the same cancel as a throw, with its
+  // undo window and its note; the button says so while it waits.
+  const [cancelling,setCancelling] = useState(false);
+  const cancellable = /^(running|queued)$/.test(status);
+  useEffect(()=>{
+    setCancelling(false);
+    // Undo in the note puts the button back; a committed cancel leaves it until the panel reads the new status.
+    const on=e=>{const d=e.detail||{};if(d.id===orb.id&&d.state==='undone')setCancelling(false);};
+    window.addEventListener('friday:orb-cancel',on);
+    return()=>window.removeEventListener('friday:orb-cancel',on);
+  },[orb.id]);
+  const cancelTask = e => {
+    e.stopPropagation();
+    if (typeof FridayOrbHands === 'undefined') return;
+    let r = (FridayOrbHands.act('cancel',[orb.id],'button')||[])[0];
+    // The orb is behind Friday just now, or was opened another way: cancel it by id all the same.
+    if ((!r || !r.ok) && FridayOrbHands.cancelOrb) r = FridayOrbHands.cancelOrb({id:orb.id,task_id:taskId,label:orb.label,status});
+    if (r && r.ok) setCancelling(true);
+    else if (typeof fridayToast === 'function') fridayToast('This task could not be cancelled from here. Find it in Activity.');
+  };
   const hasActivity = !!(log?.length || steps.length || meta?.result);
   const [area,setArea] = useState(()=>fridayDesktopArea());
   useEffect(()=>{
@@ -49272,6 +49564,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
       rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
+      cancellable&&typeof FridayOrbHands!=='undefined'&&rtEl('button',{type:'button',className:'thread-cancel','data-orb-cancel':orb.id,'aria-label':cancelling?'Cancelling this task; undo it from the note':'Cancel this task',title:cancelling?'Stopping. Undo it from the note while it shows.':'Stop this task (you can undo it for a few seconds)',disabled:cancelling,onMouseDown:e=>e.stopPropagation(),onClick:cancelTask,style:{minHeight:24,minWidth:24,padding:'2px 8px',borderRadius:6,border:'1px solid rgba(255,0,128,0.45)',background:'transparent',color:'#ff6fa8',font:'600 11px Inter,system-ui,sans-serif',cursor:cancelling?'default':'pointer'}},cancelling?'Cancelling…':'Cancel'),
       onMove&&rtEl('button',{type:'button',className:'thread-close','data-panel-move':'thread','aria-label':'Move this process panel to the next corner',title:'Move to the next corner',onMouseDown:e=>e.stopPropagation(),onClick:e=>{e.stopPropagation();onMove();}},'⇲'),rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
       (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
     rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
@@ -49284,7 +49577,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
           emptyText:'No reasoning was recorded for this process.'}) : rtMuted(readState==='loading'?'Looking for a linked reasoning thread…':'No reasoning trace is linked to this process.')),
       rtEl('details',{open:activityExpanded,style:{marginTop:10}},rtEl('summary',{style:{cursor:'pointer',fontSize:11},onClick:e=>{e.preventDefault();setActivityExpanded(value=>!value);}},'Activity and result'),
         Array.isArray(log)&&log.map((line,i)=>rtEl('div',{key:'log'+i,className:'thread-log-line'},String(line))),
-        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending')}),
+        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending'),role:'img','aria-label':({done:'Done','in-progress':'In progress',pending:'Waiting',error:'Failed'})[step.status||'pending']||String(step.status)}),
           rtEl('div',{className:'thread-step-content'},rtEl('div',{className:'thread-step-text'},step.text),
             step.detail&&rtEl('details',null,rtEl('summary',null,'Details'),rtEl('div',{className:'thread-log-line'},step.detail)),
             step.timestamp&&rtEl('div',{className:'thread-step-time'},step.timestamp)))),
@@ -55644,9 +55937,11 @@ function ModelRow({ m, need, current, onPick, machine, servingId }) {
   },
     E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
       E('span', {
+        className: 'fr-state', 'data-kind': m.local ? 'local' : 'cloud', role: 'img',
+        'aria-label': (m.local ? 'Runs on this PC' : 'Runs in the cloud') + (m.state === 'resident' ? ', loaded' : ''),
+        title: (m.local ? 'Runs on this PC' : 'Runs in the cloud') + (m.state === 'resident' ? ', loaded' : ''),
         style: {
-          width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-          background: m.local ? '#00ff80' : '#7b61ff',
+          width: 7, height: 7, color: m.local ? '#00ff80' : '#7b61ff',
           boxShadow: m.state === 'resident' ? '0 0 6px #00ff80' : 'none',
         },
       }),
@@ -56684,10 +56979,10 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
       },
         E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
           E('span', {
-            style: {
-              width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-              background: m ? (m.local ? '#00ff80' : '#7b61ff') : 'rgba(255,255,255,0.3)',
-            },
+            className: 'fr-state', role: 'img',
+            'data-kind': m ? (m.local ? 'local' : 'cloud') : undefined, 'data-state': m ? undefined : 'off',
+            'aria-label': m ? (m.local ? 'Runs on this PC' : 'Runs in the cloud') : 'No model',
+            style: { width: 7, height: 7, color: m ? (m.local ? '#00ff80' : '#7b61ff') : 'rgba(255,255,255,0.3)' },
           }),
           E('span', {
             style: {
@@ -58078,11 +58373,10 @@ function IntelligenceDiagnostics() {
         },
       },
         E('span', {
+          className: 'fr-state', 'data-state': p.connected ? 'ok' : 'off', role: 'img',
+          'aria-label': p.connected ? 'Connected' : 'Not connected',
           title: p.connected ? 'connected' : 'not connected',
-          style: {
-            width: 7, height: 7, borderRadius: 4, flexShrink: 0,
-            background: p.connected ? '#00ff80' : 'rgba(255,255,255,0.25)',
-          },
+          style: { width: 7, height: 7 },
         }),
         E('div', { style: { width: 170, flexShrink: 0 } },
           E('div', { style: { fontSize: 12.5, color: 'var(--st-text)' } }, p.label),
@@ -60567,6 +60861,9 @@ function SettingsTabPrivacy({
     title: "When a cloud provider fails",
     desc: "If a cloud provider fails, " + fridayName() + " says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time."
   }, window.FridayCloudFallbackOrder ? /*#__PURE__*/React.createElement(window.FridayCloudFallbackOrder, null) : null), /*#__PURE__*/React.createElement(StSection, {
+    title: "Folder grants",
+    desc: "Her file tools read and write only inside your home folder (not app data or her own state folder), her output folders, and the folders you add here. Adding one is a press on this screen; removing one is always allowed."
+  }, window.FridayFolderGrants ? /*#__PURE__*/React.createElement(window.FridayFolderGrants, null) : null), /*#__PURE__*/React.createElement(StSection, {
     title: "Meeting recordings",
     desc: ("How long " + fridayName() + " keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes.")
   }, /*#__PURE__*/React.createElement(StRow, {
@@ -63407,16 +63704,17 @@ function ProviderStatusDot({
     color = '#ef4444';
     title = 'down — circuit breaker open';
   }
+  const state = color === '#00ff80' ? 'ok' : color === '#f59e0b' ? 'warn' : color === '#ef4444' ? 'bad' : 'off';
   return /*#__PURE__*/React.createElement("span", {
+    className: "fr-state",
+    "data-state": state,
+    role: "img",
+    "aria-label": 'Status: ' + title,
     title: title,
     style: {
-      display: 'inline-block',
+      color: color,
       width: 9,
-      height: 9,
-      borderRadius: 5,
-      background: color,
-      boxShadow: `0 0 6px ${color}`,
-      flexShrink: 0
+      height: 9
     }
   });
 }
@@ -64565,12 +64863,13 @@ function SettingsTabConnectors({
       color: c.connected ? 'var(--st-text)' : 'var(--st-dim)'
     }
   }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true",
+    className: "fr-state",
+    "data-state": c.connected ? 'ok' : 'off',
+    role: "img",
+    "aria-label": c.connected ? 'Connected' : 'Not connected',
     style: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-      background: c.connected ? '#00ff80' : 'rgba(255,255,255,0.25)'
+      width: 7,
+      height: 7
     }
   }), c.name || c.id)))));
 }
@@ -67440,17 +67739,20 @@ function LaneReceipts() {
       h('div', { className: 'local-ai-row-text' },
         h('div', { className: 'local-ai-row-label' }, t.label || t.kind || 'A trace'),
         h('div', { className: 'local-ai-row-meta' }, [t.model, t.status, laneAgo(t.started)].filter(Boolean).join(' · '))),
-      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
+      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', 'aria-label': 'Open the trace: ' + (t.label || t.kind || 'a trace'), onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
 }
 function LaneBody({ tab, onTab, lane, q, onLocal, busy, onChanged }) {
   const h = React.createElement;
   const counts = { needs: lane && lane.needs_you || 0, activity: lane && lane.activity || 0, updates: lane && lane.updates || 0, receipts: 0 };
   const onKey = e => {
-    const i = LANE_TABS.findIndex(x => x[0] === tab);
-    if (e.key === 'ArrowRight') onTab(LANE_TABS[(i + 1) % LANE_TABS.length][0]);
-    else if (e.key === 'ArrowLeft') onTab(LANE_TABS[(i + LANE_TABS.length - 1) % LANE_TABS.length][0]);
-    else return;
+    const i = LANE_TABS.findIndex(x => x[0] === tab), n = LANE_TABS.length;
+    const to = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to < 0) return;
     e.preventDefault();
+    const next = LANE_TABS[to][0];
+    onTab(next);
+    // Focus goes with the selection (WAI-ARIA tabs): the tab left behind is out of the Tab order (tabIndex -1).
+    setTimeout(() => { const b = document.getElementById('lane-tab-' + next); if (b) b.focus(); }, 0);
   };
   return h(React.Fragment, null,
     h('div', { className: 'place-tabs', role: 'tablist', 'aria-label': 'Needs you, Activity, Updates, Receipts and traces', onKeyDown: onKey },
@@ -68390,6 +68692,8 @@ function ApprovalCardBody({
     },
     "data-testid": "approval-card",
     "data-approval-id": a.approval_id,
+    role: "group",
+    "aria-label": a.title || 'A request waiting for you',
     ...fridayRow('card', a.approval_id, a.title, { kind: String(a.kind || '').slice(0, 30), status: 'pending' })
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -71569,7 +71873,7 @@ function App() {
   }, [threadOrb]);
   // Drag the window by its header.
   const startThreadDrag = e => {
-    if(e.target.closest('.thread-close'))return;
+    if(e.target.closest('.thread-close,.thread-cancel'))return;
     const box=e.currentTarget.closest('.thread-panel').getBoundingClientRect();
     threadDrag.current={sx:e.clientX,sy:e.clientY,ox:box.left,oy:box.top,w:box.width,h:box.height};
     const move=event=>{
@@ -72983,6 +73287,7 @@ function App() {
         model: d.model,
         seat: d.seat,
         fallback_chain: d.fallback_chain || [],
+        route: d.route || (d.friday_msg || {}).route || null,
         trace_id: d.trace_id || streamTraceId || null,
         reasoning_sources: d.reasoning_sources || [],
         // local_only mode refused (no local seat available) rather than

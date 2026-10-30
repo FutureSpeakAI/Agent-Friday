@@ -173,7 +173,7 @@
     </div>
 
     <!-- Parallax Tracker Dot -->
-    <div id="camera-indicator"></div>
+    <div id="camera-indicator" role="img" aria-label="Camera off" title="Camera off"></div>
 
     <div id="hud-overlay">
         <!-- Minimalist Optical Arcs -->
@@ -192,6 +192,9 @@
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
+        <!-- The page's one top-level heading: a screen reader's heading list starts here, and each open window
+             is a level-2 heading under it (north star 33.1-6). -->
+        <h1 class="fr-sr-only">Agent Friday™</h1>
         <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
     </div>
 
@@ -455,6 +458,7 @@
             if (!ind) return;
             if (active && isHologramMode) { ind.classList.add('holo-active'); }
             else { ind.classList.remove('holo-active'); }
+            const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab;
         }
 
         // --- AESTHETIC CONFIGURATION ---
@@ -1350,7 +1354,15 @@
                 // task (an image or a video render) is cancelled as a process.
                 if (o.task_id) {
                     return post('/api/tasks/' + encodeURIComponent(o.task_id) + '/stop-after-step').then(r => {
-                        if (r.status === 409) return fetch('/api/tasks/' + encodeURIComponent(o.task_id), { method: 'DELETE' });
+                        // Not running (finished meanwhile, paused, or waiting for your OK): nothing is stopped and
+                        // nothing is deleted (a DELETE here would remove a finished task's record); say so.
+                        if (r.status === 409) return r.json().catch(() => ({})).then(d => {
+                            const st = String((d && d.status) || '');
+                            note('cancel:' + o.id, Name(o) + (/^(paused|awaiting_approval)$/.test(st)
+                                ? ' is waiting, so it was not stopped. Find it in Activity.'
+                                : ' had already stopped; its record is kept.'), { ms: 4500 });
+                            return r;
+                        });
                         return r;
                     }).catch(() => {});
                 }
@@ -1360,10 +1372,15 @@
                 U.tick(performance.now());
                 if (!U.keys().length) { clearInterval(undoTimer); undoTimer = 0; }
             }
+            // What became of a cancel, for anything showing it (the process panel's Cancel button).
+            function said(o, state) {
+                try { window.dispatchEvent(new CustomEvent('friday:orb-cancel', { detail: { id: o.id, state } })); } catch (_) {}
+            }
             function cancel(o) {
                 if (U.has(o.id)) return { ok: true, pending: true };
                 call('mark', o.id, 'cancelling');
-                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); }, performance.now());
+                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); said(o, 'committed'); }, performance.now());
+                said(o, 'pending');
                 note('undo:' + o.id, Name(o) + ' will stop.', { undo: () => undo(o), ms: UNDO_MS });
                 if (!undoTimer) undoTimer = setInterval(undoTick, 200);
                 return { ok: true, pending: true, undo_s: UNDO_MS / 1000 };
@@ -1371,6 +1388,7 @@
             function undo(o) {
                 if (!U.undo(o.id)) return { ok: false, reason: 'nothing to undo' };
                 dropNote('undo:' + o.id);
+                said(o, 'undone');
                 call('mark', o.id, null);
                 note('undone:' + o.id, Name(o) + ' carries on.', { ms: 2500 });
                 return { ok: true };
@@ -1459,7 +1477,7 @@
                 return { ok: results.every(r => r.ok !== false), results };
             }
 
-            return { attach, run, act, onScene, statusLine, note, _undo: U };
+            return { attach, run, act, onScene, statusLine, note, _undo: U, cancelOrb: o => cancel(Object.assign({}, find(o.id) || {}, o)) };
         })();
         // </orb-hands>
         // <orb-scene>

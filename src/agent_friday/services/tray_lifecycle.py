@@ -54,6 +54,7 @@ DEFAULT_TRAY_HOURS = {
     "superseded": 1,
     "cancelled": 6,
     "failed": 48,
+    "outcome_unknown": 48,          # the owner has something to check
     "timeout": 48,
     "killed": 48,
     "failed:watchdog-kill": 48,

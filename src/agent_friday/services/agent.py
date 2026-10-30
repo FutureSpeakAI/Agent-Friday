@@ -374,7 +374,10 @@ def _generate_agent_untraced(messages, system=None, model=None, max_tokens=16384
         _journal().decision("seat_select", f"{provider}/{routed_model or '(provider default)'}",
                             reason=str(route.get("reason") or route.get("why")
                                        or f"mode={routing_cfg.get('mode', 'default')}"),
-                            alternatives=[p for p in ("local", "cloud", "openai") if p != provider],
+                            alternatives=([
+                                "%s: %s" % (a.get("label") or a.get("provider") or a.get("seat"), a.get("why"))
+                                for a in ((route.get("record") or {}).get("alternatives") or [])
+                            ] or [p for p in ("local", "cloud", "openai") if p != provider]),
                             session_ctx=session_ctx)
     except Exception:
         pass
@@ -1034,7 +1037,7 @@ CLAUDE_TOOLS = [
          "replaces": {"type": "string"},
          "why": {"type": "string"}},
       "required": ["action"]}},
-    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki) or a write_file: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail goes back on one approval card.",
+    {"name": "undo_action", "description": "Undo one of Friday's organize changes (mail, files or wiki), a write_file, or a Google Calendar or Google Tasks change Friday made: the newest in this conversation, or the receipt_id a result named. Files and pages go back now; mail, calendar and tasks go back on one approval card.",
      "input_schema": {"type": "object", "properties": {
          "receipt_id": {"type": "string", "description": "rcpt_... from an earlier result; empty for the newest."}}}},
     {"name": "answer_card", "description": "Record the user's answer to an organize, undo_action or money-paragraph card. Only their own words AFTER the card was raised count: yes/go ahead approves; no/cancel declines. Call immediately after their answer; if it returns a read-back, say it and ask.",
@@ -1312,6 +1315,15 @@ def _tool_read_file(inp):
     raw = (inp or {}).get('path', '')
     if not raw:
         return "read_file error: 'path' is required."
+    # Where file tools may reach (services/path_policy, BD-26), judged on the resolved
+    # path here as well as in the sandbox hook, which settings can switch off. Key
+    # material keeps its own refusal (and its signed receipt) first.
+    from agent_friday.services import path_policy as _pp
+    # The text first: a network share or a device path is refused before anything
+    # resolves it (resolving a share contacts it).
+    _why = _pp._text_reason(str(raw))
+    if _why:
+        return _pp.refusal(raw, _why, "read")
     try:
         p = Path(raw).expanduser().resolve()
     except Exception as e:
@@ -1320,6 +1332,9 @@ def _tool_read_file(inp):
     from agent_friday.services import credential_paths as _cred
     if _cred.check(p):
         return _cred.refusal(p)
+    p, _why = _pp.judge(raw, "read")
+    if p is None:
+        return _pp.refusal(raw, _why, "read")
     if not p.exists():
         return f"File not found: {p}.{_suggest_near_miss(p)}"
     if not p.is_file():
@@ -1456,11 +1471,17 @@ def _tool_write_file(inp):
         return "write_file error: 'path' is required."
     if mode not in ('write', 'append'):
         mode = 'write'
+    from agent_friday.services import path_policy as _pp
+    _p_ok, _why = _pp.judge(raw, "write")
+    if _p_ok is None:
+        return _pp.refusal(raw, _why, "write")
+    # Key material is not written over either (services/credential_paths).
+    from agent_friday.services import credential_paths as _cred_w
+    if _cred_w.check(_p_ok, sniff=False):
+        return _cred_w.refusal(_p_ok)
     from agent_friday.services import file_write_receipts as _fwr
-    try:
-        p = Path(raw).expanduser().resolve()
-    except Exception as e:
-        return f"Write error: {e}"
+    # The path the policy judged (resolved) is the one written.
+    p = _p_ok
     if p.is_dir():
         return f"Write error: {p} is a folder, not a file. Nothing was written."
     # The backup and the receipt come first: an existing file is copied (and
@@ -1982,6 +2003,33 @@ def _summarize_multi_account_errors(result):
     return list(by_id.values())
 
 
+def _scrub_titled_card(approval_id, name):
+    """A calendar or task card answered in chat is decided: its stored copy keeps no title
+    (release-lead call 2026-10-24; services/change_receipts.scrub_card)."""
+    if name in _change_receipts.TITLE_TOOLS:
+        _change_receipts.scrub_card(approval_id)
+
+
+def _idem(tool, inp):
+    """The idempotency key a create carries (F3), as a keyword only when there is one: a request
+    outside a turn or a task passes nothing new."""
+    key = _conn_outcome.idem_key(tool, inp)
+    return {"idempotency_key": key} if key else {}
+
+
+def _with_receipt(res, receipt):
+    """A change's result as the model sees it: its receipt named (so "undo that" can find it),
+    and the whole before-values Undo keeps (services/change_receipts) left out."""
+    if not isinstance(res, dict):
+        return res
+    head = {}
+    if receipt:
+        head["receipt_id"] = receipt.get("receipt_id")
+        if receipt.get("undo"):
+            head["undo"] = "Say \u201cundo that\u201d to put it back (it asks first)."
+    return dict(head, **{k: v for k, v in res.items() if k not in ("undo_before", "receipt_id", "undo")})
+
+
 def _calendar_write_summary(res, what, change=True):
     """Render a write result as prose Friday can repeat truthfully."""
     if not isinstance(res, dict):
@@ -2022,9 +2070,11 @@ def _tool_create_calendar_event(inp):
         location=(inp.get("location") or "").strip(),
         description=(inp.get("description") or "").strip(),
         attendees=inp.get("attendees") or None,
-        account_id=(inp.get("account_id") or "").strip() or None)
-    out = _calendar_write_summary(res, "create that event")
-    if isinstance(res, dict) and res.get("ok"):
+        account_id=(inp.get("account_id") or "").strip() or None,
+        **_idem("create_calendar_event", inp))
+    _receipt_rec = _change_receipts.calendar_created(res, conversation_id=_CURRENT_CONVERSATION.get())
+    out = _calendar_write_summary(_with_receipt(res, _receipt_rec), "create that event")
+    if isinstance(res, dict) and res.get("ok") and not res.get("already_made"):
         out += _travel_postcheck(res, inp)
     return out
 
@@ -2072,7 +2122,8 @@ def _tool_update_calendar_event(inp):
         description=inp.get("description"),
         allow_clearing=bool(inp.get("allow_clearing")),
         account_id=(inp.get("account_id") or "").strip() or None)
-    return _calendar_write_summary(res, "update that event")
+    _receipt_rec = _change_receipts.calendar_updated(res, conversation_id=_CURRENT_CONVERSATION.get())
+    return _calendar_write_summary(_with_receipt(res, _receipt_rec), "update that event")
 
 
 def _tool_delete_calendar_event(inp):
@@ -2085,7 +2136,8 @@ def _tool_delete_calendar_event(inp):
     res = cw.delete_event(eid, calendar_id=(inp.get("calendar_id") or "").strip() or "primary",
                           account_id=(inp.get("account_id") or "").strip() or None,
                           notify_guests=_notify_guests_arg(inp))
-    return _calendar_write_summary(res, "delete that event")
+    _receipt_rec = _change_receipts.calendar_deleted(res, conversation_id=_CURRENT_CONVERSATION.get())
+    return _calendar_write_summary(_with_receipt(res, _receipt_rec), "delete that event")
 
 
 def _notify_guests_arg(inp):
@@ -2154,7 +2206,8 @@ def _tool_hold_slots(inp):
     inp = inp or {}
     res = sch.hold_slots(title=(inp.get("title") or "").strip(),
                          slots=inp.get("slots"),
-                         account_id=_opt_str(inp, "account_id"))
+                         account_id=_opt_str(inp, "account_id"),
+                         **_idem("hold_slots", inp))
     return _calendar_write_summary(res, "hold those times")
 
 
@@ -2789,12 +2842,12 @@ def _tool_complete_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.complete_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.complete_task(account_id=_a, tasklist_id=_l, task_id=_t)
+    _rec = _change_receipts.task_changed(result, _before, tool="complete_task", changed=["status"],
+                                         tasklist_id=_l, conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_create_task(inp):
@@ -2811,8 +2864,12 @@ def _tool_create_task(inp):
         tasklist_id=(inp.get('tasklist_id') or '').strip() or "@default",
         notes=(inp.get('notes') or '').strip(),
         due=(inp.get('due') or '').strip(),
+        **_idem("create_task", inp),
     )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _rec = _change_receipts.task_created(
+        result, tasklist_id=(inp.get('tasklist_id') or '').strip() or "@default",
+        conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_update_task(inp):
@@ -2823,16 +2880,17 @@ def _tool_update_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.update_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-        title=(inp.get('title') or '').strip() or None,
-        notes=inp.get('notes') if inp.get('notes') is not None else None,
-        due=(inp.get('due') or '').strip() or None,
-        status=(inp.get('status') or '').strip() or None,
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _fields = dict(title=(inp.get('title') or '').strip() or None,
+                   notes=inp.get('notes') if inp.get('notes') is not None else None,
+                   due=(inp.get('due') or '').strip() or None,
+                   status=(inp.get('status') or '').strip() or None)
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.update_task(account_id=_a, tasklist_id=_l, task_id=_t, **_fields)
+    _rec = _change_receipts.task_changed(result, _before, tool="update_task",
+                                         changed=[k for k, v in _fields.items() if v is not None],
+                                         tasklist_id=_l, conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_delete_task(inp):
@@ -2843,12 +2901,12 @@ def _tool_delete_task(inp):
     except Exception as e:
         _log.warning("google_accounts unavailable: %s", type(e).__name__)
         return json.dumps(_conn_outcome.settle({"error": "Google Tasks is not available right now; nothing was changed."}))
-    result = ga.delete_task(
-        account_id=(inp.get('account_id') or '').strip(),
-        tasklist_id=(inp.get('tasklist_id') or '').strip(),
-        task_id=(inp.get('task_id') or '').strip(),
-    )
-    return json.dumps(_conn_outcome.settle(result), default=str)
+    _a, _l, _t = ((inp.get(k) or '').strip() for k in ('account_id', 'tasklist_id', 'task_id'))
+    _before = ga.read_task(_a, _l, _t)
+    result = ga.delete_task(account_id=_a, tasklist_id=_l, task_id=_t)
+    _rec = _change_receipts.task_deleted(result, _before, tasklist_id=_l,
+                                         conversation_id=_CURRENT_CONVERSATION.get())
+    return json.dumps(_conn_outcome.settle(_with_receipt(result, _rec)), default=str)
 
 
 def _tool_search_contacts(inp):
@@ -3091,9 +3149,14 @@ def _tool_run_command(inp):
         return _second
     # The governance check already refuses these; this is the backstop.
     from agent_friday.governance.action_gate import classify_command
-    if classify_command(cmd)[0] == "forbidden":
-        return ("Blocked: this command addresses Friday's own local API, which "
-                "trusts this machine as the owner. It was not run.")
+    _klass, _kwhy = classify_command(cmd)
+    if _klass == "forbidden":
+        if "local API" in _kwhy:
+            return ("Blocked: this command addresses Friday's own local API, which "
+                    "trusts this machine as the owner. It was not run.")
+        return ("[SANDBOX DENY] Not run, even with approval: %s. Commands follow the same "
+                "folder rules as Friday's file tools (Settings > Privacy > Folder grants). "
+                "Do not try another spelling of the same path." % _kwhy)
     # The command runs held in (services/code_sandbox.run_shell), never as the owner's bare process.
     # A command the gate classed as read-only runs without a card, so it gets the full box: Low
     # integrity, a job object, a scrubbed environment, a scratch folder. A command the owner
@@ -5161,7 +5224,9 @@ def _draft_email_send(inp, gs):
             "from": (appr.get("payload") or {}).get("from_email"),
             "note": ("The user PRE-APPROVED sending to these recipients (grant %s), so no "
                      "card was raised. The message goes out after a %d-second undo window; "
-                     "say it is going out under their pre-approval, not that it was sent."
+                     "say it is going out under their pre-approval, not that it was sent. Do "
+                     "not call this tool again for the same message: a repeat is not covered "
+                     "by the pre-approval and would ask the user on a card."
                      % (result.get("pre_approved"), gs.UNDO_SECONDS)),
         }, default=str)
     unattended = bool((_CURRENT_TOOL_CONTEXT.get() or {}).get("schedule_id")
@@ -5679,6 +5744,20 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 summary['cards_outcome_unknown'] = _cards.reconcile_at_boot()
             except Exception:
                 pass
+            # NS-34.16-4: an outward action the previous process allowed and never closed is
+            # marked unconfirmed (never executed, never retried), so nothing is left open.
+            try:
+                from agent_friday.services import card_recovery as _cards2
+                summary['decisions_unconfirmed'] = _cards2.settle_interrupted_decisions()
+            except Exception:
+                pass
+            # An approved item_actions batch the last run started and never finished: its card
+            # is spent with outcome unknown and the owner is told once, in counts. Never re-run.
+            try:
+                from agent_friday.services import card_recovery as _cards3
+                summary['batches_interrupted'] = _cards3.settle_interrupted_batches()
+            except Exception:
+                pass
         try:
             removed = tj.apply_retention()
             if removed:
@@ -6073,6 +6152,13 @@ def _evidence_verdict(tool_trace):
 WAITING_APPROVAL = 'waiting_approval'
 #: Every card the task waited on was declined or expired: nothing it asked for ran.
 DECLINED = 'declined'
+#: An approved card the task waited on began and never said how it ended (Friday stopped
+#: mid-run, card_recovery marked it outcome unknown, or it never reported back): whether its
+#: action happened is not known. Never done, never retried on its own; the owner checks. A
+#: report the executor makes later still wins (settle_waiting_task).
+OUTCOME_UNKNOWN = 'outcome_unknown'
+#: What the owner reads for a task that ended OUTCOME_UNKNOWN.
+OUTCOME_UNKNOWN_WORDS = 'outcome unknown — check before retrying'
 
 
 def settle_waiting_task(task_id, *, from_worker=False):
@@ -6082,9 +6168,20 @@ def settle_waiting_task(task_id, *, from_worker=False):
     names this task. With a card still pending, nothing changes. Then:
       * every card approved and its action ran -> 'complete', verified by those runs,
         and a workflow continues with its next step;
+      * any approved action whose outcome is not known -> OUTCOME_UNKNOWN, 'outcome unknown -
+        check before retrying', never 'failed' (it may have happened) and never done. That is
+        a card card_recovery marked outcome unknown or one claimed before this process started
+        (Friday stopped while carrying it out), or, only when this process's start cannot be
+        known, a claim that has not reported back for _SETTLE_STALE_S. A card claimed by the
+        executor in this process is still running, however long it takes: the task keeps
+        waiting (its log says it is still running);
       * any approved action that did not go through -> 'failed', with why;
       * otherwise (declined or expired) -> DECLINED: nothing it asked for ran.
     Returns the new status, or None when the task is not waiting or still has a card.
+
+    A task that ended OUTCOME_UNKNOWN moves on only when the executor later reports how its
+    card went (the late report wins): to 'complete' / 'completed_unverified' (and a workflow
+    continues with its next step) or to 'failed'.
 
     Also called by the task's own worker the moment it finishes waiting, because a card
     can be decided while the task is still running (the decision then found nothing to
@@ -6098,16 +6195,22 @@ def settle_waiting_task(task_id, *, from_worker=False):
     with _SETTLE_LOCK:
         with TASKS_LOCK:
             rec = dict(TASKS.get(task_id) or {})
-        if rec.get('status') != WAITING_APPROVAL:
+        # An OUTCOME_UNKNOWN task is looked at again only for a late report: the executor that
+        # was still carrying out its card finally recorded how it went (the report wins).
+        late = rec.get('status') == OUTCOME_UNKNOWN
+        if rec.get('status') != WAITING_APPROVAL and not late:
             return None
         mine = [r for r in _ap.list_approvals()
                 if str(((r or {}).get('payload') or {}).get('task_id') or '') == task_id
                 and r.get('kind') in _SETTLE_KINDS and (r.get('payload') or {}).get('tool')]
         if not mine:
             return None
+        proc_start, margin = _process_started()
+        now = _time.time()
 
         def _outcome(r):
-            """'pending' | 'running' | 'ran' | 'ran_unchecked' | 'failed' | 'not_approved'."""
+            """'pending' | 'running' | 'running_long' | 'ran' | 'ran_unchecked' | 'failed' |
+            'unknown' (Friday stopped while carrying it out) | 'no_report' | 'not_approved'."""
             st = r.get('status')
             if st == 'pending':
                 return 'pending'
@@ -6116,24 +6219,55 @@ def settle_waiting_task(task_id, *, from_worker=False):
             detail = r.get('used_detail') or {}
             if 'ok' in detail:                  # the executor ran it and recorded how it went
                 return 'ran' if detail.get('ok') is True else 'failed'
+            if r.get('outcome') == 'unknown':
+                # Friday stopped while carrying it out (services/card_recovery): it may or may
+                # not have happened, so it is neither a failure nor done
+                return 'unknown'
             started = r.get('executing_at')
             if started:
-                # claimed by the executor and not reported back: running, unless far too long ago
-                # (a restart mid-run), which is said as a failure rather than waited on forever
-                return 'running' if _time.time() - float(started) < _SETTLE_STALE_S else 'failed'
+                try:
+                    started = float(started)
+                except (TypeError, ValueError):
+                    started = 0.0
+                if proc_start is not None and started < proc_start - margin:
+                    # claimed by a process that is gone: Friday stopped while carrying it out
+                    # (never said to have failed: it may have happened)
+                    return 'unknown'
+                if now - started < _SETTLE_STALE_S:
+                    return 'running'
+                if proc_start is not None:
+                    # claimed by this process's executor, which always records its end: it is
+                    # still running, however long it takes, and the task keeps waiting for it
+                    return 'running_long'
+                # which process claimed it cannot be known, and it never reported back
+                return 'no_report'
             # used without the executor (the task's own identical call went through on the
             # approved card) or about to be claimed by it
             return 'ran_unchecked' if r.get('consumed') else 'running'
 
         outcomes = [(r, _outcome(r)) for r in mine]
-        if any(o in ('pending', 'running') for _r, o in outcomes):
+        long_running = [r for r, o in outcomes if o == 'running_long']
+        if long_running and not late and not rec.get('still_running_noted'):
+            _task_set(task_id, still_running_noted=now)
+            _task_log(task_id, 'Still running: the action you approved (%s) started over %d minutes ago '
+                               'and has not finished yet. This task keeps waiting for it.'
+                      % (', '.join(dict.fromkeys(str((r.get('payload') or {}).get('tool') or '?')
+                                                 for r in long_running[:10])), _SETTLE_STALE_S // 60))
+        if any(o in ('pending', 'running', 'running_long') for _r, o in outcomes):
             return None                 # a card still waits, or an approved one is still running
         ran = [r for r, o in outcomes if o == 'ran']
         unchecked = [r for r, o in outcomes if o == 'ran_unchecked']
         failed = [r for r, o in outcomes if o == 'failed']
+        stopped = [r for r, o in outcomes if o == 'unknown']
+        no_report = [r for r, o in outcomes if o == 'no_report']
+        unknown = stopped + no_report
         tools = lambda rows: ', '.join(dict.fromkeys(str((r.get('payload') or {}).get('tool') or '?')
                                                      for r in rows[:10]))
-        if failed:
+        if unknown:
+            status, verified = OUTCOME_UNKNOWN, False
+            summary = '%s: %s%s' % (OUTCOME_UNKNOWN_WORDS, tools(unknown),
+                                    ('; did not go through: ' + tools(failed)) if failed else '')
+        elif failed:
             status, verified = 'failed', False
             summary = 'approved but did not go through: ' + tools(failed)
         elif ran and len(ran) == len(mine):
@@ -6149,9 +6283,28 @@ def settle_waiting_task(task_id, *, from_worker=False):
         else:
             status, verified = DECLINED, False
             summary = 'not approved (declined, expired or blocked): ' + tools(mine)
+        if late and status not in ('complete', 'completed_unverified', 'failed'):
+            return None                 # ended outcome unknown once; only a report changes it
+        extra = {}
+        if status == DECLINED:
+            # A typed blocker (NS-32.8-1): what stopped the task, which cards, and that a new
+            # request needs a new card (a declined or expired one is never used again).
+            extra = _approval_blocker(mine, tools(mine))
         _task_set(task_id, status=status, verified=verified, verification_evidence=summary,
-                  settled=_time.time())
-    _task_log(task_id, 'Your decision closed this task: %s (%s).' % (status, summary))
+                  settled=_time.time(), **extra)
+    if late:
+        _task_log(task_id, 'The action you approved reported back after this task had ended as outcome '
+                           'unknown: %s (%s).' % (status, summary))
+    elif status == OUTCOME_UNKNOWN and stopped:
+        _task_log(task_id, 'Friday stopped while carrying out the action you approved, so whether it '
+                           'happened is not known. This task ended: %s (%s). Friday will not do it '
+                           'again on its own.' % (OUTCOME_UNKNOWN_WORDS, summary))
+    elif status == OUTCOME_UNKNOWN:
+        _task_log(task_id, 'The action you approved was started but never reported how it ended, so '
+                           'whether it happened is not known. This task ended: %s (%s). Friday will '
+                           'not do it again on its own.' % (OUTCOME_UNKNOWN_WORDS, summary))
+    else:
+        _task_log(task_id, 'Your decision closed this task: %s (%s).' % (status, summary))
     if from_worker:
         return status                   # the worker reports and continues the run itself
     if rec.get('run_id'):
@@ -6173,14 +6326,39 @@ def settle_waiting_task(task_id, *, from_worker=False):
     return status
 
 
+def _approval_blocker(cards, tool_words):
+    """{'blocker': {...}, 'status_reason': text} for a task none of whose cards was approved."""
+    sts = [str(r.get('status') or '') for r in cards]
+    if 'denied' in sts:
+        kind, text = 'approval_denied', 'You declined its approval card (%s), so nothing it asked for ran.'
+    elif 'blocked' in sts:
+        kind, text = 'approval_blocked', 'A safety rule blocked its approval card (%s), so nothing it asked for ran.'
+    elif any(r.get('withdrawn') for r in cards):
+        kind, text = 'approval_withdrawn', ('Its approval (%s) was taken back when you revoked Friday\'s '
+                                            'authority to act, so nothing it asked for ran.')
+    else:
+        kind, text = 'approval_expired', ('Its approval card (%s) expired before you decided, so nothing '
+                                          'it asked for ran.')
+    text = (text % tool_words) + ' Asking again raises a new card.'
+    try:
+        from agent_friday.services import goal_state as _gs
+        b = _gs.blocker('policy_blocked', text, type=kind, needs_confirmation=False,
+                        approval_ids=[r.get('approval_id') for r in cards[:10]],
+                        tools=[str((r.get('payload') or {}).get('tool') or '?') for r in cards[:10]])
+    except Exception:
+        b = {'type': kind, 'category': 'policy_blocked', 'text': text,
+             'approval_ids': [r.get('approval_id') for r in cards[:10]]}
+    return {'blocker': b, 'status_reason': text}
+
+
 _LAST_SWEEP = [0.0]
 #: How often the tray's poll may re-check waiting tasks.
 _SWEEP_EVERY_S = 300
 
 
 def sweep_waiting_tasks(*, force=False):
-    """Settle every waiting task whose cards have all been decided or have stopped reporting
-    (an approved card a restart left half-run is closed after _SETTLE_STALE_S). Called at boot
+    """Settle every waiting task whose cards have all been decided or can no longer report
+    (an approved card a restart left half-run: claimed before this process started). Called at boot
     and, at most every _SWEEP_EVERY_S, from the task list the tray polls. Returns how many
     tasks it closed."""
     now = _time.time()
@@ -6202,9 +6380,21 @@ def sweep_waiting_tasks(*, force=False):
 #: The card kinds whose action is a task's own tool call (services/approval_executor).
 _SETTLE_KINDS = ('tainted_action', 'tool_confirm')
 _SETTLE_LOCK = threading.Lock()
-#: An approved card claimed for running this long ago with no outcome recorded did not
-#: report back (a restart mid-run): the task is closed as failed rather than left waiting.
+#: An approved card claimed for running this long ago with no outcome recorded: when it was
+#: claimed in this process it is still running (the task's log says so, once, and it keeps
+#: waiting); only when this process's start cannot be known is it taken as not reporting
+#: back, and the task closed as OUTCOME_UNKNOWN (never as failed: it may have happened).
 _SETTLE_STALE_S = 1800
+
+
+def _process_started():
+    """(when this process started, or None when it cannot be known; the clock margin a claim
+    this close to it is given), as services/card_recovery judges it."""
+    try:
+        from agent_friday.services import card_recovery as _cr
+        return _cr.process_started(), float(_cr.CLOCK_MARGIN_S)
+    except Exception:
+        return None, 0.0
 
 
 def _background_model_binding(explicit_model, default_model):
@@ -6564,6 +6754,33 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                 final_status = 'complete' if verified else 'completed_unverified'
                 verification_summary = '; '.join(c['detail'] for c in outcome['checks']
                                                  if c['status'] != 'not_automatically_checked')
+
+        # A file this task made that failed its checks (services/artifact_qa,
+        # recorded in the artifact manifest) leaves the task unverified: the
+        # work ran, but what it produced is broken for its reader (NS-24.5-1).
+        # Only this task's own checks are waited for; any still running after
+        # the wait leave it unverified ("checks still running"), never complete.
+        if final_status == 'complete':
+            try:
+                from agent_friday.services import artifact_manifest as _am_qa
+                if any(t.get('name') in _am_qa.CREATING_TOOLS for t in (tool_trace or [])):
+                    _qv = _am_qa.qa_verdict(task_id, wait=_am_qa.QA_WAIT_S)
+                    _bad = _qv['failures']
+                    if _qv['pending']:
+                        verified, final_status = False, 'completed_unverified'
+                        verification_summary = ((verification_summary + '; ') if verification_summary else '') \
+                            + _am_qa.PENDING_REASON
+                        _task_log(task_id, 'Unverified: %s on %d file(s) it made.' % (
+                            _am_qa.PENDING_REASON, _qv['pending']))
+                    if _bad:
+                        verified, final_status = False, 'completed_unverified'
+                        _names = ', '.join(Path(str(b.get('path') or '')).name for b in _bad[:5])
+                        verification_summary = ((verification_summary + '; ') if verification_summary else '') \
+                            + 'a file it made failed its checks: ' + _names
+                        _task_log(task_id, 'Unverified: %s failed its checks (%s).' % (
+                            _names, '; '.join(m for b in _bad[:3] for m in (b.get('errors') or [])[:2])[:400]))
+            except Exception:
+                pass
 
         # v5: feed the learning loop with this task's outcome. The *approach* is
         # the tool strategy used (deduped tool names), so repeated tasks that
@@ -7105,7 +7322,7 @@ def _report_workflow_completion(task_id, name, status, result_text):
         # A step waiting on a card holds the run there (the next step starts only once the
         # owner decides), so the owner hears about it now, not when a later step finishes.
         if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout',
-                                                     WAITING_APPROVAL):
+                                                     WAITING_APPROVAL, OUTCOME_UNKNOWN):
             _task_set(task_id, delivery={'status': 'deferred', 'reason': 'Next workflow step owns delivery.'})
             return
         if (status in ('failed', 'error') and index < len(steps) and not rec.get('settled')
@@ -7124,7 +7341,8 @@ def _report_workflow_completion(task_id, name, status, result_text):
                          and baseline.get('fingerprint') == rec.get('result_fingerprint')
                          and baseline.get('fingerprint'))
         if mode in ('never', 'silent') or (mode == 'on_change' and unchanged
-                and status not in ('failed', 'error', 'cancelled', 'timeout', 'completed_unverified')):
+                and status not in ('failed', 'error', 'cancelled', 'timeout', 'completed_unverified',
+                                   OUTCOME_UNKNOWN)):
             _task_set(task_id, delivery={'status': 'suppressed',
                       'reason': 'Unchanged result.' if unchanged else 'Completion notices are off.',
                       'changed': not unchanged})
@@ -7136,7 +7354,10 @@ def _report_workflow_completion(task_id, name, status, result_text):
         label = {'completed_unverified': 'finished; output checks are incomplete',
                  'cancelled': 'stopped', 'stopped': 'stopped', 'failed': 'failed', 'timeout': 'timed out',
                  'waiting': 'is waiting for your decision on an approval card',
-                 WAITING_APPROVAL: 'is waiting for your decision on an approval card'}.get(aggregate, 'finished')
+                 WAITING_APPROVAL: 'is waiting for your decision on an approval card',
+                 OUTCOME_UNKNOWN: 'ended with its ' + OUTCOME_UNKNOWN_WORDS}.get(aggregate, 'finished')
+        if status == OUTCOME_UNKNOWN:
+            label = 'ended with its ' + OUTCOME_UNKNOWN_WORDS
         if status == DECLINED:
             label = 'stopped: you did not approve its card'
         body = str(result_text or '').strip() or '(no output)'
@@ -8167,14 +8388,29 @@ def chain_run_status(name, run_id=None):
         state = 'waiting'
     elif DECLINED in statuses:
         state = 'stopped'
-        for x in out_steps:
+        stop = None
+        for x, row in zip(out_steps, selected):
             if x['status'] == DECLINED:
-                x['reason'] = 'you declined its approval card'
+                b = row.get('blocker') or {}
+                x['reason'] = b.get('text') or 'you declined its approval card'
+                x['blocker'] = b or None
+                if stop is None:
+                    stop = {'task_id': row.get('task_id'), 'type': b.get('type') or 'approval_denied',
+                            'step': x['index']}
             elif x['status'] == 'pending':
                 x['status'] = 'skipped'
-                x['reason'] = "you declined an earlier step's approval card"
+                x['reason'] = {
+                    'approval_expired': "an earlier step's approval card expired, so this step did not run",
+                    'approval_blocked': "a safety rule blocked an earlier step's approval card, so this step did not run",
+                    'approval_withdrawn': ("an earlier step's approval was taken back when you revoked Friday's "
+                                           "authority, so this step did not run"),
+                }.get((stop or {}).get('type'), "you declined an earlier step's approval card")
+                # the typed reason it never ran (NS-32.8-1): which step's card, and what became of it
+                x['blocked_by'] = dict(stop) if stop else None
     elif statuses & {'failed', 'error', 'timeout'}:
         state = 'failed'
+    elif OUTCOME_UNKNOWN in statuses:
+        state = OUTCOME_UNKNOWN          # a step's approved action may or may not have happened
     elif 'cancelled' in statuses:
         state = 'cancelled'
     elif 'interrupted' in statuses:
@@ -8527,6 +8763,13 @@ def _advance_task_chain_once(task_id, result_text):
         _chain_sync(task_id)
         return None
     if _journal().stop_requested(task_id) or t.get('stop_requested') or t.get('status') in ('cancelled', 'timeout', 'interrupted'):
+        return None
+    if t.get('status') == OUTCOME_UNKNOWN:
+        # Whether the action the step's card approved happened is not known (Friday stopped
+        # while carrying it out, or it never reported back), so nothing that may depend on it
+        # starts. A late report from the executor continues the run (settle_waiting_task).
+        _task_log(task_id, 'Whether the action you approved happened is not known: the next step did '
+                           'not start. Check before retrying.')
         return None
     if t.get('status') in (WAITING_APPROVAL, DECLINED) or (t.get('settled') and t.get('status') == 'failed'):
         # The step raised a card: what follows may depend on it, so the next step does not
@@ -13802,6 +14045,7 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import connector_outcome as _conn_outcome
+from agent_friday.services import change_receipts as _change_receipts
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
 from agent_friday.services import tool_output as _tool_output
@@ -14690,7 +14934,11 @@ def _verifier_card(ctx, why_text):
             rec = _appr.create_approval(
                 kind="tool_confirm", subject_type="tool_action", subject_id=subject,
                 title=_taint_title(name, inp),
-                action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
+                # kept text names no event's or task's words (the dissent check can write it to the
+                # ledger); the card's title shows them on screen
+                action_description=f"{name} " + json.dumps(
+                    _change_receipts.untitled_args(inp) if name in _change_receipts.TITLE_TOOLS else inp,
+                    default=str)[:600],
                 description=f"Held for your yes: {why_text}.",
                 force_gate=True,
                 payload=_approval_tool_payload(name, inp, ctx.session_ctx),
@@ -14845,13 +15093,17 @@ def _resolve_escalated_card(approval_id, name, tool_input):
     try:
         from agent_friday.services import approvals as _appr
         if _appr.claim_chat_confirmation(approval_id, name, tool_input):
+            _scrub_titled_card(approval_id, name)
             return True
         stored = ((_appr.get_approval(approval_id) or {}).get("payload") or {})
         if (stored.get("tool") == name and isinstance(stored.get("input"), dict)
                 and stored.get("input") != tool_input
                 and _action_fingerprint(name, stored["input"])
                 == _action_fingerprint(name, tool_input)):
-            return _appr.claim_chat_confirmation(approval_id, name, stored["input"])
+            won = _appr.claim_chat_confirmation(approval_id, name, stored["input"])
+            if won:
+                _scrub_titled_card(approval_id, name)
+            return won
         return False
     except Exception as e:
         _log.warning("could not claim escalated approval %s: %s", approval_id, e)
@@ -14882,7 +15134,10 @@ def _raise_confirmation_card(session_id, name, tool_input, fingerprint, question
                 kind="tool_confirm", subject_type="tool_action",
                 subject_id=f"{session_id}:{fingerprint}:{request_id}",
                 title=question,
-                action_description=f"{name} {tool_input!r}",
+                # an event's or a task's own words stay off the kept text (the dissent check can write
+            # it to the ledger); the card's title and question show them on screen
+            action_description=f"{name} " + repr(_change_receipts.untitled_args(tool_input)
+                                                 if name in _change_receipts.TITLE_TOOLS else tool_input),
                 description=("Friday asked for your yes before doing this. "
                              "Decide it here, or answer the question in chat."),
                 force_gate=True, payload=_approval_tool_payload(name, tool_input, session_ctx),
@@ -15279,7 +15534,8 @@ def _approved_card_allows(approval_id, tool_name, args):
     if _norm(payload.get("input")) != _norm(args):
         return False, "its details differ from what was approved"
     try:
-        _appr.mark_used(approval_id, f"tool:{tool_name}")
+        if not _appr.spend_once(approval_id, f"tool:{tool_name}"):
+            return False, "it has already been used"
     except Exception as e:
         return False, f"the approval could not be marked used ({e})"
     return True, ""
@@ -15298,7 +15554,11 @@ def _taint_card(ctx, decision, key):
         from agent_friday.services import approvals as _appr
         rec = _appr.find_for_subject("tool_action", subject, "tainted_action")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
-            _appr.mark_used(rec["approval_id"], f"tool:{name}")
+            # One decision, one action, even when two calls read the card at once.
+            if not _appr.spend_once(rec["approval_id"], f"tool:{name}"):
+                return _hooks.DENY(
+                    f"[ALREADY DONE] The approval for '{name}' with these details was just used "
+                    f"by another call. It was NOT executed again. Do not retry it.")
             ctx.meta["taint_card_approved"] = True
             ctx.meta["owner_decided"] = rec["approval_id"]
             return _hooks.ALLOW
@@ -15326,7 +15586,11 @@ def _taint_card(ctx, decision, key):
                     kind="tainted_action", subject_type="tool_action",
                     subject_id=subject,
                     title=_taint_title(name, inp),
-                    action_description=f"{name} {json.dumps(inp, default=str)[:600]}",
+                    # an event's or a task's own words stay off the kept text (the dissent check
+                    # can write it to the ledger); the card's title shows them on screen
+                    action_description=f"{name} " + json.dumps(
+                        _change_receipts.untitled_args(inp) if name in _change_receipts.TITLE_TOOLS else inp,
+                        default=str)[:600],
                     description=why_text,
                     force_gate=True,
                     # The conversation id rides along so the executor can
@@ -15452,10 +15716,11 @@ def _run_card_claim(ctx, rec):
         from agent_friday.governance import action_gate as _gate
         inp = ctx.input or {}
         try:
-            # this call's outcome closes the decision written here (BD-11a)
+            # this call's outcome closes the decision written here (BD-11a); the target
+            # names the item by id, never by its title (kept sealed)
             ctx.meta["decision_receipt"] = _gate.record_external(
                 ctx.tool_name, surface="approval_card", approval_id=aid,
-                target=str(inp.get("title") or inp.get("task_id") or ""))
+                target=str(inp.get("task_id") or inp.get("event_id") or ""))
         except Exception as e:
             _appr.mark_used(aid, f"tool:{ctx.tool_name}",
                             detail={"ok": False, "error": "held: %s" % e})
@@ -17203,7 +17468,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
     from agent_friday.services import turn_budget as _tb
     _round_cap = max_iters if max_iters else _tb.rounds_for(str(model or ""))
     _rounds_left = int(_round_cap) if _round_cap else None
-    _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
+    _loop_guard = _tb.LoopGuard(trace=tool_trace) if _tb.loop_guard_enabled() else None
 
     # ── Fewer tools up front, on the cloud too. ──
     # Every schema on every round was ~46k tokens a call. The cloud now gets
@@ -17745,10 +18010,13 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                         result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
-                # Cleared on the SUCCESS path only, deliberately not in a
+                # Marked FINISHED on the success path only, deliberately not in a
                 # `finally`. If _execute_tool raised, the tool's side effect is
                 # exactly as unknown as it is after a process death, and a
-                # `finally` would erase the one marker that says so.
+                # `finally` would erase the one marker that says so. Finished is
+                # not saved: the marker stays until this round's checkpoint below
+                # holds the result, so a crash in between does not resume into
+                # the model asking for the same call again (NS-33.6-2 c).
                 _resume_unmark(session_ctx)
                 _crew_denial = _host_action_denial(tu.name, session_ctx)
                 if _crew_denial:
@@ -18055,7 +18323,7 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
     loops = max_iters if oai_tools else 1
     # The one guard left on by default, and the owner can switch it off in
     # Settings > Spending. It catches a stuck model, not a long one.
-    _loop_guard = _tb.LoopGuard() if _tb.loop_guard_enabled() else None
+    _loop_guard = _tb.LoopGuard(trace=tool_trace) if _tb.loop_guard_enabled() else None
     # The clock and the token ceiling are only constructed when the owner asked
     # for one. `None` is not "use a default" any more -- there is no default.
     _wall_s = _tb.wall_clock_for("local")

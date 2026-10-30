@@ -89,13 +89,14 @@ class DiscordBridge(ChannelAdapter):
                     from agent_friday.services.channels.base import record_channel_send, send_unsure
                     gated = gated[:2000]
                     try:
-                        await message.channel.send(gated)
+                        sent = await message.channel.send(gated)
                     except Exception as e:
                         unsure = send_unsure(e)
                         self.report_outbound(decision, False, unsure)
                         record_channel_send(self.name, chat_id, gated, False, unsure)
                         raise
-                    self.report_outbound(decision, True)
+                    # Discord's id for the posted message is its confirmation
+                    self.report_outbound(decision, True, verified=bool(getattr(sent, "id", None)))
                     record_channel_send(self.name, chat_id, gated, True)
 
         loop = asyncio.new_event_loop()

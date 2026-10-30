@@ -376,6 +376,14 @@
   "cloud_context_slicing_offer": {
    "type": "string"
   },
+  "command_network": {
+   "properties": {
+    "allow_hosts": {
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
   "communication_style": {
    "type": "string"
   },
@@ -866,6 +874,9 @@
    "type": "string"
   },
   "mail_default_account": {
+   "type": "string"
+  },
+  "mcp_network_default": {
    "type": "string"
   },
   "meeting_archive": {

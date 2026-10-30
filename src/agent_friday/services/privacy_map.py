@@ -310,6 +310,20 @@ def _enc_sent_text() -> tuple:
     return "no", "Nothing can encrypt it right now, so nothing is kept."
 
 
+def _enc_undo() -> tuple:
+    """What Undo keeps of a changed event or task (services/undo_store): sealed as sent text is."""
+    from agent_friday.services import sent_text_store as sts
+    sealed = sts.sealed_with()
+    if sealed == "vault":
+        return "yes", "Encrypted with your vault passphrase. Nothing is written if it can't be encrypted."
+    if sealed == "keystore":
+        state, _ = _enc_keys()
+        return ("partly" if state == "partly" else "yes"), (
+            "Encrypted with Friday's key store, not the vault: no vault passphrase is set. "
+            "Nothing is written if it can't be encrypted.")
+    return "no", "Nothing can encrypt it right now, so nothing is kept (those changes can't be undone)."
+
+
 def _ret_sent_text() -> str:
     try:
         from agent_friday.services import sent_text_store as sts
@@ -443,7 +457,9 @@ def _stores() -> List[dict]:
          "paths": ["actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl", "mail_outbox",
                    "activity_ledger.jsonl", "vault/egress-log.jsonl", "vault/context-manifests.jsonl",
                    "vault/access-log.jsonl",
-                   "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl"],
+                   "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl",
+                   # which Idempotency-Keys were already handled (keyed digests only, 24 hours)
+                   "idempotency_keys.json"],
          "enc": _enc("no", "Readable on this disk; each is signed or chained so a change shows."),
          "ret": lambda: ("Kept until you delete them, so the record stays whole. The activity record rotates at "
                          "about 20 MB; the list of what went into each send keeps its newest 40 MB or so."),
@@ -456,6 +472,14 @@ def _stores() -> List[dict]:
          "controls": [_ctl("delete", "Delete it, or keep fingerprints only",
                            "Delete the kept text now, or switch to fingerprints only.",
                            nav=dict(_PRIVACY_TAB, section="Privacy map")), _EXPORT_ALL]},
+        {"key": "undo_data", "name": "What Undo keeps",
+         "holds": ("What a calendar event or a Google Task was before Friday changed or deleted it "
+                   "(its title, place, description or notes), so Undo can put it back."),
+         "paths": ["vault/undo"], "enc": _enc_undo,
+         "ret": lambda: ("Kept for 30 days, then deleted (that change can no longer be undone). "
+                         "Deleted sooner once its Undo has run, or when you forget a person it names."),
+         "controls": [_ctl("settings", "Friday's changes", "Every action with its receipt and undo.",
+                           nav={"workspace": "system"}), _EXPORT_ALL, _ERASE_ALL]},
         {"key": "credentials", "name": "Keys and sign-ins",
          "holds": "Provider keys and account sign-ins Friday uses for you.",
          "paths": ["security", "providers", "google_accounts", "mcp_oauth", "platforms",

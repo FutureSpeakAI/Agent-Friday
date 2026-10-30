@@ -565,12 +565,41 @@ if not _TESTING:
         _migrate_legacy_keys()
     except Exception:
         pass
+    # Provider keys in start.bat / launch_now.bat / friday_startup.bat go into the
+    # credential store; the lines are blanked in place (services/launch_script_keys).
+    try:
+        from agent_friday.services.launch_script_keys import migrate as _migrate_launch_keys
+        _migrate_launch_keys()
+    except Exception:
+        pass
+    # Windows: Low-integrity processes (the code sandbox, read-only commands) are
+    # kept out of Friday's state folder by a mandatory label; her output folders in
+    # it stay readable (services/code_sandbox.fence_from_low). In the background:
+    # labelling walks the folder. A failure is logged; the command rules still hold.
+    def _fence_state_folder():
+        try:
+            from agent_friday.services import code_sandbox as _sbx
+            from agent_friday.services import path_policy as _pp
+            _state = _Path(FRIDAY_DIR)
+            _open = [d for d in _pp.output_dirs() if _pp._within(d, _state.resolve(strict=False))]
+            if _sbx.fence_from_low(_state, _open):
+                print("  [sandbox] Friday's state folder is closed to Low-integrity processes")
+        except Exception as _fe:
+            print(f"  [sandbox] could not label Friday's state folder: {_fe}")
+    threading.Thread(target=_fence_state_folder, name="fence-state", daemon=True).start()
 
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
         from agent_friday.services.credential_store import bootstrap_provider_env_detail
         _pk_detail = bootstrap_provider_env_detail()
+        # Constants core computed at import (GEMINI_API_KEY) take a key that
+        # moved out of start.bat and is now in the store.
+        try:
+            from agent_friday.services.launch_script_keys import refresh_core_constants
+            refresh_core_constants()
+        except Exception:
+            pass
         # Gate on candidates existing at all, not on the count that
         # succeeded: printing only a nonzero success count means a run where
         # every stored key fails to decrypt prints NOTHING, the least visible

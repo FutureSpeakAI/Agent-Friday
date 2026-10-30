@@ -418,6 +418,10 @@ def _ensure_defaults() -> None:
     # carrying a token of the person's name goes.
     from agent_friday.services import memory_suppress as _memory_suppress
     register_store("memory_suppressions", _memory_suppress.people_find, _memory_suppress.people_purge)
+    # What Undo keeps of a changed or deleted event or task (sealed; services/undo_store) can name
+    # people too: those entries go, and that change can then no longer be undone.
+    from agent_friday.services import undo_store as _undo_store
+    register_store("undo_data", _undo_store.forget_find, _undo_store.forget_purge)
 
 
 def _norm(s: str) -> str:

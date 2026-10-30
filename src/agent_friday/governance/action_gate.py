@@ -609,6 +609,12 @@ def classify_command(cmd: str) -> tuple:
     c = _literal_search_patterns(c)
     if _SELF_API.search(c):
         return "forbidden", "it addresses Friday's own local API"
+    # The file tools' policy, for commands too (services/path_policy, BD-26): no
+    # command, approved or not, reaches Friday's own state, a store of sign-ins,
+    # or a file a shell runs at start-up.
+    zone = _command_forbidden_reason(c)
+    if zone:
+        return "forbidden", zone
     if _DANGEROUS.search(c):
         return OUTWARD, "it chains, redirects, changes or reaches outside"
     if _GROUPING.search(c):
@@ -625,7 +631,187 @@ def classify_command(cmd: str) -> tuple:
             return OUTWARD, f"'{words[0]}' is not on the read-only list"
         if head == "git" and (len(words) < 2 or words[1].lower() not in _GIT_READ):
             return OUTWARD, "a git command that is not read-only"
+    reach = _command_reach_reason(c)
+    if reach:
+        return OUTWARD, reach
     return INTERNAL, "read-only"
+
+
+def _command_path_tokens(cmd: str):
+    """(token, expanded text) for every word of a command that names a path by
+    absolute, home-relative or environment spelling. '..' relatives are left to
+    _command_reach_reason."""
+    import os as _os
+    import re as _re
+    try:
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return
+    for raw in _re.split(r"[\s,;()]+", cmd or ""):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        if not (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
+                or low.startswith(("$env:", "$home", "$pshome", "$profile"))):
+            continue
+        if drive and _os.name != "nt":
+            continue
+        yield tok, _expand_path_text(tok)
+
+
+#: Segment names that are a store of sign-ins or history wherever they appear
+#: (services/path_policy._SIGN_IN_STORES, first segments).
+_SIGN_IN_NAMES = (".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".claude", ".codex",
+                  ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".m2", ".terraform.d",
+                  ".bash_history", ".zsh_history", ".python_history", ".node_repl_history",
+                  ".psql_history", ".mysql_history", ".lesshst", ".viminfo")
+#: Start-up files a command that may write may not name (path_policy._AUTORUN dot-files).
+_AUTORUN_NAMES = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv",
+                  ".gitconfig", ".gitattributes", ".inputrc", ".wgetrc", ".curlrc")
+#: Friday's own output folders inside her state folder (core.DAILY_CREATIONS_DIR,
+#: office_engine.DOCUMENTS_DIR).
+_STATE_OUTPUT_SUBDIRS = ("creations", "documents", "friday-creations")
+#: Spellings of the home folder that may come right before a sign-in or start-up name.
+_HOME_MARKERS = ("~", "$home", "$env:userprofile", "${env:userprofile}", "%userprofile%",
+                 "$env:home", "${env:home}", "%homepath%")
+
+
+def _named_zone(cmd: str, state_name: str, op: str, home_name: str = "") -> str:
+    import fnmatch as _fn
+    import re as _re
+    segs = _re.findall(r"[^\\/\s'\"`,;()|={}<>]+", (cmd or "").casefold())
+    state = (state_name or ".friday").casefold()
+    homes = set(_HOME_MARKERS) | ({home_name.casefold()} if home_name else set())
+
+    def clean(seg: str) -> str:
+        return seg.split("::")[-1].split(":")[-1] if ":" in seg and not seg.startswith("$") else seg
+
+    def state_hit(seg: str) -> bool:
+        if seg == state:
+            return True
+        # A wildcard aimed at the state folder's own name ('.fri*', '.f?iday'): at
+        # least three literal characters, all of them a prefix-compatible pattern.
+        literal = sum(1 for ch in seg if ch not in "*?[]")
+        return (state.startswith(".") and seg.startswith(".") and literal >= 3
+                and any(ch in seg for ch in "*?[") and _fn.fnmatchcase(state, seg))
+
+    for i, raw in enumerate(segs):
+        seg = clean(raw)
+        if not seg:
+            continue
+        # Friday's state folder by name, in any spelling (only a dot-named one: a
+        # bare word like 'friday' is too common to refuse on).
+        if state.startswith(".") and state_hit(seg):
+            nxt = segs[i + 1] if i + 1 < len(segs) else ""
+            if nxt in _STATE_OUTPUT_SUBDIRS:
+                continue
+            return "it reaches Friday's own state folder"
+        # Sign-in stores and start-up files only where they ARE those: right under
+        # the home folder (a project's own .claude/ or .gitattributes is not).
+        prev = clean(segs[i - 1]) if i else ""
+        if prev in homes or raw in homes:
+            if seg in _SIGN_IN_NAMES:
+                return "it reaches a store of sign-ins or history"
+            if op == "write" and seg in _AUTORUN_NAMES:
+                return "it reaches a file run or obeyed at start-up"
+    return ""
+
+
+def _command_forbidden_reason(cmd: str) -> str:
+    """Why a command may not run even with the owner's approval, or "": it names (by
+    segment, in any spelling) Friday's own state folder, a store of sign-ins or history,
+    or, for a command that may write, a file a shell runs at start-up. Text matching:
+    for an APPROVED command (owner integrity) this is the protection; a read-only command
+    also runs at Low integrity, which Windows keeps out of Friday's state folder
+    (code_sandbox.fence_from_low)."""
+    try:
+        from agent_friday.services import path_policy as _pp
+    except Exception:
+        return ""
+    import os as _os
+    from pathlib import Path as _P
+    import agent_friday.core as _core
+    state = _P(_core.FRIDAY_DIR).resolve(strict=False)
+    outs = _pp.output_dirs()
+    # Start-up files are refused to commands that may write; a read-only command
+    # (every stage on the read-only list, nothing chained or redirected) may still
+    # read .gitconfig.
+    heads = [s.strip().split()[0].lower() for s in (cmd or "").split("|") if s.strip()]
+    op = ("read" if heads and all(h in READ_ONLY_COMMANDS for h in heads)
+          and not _DANGEROUS.search(cmd or "") else "write")
+    # By NAME first, whatever the spelling around it: a path segment that is (or a
+    # wildcard that matches) Friday's state folder or a sign-in store refuses. Path
+    # parsing alone misses -Path:x, ${env:..}, FileSystem::, a relative 'cd ~; gc
+    # .friday\x', Join-Path pieces. Matching too much only refuses more; Friday's
+    # own output folders inside the state folder stay allowed.
+    named = _named_zone(cmd, state.name, op, _P(_core.HOME).name)
+    if named:
+        return named
+    for _tok, expanded in _command_path_tokens(cmd):
+        why = _pp._text_reason(expanded)
+        if why:
+            continue                       # judged (and carded) by _command_reach_reason
+        try:
+            # Text only (normalised, not resolved): no filesystem access for a
+            # model-supplied path; a link is caught by the Low fence, not here.
+            p = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
+        except Exception:
+            continue
+        if any(_pp._within(p, d) for d in outs):
+            continue
+        if _pp._within_folded(p, state):
+            return "it reaches Friday's own state folder"
+        zone = _pp.off_limits_reason(p, op) or ""
+        if ("sign-ins" in zone or "start-up" in zone) and _pp._grant_for(p, op) is None:
+            return zone.replace("it is inside", "it reaches", 1)
+    return ""
+
+
+def _command_reach_reason(cmd: str) -> str:
+    """A read-only command still READS: every path it names is judged by the same
+    policy as read_file (services/path_policy, BD-26). A path outside the folders
+    Friday may use, or a walk up with '..', makes the command outward (a card)."""
+    import re as _re
+    try:
+        from agent_friday.services import path_policy as _pp
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return ""
+    import os as _os
+    from pathlib import Path as _P
+    for raw in _re.split(r"[\s,;()]+", cmd):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        # On Windows a leading "/" is a switch (dir /s), elsewhere an absolute path.
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        looks = (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
+                 or low.startswith(("$env:", "$home", "$pshome", "$profile")) or ".." in tok)
+        if not looks:
+            continue
+        if ".." in tok and not _re.match(r"^[a-z]:[\\/]|^[~\\/%$]", low):
+            return "it walks up out of its working folder with '..'"
+        if drive and _os.name != "nt":
+            continue        # a drive path names nothing on this machine
+        expanded = _expand_path_text(tok)
+        p, why = _pp.judge(expanded, "read")
+        if p is None:
+            # A folder ABOVE the home (C:\Users, C:\) shows names only to a
+            # listing; it holds no content of its own to read.
+            try:
+                # Text only (no filesystem access): normalised, not resolved.
+                q = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
+                if _pp._within_folded(_pp._home(), q):
+                    continue
+            except Exception:
+                pass
+            return f"it reads a place Friday's file tools may not ({why})"
+    return ""
 
 
 def _resolve(path) -> Optional[Path]:
@@ -1672,6 +1858,7 @@ TASK_STATE_OUTCOME = {
     "failed": FAILED, "recovered_after_crash": FAILED, "cancelled": DENIED,
     "waiting_for_approval": WAITING, "waiting_for_input": WAITING,
     "waiting_for_external_event": WAITING,
+    "outcome_unknown": UNCONFIRMED,     # it may or may not have happened: never executed
 }
 
 
@@ -1762,7 +1949,7 @@ def _external_ref(out: Any, tool: str, approval_id: Optional[str]) -> dict:
     ref = {"seq": out.get("seq"), "hash": out.get("hash"), "tool": tool, "class": OUTWARD,
            "decision": "allow", "action_id": rec.get("action_id"),
            "policy_version": rec.get("policy_version"), "approval": approval_id,
-           "t": time.time()}
+           "t": time.time(), "receipt": dict(rec) if rec else None}
     try:
         from flask import g, has_request_context
         if has_request_context():
@@ -1857,6 +2044,102 @@ def defer_external(ref: Optional[dict]) -> Optional[dict]:
     if isinstance(ref, dict):
         ref["_deferred"] = True
     return ref
+
+
+def decision_ref_of(verdict: Any) -> Optional[dict]:
+    """The decision an allowing `authorize_external` verdict carries
+    (`detail['decision_ref']`), for its executor to close with the action's
+    own result. None for any other verdict. Never raises."""
+    try:
+        if getattr(verdict, "action", None) != "allow":
+            return None
+        ref = (getattr(verdict, "detail", None) or {}).get("decision_ref")
+        return ref if isinstance(ref, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+#: What of a decision a record keeps so a later reconcile can close it.
+_PORTABLE_KEYS = ("seq", "hash", "tool", "class", "decision", "action_id", "policy_version",
+                  "approval", "t", "_unconfirmed", "_closed")
+
+
+def portable_ref(ref: Optional[dict]) -> Optional[dict]:
+    """A decision as an operation record keeps it (JSON-safe), for an action
+    whose final state is known only later (a site publish the provider is
+    still building): `close_persisted` closes it from the reconcile. None when
+    there is nothing to keep. Never raises."""
+    try:
+        if not (isinstance(ref, dict) and ref.get("class") == OUTWARD and ref.get("action_id")):
+            return None
+        return {k: ref[k] for k in _PORTABLE_KEYS if k in ref}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _has_terminal_outcome(action_id: str) -> bool:
+    from agent_friday.services import action_ledger
+    for e in action_ledger.entries(["outcome"], newest_first=True,
+                                   where=lambda e: isinstance(e.get("rec"), dict)
+                                   and e["rec"].get("action_id") == action_id):
+        rec = e.get("rec") or {}
+        if rec.get("outcome") in TERMINAL_OUTCOMES or rec.get("terminal") is True:
+            return True
+    return False
+
+
+def _ledger_decision_matches(ref: dict, expected_tool: Optional[str]) -> bool:
+    """Is `ref` exactly a decision the ledger holds? The decision entry with
+    its action id must carry the same seq and hash, be outward, and name the
+    tool the caller expects (`expected_tool`, when given; the ref's own tool
+    must agree). A ref read back from a record is data, not proof: a forged
+    or swapped one (another action's id, a wrong hash, another kind) matches
+    nothing and closes nothing."""
+    from agent_friday.services import action_ledger
+    aid = str(ref.get("action_id") or "")
+    if not aid:
+        return False
+    if expected_tool is not None and str(ref.get("tool") or "") != str(expected_tool):
+        return False
+    # verified: only a line whose hash and signature hold; archive: a decision kept long enough to
+    # have been archived still counts
+    for e in action_ledger.entries(["decision"], newest_first=True, verified=True, archive=True,
+                                   where=lambda e: isinstance(e.get("rec"), dict)
+                                   and e["rec"].get("action_id") == aid):
+        rec = e.get("rec") or {}
+        if (e.get("seq") == ref.get("seq") and isinstance(e.get("hash"), str)
+                and e.get("hash") == ref.get("hash")
+                and rec.get("class") == OUTWARD
+                and str(rec.get("tool") or "") == str(ref.get("tool") or "")
+                and (expected_tool is None or rec.get("tool") == expected_tool)):
+            return True
+    return False
+
+
+def close_persisted(ref: Optional[dict], ok: bool = True, *, detail: str = "",
+                    verified: bool = False, outcome: Optional[str] = None,
+                    expected_tool: Optional[str] = None) -> bool:
+    """`close_external` for a decision kept on a record (`portable_ref`) and
+    read back, possibly after a restart. The ref is checked against the
+    ledger first (`_ledger_decision_matches`: the decision with its action id,
+    the same seq and hash, outward, and the `expected_tool` the caller names);
+    one that does not match is refused (logged, nothing written). Then the
+    ledger is asked whether the action already has its terminal outcome, so
+    it never gets a second one. True when an outcome was written. Never
+    raises."""
+    try:
+        if not (isinstance(ref, dict) and ref.get("action_id")) or ref.get("_closed"):
+            return False
+        if not _ledger_decision_matches(ref, expected_tool):
+            _log.warning("close_persisted refused a decision ref that matches no ledger decision "
+                         "(expected tool %s)", expected_tool or "any")
+            return False
+        if _has_terminal_outcome(str(ref["action_id"])):
+            ref["_closed"] = True
+            return False
+        return close_external(ref, ok, detail=detail, verified=verified, outcome=outcome)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def settle_request_externals(ok: bool, detail: str = "") -> int:
@@ -2289,23 +2572,9 @@ class Held(RuntimeError):
     """An outward action the checkpoint would not let through."""
 
 
-def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
-                    target: str = "") -> dict:
-    """The checkpoint's integrity check and signed receipt, for an executor
-    that carries out an already-decided action outside a tool call (an
-    approved email, an approved text).
-
-    The decision itself (the card) is the caller's to verify. This adds the
-    two steps every tool call gets in `authorize`: the cLaws are intact, and
-    a signed receipt of the action is written. Raises `Held` if either fails,
-    so the caller stops before anything leaves the machine.
-
-    Returns the decision as an outcome names it; the executor writes the
-    action's terminal outcome with `close_external` (inside a request, one it
-    leaves open is marked unconfirmed: settle_request_externals). The
-    decision receipt carries no outcome word: nothing has run yet, and what
-    became of the action is its outcome receipt's to say.
-    """
+def check_external() -> None:
+    """The checks `record_external` makes before its receipt (Stop is not
+    pressed, the cLaws are intact, no outward hold). Raises `Held`."""
     import agent_friday.core as _core_gs
     if _core_gs.GLOBAL_STOP.is_set():
         # Stop everything (services/global_stop): held; the decision is not spent.
@@ -2319,11 +2588,53 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     hold = outward_hold()
     if hold:
         raise Held(hold)
+
+
+def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
+                    target: str = "", task_id: Optional[str] = None, once: bool = False) -> dict:
+    """The checkpoint's integrity check and signed receipt, for an executor
+    that carries out an already-decided action outside a tool call (an
+    approved email, an approved text).
+
+    The decision itself (the card) is the caller's to verify. This adds the
+    two steps every tool call gets in `authorize`: the cLaws are intact, and
+    a signed receipt of the action is written. Raises `Held` if either fails,
+    so the caller stops before anything leaves the machine.
+
+    Returns the decision as an outcome names it; the executor writes the
+    action's terminal outcome with `close_external` (inside a request, one it
+    leaves open is marked unconfirmed: settle_request_externals). The
+    decision receipt carries no outcome word: nothing has run yet, and what
+    became of the action is its outcome receipt's to say. Its `receipt` is
+    the signed record itself, which a delivery names
+    (services/artifact_manifest.record_delivery).
+
+    `once` (with `approval_id`), for an executor whose card buys exactly one
+    action (the approval executor, a mail send): the decision's idempotency
+    key is the card's (with the action and target), so the outward audit sees
+    that card carried out twice (`duplicate_key`), across restarts too. Not
+    the default: some cards rightly carry more than one decision of the same
+    action and target (a site build's operation and its process launch, a
+    publisher series).
+    `task_id`: the task the card was raised for, so the audit can tell a task
+    marked done whose approved action never ended executed (false_done).
+    """
+    check_external()
+    entry = {"tool": action, "class": OUTWARD, "decision": "allow",
+             "surface": surface,
+             "reason": "approved card" if approval_id else surface,
+             "approval": approval_id, "target": target}
+    if task_id:
+        entry["task_id"] = str(task_id)[:120]
+    if approval_id and once:
+        try:
+            entry["envelope"] = build_envelope(
+                action, klass=OUTWARD, decision="allow", via=surface,
+                ctx={"idempotency_key": "approval|%s|%s|%s" % (approval_id, action, target)}).to_dict()
+        except Exception:  # noqa: BLE001 - the envelope records; _receipt builds one without a key
+            pass
     try:
-        out = _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
-                        "surface": surface,
-                        "reason": "approved card" if approval_id else surface,
-                        "approval": approval_id, "target": target})
+        out = _receipt(entry)
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
     return _external_ref(out, action, approval_id)
@@ -2389,8 +2700,12 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
             rec = _ap.find_for_subject("external_action", subject, "governed_action")
         card_id = (rec or {}).get("approval_id")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
-            _ap.mark_used(rec["approval_id"], requested_by)
-            v = Verdict("allow", OUTWARD, "approved on a card")
+            # spent here and now, by exactly one caller: two at once cannot both run on it
+            if _ap.spend_once(rec["approval_id"], requested_by):
+                v = Verdict("allow", OUTWARD, "approved on a card")
+            else:
+                v = Verdict("deny", OUTWARD, "that card's one approval was already used by "
+                                             "another call at the same moment; nothing was done twice")
         elif rec and rec.get("status") in ("denied", "blocked"):
             v = Verdict("deny", OUTWARD, "declined on a card", outcome=DENIED)
         else:

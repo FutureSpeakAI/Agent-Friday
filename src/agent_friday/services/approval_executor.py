@@ -140,6 +140,15 @@ def _settle(record: dict) -> None:
                      task_id, record.get("approval_id"), type(e).__name__)
 
 
+#: Tools whose `title` argument is an event's or a task's title (kept sealed, never in the ledger).
+def _title_tools():
+    from agent_friday.services import change_receipts as _cr
+    return _cr.TITLE_TOOLS
+
+
+_TITLE_SEALED_TOOLS = _title_tools()     # one list (services/change_receipts.TITLE_TOOLS)
+
+
 def _on_decision(record: dict) -> None:
     """Run an approved card's action once, report what happened, and settle the
     task that was waiting for it."""
@@ -148,6 +157,11 @@ def _on_decision(record: dict) -> None:
     finally:
         if isinstance(record, dict) and record.get("status") != "pending":
             _settle(record)
+            if ((record.get("payload") or {}).get("tool") in _TITLE_SEALED_TOOLS
+                    and record.get("approval_id")):
+                # decided: the stored card keeps no title (the live card was the one on screen)
+                from agent_friday.services import change_receipts as _cr
+                _cr.scrub_card(record["approval_id"])
 
 
 def _decide(record: dict) -> None:
@@ -206,8 +220,15 @@ def _decide(record: dict) -> None:
     # fails the action does NOT run.
     try:
         from agent_friday.governance import action_gate as _gate
+        # A calendar event's or a task's title is not kept readable in the ledger:
+        # those name the item by id. The task that raised the card, when one did:
+        # its decision names it (outward_audit false_done).
+        task_id = str(payload.get("task_id") or "")
         decision_ref = _gate.record_external(tool, surface="approval_card", approval_id=aid,
-                                             target=str(args.get("path") or args.get("title") or ""))
+                                             target=str(args.get("path") or (
+                                                 (args.get("event_id") or args.get("task_id") or "")
+                                                 if tool in _TITLE_SEALED_TOOLS else args.get("title")) or ""),
+                                             once=True, **({"task_id": task_id} if task_id else {}))
     except Exception as e:
         _ap.mark_used(aid, "approval_executor",
                       detail={"ok": False, "error": "held: %s" % e})

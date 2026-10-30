@@ -60,6 +60,7 @@ FILES = [
     "tests/api/test_known_issues_route.py",
     "tests/unit/test_doctor_local_model_repair.py",
     "tests/api/test_doctor_local_model_routes.py",
+    "tests/unit/test_doctor_health_domains.py",
     "tests/api/test_authority_routes.py",
     "tests/api/test_bundle_routes.py",
     "tests/api/test_bundle_schedule_routes.py",

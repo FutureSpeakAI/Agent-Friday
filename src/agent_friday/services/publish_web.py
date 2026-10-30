@@ -452,7 +452,9 @@ def scan(bundle: Bundle) -> dict:
         if ns:
             refusals.append("never-send material is in the bundle (%d item%s)" % (len(ns), "" if len(ns) == 1 else "s"))
     except Exception as e:
-        warnings.append("the egress floor could not run (%s)" % e)
+        # A public page is never published past a floor that could not be checked (NS-34.6-7).
+        refusals.append("the never-send check could not run (%s), so nothing is published until it can"
+                        % type(e).__name__)
     ids += len(_SSN_RE.findall(text))
     if ids:
         refusals.append("hard identifier(s) found: %d (a national id, card or account number)" % ids)
@@ -865,6 +867,18 @@ def _on_decision(record: dict) -> None:
         _write_index(items)
         shutil.rmtree(_staging_root() / str(payload.get("staging") or ""), ignore_errors=True)
     _ap.mark_used(aid, "publish_web", detail={"ok": True, "url": url})
+    # A published file that Friday made (a picture, a page) gets this
+    # publication's receipt in the artifact manifest, found by its bytes.
+    try:
+        publish_receipt = (decision or {}).get("receipt")
+        if publish_receipt:
+            import hashlib as _hl
+            from agent_friday.services import artifact_manifest as _am
+            for _data in bundle.files.values():
+                _am.record_delivery(publish_receipt, channel="publish_web:%s" % adapter,
+                                    sha256=_hl.sha256(_data).hexdigest(), ref=bundle.slug, approval_id=aid)
+    except Exception:
+        pass
     note = (" It is reachable only while this PC is on and its tunnel is up." if adapter == "this_pc" else "")
     _post_back(record, 'Published "%s" (v%d) via %s: %s%s Say "take it down" to unpublish.'
                % (title, bundle.version, label, url, note))

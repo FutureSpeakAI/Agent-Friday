@@ -173,7 +173,7 @@ jobs:
         run: >
           npx playwright test --config=playwright.app.config.ts --workers=1
           --timeout=180000 --output=test-results/app
-          settings_walk.spec.ts smoke.spec.ts
+          settings_walk.spec.ts smoke.spec.ts colour_independent_state.spec.ts headings.spec.ts keyboard_flows.spec.ts
           camera_mode.spec.ts
           fill_in_place.spec.ts messages_friday_select.spec.ts open_only_stage.spec.ts
           point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts

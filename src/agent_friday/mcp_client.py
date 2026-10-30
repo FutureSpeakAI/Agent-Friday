@@ -54,6 +54,28 @@ _CREATE_FLAGS = 0
 if sys.platform == "win32":
     _CREATE_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+_REAL_POPEN = subprocess.Popen
+
+
+def _own_workdir(name: str):
+    """Where a stdio server runs when its config names no folder of its own: a folder
+    of its own OUTSIDE Friday's state folder (a relative '..\\..' from it must not reach
+    the vault), named from the server plus a hash so two names never share one.
+    Windows: %LOCALAPPDATA%\\AgentFriday\\mcp-work\\<name>-<hash>; elsewhere
+    ~/.cache/agent-friday/mcp-work/<name>-<hash>."""
+    import hashlib
+    from pathlib import Path
+    import agent_friday.core as core
+    raw = str(name or "")
+    safe = ("".join(ch for ch in raw if ch.isalnum() or ch in "-_") or "server")[:40]
+    tag = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:8]
+    home = Path(core.HOME)
+    base = (home / "AppData" / "Local" / "AgentFriday" / "mcp-work" if sys.platform == "win32"
+            else home / ".cache" / "agent-friday" / "mcp-work")
+    d = base / f"{safe}-{tag}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 # MCP protocol revision we advertise in `initialize`. Servers negotiate down if
 # they only speak an older revision; this is just our preferred version.
 _PROTOCOL_VERSION = "2024-11-05"
@@ -172,6 +194,7 @@ class MCPServerProcess:
         cwd: str | None = None,
         log: Callable[[str], None] | None = None,
         trust_level: str = "sandboxed",
+        network: dict | None = None,
     ) -> None:
         self.name = name
         self.command = command
@@ -183,8 +206,13 @@ class MCPServerProcess:
         # does the same) -- a server config has to opt IN to "trusted" to
         # ever see Friday's own inherited secrets, not opt out of leaking them.
         self.trust_level = trust_level
+        # allow_hosts (enforced through Friday's proxy) and isolation
+        # ("appcontainer": no network, its own folder only), from mcp_servers.json.
+        self.network = dict(network or {})
+        self._proxy_token = None
 
         self.proc: subprocess.Popen | None = None
+        self._job = None                      # Windows job holding the server's tree
         self.tools: list[dict] = []           # raw MCP tool dicts (inputSchema form)
         self.status = "stopped"               # stopped|starting|ready|error|crashed
         self.error: str | None = None
@@ -239,20 +267,86 @@ class MCPServerProcess:
                       f"({e}) — reconnect this connector to re-enter it")
             raise
         full_env.update({k: str(v) for k, v in env.items()})
+        # Network through Friday's loopback proxy (services/egress_proxy): a server
+        # with allow_hosts reaches only those; one without is observed (every host
+        # recorded). Set after the server's own env, so it cannot point elsewhere.
+        # Not a boundary: a server that ignores proxy variables goes around it.
+        try:
+            from agent_friday.services import egress_proxy as _ep
+            if self._proxy_token:
+                _ep.close_session(self._proxy_token)
+            mode, hosts = _ep.mcp_policy(self.name, self.network)
+            sess = _ep.open_session("connector: %s" % self.name, mode=mode, allow_hosts=hosts)
+            self._proxy_token = sess["token"]
+            _ep.apply_env(full_env, sess["env"])
+        except Exception as e:
+            self._log(f"[mcp:{self.name}] could not route through Friday's proxy: {e}")
         cmd = [self._resolve_command(), *self.args]
+        # Its own working folder, never Friday's app folder (her code and an older
+        # release's key files) nor her state folder. A configured cwd is kept.
+        cwd = self.cwd or str(_own_workdir(self.name))
+        # Held from its first instruction (services/code_sandbox.contain_helper): on
+        # Windows it starts suspended, goes into its own job (memory ceiling,
+        # process cap, the whole tree ends with the job), then runs. If the job
+        # cannot be made the server does not run.
+        contained = sys.platform == "win32"
+        from agent_friday.services import code_sandbox as _sbx
+        # "isolation": "appcontainer" (the server's own config): Windows' fully
+        # isolated mode, no network at all and only its own folder. It runs in its
+        # own job already; if isolation cannot be set up, the server does not run.
+        if str(self.network.get("isolation") or "").lower() == "appcontainer":
+            from pathlib import Path
+            from agent_friday.services import appcontainer as _ac
+            own = _own_workdir(self.name)
+            if self.cwd and Path(self.cwd).resolve() != own.resolve():
+                # Only the folder Friday made for it is ever opened to it.
+                raise RuntimeError("an isolated server runs in its own folder only; "
+                                   "remove its 'cwd' to isolate it")
+            self.proc = _ac.start(cmd, cwd=str(own), env=full_env, write=[own],
+                                  profile=_ac.server_profile(self.name))
+            self._job = None
+            self._reader = threading.Thread(
+                target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True)
+            self._reader.start()
+            threading.Thread(target=self._drain_stderr, name=f"mcp-{self.name}-stderr",
+                             daemon=True).start()
+            return
         self.proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=full_env,
-            cwd=self.cwd or None,
+            cwd=cwd,
             text=True,
             encoding="utf-8",
             errors="replace",
             bufsize=1,                       # line-buffered
-            creationflags=_CREATE_FLAGS,
+            creationflags=_CREATE_FLAGS | (_sbx.CREATE_SUSPENDED if contained else 0),
+            start_new_session=not contained,  # POSIX: stop() ends the whole group
         )
+        self._job = None
+        if contained:
+            try:
+                if not isinstance(self.proc, _REAL_POPEN):
+                    raise RuntimeError("not a process this can hold")
+                self._job = _sbx.contain_helper(self.proc)
+            except Exception:
+                # Killed and its pipes closed: never left suspended or running unheld.
+                _p, self.proc = self.proc, None
+                for _act in (lambda: _p.kill(), lambda: _p.wait(5)):
+                    try:
+                        _act()
+                    except Exception:
+                        pass
+                for _s in (getattr(_p, "stdin", None), getattr(_p, "stdout", None),
+                           getattr(_p, "stderr", None)):
+                    try:
+                        if _s:
+                            _s.close()
+                    except Exception:
+                        pass
+                raise
         self._reader = threading.Thread(
             target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True
         )
@@ -322,6 +416,35 @@ class MCPServerProcess:
             pass
         finally:
             self.proc = None
+            # An isolated server (services/appcontainer) holds raw handles.
+            if not isinstance(proc, subprocess.Popen) and callable(getattr(proc, "close", None)):
+                try:
+                    proc.close()
+                except Exception:
+                    pass
+            # POSIX: the server runs in its own session; end the whole group so
+            # what it started does not outlive it.
+            if sys.platform != "win32" and getattr(proc, "pid", None):
+                try:
+                    import signal as _sig
+                    os.killpg(proc.pid, _sig.SIGKILL)
+                except Exception:
+                    pass
+            # Ends anything the server started that outlived it.
+            job, self._job = getattr(self, "_job", None), None
+            if job:
+                try:
+                    from agent_friday.services import code_sandbox as _sbx
+                    _sbx.release_helper(job)
+                except Exception:
+                    pass
+            tok, self._proxy_token = getattr(self, "_proxy_token", None), None
+            if tok:
+                try:
+                    from agent_friday.services import egress_proxy as _ep
+                    _ep.close_session(tok)
+                except Exception:
+                    pass
             if self.status == "ready":
                 self.status = "stopped"
             # Fail any in-flight requests.
@@ -442,6 +565,9 @@ class MCPServerProcess:
                             break
                     continue
                 line = raw.rstrip()
+                tok = self._proxy_token
+                if line and tok:
+                    line = line.replace(tok, "[proxy credential]")
                 if line:
                     self._stderr_tail.append(line)
         except Exception:
@@ -1061,6 +1187,7 @@ class MCPManager:
                         cwd=spec.get("cwd"),
                         log=self._log,
                         trust_level=_extsec.get_trust_level(spec),
+                        network={k: spec[k] for k in ("allow_hosts", "isolation") if k in spec},
                     )
                 if spec.get("enabled") is False:
                     # Keep a stopped placeholder so status() still lists it.
