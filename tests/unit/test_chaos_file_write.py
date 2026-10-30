@@ -34,8 +34,12 @@ NEW = "Friday's new text\n" * 4000
 
 
 def _run(script: str, home: Path, *, expect: int) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_") and k != "FRIDAY_HOME"}
-    env.update(FRIDAY_HOME=str(home), FRIDAY_TESTING="1",
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("PYTEST_") and k not in ("FRIDAY_HOME", "FRIDAY_SANDBOX_ROOT")}
+    # The owner's document sits in this test's own folder, which is the sandbox root
+    # (write_file reaches only the owner's folders: services/path_policy, #211); Friday's
+    # state folder (.friday) is inside it but is never a write_file target.
+    env.update(FRIDAY_HOME=str(home), FRIDAY_SANDBOX_ROOT=str(home.parent), FRIDAY_TESTING="1",
                PYTHON_KEYRING_BACKEND="keyring.backends.fail.Keyring", PYTHONIOENCODING="utf-8")
     head = "import os, sys\nsys.path.insert(0, %r)\nfrom agent_friday.services import agent\n" % str(SRC)
     r = subprocess.run([sys.executable, "-c", head + textwrap.dedent(script)], env=env,
