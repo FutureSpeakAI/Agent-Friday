@@ -562,10 +562,15 @@ def _preset_triage(ctx: Ctx, spec: dict) -> dict:
                 "why": "the triage heads are not part of this build"}
     head = _triage_head(spec.get("_name", "triage.mail"), spec)
     texts = ctx.opts.get("texts") or [ctx.text]
-    if len(texts) == 1 and triage_heads._embed_override is None and triage_heads.available():
+    request_path = bool(ctx.opts.get("request_path", False))
+    # On a request path the head reads its cache and never waits for the encoder
+    # (services/triage_heads, DM7 gate), so the context vector is not taken here.
+    if (len(texts) == 1 and not request_path and triage_heads._embed_override is None
+            and triage_heads.available()):
         ctx.vector(triage_heads._clip(texts[0]))       # the one embedding; the head's peek hits it
     out = triage_heads._read_core(head, list(texts), allowed=ctx.opts.get("allowed"),
-                                  block=bool(ctx.opts.get("block", False)), cached=bool(ctx.opts.get("cached", False)))
+                                  block=bool(ctx.opts.get("block", False)), cached=bool(ctx.opts.get("cached", False)),
+                                  request_path=request_path)
     if not out:
         return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
                 "why": "the reading model or this head's prototypes are not ready"}
@@ -573,7 +578,8 @@ def _preset_triage(ctx: Ctx, spec: dict) -> dict:
     # a reading below its abstain threshold is "other" (or "none"), never a guess.
     decide = getattr(triage_heads, "decide", None)
     label, p = decide(head, out[0]) if callable(decide) else triage_heads.argmax(out[0])
-    cal = _calibrated_triage(ctx, head, texts, ctx.opts.get("allowed"))
+    # The calibrated reading embeds the text again; a request path skips it.
+    cal = None if request_path else _calibrated_triage(ctx, head, texts, ctx.opts.get("allowed"))
     return {"answer": _answer(label, p, (cal or {}).get("set")), "layer": "t1", "verdict": None, "native": out,
             "calibrated": cal, "why": "nearest prototype over the %s head's seeds" % head}
 
@@ -910,11 +916,11 @@ def point_act_turn(text: str, *, quiet: bool = False, stage=_UNSET, pointed=_UNS
 
 
 def triage_read(head: str, texts: List[str], *, allowed=None, block: bool = False, cached: bool = False,
-                caller: Optional[str] = None):
+                caller: Optional[str] = None, request_path: bool = False):
     """A triage head's {label: p} per text through ``ask``, or None when the
     reading model or prototypes are not ready (the incumbent then answers)."""
     opts = {"texts": list(texts), "allowed": None if allowed is None else list(allowed), "block": block,
-            "cached": cached}
+            "cached": cached, "request_path": request_path}
     name = "triage.%s" % head
     res = ask({"text": texts[0] if texts else "", "surface": "background", "opts": opts},
               {name: {"type": "choice", "preset": name}}, caller or name,
