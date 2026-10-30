@@ -76,7 +76,8 @@ def _head_key() -> Optional[tuple]:
 def reset_cache() -> None:
     with _CACHE_LOCK:
         _CACHE.clear()
-#: Task statuses that say the task is done.
+#: Task statuses that say the task is done. Never ``outcome_unknown`` (an approved action
+#: it waited on may or may not have happened) nor ``completed_unverified``.
 DONE_STATUSES = frozenset({"complete", "completed", "done", "completed_verified"})
 
 

@@ -70,6 +70,14 @@ KIND_LABELS = {
     "outcome": "What an action did",
     "authority": "Action authority revoked or restored",
     "policy_version": "The rules actions ran under changed",
+    "item_batch_run": "Approved change run",
+}
+
+#: What an approved change's run marker (services/item_actions.RUN_KIND) says happened.
+_BATCH_RUN_WORDS = {
+    "started": "started",
+    "finished": "finished",
+    "interrupted": "was cut off when Friday stopped (all, some or none of it may have happened)",
 }
 
 _LAST_FULL = [0.0]
@@ -176,6 +184,19 @@ def plain_line(e: dict) -> str:
         return "%s: %s (decision #%s)." % (rec.get("tool") or "an action", rec.get("status") or "done",
                                            rec.get("decision_seq") if rec.get("decision_seq") is not None
                                            else "none")
+    if k == "item_batch_run":
+        # counts and codes only: the marker never holds a name, a subject or a path
+        try:
+            n = int(rec.get("count") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        what = str(rec.get("domain") or "").replace("_", " ").strip()
+        size = (" (%d %s)" % (n, "item" if n == 1 else "items")) if n else ""
+        state = str(rec.get("state") or "")
+        said = _BATCH_RUN_WORDS.get(state, state.replace("_", " ") or "recorded")
+        if state == "finished" and rec.get("ok") is False:
+            said = "finished without going through"
+        return "Approved %schange%s %s." % ((what + " ") if what else "", size, said)
     if k == "archived":
         return "%s records up to %s moved to the encrypted archive (kept, not deleted)." % (
             rec.get("records"), rec.get("through"))

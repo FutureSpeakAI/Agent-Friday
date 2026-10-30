@@ -433,7 +433,8 @@ _RESULT = {"complete": "finished", "completed": "finished", "ok": "finished",
            "error": "failed", "timeout": "failed", "skipped": "skipped",
            "paused": "skipped", "running": "running", "interrupted": "stopped",
            "cancelled": "stopped", "completed_unverified": "unverified",
-           "waiting_approval": "waiting", "waiting_for_approval": "waiting"}
+           "waiting_approval": "waiting", "waiting_for_approval": "waiting",
+           "outcome_unknown": "outcome unknown"}
 
 
 def _sched_last(rec):
@@ -457,9 +458,11 @@ def _chain_last(st):
     state = st.get("state")
     status = {"completed": "finished", "failed": "failed", "running": "running",
               "completed_unverified": "unverified", "waiting_approval": "waiting",
-              "waiting_for_approval": "waiting", "queued": "running"}.get(state, "stopped")
+              "waiting_for_approval": "waiting", "queued": "running",
+              "outcome_unknown": "outcome unknown"}.get(state, "stopped")
     done = [s for s in steps if s.get("status") == "completed"]
-    bad = next((s for s in steps if s.get("status") in ("failed", "interrupted", "cancelled")), None)
+    bad = next((s for s in steps if s.get("status") in ("failed", "interrupted", "cancelled",
+                                                         "outcome_unknown")), None)
     if status in ("finished", "unverified"):
         summary = (steps[-1].get("result_tail") or "").strip() if steps else ""
     elif bad:

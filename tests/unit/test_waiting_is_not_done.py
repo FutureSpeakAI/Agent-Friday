@@ -134,7 +134,9 @@ def test_a_card_that_never_reports_back_does_not_keep_the_task_waiting_forever(t
         agent.TASKS[tid]["status"] = "waiting_approval"
     stale = dict(_card("approved"), consumed=True, used_detail={}, executing_at=_t.time() - 7200)
     _cards(monkeypatch, [stale])
-    assert agent.settle_waiting_task(tid) == "failed", "a run that never reported back is not waited on forever"
+    # not waited on forever, and never said to have failed: it may have happened (NS-34.16-4)
+    assert agent.settle_waiting_task(tid) == agent.OUTCOME_UNKNOWN, \
+        "a run that never reported back is not waited on forever"
     with agent.TASKS_LOCK:
         agent.TASKS[tid]["status"] = "waiting_approval"
     retried = dict(_card("approved"), consumed=True, used_detail={})    # used by the task's own retry

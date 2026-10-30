@@ -2269,6 +2269,63 @@ def _close_batch(decision_ref, rec, ok: bool) -> None:
         pass
 
 
+#: The action-ledger kind of an approved batch's run markers (NS-34.16-4): ``started`` is
+#: written (durably) before the batch can touch anything, ``finished`` when it ends either
+#: way, and ``interrupted`` when a later start finds a run that never finished
+#: (card_recovery.settle_interrupted_batches). Counts and codes only: never a name, a
+#: subject, an address or a path.
+RUN_KIND = "item_batch_run"
+#: Who a batch's card names as its user when the batch records its own end
+#: (``approvals.mark_used(..., END_ACTOR, ...)``). The governance checkpoint already
+#: burns the card (``used_at``, ``used_by`` the requester) when it allows the batch,
+#: BEFORE it runs, so ``used_at`` alone never means the batch ended: only this actor does
+#: (card_recovery.settle_interrupted_batches).
+END_ACTOR = "item_actions"
+#: What of the batch's decision a ``started`` marker keeps, so a later start can close it.
+_RUN_REF_KEYS = ("seq", "hash", "tool", "class", "decision", "action_id", "policy_version", "approval")
+
+
+def batch_count(detail: dict) -> int:
+    """How many things an approved batch changes (its ops, or the conversations it names)."""
+    detail = detail or {}
+    try:
+        if detail.get("count") is not None:
+            return max(0, int(detail.get("count")))
+    except (TypeError, ValueError):
+        pass
+    for k in ("ops", "thread_ids", "refs"):
+        v = detail.get(k)
+        if isinstance(v, (list, tuple)) and v:
+            return len(v)
+    return 0
+
+
+def _run_mark(state: str, run_id: str, approval_id: str | None, detail: dict,
+              decision_ref: dict | None = None, **extra) -> bool:
+    """Write one run marker; True when it was written. Never raises. A ``started`` marker
+    also records when this process started, so a later start can tell this process (still
+    running the batch) from a gone one that reused its pid."""
+    try:
+        from agent_friday.services import action_ledger
+        rec = {"run_id": run_id, "state": state, "approval_id": approval_id or "",
+               "domain": str((detail or {}).get("domain") or "")[:20],
+               "action": str((detail or {}).get("action") or "")[:20],
+               "count": batch_count(detail), "pid": os.getpid(), "at": time.time(), **extra}
+        if state == "started":
+            try:
+                from agent_friday.services import card_recovery
+                rec["pid_started"] = card_recovery.process_started()
+            except Exception:  # noqa: BLE001
+                rec["pid_started"] = None
+            if isinstance(decision_ref, dict):
+                rec["decision_ref"] = {k: decision_ref.get(k) for k in _RUN_REF_KEYS}
+        action_ledger.append(RUN_KIND, rec, durable=state == "started")
+        return True
+    except Exception as e:  # noqa: BLE001
+        _log.warning("approved batch: the %s marker could not be written (%s)", state, type(e).__name__)
+        return False
+
+
 def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = None) -> threading.Event:
     from agent_friday.governance import action_gate
     # the batch runs on its own thread: its result closes the decision, not a request
@@ -2278,6 +2335,34 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
         _RUNS[approval_id or ""] = {"event": ev, "receipt": None}
         for old in list(_RUNS)[:-100]:
             _RUNS.pop(old, None)
+    # On disk before anything can be touched: a process killed from here on leaves a run
+    # that started and never finished, which the next start finds and tells the owner about
+    # (card_recovery.settle_interrupted_batches). The card is already burned by the checkpoint
+    # that allowed the batch (used_at, used_by the requester); only the batch's own end names
+    # END_ACTOR as its user.
+    run_id = journal.new_id().replace("rcpt_", "brun_", 1)
+    if not _run_mark("started", run_id, approval_id, detail, decision_ref):
+        # Without its started marker a crash mid-batch could never be found and told: the
+        # batch does not start. Its decision closes failed, the card is spent, the owner is told.
+        text = ("You approved it, but Friday could not record that it was starting, so it did "
+                "not start. Nothing changed. Ask again to retry.")
+        _close_batch(decision_ref, None, False)
+        if approval_id:
+            try:
+                from agent_friday.services import approvals as ap
+                ap.mark_used(approval_id, END_ACTOR,
+                             {"ok": False, "error": "run marker not written", "summary": text})
+            except Exception:  # noqa: BLE001
+                pass
+        _post_back(detail.get("conversation_id"), text, approval_id)
+        _notify("Not done", text, "warning")
+        _tell_held(detail, "declined", card_id=approval_id or "")
+        with _RUNS_LOCK:
+            run = _RUNS.get(approval_id or "")
+            if run is not None:
+                run["receipt"] = {"status": "failed", "summary": text}
+        ev.set()
+        return ev
 
     def work():
         from agent_friday.services import approvals as ap
@@ -2294,7 +2379,10 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
             ok = False
         except BaseException:
             # the thread is being torn down (SystemExit, KeyboardInterrupt): its decision still
-            # closes, failed, and whoever waits on the run is let go; then it goes on as before
+            # closes, failed, and whoever waits on the run is let go; then it goes on as before.
+            # A crash (a kill, os._exit, power loss) never reaches here: it leaves only the
+            # started marker, which the next start judges interrupted.
+            _run_mark("finished", run_id, approval_id, detail, ok=False, end="torn_down")
             _close_batch(decision_ref, None, False)
             with _RUNS_LOCK:
                 run = _RUNS.get(approval_id or "")
@@ -2305,11 +2393,15 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
         _close_batch(decision_ref, rec, ok)
         if approval_id:
             try:
-                ap.mark_used(approval_id, "item_actions",
+                ap.mark_used(approval_id, END_ACTOR,
                              {"ok": ok, "receipt_id": (rec or {}).get("receipt_id"),
                               "summary": text[:300]})
             except Exception:
                 pass
+        # last: a process killed before this leaves a run a later start finds (its decision
+        # and card are already closed then, and are left as they are)
+        _run_mark("finished", run_id, approval_id, detail, ok=bool(ok),
+                  status=str((rec or {}).get("status") or ("complete" if ok else "failed"))[:20])
         _post_back(detail.get("conversation_id"), text, approval_id)
         _tell_call(detail.get("conversation_id"), rec, ok)
         _notify("Done" if ok else "Not done", text, "info" if ok else "warning")
@@ -2327,6 +2419,7 @@ def _start(detail: dict, approval_id: str | None, decision_ref: dict | None = No
     try:
         threading.Thread(target=work, name="item-batch", daemon=True).start()
     except BaseException:
+        _run_mark("finished", run_id, approval_id, detail, ok=False, end="not_started")
         action_gate.close_external(decision_ref, False, detail="batch_not_started")
         raise
     return ev
@@ -2379,7 +2472,7 @@ def _on_decision(record: dict) -> None:
     name = _action_name(detail.get("domain", ""), detail.get("action", ""))
     v = action_gate.authorize_external(name, detail, requested_by="owner approval", approval_id=aid)
     if v.action != "allow":
-        ap.mark_used(aid, "item_actions", {"ok": False, "error": v.reason})
+        ap.mark_used(aid, END_ACTOR, {"ok": False, "error": v.reason})
         _post_back(detail.get("conversation_id"),
                    "You approved it, but Friday's governance check held it: %s. Nothing changed." % v.reason,
                    aid)
