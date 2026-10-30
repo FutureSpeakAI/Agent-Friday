@@ -555,3 +555,48 @@ def run_nightly(should_stop: Optional[Callable[[], bool]] = None, now: Optional[
     path = write(rep)
     return {"written": path.name, "heads": len(rep["heads"]), "rows": rep["rows"],
             "shortfall_s": rep["shortfall_s"], "seconds": round(time.time() - t0, 2)}
+
+
+# --------------------------------------------------------------------------
+#  Settings > Laya: the report card's decision-head rows
+# --------------------------------------------------------------------------
+
+#: Plain names for the report card. A head this table does not name shows its id.
+HEAD_NAMES = {
+    "triage.mail": "Mail lanes", "triage.news": "News value", "triage.notify": "Notification flag",
+    "triage.memory": "Memory proposals", "evidence.sufficient": "Is the found memory enough?",
+    "evidence.holds": "Does a passage hold the answer?", "evidence.supports": "Does a source support its sentence?",
+    "loop.no_progress": "Is a task stuck?",
+}
+
+
+def report_card() -> dict:
+    """One row per decision head for Settings > Laya: its mode and version, and
+    what the latest nightly report found (shipped thresholds). Read-only: it
+    reads the head files and the newest report, runs nothing, and holds counts
+    only. ``night`` is None before the first report."""
+    from agent_friday.services import decision_heads
+    reports = _nightly_reports()
+    latest = max(reports, key=lambda r: r.get("night", "")) if reports else None
+    heads = (latest or {}).get("heads") or {}
+    rows = []
+    for st in decision_heads.status():
+        hid = st.get("id")
+        h = heads.get(hid) if isinstance(heads.get(hid), dict) else {}
+        s = ((h.get("by_set") or {}).get("shipped") or {}) if h else {}
+        v = s.get("verdict") or {}
+        rows.append({
+            "id": hid, "name": HEAD_NAMES.get(hid, hid), "mode": st.get("mode"), "source": st.get("source"),
+            "tag": st.get("tag"), "usable": bool(st.get("usable")), "problem": st.get("problem") or "",
+            "decisions": h.get("n") if h else None, "take_rate": s.get("take_rate"),
+            "pass": v.get("pass"), "fail": v.get("fail"), "uncertain": v.get("uncertain"),
+            "miss": s.get("miss"), "wrong": s.get("wrong"), "ece": s.get("ece"),
+            "p95_ms": ((h.get("latency_ms") or {}).get("p95") if h else None),
+            "drift": ((h.get("drift") or {}).get("take_rate_vs_week") if h else None),
+            "drift_flag": bool((h.get("drift") or {}).get("flag")) if h else False,
+        })
+    return {"night": (latest or {}).get("night"), "shortfall_s": (latest or {}).get("shortfall_s") or 0,
+            "rows": rows,
+            "note": ("Every decision the heads made since the last night's report, replayed on this PC from the "
+                     "labels and scores they logged. Counts only. Pass and fail need a right answer you gave "
+                     "(a correction or a confirmation); without one a decision is uncertain.")}
