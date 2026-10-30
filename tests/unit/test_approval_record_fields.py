@@ -1,8 +1,8 @@
 """An approval record carries what it authorises as a fingerprint, where it stands (including
 revoked and consumed), and which device decided it (NS-30.11-1).
 
-Before: a card had no action fingerprint, so one whose payload was changed on disk after the owner
-approved it could still be spent on the changed action; "revoked" and "consumed" were not states a
+Before: a card had no action fingerprint, so one whose payload was changed outside the approvals
+module after the owner approved it (a bug, a stray edit) could still be spent on the changed action; "revoked" and "consumed" were not states a
 reader could see; and nothing said from where a decision came. Synthetic cards only.
 """
 from __future__ import annotations
@@ -55,17 +55,17 @@ def test_the_lifecycle_says_consumed_and_revoked():
     used = _card()
     approvals.decide(used, "approve")
     assert approvals.spend_once(used, "synthetic")
-    assert approvals.get_approval(used)["lifecycle"] == "consumed"
+    assert approvals.get_approval(used).get("lifecycle") == "consumed"
     taken = _card(tool="synthetic", input={"b": 1})
     approvals.decide(taken, "approve")
     approvals.withdraw_unused_approved(by="authority", note="revoked")
-    assert approvals.get_approval(taken)["lifecycle"] == "revoked"
-    assert {r["approval_id"]: r["lifecycle"] for r in approvals.list_approvals()}[used] == "consumed"
+    assert approvals.get_approval(taken).get("lifecycle") == "revoked"
+    assert {r["approval_id"]: r.get("lifecycle") for r in approvals.list_approvals()}[used] == "consumed"
 
 
 def test_the_record_says_which_device_decided():
     aid = _card()
     approvals.decide(aid, "deny")
     assert approvals.get_approval(aid).get("decided_device")
-    assert approvals.decided_device("sms") == "owner_phone"
+    assert approvals.decided_device("text_message") == "owner_phone"
     assert approvals.decided_device("desktop_press") == "this_pc"

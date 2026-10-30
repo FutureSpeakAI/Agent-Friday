@@ -332,12 +332,20 @@ _RECEIPT_KEYS = ("approval_id", "kind", "subject_type", "policy_class", "gated",
 # ── The record's own identity, its lifecycle and who decided it, from where (NS-30.11-1) ─────────
 
 def _action_fp(rec: Dict[str, Any]) -> str:
-    """What the card authorises, as one digest: its kind, subject and payload. Written when the
-    card is made (and again when this module itself changes the payload); a card whose payload no
-    longer matches it was changed outside this module and is never spent."""
+    """What the card authorises, as one digest: its kind, subject and payload, in the form the
+    store keeps them (so a value that changes shape on disk, an int key or a tuple, digests the
+    same). Written when the card is made, and again when this module itself changes the payload.
+    A card whose payload no longer matches was changed outside this module (a bug, a stray edit):
+    it is never spent. This is a consistency check, not a seal: someone who can edit Friday's
+    folder can also rewrite the digest; the signed action ledger is what records each decision."""
     import hashlib
-    blob = json.dumps({"k": rec.get("kind"), "t": rec.get("subject_type"), "s": rec.get("subject_id"),
-                       "p": rec.get("payload") or {}}, sort_keys=True, default=str)
+    try:
+        body = json.loads(json.dumps({"k": rec.get("kind"), "t": rec.get("subject_type"),
+                                      "s": rec.get("subject_id"), "p": rec.get("payload") or {}},
+                                     default=str))
+        blob = json.dumps(body, sort_keys=True)
+    except Exception:
+        blob = repr((rec.get("kind"), rec.get("subject_type"), rec.get("subject_id")))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:32]
 
 
@@ -349,7 +357,10 @@ def fingerprint_holds(rec: Dict[str, Any]) -> bool:
 
 #: Where a decision was made, from its channel (decided_source).
 _DEVICE_OF_SOURCE = {"desktop_press": "this_pc", "typed": "this_pc", "voice": "this_pc",
-                     "chat": "this_pc", "owner": "this_pc", "sms": "owner_phone", "text": "owner_phone",
+                     "chat": "this_pc", "owner": "this_pc", "page_on_this_pc": "this_pc",
+                     "local_program": "this_pc", "in_process": "friday",
+                     "page_not_on_this_pc": "another_device", "page_without_desk_key": "another_device",
+                     "text_message": "owner_phone", "sms": "owner_phone", "text": "owner_phone",
                      "google_tasks_tick": "google_tasks", "standing_grant": "pre_approved_in_settings",
                      "auto_policy": "policy", "law1_block": "policy", "system": "friday"}
 
@@ -951,7 +962,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
         rec["decided_source"] = source
-        rec["decided_device"] = decided_device(source)
+        rec["decided_device"] = ("another_device" if source == "voice" and voice_off_this_desk()
+                                 else decided_device(source))
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
@@ -1169,6 +1181,7 @@ def expire_matching(match, by: str, note: str = "") -> int:
                     r["decided_at"] = time.time()
                     r["decided_by"] = by
                     r["decided_source"] = "system"
+                    r["decided_device"] = decided_device("system")
                     r["decision_note"] = note
                     expired.append(dict(r))
         if expired:
@@ -1209,6 +1222,7 @@ def _expire_due(now: float, notify: bool = True) -> List[Dict[str, Any]]:
                 r["decided_at"] = now
                 r["decided_by"] = "system:expiry"
                 r["decided_source"] = "system"
+                r["decided_device"] = decided_device("system")
                 expired.append(dict(r))
         if expired:
             _write_store(recs)
