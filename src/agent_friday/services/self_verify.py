@@ -13,10 +13,21 @@ network:
 * credential_store: a secret can be written and read back;
 * vault: the vault's settings file reads;
 * authority: the owner's authority switch (the kill switch for outward
-  actions) can be read.
+  actions) can be read;
+* update_signatures: the minisign verifier passes a known-answer test (a key
+  made for the check, never a release key; both signature kinds), every
+  configured trusted key reads, and once a release key exists an unsigned
+  release is refused. update_check's own manifest rules (name, version,
+  expiry, downgrade) are not re-checked here; their tests cover them;
+* sandbox: the network-blocking names are still in the Python sandbox's
+  start-up code (checked as text: running it here would block Friday's own
+  network), the host backend is still classed outward and an unknown backend
+  forbidden, and the Python sandbox's environment holds only allowlisted
+  variable names and dead proxies. The shell sandbox's environment is not
+  checked here.
 
-What it does not cover yet, said so the gap stays visible: update signatures,
-connector domains, the sandbox and principal invariants.
+What it does not cover yet, said so the gap stays visible: connector domains
+and principal invariants.
 
 A problem goes out through services/integrity_report (the log, /api/health
 under data_integrity, and one Needs-you card per safeguard, raised again if it
@@ -32,7 +43,7 @@ from typing import Callable
 INTERVAL_S = 6 * 3600
 RETRY_S = 600                            # sooner while something failed, so a fix is seen
 FIRST_DELAY_S = 60.0
-NOT_COVERED = ("update_signatures", "connector_domains", "sandbox", "principal_invariants")
+NOT_COVERED = ("connector_domains", "principal_invariants")
 
 #: Doctor states that mean the safeguard is not doing its job.
 BAD = {"broken", "misconfigured"}
@@ -55,6 +66,106 @@ def _credential_store() -> tuple:
     return "broken", "round_trip_failed"
 
 
+def _minisign_pair():
+    """(public key text, sign(data, comment) -> signature text) for a key made
+    now and thrown away: the check never touches a real signing key."""
+    import base64
+    import hashlib
+    import os
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    sk = Ed25519PrivateKey.generate()
+    pk = sk.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    kid = os.urandom(8)
+    pub = "untrusted comment: self-check key\n" + base64.b64encode(b"Ed" + kid + pk).decode()
+
+    def sign(data: bytes, comment: str, alg: bytes = b"ED") -> str:
+        signed = hashlib.blake2b(data, digest_size=64).digest() if alg == b"ED" else data
+        sig = sk.sign(signed)
+        gsig = sk.sign(sig + comment.encode("utf-8"))
+        return "\n".join(["untrusted comment: self-check", base64.b64encode(alg + kid + sig).decode(),
+                          "trusted comment: " + comment, base64.b64encode(gsig).decode()])
+    return pub, sign
+
+
+def _update_signatures() -> tuple:
+    from agent_friday.services import minisign, trust_keys
+    for k in tuple(trust_keys.RELEASE_KEYS) + tuple(trust_keys.PUBLIC_LIST_KEYS):
+        try:
+            minisign.parse_public_key(k)
+        except minisign.SignatureError:
+            return "broken", "trusted_key_unreadable"
+    if trust_keys.RELEASE_KEYS:
+        from agent_friday.services import update_check
+        if not {"unsigned", "unreachable"} <= set(update_check.refused_states()):
+            return "broken", "unsigned_release_not_refused"
+    pub, sign = _minisign_pair()
+    _other, sign_other = _minisign_pair()
+    body = b"friday self-check"
+    for alg in (b"Ed", b"ED"):                                  # plain and prehashed (minisign's default)
+        sig = sign(body, "name=self-check", alg)
+        try:
+            minisign.verify(body, sig, [pub])
+        except minisign.SignatureError:
+            return "broken", "good_signature_refused"
+        try:
+            minisign.verify(body + b"!", sig, [pub])
+        except minisign.SignatureError:
+            continue
+        return "broken", "bad_signature_accepted"
+    good = sign(body, "name=self-check")
+    lines = good.split("\n")
+    forged_comment = "\n".join(lines[:2] + ["trusted comment: name=agent-friday-release"] + lines[3:])
+    for data, sig, keys in ((body + b"!", good, [pub]),                  # a changed file
+                            (body, forged_comment, [pub]),               # a changed trusted comment
+                            (body, sign_other(body, "name=self-check"), [pub]),   # someone else's key
+                            (body, good, [])):                           # nobody's key
+        try:
+            minisign.verify(data, sig, keys)
+        except minisign.SignatureError:
+            continue
+        return "broken", "bad_signature_accepted"
+    return "healthy", "verifier_ok"
+
+
+#: The names the code sandbox's start-up code must replace to block the network.
+SANDBOX_BLOCKS = ("socket", "create_connection", "getaddrinfo", "create_server", "socketpair")
+
+
+#: Every variable the Python sandbox's environment may hold: code_sandbox.
+#: _clean_env builds it from nothing, so anything else came from Friday's own
+#: environment (where secrets live). A variable added there must be added here.
+SANDBOX_ENV = frozenset({
+    "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "TMPDIR",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy",
+    "NO_PROXY", "no_proxy", "PYTHONIOENCODING", "FRIDAY_SANDBOX", "SystemRoot", "windir", "PATH", "LANG"})
+
+
+def _sandbox() -> tuple:
+    import os
+    from pathlib import Path
+
+    from agent_friday.services import code_sandbox as cs
+    boot = cs._BOOT
+    compile(boot, "<sandbox boot>", "exec")
+    if any('"%s"' % n not in boot for n in SANDBOX_BLOCKS) \
+            or not all(t in boot for t in ("_no_network", "setattr(_m, _n, _no_network)", "_ss")):
+        return "broken", "network_block_missing"
+    if cs.classify({"backend": "host"})[0] != cs.OUTWARD:
+        return "broken", "host_backend_not_outward"
+    if cs.classify({"backend": "self-check-unknown"})[0] != cs.FORBIDDEN:
+        return "broken", "unknown_backend_allowed"
+    env = cs._clean_env(Path(os.sep) / "friday-self-check")
+    if set(env) - SANDBOX_ENV:
+        return "broken", "environment_inherited"
+    if any(env.get(k) != cs.DEAD_PROXY for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                                                  "http_proxy", "https_proxy", "all_proxy")) \
+            or env.get("NO_PROXY", "") or env.get("no_proxy", ""):
+        return "broken", "proxy_not_dead"
+    return "healthy", "sandbox_rules_ok"
+
+
 def _key_present() -> bool:
     """Whether a governance key exists, without creating one."""
     try:
@@ -72,6 +183,9 @@ CHECKS = (
     ("credential_store", _credential_store, "Friday cannot write and read back a secret in its credential store."),
     ("vault", _doctor("_c_vault"), "The vault's settings file cannot be read."),
     ("authority", _doctor("_c_authority"), "The owner's authority switch cannot be read."),
+    ("update_signatures", _update_signatures,
+     "The signature verifier that update checks use no longer tells a good signature from a bad one."),
+    ("sandbox", _sandbox, "The Python sandbox's own rules (its network block, its clean environment) are not intact."),
 )
 
 
