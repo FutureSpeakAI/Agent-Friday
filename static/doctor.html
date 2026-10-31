@@ -39,6 +39,25 @@
   <p id="safe-note" role="status"></p>
 </section>
 
+<section id="diagnostic" aria-labelledby="diag-h">
+  <h2 id="diag-h">Diagnostic start</h2>
+  <p class="muted">To find out why Friday will not start or misbehaves, choose a diagnostic start below and restart Friday, or run <code>friday diagnose</code>. That one start is in safe mode, records how far the start got and when, and saves a Doctor report with it in the diagnostics folder. It holds no content and is never sent. The start after it is as it would have been.</p>
+  <p id="diag-state" role="status">Checking...</p>
+  <button id="diag-next" type="button">Make the next start a diagnostic start</button>
+  <button id="diag-cancel" type="button" hidden>Cancel the diagnostic start</button>
+  <p id="diag-note" role="status"></p>
+  <pre id="diag-out" hidden></pre>
+</section>
+
+<section id="afterupgrade" aria-labelledby="au-h">
+  <h2 id="au-h">After an upgrade or a restore</h2>
+  <p class="muted">Things an upgrade or a restore could not sort out on its own, with what to do, and the search indexes Friday rebuilds from your data afterwards. An item stays here until you mark it sorted.</p>
+  <p id="au-state" role="status">Checking...</p>
+  <ul id="au-items"></ul>
+  <ul id="au-rebuilds"></ul>
+  <p id="au-note" role="status"></p>
+</section>
+
 <section id="capabilities" aria-labelledby="caps-h">
   <h2 id="caps-h">What Friday can do right now</h2>
   <p>Read live. <strong>Off</strong> means a setting, a choice of yours or this PC keeps something off: nothing is wrong. <strong>Needs attention</strong> means something is wrong, with what to do.</p>
@@ -47,14 +66,22 @@
 <section id="restore" aria-labelledby="restore-h" hidden>
   <h2 id="restore-h">After a restore</h2>
   <p id="restore-why" role="status"></p>
-  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC.</p>
+  <ul id="restore-left"></ul>
+  <p>Check that your services are connected again (Settings, Connect your services), then let Friday act again on this PC. Resume waits until this PC holds Friday's governance key and every channel and the phone line, where switched on, is connected again or switched off.</p>
+  <button id="restore-check" type="button">Check again</button>
   <button id="resume" type="button">Resume outward actions</button>
   <p id="restore-note" role="status"></p>
 </section>
 
-<section aria-labelledby="bundle-h">
+<section id="bundle" aria-labelledby="bundle-h">
   <h2 id="bundle-h">Backup: Friday Bundle</h2>
   <p>One encrypted file with your memory, vault, settings, skills, workspaces, receipts and conversations. Service sign-ins are not included; you reconnect them after a restore. It is saved in Documents, Friday Bundles. Without the passphrase it cannot be opened, by anyone.</p>
+  <h3>Who can read what</h3>
+  <ul id="bundle-protection">
+    <li>On this PC, Friday's data folder is protected by your Windows account: anyone who can sign in as you can read all of it, including the vault and Friday's sign-ins, because Friday keeps the keys that open them under your account so she can start on her own. An administrator of this PC can read it too.</li>
+    <li>A Friday Bundle is protected by its passphrase instead: wherever the file goes (a USB drive, a cloud folder, another PC), no one can open it without the passphrase, not even someone signed in as you. Without it, only the bundle's date, the Friday version and which kinds of data it holds can be seen.</li>
+    <li>Scheduled bundles keep their passphrase in this Windows account's credential store so they can be made while you are away: anyone who can sign in as you can open those.</li>
+  </ul>
   <label>Passphrase (four or five unrelated words work well) <input id="bp1" type="password" autocomplete="new-password"></label>
   <span class="meter" id="bp1-meter" role="status" aria-live="polite"></span><br>
   <label>Type it again <input id="bp2" type="password" autocomplete="new-password"></label><br>
@@ -200,11 +227,75 @@
   const $ = id => document.getElementById(id);
   const text = (el, s) => { el.textContent = s; };
 
+  function diagState() {
+    api('/api/doctor/diagnostic').then(({ d }) => {
+      if (!d || d.status !== 'ok') { text($('diag-state'), 'The diagnostic report could not be read.'); return; }
+      const r = d.report;
+      $('diag-next').hidden = !!d.next_start;
+      $('diag-cancel').hidden = !d.next_start;
+      const now = (d.active ? 'This is a diagnostic start. ' : '') + (d.next_start ? 'The next start will be a diagnostic start. ' : '');
+      if (!r || (d.active && !d.this_run)) {
+        text($('diag-state'), now + (d.active ? 'Its report is being made; reload in a moment.' : 'No diagnostic start has been run.')
+             + (r ? ' The newest report below is from an earlier start.' : ''));
+        if (!r) return;
+      } else {
+        text($('diag-state'), now + 'Newest diagnostic report: ' + r.id + ' (' + r.generated_at + ').');
+      }
+      text($('diag-out'), d.text || '');
+      $('diag-out').hidden = false;
+    }).catch(() => text($('diag-state'), 'The diagnostic report could not be read.'));
+  }
+
+  function afterUpgrade() {
+    api('/api/doctor/after-upgrade').then(({ d }) => {
+      if (!d || d.status !== 'ok') { text($('au-state'), 'The list could not be read.'); return; }
+      const items = d.items || [];
+      const rb = d.rebuild || {};
+      const waiting = (rb.waiting || []).map(w => w.label);
+      text($('au-state'), (items.length ? items.length + ' thing(s) to look at.' : 'Nothing to look at.')
+           + (waiting.length ? ' Waiting to be rebuilt: ' + waiting.join(', ') + '.' : '')
+           + (rb.restore_waiting ? ' A restore asked for the indexes to be rebuilt.' : ''));
+      const ul = $('au-items'); ul.textContent = '';
+      items.forEach(it => {
+        const li = document.createElement('li');
+        const p = document.createElement('span');
+        p.textContent = it.said + (it.todo ? ' ' + it.todo : '') + (it.count > 1 ? ' (' + it.count + ' times)' : '');
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Mark as sorted';
+        b.addEventListener('click', () => api('/api/doctor/after-upgrade/' + encodeURIComponent(it.id) + '/sorted', { method: 'POST', body: '{}' })
+          .then(({ ok, d: r }) => { text($('au-note'), ok ? 'Marked as sorted.' : (r.error || 'That did not work.')); afterUpgrade(); }));
+        li.appendChild(p); li.appendChild(document.createTextNode(' ')); li.appendChild(b); ul.appendChild(li);
+      });
+      const rl = $('au-rebuilds'); rl.textContent = '';
+      Object.keys(rb.indexes || {}).forEach(ix => {
+        const last = (rb.results || []).find(r => r.index === ix);
+        const li = document.createElement('li');
+        const s = document.createElement('span');
+        s.textContent = rb.indexes[ix] + ': ' + (last ? (last.ok ? 'rebuilt' : 'rebuild failed (' + (last.error || '') + ')') + ' ' + new Date(last.at * 1000).toLocaleString() : 'not rebuilt by an upgrade or restore');
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Rebuild now';
+        b.addEventListener('click', () => api('/api/doctor/rebuild', { method: 'POST', body: JSON.stringify({ index: ix }) })
+          .then(({ ok, d: r }) => { text($('au-note'), ok ? 'Rebuilding ' + rb.indexes[ix] + ' in the background.' : (r.error || 'That did not work.')); }));
+        li.appendChild(s); li.appendChild(document.createTextNode(' ')); li.appendChild(b); rl.appendChild(li);
+      });
+    }).catch(() => text($('au-state'), 'The list could not be read.'));
+  }
+
+  function diagNext(on) {
+    api('/api/doctor/diagnostic', { method: 'POST', body: JSON.stringify({ next_start: on }) }).then(({ ok, d }) => {
+      text($('diag-note'), ok ? (d.next_start ? 'Restart Friday for the diagnostic start.' : 'The next start will not be a diagnostic start.')
+                              : (d.error || 'That did not work.'));
+      diagState();
+    });
+  }
+  $('diag-next').addEventListener('click', () => diagNext(true));
+  $('diag-cancel').addEventListener('click', () => diagNext(false));
+
   function safeState() {
     api('/api/safe-mode').then(({ d }) => {
       const now = d.active ? 'This run is in safe mode (' + (d.why || '') + '): extensions and the cloud are off, schedules are paused, outward actions are held.'
                            : 'This run is a normal start.';
-      const next = d.next_start_safe ? ' The next start will be in safe mode.' : ' The next start will be normal.';
+      const next = d.reason === 'migration_failed'
+        ? ' An upgrade step failed, so Friday stays in safe mode until you press "Leave safe mode at the next start" here.'
+        : (d.next_start_safe ? ' The next start will be in safe mode.' : ' The next start will be normal.');
       text($('safe-state'), now + next);
       $('safe').className = d.active ? 'safe' : '';
     });
@@ -305,6 +396,31 @@
     t.appendChild(head);
     (rep.checks || []).forEach(c => t.appendChild(row(c)));
     out.appendChild(t);
+    // the deterministic repairs each not-healthy check offers (services/doctor_repairs)
+    const reps = rep.repairs && !rep.repairs.error ? Object.keys(rep.repairs).sort() : [];
+    if (reps.length) {
+      const h3 = document.createElement('h3'); h3.textContent = 'Repairs offered (none needs a model)'; out.appendChild(h3);
+      const ul = document.createElement('ul'); ul.id = 'repairs';
+      reps.forEach(cid => (rep.repairs[cid] || []).forEach(r => {
+        const li = document.createElement('li');
+        li.appendChild(document.createTextNode(cid + ': '));
+        if (typeof r.where === 'string' && /^#[a-z]+$/.test(r.where)) {
+          const a = document.createElement('a'); a.href = r.where; a.textContent = r.label; li.appendChild(a);
+        } else {
+          li.appendChild(document.createTextNode(r.label));
+        }
+        if (r.flow && typeof r.flow === 'object') {     // §28.1-2: what it does at each step
+          const steps = document.createElement('ul'); steps.className = 'repair-flow';
+          ['preview', 'backup', 'verify', 'rollback', 'receipt'].forEach(st => {
+            if (typeof r.flow[st] !== 'string') return;
+            const s = document.createElement('li'); s.textContent = st + ': ' + r.flow[st]; steps.appendChild(s);
+          });
+          li.appendChild(steps);
+        }
+        ul.appendChild(li);
+      }));
+      out.appendChild(ul);
+    }
     const pre = document.createElement('pre'); pre.textContent = txt || ''; out.appendChild(pre);
     const f = $('files'); f.textContent = '';
     ['txt', 'json'].forEach(k => {
@@ -410,14 +526,15 @@
         (u.entries ? ' ' + u.entries + ' other entries in the folder (' + size(u.bytes) + ') are not Friday stores.' : ''));
       const tb = document.createElement('table');
       const head = document.createElement('tr');
-      ['store', 'version', 'size', 'files', 'where (in the data folder)', 'kind'].forEach(h => {
+      ['store', 'version', 'size', 'files', 'where (in the data folder)', 'kind', 'protection', 'backup'].forEach(h => {
         const th = document.createElement('th'); th.textContent = h; head.appendChild(th);
       });
       tb.appendChild(head);
       kept.concat(rows.filter(r => r.durable === false)).forEach(r => {
         const tr = document.createElement('tr');
+        const pol = (d.policies || {})[r.store] || {};
         [r.store, r.version, size(r.bytes) + (r.at_least ? ' or more' : ''), r.files, r.location,
-         r.durable === false ? r.format + ' (not durable)' : r.format].forEach(v => {
+         r.durable === false ? r.format + ' (not durable)' : r.format, pol.encryption, pol.backup].forEach(v => {
           const td = document.createElement('td'); td.textContent = v == null ? '' : String(v); tr.appendChild(td);
         });
         tb.appendChild(tr);
@@ -448,8 +565,12 @@
     api('/api/restore/state').then(({ d }) => {
       $('restore').hidden = !d.held;
       text($('restore-why'), d.why || '');
+      const ul = $('restore-left'); ul.textContent = '';
+      (d.blockers || []).forEach(b => { const li = document.createElement('li'); li.textContent = b.said; ul.appendChild(li); });
+      $('resume').disabled = (d.blockers || []).length > 0;
     });
   }
+  $('restore-check').addEventListener('click', () => restoreState());
   $('resume').addEventListener('click', () => {
     api('/api/restore/resume', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
       text($('restore-note'), ok ? 'Friday may act again on this PC.' : (d.error || 'Not resumed.'));
@@ -587,7 +708,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); history(); stores(); knownIssues(); localModel(); safetyMetrics();
+  safeState(); diagState(); afterUpgrade(); history(); stores(); knownIssues(); localModel(); safetyMetrics();
 })();
 </script>
 </body>
