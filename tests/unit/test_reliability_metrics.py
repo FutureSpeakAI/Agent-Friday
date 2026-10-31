@@ -219,10 +219,10 @@ def _always_recorder(name, decision, ctx):
     from agent_friday.governance import action_gate as gate
     done = []
 
-    def _write(status, detail=""):
+    def _write(status, detail="", outcome=None):
         if not done:
             done.append(status)
-            gate.record_outcome(name, decision, status, detail=detail)
+            gate.record_outcome(name, decision, status, detail=detail, outcome=outcome)
     return _write
 
 

@@ -118,6 +118,13 @@ def _classify(rec: dict) -> str:
     """success | failure | provider | owner | not_attempted"""
     status = str(rec.get("status") or "")
     detail = str(rec.get("detail") or "")
+    # The outcome word Friday put on a call that returned (action_gate.record_outcome):
+    # a line of her own saying it was not done is not a success.
+    outcome = str(rec.get("outcome") or "")
+    if outcome == "failed":
+        return "failure"
+    if outcome in ("denied", "approval_required", "forbidden", "waiting"):
+        return "not_attempted"
     if status == "ok":
         return "success"
     if status in ("refused", "held"):

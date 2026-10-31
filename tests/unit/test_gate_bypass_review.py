@@ -76,7 +76,8 @@ STILL_READ_ONLY = [
     "git tag -l v1.*",
     "git remote -v",
     "gci $env:USERPROFILE",
-    r"gci $env:TEMP\logs",
+    # (a $env: path is then judged by the file tools' path policy, so a folder
+    # such as %TEMP% outside the folders Friday may use goes to a card)
     "Get-Content notes.txt | Select-String -Pattern 'needle'",
     "git log -C --stat",
     "git diff -M -C --name-only",

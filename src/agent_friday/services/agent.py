@@ -14955,8 +14955,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         # was not done (its own card, a refusal) labels the outcome. A connector's
         # reply is never read for it. Labelling never raises after the action ran.
         try:
-            _st_now = _tool_call_status(result)
             _label = _handler_outcome(name, result)
+            _st_now = _tool_call_status(result) if _result_is_fridays(name, result) else "ok"
             if _st_now == "pending":
                 _outcome("held", "waiting_for_card", _label)
             elif _st_now == "deny":
