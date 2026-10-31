@@ -222,6 +222,20 @@ class KnowledgeGraphStore:
                 name, verdict)
             return {"public": 0, "sensitive": 0, "dropped": 0, "refused": verdict}
 
+        # BD-16: a plain file that does not parse read as empty; writing now would replace
+        # what it held with only what this save carries. It is kept aside first.
+        try:
+            from agent_friday.services import memory_store_repair as _msr
+            if _msr.plain_damaged(self._plain_path(name)):
+                _msr.keep_aside(self._plain_path(name))
+        except OSError as e:
+            self.refusals += 1
+            self.refused.append({"artifact": name, "reason": "damaged_file_not_kept"})
+            import logging
+            logging.getLogger("friday.knowledge_graph").error(
+                "knowledge graph: %s is damaged and could not be kept aside (%s); nothing "
+                "was written", name, type(e).__name__)
+            return {"public": 0, "sensitive": 0, "dropped": 0, "refused": "damaged_file_not_kept"}
         self._atomic_write(self._plain_path(name),
                            json.dumps(public, ensure_ascii=False, indent=1).encode("utf-8"))
 
@@ -253,8 +267,13 @@ class KnowledgeGraphStore:
         if p.exists():
             try:
                 out.extend(json.loads(p.read_text(encoding="utf-8")) or [])
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as e:
+                # BD-16: said, not silent (recall health and the Doctor's knowledge_graph check).
+                try:
+                    from agent_friday.services import recall_health
+                    recall_health.note_failure("knowledge_graph", e)
+                except Exception:
+                    pass
         sp = self._sensitive_path(name)
         LOAD_VERDICT.pop(str(sp), None)
         if sp.exists():
@@ -513,7 +532,15 @@ class KnowledgeGraphManifest:
             **fp,
         }
 
-    def forget(self, source: str | Path) -> None:
+    def forget(self, source: str | Path, scrub: bool = True) -> None:
+        if scrub:
+            try:
+                # BD-16: what is forgotten must not survive in a kept damaged copy (or in a
+                # damaged file no one can read record by record).
+                from agent_friday.services import memory_store_repair as _msr
+                _msr.drop_kept_copies(self.path.parent, why="forget", damaged_live=True)
+            except Exception:
+                pass
         self.sources.pop(canonical(source), None)
 
     def delta(self, paths: Iterable[str | Path]) -> dict:

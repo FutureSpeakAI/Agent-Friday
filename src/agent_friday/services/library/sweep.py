@@ -131,6 +131,20 @@ def _conversations(fp) -> int:
 
 
 def _memory_index(fp) -> tuple[int, str | None]:
+    """A conversation-memory rebuild that overlaps this purge is abandoned (its copy may hold the
+    words being removed)."""
+    try:
+        from agent_friday.conversation_memory import end_rewrite, note_rewrite
+    except Exception:
+        return _memory_index_rows(fp)
+    note_rewrite()
+    try:
+        return _memory_index_rows(fp)
+    finally:
+        end_rewrite()
+
+
+def _memory_index_rows(fp) -> tuple[int, str | None]:
     """The conversation memory's search index: replies are rewritten in place.
     Returns (records changed, why it could not be swept or None)."""
     n = 0
