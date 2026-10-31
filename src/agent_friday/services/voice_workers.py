@@ -731,6 +731,10 @@ class VoiceWorker:
                 pass
 
     def transcribe(self, pcm: bytes) -> str:
+        return self.transcribe_heard(pcm)[0]
+
+    def transcribe_heard(self, pcm: bytes) -> tuple:
+        """The words, and how sure the worker's ear was of them (0 to 1, or None)."""
         self._touch()
         with self._io:
             if not self.alive():
@@ -742,7 +746,8 @@ class VoiceWorker:
             reply = json.loads(payload.decode("utf-8"))
         if reply.get("error"):
             raise RuntimeError(reply.get("detail") or reply["error"])
-        return str(reply.get("text") or "")
+        conf = reply.get("confidence")
+        return str(reply.get("text") or ""), (conf if isinstance(conf, (int, float)) else None)
 
     def synth_stream(self, text: str, cancel: threading.Event | None = None):
         """Yield PCM16 24 kHz chunks as the child produces them."""
@@ -950,7 +955,10 @@ class CpuWhisperEar(EarEngine):
         self._asr.load(progress=progress)
 
     def transcribe(self, pcm16_16k: bytes) -> str:
-        return self._asr.transcribe(pcm16_16k)
+        out = self._asr.transcribe(pcm16_16k)
+        # How sure this ear was of these words (north star 22.2-6); the voice session reads it next.
+        self.last_confidence = getattr(self._asr, "last_confidence", None)
+        return out
 
     def describe(self) -> dict:
         return {"engine": self.name, "device": "cpu", "model": self.model}
@@ -966,7 +974,13 @@ class WorkerEar(EarEngine):
     def __init__(self, worker: VoiceWorker):
         self.worker = worker
 
+    last_confidence = None
+
     def transcribe(self, pcm16_16k: bytes) -> str:
+        if hasattr(self.worker, "transcribe_heard"):
+            text, self.last_confidence = self.worker.transcribe_heard(pcm16_16k)
+            return text
+        self.last_confidence = None
         return self.worker.transcribe(pcm16_16k)
 
     def describe(self) -> dict:
