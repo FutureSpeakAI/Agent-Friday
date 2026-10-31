@@ -1048,6 +1048,10 @@ class BrowserSession:
     # -- operations (worker thread) --
 
     def op_open(self, url: str) -> dict:
+        from agent_friday.services.cloud_intent import outbound_held
+        _held = outbound_held("web_fetch", "browser open")      # A16a
+        if _held:
+            raise BrowserRefused(f"not opened: {_held}")
         ok, why = self.url_allowed(url, navigation=True)
         if not ok:
             raise BrowserRefused(f"not opened: {why}")
@@ -1281,13 +1285,20 @@ class BrowserSession:
             return {"submitted": False, "status": "refused" if v.action == "deny" else
                     "waiting_for_approval", "reason": v.reason, "card": body,
                     "approval_id": _pending_card_id(ACTION_SUBMIT, detail)}
-        loc = self._locator(i, nonce)
-        self._cursor_action("submit", locator=loc)
-        self._guard()
-        if how == "enter":
-            loc.press("Enter")
-        else:
-            loc.click(timeout=ACTION_TIMEOUT_MS)
+        ref = action_gate.decision_ref_of(v)
+        try:
+            loc = self._locator(i, nonce)
+            self._cursor_action("submit", locator=loc)
+            self._guard()
+            if how == "enter":
+                loc.press("Enter")
+            else:
+                loc.click(timeout=ACTION_TIMEOUT_MS)
+        except BaseException:
+            action_gate.close_external(ref, False, detail="submit_error")
+            raise
+        # the press or click went through: the card's decision is carried out
+        action_gate.close_external(ref, True, detail="submitted")
         self._settle()
         self._pending.pop(fp, None)
         return {"submitted": True, "url": detail["url"], "fields": detail["fields"],
@@ -1318,13 +1329,19 @@ class BrowserSession:
             return {"filled": False, "status": "refused" if v.action == "deny" else
                     "waiting_for_approval", "reason": v.reason, "card": body,
                     "approval_id": _pending_card_id(ACTION_FILL, detail)}
-        loc = self._locator(i, nonce)
-        self._cursor_action("fill", locator=loc)
-        self._guard()
-        if select:
-            loc.select_option(label=value)
-        else:
-            loc.fill(value)
+        ref = action_gate.decision_ref_of(v)
+        try:
+            loc = self._locator(i, nonce)
+            self._cursor_action("fill", locator=loc)
+            self._guard()
+            if select:
+                loc.select_option(label=value)
+            else:
+                loc.fill(value)
+        except BaseException:
+            action_gate.close_external(ref, False, detail="fill_error")
+            raise
+        action_gate.close_external(ref, True, detail="filled")
         self._held_values.pop(mac, None)
         self._pending.pop(fp, None)
         return {"filled": True, "field": label}

@@ -7,7 +7,8 @@ be sent. He sends it, edits it, or declines it, on screen or by voice. These
 tests use a stand-in for the local model and the real scrubber, gate, approval
 store, decision hook, grants and live-call channel.
 """
-import pytest
+import pytest
+from tests.desk_press_support import voice_call_on_this_desk
 
 import agent_friday.routes.voice as rv
 import agent_friday.services.voice_engine as ve
@@ -118,7 +119,8 @@ def test_voice_approve_counts_only_his_own_words(world):
     refused = lc.decide_by_voice(aid, "what's the weather like", False, "approve")
     assert not refused["ok"] and approvals.get_approval(aid)["status"] == "pending"
     assert world == []
-    ok = lc.decide_by_voice(aid, "yes, send it", False, "approve")
+    with voice_call_on_this_desk():
+        ok = lc.decide_by_voice(aid, "yes, send it", False, "approve")
     assert ok["ok"] and ok["status"] == "approved"
     assert world == [("context", rec["payload"]["text"])]
 
@@ -134,7 +136,8 @@ def test_a_room_of_several_people_needs_friday_named(world):
     rec = _card(_ask())
     aid = rec["approval_id"]
     assert not lc.decide_by_voice(aid, "send it", True, "approve")["ok"]
-    assert lc.decide_by_voice(aid, "Friday, send it", True, "approve")["ok"]
+    with voice_call_on_this_desk():
+        assert lc.decide_by_voice(aid, "Friday, send it", True, "approve")["ok"]
 
 
 def test_the_voice_tools_use_his_words_from_the_call(world, monkeypatch):
@@ -145,10 +148,12 @@ def test_the_voice_tools_use_his_words_from_the_call(world, monkeypatch):
                              lambda f: None, session={"conversation_id": CID,
                                                       "owner_text": "hmm let me think"})
     assert out.startswith("NOT RECORDED")
+    # His words on a call from this PC's own page (the desk key on the socket): approved.
     out = ve._voice_tool_run("answer_share_request",
                              {"request_id": rec["approval_id"], "decision": "approve"},
                              lambda f: None, session={"conversation_id": CID,
-                                                      "owner_text": "okay, send it"})
+                                                      "owner_text": "okay, send it",
+                                                      "owner_local": True})
     assert out.startswith("Recorded: they approved")
 
 

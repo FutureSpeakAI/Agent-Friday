@@ -63,6 +63,13 @@ def child_env(scratch: Path, key: bytes, *, keep_cloud_keys: bool = False) -> Di
     (user / "AppData" / "Roaming").mkdir(parents=True, exist_ok=True)
     (user / "AppData" / "Local").mkdir(parents=True, exist_ok=True)
     (user / "tmp").mkdir(parents=True, exist_ok=True)
+    # A trial measures how an established Friday does a task, not the first
+    # run: the scratch home is an install that already existed, so its route
+    # counts as chosen and its tools are not held for a pick (north-star A16a).
+    rec = home / "install_choices.json"
+    if not rec.exists():
+        rec.write_text('{"install": "existing", "decided_at": "task-eval trial"}',
+                       encoding="utf-8")
     env.update({
         "FRIDAY_TRIAL": "1",
         "FRIDAY_TRIAL_INSTRUCTION_KEY": key.hex(),

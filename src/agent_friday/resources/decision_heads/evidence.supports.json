@@ -1,0 +1,23 @@
+{
+  "id": "evidence.supports",
+  "version": 1,
+  "preset": "evidence.supports",
+  "question_type": "choice",
+  "labels": ["supports", "contradicts", "does_not_address", "unsure"],
+  "direction": "label_only",
+  "scorer": "series_one",
+  "thresholds": {
+    "act": 0.99,
+    "abstain": 0.32
+  },
+  "budget_ms": 500,
+  "calibration": {
+    "platt": [
+      7.517279,
+      -4.760621
+    ],
+    "fitted_on": "ftv/decision_eval E1 2026-10-28_0151, a_rule (question to passage); PROVISIONAL for claim to passage"
+  },
+  "mode_default": "shadow",
+  "about": "Second-wave head 5. For each [web:] or [lib:] footnote whose passage this turn returned, P(the passage supports the sentence) from the Library passage score through the E1 Platt fit. That fit was made for question-to-passage evidence, so it is provisional here: below 0.32 does_not_address, act 0.99 is out of reach (supports is never said), between unsure. A similarity scorer cannot tell contradiction from support, so contradicts is reserved for a later scorer and never said. Label only: in act mode it could only annotate a footnote as not supported by the cited source; it never deletes a citation or a claim. Refit from shadow receipts and a claim-support bench before any act."
+}

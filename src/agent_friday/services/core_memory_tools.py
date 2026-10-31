@@ -14,6 +14,13 @@ in the conversation's ledger (6 h). Anything else waits in the memory card's
 review queue for the owner's Keep. An approved card for exactly this call is
 the owner's OK. The background review never rewrites or removes.
 
+A special category (health, sexuality, politics, religion, ethnicity, union
+membership, genetic or biometric data, criminal record, immigration,
+finances, a home address; services/sensitive_categories, NS-15.4-3) is Friday inferring unless it rests
+on the owner's own words: then it never saves silently but waits for the
+owner's Keep (the explicit purpose); otherwise it is dropped, not queued. An
+approved card for exactly this call is the owner's OK and saves as asked.
+
 For a model that is not known to be on this PC, `show` and the refusal
 listings leave out the lines about the owner, and no file path is returned.
 
@@ -147,11 +154,29 @@ def _cloud_reader() -> bool:
         return True
 
 
-def _ask_first(target: str, action: str, inp: dict, why: str) -> str:
+def _special_category(text: str):
+    """services/sensitive_categories.special_category; a check that fails
+    counts as special (fail closed, like dreaming and proposals)."""
+    try:
+        from agent_friday.services.sensitive_categories import special_category
+        return special_category(text)
+    except Exception:
+        return "special_category"
+
+
+def _ask_first(target: str, action: str, inp: dict, why: str, *,
+               owner_stated: bool = False) -> str:
     r = core_memory.queue(target, action, text=inp.get("text") or "", old=inp.get("old") or "",
-                          source="friday", reason=why)
+                          source="friday", reason=why, owner_stated=owner_stated)
     if not r.get("ok"):
+        if r.get("sensitive"):
+            return str(r.get("error"))
         return "NOT SAVED: " + str(r.get("error"))
+    if r.get("suppressed"):
+        # NS-15.5-1: the owner said "Don't suggest things like this" about a
+        # similar suggestion; nothing is queued and they are not asked again.
+        return ("NOT SAVED: the user asked not to be offered suggestions like this one, so it was "
+                "not queued. Do not ask them about it again.")
     if target == "friday" and action in ("add", "replace") and not r.get("unchanged"):
         # A lesson written after Friday read outside content starts as
         # "proposed" in its learning record: it applies only once the owner
@@ -185,6 +210,15 @@ def _tool_update_core_memory(inp=None) -> str:
         return "NOT DONE: action is add, replace, remove or show."
     if target not in core_memory.TARGETS:
         return "NOT DONE: target is user or friday."
+    if (action in ("add", "replace") and not _owner_decided()
+            and _off_record_turn(_ctx(), "update_core_memory")):
+        # NS-15.8-2: an off-record turn teaches Friday nothing. Nothing is
+        # saved and nothing is queued on the card (pending.jsonl) unless the
+        # owner approved a card for exactly this call. A remove ("forget
+        # that") is not learning and goes ahead as on the record.
+        return ("NOT SAVED: this conversation is off the record, so Friday saves nothing new from it, "
+                "on the memory card or in its review queue. Tell the user in one sentence; if they "
+                "want it kept, they can add it on their Memory card themselves or turn off-record off.")
     actor = _actor()
     if actor != "friday" and action in ("replace", "remove"):
         # The background review may add; anything it would rewrite or drop
@@ -192,6 +226,10 @@ def _tool_update_core_memory(inp=None) -> str:
         r = core_memory.queue(target, action, text=inp.get("text") or "",
                               old=inp.get("old") or "", source=actor,
                               reason=str(inp.get("reason") or ""))
+        if r.get("suppressed"):
+            # NS-15.5-1: the owner said "Don't suggest things like this"; nothing was queued.
+            return ("NOT QUEUED: the user asked not to be offered suggestions like this one, so it "
+                    "was not queued.")
         return ("QUEUED for the user's review (the background review never rewrites or removes "
                 "on its own)." if r.get("ok") else "NOT QUEUED: " + str(r.get("error")))
     if actor == "friday" and not _owner_decided():
@@ -226,17 +264,32 @@ def _tool_update_core_memory(inp=None) -> str:
         if _read_outside_content(ctx):
             return _ask_first(target, action, inp,
                               "Friday read outside content in this conversation, so it may come from there.")
+        if action in ("add", "replace"):
+            # NS-15.4-3: a special category (health, sexuality, politics,
+            # religion, ...) is never saved on Friday's own judgment, even in
+            # the owner's words: it waits for the owner's Keep, which is the
+            # explicit purpose. Not resting on their words, it is dropped
+            # (core_memory.queue / add refuse it).
+            cat = _special_category(inp.get("text") or "")
+            if cat:
+                return _ask_first(target, action, inp,
+                                  "It is about %s, which Friday keeps only when the user keeps it."
+                                  % cat.replace("_", " "), owner_stated=True)
     if target == "friday" and action in ("replace", "remove"):
         # The whole line `old` points at, so its learning record is found.
         _line, _miss = core_memory.resolve_line(target, inp.get("old") or "")
         if _line and not _miss:
             inp = dict(inp, old=_line)
+    # The owner approved exactly this call on its card (the gate's owner
+    # decision): that is their explicit OK, special category or not.
+    owner_ok = actor == "friday" and _owner_decided()
     tok = core_memory.REVEAL_USER.set(not cloud)
     try:
         if action == "add":
-            r = core_memory.add(target, inp.get("text") or "", actor=actor)
+            r = core_memory.add(target, inp.get("text") or "", actor=actor, owner_ok=owner_ok)
         elif action == "replace":
-            r = core_memory.replace(target, inp.get("old") or "", inp.get("text") or "", actor=actor)
+            r = core_memory.replace(target, inp.get("old") or "", inp.get("text") or "", actor=actor,
+                                    owner_ok=owner_ok)
         else:
             r = core_memory.remove(target, inp.get("old") or "", actor=actor)
     finally:
@@ -355,6 +408,19 @@ def _minor_profile(profile_id) -> bool:
         return True
 
 
+def _off_record_turn(ctx: dict, learner: str) -> bool:
+    """True when this turn is off the record, so nothing from it reaches the
+    card (NS-15.8-2). The turn's snapshot (ctx["off_record_turn"]) when the
+    caller took one; else services/off_record.skip_learning reads the setting,
+    failing closed. Cannot tell: off."""
+    snap = (ctx or {}).get("off_record_turn") if isinstance(ctx, dict) else None
+    try:
+        from agent_friday.services import off_record as _off
+        return _off.skip_learning(learner, off_record=snap if isinstance(snap, bool) else None)
+    except Exception:
+        return True
+
+
 def capture_household(message: str, ctx: dict) -> dict:
     """Save the household basics the owner just typed, under the card's rule.
 
@@ -374,6 +440,9 @@ def capture_household(message: str, ctx: dict) -> dict:
       * no household line is on the card yet: a different statement is
         queued as a replace, never rewritten silently.
     A phone, channel or background origin, or a minor profile, keeps nothing.
+    An off-record turn keeps nothing either, saved or queued (NS-15.8-2):
+    the turn's own snapshot (ctx["off_record_turn"], set by the chat routes)
+    decides when present, else the current setting; cannot tell is off.
 
     Returns {"status": "saved"|"queued"|"unchanged"|"none"|"skipped", "text", "note"};
     `note` is one paragraph for the model's turn context, empty when nothing changed.
@@ -381,6 +450,8 @@ def capture_household(message: str, ctx: dict) -> dict:
     from agent_friday.services import household_facts as hf
     ctx = ctx if isinstance(ctx, dict) else {}
     out = {"status": "none", "text": "", "note": ""}
+    if _off_record_turn(ctx, "household_capture"):
+        return {**out, "status": "skipped", "off_record": True}
     try:
         facts = hf.extract(message)
     except Exception:
@@ -428,6 +499,8 @@ def capture_household(message: str, ctx: dict) -> dict:
                                        if own_words else "A household statement in a chat turn. ") + why))
         if not q.get("ok"):
             return out
+        if q.get("suppressed"):
+            return {**out, "status": "suppressed"}     # the owner asked not to be offered this (NS-15.5-1)
         return {"status": "queued", "text": text,
                 "note": ("MEMORY CARD: the household facts the user just stated are waiting for "
                          "their OK on the Memory card (Settings > Privacy & Data > Memory card, "

@@ -118,6 +118,7 @@
    {"id": "contacts.follow_up", "group": "create", "label": "set follow-up", "audit_status": "M"},
    {"id": "contacts.save_google", "group": "create", "label": "save to Google", "audit_status": "M"},
    {"id": "contacts.import_sync", "group": "create", "label": "import LinkedIn / sync", "audit_status": "N"},
+   {"id": "contacts.import_review", "group": "create", "label": "accept / reject / later for imported people", "audit_status": "new"},
    {"id": "contacts.forget_person", "group": "organize", "label": "forget person", "audit_status": "N"},
    {
     "id": "contacts.relationship_config",
@@ -327,7 +328,9 @@
    {"id": "settings.memory_review", "group": "settings", "label": "memory card: review our conversations every few turns (local model only)", "audit_status": "new"},
    {"id": "settings.conversation_search", "group": "read", "label": "search your conversations (full text, every conversation)", "audit_status": "new"},
    {"id": "settings.conversation_delete_message", "group": "settings", "label": "search your conversations: delete one message everywhere", "audit_status": "new"},
-   {"id": "settings.locks_windows_page", "group": "settings", "label": "Locks: open Windows' own disk-encryption settings", "audit_status": "new"}
+   {"id": "settings.locks_windows_page", "group": "settings", "label": "Locks: open Windows' own disk-encryption settings", "audit_status": "new"},
+   {"id": "settings.tasks_inbox", "group": "settings", "label": "Your waiting list in Google Tasks: turn on, text level, turn off, remove the list", "audit_status": "new"},
+   {"id": "settings.ai_history_import", "group": "settings", "label": "Bring your AI history in: choose an export, stage it, answer each conversation", "audit_status": "new"}
   ]
  }
 }

@@ -229,23 +229,28 @@ def byo_scopes() -> list:
     and one that half-works a week afterwards.
     """
     try:
-        # Send and modify are listed too: they are requested only from
-        # "Reconnect with sending", but a client missing them fails there.
+        # Send, modify and the calendar/Tasks change scopes are listed too: each is
+        # requested only from its own button ("Reconnect with sending", "Allow calendar
+        # changes", "Allow task changes"), but a client missing them fails there.
         from agent_friday.services.google_accounts import (
-            GOOGLE_MULTI_SCOPES, GMAIL_SEND, GMAIL_MODIFY)
-        return list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY]
+            GOOGLE_MULTI_SCOPES, GMAIL_SEND, GMAIL_MODIFY, CALENDAR_RW, TASKS_RW)
+        return list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY, CALENDAR_RW, TASKS_RW]
     except Exception:
         # Kept in step with services/google_accounts.py; the import above is
         # the source of truth and this is only for an import-time failure.
         return [
             "https://www.googleapis.com/auth/gmail.readonly",
-            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/calendar.readonly",
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/documents.readonly",
             "https://www.googleapis.com/auth/spreadsheets.readonly",
-            "https://www.googleapis.com/auth/tasks",
+            "https://www.googleapis.com/auth/tasks.readonly",
             "https://www.googleapis.com/auth/contacts.readonly",
             "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/gmail.send",
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/tasks",
         ]
 
 

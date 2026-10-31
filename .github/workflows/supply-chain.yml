@@ -1,0 +1,147 @@
+name: supply-chain
+
+# What the Windows setup program carries, its licences and its known
+# vulnerabilities (north star §34.2-10, §34.2-17, §34.17-6), judged by
+# scripts/supply_chain.py against packaging/supply-chain/reviewed.json.
+#
+#   release        called by installer.yml on every version tag with the SBOM
+#                  its build job wrote from the wheelhouse it staged, so the
+#                  versions judged are the versions shipped. The release job
+#                  waits for it and attaches the SBOM to the release. A beta tag
+#                  only records (amendment A19: betas are exempt from §34); a
+#                  public tag must pass.
+#   pull request   dependency review: the change's wheelhouse is resolved on
+#                  Windows (pip reads environment markers for the platform it
+#                  runs on), and any licence, attribution or advisory finding the
+#                  change ADDS fails; what main already has is reported.
+#   weekly         the latest published release's SBOM audited again, so an
+#                  advisory published after a release is still found. Before a
+#                  release carries an SBOM, main's wheelhouse is resolved and
+#                  audited instead (recorded, not failing).
+
+on:
+  workflow_call:
+    inputs:
+      called:
+        type: boolean
+        default: false
+      report_only:
+        type: boolean
+        default: false
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+  pull_request:
+    paths:
+      - "packaging/windows/requirements/**"
+      - "packaging/windows/sources.json"
+      - "packaging/windows/build-installer.ps1"
+      - "packaging/windows/lib/Deps.ps1"
+      - "pyproject.toml"
+      - "static/vendor/**"
+      - "THIRD_PARTY_LICENSES.md"
+      - "packaging/supply-chain/**"
+      - "scripts/supply_chain.py"
+      - ".github/workflows/supply-chain.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.ref }}-${{ inputs.called && 'release' || github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  release:
+    if: ${{ inputs.called == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sbom
+          path: supply-chain
+      - name: Licences, attribution and advisories of the shipped SBOM
+        run: |
+          python3 scripts/supply_chain.py check --sbom supply-chain/sbom.cdx.json --out supply-chain \
+            ${{ inputs.report_only && '--report-only' || '' }}
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: supply-chain-verdict
+          path: supply-chain/supply-chain.json
+          if-no-files-found: error
+
+  dependency-review:
+    if: ${{ inputs.called != true && github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: The change's wheelhouse and the base's, each into an empty folder
+        shell: pwsh
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          $base = Join-Path $env:RUNNER_TEMP 'base'
+          git worktree add $base "origin/$env:BASE_REF"
+          python scripts/supply_chain.py resolve --wheels "$env:RUNNER_TEMP\head-wheels"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The base is resolved with the base's own requirement files.
+          Push-Location $base
+          python "${{ github.workspace }}\scripts\supply_chain.py" resolve --wheels "$env:RUNNER_TEMP\base-wheels" --repo $base
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Pop-Location
+          python scripts/supply_chain.py sbom --wheels "$env:RUNNER_TEMP\head-wheels" --out supply-chain
+          python scripts/supply_chain.py sbom --wheels "$env:RUNNER_TEMP\base-wheels" --out base --repo $base
+          exit $LASTEXITCODE
+      - name: Only what the change adds can fail it
+        shell: pwsh
+        run: |
+          python scripts/supply_chain.py check --sbom supply-chain/sbom.cdx.json --out supply-chain --base-sbom base/sbom.cdx.json
+          exit $LASTEXITCODE
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dependency-review
+          path: supply-chain/*.json
+          if-no-files-found: ignore
+
+  weekly:
+    if: ${{ inputs.called != true && github.event_name != 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: The latest release's SBOM, or main's wheelhouse when no release carries one
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force supply-chain | Out-Null
+          gh release download --repo "${{ github.repository }}" --pattern '*.sbom.cdx.json' --output supply-chain/sbom.cdx.json 2>$null
+          if (Test-Path supply-chain/sbom.cdx.json) {
+            python scripts/supply_chain.py check --sbom supply-chain/sbom.cdx.json --out supply-chain
+          } else {
+            Write-Host 'No published release carries an SBOM yet: auditing main''s wheelhouse (recorded, not failing).'
+            python scripts/supply_chain.py resolve --wheels "$env:RUNNER_TEMP\wheels"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            python scripts/supply_chain.py sbom --wheels "$env:RUNNER_TEMP\wheels" --out supply-chain
+            python scripts/supply_chain.py check --sbom supply-chain/sbom.cdx.json --out supply-chain --report-only
+          }
+          exit $LASTEXITCODE
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: supply-chain-weekly
+          path: supply-chain/*.json
+          if-no-files-found: ignore

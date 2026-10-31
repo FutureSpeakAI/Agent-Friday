@@ -614,7 +614,8 @@ def local_models_catalog(profile: dict, sizes: dict) -> dict:
     try:
         from agent_friday.services import model_shortlist as sl
         from agent_friday.services import model_store as ms
-        store_ids = set(ms.available().keys())
+        # Held models are installed too (verified, no seat yet): never offered twice.
+        store_ids = set(ms.available().keys()) | set(ms.held_installed().keys())
         for m in sl.entries():
             f = sl.file_entry(m["id"]) or {}
             r = row(m["id"], "text", m.get("label"), m["id"] in store_ids,
@@ -1554,6 +1555,7 @@ def _intelligence_payload() -> dict:
     # Same single reading as everywhere (cloud_intent.normalize_mode): blank is
     # unset and behaves as cloud_only; the removed `smart` reads as local_preferred.
     from agent_friday.services.cloud_intent import normalize_mode as _normalize_mode2
+    from agent_friday.core import route_pick_pending as _route_pick_pending
     routing_mode = _normalize_mode2((settings.get("model_routing") or {}).get("mode"))
 
     labels = {m["id"]: (m.get("label") or m["id"]) for m in models
@@ -1568,6 +1570,11 @@ def _intelligence_payload() -> dict:
         "serving": costs["serving"],
         "residency_help": RESIDENCY_HELP,
         "routing_mode": routing_mode,
+        # North-star A16: False on a new install until the owner picks a route.
+        # The page then presses no mode button and says what runs meanwhile;
+        # routing_mode is still how Friday routes in the meantime.
+        # Read from the stored settings: the offline overlay moves the mode.
+        "routing_mode_picked": not _route_pick_pending(None),
         # The vault posture, stated where a user can see it. A privacy control
         # that disables itself silently is worse than one that is absent; this
         # is the surface that makes `vault_local_only: false` visible without

@@ -1,9 +1,11 @@
 """Mailbox changes Friday proposes on its own initiative.
 
-The owner's own click in the Messages workspace acts at once, with undo: it is
-the owner acting through Friday's page, which the governance checkpoint leaves
-alone on purpose (docs/decisions/2026-09-24-injection-provenance-gate.md, "the
-owner's own REST actions").
+The owner's own press in the Messages workspace acts at once, with undo: it is
+the owner acting through Friday's page. Since 2026-10-21 it is taken only from
+the press itself, never from a body that says "ui:...", and a change that
+reaches Gmail passes the checkpoint's integrity check and signed receipt first
+(services/mail_owner; docs/decisions/2026-09-24-injection-provenance-gate.md,
+amendment of 2026-10-21).
 
 When Friday itself decides to delete, archive, mute, report spam or
 unsubscribe, that is a different thing, and it goes through the checkpoint
@@ -104,6 +106,21 @@ def _succeeded(detail: dict, res: dict) -> bool:
     return res.get("status") == "ok"
 
 
+def _run_closing(detail: dict, ref) -> dict:
+    """`_run` for an approved card, closing the checkpoint's decision from the
+    change's own result (`_succeeded`): executed or failed. An exception
+    closes failed and is raised as before."""
+    from agent_friday.governance import action_gate
+    try:
+        res = _run(detail)
+    except BaseException:
+        action_gate.close_external(ref, False, detail="mail_change_error")
+        raise
+    ok = _succeeded(detail, res if isinstance(res, dict) else {})
+    action_gate.close_external(ref, ok, detail="mail_changed" if ok else "mail_not_changed")
+    return res
+
+
 def propose(action: str, ids, gmail_items, *, requested_by: str, reason: str = "",
             extra: dict | None = None) -> dict:
     """Put a mailbox change Friday wants to make to the governance checkpoint.
@@ -123,7 +140,7 @@ def propose(action: str, ids, gmail_items, *, requested_by: str, reason: str = "
         title=title, action_description=body,
         description="Friday asked for this on its own. Nothing happens unless you approve it.")
     if v.action == "allow":
-        res = _run(detail)
+        res = _run_closing(detail, action_gate.decision_ref_of(v))
         return {"status": "done" if _succeeded(detail, res) else "error", "result": res,
                 "message": "You had already approved exactly this, so it was done."}
     if v.action == "deny":
@@ -174,7 +191,7 @@ def _on_decision(record: dict) -> None:
             _notify("Mail: approved change NOT made",
                     "Friday's governance check held it: %s" % v.reason, "warning")
             return
-        res = _run(detail)
+        res = _run_closing(detail, action_gate.decision_ref_of(v))
         ok = _succeeded(detail, res)
         _notify("Mail: approved change %s" % ("made" if ok else "NOT made"),
                 res.get("message") or ("Done: %s." % VERBS.get(action, action)),

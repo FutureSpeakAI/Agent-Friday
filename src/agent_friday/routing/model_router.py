@@ -309,6 +309,14 @@ class ModelRouter:
         result["vault_access"] = vault_access
         result["refuse"] = refuse
         result["warning"] = warning
+        # The governing policy version this route was decided under
+        # (services/policy_version, NS-30.19-1). Every route leaves through
+        # here. Records only: nothing reads it to choose a model.
+        try:
+            from agent_friday.services import policy_version as _pv
+            result["policy_version"] = _pv.current_id()
+        except Exception:  # noqa: BLE001
+            result["policy_version"] = None
         return result
 
     def _chosen_seat(self, ctx=None):
@@ -674,6 +682,28 @@ class ModelRouter:
         }, vault_access=True, warning=warning)
 
     def route(self, messages, task_context=None):
+        """Decide which provider/model to use, and record why (north star 12.3).
+
+        The decision is `_decide`'s; this adds `record` (services/route_record:
+        seat, reason, alternatives not chosen and why, expected cost, context,
+        fallback policy) and hands it to the turn's attribution, so the reply
+        can show where it was answered and why. Building the record never
+        touches the network and never changes the decision.
+        """
+        result = self._decide(messages, task_context)
+        try:
+            from agent_friday.services import route_record as _rr
+            from agent_friday.services import attribution as _attr
+            rec = _rr.build(result, messages=messages, routing_cfg=self.config,
+                            source="router")
+            if isinstance(result, dict):
+                result["record"] = rec
+            _attr.note_route(rec)
+        except Exception:
+            pass
+        return result
+
+    def _decide(self, messages, task_context=None):
         """Decide which provider/model to use.
 
         Returns a dict with provider/model/task_type/reason plus the control
@@ -741,6 +771,22 @@ class ModelRouter:
         the voice pipeline speaks it. `offer_cloud_switch` stays the local_only
         "switch the mode" button the chat already knows.
         """
+        try:
+            from agent_friday.services.cloud_intent import route_unpicked
+            unpicked = bool(route_unpicked())
+        except Exception:
+            unpicked = False
+        if unpicked:
+            # North-star A16a: no route chosen yet, so no "send it to Claude"
+            # and no mode switch; the person is asked to choose instead.
+            warning = ("No local model is answering right now (%s), and nothing "
+                       "was sent to the cloud: you haven't chosen where I think yet. "
+                       "Choose where I think: on this computer, in the cloud, or both "
+                       "(Settings > Models)." % why)
+        else:
+            warning = ("No local model is answering right now (%s), so nothing "
+                       "was sent to a cloud model. You can try again once one is "
+                       "loaded, or send this one turn to Claude." % why)
         return {
             "provider": "local",
             "model": None,
@@ -748,11 +794,9 @@ class ModelRouter:
             "local_unavailable": True,
             # `fallback_to_cloud` means "offer", never "send": off makes no
             # mode-switch offer (the chat offer card still lists the choices).
-            "offer_cloud_switch": bool(self.fallback_to_cloud),
+            "offer_cloud_switch": bool(self.fallback_to_cloud) and not unpicked,
             "task_type": task_type,
-            "warning": ("No local model is answering right now (%s), so nothing "
-                        "was sent to a cloud model. You can try again once one is "
-                        "loaded, or send this one turn to Claude." % why),
+            "warning": warning,
             "reason": "%s mode: %s" % (self.mode, why),
         }
 

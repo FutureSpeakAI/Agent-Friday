@@ -31,10 +31,11 @@ Consolidation rules (north star NS-15.9-1):
                      reads filter by it
   * sensitivity      off the record nothing is consolidated (the day is
                      remembered, date only, and the next run catches it up); a
-                     sentence in a special category (health, sexuality) is not
-                     mined
+                     fact or topic in a special category is dropped before it
+                     is queued or written (_drop_special, NS-15.4-3)
   * forget           a forgotten person leaves the dreams too: forget_registry
-                     store "dreams" (people_find / people_purge below)
+                     store "dreams" (services/forget_derived -> forget_matching
+                     below: the db row, <day>.md and the <day>.json sidecar)
   * rebuildable      ``rebuild_day(day)`` recomputes the day from stored turns;
                      running it again gives the same items
 """
@@ -42,12 +43,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sqlite3
 import threading
 import time
 import uuid
 from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
 from agent_friday.user_errors import exception_text
@@ -94,8 +97,6 @@ _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PRINCIPAL = "owner"
 #: What makes a dream: a heuristic pass, not a model.
 MADE_BY = "heuristic"
-#: Special categories (health, sexuality) never mined into a suggestion.
-_SPECIAL = ("health", "sexuality")
 #: The stores consolidation reads and may never delete from.
 SOURCE_STORES = ("conversation_memory", "conversations", "conversation_fts")
 #: Its own derived table, the only thing it replaces.
@@ -140,25 +141,16 @@ def _assert_derived(table: str) -> None:
 
 
 def _off_record() -> bool:
+    """Off the record nothing is consolidated: storage stopped (skip), or the
+    learning check (skip_learning, NS-15.8-2: an owner who keeps off-record
+    transcripts still teaches Friday nothing; unreadable settings count as
+    off the record)."""
     try:
         from agent_friday.services import off_record
-        return bool(off_record.skip("memory_dreaming"))
+        return bool(off_record.skip("memory_dreaming")
+                    or off_record.skip_learning("memory_dreaming"))
     except Exception:
         return False
-
-
-def _special_category(sentence: str) -> Optional[str]:
-    """The special category `sentence` touches, or None. The shared category
-    lists live in services/setup_research; without them nothing is skipped."""
-    try:
-        from agent_friday.services.setup_research import sensitive_category
-    except Exception:
-        return None
-    try:
-        cat = sensitive_category(sentence)
-    except Exception:
-        return None
-    return cat if cat in _SPECIAL else None
 
 
 def _turn_id(t: Dict[str, Any]) -> str:
@@ -285,7 +277,22 @@ def _dream_day(day: str, *, memory=None, queue: bool = True,
 
         topics = _extract_topics(turns)
         facts = _mine_facts(turns)
+        if queue:
+            # A rebuild files nothing new for review (NS-15.9-1), and the head
+            # may store pending proposals, so it runs only on a queuing pass.
+            try:
+                # The encoder sentence reader: shadow log, or pending proposals the
+                # owner reviews. It never feeds `facts`, so nothing below changes.
+                from agent_friday.services import triage_heads
+                triage_heads.memory_pass(turns, day, facts)
+            except Exception:
+                pass
         pruned = _count_noise(turns)
+        # NS-15.4-3: a regex is inferring. A sentence or topic that touches a
+        # special category (health, sexuality, politics, religion, ...) is
+        # dropped here, so it is neither queued nor written to dreams.db or
+        # the day's markdown; only a count by category is kept.
+        facts, topics = _drop_special(facts, topics)
         source_ids = sorted({_turn_id(t) for t in turns if _turn_id(t)})
 
         # A regex over yesterday's turns is not a review. Nothing it finds is
@@ -558,10 +565,9 @@ def _mine_facts(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             continue
         text = (t.get("text") or "").strip()
         tid = _turn_id(t)
+        # A special-category sentence is dropped after mining (_drop_special),
+        # where the drop is counted by category.
         for sentence in _split_sentences(text):
-            if _special_category(sentence):
-                # Health or sexuality is never turned into a suggestion.
-                continue
             for pat, category in _FACT_PATTERNS:
                 if pat.search(sentence):
                     norm = sentence.strip()[:240]
@@ -586,6 +592,30 @@ def _mine_facts(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     facts.append(fact)
                     break
     return facts[:20]
+
+
+def _drop_special(facts: List[Dict[str, Any]], topics: List[Dict[str, Any]]):
+    """Facts and topics less those that touch a special category
+    (services/sensitive_categories). Dropped items are counted, not kept."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+    except Exception:
+        return [], []                       # cannot check: keep nothing inferred
+    kept_facts = []
+    for f in facts:
+        cat = _sc.special_category(f.get("text"))
+        if cat:
+            _sc.note_dropped("dreaming.fact", cat)
+            continue
+        kept_facts.append(f)
+    kept_topics = []
+    for t in topics:
+        cat = _sc.special_category(t.get("topic"))
+        if cat:
+            _sc.note_dropped("dreaming.topic", cat)
+            continue
+        kept_topics.append(t)
+    return kept_facts, kept_topics
 
 
 def _count_noise(turns: List[Dict[str, Any]]) -> int:
@@ -642,36 +672,208 @@ def _ids_text(ids) -> str:
     return "from messages " + shown
 
 
-def _write_markdown(day, n_turns, topics, consolidated, pruned, summary, meta=None) -> None:
+def _render_markdown(day, n_turns, topics, consolidated, pruned, summary, meta=None) -> str:
     meta = dict(meta or {})
+    lines = [f"# Dream — {day}", "",
+             # What made this, and whose it is, in words (NS-15.9-1).
+             f"> Made by Friday's overnight pass ({meta.get('made_by', MADE_BY)}, not a "
+             f"model summary) for {meta.get('principal', PRINCIPAL)}. INFERRED: nothing "
+             f"here is confirmed; each item names the messages it came from.",
+             "", f"*{summary}*", "",
+             f"- Turns reviewed: {n_turns}", f"- Low-value turns (counted): {pruned}",
+             "", "## Top topics"]
+    for t in topics:
+        lines.append(f"- {t['topic']} ({t['mentions']}) — {_ids_text(t.get('message_ids'))}")
+    lines += ["", "## Consolidated facts"]
+    if consolidated:
+        for f in consolidated:
+            lines.append(f"- **[{f['category']}]** {f['text']} — "
+                         f"{_ids_text(f.get('message_ids'))}")
+    else:
+        lines.append("- (none)")
+    return "\n".join(lines) + "\n"
+
+
+def _render_json(day, n_turns, topics, consolidated, pruned, summary, meta=None) -> str:
+    """The same record as data, with every source pointer (the <day>.json sidecar)."""
+    record = {"day": day, "turns_reviewed": n_turns, "pruned": pruned,
+              "summary": summary, "topics": topics, "consolidated": consolidated}
+    record.update(dict(meta or {}))
+    return json.dumps(record, indent=2)
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write `text` to `path` via a temp file and os.replace: a crash leaves
+    the old file or the new one, never half of one. Raises on failure."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _write_record(day, n_turns, topics, consolidated, pruned, summary, meta=None) -> None:
+    """Write the day's <day>.md and its <day>.json sidecar, each atomically.
+    Raises on failure (forget_matching reports it)."""
+    from agent_friday.paths import contained
+    _write_atomic(contained(DREAMS_DIR, f"{day}.md"),
+                  _render_markdown(day, n_turns, topics, consolidated, pruned, summary, meta))
+    _write_atomic(contained(DREAMS_DIR, f"{day}.json"),
+                  _render_json(day, n_turns, topics, consolidated, pruned, summary, meta))
+
+
+def _write_markdown(day, n_turns, topics, consolidated, pruned, summary, meta=None) -> None:
     try:
-        DREAMS_DIR.mkdir(parents=True, exist_ok=True)
-        lines = [f"# Dream — {day}", "",
-                 # What made this, and whose it is, in words (NS-15.9-1).
-                 f"> Made by Friday's overnight pass ({meta.get('made_by', MADE_BY)}, not a "
-                 f"model summary) for {meta.get('principal', PRINCIPAL)}. INFERRED: nothing "
-                 f"here is confirmed; each item names the messages it came from.",
-                 "", f"*{summary}*", "",
-                 f"- Turns reviewed: {n_turns}", f"- Low-value turns (counted): {pruned}",
-                 "", "## Top topics"]
-        for t in topics:
-            lines.append(f"- {t['topic']} ({t['mentions']}) — {_ids_text(t.get('message_ids'))}")
-        lines += ["", "## Consolidated facts"]
-        if consolidated:
-            for f in consolidated:
-                lines.append(f"- **[{f['category']}]** {f['text']} — "
-                             f"{_ids_text(f.get('message_ids'))}")
-        else:
-            lines.append("- (none)")
-        (DREAMS_DIR / f"{day}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-        # The same record as data, with every source pointer.
-        record = {"day": day, "turns_reviewed": n_turns, "pruned": pruned,
-                  "summary": summary, "topics": topics, "consolidated": consolidated}
-        record.update(meta)
-        (DREAMS_DIR / f"{day}.json").write_text(json.dumps(record, indent=2),
-                                                encoding="utf-8")
+        _write_record(day, n_turns, topics, consolidated, pruned, summary, meta)
     except Exception:
         pass
+
+
+def forget_matching(match, keyword=None, apply: bool = True) -> Dict[str, Any]:
+    """Forget-person (services/forget_derived, NS-15.7-2): the consolidated
+    facts whose text `match` accepts and the topics `keyword` (a predicate on
+    one lowercase keyword) or `match` accepts leave each day's dream; the
+    day's summary line is written again from what is left, and its
+    ``dreams/<day>.md`` and ``<day>.json`` sidecar are rewritten from the
+    cleaned row (keeping its principal, made_by and source message ids). A
+    day log with no row loses only the lines that name the person, and its
+    summary line (``*Reviewed ... Top topics: ...*``) loses the topics that
+    name them; a sidecar with no row loses the items that name them (and is
+    removed whole if it still names them after that: it is derived).
+    With `apply=False` only counts. Returns {"facts", "topics", "lines" (day
+    logs with no row: lines removed or edited), "days", "not_removable"}.
+    Raises when the store cannot be read, so the receipt says it was not
+    checked.
+
+    The database is committed BEFORE any day log is written again, and each
+    day log is written atomically (temp file, then os.replace) in its own
+    try: a log that cannot be rewritten is listed in "not_removable" (and,
+    for a log with no row, its lines are not counted as removed)."""
+    from agent_friday.user_errors import clip
+    kw = keyword or (lambda _k: False)
+    touched = set()                               # days changed (or that would be)
+
+    def named(k) -> bool:
+        # A lowercase keyword (kw), or the matcher's rule on the topic as
+        # written (a multi-word name in any case, a one-word one as cased).
+        k = str(k or "").strip()
+        return bool(k) and (kw(k.lower()) or match(k))
+
+    def topic_named(t) -> bool:
+        return named((t or {}).get("topic"))
+
+    def failed(day, e) -> dict:
+        return {"what": "the dreaming log for %s" % day,
+                "reason": clip(exception_text(e, "it could not be written again, so it may still name them (%s)"),
+                               200)}
+
+    out: Dict[str, Any] = {"facts": 0, "topics": 0, "lines": 0, "days": 0, "not_removable": []}
+    rewritten = set()
+    redo = []                                     # day logs written again after the commit
+    if DB_PATH.exists():
+        with _LOCK:
+            conn = _connect()
+            try:
+                rows = conn.execute("SELECT dream_id, day, turns_reviewed, topics_json, consolidated_json, "
+                                    "pruned, principal, meta_json FROM dreams").fetchall()
+                for did, day, tr, tj, cj, pr, pri, mj in rows:
+                    topics, facts = _loads(tj, []), _loads(cj, [])
+                    keep_t = [t for t in topics if not topic_named(t)]
+                    keep_f = [f for f in facts if not match(str((f or {}).get("text") or ""))]
+                    if len(keep_t) == len(topics) and len(keep_f) == len(facts):
+                        continue
+                    out["topics"] += len(topics) - len(keep_t)
+                    out["facts"] += len(facts) - len(keep_f)
+                    touched.add(str(day))
+                    if _DAY_RE.match(str(day or "")):
+                        rewritten.add(day)          # its day log is written again from the row
+                    if not apply:
+                        continue
+                    summary = _summarize(day, tr, keep_t, keep_f, pr)
+                    conn.execute("UPDATE dreams SET topics_json=?, consolidated_json=?, summary=? "
+                                 "WHERE dream_id=?", (json.dumps(keep_t), json.dumps(keep_f), summary, did))
+                    if day in rewritten:
+                        # The record keeps what made it, whose it is and its sources.
+                        meta = _loads(mj, {})
+                        meta = meta if isinstance(meta, dict) else {}
+                        meta.setdefault("principal", _principal_of(pri))
+                        redo.append((day, tr, keep_t, keep_f, pr, summary, meta))
+                if apply:
+                    conn.commit()
+            finally:
+                conn.close()
+        for day, tr, keep_t, keep_f, pr, summary, meta in redo:
+            try:
+                _write_record(day, tr, keep_t, keep_f, pr, summary, meta)
+            except Exception as e:
+                out["not_removable"].append(failed(day, e))
+    if DREAMS_DIR.exists():
+        # A topic line may end with its sources (" — from messages ...").
+        topic_line = re.compile(r"^- (.+?) \(\d+\)(?: — .*)?$")
+        summary_line = re.compile(r"^(\*Reviewed .*?Top topics: )(.*?)(\. Consolidated .*)$")
+        for p in sorted(DREAMS_DIR.glob("*.md")):
+            if p.stem in rewritten:
+                continue
+            try:
+                lines = p.read_text(encoding="utf-8").splitlines()
+                keep, changed = [], 0
+                for line in lines:
+                    edited = line
+                    s = summary_line.match(line)
+                    if s:
+                        tops = [x for x in s.group(2).split(", ") if x.strip() and x.strip() != "—"]
+                        left = [x for x in tops if not named(x)]
+                        if len(left) != len(tops):
+                            edited = s.group(1) + (", ".join(left) or "—") + s.group(3)
+                    t = topic_line.match(edited)
+                    if match(edited) or (t and named(t.group(1))):
+                        changed += 1                # the line goes
+                        continue
+                    changed += int(edited != line)  # the summary line loses the topics naming them
+                    keep.append(edited)
+                if not changed:
+                    continue
+                if apply:
+                    _write_atomic(p, "\n".join(keep) + "\n")
+                touched.add(p.stem)
+                out["lines"] += changed
+            except Exception as e:
+                out["not_removable"].append(failed(p.stem, e))
+        # <day>.json sidecars with no row: the items naming them go, and the
+        # summary is made again from what is left.
+        for p in sorted(DREAMS_DIR.glob("*.json")):
+            if p.stem in rewritten or not _DAY_RE.match(p.stem):
+                continue
+            try:
+                rec = _loads(p.read_text(encoding="utf-8"), None)
+                if not isinstance(rec, dict):
+                    continue
+                topics = [t for t in (rec.get("topics") or []) if isinstance(t, dict)]
+                facts = [f for f in (rec.get("consolidated") or []) if isinstance(f, dict)]
+                keep_t = [t for t in topics if not topic_named(t)]
+                keep_f = [f for f in facts if not match(str(f.get("text") or ""))]
+                gone_t, gone_f = len(topics) - len(keep_t), len(facts) - len(keep_f)
+                if gone_t or gone_f:
+                    rec["topics"], rec["consolidated"] = keep_t, keep_f
+                    rec["summary"] = _summarize(p.stem, rec.get("turns_reviewed", 0), keep_t, keep_f,
+                                                rec.get("pruned", 0))
+                text = json.dumps(rec, indent=2)
+                # Still names them (a field the items do not cover): derived, removed whole.
+                stray = match(json.dumps(rec, ensure_ascii=False))
+                if not (gone_t or gone_f or stray):
+                    continue
+                if apply:
+                    if stray:
+                        p.unlink()
+                    else:
+                        _write_atomic(p, text)
+                touched.add(p.stem)
+                out["topics"] += gone_t
+                out["facts"] += gone_f
+                out["lines"] += int(stray and not (gone_t or gone_f))
+            except Exception as e:
+                out["not_removable"].append(failed(p.stem, e))
+    out["days"] = len(touched)
+    return out
 
 
 def _loads(s, default):
@@ -683,107 +885,28 @@ def _loads(s, default):
 
 # ── forget a person (services/forget_registry) ────────────────────────────────
 # A dream names people in its topics and facts, in three places: the db row,
-# <day>.md and the <day>.json sidecar. Forgetting a person removes every item
-# that names them from all three (the rest of the day's record stays), and a
-# stray file that still names them after that is removed whole.
+# <day>.md and the <day>.json sidecar. The registry's "dreams" store
+# (services/forget_derived.dreams_find / dreams_purge) calls forget_matching
+# above with the shared name matcher; these two give the count of days.
 
-def _person_patterns(names, emails) -> list:
-    wanted = {" ".join(str(x or "").split()).lower()
-              for x in set(names or ()) | set(emails or ())}
-    return [re.compile(r"\b" + r"\s+".join(re.escape(w) for w in n.split(" ")) + r"\b",
-                       re.IGNORECASE) for n in wanted if len(n) >= 3]
-
-
-def _hit(text, pats) -> bool:
-    return bool(text) and any(p.search(str(text)) for p in pats)
-
-
-def _scrub(topics, consolidated, pats):
-    """The topics and facts that do not name the person, and how many went."""
-    topics = list(topics or [])
-    consolidated = list(consolidated or [])
-    kept_t = [t for t in topics if not _hit((t or {}).get("topic"), pats)]
-    kept_c = [c for c in consolidated if not _hit((c or {}).get("text"), pats)]
-    return kept_t, kept_c, (len(topics) - len(kept_t)) + (len(consolidated) - len(kept_c))
-
-
-def _dream_files():
-    # Sidecars first: re-writing one re-writes its md, so an md that still
-    # names the person afterwards is a stray.
-    try:
-        return sorted(DREAMS_DIR.glob("*.json")) + sorted(DREAMS_DIR.glob("*.md"))
-    except Exception:
-        return []
-
-
-def _forget(names, emails, *, purge: bool) -> int:
-    pats = _person_patterns(names, emails)
-    if not pats:
-        return 0
-    days = set()
-    with _LOCK:
-        conn = _connect()
-        try:
-            rows = conn.execute(
-                "SELECT dream_id, day, turns_reviewed, topics_json, consolidated_json, "
-                "pruned, summary, principal, meta_json FROM dreams").fetchall()
-            for did, day, tr, tj, cj, pr, _summ, pri, mj in rows:
-                topics, cons, removed = _scrub(_loads(tj, []), _loads(cj, []), pats)
-                if not removed:
-                    continue
-                days.add(day)
-                if not purge:
-                    continue
-                summary = _summarize(day, tr, topics, cons, pr)
-                conn.execute("UPDATE dreams SET topics_json=?, consolidated_json=?, summary=? "
-                             "WHERE dream_id=?",
-                             (json.dumps(topics), json.dumps(cons), summary, did))
-                meta = _loads(mj, {})
-                meta.setdefault("principal", _principal_of(pri))
-                _write_markdown(day, tr, topics, cons, pr, summary, meta)
-            conn.commit()
-        finally:
-            conn.close()
-    # Sidecars without a row, and any file that still names the person.
-    for p in _dream_files():
-        day = p.stem
-        if not _DAY_RE.match(day):
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-        except Exception:
-            continue
-        if not _hit(text, pats):
-            continue
-        days.add(day)
-        if not purge:
-            continue
-        if p.suffix == ".json":
-            rec = _loads(text, {})
-            if isinstance(rec, dict):
-                topics, cons, removed = _scrub(rec.get("topics"), rec.get("consolidated"), pats)
-                if removed:
-                    summary = _summarize(day, rec.get("turns_reviewed", 0), topics, cons,
-                                         rec.get("pruned", 0))
-                    meta = {k: v for k, v in rec.items()
-                            if k not in ("day", "turns_reviewed", "pruned", "summary",
-                                         "topics", "consolidated")}
-                    _write_markdown(day, rec.get("turns_reviewed", 0), topics, cons,
-                                    rec.get("pruned", 0), summary, meta)
-        try:
-            if p.exists() and _hit(p.read_text(encoding="utf-8"), pats):
-                p.unlink()                       # derived; the rest of it cannot be kept apart
-        except Exception:
-            pass
-    return len(days)
+def _person_matchers(names, emails):
+    from agent_friday.services import forget_derived as fd
+    m = fd._matcher(names, emails)
+    return m, fd._keyword_matcher(m)
 
 
 def people_find(names, emails) -> int:
     """forget-person: how many days' dreams name the person."""
-    return _forget(names, emails, purge=False)
+    m, kw = _person_matchers(names, emails)
+    if not m:
+        return 0
+    return int(forget_matching(m, keyword=kw, apply=False).get("days") or 0)
 
 
 def people_purge(names, emails) -> int:
     """forget-person: remove what names the person from every day's dream
     (row, md, json); returns the number of days touched."""
-    return _forget(names, emails, purge=True)
+    m, kw = _person_matchers(names, emails)
+    if not m:
+        return 0
+    return int(forget_matching(m, keyword=kw).get("days") or 0)

@@ -227,8 +227,14 @@ def _enter(st: dict, transcript: list, stage: str) -> None:
         _say(transcript, copy.RESEARCH_REVIEW, stage)
     elif stage == "money":
         usd = steps.money_estimate()
+        cap = steps.current_daily_cap()
+        est = copy.MONEY_ESTIMATE.format(usd=usd) if usd else ""
+        if est and cap is not None and steps.estimate_exceeds_daily_cap(usd, cap):
+            est += copy.MONEY_ESTIMATE_OVER_CAP.format(cap=cap)
         _say(transcript, copy.MONEY_ASK.format(
-            estimate=copy.MONEY_ESTIMATE.format(usd=usd) if usd else ""), stage)
+            now=(copy.MONEY_NOW.format(name=agent, usd=cap) if cap is not None
+                 else copy.MONEY_NOW_NONE.format(name=agent)),
+            estimate=est), stage)
     elif stage == "scheduled_cloud":
         _say(transcript, _scheduled_cloud_question(), stage)
     elif stage == "routines":
@@ -346,7 +352,7 @@ def _prompt(st: dict) -> dict:
         p.update(card="research_review", chips=_chips((("done", "Done reviewing"),)))
     elif stage == "money":
         p.update(input="text", placeholder=copy.MONEY_OTHER_HINT,
-                 chips=_rec_chips(steps.MONEY_CHOICES, steps.MONEY_RECOMMENDED)
+                 chips=_rec_chips(steps.money_choices(), steps.recommended_for("money"))
                  + _chips((skip,)))
     elif stage == "scheduled_cloud":
         p.update(chips=_rec_chips(copy.SCHEDULED_CLOUD_CHIPS, steps.recommended_for(stage)))
@@ -466,8 +472,7 @@ def receipt(st: dict | None = None) -> list:
         ("Never-send list", "%d of your own, plus the built-in protections"
          % int(st.get("never_send_added") or 0), how("never_send")),
         ("The lock", *_lock_row(acks)),
-        ("Monthly ceiling", {"none": "no cap", "skipped": "no cap", "": "not asked"}
-         .get(st.get("money") or "", "$%s a month" % (st.get("money") or "")), how("money")),
+        ("Daily spending cap", _money_row(st), how("money")),
         ("Routines", ", ".join(st.get("routines_on") or []) or "none scheduled", how("routines")),
         ("Spoken approvals in a room", (by.get("room_voice") or {}).get("decision") or "",
          how("room_voice")),
@@ -531,18 +536,36 @@ def view() -> dict:
 
 # ── Transitions ──────────────────────────────────────────────────────────────
 
-def begin(routing_mode: str = "", vault_passphrase: str = "") -> dict:
+def begin(routing_mode: str = "", vault_passphrase: str = "", *, screen: bool = False) -> dict:
     """The consent screens are done. Store the passphrase now (never in the
-    state file) and open the chat."""
+    state file) and open the chat.
+
+    `screen` is True only for the consent page's own verified click
+    (screen_click.screen_session); only then is its route recorded as the
+    person's pick (A16a)."""
     from agent_friday.services.setup_complete import ROUTING_MODES, store_vault_passphrase
     with _LOCK:
         st = load_state()
+        # Only the consent screen's own first finish records its route as a
+        # pick (A16a); calling begin again (a reload, a script) cannot.
+        first_finish = not st.get("consent_done") and not st.get("completed")
         if vault_passphrase:
             store_vault_passphrase(vault_passphrase)
         if routing_mode in ROUTING_MODES:
             st["routing_mode"] = routing_mode
         st["consent_done"] = True
         save_state(st)
+    # North-star A16a: the route the person picked on the consent screen is
+    # their pick from now on (until then Friday is local-only). It is recorded
+    # as a routing choice, not as cloud consent ("consent_screen" is not one of
+    # privacy/cloud_consent.ROUTING_CONSENT_VIAS); the privacy answer later in
+    # the chat may change it.
+    if routing_mode in ROUTING_MODES and first_finish:
+        try:
+            from agent_friday.services.setup_complete import save_routing_answer
+            save_routing_answer(routing_mode, via="consent_screen" if screen else "unverified")
+        except Exception as e:
+            _log.warning("the consent screen's route was not recorded: %s", type(e).__name__)
     return view()
 
 
@@ -1268,30 +1291,45 @@ def _on_scheduled_cloud(st, transcript, value, text):
     _enter(st, transcript, "routines")
 
 
+def _money_row(st: dict) -> str:
+    """The receipt's line for the daily cap (A17): what is set now."""
+    if not st.get("money"):
+        return "not asked"
+    cap = steps.current_daily_cap()
+    return ("$%.2f a day" % cap) if cap is not None else "no daily cap"
+
+
 def _on_money(st, transcript, value, text):
+    """The daily cap on paid cloud spend (north-star A17). It is already on
+    when this is asked; skipping keeps it as it is."""
     text = _guard_text(text)
     if value == "skip" or _is_skip(text):
         _heard(transcript, copy.SKIP, "money")
-        _say(transcript, copy.MONEY_SKIPPED, "money")
+        cap = steps.current_daily_cap()
+        _say(transcript, copy.MONEY_SKIPPED.format(usd=cap) if cap is not None
+             else copy.MONEY_SKIPPED_NONE, "money")
         st["money"] = "skipped"
-        record.append("money", "no cap", "default")
+        record.append("money", ("daily cap $%.2f" % cap) if cap is not None else "no daily cap",
+                      "default")
         _enter(st, transcript, "scheduled_cloud")
         return
     v = str(value) if value is not None else ""
     low = text.lower().strip()
-    if v == "none" or low in ("none", "no", "no cap", "no limit", "nothing"):
+    if v == "none" or low in ("none", "no", "no cap", "no limit", "nothing", "no daily cap"):
         amount = None
+    elif v == steps.MONEY_KEEP or low in ("keep", "keep it"):
+        amount = steps.current_daily_cap()
     elif v in dict(steps.MONEY_CHOICES):
         amount = float(v)
     else:
         amount = steps.parse_amount(text)
         if amount is None:
-            _refuse_choice([lbl for _v, lbl in steps.MONEY_CHOICES] + [copy.MONEY_OTHER_HINT])
-    steps.apply_monthly_cap(amount)
+            _refuse_choice([lbl for _v, lbl in steps.money_choices()] + [copy.MONEY_OTHER_HINT])
+    steps.apply_daily_cap(amount)
     st["money"] = ("%.2f" % amount) if amount else "none"
-    _heard(transcript, ("$%.2f a month" % amount) if amount else "No cap", "money")
+    _heard(transcript, ("$%.2f a day" % amount) if amount else "No daily cap", "money")
     _say(transcript, copy.MONEY_SET.format(usd=amount) if amount else copy.MONEY_NONE, "money")
-    record.append("money", "monthly cap" if amount else "no cap", _how(st),
+    record.append("money", "daily cap" if amount else "no daily cap", _how(st),
                   amount_usd=round(amount, 2) if amount else 0)
     _enter(st, transcript, "scheduled_cloud")
 
@@ -1496,6 +1534,32 @@ def _complete(st: dict) -> None:
     complete_setup(_completion_payload(st), routing_via="posture")
     st["completed"] = True
     st["stage"] = "done"
+    _propose_first_action()
+
+
+#: Tests that are about the first action set this to [True].
+FIRST_ACTION_IN_TESTS = [False]
+
+
+def _propose_first_action() -> None:
+    """A27: at the end of setup Friday proposes one low-stakes action (services/first_action). A
+    card that waits for the owner's press; on its own thread, so it can never hold up setup. Inert
+    under FRIDAY_TESTING unless a test asks for it (a stray card would change other tests' counts)."""
+    try:
+        from agent_friday import core as _core
+        if getattr(_core, "_TESTING", False) and not FIRST_ACTION_IN_TESTS[0]:
+            return
+    except Exception:
+        pass
+
+    def run():
+        try:
+            from agent_friday.services import first_action
+            first_action.propose(requested_by="setup")
+        except Exception:  # noqa: BLE001 - setup is finished either way
+            pass
+    import threading
+    threading.Thread(target=run, name="first-action-proposal", daemon=True).start()
 
 
 def skip_all() -> dict:

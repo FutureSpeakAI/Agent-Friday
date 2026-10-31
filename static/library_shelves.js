@@ -319,7 +319,7 @@
       onPointerDownCapture: () => { if (coreRef.current) coreRef.current.skip(); }
     },
       h('div', { className: 'ls-mount', ref: mountRef }),
-      noGL && h('div', { className: 'ls-msg' }, 'The 3D view is unavailable in this browser. Your documents are listed beside it.'),
+      noGL && h('div', { className: 'ls-msg' }, (window.fridayRender3dOff && window.fridayRender3dOff()) ? '3D rendering is off (Settings > Appearance). Your documents are listed beside it.' : 'The 3D view is unavailable in this browser. Your documents are listed beside it.'),
       !noGL && (!nodes || !nodes.length) && h('div', { className: 'ls-msg' }, 'No documents yet.'),
       h('div', { className: 'ls-live', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, live),
       !noGL && h('div', { className: 'ls-cap' },

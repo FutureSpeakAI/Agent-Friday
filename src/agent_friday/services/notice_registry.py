@@ -159,6 +159,10 @@ _ALL = [
        "spend_halt:{scope}", source="spend-guard", safety=True),
     _e("E38", "services/credential_sweep.py:_push", "credential_problem", NEEDS_YOU,
        "credential:{provider}:{state}", source="credentials", safety=True),
+    # A21: an install that finished setup before the key store passphrase became the default is
+    # offered it once (services/keystore_offer).
+    _e("KS1", "services/keystore_offer.py:push_card_if_pending", "keystore_offer", NEEDS_YOU,
+       "keystore-passphrase-offer", source="security"),
     _e("E39", "services/connectors.py:_notif_push", "connector_down", NEEDS_YOU,
        "connector_down:{connector}:{status}"),
     _e("E40", "services/embedder_cache.py:_notify", "model_download", ACTIVITY,
@@ -247,6 +251,20 @@ _ALL = [
     _e("E81", "routes/chat.py:stream", "stream_trace", RECEIPTS, "", route=STREAM, ledger=False),
     _e("E82", "core.py:process_register", "process_orb", ACTIVITY, "", route=AMBIENT,
        ledger=False),
+    # A wrong spoken call PIN on a call from the owner's cell (owner ruling 8): the owner is told
+    # each time; a locked PIN says how to set it again.
+    _e("CP1", "phone/call_pin.py:_tell_owner", "call_pin_wrong", NEEDS_YOU, "call-pin-wrong",
+       source="phone"),
+    # A crash in the middle of an outward action (north star §34.16-1): an approved card whose
+    # action began and never recorded its end, and a task whose first outward step was in flight.
+    # Whether it happened is not known; nothing is retried; the owner is told once.
+    # (CU1/CU2: card recovery's own ids; CR1 is the calendar reminder below.)
+    _e("CU1", "services/card_recovery.py:_announce", "approval_outcome_unknown", NEEDS_YOU,
+       "approval_outcome_unknown:{approval_ids}", source="card-recovery"),
+    _e("CU2", "services/card_recovery.py:_announce_batches", "approval_outcome_unknown", NEEDS_YOU,
+       "approval_outcome_unknown:{run_ids}", source="card-recovery"),
+    _e("CR2", "services/task_resume.py:announce_may_have_acted", "tasks_may_have_acted", NEEDS_YOU,
+       "tasks_may_have_acted:{incident}", source="task-resume"),
     # A model swap on the same side of the cloud line: a receipt, pulled not pushed.
     _e("X02", "services/seat_transparency.py:observe_seats(same side)", "seat_receipt", RECEIPTS,
        "seat_receipt:{seat_state}"),
@@ -264,6 +282,10 @@ _ALL = [
        NEEDS_YOU, "cloud-voice-scope", source="local-voice"),
     _e("LV9", "services/local_voice_readiness.py:_revert_call_scope", "cloud_voice_call_ended",
        UPDATES, "cloud-voice-call-ended", source="local-voice"),
+    # North-star A17: once, on an install from before the daily spending cap shipped on, the
+    # card that explains the new cap and takes the owner to set it (or keep no cap).
+    _e("SC1", "services/spending_caps.py:push_daily_cap_card_if_pending", "spend_cap_intro",
+       NEEDS_YOU, "spend-cap-intro", source="spending-caps"),
     # Laya's personal learning (services/laya_personal.notify): the one-time "Laya learns from your
     # corrections" notice, and the confirmations of forget / reset / go back / wipe. Never carries the
     # owner's words.
@@ -282,6 +304,17 @@ _ALL = [
        route=STREAM, ledger=False),
     _e("L06", "routes/voice.py:_run_routed_front_turn", "router_receipt", RECEIPTS, "",
        route=STREAM, ledger=False),
+    # The weekly "send a Doctor report?" card (A3): in Needs you, raised once a week at most,
+    # never interrupting (tier FYI), nothing sent without the owner's approval card.
+    _e("L07", "services/doctor_weekly.py:tick", "doctor_weekly", NEEDS_YOU,
+       "doctor-weekly:{week}", source="doctor"),
+    # The first backup (§34.4-9): offered in Needs you once setup is done and no scheduled bundle
+    # is on, at most three times a week apart; it turns nothing on and sends nothing.
+    _e("L08", "services/first_backup.py:tick", "first_backup", NEEDS_YOU,
+       "first-backup:{n}", source="backup"),
+    # The drive with Friday's data is almost full (§32.13): one card while background work is
+    # paused, closed when space is back.
+    _e("DF1", "services/disk_guard.py:_enter", "disk_full", NEEDS_YOU, "disk-full", source="disk"),
     # Quiet turned on by the owner (voice, chat or the page): a visible line in Updates that never
     # merges with another, so every activation can be seen.
     _e("NQ1", "services/notification_tools.py:_quiet", "quiet_on", UPDATES, "quiet-on:{surface}:{seq}",
@@ -289,6 +322,9 @@ _ALL = [
     # An approval whose time ran out while quiet hours, the limit or Focus Assist held it back.
     _e("NQ3", "services/approvals.py:_notify_expired_while_held", "approval_expired_held", NEEDS_YOU,
        "approval-expired:{approval_id}", source="approvals"),
+    # The outcome of a skill import the owner approved on its card: installed, or why not.
+    _e("SK1", "services/skill_import_review.py:_tell", "skill_import", UPDATES,
+       "skill-import:{approval_id}", source="skills"),
     # A scheduled run that was due in quiet hours and waits for them to end.
     _e("NQ2", "services/scheduler.py:_defer_for_quiet", "scheduled_deferred", UPDATES,
        "sched-deferred:{schedule_id}:{day}", source="scheduler"),
@@ -336,6 +372,13 @@ _ALL = [
     # ── calendar: a reminder Google has for an event, raised in Friday's tray ──
     _e("CR1", "services/calendar_reminders.py:tick", "calendar_reminder", UPDATES,
        "calendar-reminder:{event_id}:{minutes}", source="calendar"),
+    # ── the phone list in Google Tasks (services/tasks_inbox) ────────────────
+    # A tick there brings a card to the desk (it approves nothing); a delete or a
+    # change made there is reported, because Friday can't tell who made it.
+    _e("TI1", "services/tasks_inbox.py:_bring_to_desk", "tasks_inbox_tick", NEEDS_YOU,
+       "tasks-inbox-tick:{approval_id}", source="tasks_inbox"),
+    _e("TI2", "services/tasks_inbox.py:_decline+_apply_changes", "tasks_inbox_change", ACTIVITY,
+       "tasks-inbox-change:{approval_id}", source="tasks_inbox"),
     # ── reserved: a kind with no emitter yet, exempt by name ─────────────────
     _e("X01", "(reserved) a cLaw block", "claw_block", NEEDS_YOU, "claw_block:{claw}",
        safety=True),
@@ -344,7 +387,7 @@ _ALL = [
 REGISTRY: dict = {e.id: e for e in _ALL}
 CENSUS_IDS = tuple("E%02d" % i for i in range(1, 83))
 #: Emitters live has gained since the 82-emitter census, registered by the same rule.
-LIVE_IDS = tuple("L%02d" % i for i in range(1, 7))
+LIVE_IDS = tuple("L%02d" % i for i in range(1, 9))
 
 _BY_KIND_SOURCE: dict = {}
 _BY_KIND: dict = {}
