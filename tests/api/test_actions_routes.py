@@ -95,6 +95,9 @@ def test_a_file_undo_is_held_while_everything_is_stopped(client, tmp_path, monke
     except ImportError:
         pass
     monkeypatch.setattr(journal, "home_trash", lambda rid: tmp_path / "trash" / rid, raising=False)
+    # The document stands for one in the owner's folders: write_file reaches only those
+    # (services/path_policy, BD-26), so this test's folder is the sandbox root.
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     journal.reset()
     doc = tmp_path / "work" / "report.txt"
     doc.parent.mkdir()

@@ -82,16 +82,21 @@ class DiscordBridge(ChannelAdapter):
             if reply:
                 # the same door as every other send: the egress gate and the
                 # action checkpoint's receipt (base.prepare_outbound), then the
-                # send record (base.record_channel_send)
-                gated = self.prepare_outbound(chat_id, reply)
+                # send record (base.record_channel_send); the gateway's answer
+                # closes the checkpoint's decision (base.report_outbound)
+                gated, decision = self.prepare_outbound_ref(chat_id, reply)
                 if gated:
                     from agent_friday.services.channels.base import record_channel_send, send_unsure
                     gated = gated[:2000]
                     try:
-                        await message.channel.send(gated)
+                        sent = await message.channel.send(gated)
                     except Exception as e:
-                        record_channel_send(self.name, chat_id, gated, False, send_unsure(e))
+                        unsure = send_unsure(e)
+                        self.report_outbound(decision, False, unsure)
+                        record_channel_send(self.name, chat_id, gated, False, unsure)
                         raise
+                    # Discord's id for the posted message is its confirmation
+                    self.report_outbound(decision, True, verified=bool(getattr(sent, "id", None)))
                     record_channel_send(self.name, chat_id, gated, True)
 
         loop = asyncio.new_event_loop()

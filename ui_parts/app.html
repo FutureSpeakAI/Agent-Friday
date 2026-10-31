@@ -1429,6 +1429,18 @@ function useSnapMenuOpener() {
     }
   };
 }
+// Moving a floating panel without dragging (WCAG 2.5.7; north star 33.1-14): each press puts the panel in
+// the next corner of the desktop, clockwise from the top left.
+function fridayNextCorner(p, w, h) {
+  const a = typeof fridayDesktopArea === 'function' ? fridayDesktopArea() : { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+  const m = 12, W = Math.min(w, Math.max(0, a.w - 2 * m)), H = Math.min(h, Math.max(0, a.h - 2 * m));
+  const corners = [{ x: a.x + m, y: a.y + m }, { x: a.x + a.w - W - m, y: a.y + m },
+    { x: a.x + a.w - W - m, y: a.y + a.h - H - m }, { x: a.x + m, y: a.y + a.h - H - m }];
+  const cur = p || {};
+  const at = corners.findIndex(c => Math.abs(c.x - (cur.x || 0)) < 24 && Math.abs(c.y - (cur.y || 0)) < 24);
+  return corners[(at + 1) % corners.length];
+}
+if (typeof window !== 'undefined') window.fridayNextCorner = fridayNextCorner;
 function SnapMenu({
   id, windowTitle, workspaceId, maxed, onToggle,
   anchor,
@@ -2159,6 +2171,9 @@ function renderFridayMarkdown(mdText,opts){
   }catch(e){body=fridayFallbackMd(psrc);}
   body=body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi,'<a target="_blank" rel="noopener" $1>');
   body = fridaySanitizeMarkup(body);
+  // A document's headings sit under the page's h1 and the window title's level 2 (north star 33.1-6): a screen
+  // reader hears its `# Title` at level 3. Only the level read out changes; the drawn size stays.
+  body = body.replace(/<h([1-6])(?=[\s>])/gi, (m, n) => m + ' aria-level="' + Math.min(6, Number(n) + 2) + '"');
   return'<div class="friday-doc'+(compact?' compact':'')+'">'+body+'</div>';
 }
 if(typeof window!=='undefined'){window.renderFridayMarkdown=renderFridayMarkdown;}
@@ -2216,7 +2231,7 @@ function ConnectorDot({wsId}){
   if(!s||s==='off')return null;
   const col=s==='connected'?'#00ff80':s==='connecting'?'#f59e0b':'#ff5470';
   const tip=s==='connected'?'Live data source connected':s==='connecting'?'Connecting data source…':'Data source error — check Settings → Connections';
-  return <span title={tip} style={{display:'inline-block',width:7,height:7,borderRadius:'50%',background:col,boxShadow:`0 0 6px ${col}`,marginLeft:7,verticalAlign:'middle'}}/>;
+  return <span className="fr-state" data-state={s==='connected'?'ok':s==='connecting'?'busy':'bad'} role="img" aria-label={tip} title={tip} style={{color:col,width:7,height:7,marginLeft:7}}/>;
 }
 
 // ═══ CHAT KEYS ═══ (see index.html)
@@ -2247,6 +2262,107 @@ function useFridayOffRecord() {
     return () => window.removeEventListener('friday:off-record', h);
   }, []);
   return on;
+}
+// What off the record does not cover (NS-15.8-3): services Friday is connected
+// to keep their own records. Read from what is connected now, when shown.
+const FRIDAY_OFF_RECORD_ELSEWHERE_TITLE = 'Off the record does not cover';
+function FridayOffRecordElsewhere() {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let live = true;
+    apiFetch('/api/off-record/external').then(r => r.json()).then(j => { if (live && j && j.ok) setD(j); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!d) return null;
+  return React.createElement('details', { 'data-off-record-elsewhere': 'true', style: { fontSize: 11, color: 'rgba(255,255,255,0.6)', padding: '0 12px 8px', lineHeight: 1.5 } },
+    React.createElement('summary', { style: { cursor: 'pointer' } }, d.short || FRIDAY_OFF_RECORD_ELSEWHERE_TITLE),
+    React.createElement('ul', { 'aria-label': FRIDAY_OFF_RECORD_ELSEWHERE_TITLE, style: { margin: '4px 0 0', paddingLeft: 16 } },
+      (d.lines || []).map((t, i) => React.createElement('li', { key: i }, t))));
+}
+// Owner ruling 12 (2026-10-28): turning off the record on first shows the list
+// of services that keep their own records. Every switch that turns it on asks
+// here first and writes the setting only on "Go off the record"; turning it off
+// asks nothing. If the list cannot be read the dialog still opens and says so.
+const FRIDAY_OFF_RECORD_CONFIRM_TITLE = 'Go off the record?';
+const FRIDAY_OFF_RECORD_CONFIRM_LEAD = 'Off the record stops this conversation being kept or learned from on this PC. Services you connected still keep their own records:';
+const FRIDAY_OFF_RECORD_CONFIRM_UNREAD = "The list of connected services couldn't be read right now. Any service you connected can still keep its own records of what it is asked to do.";
+const FRIDAY_OFF_RECORD_CONFIRM_LIMIT = 'Off the record cannot delete what other services keep.';
+const FRIDAY_OFF_RECORD_CONFIRM_GO = 'Go off the record';
+const FRIDAY_OFF_RECORD_CONFIRM_CANCEL = 'Cancel';
+// Resolves true only when the owner presses "Go off the record".
+function fridayConfirmOffRecord() {
+  return new Promise(resolve => {
+    const detail = { resolve: ok => resolve(!!ok), handled: false };
+    try { window.dispatchEvent(new CustomEvent('friday:off-record-confirm', { detail })); } catch (e) {}
+    // No dialog host on this page: ask plainly rather than skip the question.
+    if (!detail.handled) resolve(!!window.confirm(FRIDAY_OFF_RECORD_CONFIRM_LEAD.replace(/:$/, '.') + ' ' + FRIDAY_OFF_RECORD_CONFIRM_LIMIT));
+  });
+}
+// The switch handler: on asks first; off is written at once.
+function fridayToggleOffRecord(isOn, write) {
+  if (isOn) { write({ off_record: false }); return; }
+  fridayConfirmOffRecord().then(ok => { if (ok) write({ off_record: true }); });
+}
+function FridayOffRecordConfirmHost() {
+  const [req, setReq] = useState(null);
+  const [d, setD] = useState(null);
+  const ref = useRef(null), goRef = useRef(null), cancelRef = useRef(null), seq = useRef(0);
+  useEffect(() => {
+    const on = e => {
+      const det = e.detail || {};
+      det.handled = true;
+      const n = ++seq.current;
+      setD(null);
+      setReq({ resolve: typeof det.resolve === 'function' ? det.resolve : () => {}, back: document.activeElement });
+      apiFetch('/api/off-record/external').then(r => r.json())
+        .then(j => { if (seq.current === n) setD(j && j.ok ? j : { failed: true }); })
+        .catch(() => { if (seq.current === n) setD({ failed: true }); });
+    };
+    window.addEventListener('friday:off-record-confirm', on);
+    return () => window.removeEventListener('friday:off-record-confirm', on);
+  }, []);
+  useEffect(() => { if (req && ref.current) ref.current.focus(); }, [req]);
+  if (!req) return null;
+  const finish = ok => {
+    const r = req;
+    seq.current++;
+    setReq(null); setD(null);
+    try { if (r.back && r.back.focus && document.contains(r.back)) r.back.focus(); } catch (_) {}
+    r.resolve(!!ok);
+  };
+  const cancel = () => finish(false);
+  const onKey = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
+    else if (e.key === 'Tab') {
+      const a = goRef.current, b = cancelRef.current, at = document.activeElement;
+      const order = [b, a].filter(x => x && !x.disabled);
+      if (!order.length) return;
+      e.preventDefault();
+      const i = order.indexOf(at);
+      order[(i < 0 ? 0 : (i + (e.shiftKey ? order.length - 1 : 1)) % order.length)].focus();
+    }
+  };
+  const E = React.createElement;
+  const failed = !!(d && (d.failed || d.readable === false));
+  const lines = d && !d.failed ? (d.lines || []).filter(t => t !== d.always) : [];
+  return E('div', { className: 'keys-sheet-overlay key-form-overlay', onClick: cancel },
+    E('div', { ref, className: 'keys-sheet key-form-sheet', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'off-record-confirm-title', 'aria-describedby': 'off-record-confirm-lead',
+      tabIndex: -1, 'data-testid': 'off-record-confirm', onClick: e => e.stopPropagation(), onKeyDown: onKey },
+      E('div', { className: 'keys-sheet-head' },
+        E('h2', { id: 'off-record-confirm-title' }, FRIDAY_OFF_RECORD_CONFIRM_TITLE)),
+      E('div', { className: 'key-form-body' },
+        E('p', { id: 'off-record-confirm-lead', className: 'sc-sub' }, FRIDAY_OFF_RECORD_CONFIRM_LEAD),
+        !d ? E('p', { className: 'sc-sub', role: 'status' }, 'Reading which services are connected…')
+          : E(React.Fragment, null,
+            failed && E('p', { className: 'sc-sub', role: 'alert', 'data-off-record-unread': 'true' }, FRIDAY_OFF_RECORD_CONFIRM_UNREAD),
+            !d.failed && d.short && E('p', { className: 'sc-sub', 'data-off-record-short': 'true' }, d.short),
+            lines.length > 0 && E('ul', { 'aria-label': FRIDAY_OFF_RECORD_ELSEWHERE_TITLE, style: { margin: '0 0 12px', paddingLeft: 18, lineHeight: 1.5 } },
+              lines.map((t, i) => E('li', { key: i }, t)))),
+        E('p', { className: 'sc-sub', 'data-off-record-limit': 'true' }, E('strong', null, FRIDAY_OFF_RECORD_CONFIRM_LIMIT)),
+        E('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          E('button', { ref: cancelRef, type: 'button', className: 'sc-btn quiet', onClick: cancel }, FRIDAY_OFF_RECORD_CONFIRM_CANCEL),
+          E('button', { ref: goRef, type: 'button', className: 'sc-btn', disabled: !d, onClick: () => finish(true) }, FRIDAY_OFF_RECORD_CONFIRM_GO)))));
 }
 function FridayChatInput({value,onChange,onSend,placeholder,disabled,inputRef,className,style,maxHeight,autoFocus}){
   const offRecord=useFridayOffRecord();if(offRecord)placeholder=FRIDAY_OFF_RECORD_TEXT;
@@ -2385,6 +2501,14 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
      the owner's own message. Nothing is sent until one is clicked, nothing is
      preselected, and the card is single-use. */
   const chooseLocalFallback=(msg,id)=>{
+    /* North-star A16a: before a route is picked the only choice opens
+       Settings > Models, where local, cloud and both are offered. */
+    if(id==='choose_route'){
+      window.__fridaySettingsTab='intelligence';
+      try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'intelligence'}}));}catch(_){}
+      if(window.fridayOpenWorkspace)window.fridayOpenWorkspace({workspace:'settings'});
+      return;
+    }
     const src=msg.source_text||'';
     if(!src)return;
     setChatMsgs(p=>p.map(x=>x===msg?{...x,local_fallback:null}:x));
@@ -2524,7 +2648,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
             {/* B1: model badge — exact id + seat class on every assistant
                message, amber for local seats, cyan for cloud. Persisted
                server-side, so it survives reloads (VOICE badge pattern). */}
-            {m.role==='friday'&&m.model&&<span title={'Actually generated by '+m.model+' ('+(m.seat||'unknown')+' seat)'+((m.fallback_chain&&m.fallback_chain.length)?'\nFallbacks this turn:\n· '+m.fallback_chain.join('\n· '):'')} style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:m.seat==='local'?'rgba(245,158,11,0.10)':'rgba(0,212,255,0.08)',border:'1px solid '+(m.seat==='local'?'rgba(245,158,11,0.35)':'rgba(0,212,255,0.25)'),color:m.seat==='local'?'#f59e0b':'#00d4ff',fontSize:9,letterSpacing:'0.05em',fontFamily:'JetBrains Mono'}}>{m.model}{m.seat?' · '+m.seat:''}{(m.fallback_chain&&m.fallback_chain.length)?<span title="This reply reached this model via fallback — hover for the chain" style={{marginLeft:3,color:'#f59e0b'}}>⚠</span>:null}</span>}
+            {m.role==='friday'&&m.model&&<span title={'Actually generated by '+m.model+' ('+(m.seat||'unknown')+' seat)'+((m.fallback_chain&&m.fallback_chain.length)?'\nFallbacks this turn:\n· '+m.fallback_chain.join('\n· '):'')} style={{marginLeft:6,padding:'1px 5px',borderRadius:3,background:m.seat==='local'?'rgba(245,158,11,0.10)':'rgba(0,212,255,0.08)',border:'1px solid '+(m.seat==='local'?'rgba(245,158,11,0.35)':'rgba(0,212,255,0.25)'),color:m.seat==='local'?'#f59e0b':'#00d4ff',fontSize:9,letterSpacing:'0.05em',fontFamily:'JetBrains Mono'}}>{m.model}{m.seat?' · '+m.seat:''}{(m.fallback_chain&&m.fallback_chain.length)?<span title="This reply reached this model via fallback — hover for the chain" style={{marginLeft:3,color:'#f59e0b'}}>⚠</span>:null}</span>}{m.role==='friday'&&m.route&&window.FridayRouteWhy?React.createElement(window.FridayRouteWhy,{route:m.route}):null}
           </div>
         </div>)}
         {chatLoad&&<div className="typing-indicator"><span className="label">{fridayName()} is thinking</span><span className="dot"/><span className="dot"/><span className="dot"/></div>}
@@ -2777,6 +2901,25 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
   const LSK='friday_fwin_'+id;
   // The window grows out of (and folds back into) its own dock icon.
   const fwinRef=useRef(null);
+  // A workspace's own headings are read under the window's title (level 2): an h1 or h2 inside
+  // is announced at level 3, an h3 at 4, and so on (north star 33.1-6). Headings that already
+  // carry a level (a document's Markdown, read two levels down) keep it. Checked once a frame
+  // at most while the window's content changes.
+  useEffect(() => {
+    const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
+    if (!body || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const fix = () => {
+      raf = 0;
+      body.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.hasAttribute('aria-level')) h.setAttribute('aria-level', String(Math.max(3, Math.min(6, Number(h.tagName[1]) + 1))));
+      });
+    };
+    fix();
+    const mo = new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(fix); });
+    mo.observe(body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
   const [historyTop, setHistoryTop] = useState(37);
   React.useLayoutEffect(() => {
     const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');
@@ -2883,7 +3026,7 @@ function FWin({id,title,emoji,children,onClose,zIndex,onFocus,closing}){
       if(snap.slot){const rel=visible.w?(e.clientX-visible.x)/visible.w:0.5;dOff.current={x:Math.round(rel*size.w),y:e.clientY-visible.y,free:true,sx:e.clientX,sy:e.clientY}}
       else dOff.current={x:e.clientX-visible.x,y:e.clientY-visible.y};
       setDragging(true)}}>
-      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/><span className="fwin-title-text">{title}</span><ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote} arrange={{maxed,current:snap.slot,onToggle:toggleMax,onPick:s=>snap.setSlot(s,'owner'),onChat:f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}} onOpenTab={()=>{const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} onClose={onClose}/></div>
+      <span className="fwin-title"><WsIcon ws={id} glyph={emoji}/><span className="fwin-title-text" role="heading" aria-level={2}>{title}</span><ConnectorDot wsId={id}/><WsCustomizedMark id={id}/></span><div className="fwin-btns"><WsTools id={id} title={title} emoji={emoji} histOpen={histOpen} onHistory={()=>setHistOpen(v=>!v)} onImproveNote={setImproveNote} arrange={{maxed,current:snap.slot,onToggle:toggleMax,onPick:s=>snap.setSlot(s,'owner'),onChat:f=>window.dispatchEvent(new CustomEvent('friday:beside-chat',{detail:{workspace:id,frac:f}}))}} onOpenTab={()=>{const body=fwinRef.current&&fwinRef.current.querySelector('.fwin-body');const tab=fridayOpenWorkspaceTab(id,fridayCollectTabState(id,body));if(!tab){setTabBlocked(true);return}setTabBlocked(false);onClose()}} onClose={onClose}/></div>
     </div>{improveNote&&<div className="fwin-tab-blocked" role="alert" data-ws-improve-note={id} onClick={()=>setImproveNote('')}>{improveNote}</div>}{tabBlocked&&<div className="fwin-tab-blocked" role="alert"><span>The browser blocked the new tab. Allow pop-ups for <b>{window.location.host}</b> (the blocked pop-up icon at the right end of the address bar), then choose Open in its own tab again. This window stays open until then.</span><button title="Dismiss" aria-label="Dismiss the pop-up notice" onClick={e=>{e.stopPropagation();setTabBlocked(false)}}>×</button></div>}<div className="fwin-body"><WsCustomBody id={id} title={title} emoji={emoji}>{children}</WsCustomBody></div>
     {histOpen&&<WorkspaceHistory top={historyTop} wsId={id} label={title} onClose={()=>setHistOpen(false)}/>}
     <div className="resize-h" title="Drag to resize" onMouseDown={e=>{e.stopPropagation();e.preventDefault();startResize(e,'se')}}/>{fridayEdgeHandles(startResize)}
@@ -3227,6 +3370,21 @@ function WorkspaceChat({
       color: '#8891a8'
     }
   }, "Shape this workspace by talking to ", fridayName())), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "data-panel-move": "studio",
+    onClick: () => setPos(p => fridayNextCorner(p, 390, Math.min(620, window.innerHeight * 0.76))),
+    "aria-label": "Move this panel to the next corner",
+    title: "Move to the next corner",
+    style: {
+      background: 'none',
+      border: '1px solid rgba(255,255,255,0.14)',
+      borderRadius: 6,
+      color: '#9fb4c8',
+      minWidth: 24,
+      minHeight: 24,
+      cursor: 'pointer'
+    }
+  }, "\u21F2"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowVer(v => !v),
     "aria-label": "Version history",
     title: "Version history",
@@ -5135,6 +5293,43 @@ function kgEdgeOpacity(count, focused, mode) {
     Math.max(.015,.16*Math.pow(4500/Math.max(4500,count),.85));
 }
 
+// The knowledge graph as a list (north star 33.1-12: a text alternative for the 3D graph). The
+// same notes and links the galaxy draws, most connected first, each opening its page; read by a
+// screen reader, used from the keyboard, and there with 3D rendering off. Built only when opened.
+function KgAsList({ kg, stats, onOpen }) {
+  const h = React.createElement;
+  const [open, setOpen] = useState(false);
+  const rows = React.useMemo(() => {
+    if (!open || !kg || !Array.isArray(kg.entities)) return [];
+    const byId = {}, links = {};
+    kg.entities.forEach(e => { byId[e.id] = e; links[e.id] = new Set(); });
+    // Each neighbour once: a pair linked both ways, or twice, is one link; a self-link is none.
+    (kg.relationships || []).forEach(r => {
+      if (r.source === r.target) return;
+      if (links[r.source] && byId[r.target]) links[r.source].add(byId[r.target]);
+      if (links[r.target] && byId[r.source]) links[r.target].add(byId[r.source]);
+    });
+    return kg.entities.map(e => { const w = Array.from(links[e.id]); return { e, n: w.length, with: w }; })
+      .sort((a, b) => b.n - a.n || String(a.e.title || '').localeCompare(String(b.e.title || ''))).slice(0, 200);
+  }, [open, kg, stats]);
+  const total = stats ? stats.nodes : (kg && kg.entities ? kg.entities.length : 0);
+  return h('details', { className: 'kw-as-list', 'data-kg-list': '', onToggle: e => setOpen(e.currentTarget.open),
+      style: { margin: '6px 0', fontSize: 12, color: '#c7d2e2', flexShrink: 0 } },
+    h('summary', { style: { cursor: 'pointer', minHeight: 24 } },
+      'The graph as a list' + (stats ? ' (' + stats.nodes + ' notes, ' + stats.edges + ' links, ' + stats.comms + ' groups)' : '')),
+    open && h('div', null,
+      rows.length === 0 ? h('p', { style: { margin: '4px 0', color: '#8fa8c8' } }, total ? 'The list fills once the galaxy has loaded its notes (the grouped view shows groups, not notes).' : 'No notes yet.')
+        : total > rows.length && h('p', { style: { margin: '4px 0', color: '#8fa8c8' } },
+        'The ' + rows.length + ' most connected of ' + total + ' notes. Search finds any of them.'),
+      // At most a third of the window: the galaxy below keeps most of the room.
+      h('ul', { style: { margin: 0, paddingLeft: 18, maxHeight: 'min(320px, 33vh)', overflow: 'auto' } },
+        rows.map(({ e, n, with: w }) => h('li', { key: e.id, style: { margin: '3px 0' } },
+          e.type === 'soul' ? h('strong', null, e.title || e.id)        // no page of its own to open
+            : h('button', { type: 'button', className: 'ws-tab-link', onClick: () => onOpen && onOpen(e),
+              style: { minHeight: 24 } }, e.title || e.id),
+          ' \u2014 ' + (n ? 'linked to ' + w.slice(0, 5).map(x => x.title || x.id).join(', ') + (n > 5 ? ' and ' + (n - 5) + ' more' : '')
+                          : 'no links yet'))))));
+}
 function KnowledgeGraphWS(props){
   const P=props||{};
   const embedded=!!P.embedded;
@@ -5195,7 +5390,7 @@ function KnowledgeGraphWS(props){
 
   useEffect(()=>{
     const mount=mountRef.current;
-    if(!mount||typeof THREE==='undefined')return;
+    if(!mount||typeof THREE==='undefined'||(window.fridayRender3dOff&&window.fridayRender3dOff()))return;
     const S=kgRef.current;
     let disposed=false;
 
@@ -7072,8 +7267,9 @@ function KnowledgeGraphWS(props){
       </div>))}
     </div>}
 
+    <KgAsList kg={kgRef.current} stats={stats} onOpen={openWikiPage}/>
     {/* 3D canvas */}
-    <div ref={mountRef} className="kw-scene" style={{flex:1,minHeight:0,position:'relative',borderRadius:8,overflow:'hidden',border:'1px solid rgba(90,60,160,0.35)'}}>
+    <div ref={mountRef} className="kw-scene" role="group" aria-label={(stats ? 'Knowledge graph: ' + stats.nodes + ' notes and ' + stats.edges + ' links, drawn in 3D. The same, as a list: "The graph as a list" above.' : 'Knowledge graph')} style={{flex:1,minHeight:0,position:'relative',borderRadius:8,overflow:'hidden',border:'1px solid rgba(90,60,160,0.35)'}}>
       {status==='loading'&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#8a7bd8',fontFamily:'Orbitron, sans-serif',fontSize:13,letterSpacing:'.15em',zIndex:2}}>CHARTING THE GALAXY…</div>}
       {status==='empty'&&<div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',gap:10,alignItems:'center',justifyContent:'center',color:'#8fa8c8',fontSize:13,zIndex:2}}>
         <div>The knowledge graph is empty — write some wiki pages first.</div>
@@ -7150,6 +7346,8 @@ function kwSlug(title) {
   return String(title || '').trim().toLowerCase().replace(/[^a-z0-9 _-]+/g, '').trim().split(/\s+/).join('-').slice(0, 80);
 }
 function kwLoadView() {
+  // 3D off (Settings > Appearance): the pages are the whole view.
+  if (window.fridayRender3dOff && window.fridayRender3dOff()) return 'pages';
   try {
     const v = localStorage.getItem('friday_kw_view');
     if (KW_VIEWS.some(x => x.id === v)) return v;
@@ -7214,6 +7412,7 @@ function KnowledgeWS() {
   const pageRef = useRef(page);
   pageRef.current = page;
   const setView = useCallback(v => {
+    if (window.fridayRender3dOff && window.fridayRender3dOff()) v = 'pages';   // 3D off: the pages are the view
     setViewRaw(v);
     kwSaveView(v);
   }, []);
@@ -7312,7 +7511,7 @@ function KnowledgeWS() {
   // What its own tab (↗) opens on: the keys useNavTarget below reads.
   useTabState('knowledge', () => ({ view, query: q, path: page || '', node: sel && sel.type !== 'page' && sel.type !== 'soul' ? sel.id : '' }));
   useNavTarget('knowledge', t => {
-    if (t.view && KW_VIEWS.some(x => x.id === t.view)) setView(t.view);
+    if (t.view && KW_VIEWS.some(x => x.id === t.view) && (t.view === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff()))) setView(t.view);
     if (t.query) setQ(String(t.query));else if (t.path || t.page) setQ('');
     if (t.path) openPage(String(t.path), {
       view: t.view
@@ -7529,7 +7728,7 @@ function KnowledgeWS() {
     className: 'kw-views',
     role: 'tablist',
     'aria-label': 'View'
-  }, KW_VIEWS.map(v => h('button', {
+  }, KW_VIEWS.filter(v => v.id === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff())).map(v => h('button', {
     key: v.id,
     role: 'tab',
     'aria-selected': view === v.id,
@@ -7587,7 +7786,7 @@ function KnowledgeWS() {
     className: 'kw-sp'
   }), !page && !sel && !section && h('span', {
     className: 'kw-dim kw-hint'
-  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && h('button', {
+  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && !(window.fridayRender3dOff && window.fridayRender3dOff()) && h('button', {
     className: 'kw-btn',
     onClick: showInGraph,
     title: 'Show this page in the galaxy'
@@ -8634,6 +8833,44 @@ function ProvenanceBar({filename}){
 // list is backend-driven via useModelCatalog() (role 'creative'), filtered by
 // modality. Posts to the unified /api/creations/generate endpoint; the process
 // orb in the 3-D scene shows progress while it renders.
+// The artifact manifest of a file Friday made (NS-24.1-2): whose work it is,
+// which goal it serves, its sensitivity level, its checks, whether it was
+// verified and delivered, and its earlier versions. Self-contained: fetches
+// /api/artifacts/manifest, and says so when Friday has no record of the file.
+function ManifestBar({path}){
+  const[data,setData]=useState(null);const[open,setOpen]=useState(false);const[busy,setBusy]=useState(false);
+  const load=()=>{if(!path){setData(null);return Promise.resolve();}return apiFetch('/api/artifacts/manifest?path='+encodeURIComponent(path)).then(r=>r.json()).then(d=>setData(d)).catch(()=>setData(null));};
+  useEffect(()=>{setData(null);setOpen(false);load();},[path]);
+  if(!path||!data)return null;
+  if(data.status!=='ok'||!data.manifest)return <div style={{fontSize:10,color:'#6a8b98',fontFamily:'JetBrains Mono',marginBottom:8}}>Manifest: no record for this file as it is now.</div>;
+  const m=data.manifest;const st=m.verification_state||'unverified';
+  const ga=m.goal_ancestry;const sens=m.sensitivity||{};const dr=m.delivery_receipt;const vh=m.version_history||[];const qa=m.qa||{};
+  const qaFailed=!!(qa.checked&&qa.ok===false);
+  const col={qa_passed:'#00e87a',owner_verified:qaFailed?'#ffb454':'#00ff80',qa_failed:'#ff5470'}[st]||'#8891a8';
+  const lbl={qa_passed:'Checks passed',qa_failed:'Checks failed',owner_verified:qaFailed?'Verified by you (checks failed)':'Verified by you',unverified:'Not verified'}[st]||st;
+  const verify=async()=>{if(qaFailed&&!window.confirm('This file failed its checks'+(qa.summary?': '+qa.summary:'.')+'\n\nMark it verified anyway?'))return;setBusy(true);try{await apiFetch('/api/artifacts/manifest/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});await load();}catch(e){}setBusy(false);};
+  const row=(k,v)=><div key={k} style={{display:'flex',gap:8}}><span style={{color:'#6a8b98',minWidth:110}}>{k}</span><span style={{color:'#aab',wordBreak:'break-all'}}>{v}</span></div>;
+  return(<div style={{marginBottom:10,padding:'8px 10px',borderRadius:8,background:'rgba(127,182,201,0.05)',border:'1px solid rgba(127,182,201,0.14)'}}>
+    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+      <span style={{fontSize:10,fontFamily:'JetBrains Mono',color:'#7fb6c9'}}>Manifest</span>
+      <span style={{fontSize:10,fontFamily:'JetBrains Mono',color:col}}>{lbl}</span>
+      {dr&&<span style={{fontSize:9,color:'#7fb6c9'}}>Delivered</span>}
+      <button className="btn" style={{fontSize:9,padding:'1px 7px',marginLeft:'auto'}} onClick={()=>setOpen(!open)}>{open?'Close':'Manifest'}</button>
+    </div>
+    {open&&<div style={{marginTop:8,fontSize:10,fontFamily:'JetBrains Mono',display:'flex',flexDirection:'column',gap:3}}>
+      {row('Made by',(m.tool||'?')+(m.task_id?' · task '+m.task_id:''))}
+      {row('For',m.principal||'unknown')}
+      {row('Goal',ga?(ga.goal_id+(ga.milestone_id?' › '+ga.milestone_id:'')):'none')}
+      {row('Sensitivity',sens.level||'unknown')}
+      {row('Checks',qa.summary||(qa.checked?'checked':'not checked'))}
+      {st==='unverified'&&m.verification_reason&&row('Why not verified',m.verification_reason)}
+      {row('Delivery receipt',dr?((dr.channel||'')+' · '+String(dr.id||'').slice(0,16)+'…'):'not sent')}
+      {row('Versions',vh.length?vh.length+' earlier: '+vh.map(v=>String(v.sha256||'').slice(0,8)+(v.backup?' (backup kept)':'')).join(', '):'first version')}
+      {row('SHA-256',String(m.sha256||'').slice(0,16)+'…')}
+      {st!=='owner_verified'&&<button className="btn" style={{fontSize:10,marginTop:4}} disabled={busy} onClick={verify}>{busy?'Saving…':'I checked it: mark verified'}</button>}
+    </div>}
+  </div>);
+}
 const IMG_STYLES=['none','photorealistic','cinematic','digital-art','watercolor','oil-painting','anime','3d-render','neon','minimalist','sketch'];
 function GeneratePanel({onCreated}){
   const mc=useModelCatalog();
@@ -9224,6 +9461,7 @@ function StudioWS(){
         </div>
       </div>
       <ProvenanceBar filename={selected.name}/>
+      <ManifestBar path={selected.path}/>
       {ext==='html'&&<iframe src={url} ref={window.fridayAttachFrame} sandbox="allow-scripts allow-pointer-lock allow-popups" referrerPolicy="no-referrer" style={{width:'100%',height:'calc(100vh - 240px)',border:'none',borderRadius:8,background:'#0a0e1a'}}/>}
       {(ext==='png'||ext==='jpg'||ext==='jpeg'||ext==='webp'||ext==='svg')&&<img src={url} alt={selected.name} style={{maxWidth:'100%',borderRadius:8}}/>}
       {(ext==='mp4'||ext==='webm'||ext==='mov')&&<video controls src={url} style={{width:'100%',borderRadius:8,background:'#0a0e1a'}}/>}
@@ -11313,7 +11551,7 @@ function relevanceFor(it){
 function SentimentDot({it}){
   const s=it&&it.sentiment||'neutral';
   const tip={positive:'Positive tone',negative:'Negative tone',neutral:'Neutral tone'}[s]||'Neutral tone';
-  return <span className={'sentiment-dot '+s} title={tip}></span>;
+  return <span className={'sentiment-dot '+s} role="img" aria-label={tip} title={tip}></span>;
 }
 // Source Trust Graph dimension labels + ordering (matches source_trust_graph.py).
 // Labels say what each dimension MEASURES (source_trust_graph.DIMENSION_INFO);
@@ -11335,7 +11573,7 @@ function TrustBadge({it,compact}){
   const color=(it&&it.trust)||(score!=null?trustColor(score):'yellow');
   const dims=it&&it.trust_dims;
   return <span className="trust-badge" tabIndex={0}>
-    <span className={'trust-dot '+color}></span>
+    <span className={'trust-dot '+color} role="img" aria-label={({ green: 'Trust: high', yellow: 'Trust: medium', red: 'Trust: low' }[color] || 'Trust: medium')}></span>
     {score!=null&&!compact&&<span className="trust-num">{score.toFixed(2)}</span>}
     <span className="trust-tip">
       <div className="trust-tip-head">Source trust{score!=null?(' · '+score.toFixed(2)):''}</div>
@@ -12242,7 +12480,7 @@ function NewsWS(){
               <div className="trust-obs-list">
                 {(trustDetail.observations||[]).length===0?<div style={{color:'#888',fontSize:11,padding:'8px 0'}}>No observations yet — this score is a seed estimate from known reputation.</div>:
                  trustDetail.observations.slice().reverse().slice(0,40).map((o,oi)=><div key={oi} className="trust-obs">
-                   <span className={'trust-obs-dot '+trustColor(o.signal)}></span>
+                   <span className={'trust-obs-dot '+trustColor(o.signal)} role="img" aria-label={({ green: 'Good signal', yellow: 'Mixed signal', red: 'Poor signal' }[trustColor(o.signal)] || 'Mixed signal')}></span>
                    <span className="trust-obs-type">{o.type}</span>
                    <span className="trust-obs-dim">{(TRUST_DIMS.find(d=>d[0]===o.dimension)||[null,o.dimension])[1]}</span>
                    <span className="trust-obs-date">{o.date}</span>
@@ -13558,9 +13796,9 @@ function RelationshipPanel({onImported}){
     if(d.status==='ok'){const res=d.result||{};setMsg('Added '+(res.added||0)+' interactions'+((res.errors||[]).length?' · '+res.errors.length+' account error(s): '+res.errors.map(x=>x.error).join('; '):'')+((res.truncated_accounts||[]).length?' · some mail not read yet, sync again':''));load()}
     else setMsg(d.message||'Sync failed.')}catch(err){setMsg('Sync failed.')}setBusy('')};
   const importFile=async f=>{if(!f)return;setBusy('import');setMsg('');try{const text=await f.text();const r=await fetch('/api/contacts/import/linkedin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csv:text})});const d=await r.json();
-    if(d.status==='ok'){const x=d.result;setMsg('LinkedIn: '+x.created+' added, '+x.updated+' updated'+(x.skipped_count?', '+x.skipped_count+' rows skipped':'')+(x.skipped_forgotten?', '+x.skipped_forgotten+' forgotten people left out':'')+'.');if(onImported)onImported()}
+    if(d.status==='ok'){const x=d.result;setMsg('LinkedIn: '+x.staged+' people staged for your review below; nothing is saved until you accept'+(x.already_decided?', '+x.already_decided+' already answered':'')+(x.skipped_count?', '+x.skipped_count+' rows skipped':'')+(x.skipped_forgotten?', '+x.skipped_forgotten+' forgotten people left out':'')+'.');if(onImported)onImported()}
     else setMsg(d.message||'Import failed.')}catch(err){setMsg('Import failed.')}setBusy('')};
-  const allowSaving=async a=>{setMsg('');try{const r=await fetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:a.id,email:a.email,include_contacts_write:true})});const d=await r.json();
+  const allowSaving=async a=>{setMsg('');try{const df=await fetchPermissionDiff(a.id,['contacts']);if(!df){setMsg('Could not load what this would add.');return;}if(!window.confirm(permissionDiffText(df)))return;const r=await fetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({account_id:a.id,email:a.email,include_contacts_write:true,diff_id:df.diff_id})});const d=await r.json();
     if(d.status==='ok'&&d.auth_url)setConsent({url:d.auth_url,brief:d.prebrief||'',email:a.email});else setMsg(d.message||'Could not start sign-in.')}catch(err){setMsg('Could not start sign-in.')}};
   const done=async id=>{try{await fetch('/api/relationships/follow-ups/'+encodeURIComponent(id)+'/done',{method:'POST'})}catch(err){}load()};
   const small={fontSize:11};const readOnly=accts.filter(a=>!a.can_save);
@@ -13582,6 +13820,7 @@ function RelationshipPanel({onImported}){
       Google will ask {consent.email} to allow creating and editing contacts. <button className="btn" style={small} onClick={()=>{window.open(consent.url,'_blank','noopener');setConsent(null)}}>Continue to Google</button> <button className="btn" style={small} onClick={()=>setConsent(null)}>Cancel</button>
     </div>}
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:4}}>{msg}</div>}
+    <StagedImportReview source="linkedin_csv" refresh={msg} onDone={onImported}/>
     {follow.length>0&&<div style={{marginTop:8}}>
       <div style={{fontSize:11,color:'#888',marginBottom:4}}>Follow-ups</div>
       {follow.slice(0,8).map(f=><div key={f.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:6,fontSize:11,padding:'3px 0',borderBottom:'1px solid rgba(255,255,255,0.03)'}}>
@@ -13590,6 +13829,140 @@ function RelationshipPanel({onImported}){
       </div>)}
     </div>}
   </div>);
+}
+// ── Imported items waiting for your answer (services/import_staging) ──
+// Nothing an import brings in is saved until you accept it here. Accepting is a press in
+// Friday's window on this PC (routes/import_staging.py); Reject keeps it from being proposed again.
+function StagedImportReview({ source, refresh, onDone }) {
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/import-staging?status=open&source=' + encodeURIComponent(source)).then(r => r.json()).then(setD).catch(() => setD(null));
+  }, [source]);
+  useEffect(() => {
+    load();
+  }, [load, refresh]);
+  const answer = (body, done) => {
+    setBusy(true);
+    setMsg('');
+    apiFetch('/api/import-staging/review', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }).then(r => r.json()).then(x => {
+      setMsg(x.ok ? done(x) : x.error || 'Nothing changed.');
+      load();
+      if (x.ok && onDone) onDone();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const items = d && d.items || [];
+  if (!items.length) return msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null;
+  const small = {
+    fontSize: 10
+  };
+  return E('div', {
+    'data-testid': 'import-staging-review',
+    style: {
+      marginTop: 8,
+      padding: 8,
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 6
+    }
+  }, E('div', {
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginBottom: 6,
+      lineHeight: 1.5
+    }
+  }, items.length + (d.more ? '+' : '') + ' imported ' + (items.length === 1 ? 'item waits' : 'items wait') + ' for your answer. Nothing is saved until you accept it.'), E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginBottom: 6
+    }
+  }, E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'accept',
+      all: true
+    }, x => 'Saved ' + x.done + (x.failed ? '; ' + x.failed + ' could not be saved and still wait' : '') + '.')
+  }, 'Accept all ' + ((d.counts || {}).proposed + (d.counts || {}).deferred || items.length)), E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'reject',
+      all: true
+    }, x => 'Left out ' + x.done + '.')
+  }, 'Reject all')), E('ul', {
+    style: {
+      listStyle: 'none',
+      padding: 0,
+      margin: 0,
+      maxHeight: 220,
+      overflowY: 'auto'
+    }
+  }, items.slice(0, 200).map(it => E('li', {
+    key: it.id,
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: 6,
+      fontSize: 11,
+      padding: '2px 0'
+    }
+  }, E('span', null, it.label + (it.status === 'deferred' ? ' (later)' : '') + (it.error ? ' (' + it.error + ')' : '')), E('span', null, E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'accept'
+    }, () => 'Saved.')
+  }, 'Accept'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'reject'
+    }, () => 'Left out.')
+  }, 'Reject'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'defer'
+    }, () => 'Kept for later.')
+  }, 'Later'))))), msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null);
 }
 function PersonTimelineCard({name}){
   const[t,setT]=useState(null);const[note,setNote]=useState('');const[days,setDays]=useState(3);const[msg,setMsg]=useState('');
@@ -14265,7 +14638,7 @@ function ContentAnalyticsTab(){
   const openDrill=id=>{setDrill({id,loading:true});fetch('/api/content/analytics/post/'+id).then(r=>r.json()).then(d=>setDrill({id,data:d})).catch(()=>setDrill({id,data:{}}))};
   const s=sum||{};
   const rate=s.engagement_rate!=null?(Number(s.engagement_rate)*100).toFixed(1)+'%':null;
-  const cards=[['Impressions · 7d',s.impressions_7d],['Impressions · 30d',s.impressions_30d!=null?s.impressions_30d:s.impressions],['Engagement rate',rate],['ψ earned from content',s.psi_earned!=null?s.psi_earned:s.psi]];
+  const cards=[['Impressions · 7d',s.impressions_7d],['Impressions · 30d',s.impressions_30d!=null?s.impressions_30d:s.impressions],['Engagement rate',rate],].concat(fridayHeldOn('federation')?[['ψ earned from content',s.psi_earned_mpsi!=null?s.psi_earned_mpsi+' mψ':(s.psi_earned!=null?s.psi_earned:s.psi)]]:[]);
   const series=(s.series&&typeof s.series==='object')?s.series:{};
   const seriesKeys=Object.keys(series).filter(k=>Array.isArray(series[k])&&series[k].length>1);
   const top=s.top_posts||s.best_posts||[];
@@ -14713,6 +15086,8 @@ function CameraMode({source,intervalSec,onClose,frameRef,setSendIndicator,facing
     <span className="cam-label">{label}</span>
     {refKey==='webcam'&&onChangeFacing&&<button aria-label="Flip camera" className="cam-close" style={{right:30,padding:'1px 6px'}} title="Flip camera"
       onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onChangeFacing()}}>⇄</button>}
+    <button type="button" aria-label="Move the camera view to the next corner" className="cam-close" data-panel-move="camera" style={{right:refKey==='webcam'&&onChangeFacing?56:30,padding:'1px 6px',minWidth:24,minHeight:24}} title="Move to the next corner"
+      onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setPos(p=>{if(!isBoth)return fridayNextCorner(p,160,120);const c=fridayNextCorner({x:p.x-130,y:p.y},250,90);return{x:c.x+130,y:c.y}})}}>⇲</button>
     <button aria-label="Stop camera" className="cam-close" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onClose()}} title="Stop camera">×</button>
     <span className="cam-active"><span className="pulse"/>LIVE</span>
     {err&&<div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.7)',color:'#ff4d6a',fontSize:11,fontFamily:'JetBrains Mono'}}>{err}</div>}
@@ -15892,13 +16267,33 @@ function fridayProcessSteps(steps) {
       timestamp: step.timestamp || (Number.isFinite(step.ts) ? new Date(step.ts * 1000).toLocaleTimeString() : '')};
   });
 }
-function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose}) {
+function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose, onMove}) {
   const surfaceRef = useRef(null);
   useFridaySpatialSurface(surfaceRef, () => ({x:position.x,y:position.y,w:400,h:320}), 'overlay');
   const traceId = meta?.trace_id || orb.trace_id || null;
   const taskId = meta?.linked_task_id || orb.task_id || null;
   const status = meta?.status || orb.status || 'running';
   const running = /^(running|queued|paused|awaiting_approval)$/.test(status);
+  // Cancel without throwing the orb (Stephen's ruling, 2026-10-28; WCAG 2.5.7): the same cancel as a throw, with its
+  // undo window and its note; the button says so while it waits.
+  const [cancelling,setCancelling] = useState(false);
+  const cancellable = /^(running|queued)$/.test(status);
+  useEffect(()=>{
+    setCancelling(false);
+    // Undo in the note puts the button back; a committed cancel leaves it until the panel reads the new status.
+    const on=e=>{const d=e.detail||{};if(d.id===orb.id&&d.state==='undone')setCancelling(false);};
+    window.addEventListener('friday:orb-cancel',on);
+    return()=>window.removeEventListener('friday:orb-cancel',on);
+  },[orb.id]);
+  const cancelTask = e => {
+    e.stopPropagation();
+    if (typeof FridayOrbHands === 'undefined') return;
+    let r = (FridayOrbHands.act('cancel',[orb.id],'button')||[])[0];
+    // The orb is behind Friday just now, or was opened another way: cancel it by id all the same.
+    if ((!r || !r.ok) && FridayOrbHands.cancelOrb) r = FridayOrbHands.cancelOrb({id:orb.id,task_id:taskId,label:orb.label,status});
+    if (r && r.ok) setCancelling(true);
+    else if (typeof fridayToast === 'function') fridayToast('This task could not be cancelled from here. Find it in Activity.');
+  };
   const hasActivity = !!(log?.length || steps.length || meta?.result);
   const [area,setArea] = useState(()=>fridayDesktopArea());
   useEffect(()=>{
@@ -15923,7 +16318,8 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
       rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
-      rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
+      cancellable&&typeof FridayOrbHands!=='undefined'&&rtEl('button',{type:'button',className:'thread-cancel','data-orb-cancel':orb.id,'aria-label':cancelling?'Cancelling this task; undo it from the note':'Cancel this task',title:cancelling?'Stopping. Undo it from the note while it shows.':'Stop this task (you can undo it for a few seconds)',disabled:cancelling,onMouseDown:e=>e.stopPropagation(),onClick:cancelTask,style:{minHeight:24,minWidth:24,padding:'2px 8px',borderRadius:6,border:'1px solid rgba(255,0,128,0.45)',background:'transparent',color:'#ff6fa8',font:'600 11px Inter,system-ui,sans-serif',cursor:cancelling?'default':'pointer'}},cancelling?'Cancelling…':'Cancel'),
+      onMove&&rtEl('button',{type:'button',className:'thread-close','data-panel-move':'thread','aria-label':'Move this process panel to the next corner',title:'Move to the next corner',onMouseDown:e=>e.stopPropagation(),onClick:e=>{e.stopPropagation();onMove();}},'⇲'),rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
       (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
     rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
       readState==='loading'&&rtEl('div',{role:'status',className:'thread-log-line'},'Loading process activity…'),
@@ -15935,7 +16331,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
           emptyText:'No reasoning was recorded for this process.'}) : rtMuted(readState==='loading'?'Looking for a linked reasoning thread…':'No reasoning trace is linked to this process.')),
       rtEl('details',{open:activityExpanded,style:{marginTop:10}},rtEl('summary',{style:{cursor:'pointer',fontSize:11},onClick:e=>{e.preventDefault();setActivityExpanded(value=>!value);}},'Activity and result'),
         Array.isArray(log)&&log.map((line,i)=>rtEl('div',{key:'log'+i,className:'thread-log-line'},String(line))),
-        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending')}),
+        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending'),role:'img','aria-label':({done:'Done','in-progress':'In progress',pending:'Waiting',error:'Failed'})[step.status||'pending']||String(step.status)}),
           rtEl('div',{className:'thread-step-content'},rtEl('div',{className:'thread-step-text'},step.text),
             step.detail&&rtEl('details',null,rtEl('summary',null,'Details'),rtEl('div',{className:'thread-log-line'},step.detail)),
             step.timestamp&&rtEl('div',{className:'thread-step-time'},step.timestamp)))),
@@ -17312,7 +17708,7 @@ function SetupConnectionItem({ it, open, onToggle, onChanged, onSkip, curated })
         if (r.ok && d.text) setMsg({ ok: !!d.can_think, text: 'Saved, encrypted on this computer. ' + d.text });
       }
     } else if (c.kind === 'google_oauth') {
-      const d = await post(c.endpoint, { label: label.trim(), include_send: !!opts.include_send, include_modify: !!opts.include_modify });
+      const d = await post(c.endpoint, { label: label.trim(), include_send: !!opts.include_send, include_modify: !!opts.include_modify, include_contacts_write: !!opts.include_contacts_write });
       openUrl(d.auth_url);
       setMsg({ ok: true, text: "Google's consent screen opened in your browser. It lists the same permissions; come back here once you've approved." });
     } else if (c.kind === 'oauth_connector') {
@@ -20014,6 +20410,39 @@ function ClawsRepinPanel(){
 // file permissions only. This panel wraps it with the vault passphrase through
 // /api/security/keystore/wrap, which answers only this page on this PC and
 // needs the passphrase typed. Nothing changes it on its own.
+// Every stored credential (BD-06, NS-23.3-4/-5): what it is for, where it came from and when,
+// last changed and used, how it is protected; where to replace it, and Remove (a press on this
+// PC; revoked at the provider where the provider allows it). /api/security/credentials.
+function CredentialsPanel(){
+  const[rows,setRows]=useState(null);
+  const[msg,setMsg]=useState('');
+  const[busy,setBusy]=useState('');
+  const load=useCallback(()=>{apiFetch('/api/security/credentials').then(r=>r.json()).then(d=>setRows(d&&d.ok?(d.credentials||[]):[])).catch(()=>setRows([]))},[]);
+  useEffect(()=>{load()},[load]);
+  const when=t=>t?String(t).replace('T',' ').slice(0,16):'never';
+  const remove=row=>{
+    if(!window.confirm('Remove '+row.kind+' ('+row['for']+')?\n\n'+((row.remove&&row.remove.note)||'')))return;
+    setBusy(row.name);setMsg('');
+    apiFetch('/api/security/credentials/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:row.name})})
+      .then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{setMsg((d&&d.message)||(ok?'Removed.':'Nothing changed.'));load();})
+      .catch(()=>setMsg('Could not reach the server.')).finally(()=>setBusy(''));
+  };
+  const muted={fontSize:11,color:'rgba(255,255,255,0.45)',lineHeight:1.6};
+  if(!rows)return <div style={muted}>Reading the stored credentials…</div>;
+  return <div data-testid="credential-list" style={{marginTop:12}}>
+    <div style={{fontSize:12,color:'#fff',marginBottom:6}}>Stored credentials</div>
+    {rows.length===0&&<div style={muted}>{fridayName()} holds no credentials.</div>}
+    {rows.map(row=><div key={row.name} style={{borderTop:'1px solid rgba(255,255,255,0.06)',padding:'6px 0'}}>
+      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+        <div style={{flex:1,fontSize:12,color:'rgba(255,255,255,0.85)'}}>{row.kind}: {row['for']}</div>
+        <button className="settings-btn" style={{fontSize:11}} disabled={!!busy} onClick={()=>remove(row)}>{busy===row.name?'Removing…':'Remove'}</button>
+      </div>
+      <div style={muted}>Came from: {row.came_from}{row.first_set?' ('+when(row.first_set)+')':''}. Last changed {when(row.last_changed)}, last used {when(row.last_used)}. {row.protection}.</div>
+      {row.replace_in&&<div style={muted}>To replace it: {row.replace_in}.</div>}
+    </div>)}
+    {msg&&<div style={{fontSize:11,color:'#cfefff',marginTop:8}}>{msg}</div>}
+  </div>;
+}
 function KeystoreWrapPanel(){
   const[st,setSt]=useState(null);
   const[pw,setPw]=useState('');
@@ -20592,6 +21021,110 @@ function CalDeleteConfirm({ e, onDone }) {
 // ── Privacy & Data > Locks: how things are locked on this PC, in plain words ──
 // Read from /api/locks (services/locks.py): every line comes from the store that
 // decides it, and a line Friday cannot read says so. The honest limit is always shown.
+// ── Privacy & Data > Bring your AI history in (services/ai_history_import) ──
+// A ChatGPT or Claude data export, read on this PC only. A preview first; then each
+// conversation waits in import staging until the owner accepts it (StagedImportReview).
+function SettingsAiHistoryImport() {
+  const E = React.createElement;
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [prev, setPrev] = useState(null);
+  const [file, setFile] = useState(null);
+  const fileRef = useRef(null);
+  const send = (f, previewOnly) => {
+    setBusy(true);
+    setMsg('');
+    const fd = new FormData();
+    fd.append('file', f);
+    if (previewOnly) fd.append('preview', '1');
+    apiFetch('/api/import/ai-history', {
+      method: 'POST',
+      body: fd
+    }).then(r => r.json()).then(x => {
+      if (!x.ok) {
+        setPrev(null);
+        setFile(null);
+        setMsg(x.error || 'The file could not be read.');
+        return;
+      }
+      if (x.preview) {
+        setPrev(x);
+        setFile(f);
+        return;
+      }
+      setPrev(null);
+      setFile(null);
+      setMsg(x.service + ': ' + x.staged + ' conversation' + (x.staged === 1 ? '' : 's') + ' staged for your review below' + (x.already_decided ? ', ' + x.already_decided + ' already answered' : '') + '. Nothing is saved until you accept it.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  return E(StSection, {
+    title: 'Bring your AI history in',
+    desc: 'Your ChatGPT or Claude data export, read on this PC only: no model reads it and nothing is sent anywhere. You see what it holds first, and each conversation is saved only when you accept it.'
+  }, E('input', {
+    ref: fileRef,
+    type: 'file',
+    accept: '.json,.zip,application/json,application/zip',
+    style: {
+      display: 'none'
+    },
+    onChange: ev => {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (f) send(f, true);
+    }
+  }), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'ai-history-choose',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => fileRef.current && fileRef.current.click()
+  }, busy ? 'Reading…' : 'Choose an export (conversations.json or .zip)'), prev ? E('div', {
+    'data-testid': 'ai-history-preview',
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginTop: 6,
+      lineHeight: 1.5
+    }
+  }, prev.service + ' export: ' + prev.conversations + ' conversation' + (prev.conversations === 1 ? '' : 's') + ', ' + prev.messages + ' messages' + (prev.first ? ', ' + prev.first + ' to ' + prev.last : '') + (prev.cut ? ' (' + prev.cut + ' long ones will be cut)' : '') + '. Nothing has been saved.', E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 6
+    }
+  }, E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy || !file,
+    onClick: () => send(file, false)
+  }, 'Stage them for my review'), E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => {
+      setPrev(null);
+      setFile(null);
+    }
+  }, 'Cancel'))) : null, msg ? E('div', {
+    role: 'status',
+    className: 'sc-msgline'
+  }, msg) : null, E(StagedImportReview, {
+    source: 'chatgpt',
+    refresh: msg
+  }), E(StagedImportReview, {
+    source: 'claude',
+    refresh: msg
+  }));
+}
 function SettingsLocks(){
   const[d,setD]=useState(null);
   const[msg,setMsg]=useState('');
@@ -20726,6 +21259,8 @@ function SettingsPrivacyMap() {
     E('div', { className: 'lk-words' }, (svc.remote || []).length ? (svc.remote.length + ' phone or remote channel' + (svc.remote.length === 1 ? '' : 's') + ' can reach ' + fridayName() + ' from outside this PC.') : 'No phone or remote channel can reach ' + fridayName() + ' from outside this PC.'),
     d.vault_access && E('div', { className: 'lk-words' }, d.vault_access.allowed_7_days == null ? 'I couldn’t read the private-data access log.' : 'In the last 7 days, private data was used by a model on this PC or allowed to the cloud ' + d.vault_access.allowed_7_days + ' time' + (d.vault_access.allowed_7_days === 1 ? '' : 's') + ', and refused ' + d.vault_access.refused_7_days + ' time' + (d.vault_access.refused_7_days === 1 ? '' : 's') + '.'),
     d.off_record && E('p', { className: 'lk-words', role: 'note' }, E('strong', null, 'When you go off the record. '), d.off_record.words),
+    d.off_record && d.off_record.external && E('h4', { className: 'pm-h' }, 'Off the record does not cover'),
+    d.off_record && d.off_record.external && E('ul', { className: 'lk-sub', 'aria-label': 'Off the record does not cover' }, (d.off_record.external.lines || []).map((t, i) => E('li', { key: i }, t))),
     E('div', null, d.export && ctl(d.export), d.erase && ctl(d.erase)),
     E('p', { className: 'pm-limit', role: 'note' }, E('strong', null, 'The honest limit. '), d.honest_limit),
     E('div', { role: 'status', 'aria-live': 'polite', className: 'sc-msgline' }, msg),
@@ -20757,6 +21292,7 @@ function SettingsTabPrivacy({s,save}){
   const armed=vaultStatus&&vaultStatus.encryption==='AES-256-GCM';
   return <div>
     <SettingsLocks/>
+    <SettingsAiHistoryImport/>
     <SettingsPrivacyMap/>
     <StSection title="Vault">
       {vaultStatus&&<div style={{padding:'12px 14px',background:'rgba(0,0,0,0.3)',borderRadius:8,border:'1px solid rgba(0,212,255,0.08)',marginBottom:14}}>
@@ -20785,6 +21321,8 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="When a cloud provider fails" desc={"If a cloud provider fails, " + fridayName() + " says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time."}>
       {window.FridayCloudFallbackOrder?React.createElement(window.FridayCloudFallbackOrder):null}
+    <StSection title="Folder grants" desc="Her file tools read and write only inside your home folder (not app data or her own state folder), her output folders, and the folders you add here. Adding one is a press on this screen; removing one is always allowed.">
+      {window.FridayFolderGrants?React.createElement(window.FridayFolderGrants):null}
     </StSection>
     <StSection title="Library" desc="Documents you add to the Library are read and indexed on this PC. Nothing is sent anywhere unless you turn on cloud answers below. The index is stored on this PC. When the optional encryption component is installed it is encrypted with a key held under your Windows account; without it the index is a plain file, and the Library page says which. Documents judged private are encrypted with your vault key.">
       <LibraryTrackedToggle/>
@@ -20850,6 +21388,7 @@ function SettingsTabPrivacy({s,save}){
     </StSection>
     <StSection title="Stored keys">
       <KeystoreWrapPanel/>
+      <CredentialsPanel/>
     </StSection>
     <StSection title="Agent workspaces">
       {window.FridayAgentWorkspacePermission && <window.FridayAgentWorkspacePermission apiFetch={apiFetch}/>}
@@ -20866,7 +21405,8 @@ function SettingsTabPrivacy({s,save}){
     {window.FridayInstructionsSettings ? <window.FridayInstructionsSettings/> : null}
     <StSection title="Conversation logging">
       <StToggle label="Log conversations and tool use" value={!!s.context_logging_enabled} onChange={()=>save({context_logging_enabled:!s.context_logging_enabled})} desc="An append-only record of chats, tool calls and file reads, kept on this machine."/>
-      <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>save({off_record:!s.off_record})} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
+      <StToggle label="Go off the record" value={!!s.off_record} onChange={()=>fridayToggleOffRecord(!!s.off_record,save)} desc="Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."/>
+      {fridayOffRecordFrom(s) && React.createElement(FridayOffRecordElsewhere, null)}
       <StToggle label="Artifact panel beside the chat" value={s.artifact_panel_enabled!==false} onChange={()=>save({artifact_panel_enabled:s.artifact_panel_enabled===false})} desc={"When " + fridayName() + " makes something you would rather see than read — a table, a chart, a draft, a small app, a diff — it opens in a panel beside the conversation, with every version kept. Off the record, artifacts are kept in memory only."}/>
       <StRow label="Keep the log for" desc="Older entries are deleted automatically.">
         <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{[{v:0,l:'Forever'},{v:365,l:'1 year'},{v:180,l:'6 months'},{v:90,l:'90 days'},{v:30,l:'30 days'}].map(o=><button key={o.v} className={`settings-btn ${(s.context_retention_days??0)===o.v?'active':''}`} style={{fontSize:11}} onClick={()=>save({context_retention_days:o.v})}>{o.l}</button>)}</div>
@@ -21892,18 +22432,24 @@ function MemoryCardPanel({s, save}) {
   // Messages a correction stopped using as evidence (north star 34.9-4), so
   // the owner sees it happened and can put them back.
   const [retired, setRetired] = useState(null);
+  const [sedit, setSedit] = useState(null);
+  const [sup, setSup] = useState({rules: [], dropped_total: 0});
   const load = useCallback(() => {
     apiFetch('/api/core-memory')
       .then(r => r.json())
       .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
       .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+    apiFetch('/api/core-memory/suppressed')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setSup(d); })
+      .catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key, after) => {
     setBusy(key || path); setMsg(''); setRetired(null);
     apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
-      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(d); load(); })
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else { if (d.suppressed && d.note) setMsg(d.note); if (after) after(d); } load(); })
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
@@ -21972,14 +22518,30 @@ function MemoryCardPanel({s, save}) {
     rep && E('div', null,
       file('user'), file('friday'),
       (rep.pending || []).length > 0 && E('div', {style: head}, 'Waiting for your review'),
-      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card; Discard drops them.'),
+      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card. Edit and keep puts your own wording on the card instead. Discard drops them. Don’t suggest things like this drops them and holds back similar suggestions.'),
       (rep.pending || []).slice(0, 30).map(p => E('div', {key: p.id, style: row},
         E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, what(p)),
         E('div', {style: dim}, (p.target === 'friday' ? 'Working with you' : 'About you') + ' · from ' + from(p.source) + ' · ' + when(p.ts)),
         p.reason ? E('div', {style: dim}, p.reason) : null,
-        E('div', {style:{display:'flex', gap:6, marginTop:4}},
-          btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
-          btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard')))),
+        (sedit && sedit.id === p.id)
+          ? E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap', alignItems:'center'}},
+              E('input', {className:'input', 'aria-label':'Your wording of this suggestion', maxLength: 400, style:{flex:'1 1 240px', fontSize:12}, value: sedit.text,
+                onChange: e => setSedit({id: p.id, text: e.target.value})}),
+              btn('Keep my wording', () => post('review', {id: p.id, keep: true, text: sedit.text}, 'k' + p.id, () => setSedit(null)), 'keepmine',
+                {disabled: !!busy || !String(sedit.text || '').trim()}),
+              btn('Cancel', () => setSedit(null), 'cancel'))
+          : E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}},
+              btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
+              p.op !== 'remove' && btn('Edit and keep', () => setSedit({id: p.id, text: p.text || ''}), 'editkeep'),
+              btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard'),
+              btn('Don’t suggest things like this', () => post('suppress', {id: p.id}, 's' + p.id), 'suppress')))),
+      (sup.rules || []).length > 0 && E('div', {style: head}, 'Suppressed'),
+      (sup.rules || []).length > 0 && E('div', {style: dim}, 'Suggestions like these are held back. Each rule keeps only the main words of the suggestion you turned down (for a meeting, only a code made from them).' + (sup.dropped_total ? ' Held back so far: ' + sup.dropped_total + '.' : '') + ' Remove a rule to see suggestions like it again.'),
+      (sup.rules || []).map(r => E('div', {key: r.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+        E('div', {style:{flex:1}},
+          E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, r.from_meeting ? 'From a meeting (its words are not kept)' : (r.kind === 'remove' ? 'Removing a line about: ' : 'About: ') + (r.words || []).join(', ')),
+          E('div', {style: dim}, when(r.ts) + (r.hits ? ' · held back ' + r.hits + (r.hits === 1 ? ' time' : ' times') : ''))),
+        btn('Remove', () => post('suppressed/remove', {id: r.id}, 'r' + r.id), 'unsuppress'))),
       (rep.changes || []).length > 0 && E('div', {style: head}, 'What ' + fridayName() + ' changed'),
       (rep.changes || []).slice(0, 20).map(c => E('div', {key: c.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
         E('div', {style:{flex:1}},
@@ -22782,6 +23344,19 @@ function TasksInboxPanel() {
     }, 'Off, and ' + fridayName() + '’s list was removed from Google Tasks.')
   }, 'Turn off and remove the list')), limit, status);
 }
+// The permission difference (BD-06, NS-23.2-2): shown before Google is asked for a new write
+// permission; the connect route refuses one without its diff_id.
+function permissionDiffText(df){
+  const adds=(df.adds||[]).map(a=>'+ '+a.what);
+  return 'This asks Google for:\n'+(adds.length?adds.join('\n'):'nothing new (already allowed)')
+    +((df.lets_friday||[]).length?'\n\nIt lets '+fridayName()+': '+df.lets_friday.join(', ')+'.':'')
+    +'\n\n'+(df.still||[]).join(' ')+'\n\nEverything else stays as it is. Continue to Google?';
+}
+async function fetchPermissionDiff(accountId,caps){
+  const r=await apiFetch('/api/google/accounts/'+encodeURIComponent(accountId)+'/permission-diff?capability='+encodeURIComponent(caps.join(',')));
+  const d=await r.json();
+  return d&&d.diff||null;
+}
 function GoogleAccountsPanel(){
   const[accounts,setAccounts]=useState([]);
   const[msg,setMsg]=useState('');
@@ -22820,6 +23395,14 @@ function GoogleAccountsPanel(){
     setLoading(true);
     try{
       const body=o.account?{account_id:o.account.id,email:o.account.email,mailbox:!!o.mailbox,include_calendar_write:!!o.calendarWrite,include_tasks_write:!!o.tasksWrite}:{label};
+      const caps=o.account?[o.mailbox&&'send',o.calendarWrite&&'calendar',o.tasksWrite&&'tasks'].filter(Boolean):[];
+      if(caps.length){
+        const df=await fetchPermissionDiff(o.account.id,caps);
+        if(!df){setMsg('Could not load what this would add.');setLoading(false);return;}
+        // "Reconnect with sending" has just shown its own permission list; the others are shown here.
+        if(!o.mailbox&&!window.confirm(permissionDiffText(df))){setLoading(false);return;}
+        body.diff_id=df.diff_id;
+      }
       const r=await apiFetch('/api/google/accounts/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const d=await r.json();
       if(d.status==='ok'&&d.auth_url){
@@ -22838,7 +23421,7 @@ function GoogleAccountsPanel(){
   const reconnectWithSending=(acc)=>apiFetch('/api/google/accounts/mailbox-scopes?account='+encodeURIComponent(acc.id)).then(r=>r.json()).then(d=>setMailboxAsk({account:acc,scopes:d.scopes||[]})).catch(()=>setMsg('Could not load the permission list.'));
   const removeAccount=async(id,email)=>{
     if(!window.confirm('Remove '+email+'? This revokes access.'))return;
-    try{await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});setAccounts(a=>a.filter(x=>x.id!==id));setMsg('Removed.');}
+    try{const r=await apiFetch('/api/google/accounts/'+id+'/remove',{method:'POST'});const d=await r.json().catch(()=>({}));if(!r.ok){setMsg(d.message||'Error.');return;}setAccounts(a=>a.filter(x=>x.id!==id));setMsg(d.message||'Removed.');}
     catch(e){setMsg('Error.');}
   };
   const toggleSvc=async(id,svc,current)=>{
@@ -22916,7 +23499,24 @@ function GoogleAccountsPanel(){
       <button aria-label="Refresh" className="settings-btn" style={{padding:'6px 10px'}} onClick={refresh} title="Refresh">↻ Refresh</button>
     </div>
     {msg&&<div style={{fontSize:11,color:'#00d4ff',marginTop:8}}>{msg}</div>}
+    <GoogleConnectorCard/>
   </div>;
+}
+// The Google connection's card (BD-06, NS-8.9-2): what it lets Friday do, the permissions it asks
+// for (reading and changing apart), what runs without a card, what Google receives, what is kept
+// on this PC, the limits and how to remove it. Read from /api/google/accounts/contract, which
+// tests tie to the code (services/connector_contracts.google_card).
+function GoogleConnectorCard(){
+  const[card,setCard]=useState(null);
+  useEffect(()=>{apiFetch('/api/google/accounts/contract').then(r=>r.json()).then(d=>{const c=d&&d.contract&&d.contract.card;if(Array.isArray(c))setCard(c)}).catch(()=>{})},[]);
+  if(!card)return null;
+  return <details className="google-connector-card" style={{marginTop:10,fontSize:11,color:'rgba(255,255,255,0.78)'}}>
+    <summary style={{cursor:'pointer',color:'#00d4ff'}}>What this connection does</summary>
+    {card.map(sec=><div key={sec.heading} style={{marginTop:6}}>
+      <div style={{fontWeight:600,color:'#fff'}}>{sec.heading}</div>
+      <ul style={{margin:'2px 0 0 16px',padding:0}}>{(sec.lines||[]).map((l,i)=><li key={i}>{l}</li>)}</ul>
+    </div>)}
+  </details>;
 }
 // ─── Settings → Connections — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),
@@ -22933,7 +23533,8 @@ function ProviderStatusDot({prov}){
   else if(avail==='ok'||avail==='unknown'){color='#00ff80';title=avail==='ok'?'healthy':'ready';}
   else if(avail==='degraded'){color='#f59e0b';title='degraded — elevated error rate';}
   else if(avail==='down'){color='#ef4444';title='down — circuit breaker open';}
-  return <span title={title} style={{display:'inline-block',width:9,height:9,borderRadius:5,background:color,boxShadow:`0 0 6px ${color}`,flexShrink:0}}/>;
+  const state=color==='#00ff80'?'ok':color==='#f59e0b'?'warn':color==='#ef4444'?'bad':'off';
+  return <span className="fr-state" data-state={state} role="img" aria-label={'Status: '+title} title={title} style={{color:color,width:9,height:9}}/>;
 }
 function ProviderRow({prov,onChanged}){
   const[keyDraft,setKeyDraft]=useState('');
@@ -23359,12 +23960,13 @@ function SettingsTabConnectors({
       color: c.connected ? 'var(--st-text)' : 'var(--st-dim)'
     }
   }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true",
+    className: "fr-state",
+    "data-state": c.connected ? 'ok' : 'off',
+    role: "img",
+    "aria-label": c.connected ? 'Connected' : 'Not connected',
     style: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-      background: c.connected ? '#00ff80' : 'rgba(255,255,255,0.25)'
+      width: 7,
+      height: 7
     }
   }), c.name || c.id)))));
 }
@@ -25480,7 +26082,47 @@ function SettingsTabAppearance({
         detail: v
       }));
     }
-  }, v.charAt(0).toUpperCase() + v.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
+  }, v.charAt(0).toUpperCase() + v.slice(1))))), /*#__PURE__*/React.createElement(StRow, {
+    label: "3D rendering",
+    desc: "Off turns every 3D view off: the scene behind the desktop, the knowledge galaxy and the 3D views of files, records and the Library. Lists and pages stay; views that are only 3D (the Library's shelves, Files in 3D) and head and hand tracking are off with it. Nothing is drawn on the graphics card. Takes effect when " + fridayName() + " next opens."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "3D rendering",
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, ['on', 'off'].map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-render3d-choice": v,
+    "aria-checked": (s.render_3d === false ? 'off' : 'on') === v,
+    className: 'settings-btn' + ((s.render_3d === false ? 'off' : 'on') === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 16px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        render_3d: v === 'on'
+      });
+      window.fridaySyncRender3d && window.fridaySyncRender3d(v === 'on');
+    }
+  }, v === 'on' ? 'On' : 'Off'))), (s.render_3d === false) !== !!(window.fridayRender3dOff && window.fridayRender3dOff()) && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      padding: '6px 12px',
+      marginTop: 6,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => window.location.reload()
+  }, "Reload now"))), /*#__PURE__*/React.createElement(StSection, {
     title: "Knowledge graph"
   }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
     s: s,
@@ -25901,17 +26543,20 @@ function LaneReceipts() {
       h('div', { className: 'local-ai-row-text' },
         h('div', { className: 'local-ai-row-label' }, t.label || t.kind || 'A trace'),
         h('div', { className: 'local-ai-row-meta' }, [t.model, t.status, laneAgo(t.started)].filter(Boolean).join(' · '))),
-      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
+      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', 'aria-label': 'Open the trace: ' + (t.label || t.kind || 'a trace'), onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
 }
 function LaneBody({ tab, onTab, lane, q, onLocal, busy, onChanged }) {
   const h = React.createElement;
   const counts = { needs: lane && lane.needs_you || 0, activity: lane && lane.activity || 0, updates: lane && lane.updates || 0, receipts: 0 };
   const onKey = e => {
-    const i = LANE_TABS.findIndex(x => x[0] === tab);
-    if (e.key === 'ArrowRight') onTab(LANE_TABS[(i + 1) % LANE_TABS.length][0]);
-    else if (e.key === 'ArrowLeft') onTab(LANE_TABS[(i + LANE_TABS.length - 1) % LANE_TABS.length][0]);
-    else return;
+    const i = LANE_TABS.findIndex(x => x[0] === tab), n = LANE_TABS.length;
+    const to = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to < 0) return;
     e.preventDefault();
+    const next = LANE_TABS[to][0];
+    onTab(next);
+    // Focus goes with the selection (WAI-ARIA tabs): the tab left behind is out of the Tab order (tabIndex -1).
+    setTimeout(() => { const b = document.getElementById('lane-tab-' + next); if (b) b.focus(); }, 0);
   };
   return h(React.Fragment, null,
     h('div', { className: 'place-tabs', role: 'tablist', 'aria-label': 'Needs you, Activity, Updates, Receipts and traces', onKeyDown: onKey },
@@ -26534,7 +27179,7 @@ function ApprovalCardBody({ a, busy, onDecide }) {
   // A search that shares text from the conversation (privacy/public_query):
   // the exact text that would go out, where it goes, and Send / Don't send.
   const pq = a && a.payload && a.payload.public_query;
-  return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id} {...fridayRow('card',a.approval_id,a.title,{kind:String(a.kind||'').slice(0,30),status:'pending'})}>
+  return (<div className="card" style={{ marginBottom: 6, padding: 8 }} data-testid="approval-card" data-approval-id={a.approval_id} role="group" aria-label={a.title||'A request waiting for you'} {...fridayRow('card',a.approval_id,a.title,{kind:String(a.kind||'').slice(0,30),status:'pending'})}>
     <div style={{ fontSize: 12, color: '#ddd' }}>{a.title}</div>
     {a.action_description && <div data-testid={pq ? 'public-query-text' : 'approval-card-description'} style={pq ? { fontSize: 11, color: '#ddd', marginTop: 4, fontFamily: "'JetBrains Mono', monospace", whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } : { fontSize: 11, color: '#999', marginTop: 2, whiteSpace: a.payload && a.payload.handler === 'gmail_send' ? 'pre-wrap' : undefined }}>{a.action_description}</div>}
     {pq && <div data-testid="public-query-engine" style={{ fontSize: 11, color: '#b8c7dc', marginTop: 4 }}>Goes to: {pq.engine}</div>}
@@ -28579,7 +29224,7 @@ function App(){
   useEffect(()=>{if(!threadOrb)return;const h=(e)=>{if(e.key==='Escape')closeThread()};window.addEventListener('keydown',h);return()=>window.removeEventListener('keydown',h)},[threadOrb]);
   // Drag the window by its header.
   const startThreadDrag = e => {
-    if(e.target.closest('.thread-close'))return;
+    if(e.target.closest('.thread-close,.thread-cancel'))return;
     const box=e.currentTarget.closest('.thread-panel').getBoundingClientRect();
     threadDrag.current={sx:e.clientX,sy:e.clientY,ox:box.left,oy:box.top,w:box.width,h:box.height};
     const move=event=>{
@@ -29362,7 +30007,7 @@ function App(){
       }
       // B1: every reply carries its model + seat class — the ACTUAL
       // generator after any fallback, plus the fallback chain.
-      setTurnMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,local_fallback:d.local_fallback||null,laya:d.laya||null,source_text:m,time:new Date().toLocaleTimeString()}]);
+      setTurnMsgs(p=>[...p,{role:'friday',text:d.response,model:d.model,seat:d.seat,fallback_chain:d.fallback_chain||[],route:d.route||(d.friday_msg||{}).route||null,trace_id:d.trace_id||null,reasoning_sources:d.reasoning_sources||[],offer_cloud_switch:!!d.offer_cloud_switch,local_fallback:d.local_fallback||null,laya:d.laya||null,source_text:m,time:new Date().toLocaleTimeString()}]);
       // Execute any structured actions Friday returned (navigate, open_path…).
       // This is the chatbot→agent bridge: text AND a real on-screen/OS move.
       fridayRunActions(d.actions);
@@ -29405,6 +30050,11 @@ function App(){
   // Held features first: the dock, the palette and every workspace below
   // read the switch through fridayHeldOn during this same render.
   fridaySetHeldFeatures(agentSettings.held_features);
+  // 3D rendering (Settings > Appearance): the saved choice is mirrored where the
+  // next page load reads it before anything draws.
+  React.useEffect(() => {
+    if (window.fridaySyncRender3d) window.fridaySyncRender3d(agentSettings.render_3d);
+  }, [agentSettings.render_3d]);
   const dockShape=React.useMemo(()=>dockArrangement(agentSettings.dock_custom,showAllWorkspaces),[agentSettings.dock_custom,showAllWorkspaces,agentSettings.held_features]);
   // A "View in 3D" bar on workspaces that have a 3D view (static/friday3d_records.js).
   const with3D=(ws,source,el)=>window.Friday3DToggle?<window.Friday3DToggle ws={ws} source={source}>{el}</window.Friday3DToggle>:el;
@@ -30359,11 +31009,12 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
               <span className="settings-toggle-label">Show all workspaces</span>
               <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
             </div>}
-        <div className="settings-toggle" onClick={()=>saveAgentSettings({off_record:!agentSettings.off_record})}>
+        <div className="settings-toggle" onClick={()=>fridayToggleOffRecord(!!agentSettings.off_record,saveAgentSettings)}>
           <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>{agentSettings.off_record&&agentSettings.off_record_stops_storage!==false?FRIDAY_OFF_RECORD_TEXT:'Go off the record'}</span>
           <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
         </div>
         {fridayOffRecordFrom(agentSettings)&&<div role="note" data-off-record-notice="true" style={{fontSize:11,color:'rgba(255,255,255,0.6)',padding:'0 12px 8px',lineHeight:1.5}}>{FRIDAY_OFF_RECORD_NOTICE}</div>}
+        {fridayOffRecordFrom(agentSettings) && React.createElement(FridayOffRecordElsewhere, null)}
         <div className="settings-toggle" role="button" tabIndex={0} title="Logging is changed in Settings, Privacy & Data, next to the log and its erase controls." onClick={()=>{window.__fridaySettingsTab='privacy';setSettingsOpen(false);toggle('settings');try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'privacy'}}))}catch(e){}}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click()}}}>
           <span className="settings-toggle-label">Log conversations</span>
           <span style={{fontSize:11,color:agentSettings.context_logging_enabled?'#00ff80':'rgba(255,255,255,0.45)',fontFamily:'JetBrains Mono'}}>{(agentSettings.context_logging_enabled?'On':'Off')+' \u2192'}</span>
@@ -30442,6 +31093,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
       <ApprovalPopups/>
       <KeyFormHost/>
+      <FridayOffRecordConfirmHost/>
       {shellMeeting}{shellTopBar}{shellKillSwitch}
       {sw?<StandaloneShell ws={sw} histOpen={tabHistOpen} onCloseHistory={()=>setTabHistOpen(false)}><Safe name={sw.label}>{wsMap[sw.id]||fridayBundleBody(sw.id)}</Safe></StandaloneShell>
         :<div className="ws-tab" style={{padding:40}}>There is no workspace called “{STANDALONE_WS}”. <a href="/" style={{color:'#00d4ff'}}>Back to the {fridayName()} desktop</a></div>}
@@ -30452,6 +31104,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
   return(<WsCustomCtx.Provider value={{map:wsCustMap,setCust}}>
     <ApprovalPopups/>
     <KeyFormHost/>
+    <FridayOffRecordConfirmHost/>
     <CloudSlicingCard/>
     {/* ── First-run setup chat. index.html puts the consent screens
          (ConsentFlow, not mirrored here) in front of it. ── */}
@@ -30557,7 +31210,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     {shellChatPanel}
 
     {/* Process Orb Stream Window (Layer 3) — floating, draggable, glassmorphic */}
-    {threadOrb&&<ProcessOrbThread orb={threadOrb} meta={taskMeta} log={taskLog} steps={threadSteps} readState={threadReadState} position={threadPos} bodyRef={threadBodyRef} onDrag={startThreadDrag} onClose={closeThread}/>}
+    {threadOrb&&<ProcessOrbThread orb={threadOrb} meta={taskMeta} log={taskLog} steps={threadSteps} readState={threadReadState} position={threadPos} bodyRef={threadBodyRef} onDrag={startThreadDrag} onClose={closeThread} onMove={()=>setThreadPos(p=>fridayNextCorner(p,400,320))}/>}
 
     {/* ── B4: Activity Ledger panel — filterable stream of model invocations,
         subagent spawns, and tool calls (seat, model, duration, tokens). ── */}

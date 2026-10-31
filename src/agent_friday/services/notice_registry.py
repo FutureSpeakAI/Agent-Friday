@@ -251,11 +251,18 @@ _ALL = [
     _e("E81", "routes/chat.py:stream", "stream_trace", RECEIPTS, "", route=STREAM, ledger=False),
     _e("E82", "core.py:process_register", "process_orb", ACTIVITY, "", route=AMBIENT,
        ledger=False),
+    # A wrong spoken call PIN on a call from the owner's cell (owner ruling 8): the owner is told
+    # each time; a locked PIN says how to set it again.
+    _e("CP1", "phone/call_pin.py:_tell_owner", "call_pin_wrong", NEEDS_YOU, "call-pin-wrong",
+       source="phone"),
     # A crash in the middle of an outward action (north star §34.16-1): an approved card whose
     # action began and never recorded its end, and a task whose first outward step was in flight.
     # Whether it happened is not known; nothing is retried; the owner is told once.
-    _e("CR1", "services/card_recovery.py:_announce", "approval_outcome_unknown", NEEDS_YOU,
+    # (CU1/CU2: card recovery's own ids; CR1 is the calendar reminder below.)
+    _e("CU1", "services/card_recovery.py:_announce", "approval_outcome_unknown", NEEDS_YOU,
        "approval_outcome_unknown:{approval_ids}", source="card-recovery"),
+    _e("CU2", "services/card_recovery.py:_announce_batches", "approval_outcome_unknown", NEEDS_YOU,
+       "approval_outcome_unknown:{run_ids}", source="card-recovery"),
     _e("CR2", "services/task_resume.py:announce_may_have_acted", "tasks_may_have_acted", NEEDS_YOU,
        "tasks_may_have_acted:{incident}", source="task-resume"),
     # A model swap on the same side of the cloud line: a receipt, pulled not pushed.
@@ -305,6 +312,9 @@ _ALL = [
     # is on, at most three times a week apart; it turns nothing on and sends nothing.
     _e("L08", "services/first_backup.py:tick", "first_backup", NEEDS_YOU,
        "first-backup:{n}", source="backup"),
+    # The drive with Friday's data is almost full (§32.13): one card while background work is
+    # paused, closed when space is back.
+    _e("DF1", "services/disk_guard.py:_enter", "disk_full", NEEDS_YOU, "disk-full", source="disk"),
     # Quiet turned on by the owner (voice, chat or the page): a visible line in Updates that never
     # merges with another, so every activation can be seen.
     _e("NQ1", "services/notification_tools.py:_quiet", "quiet_on", UPDATES, "quiet-on:{surface}:{seq}",

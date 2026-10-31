@@ -280,6 +280,53 @@ _RUNNING_LOCK = threading.Lock()
 
 #: The zone schedules run in when the owner has not said theirs.
 DEFAULT_ZONE = "America/Chicago"
+#: How a schedule meets a daylight-saving change (NS-32.16-1), stored on every schedule so it is
+#: explicit, not implied: it keeps its wall-clock time in its timezone; a time that does not exist
+#: (spring forward) runs at the first real moment after the gap; a time that happens twice (fall
+#: back) runs once, at the first of the two (services/schedule_math).
+DST_WALL_CLOCK = "wall_clock"
+DST_POLICIES = (DST_WALL_CLOCK,)
+DST_TEXT = {DST_WALL_CLOCK: ("Keeps its local time across daylight-saving changes. A time skipped when "
+                             "clocks go forward runs just after the gap; a time that happens twice when "
+                             "clocks go back runs once, the first time.")}
+
+
+def _zone(name):
+    """A ZoneInfo for an IANA name, or None when it is not one."""
+    if not name or not isinstance(name, str):
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
+def owner_zone_name() -> str:
+    """The owner's own timezone (Settings > timezone, asked during first run), else DEFAULT_ZONE."""
+    try:
+        name = str((_load_settings() or {}).get("timezone") or "").strip()
+    except Exception:
+        name = ""
+    return name if _zone(name) is not None else DEFAULT_ZONE
+
+
+def schedule_zone_name(rec) -> str:
+    """The timezone a schedule keeps: its own stored `tz` when it has one, else the owner's (a
+    built-in routine follows the owner's timezone)."""
+    tz = (rec or {}).get("tz")
+    return tz if _zone(tz) is not None else owner_zone_name()
+
+
+def _in_zone(rec, now):
+    """`now` as the wall clock of the schedule's own timezone."""
+    z = _zone(schedule_zone_name(rec))
+    if z is None or now is None:
+        return now
+    try:
+        return now.astimezone(z) if now.tzinfo is not None else now
+    except Exception:
+        return now
 
 
 def _now_central():
@@ -439,7 +486,12 @@ def schedule_view(rec) -> dict:
         except Exception:
             model = ""
     out = {"status": status, "status_reason": reason, "model": model,
-           "model_pinned": bool(pins)}
+           "model_pinned": bool(pins),
+           # when it runs is read in this timezone, and how it meets a clock change (NS-32.16-1)
+           "timezone": schedule_zone_name(rec),
+           "timezone_follows_yours": not _zone((rec or {}).get("tz")),
+           "dst": (rec or {}).get("dst") or DST_WALL_CLOCK,
+           "dst_text": DST_TEXT.get((rec or {}).get("dst") or DST_WALL_CLOCK, DST_TEXT[DST_WALL_CLOCK])}
     if (rec or {}).get("source") != "builtin":
         policy = _missed_policy(rec)
         # The owner's default as it is now (Settings > General > Scheduled jobs), so a job card can
@@ -533,6 +585,11 @@ def _normalize_record(rec, *, source="user"):
         # A new job's emails are saved as drafts unless it is made to send (services/email_jobs).
         if isinstance(rec.get("email_send"), bool):
             out["email_send"] = rec["email_send"]
+        # The timezone it keeps, stored with it (NS-32.16-1): the one asked for, else the owner's now.
+        out["tz"] = rec.get("tz") if _zone(rec.get("tz")) is not None else owner_zone_name()
+    elif _zone(rec.get("tz")) is not None:
+        out["tz"] = rec["tz"]
+    out["dst"] = rec.get("dst") if rec.get("dst") in DST_POLICIES else DST_WALL_CLOCK
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
               "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
@@ -556,6 +613,10 @@ _RUN_FIELDS = ("enabled", "trigger", "spec", "task")
 def _run_basis(rec) -> dict:
     basis = {k: (rec or {}).get(k) for k in _RUN_FIELDS}
     basis["enabled"] = bool((rec or {}).get("enabled", True))
+    if (rec or {}).get("tz"):
+        # the timezone a job keeps is part of WHEN it runs; a record without one (made before
+        # NS-32.16-1, or a built-in) keeps its old fingerprint, so a card about it stays valid
+        basis["tz"] = rec["tz"]
     return basis
 
 
@@ -580,10 +641,12 @@ def update_schedule(sid, patch, *, by="owner") -> dict | None:
         if not cur:
             return None
         allowed = {"name", "trigger", "spec", "task", "enabled", "notify",
-                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held", "email_send"}
+                   "retry", "timeout_seconds", "finish_notice", "missed", "on_held", "email_send", "tz"}
         before = _run_basis(cur)
         for k, v in (patch or {}).items():
             if k in allowed:
+                if k == "tz" and (_zone(v) is None or cur.get("source") == "builtin"):
+                    continue              # a real IANA timezone, and only on the owner's own jobs
                 if k in ("missed", "on_held"):
                     # "default" (or null) puts the job back on the owner's default choice.
                     if v in (None, "default"):
@@ -1243,7 +1306,7 @@ def _note_quiet_deferral(rec, now) -> None:
     sid = rec.get("id")
     if rec.get("quiet_deferred") or not sid:
         return
-    day = now.strftime("%Y-%m-%d")
+    day = _in_zone(rec, now).strftime("%Y-%m-%d")
     cause = _defer_cause(now)
     _patch_record(sid, quiet_deferred={"day": day, "at": now.timestamp(), "reason": cause})
     try:
@@ -1278,7 +1341,7 @@ def _late_run_due(rec, now) -> bool:
         return False
     cu = rec.get("catch_up")
     if cu:
-        if cu.get("date") != now.strftime("%Y-%m-%d"):
+        if cu.get("date") != _in_zone(rec, now).strftime("%Y-%m-%d"):
             return False
         return _catch_up_ready(rec)
     if rec.get("trigger") == "interval" and _cloud_cadence_holds(rec, now):
@@ -1389,6 +1452,8 @@ def _is_due(rec, now) -> bool:
 def _is_due_on_schedule(rec, now) -> bool:
     if not rec.get("enabled", True):
         return False
+    owner_now = now                       # the owner's clock: when they are at this computer
+    now = _in_zone(rec, now)              # its own wall clock (NS-32.16-1)
     with _RUNNING_LOCK:
         if rec.get("id") in _RUNNING:
             return False
@@ -1453,7 +1518,7 @@ def _is_due_on_schedule(rec, now) -> bool:
         # Every condition below is a reason to WAIT, not to fail, and the day's
         # mark is only set when it actually runs -- so a day the user never steps
         # away simply does not produce one, and says so rather than pretending.
-        return _idle_window_ok(rec, spec, now)
+        return _idle_window_ok(rec, spec, owner_now)
     if trig == "daily":
         return (now.hour, now.minute) >= _spec_hm(spec)
     if trig == "weekly":
@@ -1467,6 +1532,7 @@ def _next_run_ts(rec, now):
     """Best-effort epoch of the next fire (for the UI). None when disabled."""
     if not rec.get("enabled", True):
         return None
+    now = _in_zone(rec, now)
     if rec.get("retry_pending"):
         return rec.get("not_before")
     trig = rec.get("trigger")
@@ -2137,7 +2203,8 @@ def _run_workflow(rec, task):
         st = _agent.chain_run_status(slug, run_id=run_id) or {}
         state = st.get("state")
         steps = st.get("steps") or []
-        if state in ("completed", "completed_unverified", "cancelled", "interrupted", "failed"):
+        if state in ("completed", "completed_unverified", "cancelled", "interrupted", "failed",
+                     "outcome_unknown"):
             _patch_record(rec.get("id"), last_workflow_run_id=run_id,
                 last_workflow_context={key: st.get(key) for key in (
                     "run_id", "workflow_revision", "conversation_id", "project_id",
@@ -2149,6 +2216,11 @@ def _run_workflow(rec, task):
                 changed=(st.get("delivery") or {}).get("changed", True))
         if state in ("cancelled", "interrupted"):
             return WorkflowRunResult(f"Workflow {state}.", status=state, run_id=run_id)
+        if state == "outcome_unknown":
+            # An end state: a step's approved action may or may not have happened. Never
+            # retried (it could do the action twice) and never a stall; the owner checks.
+            return WorkflowRunResult("Workflow ended with a step's outcome unknown: check before "
+                                     "retrying.", status="outcome_unknown", run_id=run_id)
         if state == "failed":
             # A failed step may be about to retry itself; only a failure that
             # is still there on the next read ends the run.
@@ -2196,7 +2268,7 @@ def _run_mark(rec, now, started) -> dict:
     job keeps its cadence, also when that late run is retried or waits for the seat. A one-time job
     switches itself off as it fires."""
     late_day = _late_slot_day(rec)
-    slot_day = late_day or now.strftime("%Y-%m-%d")
+    slot_day = late_day or _in_zone(rec, now).strftime("%Y-%m-%d")
     mark = dict(last_run_ts=started, last_run_date=slot_day, started_at=started, quiet_deferred=None,
                 slot_day=late_day, slot_cause=_late_cause(rec) if late_day else None)
     if rec.get("trigger") == "once":
@@ -2356,7 +2428,7 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             _patch_record(sid, last_status="waiting", last_summary=summary,
                           retry_pending=False, retry_count=0,
                           not_before=_time.time() + CATCH_UP_POLL_SECONDS,
-                          catch_up={"date": now.strftime("%Y-%m-%d"),
+                          catch_up={"date": _in_zone(rec, now).strftime("%Y-%m-%d"),
                                     "reason": summary, "since": since})
             if not catch_up:
                 _notify_run(rec, "waiting", summary)
@@ -2988,6 +3060,15 @@ def _uses_gpu(rec) -> bool:
     return not kind.startswith(("file", "cleanup", "prune", "publish"))
 
 
+def _disk_holds(rec) -> bool:
+    """services/disk_guard.holds, never raising: a check that cannot run holds nothing."""
+    try:
+        from agent_friday.services import disk_guard
+        return bool(disk_guard.holds(rec))
+    except Exception:
+        return False
+
+
 def _tick():
     now = _now_central()
     try:                       # quiet hours or Focus Assist just ended: held approvals pop open and get texted
@@ -3017,8 +3098,13 @@ def _tick():
     today = now.strftime("%Y-%m-%d")
     for rec in recs:
         try:
+            if _disk_holds(rec):
+                # A full disk (services/disk_guard, NS-32.13-1): checked before anything else, so a
+                # held job writes nothing (no missed or late-run rows, no deferral notices) and is
+                # left unmarked; it is judged again on the first tick after space is back.
+                continue
             cu = rec.get("catch_up")
-            if cu and cu.get("date") != today:
+            if cu and cu.get("date") != _in_zone(rec, now).strftime("%Y-%m-%d"):
                 _record_missed(rec)
                 rec = dict(rec, catch_up=None)
             if _is_due(rec, now):
@@ -3031,7 +3117,10 @@ def _tick():
         except Exception as e:
             _log.warning("tick error [%s]: %s", rec.get('id'), e)
     _reclaim_expired_lease()
-    _away_drain_tick()
+    if not _disk_holds({"id": "away_drain"}):
+        # The away-time drain runs queued background work: it waits for space too. Meeting
+        # retention runs on: it only removes what the owner chose to stop keeping.
+        _away_drain_tick()
     _meeting_retention_tick()
 
 

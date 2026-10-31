@@ -130,6 +130,37 @@
   <button id="run" type="button">Run the checks</button>
   <span id="files"></span>
   <div id="out" role="region" aria-live="polite"></div>
+  <p class="muted">A support bundle is one zip in Documents\Friday Support: this report, the list of what Friday keeps, and the newest warning and error lines of Friday's logs with names, sentences, paths, addresses and keys taken out. Friday never sends it; read it, then attach it yourself.</p>
+  <button id="support-go" type="button">Make a support bundle</button>
+  <p id="support-note" role="status"></p>
+</section>
+
+<section id="safetymetrics" aria-labelledby="sm-h">
+  <h2 id="sm-h">Safety and privacy, last 30 days</h2>
+  <p class="muted">Counted on this PC from Friday's own records; never sent. Each should be zero, and the self-tests and restore rehearsals should be at 100%.</p>
+  <p id="sm-sum" role="status">Checking...</p>
+  <div id="sm-out"></div>
+</section>
+
+<section id="localmodel" aria-labelledby="lm-h">
+  <h2 id="lm-h">Local model</h2>
+  <p id="lm-state" role="status">Checking...</p>
+  <div id="lm-offers"></div>
+  <p id="lm-note" role="status"></p>
+</section>
+
+<section id="known" aria-labelledby="known-h">
+  <h2 id="known-h">Known issues in this release</h2>
+  <p class="muted">What is broken, unverified or limited on purpose in this version, from the list that ships with it. If something you hit is here, it is known; the list says what to do meanwhile.</p>
+  <p id="known-sum" role="status">Checking...</p>
+  <div id="known-out"></div>
+</section>
+
+<section id="stores" aria-labelledby="stores-h">
+  <h2 id="stores-h">What Friday keeps</h2>
+  <p class="muted">Every store in Friday's data folder: its version, its size and where it lives in the folder. The same list goes into every report, every bundle and every export.</p>
+  <p id="stores-sum" role="status">Checking...</p>
+  <div id="stores-out"></div>
 </section>
 
 <section aria-labelledby="hist-h">
@@ -208,6 +239,19 @@
     });
   }
   $('readable-go').addEventListener('click', () => readableExport(false));
+  function supportBundle(cloudOk) {
+    text($('support-note'), 'Making...');
+    api('/api/doctor/support', { method: 'POST', body: JSON.stringify(cloudOk ? { cloud_ok: true } : {}) }).then(({ ok, d }) => {
+      if (!ok && d.code === 'cloud_folder') {
+        if (confirm(d.error)) { supportBundle(true); } else { text($('support-note'), 'Not made.'); }
+        return;
+      }
+      text($('support-note'), ok ? 'Made ' + d.file + ' (' + (d.members || []).length + ' files).' +
+        ((d.notes || []).length ? ' ' + d.notes.join(' ') : '') + ' Read it before you share it.'
+        : (d.error || 'Not made.'));
+    });
+  }
+  $('support-go').addEventListener('click', () => supportBundle(false));
   function caps() {
     api('/api/capabilities/state').then(({ ok, d }) => {
       const box = $('caps'); box.textContent = '';
@@ -237,6 +281,20 @@
       if (i === 2) td.className = String(v);
       tr.appendChild(td);
     });
+    if (c.id === 'search_index' && c.state === 'degraded') {
+      // NS-32.6-1: the index is rebuilt from the conversations themselves, which are not changed.
+      const td = document.createElement('td');
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Rebuild the search index';
+      const note = document.createElement('span');
+      b.addEventListener('click', () => {
+        b.disabled = true;
+        api('/api/doctor/repair/search-index', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
+          text(note, ' ' + (ok ? (d.message || 'Rebuilding.') : (d.error || 'Not started.')));
+          b.disabled = false;
+        });
+      });
+      td.appendChild(b); td.appendChild(note); tr.appendChild(td);
+    }
     return tr;
   }
   function show(rep, txt) {
@@ -255,6 +313,118 @@
       f.appendChild(a); f.appendChild(document.createTextNode('  '));
     });
   }
+  function size(n) {
+    if (n == null) return '?';
+    const u = ['B', 'KB', 'MB', 'GB']; let i = 0; n = Number(n);
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+  }
+  function safetyMetrics() {
+    api('/api/doctor/safety-metrics').then(({ ok, d }) => {
+      const out = $('sm-out'); out.textContent = '';
+      if (!ok) { text($('sm-sum'), d.error || 'Could not be read.'); return; }
+      const att = (d.attention || []).length, unk = (d.unknown || []).length;
+      text($('sm-sum'), att ? att + ' need attention.' : (unk ? 'Nothing needs attention; ' + unk + ' could not be counted.' : 'All held.'));
+      const tb = document.createElement('table');
+      (d.metrics || []).forEach(m => {
+        const tr = document.createElement('tr');
+        const v = m.value == null ? 'unknown' : (m.unit === 'percent' ? m.value + '%' : String(m.value));
+        [m.label, v, m.state === 'ok' ? 'held' : (m.state === 'attention' ? 'needs attention' : 'not counted'), m.note || ''].forEach((x, i) => {
+          const td = document.createElement('td'); td.textContent = x;
+          if (i === 2) td.className = m.state === 'ok' ? 'healthy' : (m.state === 'attention' ? 'broken' : 'unverified');
+          tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      });
+      out.appendChild(tb);
+    });
+  }
+  const LM_WORDS = { working: 'serving', present_failing: 'installed, but not serving', absent: 'not installed' };
+  function localModel() {
+    api('/api/doctor/local-model').then(({ ok, d }) => {
+      const box = $('lm-offers'); box.textContent = '';
+      if (!ok) { text($('lm-state'), d.error || 'Could not be read.'); return; }
+      text($('lm-state'), 'The local model is ' + (LM_WORDS[d.brain.state] || d.brain.state) + '.' +
+        (d.brain.detail ? ' (' + d.brain.detail + ')' : '') + (d.safe_mode ? ' Friday is in safe mode.' : ''));
+      (d.offers || []).forEach(o => {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = o.label + (o.recommended ? ' (suggested)' : '');
+        b.disabled = !o.available || (d.job && d.job.state === 'running');
+        b.addEventListener('click', () => repair(o.id));
+        box.appendChild(b);
+        if (o.why || o.problem) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = o.why || o.problem; box.appendChild(p); }
+      });
+      const j = d.job || {};
+      if (j.state === 'running') { text($('lm-note'), 'Working on it: ' + j.what + '...'); setTimeout(localModel, 3000); }
+      else if (j.state === 'done') {
+        const r = j.result || {};
+        let msg = j.what + ': ' + (r.ok ? 'done.' : 'not fixed.');
+        if (r.note) msg += ' ' + r.note + '.';
+        if (r.models) msg += ' ' + r.models.filter(m => !m.ok).map(m => m.model + ' (' + m.problem + ')').join(', ');
+        if (r.next) msg += ' ' + r.next;
+        text($('lm-note'), msg);
+      } else if (j.state === 'failed') { text($('lm-note'), j.what + ' could not run (' + j.error + ').'); }
+    });
+  }
+  function repair(what) {
+    text($('lm-note'), 'Starting...');
+    api('/api/doctor/local-model/repair', { method: 'POST', body: JSON.stringify({ repair: what }) }).then(({ ok, d }) => {
+      if (!ok) { text($('lm-note'), d.error || 'Not started.'); return; }
+      localModel();
+    });
+  }
+  function knownIssues() {
+    api('/api/doctor/known-issues').then(({ ok, d }) => {
+      const out = $('known-out'); out.textContent = '';
+      if (!ok || !d.available) { text($('known-sum'), (d && d.why) || 'The list of known issues could not be read.'); return; }
+      text($('known-sum'), d.count + ' known issues' + (d.release ? ' (' + d.release + ')' : '') + '.');
+      api('/api/safe-mode').then(({ d: sm }) => {
+        if (sm && sm.active) text($('known-sum'), $('known-sum').textContent + ' Friday is in safe mode: check these before changing anything.');
+      });
+      (d.sections || []).forEach(s => {
+        const det = document.createElement('details');
+        const sum = document.createElement('summary'); sum.textContent = s.title + ' (' + s.items.length + ')';
+        det.appendChild(sum);
+        const ul = document.createElement('ul');
+        s.items.forEach(it => {
+          const li = document.createElement('li');
+          if (it.title) { const b = document.createElement('strong'); b.textContent = it.title; li.appendChild(b); li.appendChild(document.createTextNode(' ')); }
+          li.appendChild(document.createTextNode(it.text || ''));
+          ul.appendChild(li);
+        });
+        det.appendChild(ul);
+        (s.notes || []).forEach(n => { const p = document.createElement('p'); p.className = 'muted'; p.textContent = n; det.appendChild(p); });
+        out.appendChild(det);
+      });
+    });
+  }
+  function stores() {
+    api('/api/doctor/stores').then(({ ok, d }) => {
+      const out = $('stores-out'); out.textContent = '';
+      if (!ok) { text($('stores-sum'), 'Could not be read: ' + (d.error || 'unknown')); return; }
+      const rows = d.stores || [];
+      const kept = rows.filter(r => r.durable !== false);
+      const t = d.totals || {};
+      const u = d.unlisted || {};
+      text($('stores-sum'), kept.length + ' stores, ' + size(t.durable_bytes) + '; downloads, caches and logs ' +
+        size(t.other_bytes) + '. ' + (d.absent || []).length + ' more are not created yet.' +
+        (u.entries ? ' ' + u.entries + ' other entries in the folder (' + size(u.bytes) + ') are not Friday stores.' : ''));
+      const tb = document.createElement('table');
+      const head = document.createElement('tr');
+      ['store', 'version', 'size', 'files', 'where (in the data folder)', 'kind'].forEach(h => {
+        const th = document.createElement('th'); th.textContent = h; head.appendChild(th);
+      });
+      tb.appendChild(head);
+      kept.concat(rows.filter(r => r.durable === false)).forEach(r => {
+        const tr = document.createElement('tr');
+        [r.store, r.version, size(r.bytes) + (r.at_least ? ' or more' : ''), r.files, r.location,
+         r.durable === false ? r.format + ' (not durable)' : r.format].forEach(v => {
+          const td = document.createElement('td'); td.textContent = v == null ? '' : String(v); tr.appendChild(td);
+        });
+        tb.appendChild(tr);
+      });
+      out.appendChild(tb);
+    });
+  }
   function history() {
     api('/api/doctor/reports').then(({ d }) => {
       const ul = $('hist'); ul.textContent = '';
@@ -271,7 +441,7 @@
     text($('out'), 'Running...');
     api('/api/doctor/report', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
       if (!ok) { text($('out'), d.error || 'The report could not be made.'); return; }
-      show(d.report, d.text); history();
+      show(d.report, d.text); history(); stores();
     });
   });
   function restoreState() {
@@ -417,7 +587,7 @@
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));
   $('safe-off').addEventListener('click', () => setNext(false));
-  safeState(); history();
+  safeState(); history(); stores(); knownIssues(); localModel(); safetyMetrics();
 })();
 </script>
 </body>

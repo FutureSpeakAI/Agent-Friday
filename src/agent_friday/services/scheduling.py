@@ -416,11 +416,19 @@ def _series_events(svc, series_id) -> list:
             return items
 
 
+def _co_series(idempotency_key: str) -> str:
+    """Twelve characters naming a hold series, derived from the request's idempotency key (F3):
+    a digest of it, so no part of the key itself is used."""
+    from agent_friday.services import connector_outcome as _co
+    return _co.event_id(idempotency_key, "hold-series")[2:14]
+
+
 class _Unconfirmed(Exception):
     """Google answered a create without naming the event it made."""
 
 
-def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
+def hold_slots(*, title: str, slots, account_id=None, series_id=None,
+               idempotency_key: str | None = None) -> dict:
     """Place tentative "Hold: <title>" events on the owner's own calendar.
 
     No attendees, no notifications, private visibility, and the hold marker.
@@ -442,7 +450,10 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
             if e <= s:
                 raise SchedulingError("a slot ends before it starts")
             pairs.append((s, e))
-        series = _check_series(series_id) if series_id else "hs" + uuid.uuid4().hex[:12]
+        # With an idempotency key (F3) the series is the key's, so a repeated call names the same
+        # series and the same holds (each hold's event id comes from the key and its times).
+        series = (_check_series(series_id) if series_id else
+                  ("hs" + _co_series(idempotency_key)) if idempotency_key else "hs" + uuid.uuid4().hex[:12])
         gated, gerr = cw._gate_calendar_field(str(title or "meeting").strip(), "title")
         if gerr or not gated:
             raise SchedulingError("the hold title was refused: %s"
@@ -466,12 +477,22 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
                                                HOLD_SERIES: series}},
         }
         from agent_friday.services import connector_outcome as _co
+        if idempotency_key:
+            body["id"] = _co.event_id(idempotency_key, s.isoformat(), e.isoformat())
         try:
             ev = svc.events().insert(calendarId="primary", body=body,
                                      sendUpdates="none").execute()
             if not _co.confirmed(ev):
                 raise _Unconfirmed()
         except Exception as ex:
+            again = None
+            if body.get("id") and (isinstance(ex, _Unconfirmed) or _co._status(ex) == 409
+                                   or _co.classify(ex) == "unconfirmed"):
+                again = cw._made_already(svc, "primary", body)    # placed already: never twice
+            if again is not None:
+                holds.append({"id": again.get("id"), "start": body["start"]["dateTime"],
+                              "end": body["end"]["dateTime"]})
+                continue
             cw._drop_calendar_cache()
             if holds:
                 # some holds were placed: the call changed something. It is done for those, with

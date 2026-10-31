@@ -553,7 +553,7 @@ def observer_token():
         return jsonify({"ok": True, "revoked": _obs.revoke()})
     token = _obs.mint()
     return jsonify({"ok": True, "token": token, "header": _obs.HEADER,
-                    "scope": "read-only", "routes": list(_obs.READ_ONLY_PREFIXES),
+                    "scope": "read-only", "routes": sorted(_obs.READ_ONLY_RULES),
                     "note": "Shown once. Steer, cancel, delete and settings are refused to this credential."})
 
 
@@ -818,7 +818,8 @@ def rerun_task(task_id):
 
 # Every finished outcome drifts for up to five minutes, or until cleared.
 ORB_VISIBLE_AFTER_DONE_S = 300
-ORB_TERMINAL_STATES = ("completed", "error", "failed", "cancelled", "timeout", "interrupted")
+ORB_TERMINAL_STATES = ("completed", "error", "failed", "cancelled", "timeout", "interrupted",
+                       "outcome_unknown")
 # Failed records stay inspectable for 24 hours; only five orbit at once.
 ORB_FAILED_MAX_VISIBLE = 5
 

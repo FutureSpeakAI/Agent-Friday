@@ -357,7 +357,8 @@ def handle_incoming(channel: str, chat_id: str, text: str) -> Optional[str]:
         return None
     # DM pairing: channel messages deepen the relationship the same way the chat
     # UI does — feed the LOCAL user model so Friday personalizes across surfaces.
-    # Best-effort; never blocks or fails the reply.
+    # Best-effort; never blocks or fails the reply. Off the record it learns
+    # nothing: observe_message reads the off-record setting itself (NS-15.8-2).
     try:
         from agent_friday.services import user_model as _um
         _um.observe_message(text, role="user", workspace="chat")

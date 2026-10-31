@@ -40,8 +40,11 @@ def test_a_scanned_pdf_is_read_with_local_ocr_and_marked(tmp_path):
     assert "4471" in res.text and "INVOICE" in res.text.upper()
 
 
-def test_read_file_returns_the_ocr_text(tmp_path):
+def test_read_file_returns_the_ocr_text(tmp_path, monkeypatch):
     pytest.importorskip("rapidocr_onnxruntime")
+    # The test's files live in pytest's temp folder: make it the folder file tools may use
+    # (services/path_policy confines them to the home folder by default).
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     out = agent._tool_read_file({"path": str(_scanned_pdf(tmp_path))})
     assert "OCR text" in out and "4471" in out
 

@@ -310,6 +310,20 @@ def _enc_sent_text() -> tuple:
     return "no", "Nothing can encrypt it right now, so nothing is kept."
 
 
+def _enc_undo() -> tuple:
+    """What Undo keeps of a changed event or task (services/undo_store): sealed as sent text is."""
+    from agent_friday.services import sent_text_store as sts
+    sealed = sts.sealed_with()
+    if sealed == "vault":
+        return "yes", "Encrypted with your vault passphrase. Nothing is written if it can't be encrypted."
+    if sealed == "keystore":
+        state, _ = _enc_keys()
+        return ("partly" if state == "partly" else "yes"), (
+            "Encrypted with Friday's key store, not the vault: no vault passphrase is set. "
+            "Nothing is written if it can't be encrypted.")
+    return "no", "Nothing can encrypt it right now, so nothing is kept (those changes can't be undone)."
+
+
 def _ret_sent_text() -> str:
     try:
         from agent_friday.services import sent_text_store as sts
@@ -399,6 +413,13 @@ def _stores() -> List[dict]:
          "paths": ["tasks"], "enc": _enc_tasks, "ret": _ret_tasks,
          "controls": [_ctl("delete", "Task records", "Delete a task's record, or choose how long they are kept.",
                            nav={"workspace": "system"}), _EXPORT_ALL]},
+        {"key": "events", "name": "Event log",
+         "holds": "When Friday raised something that needs you or a safety notice, and what kind: "
+                  "ids and kinds only, never the words of the card.",
+         "paths": ["events"], "enc": _PLAIN,
+         "ret": lambda: "The newest 20 to 40 MB: past 20 MB the log becomes the older file and the "
+                        "older file before it is deleted.",
+         "controls": [_EXPORT_ALL, _ERASE_ALL]},
         {"key": "goals", "name": "Goals",
          "holds": "Goals you set, their steps and the signed record of what was done.",
          "paths": ["goals"], "enc": _PLAIN, "ret": lambda: _FOREVER,
@@ -436,7 +457,9 @@ def _stores() -> List[dict]:
          "paths": ["actions", "decision-bom.jsonl", "governance", "sent_mail.jsonl", "mail_outbox",
                    "activity_ledger.jsonl", "vault/egress-log.jsonl", "vault/context-manifests.jsonl",
                    "vault/access-log.jsonl",
-                   "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl"],
+                   "vault/retrieval-log.jsonl", "vault/privilege-log.jsonl",
+                   # which Idempotency-Keys were already handled (keyed digests only, 24 hours)
+                   "idempotency_keys.json"],
          "enc": _enc("no", "Readable on this disk; each is signed or chained so a change shows."),
          "ret": lambda: ("Kept until you delete them, so the record stays whole. The activity record rotates at "
                          "about 20 MB; the list of what went into each send keeps its newest 40 MB or so."),
@@ -449,6 +472,14 @@ def _stores() -> List[dict]:
          "controls": [_ctl("delete", "Delete it, or keep fingerprints only",
                            "Delete the kept text now, or switch to fingerprints only.",
                            nav=dict(_PRIVACY_TAB, section="Privacy map")), _EXPORT_ALL]},
+        {"key": "undo_data", "name": "What Undo keeps",
+         "holds": ("What a calendar event or a Google Task was before Friday changed or deleted it "
+                   "(its title, place, description or notes), so Undo can put it back."),
+         "paths": ["vault/undo"], "enc": _enc_undo,
+         "ret": lambda: ("Kept for 30 days, then deleted (that change can no longer be undone). "
+                         "Deleted sooner once its Undo has run, or when you forget a person it names."),
+         "controls": [_ctl("settings", "Friday's changes", "Every action with its receipt and undo.",
+                           nav={"workspace": "system"}), _EXPORT_ALL, _ERASE_ALL]},
         {"key": "credentials", "name": "Keys and sign-ins",
          "holds": "Provider keys and account sign-ins Friday uses for you.",
          "paths": ["security", "providers", "google_accounts", "mcp_oauth", "platforms",
@@ -920,12 +951,21 @@ def grants() -> dict:
 _REMOTE_GROUPS = ("phone", "messaging", "network")
 
 
-def services() -> dict:
-    """Connected services and what each may do; phones and remote channels."""
+def _checklist_items() -> Optional[list]:
+    """The connection checklist's items, or None when it could not be read."""
     try:
         from agent_friday.services import setup_connections
-        items = setup_connections.checklist().get("items") or []
+        return list(setup_connections.checklist().get("items") or [])
     except Exception:
+        return None
+
+
+def services(items: Optional[list] = None) -> dict:
+    """Connected services and what each may do; phones and remote channels.
+    `items` is the already-read connection checklist (read here when None)."""
+    if items is None:
+        items = _checklist_items()
+    if items is None:
         return {"readable": False, "connected": [], "remote": []}
     connected, remote = [], []
     for it in items:
@@ -983,13 +1023,22 @@ OFF_RECORD_WORDS = (
     "asked to do.")
 
 
-def off_record() -> dict:
+def off_record(items: Optional[list] = None) -> dict:
+    """Off the record now, and what it does not cover. `items` is the
+    already-read connection checklist, passed on so it is not built twice."""
     try:
         from agent_friday.services import off_record as off
         on = bool(off.active())
     except Exception:
         on = None
-    return {"on": on, "words": OFF_RECORD_WORDS}
+    out = {"on": on, "words": OFF_RECORD_WORDS}
+    # What off the record does not cover, from what is connected now (NS-15.8-3).
+    try:
+        from agent_friday.services import off_record_external
+        out["external"] = off_record_external.view(items=items)
+    except Exception as e:
+        _log.warning("privacy map: off-the-record external records could not be read: %s", e)
+    return out
 
 
 # ── the whole map ─────────────────────────────────────────────────────────────
@@ -1016,16 +1065,23 @@ def view(now: Optional[float] = None) -> dict:
             _log.warning("privacy map: %s could not be read: %s", getattr(fn, "__name__", "?"), e)
             return fallback
 
+    # The folder is measured first: building the connection checklist can
+    # write its own small files, and what the map counts must not depend on
+    # it. The checklist is then built once for the services list and the
+    # off-the-record lines.
+    counted = safe(stores, [])
+    items = _checklist_items()
     return {
         "generated_at": now,
-        "stores": safe(stores, []),
+        "stores": counted,
         "left": safe(left, {"destinations": [], "rows": 0, "readable": False,
                             "not_recorded": list(NOT_RECORDED)}),
         "mail": safe(mail, {"sent": 0, "failed": 0, "recipients": []}),
         "grants": safe(grants, {"actions": None, "files": None}),
-        "services": safe(services, {"readable": False, "connected": [], "remote": []}),
+        "services": safe(lambda: services(items),
+                         {"readable": False, "connected": [], "remote": []}),
         "vault_access": safe(lambda: vault_access(now), {"allowed_7_days": None, "refused_7_days": None}),
-        "off_record": safe(off_record, {"on": None, "words": OFF_RECORD_WORDS}),
+        "off_record": safe(lambda: off_record(items), {"on": None, "words": OFF_RECORD_WORDS}),
         "sent_text": safe(_sent_text_status, {"mode": None, "keep": None,
                                               "words": "I couldn't tell whether the full text is kept."}),
         "export": _EXPORT_ALL, "erase": _ERASE_ALL,

@@ -35,6 +35,24 @@ def _run(detail: dict) -> dict:
     return _write(query=detail["query"], note=detail["note"], event_id=detail["event_id"], apply_to_series=False)
 
 
+def _run_closing(detail: dict, ref) -> dict:
+    """`_run` for an approved card, closing the checkpoint's decision from the
+    calendar's own answer: Google took the change -> completed_verified; ok
+    with nothing changed -> executed; otherwise failed. An exception closes
+    failed and is raised as before."""
+    from agent_friday.governance import action_gate
+    try:
+        res = _run(detail)
+    except BaseException:
+        action_gate.close_external(ref, False, detail="calendar_error")
+        raise
+    res = res if isinstance(res, dict) else {}
+    ok = bool(res.get("ok"))
+    action_gate.close_external(ref, ok, verified=ok and bool(res.get("changed")),
+                               detail="summary_added" if ok else "summary_not_added")
+    return res
+
+
 def request(meeting: dict, *, requested_by: str = "meetings") -> dict:
     """Raise the card for attaching this meeting's summary to its calendar event.
 
@@ -69,7 +87,7 @@ def request(meeting: dict, *, requested_by: str = "meetings") -> dict:
                      "calendar account, not only on this PC. Nothing is added unless you approve.\n\n" + note)[:1900],
         action_description="Add a meeting summary note to one calendar event")
     if v.action == "allow":
-        res = _run(detail)
+        res = _run_closing(detail, action_gate.decision_ref_of(v))
         return {"status": "done" if res.get("ok") else "error", "message": res.get("error") or "Added to the event.",
                 "event": ev.get("title")}
     if v.action == "deny":
@@ -114,7 +132,7 @@ def _on_decision(record: dict) -> None:
         if v.action != "allow":
             _notify("Meetings: summary NOT added", "Friday's governance check held it: %s" % v.reason, "warning")
             return
-        res = _run(detail)
+        res = _run_closing(detail, action_gate.decision_ref_of(v))
         ok = bool(res.get("ok"))
         _notify("Meetings: summary %s" % ("added to your calendar event" if ok else "NOT added"),
                 "Done." if ok else str(res.get("error") or "The calendar did not take it.")[:200],

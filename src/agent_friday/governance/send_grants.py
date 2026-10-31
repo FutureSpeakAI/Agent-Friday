@@ -245,6 +245,13 @@ _REVOKED_CACHE: dict = {}
 
 def _log(event: str, **fields) -> None:
     row = {"at": time.time(), "event": event, **fields}
+    # The governing policy version the grant was issued, used or revoked under
+    # (services/policy_version, NS-30.19-1). Records only.
+    try:
+        from agent_friday.services import policy_version as _pv
+        row.setdefault("policy_version", _pv.current_id())
+    except Exception:  # noqa: BLE001
+        pass
     # the one action ledger (services/action_ledger.py), kind "send_grant";
     # _log_path() is where these rows were kept before it. Raises when it
     # cannot be written, as the file write did.

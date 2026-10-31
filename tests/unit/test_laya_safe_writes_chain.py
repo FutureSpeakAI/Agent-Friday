@@ -924,7 +924,10 @@ def test_r2_a_card_a_model_raised_is_notified_as_before(monkeypatch):
     monkeypatch.setattr(ne, "push", lambda **kw: pushed.append(kw))
     ap._notify_pending({"approval_id": "apr_x", "title": "T", "description": "Subject — Name <a@b.example>",
                         "payload": {"handler": ia.HANDLER, "origin": ""}})
-    assert pushed[-1]["body"] == "Subject — Name <a@b.example>"
+    # Owner ruling 5 (2026-10-28): a waiting card's notice no longer carries its description;
+    # it says where to look (tests/unit/test_waiting_card_notices_are_generic.py).
+    assert pushed[-1]["body"] == ap.WAITING_NOTICE_BODY
+    assert "a@b.example" not in pushed[-1]["body"]
 
 
 # ── CLI: a write that cannot keep the key says so ────────────────────────────────────────────────

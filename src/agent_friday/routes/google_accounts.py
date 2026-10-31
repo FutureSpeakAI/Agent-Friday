@@ -161,6 +161,29 @@ def connect_google_account():
         if existing:
             login_hint = login_hint or (existing.get("email") or "")
             label = label or (existing.get("label") or "")
+    # A new write permission for an account Friday already has is asked for only after its
+    # permission difference was shown (BD-06, NS-23.2-2): the caller sends back the diff_id
+    # of GET /api/google/accounts/<id>/permission-diff for exactly these capabilities.
+    caps = [c for c, on in (("send", include_send or include_modify), ("calendar", include_calendar_write),
+                            ("tasks", include_tasks_write), ("contacts", include_contacts_write)) if on]
+    if not existing and login_hint:
+        # Named by its address rather than its id: still the same account (the callback files a
+        # grant under the address's id), so still its difference first.
+        existing = ga.get_account(ga._account_id(login_hint))
+        if existing:
+            account_id = existing.get("id") or account_id
+    if not existing and set(caps) - {"send"}:
+        # Calendar, task and contact changes are turned on from an account's own button only.
+        # (A new account's "let Friday send mail" box explains itself on the add form.)
+        return jsonify({"status": "error",
+                        "message": "Turn this on from the account's own button in Settings > "
+                                   "Google accounts, which shows what it adds first."}), 409
+    if existing and caps:
+        diff = ga.permission_diff(account_id, caps)
+        if str(body.get("diff_id") or "") != diff["diff_id"]:
+            return jsonify({"status": "needs_review", "diff": diff,
+                            "message": "Show what this adds first (the permission difference), "
+                                       "then ask Google."}), 409
     try:
         _flow_kw = dict(include_send=include_send, include_modify=include_modify,
                         include_contacts_write=include_contacts_write)
@@ -222,7 +245,12 @@ def connect_google_account():
                                      and (x["scope"] != ga.GMAIL_MODIFY or include_modify)]
                                     + [{"scope": sc, "what": ga._SCOPE_PLAIN.get(sc, sc), "new": True}
                                        for sc, on in ((ga.CALENDAR_RW, include_calendar_write),
-                                                      (ga.TASKS_RW, include_tasks_write)) if on],
+                                                      (ga.TASKS_RW, include_tasks_write)) if on]
+                                  # The preview lists contacts-write too when it is asked
+                                  # for, so it matches Google's screen (§34.4-7).
+                                  + ([{"scope": ga.CONTACTS_RW, "what": ga._SCOPE_PLAIN[ga.CONTACTS_RW],
+                                       "new": ga.CONTACTS_RW not in set((existing or {}).get("scopes") or [])}]
+                                     if include_contacts_write else []),
                 "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (
@@ -344,6 +372,20 @@ def google_connector_contract():
     return jsonify({"status": "ok", "contract": cc.google_contract()})
 
 
+@google_accounts_bp.route("/api/google/accounts/<account_id>/permission-diff")
+def google_permission_diff(account_id):
+    """What turning on new write capabilities (?capability=calendar, repeatable or comma
+    separated: send, calendar, tasks, contacts) would add for this account, in plain words.
+    Read-only; starts nothing."""
+    if not ga.get_account(account_id):
+        return jsonify({"status": "error", "message": "account not found"}), 404
+    caps = [c.strip() for v in request.args.getlist("capability") for c in v.split(",") if c.strip()]
+    try:
+        return jsonify({"status": "ok", "diff": ga.permission_diff(account_id, caps)})
+    except ValueError as e:
+        return api_error(e, "Not a capability Friday can ask for", 400)
+
+
 @google_accounts_bp.route("/api/google/accounts/mailbox-scopes")
 def google_mailbox_scopes():
     """Exactly what "Reconnect with sending" will ask Google for, in plain words.
@@ -407,10 +449,23 @@ def toggle_google_account_services(account_id):
 @google_accounts_bp.route("/api/google/accounts/<account_id>/remove", methods=["POST"])
 @rate_limited(max_calls=10, window_s=300, bucket="remove")
 def remove_google_account(account_id):
-    ok = ga.remove_account(account_id)
-    if not ok:
+    out = ga.remove_account_detail(account_id)
+    if not out:
         return jsonify({"status": "error", "message": "account not found"}), 404
-    return jsonify({"status": "ok", "removed": account_id})
+    if not out.get("removed"):
+        return jsonify({"status": "error", "revoked_at_google": out["revoked_at_google"],
+                        "message": ("The sign-in file for this account could not be deleted (it may "
+                                    "be in use), so the account is still listed. Try Remove again.")}), 500
+    # The contract (services/connector_contracts.GOOGLE_REVOCATION) promises the owner is told
+    # when Google could not be asked to revoke: the token is gone from this PC either way.
+    message = ("Removed. Google confirmed access is revoked." if out["revoked_at_google"] else
+               "Removed from this PC, but Google did not confirm the revoke. To be sure, remove "
+               "Friday at myaccount.google.com > Security > Third-party access.")
+    if not out.get("legacy_deleted", True):
+        message += (" The older sign-in file google_token.json could not be deleted (it may be in "
+                    "use): delete it by hand from Friday's data folder.")
+    return jsonify({"status": "ok", "removed": account_id,
+                    "revoked_at_google": out["revoked_at_google"], "message": message})
 
 
 @google_accounts_bp.route("/api/google/accounts/gmail")

@@ -222,8 +222,14 @@ def launch_guard(codebase_id, snapshot, command):
         current, _operation = sites._approved_operation(record)
         if current["codebase_id"] != codebase_id or current["build_command"] != command:
             raise ValueError("The build command or owner changed before process launch.")
-        action_gate.record_external(sites.KIND, surface="approval_card", approval_id=record["approval_id"], target=codebase_id)
-        yield
+        decision = action_gate.record_external(sites.KIND, surface="approval_card", approval_id=record["approval_id"], target=codebase_id)
+        # this decision is the process launch: it closes when the guarded launch returns or raises
+        try:
+            yield
+        except BaseException:
+            action_gate.close_external(decision, False, detail="build_launch_failed")
+            raise
+        action_gate.close_external(decision, True, detail="build_launched")
 
 
 def _capture_process_tree(identities, uncertain):

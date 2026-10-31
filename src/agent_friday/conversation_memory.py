@@ -129,6 +129,23 @@ _SUPERSEDED_AT = "superseded_at"
 _SUPERSEDED_BY = "superseded_by"
 
 
+def _recall_failed(source, exc=None):
+    """services/recall_health: this store could not be read (never raises)."""
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_failure(source, exc)
+    except Exception:
+        pass
+
+
+def _recall_ok(source):
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_ok(source)
+    except Exception:
+        pass
+
+
 class ConversationMemory:
     """Persistent, embedding-backed store of every chat turn.
 
@@ -301,7 +318,7 @@ class ConversationMemory:
 
     # ── writes ───────────────────────────────────────────────────────
     def index(self, text, role, session_id="default", timestamp=None,
-              topic_keywords=None, msg_id=None):
+              topic_keywords=None, msg_id=None, rebuild=False):
         """Index a single chat message. Returns the stored id, or None on no-op.
 
         text           the message body
@@ -310,6 +327,8 @@ class ConversationMemory:
         timestamp      ISO-8601; defaults to now
         topic_keywords list[str] | comma-string; auto-extracted when omitted
         msg_id         stable id for idempotent upserts; uuid when omitted
+        rebuild        True from a bulk rebuild from the transcripts: the
+                       forgotten-turn check is strict (see below)
         """
         text = (text or "").strip()
         # A key is withheld before it is embedded, stored as a document,
@@ -319,6 +338,29 @@ class ConversationMemory:
         text = withhold(text)[0]
         if not text:
             return None
+        # A turn forget-person took out stays out (NS-15.7-2): a rebuild from
+        # the transcripts, or a turn still being indexed when the forget ran,
+        # re-indexes through here with the transcript id, which forget-person
+        # keeps durably (conversation_fts: forgotten-turns.json beside the
+        # tombstones, mirrored in the search index's `forgotten` table).
+        # A bulk rebuild (rebuild=True, or inside conversation_fts.rebuilding())
+        # is strict: when the durable list cannot be read, every turn is
+        # skipped rather than one the owner forgot re-indexed. The live
+        # single-turn path skips only an id KNOWN to be forgotten: if the list
+        # cannot be read the turn is indexed and the failure logged (memory
+        # keeps working; the forget's own deletion already ran).
+        try:
+            from agent_friday.services import conversation_fts as _fts
+            if rebuild or _fts.rebuild_state() is not None:
+                if _fts.skip_on_rebuild(msg_id):
+                    return None
+            elif msg_id and _fts.is_forgotten(msg_id):
+                return None
+        except Exception as e:
+            if rebuild:
+                print(f"  [MEMORY] forgotten-turn check failed during a rebuild (turn skipped): {type(e).__name__}")
+                return None
+            print(f"  [MEMORY] forgotten-turn check failed (indexing anyway): {type(e).__name__}")
         if not self._ensure():
             return None
         # D5: verify the embedding space BEFORE the broad handler below, which
@@ -446,6 +488,7 @@ class ConversationMemory:
             with self._lock:
                 count = self._collection.count()
                 if count == 0:
+                    _recall_ok("past_conversations")      # read, and empty
                     return []
                 # Over-fetch when filtering supersession out in Python. Doing
                 # it here rather than in a Chroma `where` clause is deliberate:
@@ -498,9 +541,12 @@ class ConversationMemory:
                 })
                 if len(out) >= want:
                     break
+            _recall_ok("past_conversations")
             return out
         except Exception as e:
             print(f"  [MEMORY] search failed (non-fatal): {e}")
+            # Not "nothing relevant": the store could not be read (services/recall_health).
+            _recall_failed("past_conversations", e)
             return []
 
     def _shared_query_ok(self):
@@ -566,9 +612,10 @@ class ConversationMemory:
             return out
         try:
             with self._lock:
-                got = self._collection.get(ids=ids, include=["metadatas"])
+                got = self._collection.get(ids=ids, include=["metadatas", "documents"])
                 found = list(got.get("ids") or [])
                 metas = list(got.get("metadatas") or [])
+                docs = list(got.get("documents") or [])
                 new_metas = []
                 for meta in metas:
                     meta = dict(meta or {})
@@ -598,6 +645,17 @@ class ConversationMemory:
             except Exception as _e:
                 print(f"  [MEMORY] full-text supersession not recorded (non-fatal): {_e}")
             out["missing"] = [i for i in ids if i not in found]
+            # What was made from these turns before (the day's summary, graph
+            # nodes) is taken back too (services/memory_derived).
+            if found:
+                try:
+                    from agent_friday.services import memory_derived as _md
+                    _md.after_supersession(
+                        [str(d or "") for d in docs],
+                        [str((m or {}).get("date") or (m or {}).get("timestamp") or "")[:10] for m in metas],
+                        bool(flag))
+                except Exception as _e:
+                    print(f"  [MEMORY] derived stores not updated (non-fatal): {_e}")
         except Exception as e:
             print(f"  [MEMORY] supersede failed (non-fatal): {e}")
             out["missing"] = ids
@@ -617,8 +675,9 @@ class ConversationMemory:
         (never the documents' words), recalled-memory spans stripped. It is
         marked superseded right after it is written when conversation search
         records it as superseded, or when an older row holding the same
-        words is superseded. Returns {"ok", "indexed", "kept", "failed",
-        "kept_superseded"}."""
+        words is superseded. A turn the owner forgot stays out, and when the
+        forgotten-turn list cannot be read nothing is re-indexed. Returns
+        {"ok", "indexed", "kept", "failed", "kept_superseded", "forgotten"}."""
         if not self._ensure():
             return {"ok": False, "error": "conversation memory is not available"}
         say = progress or (lambda msg: None)
@@ -654,7 +713,7 @@ class ConversationMemory:
             elided = getattr(_cite, "ELIDED", None)
         except Exception:
             elided = None
-        indexed = kept = failed = flagged = 0
+        indexed = kept = failed = flagged = forgotten = 0
         new_ids = []
         corrected = _fts_superseded()
         try:
@@ -662,60 +721,72 @@ class ConversationMemory:
         except Exception as e:
             say(f"could not list the conversations: {e}")
             return {"ok": False, "error": "the conversations could not be listed; nothing was changed"}
-        for conv in convs:
-            cid = conv.get("id")
-            if not cid:
-                continue
-            try:
-                messages = cv._stored_messages(cid)
-            except Exception as e:
-                say(f"conversation {cid} not read: {e}")
-                failed += 1
-                continue
-            for m in messages:
+        # Inside rebuilding(): the forgotten-turn list is read once, and when it
+        # cannot be read nothing is re-indexed (a bulk rebuild never risks a
+        # turn the owner forgot).
+        with fts.rebuilding() as rb:
+            if rb["refused"]:
+                say("the forgotten-turn list could not be read; nothing was re-indexed")
+                return {"ok": False, "error": "the forgotten-turn list could not be read; "
+                                             "nothing was re-indexed"}
+            for conv in convs:
+                cid = conv.get("id")
+                if not cid:
+                    continue
                 try:
-                    if not fts._indexable(m):      # text, an id, a turn, not off the record
-                        continue
-                    mid = str(m["id"])
-                    if mid in present:
-                        kept += 1                  # as the live path left it
-                        continue
-                    meta = m.get("meta") or {}
-                    text = m["text"]
-                    role = m.get("role") or "user"
-                    if role != "user" and (m.get("library") or meta.get("library")):
-                        if not elided:
-                            continue               # never the documents' words
-                        text = elided
-                    if _mf is not None:
-                        text = _mf.strip(text)
-                    if not str(text or "").strip():
-                        continue
-                    try:
-                        ts = datetime.fromtimestamp(float(m["ts"])).isoformat() if m.get("ts") else None
-                    except (TypeError, ValueError, OSError):
-                        ts = None
-                    if not self.index(text, role, session_id=(ts or datetime.now().isoformat())[:10],
-                                      timestamp=ts, msg_id=mid):
-                        failed += 1
-                        continue
-                    indexed += 1
-                    new_ids.append(mid)
-                    norm = " ".join(str(text).split())
-                    flag = (("superseded", "") if mid in corrected
-                            else flagged_text.get(norm) if text != elided else None)
-                    if flag and self._set_supersession([mid], "1", flag[0], flag[1]).get("superseded"):
-                        flagged += 1
+                    messages = cv._stored_messages(cid)
                 except Exception as e:
-                    say(f"a turn was not indexed: {e}")
+                    say(f"conversation {cid} not read: {e}")
                     failed += 1
+                    continue
+                for m in messages:
+                    try:
+                        if not fts._indexable(m):      # text, an id, a turn, not off the record
+                            continue
+                        mid = str(m["id"])
+                        if mid in present:
+                            kept += 1                  # as the live path left it
+                            continue
+                        if mid in rb["gone"]:
+                            forgotten += 1             # the owner forgot it: it stays out
+                            continue
+                        meta = m.get("meta") or {}
+                        text = m["text"]
+                        role = m.get("role") or "user"
+                        if role != "user" and (m.get("library") or meta.get("library")):
+                            if not elided:
+                                continue               # never the documents' words
+                            text = elided
+                        if _mf is not None:
+                            text = _mf.strip(text)
+                        if not str(text or "").strip():
+                            continue
+                        try:
+                            ts = datetime.fromtimestamp(float(m["ts"])).isoformat() if m.get("ts") else None
+                        except (TypeError, ValueError, OSError):
+                            ts = None
+                        if not self.index(text, role, session_id=(ts or datetime.now().isoformat())[:10],
+                                          timestamp=ts, msg_id=mid):
+                            failed += 1
+                            continue
+                        indexed += 1
+                        new_ids.append(mid)
+                        norm = " ".join(str(text).split())
+                        flag = (("superseded", "") if mid in corrected
+                                else flagged_text.get(norm) if text != elided else None)
+                        if flag and self._set_supersession([mid], "1", flag[0], flag[1]).get("superseded"):
+                            flagged += 1
+                    except Exception as e:
+                        say(f"a turn was not indexed: {e}")
+                        failed += 1
         # Anything corrected in conversation search while this ran.
         late = [i for i in new_ids if i in (_fts_superseded() - corrected)]
         if late:
             flagged += len(self._set_supersession(late, "1", "superseded", "").get("superseded") or [])
-        say(f"indexed {indexed} missing turns, kept {kept}, {failed} failed, {flagged} marked superseded")
+        say(f"indexed {indexed} missing turns, kept {kept}, left out {forgotten} forgotten, "
+            f"{failed} failed, {flagged} marked superseded")
         return {"ok": failed == 0, "indexed": indexed, "kept": kept, "failed": failed,
-                "kept_superseded": flagged}
+                "kept_superseded": flagged, "forgotten": forgotten}
 
     def find_ids(self, substring, limit=50):
         """Document ids whose text contains *substring* (case-insensitive).
@@ -780,6 +851,28 @@ class ConversationMemory:
         except Exception as e:
             print(f"  [MEMORY] delete failed (non-fatal): {e}")
         return removed
+
+    def matching(self, predicate):
+        """Every stored turn whose text `predicate` accepts, as
+        [{id, text, date}]; None when the store cannot be read. For
+        forget-person (services/forget_derived), which then delete()s them."""
+        if not self._ensure():
+            return None
+        try:
+            with self._lock:
+                res = self._collection.get(include=["documents", "metadatas"])
+        except Exception as e:
+            print(f"  [MEMORY] matching failed (non-fatal): {e}")
+            return None
+        out = []
+        for did, doc, meta in zip(res.get("ids") or [], res.get("documents") or [],
+                                  res.get("metadatas") or []):
+            if doc and predicate(doc):
+                meta = meta or {}
+                out.append({"id": did, "text": doc,
+                            "date": meta.get("date") or str(meta.get("timestamp") or "")[:10]
+                            or meta.get("session_id")})
+        return out
 
     def get_session(self, session_id, limit=500):
         """Return every stored turn for one conversation, oldest-first.

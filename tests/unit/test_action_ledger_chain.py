@@ -302,12 +302,12 @@ def test_a_durable_entry_is_flushed_to_disk_outside_the_tests(monkeypatch):
     real = os.fsync
     monkeypatch.setattr(os, "fsync", lambda fd: (calls.append(fd), real(fd)))
     L.append("activity", {"n": 1})
-    L.append("decision", {"n": 2}, durable=True)
+    L.append("decision", {"n": 2, "action_id": "act_fsync_2"}, durable=True)
     assert calls == []
     monkeypatch.setenv("FRIDAY_LEDGER_FSYNC", "1")
     L.append("activity", {"n": 3})
     assert calls == []
-    L.append("decision", {"n": 4}, durable=True)
+    L.append("decision", {"n": 4, "action_id": "act_fsync_4"}, durable=True)
     assert len(calls) == 1
     monkeypatch.delenv("FRIDAY_TESTING")
     assert L._fsync_durable() is True

@@ -277,7 +277,11 @@ def nightly_signals(*, day=None):
     writes nothing."""
     d = date.fromisoformat(day) if day else date.today() - timedelta(days=1)
     start = datetime(d.year, d.month, d.day).timestamp()
-    rows = [r for r in (_ledger_rows(start, start + 86400) or []) if not r.get("off_record")]
+    # The avatar's growth is personalization: a row from an off-record turn is
+    # left out whether or not its content was stored (`no_learning`, the
+    # learning mark; `off_record`, the storage mark), NS-15.8-2.
+    rows = [r for r in (_ledger_rows(start, start + 86400) or [])
+            if not (r.get("off_record") or r.get("no_learning"))]
     if not rows:
         return None
     row = {k: 0 for k in SIGNAL_KEYS}

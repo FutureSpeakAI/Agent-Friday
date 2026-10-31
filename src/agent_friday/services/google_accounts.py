@@ -110,9 +110,10 @@ GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 GMAIL_MODIFY = "https://www.googleapis.com/auth/gmail.modify"
 
 # Creating and editing the owner's Google Contacts. Like send, it is asked for
-# only from an explicit "Allow saving to Google Contacts" in the Contacts
-# workspace, never on an ordinary connect or reconnect; every save still
-# waits for the owner's decision (services/google_contacts_write.py).
+# only when the owner opts in: "Allow saving to Google Contacts" in the
+# Contacts workspace, or the unticked-by-default tick on the Google card in
+# Settings > Connections; never on an ordinary connect or reconnect. Every save
+# still waits for the owner's decision (services/google_contacts_write.py).
 CONTACTS_RW = "https://www.googleapis.com/auth/contacts"
 
 # What the Reconnect-with-sending consent asks for, in plain words, shown in
@@ -122,7 +123,7 @@ _SCOPE_PLAIN = {
     GMAIL_SEND: "Send email on your behalf. Each message still waits for your approval card.",
     GMAIL_MODIFY: "Change your mailbox: labels, archive, star, read/unread, and saving drafts. Never permanent delete.",
     CALENDAR_READ: "See your calendar",
-    CALENDAR_RW: "Add, change and delete calendar events. Each change still follows your approval rules.",
+    CALENDAR_RW: "See, edit, share and delete your calendars and their events",
     DRIVE_READ: "Read Drive files",
     DOCS_READ: "Read Docs",
     SHEETS_READ: "Read Sheets",
@@ -142,6 +143,58 @@ def mailbox_scopes(granted=None) -> list:
     return [{"scope": sc, "what": _SCOPE_PLAIN.get(sc, sc),
              "new": (sc not in have) if have is not None else sc in (GMAIL_SEND, GMAIL_MODIFY)}
             for sc in list(GOOGLE_MULTI_SCOPES) + [GMAIL_SEND, GMAIL_MODIFY]]
+
+
+#: The write capabilities an account can be given, each by its own button, and the
+#: permissions each one asks Google for (build_auth_flow's include_* flags).
+CAPABILITY_SCOPES = {
+    "send": (GMAIL_SEND, GMAIL_MODIFY),          # "Reconnect with sending": one consent for both
+    "calendar": (CALENDAR_RW,),
+    "tasks": (TASKS_RW,),
+    "contacts": (CONTACTS_RW,),
+}
+_CAPABILITY_STILL = {
+    "send": ("Sending, archive, trash, spam, mute and unsubscribe each wait for your yes on a card; "
+             "saving drafts, read/unread, star and labels change without one."),
+    "calendar": ("Each change to your calendar still waits for your yes on a card (removing the "
+                 "tentative holds Friday itself placed does not)."),
+    "tasks": ("Each change to your Google Tasks still waits for your yes on a card; in a background "
+              "run, one card covers that run's task changes."),
+    "contacts": "Each save to Google Contacts still waits for your yes on a card.",
+}
+
+
+def permission_diff(account_id: str, capabilities) -> dict:
+    """What turning on new write capabilities for an account changes (BD-06, NS-23.2-2): each
+    permission Google will be asked for that the account does not have yet, what it lets Friday
+    do, what stays as it is, and a `diff_id` the connect route requires, so a new write
+    permission is never asked for without this having been shown first."""
+    import hashlib as _h
+    caps = sorted({str(c) for c in (capabilities or [])})
+    unknown = [c for c in caps if c not in CAPABILITY_SCOPES]
+    if unknown or not caps:
+        raise ValueError("unknown capability: %s" % ", ".join(unknown or ["(none)"]))
+    rec = get_account(account_id) or {}
+    granted = set(rec.get("scopes") or [])
+    # Exactly what build_auth_flow will ask Google for (calendar asks for the full calendar
+    # permission even when calendar.events is already allowed: that is shown as added).
+    asked = [s for c in caps for s in CAPABILITY_SCOPES[c]]
+    adds = [s for s in dict.fromkeys(asked) if s not in granted]
+    try:
+        from agent_friday.services import connector_contracts as _cc
+        lets = sorted({o["tool"].replace("_", " ") for o in _cc.GOOGLE_OPERATIONS
+                       if o["access"] == "write" and set(o["scopes"]) & set(adds)})
+    except Exception:  # noqa: BLE001
+        lets = []
+    body = "%s|%s|%s" % (account_id, ",".join(caps), ",".join(sorted(adds)))
+    return {
+        "account_id": account_id, "capabilities": caps,
+        "adds": [{"scope": s, "what": _SCOPE_PLAIN.get(s, s)} for s in adds],
+        "already": [{"scope": s, "what": _SCOPE_PLAIN.get(s, s)} for s in sorted(granted)],
+        "lets_friday": lets,
+        "still": [_CAPABILITY_STILL[c] for c in caps],
+        "diff_id": _h.sha256(body.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 def change_permissions(rec: dict) -> dict:
@@ -636,24 +689,56 @@ def set_label(account_id: str, label: str) -> dict | None:
 
 def remove_account(account_id: str) -> bool:
     """Revoke the grant at Google (best-effort), delete the encrypted token, and
-    drop the index entry. Audited."""
+    drop the index entry. Audited. False when there is no such account, or its token
+    could not be deleted (it then stays listed)."""
+    out = remove_account_detail(account_id)
+    return bool(out and out.get("removed"))
+
+
+def remove_account_detail(account_id: str):
+    """remove_account, saying what happened: None when there is no such account, else
+    {"removed", "revoked_at_google", "last_account"}. With the last account gone, the
+    record of which Google services answered goes too (connector contract, NS-23.1-6)."""
     with _LOCK:
         index = _load_index()
         accounts = index.get("accounts", [])
         rec = next((r for r in accounts if r.get("id") == account_id), None)
         if not rec:
-            return False
+            return None
         # Best-effort remote revocation before we delete the local token.
         revoked = _revoke_remote(account_id)
+        token_deleted = legacy_deleted = True
         try:
             _token_path(account_id).unlink(missing_ok=True)
         except Exception:
-            pass
+            token_deleted = False
+        if not token_deleted:
+            # The account stays listed (and its Remove button with it) while its token is
+            # still on this PC: removing it from the list would hide a token left behind.
+            cs.audit_event(_AUDIT_CATEGORY, "disconnect", account_id=account_id,
+                           remote_revoked=revoked, token_deleted=False, success=False)
+            return {"removed": None, "revoked_at_google": bool(revoked), "last_account": False,
+                    "token_deleted": False, "legacy_deleted": True}
         index["accounts"] = [r for r in accounts if r.get("id") != account_id]
         _save_index(index)
+        last = not index["accounts"]
+        if last:
+            # Nothing of Google's sign-in is left behind with the last account: the record of
+            # which services answered, and the plaintext token the older single-account
+            # connect page wrote (calendar_engine.GOOGLE_TOKEN_PATH).
+            try:
+                _SERVICE_STATE_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services.calendar_engine import GOOGLE_TOKEN_PATH as _legacy
+                _legacy.unlink(missing_ok=True)
+            except Exception:
+                legacy_deleted = False
     cs.audit_event(_AUDIT_CATEGORY, "disconnect", account_id=account_id,
-                   remote_revoked=revoked, success=True)
-    return True
+                   remote_revoked=revoked, legacy_deleted=legacy_deleted, success=True)
+    return {"removed": account_id, "revoked_at_google": bool(revoked), "last_account": last,
+            "token_deleted": True, "legacy_deleted": legacy_deleted}
 
 
 def _revoke_remote(account_id: str) -> bool:
@@ -694,7 +779,16 @@ def credentials_for(account_id: str):
 
     Refresh failures are isolated per account: the account is marked
     'needs_reauth' and None is returned; other accounts are untouched.
+
+    North-star A16a: before the owner chooses where Friday thinks, no Google
+    connector is used. None is returned and the stored status is left exactly
+    as it was (this is not a fault of the account).
     """
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("connector", "google"):
+        if isinstance(account_id, str):
+            _LAST_PROBLEM[account_id] = "route_not_chosen"
+        return None
     _migrate_legacy_if_needed()
     try:
         creds = _raw_credentials(account_id)
@@ -1494,7 +1588,7 @@ def _inbox_fenced(account_id, tasklist_id) -> bool:
 # tasklist_id (except create_task, which may default to "@default") since
 # the Tasks API addresses a task by (tasklist, task), not by task id alone.
 def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | None,
-                          account_id: str | None = None) -> dict:
+                          account_id: str | None = None, adopt: bool = False) -> dict:
     """Create (task_id=None) or patch (task_id given) one task.
 
     A change Google refused, could not be asked for, or did not confirm (a reply that names no
@@ -1505,6 +1599,7 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
     except Exception as e:
         _co.not_done("failed", "Google Tasks")
         return {"error": ExceptionText(f"google-api-python-client not installed: {e}")}
+    svc = None
     try:
         from agent_friday.services import egress_record as _er
         svc = _er.tasks(build("tasks", "v1", credentials=creds, cache_discovery=False))
@@ -1513,11 +1608,51 @@ def _write_task_for_creds(creds, tasklist_id: str, body: dict, task_id: str | No
         else:
             result = svc.tasks().insert(tasklist=tasklist_id, body=body).execute()
     except Exception as e:
-        return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
+        # A create that may have reached Google (a timeout, a 5xx, a dropped connection) is looked
+        # for before anyone is told to check (F3): found once, it is done, and never made twice.
+        found = (_find_just_made(svc, tasklist_id, body)
+                 if adopt and not task_id and svc is not None and _co.classify(e) == "unconfirmed" else None)
+        if found is None:
+            return {"error": _co.failed(e, "Google Tasks", account_id=account_id)}
+        result = found
+    if not _co.confirmed(result) and adopt and not task_id and svc is not None:
+        result = _find_just_made(svc, tasklist_id, body) or result
     if not _co.confirmed(result):
         return {"error": _co.not_done("unconfirmed", "Google Tasks"), "unconfirmed": True}
     return {"id": result.get("id"), "title": result.get("title", "(untitled)"),
             "status": result.get("status", "needsAction"), "due": result.get("due", "")}
+
+
+#: Creates this process made, by idempotency key (F3): a repeat in the same turn returns the task
+#: already made instead of making a second. Kept 30 minutes.
+_RECENT_CREATES: dict = {}
+_RECENT_TTL_S = 1800.0
+_RECENT_LOCK = threading.Lock()
+
+
+def _find_just_made(svc, tasklist_id: str, body: dict) -> dict | None:
+    """The one open task with exactly this title, notes and due date changed in the last few
+    minutes, when a create's reply was lost (F3; only for a create with an idempotency key). None
+    when there is none or more than one: then nobody can say which, and the owner is asked to look.
+    A task the owner made by hand differs in one of those far more often than not; matching all of
+    them keeps Friday from adopting it (and from offering an Undo that would delete it)."""
+    import datetime as _dt
+    title = str((body or {}).get("title") or "")
+    if not title:
+        return None
+    since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    try:
+        got = svc.tasks().list(tasklist=tasklist_id, showCompleted=True, showHidden=True,
+                               updatedMin=since, maxResults=100).execute()
+    except Exception as e:  # noqa: BLE001 - then nobody can say; the owner is asked to look
+        _log.info("could not look for a task just made: %s", type(e).__name__)
+        return None
+    notes, due = str(body.get("notes") or ""), str(body.get("due") or "")[:10]
+    same = [t for t in ((got or {}).get("items") or []) if isinstance(t, dict)
+            and t.get("title") == title and not t.get("deleted")
+            and (t.get("status") or "needsAction") == "needsAction"
+            and str(t.get("notes") or "") == notes and str(t.get("due") or "")[:10] == due]
+    return same[0] if len(same) == 1 else None
 
 
 def _delete_task_for_creds(creds, tasklist_id: str, task_id: str,
@@ -1571,6 +1706,27 @@ def _gate_task_text(body: dict) -> tuple[dict, str]:
     return out, ""
 
 
+def read_task(account_id: str, tasklist_id: str, task_id: str) -> dict | None:
+    """One task as it is now ({title, notes, due, status}), for Undo to set back or make again
+    (services/change_receipts). None when it cannot be read; a write never depends on it."""
+    if not (account_id and tasklist_id and task_id):
+        return None
+    try:
+        creds = credentials_for(account_id)
+        if not creds:
+            return None
+        from googleapiclient.discovery import build
+        svc = build("tasks", "v1", credentials=creds, cache_discovery=False)
+        t = svc.tasks().get(tasklist=tasklist_id, task=task_id).execute()
+    except Exception as e:  # noqa: BLE001 - Undo is then unavailable, said in the receipt
+        _log.info("task could not be read before a change: %s", type(e).__name__)
+        return None
+    if not isinstance(t, dict) or not t.get("id"):
+        return None
+    return {"title": t.get("title") or "", "notes": t.get("notes") or "", "due": t.get("due") or "",
+            "status": t.get("status") or "needsAction"}
+
+
 def _no_task_credentials(account_id: str) -> dict:
     """The account produced no credentials before a Tasks change: nothing was sent. `error` keeps
     its code ("needs_reauth", or "unreachable" when the refresh never got an answer) and
@@ -1581,7 +1737,8 @@ def _no_task_credentials(account_id: str) -> dict:
     return {"error": code, "message": message, "account_id": account_id}
 
 
-def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict) -> dict:
+def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body: dict,
+                    adopt: bool = False) -> dict:
     """Shared account-resolution + audit wrapper for complete/update/create."""
     body, gate_err = _gate_task_text(body)
     if gate_err:
@@ -1600,7 +1757,8 @@ def _one_task_write(account_id: str, tasklist_id: str, task_id: str | None, body
     creds = credentials_for(account_id)
     if not creds:
         return _no_task_credentials(account_id)
-    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id)
+    result = _write_task_for_creds(creds, tasklist_id, body, task_id, account_id,
+                                   **({"adopt": True} if adopt else {}))
     ok = "error" not in result
     cs.audit_event(_AUDIT_CATEGORY, "tasks_write", account_id=account_id,
                    success=ok, error=None if ok else result.get("error"))
@@ -1618,8 +1776,11 @@ def complete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
 
 def update_task(account_id: str, tasklist_id: str, task_id: str, *,
                 title: str | None = None, notes: str | None = None,
-                due: str | None = None, status: str | None = None) -> dict:
-    """Patch one task's fields, in the one account/tasklist named."""
+                due: str | None = None, status: str | None = None,
+                clear_due: bool = False) -> dict:
+    """Patch one task's fields, in the one account/tasklist named. `clear_due` removes the due
+    date (Google wants null, not ""); reopening a task (status needsAction) clears its
+    completed time the same way."""
     if not task_id:
         return {"error": "task_id is required."}
     body = {}
@@ -1631,24 +1792,49 @@ def update_task(account_id: str, tasklist_id: str, task_id: str, *,
         body["due"] = due
     if status is not None:
         body["status"] = status
+        if status == "needsAction":
+            body["completed"] = None
+    if clear_due:
+        body["due"] = None
     if not body:
         return {"error": "No fields to update (title/notes/due/status all empty)."}
     return _one_task_write(account_id, tasklist_id, task_id, body)
 
 
 def create_task(account_id: str, title: str, tasklist_id: str = "@default",
-                notes: str = "", due: str = "") -> dict:
+                notes: str = "", due: str = "", idempotency_key: str | None = None) -> dict:
     """Create a new task in the one account named. tasklist_id defaults to the
-    account's default list — "@default" is a Tasks API alias, not a lookup."""
+    account's default list — "@default" is a Tasks API alias, not a lookup.
+
+    With `idempotency_key` (F3: the same create in the same turn), a repeat returns the task
+    already made, after checking it is still there, instead of making a second."""
     title = (title or "").strip()
     if not title:
         return {"error": "title is required."}
+    import time as _time
+    if idempotency_key:
+        with _RECENT_LOCK:
+            prior = _RECENT_CREATES.get(idempotency_key)
+        if prior and _time.time() - prior[3] < _RECENT_TTL_S:
+            still = read_task(prior[0], prior[1], prior[2])
+            if still is not None:
+                return {"id": prior[2], "title": still.get("title"), "status": still.get("status"),
+                        "due": still.get("due"), "account_id": prior[0],
+                        "already_made": "This task was already made by this same request; it was "
+                                        "not made twice."}
     body = {"title": title}
     if notes:
         body["notes"] = notes
     if due:
         body["due"] = due
-    return _one_task_write(account_id, tasklist_id or "@default", None, body)
+    out = _one_task_write(account_id, tasklist_id or "@default", None, body,
+                          **({"adopt": True} if idempotency_key else {}))
+    if idempotency_key and out.get("id") and not out.get("error"):
+        with _RECENT_LOCK:
+            _RECENT_CREATES[idempotency_key] = (account_id, tasklist_id or "@default", out["id"], _time.time())
+            for k in [k for k, v in list(_RECENT_CREATES.items()) if _time.time() - v[3] > _RECENT_TTL_S]:
+                _RECENT_CREATES.pop(k, None)
+    return out
 
 
 def delete_task(account_id: str, tasklist_id: str, task_id: str) -> dict:
@@ -1796,6 +1982,10 @@ def build_auth_flow(state: str | None = None, include_send: bool = False,
     """
     # Bundled client first-resort, the user's own always winning -- see
     # services/google_oauth_client.active_client for why that order matters.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("connector", "google sign-in")       # A16a
+    if _held:
+        raise UserFacingRuntimeError(_held)
     from agent_friday.services import google_oauth_client as goc
     cfg, _src, _kind = goc.active_client(discover=_google_client_config)
     if not cfg:

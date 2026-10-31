@@ -142,14 +142,50 @@ def security_keystore_status():
 def security_credentials():
     """Every credential Friday holds: what it is, whose, how protected, last changed, last
     used. Names and times only; never a value (credential_store.inventory)."""
+    from agent_friday.services import credential_lifecycle as cl
     from agent_friday.services import credential_store as cs
     try:
-        return jsonify({"ok": True, "credentials": cs.inventory(),
+        # Each row also says what it is for, where it came from and when, where to replace
+        # it and what removing it does (BD-06, NS-23.3-4/-5; services/credential_lifecycle).
+        return jsonify({"ok": True, "credentials": cl.rows(),
                         "protection": cs.protection_method()})
     except Exception as e:
         _log.error("credential inventory failed: %s", type(e).__name__)
         return jsonify({"ok": False, "message": "The list of credentials could not be read (%s)."
                                                 % type(e).__name__}), 500
+
+
+@owner_security_bp.route("/api/security/credentials/remove", methods=["POST"])
+@login_required
+def security_credential_remove():
+    """Remove one stored credential ({"name": <a listed name>}) with its kind's own removal:
+    revoked at the provider where the provider allows it. Only Friday's page on this PC, with
+    a press on its own screen (services/desk_press)."""
+    refusal = _refusal()
+    if refusal:
+        return _refused(refusal)
+    from agent_friday.services import screen_click
+    pressed = screen_click.press_refusal(request, "Remove a credential with a press in Settings, on "
+                                                  "the computer Friday runs on.")
+    if pressed is not None:
+        return pressed
+    from agent_friday.services import credential_lifecycle as cl
+    body = request.get_json(silent=True) or {}
+    try:
+        out = cl.remove(str(body.get("name") or ""))
+    except cl.NotListed:
+        return jsonify({"ok": False, "message": "That is not one of the stored credentials."}), 404
+    except Exception as e:
+        _log.error("credential removal failed: %s", type(e).__name__)
+        return jsonify({"ok": False, "message": "It could not be removed (%s). Nothing else changed."
+                                                % type(e).__name__}), 500
+    if not out["removed"]:
+        return jsonify({"ok": False, **out, "message": "It is still stored: the removal did not "
+                                                         "finish. Try again."}), 500
+    said = out["note"]
+    if out["revoked_at_provider"] is False:
+        said += " The provider did not confirm the revoke."
+    return jsonify({"ok": True, **out, "message": "Removed. " + said})
 
 
 @owner_security_bp.route("/api/security/keystore/wrap", methods=["POST"])

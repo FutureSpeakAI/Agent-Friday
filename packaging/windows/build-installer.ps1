@@ -294,6 +294,9 @@ $mustExist = @(
     'src\agent_friday\setup_wizard.py',
     'src\agent_friday\__init__.py',
     'friday_tray.py',
+    # The Doctor page, and the known issues it shows (services/known_issues.py).
+    'static\doctor.html',
+    'KNOWN_ISSUES.md',
     # The Reader draws a PDF with the vendored pdf.js; these are the files it imports.
     'static\vendor\pdfjs-6.4.299\VERSION.json',
     'static\vendor\pdfjs-6.4.299\legacy\pdf.min.mjs',
@@ -489,9 +492,10 @@ if ($NoBundlePython) {
     if (-not (Get-RemoteFile -Uri $sources.get_pip.url -OutFile (Join-Path $PyBundle 'get-pip.py') -FriendlyName 'the pip bootstrap')) {
         Say-Note 'Could not fetch get-pip.py; the installer will fetch it on the target machine.'
     } else {
-        $h = Get-Sha256 (Join-Path $PyBundle 'get-pip.py')
-        Say-Ok "get-pip.py bundled. Its SHA-256 today is $h"
-        Say-Detail 'sources.json deliberately does not pin this - see the note in that file.'
+        # Pinned (sources.json): a bundled bootstrap that is not the pinned file
+        # stops the build, the same as the Python archive above.
+        Assert-FileHash -Path (Join-Path $PyBundle 'get-pip.py') -ExpectedSha256 $sources.get_pip.sha256 -What 'the pip bootstrap'
+        Say-Ok 'get-pip.py bundled and hash-verified.'
     }
 }
 
@@ -538,6 +542,7 @@ if ($NoWheelhouse) {
         if (-not (Test-Path -LiteralPath $gp)) {
             [void](Get-RemoteFile -Uri $sources.get_pip.url -OutFile $gp -FriendlyName 'the pip bootstrap')
         }
+        Assert-FileHash -Path $gp -ExpectedSha256 $sources.get_pip.sha256 -What 'the pip bootstrap'
         $null = Invoke-Native -FilePath $buildPy -Arguments @($gp, '--no-warn-script-location', '--no-cache-dir') -TimeoutSeconds 900
         # setuptools + wheel must be installed, not fetched by build isolation:
         # a ._pth makes PYTHONPATH inert, which is how pip hands build backends
