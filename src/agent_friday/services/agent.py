@@ -15624,6 +15624,19 @@ def _gate_policy_class(tool_name, args):
 
 
 def _approved_card_allows(approval_id, tool_name, args):
+    """See _approved_card_allows_inner. A forbidden call (Class 5, NS-18.2-7) is never run on a
+    card, whenever the card was approved."""
+    try:
+        from agent_friday.governance import action_gate as _g5
+        _why5 = _g5.forbidden_reason(tool_name, args)
+    except Exception:
+        _why5 = None
+    if _why5:
+        return False, "it is forbidden: %s" % _why5
+    return _approved_card_allows_inner(approval_id, tool_name, args)
+
+
+def _approved_card_allows_inner(approval_id, tool_name, args):
     """May this exact call run on the strength of that card? Consumes it if so.
 
     Returns (allowed, why_not). The argument comparison is on the JSON form with
