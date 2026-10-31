@@ -923,5 +923,16 @@ def overview() -> dict:
     return {"what_runs": what_runs(), "modes": modes(), "mode_meaning": MODE_MEANING,
             "report": {"take_rate": take_rate(rows), "replay": last_replay(),
                        "bars_preview": (bars_preview(rows, cur["bars"], learned=learned_threshold(_current_profile()))
-                                        if cur["bars"] else None)},
+                                        if cur["bars"] else None),
+                       "decision_heads": _decision_heads_card()},
             "bars": bars_view(), "teach_labels": teach_labels()}
+
+
+def _decision_heads_card() -> Optional[dict]:
+    """The decision heads' rows (services/decision_replay.report_card), or None
+    when they cannot be read: the rest of the report card never waits on them."""
+    try:
+        from agent_friday.services import decision_replay
+        return decision_replay.report_card()
+    except Exception:  # noqa: BLE001
+        return None

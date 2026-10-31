@@ -8,7 +8,7 @@ import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PAGES = ["index.html", "ui_parts/app.html"]
-TITLES = ["What Laya does", "Laya's modes", "Laya's report card", "Replay test", "Confidence bars", "Teach her a phrase",
+TITLES = ["What Laya does", "Laya's modes", "Laya's report card", "Her decision heads", "Replay test", "Confidence bars", "Teach her a phrase",
           "What Laya learns about you", "Instant answers (no model)", "Laya chat pilot",
           "Safe writes (off until you turn them on)", "Coming next"]
 

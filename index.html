@@ -61893,6 +61893,7 @@ function SettingsTabLaya({s, save} = {}) {
   const rp = rep.replay;
   const bars = d.bars || {rows:[], mode:'shadow'};
   const prev = rep.bars_preview;
+  const dh = rep.decision_heads;
   const tableOf = (heads, rows) => E('table', {style:{borderCollapse:'collapse', width:'100%'}},
     E('thead', null, E('tr', null, heads.map(h => E('th', {key:h, style:th}, h)))),
     E('tbody', null, rows));
@@ -61944,6 +61945,19 @@ function SettingsTabLaya({s, save} = {}) {
         rp.with_your_bars ? E('div', {style:dim}, 'With your bars (shadow): ' + rp.with_your_bars.moved + ' decisions would change; ' + rp.with_your_bars.right_after + ' of them right, ' + rp.with_your_bars.wrong_after + ' wrong.') : null,
         E('div', {style:dim}, (rp.waiting_not_scored || 0) + ' choices waiting for your OK and ' + (rp.set_aside_not_scored || 0) + ' set aside were not scored.'))
         : E('div', {style:dim}, 'Not run yet. Use the replay test below.')),
+    // The decision heads (services/decision_replay.report_card): what each head did in the period the last
+    // nightly report covered. Counts only; nothing here changes a head.
+    React.createElement(StSection, { title: "Her decision heads", desc: 'Small, fixed questions Laya answers beside ' + fridayName() + ': which mail lane, whether the memory she found is enough, whether a source supports a sentence, whether a task is stuck. Each one only records what it would have done, until you approve a change. ' + ((dh && dh.note) || '') },
+      !dh ? E('div', {style:dim, 'data-laya-heads-night': 'error'}, 'Could not read the heads\u2019 report.') :
+      E('div', {style:dim, 'data-laya-heads-night': dh.night || 'none'}, dh.night ? ('Last nightly report: ' + dh.night + '.' + (dh.shortfall_s ? ' Some decisions more than a week old were not replayed.' : '')) : 'No nightly report yet. It runs in the nightly practice window, on mains power.'),
+      dh ? tableOf(['Head', 'Mode', 'Decisions', 'Would act (as shipped)', 'Right / wrong / not known yet', 'Missed / acted wrongly', 'Change from her usual'], (dh.rows || []).map(r => E('tr', {key:r.id, 'data-laya-head': r.id},
+        E('td', {style:td}, r.name), E('td', {style:td}, chip(r.mode || 'off')),
+        E('td', {style:td}, r.decisions === null || r.decisions === undefined ? 'not yet' : r.decisions),
+        E('td', {style:td}, r.take_rate_pct === null || r.take_rate_pct === undefined ? 'not yet' : (r.lower_bound ? 'at least ' : '') + pct(r.take_rate_pct)),
+        E('td', {style:td}, r.pass === null || r.pass === undefined ? 'not yet' : (r.pass + ' / ' + r.fail + ' / ' + r.uncertain)),
+        E('td', {style:td}, r.miss === null || r.miss === undefined ? 'not yet' : (r.miss + ' / ' + r.wrong)),
+        E('td', {style:Object.assign({}, td, r.drift_flag ? {color:'#f5b94a'} : {}), 'data-laya-head-drift': r.drift_flag ? 'flag' : 'steady'},
+          r.drift === null || r.drift === undefined ? 'not yet' : ((r.drift > 0 ? '+' : '') + Math.round(r.drift * 100) + ' points' + (r.drift_flag ? ' (worth a look)' : '')))))) : null),
     React.createElement(StSection, { title: "Replay test", desc: 'Replays the requests you corrected or confirmed through Laya as she is now, then again reworded so phrasings she memorised stop helping. It stays on this PC, reads only what is sealed in your vault, and saves counts, never your words. You can also say "run your replay test".' },
       E('button', {type:'button', className:'settings-btn', 'data-laya-action':'replay', disabled: !!busy, onClick: () => post('replay', {}, 'replay')},
         busy === 'replay' ? 'Replaying…' : 'Run the replay test on my history'),
