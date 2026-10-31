@@ -207,6 +207,16 @@ def _parse(raw: Any) -> Dict[str, list]:
     return out
 
 
+def _loggable(raw: Any, limit: int) -> str:
+    """Model text for a log or an exception: cut, or withheld when it touches
+    a special category (services/sensitive_categories). Cannot check: withheld."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        return _sc.loggable(raw, limit)
+    except Exception:
+        return "[withheld: could not check it for special categories]"
+
+
 def _norm(s: str) -> str:
     return " ".join(re.sub(r"[^\w\s]", " ", str(s or "").lower()).split())
 
@@ -243,9 +253,11 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
                                  max_tokens=1200, temperature=0.1, orb_label="Memory review",
                                  schema=SCHEMA)
         if is_refusal(raw):
-            raise RuntimeError("no local model could run the memory review: " + str(raw)[:160])
+            # The text goes to a log (_run_and_release): withheld when it
+            # touches a special category (NS-15.4-3).
+            raise RuntimeError("no local model could run the memory review: " + _loggable(raw, 160))
     plan = _parse(raw)
-    added = queued = 0
+    added = queued = dropped = 0
     token = core_memory.ACTOR.set("review")
     try:
         for a in plan["add"]:
@@ -253,9 +265,15 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
             text = str(a.get("text") or "")
             on_user = _rests_on_the_user(a.get("evidence") or "", text, window)
             if on_user:
+                # A special category (health, sexuality, politics, ...) is
+                # refused here and by the queue: the review is inferring
+                # (NS-15.4-3), even from the owner's words.
                 r = core_memory.add(target, text, actor="review")
                 if r.get("ok") and not r.get("unchanged"):
                     added += 1
+                    continue
+                if r.get("sensitive"):
+                    dropped += 1
                     continue
                 if not r.get("full"):
                     continue                      # refused or already there
@@ -265,11 +283,13 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
                                   if not on_user else
                                   "The background review suggested this; the card was full.")
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
+            dropped += int(bool(r.get("sensitive")))
         for c in plan["change"]:
             target = c.get("target") if c.get("target") in core_memory.TARGETS else "user"
             r = core_memory.queue(target, "replace", old=c.get("old") or "", text=c.get("text") or "",
                                   source="review", reason=str(c.get("why") or ""))
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
+            dropped += int(bool(r.get("sensitive")))
         for c in plan["remove"]:
             target = c.get("target") if c.get("target") in core_memory.TARGETS else "user"
             r = core_memory.queue(target, "remove", old=c.get("old") or "", source="review",
@@ -277,7 +297,10 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
     finally:
         core_memory.ACTOR.reset(token)
-    return {"ok": True, "added": added, "queued": queued}
+    out = {"ok": True, "added": added, "queued": queued}
+    if dropped:
+        out["dropped_sensitive"] = dropped        # a count; the text was not kept
+    return out
 
 
 def forget_text(text: str) -> int:
@@ -291,6 +314,23 @@ def forget_text(text: str) -> int:
         for key, buf in _BUFFERS.items():
             keep = [ex for ex in buf if want not in (" ".join(ex.get("user", "").split()),
                                                       " ".join(ex.get("friday", "").split()))]
+            dropped += len(buf) - len(keep)
+            if len(keep) != len(buf):
+                _BUFFERS[key] = deque(keep, maxlen=WINDOW)
+    return dropped
+
+
+def forget_matching(match) -> int:
+    """Forget-person (services/forget_derived): every buffered exchange whose
+    user or Friday side `match` accepts leaves the review buffers, including
+    one buffered after the forget's transcript scan began (a turn in flight).
+    A review already running keeps the window it copied. Returns how many
+    buffered exchanges were dropped."""
+    dropped = 0
+    with _LOCK:
+        for key, buf in list(_BUFFERS.items()):
+            keep = [ex for ex in buf if not (match(str(ex.get("user") or ""))
+                                             or match(str(ex.get("friday") or "")))]
             dropped += len(buf) - len(keep)
             if len(keep) != len(buf):
                 _BUFFERS[key] = deque(keep, maxlen=WINDOW)

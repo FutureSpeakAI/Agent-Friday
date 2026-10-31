@@ -1303,7 +1303,7 @@
         }
         function sourceDescription(current) {
             if (state.error) return state.error;
-            if (!current.ready) return win.__FRIDAY_STANDALONE__ || win.__FRIDAY_CHROME__ === 'chat' ? 'Scene and head tracking live on the holographic desktop. This tab keeps your workspace open.' : 'The original scene is loading.';
+            if (!current.ready) return win.fridayRender3dOff && win.fridayRender3dOff() ? '3D rendering is off (Settings > Appearance), so the scene and head and hand tracking are off too.' : win.__FRIDAY_STANDALONE__ || win.__FRIDAY_CHROME__ === 'chat' ? 'Scene and head tracking live on the holographic desktop. This tab keeps your workspace open.' : 'The original scene is loading.';
             if (current.callHeld) return 'Friday is standing back for a call.';
             if (state.source === 'preview') return 'Pointer preview uses no camera. Move across the desktop to inspect depth.' + (current.handTracking ? ' Hand tracking still has camera access.' : '');
             if (state.source === 'camera') {
@@ -1359,7 +1359,7 @@
             const serial = ++selectSerial;
             state.error = ''; clearPreview();
             const tracking = cameraSession();
-            if (source !== 'off' && !sample().ready) { state.error = win.__FRIDAY_STANDALONE__ || win.__FRIDAY_CHROME__ === 'chat' ? 'Open the holographic desktop to use the scene and tracking controls.' : 'The original scene is still loading. Try again in a moment.'; refreshPanel(); return; }
+            if (source !== 'off' && !sample().ready) { state.error = win.fridayRender3dOff && win.fridayRender3dOff() ? '3D rendering is off (Settings > Appearance). Turn it on to use the scene and tracking.' : win.__FRIDAY_STANDALONE__ || win.__FRIDAY_CHROME__ === 'chat' ? 'Open the holographic desktop to use the scene and tracking controls.' : 'The original scene is still loading. Try again in a moment.'; refreshPanel(); return; }
             if (source === 'camera' && win.FridayTracking?.head.debug) { state.error = 'Finish the existing tracking preview before enabling the camera.'; refreshPanel(); return; }
             if (source === 'camera' && (doc.hidden || sample().callHeld)) { state.error = 'Return to the desktop after the call to enable head tracking.'; refreshPanel(); return; }
             state.source = source; ensureDepth(); depth?.setSource(source);

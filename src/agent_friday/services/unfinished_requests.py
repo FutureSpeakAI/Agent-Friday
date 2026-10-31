@@ -104,6 +104,10 @@ def open_requests(rows, exclude_id=None) -> list[str]:
             continue
         if exclude_id is not None and m.get("id") == exclude_id:
             continue
+        if m.get("imported_from"):
+            # A turn brought in from another assistant's history (services/ai_history_import) is
+            # a record of what was said there, never a request the owner is making of Friday now.
+            continue
         role = m.get("role")
         meta = m.get("meta") or {}
         if role == "user":

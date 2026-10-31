@@ -282,6 +282,23 @@ def test_the_whole_memory_export_reads_turns_exactly_as_search_indexes_them(monk
         assert gone not in blob, gone
 
 
+def test_a_turn_forget_person_took_out_is_not_exported(monkeypatch):
+    # Live's forget-person keeps the turn in the transcript but out of search (conversation_fts.forget_turns);
+    # the whole-memory export reads transcripts, so it must leave that turn out too.
+    cid = cv.create("Boats")["id"]
+    kept = _say(cid, "Wren is kept at Harwich.")
+    gone = _say(cid, "A word about Wren that was forgotten.")
+    monkeypatch.setattr(fts, "forgotten_ids", lambda mids: {m for m in mids if m == gone})
+    texts = _texts(me.build("", kinds=["conversation"]))
+    assert "Wren is kept at Harwich." in texts and "A word about Wren that was forgotten." not in texts
+    assert kept
+    # When forgotten turns cannot be asked about at all, the conversation is left out (fail closed).
+    def boom(mids):
+        raise RuntimeError("unreadable")
+    monkeypatch.setattr(fts, "forgotten_ids", boom)
+    assert _texts(me.build("", kinds=["conversation"])) == []
+
+
 def test_one_very_long_item_is_cut_with_an_ellipsis_and_a_note(monkeypatch):
     long_text = "Wren " + "x" * (me.ITEM_TEXT_MAX + 5000)
     monkeypatch.setattr(um, "all_facts", lambda limit=2000: [

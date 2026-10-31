@@ -59,7 +59,7 @@ const NEVER = [
 ];
 
 /** A control whose row says any of this is looked at, never changed. */
-const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|vault|passphrase|erase|delete|forget|clear|remove|disconnect|certificate|signature|key|token|secret|password|download|install|update|check for|cloud|unrestricted|budget|hard stop|alert|federation|economy|wallet|google|oauth|connect|publish|substack|mcp|salon|workspaces? (permission|history)|export|calibrate|elevenlabs|gemini|microphone|camera|webcam|listener|local address|grant|off the record|send|texts?|by text|invites?/i;
+const GUARDED = /phone|twilio|texting|sms|voicemail|your cell|computer control|vault|passphrase|erase|delete|forget|clear|remove|disconnect|certificate|signature|key|token|secret|password|download|install|update|check for|cloud|unrestricted|budget|hard stop|spending caps?|daily cap|monthly cap|alert|federation|economy|wallet|google|oauth|connect|publish|substack|mcp|salon|workspaces? (permission|history)|export|calibrate|elevenlabs|gemini|microphone|camera|webcam|listener|local address|grant|off the record|send|texts?|by text|invites?/i;
 
 /**
  * Whole groups the walk looks at and never changes: forms that create a standing permission or reach another

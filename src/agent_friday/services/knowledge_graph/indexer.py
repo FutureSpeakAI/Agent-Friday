@@ -295,6 +295,88 @@ def purge_library_documents(doc_ids) -> dict:
     return out
 
 
+def purge_conversation_turns(turn_ids, store=None) -> dict:
+    """Take corrected conversation turns out of the graph (north star
+    §34.9-4; services/memory_derived), with the Library purge's rules: what
+    only they supported goes; what other sources support loses its
+    description; community reports that mention a touched entity go; their
+    search entries go. Approved facts (fact_*) are the owner's and stay.
+    Returns the counts and "refused" when a sealed file refused the save (the
+    caller keeps the ids queued)."""
+    keys = {str(t) for t in turn_ids if str(t).strip()}
+    store = store if store is not None else KnowledgeGraphStore()
+    gone: list[str] = []
+    touched: set[str] = set()
+    out = {"entities": 0, "relationships": 0, "described_again": 0, "reports": 0}
+
+    def _strip(records, kind):
+        keep = []
+        for r in records:
+            prov = r.get("provenance") or {}
+            convs = [str(c) for c in (prov.get("conversations") or [])]
+            if str(r.get("id", "")).startswith("fact_") or not (set(convs) & keys):
+                keep.append(r)
+                continue
+            convs = [c for c in convs if c not in keys]
+            other = [k for k, v in prov.items() if k not in ("sensitivity", "conversations") and isinstance(v, list) and v]
+            if convs or other:
+                prov["conversations"] = convs
+                r["description"] = ""
+                r.pop("descriptions", None)
+                out["described_again"] += 1
+                if kind == "entities":
+                    touched.add(r["id"])
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
+                keep.append(r)
+            else:
+                out[kind] += 1
+                if kind == "entities":
+                    gone.append(r["id"])
+                else:
+                    touched.update(x for x in (r.get("source"), r.get("target")) if x)
+        return keep
+
+    ents = _strip(store.load("entities"), "entities")
+    dead = set(gone)
+    rels = [r for r in _strip(store.load("relationships"), "relationships")
+            if r.get("source") not in dead and r.get("target") not in dead]
+    comms = store.load("communities")
+    hit_comms = {c.get("community") for c in comms if (set(c.get("entity_ids") or []) & (touched | dead))}
+    reports = store.load("community_reports")
+    kept_reports = [r for r in reports if r.get("community") not in hit_comms]
+    out["reports"] = len(reports) - len(kept_reports)
+    refused_before = store.refusals
+    if any(out.values()) or dead:
+        store.save("entities", ents)
+        store.save("relationships", rels)
+        store.save("community_reports", kept_reports)
+    out["refused"] = store.refusals != refused_before
+    if not out["refused"]:
+        try:
+            manifest = KnowledgeGraphManifest(base_dir=store.base)
+            changed = False
+            for k in keys:
+                if canonical(f"conversation:{k}") in manifest.sources:
+                    manifest.forget(f"conversation:{k}")
+                    changed = True
+            if changed:
+                manifest.save()
+        except Exception:
+            pass
+    ids = sorted(dead | touched)
+    if ids:
+        try:
+            from pathlib import Path as _P
+            from agent_friday.conversation_memory import get_conversation_memory
+            cm = get_conversation_memory()
+            if _P(cm.persist_dir).exists() and cm._ensure():
+                cm._client.get_or_create_collection("knowledge-graph").delete(ids=ids)
+        except Exception:
+            pass
+    return out
+
+
 def purge_library_document(doc_id: int) -> dict:
     return purge_library_documents([doc_id])
 
@@ -383,6 +465,29 @@ def _cognitive_chunks() -> Iterable[dict]:
 def _quotes_library(text: str) -> bool:
     """A turn that drew on the Library (a footnote, or a forgotten-source mark)."""
     return "[lib:" in text or "[unverified-lib:" in text or "[forgotten source]" in text
+
+
+def _refs_from_path(key) -> set:
+    """The provenance references a source at `key` gave its nodes, from its
+    path alone (manifests written before refs were recorded): a wiki page's
+    path relative to the wiki, a cognitive memory file's stem."""
+    out = set()
+    try:
+        p = Path(str(key))
+        try:
+            out.add(("wiki_pages", p.resolve().relative_to(Path(WIKI_DIR).resolve()).as_posix()))
+        except Exception:
+            pass
+        if p.suffix.lower() == ".json":
+            try:
+                from agent_friday.paths import friday_home
+                p.resolve().relative_to((Path(friday_home()) / "memory").resolve())
+                out.add(("cognitive_keys", p.stem))       # a cognitive memory file
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return out
 
 
 def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
@@ -706,6 +811,38 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         todo = list(chunks)
     say(f"to extract: {len(todo)} chunks (mode={mode})")
 
+    # North star §34.9-3/-4/-9: a source that changed or is gone takes its old
+    # contribution with it. Each such source's provenance references (recorded
+    # in the manifest, else read from its current chunks or its path) are
+    # taken out of the nodes AFTER extraction, and only for a source whose
+    # every chunk extracted: a failed or capped chunk leaves the old nodes as
+    # they were and the source is tried again next pass. A node that still
+    # names the source gets the new description; a node left with no source
+    # is dropped. "Gone" means the file no longer exists - a source the owner
+    # turned off, or one that could not be read this pass, is not "removed".
+    # Conversation turns are never stale here. Approved facts (fact_*) are
+    # the owner's and are never touched.
+    source_refs: dict = {}
+    removed_keys: list = []
+    if mode == "delta":
+        from .store import fingerprint as _fingerprint
+        removed_keys = [k for k in d["removed"]
+                        if "conversation:" not in str(k) and _fingerprint(k) is None]
+        for key in list(stale) + removed_keys:
+            refs = set()
+            for k2, vals in ((manifest.sources.get(key) or {}).get("refs") or {}).items():
+                refs.update((k2, str(v)) for v in (vals or []))
+            refs |= _refs_from_path(key)
+            source_refs[key] = refs
+        for c in todo:
+            if c["source_path"].startswith("conversation:"):
+                continue
+            refs = source_refs.setdefault(canonical(c["source_path"]), set())
+            for k2, vals in (c.get("provenance") or {}).items():
+                if isinstance(vals, list):
+                    refs.update((k2, str(v)) for v in vals)
+    all_stale_refs = set().union(*source_refs.values()) if source_refs else set()
+
     # ── extract ──────────────────────────────────────────────
     extract_tpl = _prompt("extract_graph")
     entities: dict[str, dict] = {e["id"]: e for e in store.load("entities")
@@ -713,6 +850,28 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     relationships: dict[str, dict] = {r["id"]: r for r in
                                       store.load("relationships")
                                       if r.get("tier") == "B"} if mode == "delta" else {}
+    if mode != "delta":
+        # A full rebuild re-derives everything from the sources, but approved
+        # facts (integration.ingest_fact) have no source text to re-derive
+        # from: they are kept. (Their links to wiki pages point at Tier A ids
+        # and are re-woven from the pages, not kept here.)
+        entities = {e["id"]: e for e in store.load("entities")
+                    if e.get("tier") == "B" and str(e.get("id", "")).startswith("fact_")}
+        relationships = {r["id"]: r for r in store.load("relationships")
+                         if r.get("tier") == "B" and (str(r.get("source", "")).startswith("fact_")
+                                                      or str(r.get("target", "")).startswith("fact_"))}
+    def _carries(obj, refs) -> bool:
+        return any(isinstance(vals, list) and any((k2, str(v)) in refs for v in vals)
+                   for k2, vals in (obj.get("provenance") or {}).items())
+
+    touched = {oid for oid, o in entities.items()
+               if not str(oid).startswith("fact_") and all_stale_refs and _carries(o, all_stale_refs)}
+    touched_rels = {oid for oid, o in relationships.items()
+                    if not str(oid).startswith("fact_") and all_stale_refs and _carries(o, all_stale_refs)}
+    refreshed: set = set()
+    refreshed_rels: set = set()
+    fresh_refs: dict = {}                   # node id -> refs it got from this pass
+    failed_sources: set = set()
     skipped_tier3 = 0
     skipped_cloud_cap = 0
     cloud_extract_calls = 0
@@ -767,6 +926,7 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                 # went down, model got uninstalled) and is counted like any
                 # other failure, not silently routed around.
                 say(f"resolve failed for {chunk['id']}: {e}")
+                failed_sources.add(canonical(chunk["source_path"]))
                 extract_failures += 1
                 if first_failure is None:
                     first_failure = f"{type(e).__name__}: {e}"
@@ -795,14 +955,18 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                        indexing_mode, orb_label="🧠 indexing knowledge")
         except Exception as e:
             say(f"extract failed for {chunk['id']}: {e}")
+            failed_sources.add(canonical(chunk["source_path"]))
             extract_failures += 1
             if first_failure is None:
                 first_failure = f"{type(e).__name__}: {e}"
             continue
         ents, rels = parse_extraction(raw)
         extracted += 1
+        _chunk_refs = {(k2, str(v)) for k2, vals in (chunk.get("provenance") or {}).items()
+                       if isinstance(vals, list) for v in vals}
         for e in ents:
             eid = _ent_id(e["title"])
+            fresh_refs.setdefault(eid, set()).update(_chunk_refs)
             cur = entities.get(eid)
             if cur is None:
                 entities[eid] = {
@@ -813,6 +977,11 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
                     "provenance": dict(chunk["provenance"]),
                 }
             else:
+                if eid in touched and eid not in refreshed:
+                    # The source that described it changed: what it says now
+                    # replaces what it said, rather than being merged with it.
+                    cur["descriptions"] = []
+                    refreshed.add(eid)
                 cur["frequency"] += 1
                 cur.setdefault("descriptions", [cur.get("description", "")])
                 if e["description"] not in cur["descriptions"]:
@@ -828,14 +997,79 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
             if sid == tid:
                 continue
             rid = f"rel_{sid[4:]}_{tid[4:]}"
+            fresh_refs.setdefault(rid, set()).update(_chunk_refs)
             if rid not in relationships:
                 relationships[rid] = {
                     "id": rid, "source": sid, "target": tid,
                     "description": r["description"], "weight": r["weight"],
                     "tier": "B", "provenance": dict(chunk["provenance"]),
                 }
+            else:
+                cur_r = relationships[rid]
+                if rid in touched_rels and rid not in refreshed_rels:
+                    cur_r["description"], cur_r["weight"] = r["description"], r["weight"]
+                    refreshed_rels.add(rid)
+                prov = cur_r.setdefault("provenance", {})
+                for k, v in chunk["provenance"].items():
+                    if k == "sensitivity":
+                        prov["sensitivity"] = max(prov.get("sensitivity", 1), v)
+                    elif isinstance(v, list):
+                        prov[k] = sorted(set(prov.get(k, [])) | set(v))
         manifest.record(chunk["source_path"], kind="tierb",
-                        produced=[chunk["id"]])
+                        produced=[chunk["id"]],
+                        refs={k: v for k, v in (chunk.get("provenance") or {}).items()
+                              if isinstance(v, list)})
+
+    # A failed chunk's file is tried again next pass, like a capped one.
+    capped_sources |= failed_sources
+    done_refs = set().union(*[refs for key, refs in source_refs.items()
+                              if key not in failed_sources and key not in capped_sources]) \
+        if source_refs else set()
+
+    def _strip(obj, oid) -> bool:
+        keep_fresh = fresh_refs.get(oid, set())
+        hit = False
+        for k2, vals in list((obj.get("provenance") or {}).items()):
+            if not isinstance(vals, list):
+                continue
+            keep = [v for v in vals if (k2, str(v)) not in done_refs or (k2, str(v)) in keep_fresh]
+            if len(keep) != len(vals):
+                obj["provenance"][k2] = keep
+                hit = True
+        return hit
+
+    def _sourced(obj) -> bool:
+        return any(isinstance(v, list) and v for v in (obj.get("provenance") or {}).values())
+
+    dropped = []
+    for eid in list(touched):
+        e = entities.get(eid)
+        if e is None or not _strip(e, eid):
+            continue
+        if not _sourced(e):
+            dropped.append(eid)
+            del entities[eid]
+        elif eid not in refreshed:
+            # What the changed source said is no longer known to be true, and
+            # what the other sources say is not separable from it: blank, as a
+            # removed Library document does, until a source describes it again.
+            e["description"] = ""
+            e.pop("descriptions", None)
+    for rid in list(touched_rels):
+        r = relationships.get(rid)
+        if r is None or not _strip(r, rid):
+            continue
+        if not _sourced(r):
+            del relationships[rid]
+        elif rid not in refreshed_rels:
+            r["description"] = ""             # as for entities: no longer known
+    if dropped:
+        say(f"dropped {len(dropped)} node(s) whose only source changed or was removed")
+    for key in removed_keys:
+        # Kept when nothing says which nodes it gave (an old manifest entry
+        # for a document): forgetting it would leave those nodes for ever.
+        if key not in capped_sources and source_refs.get(key):
+            manifest.forget(key)
 
     if capped_sources:
         # A sibling chunk from one of these files may have already called
@@ -882,6 +1116,10 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
             # LLM, so a forgotten name can never ride back in through the
             # summary either.
             for e in entities.values():
+                if str(e.get("id", "")).startswith("fact_") and e.get("title"):
+                    # A fact's title is its own words: a forgotten name in it
+                    # must not survive a forget or a rebuild.
+                    e["title"] = _fp.redact_forgotten_names(e["title"])
                 if e.get("description"):
                     e["description"] = _fp.redact_forgotten_names(e["description"])
                 if e.get("descriptions"):
@@ -1011,6 +1249,21 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
     store.save_layout(layout_meta)
     if store.refusals == refused_before:            # a refused save keeps its sources due again
         manifest.save()
+
+    # Corrections made while this pass ran (services/memory_derived): taken
+    # out now, after the save, so this pass cannot put their nodes back.
+    try:
+        from agent_friday.services import memory_derived as _md
+        try:
+            from agent_friday.routes import knowledge_graph as _kg_routes
+            _lock = _kg_routes._rebuild_lock
+        except Exception:
+            _lock = None
+        if _lock is not None:
+            with _lock:                               # a structural rebuild also re-saves Tier B
+                _md.apply_pending_graph_retractions(store=store)
+    except Exception as _re:
+        say(f"corrections not applied to the graph yet: {_re}")
 
     # Tier B used to fail SILENTLY and completely: `indexing_mode` defaulted
     # to a local model no install actually delivered, every call raised, was

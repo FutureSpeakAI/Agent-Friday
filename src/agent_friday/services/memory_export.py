@@ -32,7 +32,8 @@ Two things never reach an export:
 
 * anything that names a person the owner asked Friday to forget, or carries
   one of their addresses: the same whole-item check the search applies
-  (memory_search._forgotten_filter);
+  (memory_search._forgotten_filter); and any conversation turn forget-person
+  took out of search (conversation_fts.forgotten_ids);
 * a key or password: every string goes through services/pasted_secrets
   (``scrub``) on its way out, whatever store it came from.
 
@@ -117,6 +118,13 @@ def _indexable(m: Dict[str, Any]) -> bool:
                 and meta.get("kind") in (None, "turn"))
 
 
+def _forgotten_turns(mids) -> set:
+    """The ids among `mids` that forget-person took out (conversation_fts.forgotten_ids). Raises when that
+    cannot be asked at all, so the caller leaves the conversation out (fail closed)."""
+    from agent_friday.services import conversation_fts
+    return {str(x) for x in conversation_fts.forgotten_ids([str(i) for i in mids if i])}
+
+
 def _unfenced(text: Any) -> str:
     """The text with recalled-memory spans removed (memory_fence.strip), as conversation search indexes it."""
     text = text if isinstance(text, str) else ""
@@ -143,9 +151,14 @@ def _all_conversations(lo, hi, include_superseded, budget, notes) -> List[Dict[s
         title = c.get("title") or ""
         try:
             msgs = _stored_messages(cid)
+            # Turns forget-person took out stay in the transcript but never in search
+            # (conversation_fts.forget_turns), so they never reach an export either.
+            gone = _forgotten_turns(m.get("id") for m in msgs)
         except Exception:
             continue
         for m in msgs:
+            if str(m.get("id") or "") in gone:
+                continue
             role = m.get("role")
             # Exactly what conversation search indexes (conversation_fts): a turn, not off-record, with
             # any recalled-memory span cut out, so an export never carries more than a search could find.
@@ -247,7 +260,7 @@ def _all_facts(lo, hi, budget) -> List[Dict[str, Any]]:
         if not ms._in_window(ts, lo, hi):
             continue
         src = str(f.get("source") or "")
-        confirmed = src.startswith(ms.CONFIRMED_SOURCES)
+        confirmed = ms._confirmed(src)     # user_model.is_confirmed_source, as the search decides it
         out.append({"kind": "fact", "id": str(f.get("fact_id")), "text": f.get("text") or "", "ts": ts,
                     "when": ms._when(ts), "source": ms._fact_source(src),
                     "status": "current" if confirmed else "inferred",

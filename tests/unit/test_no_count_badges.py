@@ -99,5 +99,6 @@ def test_a_finish_card_can_turn_off_that_job_and_the_routines_list_turns_it_back
 @pytest.mark.parametrize("rel", ["index.html", "ui_parts/head.html"])
 def test_the_highlight_is_a_quiet_dot_not_a_pulse(rel):
     flat = _flat(rel)
-    assert ".dock-btn.has-notice.dot{background:#00d4ff;}" in flat
+    # A ring, so it is told from an open window's filled dot by shape, not colour (WCAG 1.4.1).
+    assert ".dock-btn.has-notice.dot{background:transparent;border:1pxsolid#00d4ff;" in flat
     assert ".dock-btn.has-notice{" not in flat, f"{rel}: the highlight grew a glow or an animation"

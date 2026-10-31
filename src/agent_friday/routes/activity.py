@@ -38,4 +38,14 @@ def api_activity():
         since=_float_arg('since'),
         until=_float_arg('until'),
     )
+    # A principal that is not the owner (the observer) gets every free-text field
+    # through the egress gate, as the task routes do (task_journal.seal_for_principal).
+    try:
+        from flask import g as _g
+        principal = getattr(_g, "friday_principal", "user") or "user"
+    except Exception:
+        principal = "observer"
+    if principal != "user":
+        from agent_friday.services import task_journal as _tj
+        events, _r, _w = _tj.seal_for_principal(events, principal)
     return jsonify({"status": "ok", "events": events, "count": len(events)})

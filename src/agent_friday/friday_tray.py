@@ -223,6 +223,12 @@ def _attach_friday_log() -> None:
             root.setLevel(logging.INFO)
     except Exception:
         pass  # a log that cannot be opened must not stop Friday starting
+    try:
+        # The tray writes friday.log too: the same redaction filter as the server's handlers.
+        from agent_friday.services import log_redaction
+        log_redaction.install(root)
+    except Exception:
+        pass
 
 
 def _ui_url() -> str:
@@ -599,6 +605,7 @@ class FridayTray:
             # stop→sleep→start sequence concurrently with it.
             return
         try:
+            self._prepare_for_exit("tray_restart", planned=True)
             self.stop_server()
             # Give the OS a moment to release the port.
             time.sleep(0.5)
@@ -632,11 +639,46 @@ class FridayTray:
     def _restart(self, _icon, _item) -> None:
         threading.Thread(target=self.restart_server, daemon=True).start()
 
+    def _restart_safe(self, _icon, _item) -> None:
+        """Safe mode (services/safe_mode.py) from the next start until the
+        owner leaves it on the Doctor page; then restart now."""
+        try:
+            from agent_friday.services import safe_mode
+            safe_mode.set_next_start(True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[tray] could not choose safe mode: {e}")
+            return
+        threading.Thread(target=self.restart_server, daemon=True).start()
+
+    def _open_doctor(self, _icon, _item) -> None:
+        threading.Thread(target=lambda: webbrowser.open(_ui_url().rstrip("/") + "/doctor"),
+                         name="friday-open-doctor", daemon=True).start()
+
     def _open_voice_log(self, _icon, _item) -> None:
         if VOICE_LOG.exists():
             os.startfile(str(VOICE_LOG))  # type: ignore[attr-defined]
         else:
             os.startfile(str(VOICE_LOG.parent))  # type: ignore[attr-defined]
+
+    def _prepare_for_exit(self, reason: str, planned: bool = False) -> None:
+        """Ask the server to get ready to stop (BD-16): flush, stop add-ons and browser sessions,
+        and record a clean exit, so the next start can say the owner closed Friday rather than
+        that she crashed. Asked FIRST for the same reason as the seats below: `stop_server`
+        terminates it, and on Windows that runs no exit handler. Short and best-effort.
+        Only for a server this tray started and still runs: an adopted server keeps running
+        when the tray stops, so it is not told it is about to stop."""
+        proc = getattr(self, "server_proc", None)
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            req = urllib.request.Request(
+                self.server_url + "/api/server/prepare-for-exit",
+                data=json.dumps({"reason": reason, "planned": planned}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=15) as r:
+                r.read()
+        except Exception as e:
+            log.warning("could not prepare the server for exit: %s: %s", type(e).__name__, e)
 
     def _release_seats(self, reason: str) -> None:
         """Ask the server to evict its model seats before we stop it.
@@ -663,7 +705,11 @@ class FridayTray:
     def _quit(self, _icon, _item) -> None:
         # A quit gives the machine its memory back. A restart does not: see
         # `restart_server`, which is a planned restart and keeps the seats.
+        # Seats first (that can take a while), then the clean-exit record, then the stop: the
+        # record is written right before the stop, so nothing the server does in between
+        # makes the next start doubt it.
         self._release_seats("tray_quit")
+        self._prepare_for_exit("tray_quit")
         self.stop_server()
         if self.icon:
             self.icon.stop()
@@ -688,6 +734,8 @@ class FridayTray:
         return pystray.Menu(
             pystray.MenuItem("Open " + brand.PRODUCT_NAME, self._open_ui, default=True),
             pystray.MenuItem("Restart Server", self._restart),
+            pystray.MenuItem("Restart in Safe Mode", self._restart_safe),
+            pystray.MenuItem("Open Doctor", self._open_doctor),
             pystray.MenuItem("Voice Debug Log", self._open_voice_log),
             pystray.MenuItem(self._status_label, None, enabled=False),
             pystray.MenuItem(lambda _i: self.ptt.label(), None, enabled=False),
@@ -1051,6 +1099,7 @@ def main(argv: list[str] | None = None) -> None:
         # Being told to stop is a quit, not a restart: hand the memory back.
         try:
             tray._release_seats("tray_signal")
+            tray._prepare_for_exit("tray_signal")
             tray.stop_server()
         except Exception:
             pass

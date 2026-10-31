@@ -131,6 +131,31 @@ def available() -> bool:
 
 
 _verified: Optional[bool] = None
+#: binary_state()'s last answer, by (size, mtime): the Doctor asks often.
+_STATE_SEEN: dict = {}
+
+
+def binary_state() -> str:
+    """"ok", "missing", "unpinned" or "mismatch", for the Doctor. Unlike
+    verify_binary it keeps no answer that changes whether a tool may run."""
+    try:
+        st = BINARY.stat()
+    except OSError:
+        return "missing"
+    pinned = str(install_record().get("sha256") or "").strip().lower()
+    if not pinned:
+        return "unpinned"
+    key = (st.st_size, st.st_mtime_ns, pinned)
+    if key in _STATE_SEEN:
+        return _STATE_SEEN[key]
+    h = hashlib.sha256()
+    with open(BINARY, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    out = "ok" if h.hexdigest() == pinned else "mismatch"
+    _STATE_SEEN.clear()
+    _STATE_SEEN[key] = out
+    return out
 
 
 def verify_binary(force: bool = False) -> Tuple[bool, str]:
@@ -553,6 +578,18 @@ def deliver_check(path, *, want_image: bool = True) -> dict:
             import base64
             out["image_b64"] = base64.b64encode(png).decode("ascii")
             out["media_type"] = "image/png"
+    # The structural checks (north star §34.12-1, services/artifact_qa) read
+    # the saved file itself: bounds, formulas, charts, fonts, alt text. They
+    # need no officecli and catch what its validator does not look at; an
+    # error blocks delivery, a warning is reported alongside.
+    try:
+        from agent_friday.services import artifact_qa
+        qa = artifact_qa.check_isolated(doc)        # time-limited: never hangs delivery
+        out["qa"] = qa
+        findings += ["%s: %s" % (f["check"], f["message"]) for f in qa["findings"] if f["severity"] == "error"]
+        out["warnings"] = ["%s: %s" % (f["check"], f["message"]) for f in qa["findings"] if f["severity"] == "warn"]
+    except Exception:
+        pass
     out["ok"] = not findings
     out["findings"] = findings
     return out

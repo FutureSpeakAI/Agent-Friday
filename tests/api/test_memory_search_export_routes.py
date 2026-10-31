@@ -279,7 +279,8 @@ def test_the_panel_sends_the_line_it_shows_with_each_card_edit_and_delete():
     for f in ("index.html", "ui_parts/app.html"):
         body = _panel(f)
         assert "json({target: at.target, index: at.index, text: text, expect: h.text})" in body, f
-        assert "json({target: at.target, index: at.index, expect: h.text})" in body, f
+        # "Wrong: delete" means what it means on live's card: the messages that said it are retired too.
+        assert "json({target: at.target, index: at.index, wrong: true, expect: h.text})" in body, f
 
 
 # ── the memory card's routes are the owner's only (review finding: consistency) ──

@@ -161,19 +161,45 @@ def _decode_old(gid: str) -> str:
     return re.sub(r"[^\w/%&=?#.:~+\-]+$", "", url)
 
 
+def _record(url: str, result, content=None) -> None:
+    """A news link lookup in the egress ledger and on the privacy map (§26.7).
+    Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_address("news_feed", url, result, content=content, prefix="news")
+    except Exception:
+        pass
+
+
 def _fetch(url: str, data: str | None = None) -> str:
     """GET through the SSRF guard; POST only to Google's fixed exchange endpoint."""
+    from agent_friday.services.cloud_intent import hold_outbound
+    hold_outbound("web_fetch", "news link")         # A16a: raises RouteNotChosen
     if data is None:
         from agent_friday.services.web_safety import safe_get
-        return safe_get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text
+        try:
+            text = safe_get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text
+        except Exception as e:
+            if type(e).__name__ != "UnsafeURLError":     # refused before anything was sent
+                _record(url, e)
+            raise
+        _record(url, "sent")
+        return text
     if url != _GN_EXEC:
         raise ValueError("refusing to post anywhere but Google's link exchange")
     import requests
     from agent_friday.services.web_safety import pinned
-    with pinned(url):
-        return requests.post(url, data={"f.req": data}, timeout=10,
-                             headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                                      "User-Agent": "Mozilla/5.0"}).text
+    try:
+        with pinned(url):
+            text = requests.post(url, data={"f.req": data}, timeout=10,
+                                 headers={"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                                          "User-Agent": "Mozilla/5.0"}).text
+    except Exception as e:
+        if type(e).__name__ != "UnsafeURLError":
+            _record(url, e, {"url": url, "request": data})
+        raise
+    _record(url, "sent", {"url": url, "request": data})
+    return text
 
 
 def resolve_url(url: str, *, fetch=None) -> str:

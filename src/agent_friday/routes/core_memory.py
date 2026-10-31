@@ -4,10 +4,16 @@ Agent Friday — Memory card API (services/core_memory)
   GET   /api/core-memory              both files, Friday's recent changes, the review queue
   POST  /api/core-memory/add          {target, text}            the owner adds a line
   POST  /api/core-memory/edit         {target, index, text, expect?}  the owner rewrites a line
-  POST  /api/core-memory/delete       {target, index, expect?}        the owner deletes a line
+  POST  /api/core-memory/delete       {target, index, wrong?, expect?} the owner deletes a line
+                                      (wrong: the messages that said it are retired too)
                                       (expect: the line's text as shown; a different line there is 409)
   POST  /api/core-memory/undo         {change_id}               undo one of Friday's changes
-  POST  /api/core-memory/review       {id, keep: bool}          keep or discard a queued suggestion
+  POST  /api/core-memory/review       {id, keep: bool, text?}   keep or discard a queued suggestion;
+                                                                with text, keep the owner's edit of it
+                                                                (/api/core-memory/decide is the same)
+  POST  /api/core-memory/suppress     {id}                      "Don't suggest things like this"
+  GET   /api/core-memory/suppressed                             the suppression rules and drop counts
+  POST  /api/core-memory/suppressed/remove {id}                 remove one suppression rule
 
   GET   /api/memory/search  ?q=&kinds=a,b&since=&until=&superseded=1&limit=
                                       the owner's search over everything Friday keeps
@@ -20,8 +26,8 @@ next turn at once (services/prompt_freeze). The three reads are the owner's
 only (principal "user"; an observer or any other is refused), the parameters are bounded, and
 neither the query nor a result is logged (services/memory_search). The export also
 answers only Friday's own page (its X-Friday-Token, or a same-origin non-navigation
-fetch), never a cross-site link or navigation. The card's read, edit, delete and
-review are the owner's only too.
+fetch), never a cross-site link or navigation. The card's read, edit, delete,
+review, suppression rules and restore-messages are the owner's only too.
 """
 from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
@@ -179,8 +185,23 @@ def delete_line():
     if _not_owner():
         return _not_the_owner_card()
     d = _body()
-    return _card_write(core_memory.owner_delete(str(d.get("target") or ""), d.get("index"), expect=_expect(d)),
+    return _card_write(core_memory.owner_delete(str(d.get("target") or ""), d.get("index"),
+                                                wrong=bool(d.get("wrong")), expect=_expect(d)),
                        "Couldn't delete that line")
+
+@core_memory_bp.route("/api/core-memory/restore-messages", methods=["POST"])
+@login_required
+def restore_messages():
+    """Put back into recall the messages a card correction retired (the ids
+    the edit or delete returned)."""
+    if _not_owner():
+        return _not_the_owner_card()
+    d = _body()
+    ids = d.get("ids")
+    if not isinstance(ids, list) or not ids or len(ids) > 200 or not all(isinstance(i, str) and 0 < len(i) <= 80
+                                                                       for i in ids):
+        return jsonify({"ok": False, "error": "which messages?"}), 400
+    return jsonify({"ok": True, "restored": core_memory.restore_superseded(ids)})
 
 
 @core_memory_bp.route("/api/core-memory/undo", methods=["POST"])
@@ -191,10 +212,41 @@ def undo_change():
 
 
 @core_memory_bp.route("/api/core-memory/review", methods=["POST"])
+@core_memory_bp.route("/api/core-memory/decide", methods=["POST"])
 @login_required
 def review_suggestion():
     if _not_owner():
         return _not_the_owner_card()
     d = _body()
-    return jsonify(public_result(core_memory.decide(str(d.get("id") or ""), bool(d.get("keep"))),
+    text = d.get("text")
+    if text is not None and not isinstance(text, str):
+        return jsonify({"ok": False, "error": "text must be a string"})
+    return jsonify(public_result(core_memory.decide(str(d.get("id") or ""), bool(d.get("keep")), text),
                                  "Couldn't record that"))
+
+
+@core_memory_bp.route("/api/core-memory/suppress", methods=["POST"])
+@login_required
+def suppress_suggestion():
+    if _not_owner():
+        return _not_the_owner_card()
+    d = _body()
+    return jsonify(public_result(core_memory.suppress(str(d.get("id") or "")), "Couldn't record that"))
+
+
+@core_memory_bp.route("/api/core-memory/suppressed", methods=["GET"])
+@login_required
+def suppression_rules():
+    if _not_owner():
+        return _not_the_owner_card()
+    return jsonify(public_result(core_memory.suppression_rules(), "Couldn't load the suppressed list"))
+
+
+@core_memory_bp.route("/api/core-memory/suppressed/remove", methods=["POST"])
+@login_required
+def remove_suppression_rule():
+    if _not_owner():
+        return _not_the_owner_card()
+    d = _body()
+    return jsonify(public_result(core_memory.remove_suppression(str(d.get("id") or "")),
+                                 "Couldn't remove that rule"))

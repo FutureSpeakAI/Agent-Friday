@@ -65,7 +65,15 @@ param(
     [switch] $InnoManaged,
     # With -Unattended: the person agreed, in the setup program, to Windows'
     # administrator prompt for the hosts-file entry and its certificate prompt.
-    [switch] $AllowElevation
+    [switch] $AllowElevation,
+    # Export first (north star 27.10): make a Friday Bundle at this folder or
+    # file before anything is removed. Unattended runs read the bundle
+    # passphrase from FRIDAY_BUNDLE_PASSPHRASE. If the bundle cannot be made
+    # and verified, nothing is removed.
+    [string] $BundleTo = '',
+    # Set by the setup program's own uninstaller when it made and verified a
+    # Friday Bundle before calling this script (it is in the receipt).
+    [switch] $BundleMade
 )
 
 $ErrorActionPreference = 'Stop'
@@ -136,14 +144,19 @@ function Move-SelfOutOfHarmsWay {
     New-Item -ItemType Directory -Force -Path $temp | Out-Null
     Copy-Item -Path (Join-Path $Here '*') -Destination $temp -Recurse -Force
     Write-Log "Relaunching uninstaller from $temp"
-    $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File', (Join-Path $temp 'uninstall.ps1'),
-              '-InstallRoot', $Root, '-Relaunched')
+    # Every value quoted: Windows PowerShell 5.1 does not quote -ArgumentList
+    # items, so a path with a space would split.
+    $q = { param($v) '"' + ([string]$v).TrimEnd('\') + '"' }
+    $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File', (& $q (Join-Path $temp 'uninstall.ps1')),
+              '-InstallRoot', (& $q $Root), '-Relaunched')
     if ($Unattended)       { $args += '-Unattended' }
     if ($RemoveEverything) { $args += '-RemoveEverything' }
     if ($InnoManaged)      { $args += '-InnoManaged' }
     if ($AllowElevation)   { $args += '-AllowElevation' }
-    Start-Process -FilePath 'powershell.exe' -ArgumentList $args -NoNewWindow -Wait
-    exit 0
+    if ($BundleTo)         { $args += @('-BundleTo', (& $q $BundleTo)) }
+    if ($BundleMade)       { $args += '-BundleMade' }
+    $child = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -NoNewWindow -Wait -PassThru
+    exit $child.ExitCode
 }
 
 $hereFull = ([System.IO.Path]::GetFullPath($Here)).TrimEnd('\')
@@ -173,6 +186,11 @@ function Remove-FridayCredentials {
         not exist yet when the call runs.
     #>
     $names = @('agent-friday/vault-passphrase', 'agent-friday/governance-key')
+    # and every other agent-friday target, by the name cmdkey lists
+    foreach ($t in @(Get-FridayCredentialTargets)) {
+        $names += [string]$t
+        if ([string]$t -match '^LegacyGeneric:target=(.+)$') { $names += $Matches[1] }
+    }
     foreach ($n in $names) {
         $r = Invoke-Native -FilePath "$env:SystemRoot\System32\cmdkey.exe" -Arguments @("/delete:$n") -TimeoutSeconds 30
         Write-Log "cmdkey /delete for a stored credential exited $($r.ExitCode)"
@@ -189,7 +207,15 @@ try:
     import keyring
 except Exception:
     sys.exit(0)
-for account in ("vault-passphrase", "governance-key"):
+import json, os, pathlib
+accounts = ["vault-passphrase", "governance-key"]
+home = pathlib.Path(os.environ.get("FRIDAY_HOME") or (pathlib.Path.home() / ".friday"))
+try:
+    kept = json.loads((home / "security" / "kept-passphrases.json").read_text(encoding="utf-8"))
+    accounts += [str(a) for a in (kept if isinstance(kept, list) else kept.get("accounts", []))]
+except Exception:
+    pass
+for account in accounts:
     try:
         keyring.delete_password("agent-friday", account)
     except Exception:
@@ -198,6 +224,38 @@ for account in ("vault-passphrase", "governance-key"):
         $null = Invoke-Native -FilePath $py -Arguments @('-c', $code) -TimeoutSeconds 60
     }
     Write-Log 'Credential Manager entries for agent-friday removed (identifiers only; no values were read).' 'OK'
+}
+
+function Get-FridayCredentialTargets {
+    <#  Every Windows Credential Manager target Friday's keyring wrote: the
+        vault passphrase, the governance key, the action ledger's anchors,
+        the guarded-settings counters and any kept earlier passphrase. Names
+        only, read from `cmdkey /list`; no value is ever read. #>
+    # Each name is written to the pipeline, so @(Get-FridayCredentialTargets)
+    # is an empty array when there are none.
+    $r = Invoke-Native -FilePath "$env:SystemRoot\System32\cmdkey.exe" -Arguments @('/list') -TimeoutSeconds 30
+    foreach ($line in ($r.StdOut -split "`r?`n")) {
+        if ($line -match '^\s*Target:\s*(.+?)\s*$') {
+            $t = $Matches[1]
+            # only the names Python's keyring writes for service agent-friday:
+            # "agent-friday" or "<account>@agent-friday", never another app's
+            # credential that merely mentions the name (a Git remote, say)
+            if ($t -match '^(LegacyGeneric:target=)?([^@\s]+@)?agent-friday$') { Write-Output $t }
+        }
+    }
+}
+
+function Get-FridaySiblingCopies {
+    <#  Full copies of the data folder a restore leaves beside it. #>
+    $parent = Split-Path -Parent $FridayDir
+    $leaf = Split-Path -Leaf $FridayDir
+    if (-not (Test-Path -LiteralPath $parent)) { return }
+    foreach ($d in @(Get-ChildItem -LiteralPath $parent -Directory -Force -ErrorAction SilentlyContinue)) {
+        if ($d.Name.StartsWith($leaf + '.pre-restore-') -or $d.Name.StartsWith($leaf + '.friday-restore-') -or
+            $d.Name.StartsWith($leaf + '.restore-undone-')) {
+            Write-Output $d.FullName
+        }
+    }
 }
 
 function Get-FolderSizeGb {
@@ -317,7 +375,49 @@ if (-not $Unattended) {
             Say '  Not confirmed - your notes will be kept.'
         }
     }
+    if ($removeData -and -not $BundleTo) {
+        Say ''
+        Say '  Before anything is removed, Friday can save everything in one'
+        Say '  encrypted file (a Friday Bundle) that you can restore on another PC.'
+        $b = Read-Host '  Make a Friday Bundle first? [Y/n]'
+        if ($b -notmatch '^[Nn]') {
+            $BundleTo = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Friday Bundles'
+        }
+    }
     Say ''
+}
+
+# --- Export first: a verified bundle before anything is removed -----------
+
+# (not $bundleMade: PowerShell names ignore case, so that would clear -BundleMade)
+$bundleSavedTo = $null
+if ($BundleTo) {
+    Say-Step 'Saving a Friday Bundle first'
+    $py = Join-Path $InstallRoot 'python\python.exe'
+    $appDir = Join-Path $InstallRoot 'app'
+    $ok = $false
+    if (Test-Path -LiteralPath $py) {
+        if ($Unattended) {
+            $r = Invoke-Native -FilePath $py -Arguments @('-m','agent_friday.cli','bundle','create','--out',$BundleTo) `
+                               -WorkingDirectory $appDir -TimeoutSeconds 7200
+            $ok = ($r.ExitCode -eq 0)
+            Write-Log ("bundle create exited {0}" -f $r.ExitCode)
+        } else {
+            $p = Start-Process -FilePath $py -ArgumentList @('-m','agent_friday.cli','bundle','create','--out',('"' + $BundleTo.TrimEnd('\') + '"')) `
+                               -WorkingDirectory $appDir -NoNewWindow -Wait -PassThru
+            $ok = ($p.ExitCode -eq 0)
+        }
+    }
+    if ($ok) {
+        $bundleSavedTo = $BundleTo
+        Say-Ok "Saved and verified in $BundleTo"
+    } else {
+        Say-Note 'The Friday Bundle could not be made, so nothing was removed.'
+        Say '        Run the uninstaller again when you want to try once more,'
+        Say '        or choose not to make a bundle.'
+        Write-Log 'Export first failed: nothing removed.' 'WARN'
+        exit 1
+    }
 }
 
 Write-Log "removeData = $removeData"
@@ -566,9 +666,29 @@ if ($removeData) {
             if (Test-Path -LiteralPath $creations) {
                 Remove-Item -LiteralPath $creations -Recurse -Force -ErrorAction SilentlyContinue
             }
+            # The upgrade backups are copies of the same data (keystore included).
+            $backups = if ($env:FRIDAY_BACKUP_ROOT) { $env:FRIDAY_BACKUP_ROOT } else { Join-Path $env:USERPROFILE '.friday-backups' }
+            if (Test-Path -LiteralPath $backups) {
+                Remove-Item -LiteralPath $backups -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            # Folders a restore left beside the data folder: the one it moved
+            # aside (.pre-restore-*), an unfinished staging copy (.friday-restore-*)
+            # and a folder an undone restore found in the way (.restore-undone-*).
+            # All are full copies of her data. Then the restore's journal and lock.
+            foreach ($sib in @(Get-FridaySiblingCopies)) {
+                Remove-Item -LiteralPath $sib -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            foreach ($tail in @('.restore-journal.json', '.restore-journal.json.partial', '.restore.lock')) {
+                $jf = Join-Path (Split-Path -Parent $FridayDir) ((Split-Path -Leaf $FridayDir) + $tail)
+                if (Test-Path -LiteralPath $jf) { Remove-Item -LiteralPath $jf -Force -ErrorAction SilentlyContinue }
+            }
             Remove-FridayCredentials
         } `
-        -Verify { -not (Test-Path -LiteralPath $FridayDir) }
+        -Verify {
+            $backups = if ($env:FRIDAY_BACKUP_ROOT) { $env:FRIDAY_BACKUP_ROOT } else { Join-Path $env:USERPROFILE '.friday-backups' }
+            (-not (Test-Path -LiteralPath $FridayDir)) -and (-not (Test-Path -LiteralPath $backups)) -and
+                (@(Get-FridayCredentialTargets).Count -eq 0) -and (@(Get-FridaySiblingCopies).Count -eq 0)
+        }
 
     Say-Ok 'Your notes and the passphrase that unlocked them are gone.'
     Say-Detail 'Nothing about Friday remains on this computer.'
@@ -625,6 +745,29 @@ $null = Invoke-Step -Id 'uninstall.root' -Title 'Removing Friday''s program file
 }
 
 # =========================================================================
+
+# The uninstall receipt (north star 27.10): what was asked, what is gone,
+# checked now, item by item. Kept beside the report, outside every folder
+# that was removed.
+$receipt = [ordered]@{
+    receipt          = 'agent-friday-uninstall'
+    at               = (Get-Date).ToUniversalTime().ToString('o')
+    data_removed     = [bool]$removeData
+    bundle_first     = ([bool]$bundleSavedTo -or [bool]$BundleMade)
+    checks           = [ordered]@{
+        install_folder_gone   = $(if ($InnoManaged) { 'removed by the setup program after this receipt' } else { -not (Test-Path -LiteralPath $InstallRoot) })
+        data_folder_gone      = -not (Test-Path -LiteralPath $FridayDir)
+        upgrade_backups_gone  = -not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.friday-backups'))
+        credentials_left      = @(Get-FridayCredentialTargets).Count
+        restore_copies_left   = @(Get-FridaySiblingCopies).Count
+        programs_entry_gone   = -not (Test-UninstallerRegistered)
+        hosts_block_gone      = -not (Test-FridayHostsBlock)
+        autostart_gone        = -not (Test-Autostart)
+    }
+}
+try {
+    ($receipt | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath (Join-Path $LogDir 'uninstall-receipt.json') -Encoding UTF8
+} catch { Write-Log "Could not write the uninstall receipt: $_" 'WARN' }
 
 Complete-Install -ReportPath (Join-Path $LogDir 'LAST-UNINSTALL-REPORT.md')
 
