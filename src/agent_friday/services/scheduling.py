@@ -569,6 +569,26 @@ def release_holds(*, series_id, account_id=None) -> dict:
     return dict(res, ok=True, series_id=series, account_id=aid)
 
 
+def _booked_of(ev, series) -> bool:
+    """An event this series already booked (a hold turned into the real event), still there."""
+    props = ((ev or {}).get("extendedProperties") or {}).get("private") or {}
+    return (props.get(HOLD_MARK) == HOLD_BOOKED and props.get(HOLD_SERIES) == series
+            and (ev or {}).get("status") != "cancelled")
+
+
+def _already_booked(aid, series, ev) -> dict:
+    """A repeat of a booking that went through (its reply was lost, or the model asked again):
+    said as done, with the event, and nothing is changed or sent again (NS-33.6-2)."""
+    return {"ok": True, "account_id": aid, "series_id": series,
+            "already_booked": ("This hold was already booked by an earlier call; nothing was changed "
+                               "and no invitation was sent again."),
+            "event": {"id": ev.get("id"), "title": ev.get("summary"),
+                      "start": (ev.get("start") or {}).get("dateTime"),
+                      "end": (ev.get("end") or {}).get("dateTime"),
+                      "html_link": ev.get("htmlLink")},
+            "invited": [a.get("email") for a in (ev.get("attendees") or []) if a.get("email")]}
+
+
 def book_slot(*, series_id, title: str, hold_event_id=None, start=None,
               attendees=None, description: str = "", location: str = "",
               account_id=None) -> dict:
@@ -603,19 +623,25 @@ def book_slot(*, series_id, title: str, hold_event_id=None, start=None,
                 raise SchedulingError("name the hold to book: hold_event_id, "
                                       "or the start time it was placed at")
             want = parse_instant(start, zone_for(scheduling_settings().get("timezone")))
-            matches = []
+            matches, booked_here = [], []
             for ev in _series_events(svc, series):
                 st = (ev.get("start") or {}).get("dateTime")
                 try:
                     if st and parse_instant(st, None) == want and is_friday_hold(ev, series):
                         matches.append(ev.get("id"))
+                    elif st and parse_instant(st, None) == want and _booked_of(ev, series):
+                        booked_here.append(ev)
                 except SchedulingError:
                     continue
+            if not matches and len(booked_here) == 1:
+                return _already_booked(aid, series, booked_here[0])
             if len(matches) != 1:
                 raise SchedulingError("no single active hold of this series "
                                       "starts at %s" % start)
             hold_event_id = matches[0]
         ev = svc.events().get(calendarId="primary", eventId=hold_event_id).execute()
+        if _booked_of(ev, series):
+            return _already_booked(aid, series, ev)
         if not is_friday_hold(ev, series):
             raise SchedulingError("event %s is not an active Friday hold of "
                                   "series %s; nothing was changed"

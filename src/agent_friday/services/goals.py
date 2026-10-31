@@ -1159,6 +1159,8 @@ def _task_outcome(status: Optional[str]) -> str:
         return "missing"
     if s == "interrupted":
         return "interrupted"
+    if s == "needs_reconnect":
+        return "needs_reconnect"           # a connection must be reconnected (NS-32.7-1)
     if s in _TASK_SUCCESS or s.startswith("complete"):
         return "done"
     if s in _TASK_FAILED or s.startswith("failed"):
@@ -1181,6 +1183,9 @@ def _await_task(tid: str, milestone: Dict[str, Any], timeout: float) -> Dict[str
         if outcome == "interrupted":
             return {"ok": False, "text": "", "cost_mψ": 0, "task_id": tid,
                     "interrupted": True, "error": "the task was interrupted"}
+        if outcome == "needs_reconnect":
+            return {"ok": False, "text": "", "cost_mψ": 0, "task_id": tid, "needs_reconnect": True,
+                    "error": "a connection this step needs must be reconnected (Settings > Connections)"}
         time.sleep(1)
     return {"ok": False, "text": "", "cost_mψ": 0,
             "error": "milestone execution timed out", "task_id": tid}
