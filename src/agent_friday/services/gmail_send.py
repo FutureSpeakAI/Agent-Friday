@@ -430,6 +430,9 @@ def _repeat_outcome(rec: dict) -> str | None:
         return "you took back an identical message"
     if used == "gmail_send_grant_revoked":
         return "an identical message was taken back when the pre-approval was revoked"
+    if used == "gmail_send_grant_refused":
+        return ("an identical message was not sent (its pre-approval did not allow it "
+                "when it was due)")
     if used == "gmail_send_missed":
         return "an identical message was not sent (Friday was off when it was due)"
     row = _outbox_row(rec.get("approval_id") or "")
@@ -725,20 +728,24 @@ def send(approval_id: str) -> dict:
     # A message approved by the owner's standing pre-approval, not by a card:
     # the pre-approval must still hold NOW, for every recipient. It may have
     # been revoked during the undo window or before a scheduled time days
-    # away; then this message does not go, and its approval is burned.
+    # away; then this message does not go, and its approval is burned. Its
+    # time cap and quiet hours are checked again too (send_time_refusal): a
+    # message due in quiet hours, or after the cap ran out, does not go.
     if appr.get("pre_approved"):
         from agent_friday.governance import send_grants as _sg
         rcpts = [a for k in ("to", "cc", "bcc") for a in (payload.get(k) or [])]
-        if _sg.verify(appr["pre_approved"], "send_email", rcpts) is None:
-            _burn(approval_id, "gmail_send_grant_revoked", {"reason": _sg.REVOKED_WHY})
+        why = _sg.send_time_refusal(appr["pre_approved"], "send_email", rcpts)
+        if why:
+            _burn(approval_id, ("gmail_send_grant_revoked" if why == _sg.REVOKED_WHY
+                                else "gmail_send_grant_refused"), {"reason": why})
             try:
                 _sg._log("refused", grant_id=appr["pre_approved"], by="friday",
-                         approval_id=approval_id, reason=_sg.REVOKED_WHY)
+                         approval_id=approval_id, reason=why)
             except Exception:
                 pass
             _log.info("refused %s: its pre-approval %s no longer holds",
                       approval_id, appr["pre_approved"])
-            raise SendRefused(_sg.REVOKED_WHY[:1].upper() + _sg.REVOKED_WHY[1:] + ".")
+            raise SendRefused(why[:1].upper() + why[1:] + ".")
 
     expected = payload.get("fingerprint")
     extras = payload.get("extras") or {}

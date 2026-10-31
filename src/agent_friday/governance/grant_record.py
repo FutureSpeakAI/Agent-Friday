@@ -496,7 +496,13 @@ def all_records(now: Optional[float] = None) -> dict:
             revoked = send_grants._revoked_in_log()
         except Exception:  # noqa: BLE001 - listed as the file says
             revoked = set()
-        return [from_send(g, now, revoked) for g in send_grants._read() if isinstance(g, dict)]
+        def _uses(g):
+            # its uses and first use as the log has them, when it can be read
+            try:
+                return send_grants._with_log_uses(g)
+            except Exception:  # noqa: BLE001 - listed as the file says
+                return g
+        return [from_send(_uses(g), now, revoked) for g in send_grants._read() if isinstance(g, dict)]
 
     def files():
         from agent_friday.services import file_grants

@@ -468,6 +468,179 @@ def test_a_non_finite_expiry_is_refused(gate, bad):
     assert action_gate._read_grants() == [] and sg._read() == []
 
 
+# ── review fixes (A11-E18..): re-approval, the log's count, send time ───────
+
+PAT = "pat@example.org"
+MAIL = {"to": PAT, "subject": "Notes", "body": "See you Monday."}
+
+
+def _edit_send_row(gid, **fields):
+    """Edit a send grant row and sign it again (as a trusted write would)."""
+    from agent_friday.governance import send_grants as sg
+    rows = sg._read()
+    for r in rows:
+        if r.get("grant_id") == gid:
+            r.update(fields)
+            r["_resign"] = True
+    sg._write(rows)
+
+
+def test_a_reapproved_send_grant_keeps_its_expiry_and_its_uses(gate, monkeypatch):
+    from agent_friday.governance import send_grants as sg
+    monkeypatch.setattr(sg, "job_fingerprint", lambda sid: "fp_" + str(sid))
+    g = sg.create(scope="job", schedule_id=SCOPE, recipients=[PAT],
+                  limits={"max_uses": 2, "expires_in_seconds": 600, "time_cap_s": 3600})
+    gid = g["grant_id"]
+    assert g["expires_at"] is not None
+    assert sg.reserve_use(gid, "send_email", [PAT]) is not None
+    first = sg.get(gid)["first_used_at"]
+    assert first
+    # re-approved: the same end, the use it had taken, the same first use
+    new = sg.reapprove(gid)
+    assert new["grant_id"] != gid and sg.get(gid)["revoked_at"]
+    assert new["expires_at"] is not None
+    assert new["expires_at"] == pytest.approx(g["expires_at"], abs=5)
+    assert new["uses"] == 1 and new["max_uses"] == 2
+    assert new["first_used_at"] == pytest.approx(first)
+    assert sg.reserve_use(new["grant_id"], "send_email", [PAT]) is not None
+    assert sg.reserve_use(new["grant_id"], "send_email", [PAT]) is None
+    # a spent grant re-approved stays spent: re-approval refills nothing
+    newer = sg.reapprove(new["grant_id"])
+    assert newer["uses"] == 2 and newer["max_uses"] == 2
+    assert sg.reserve_use(newer["grant_id"], "send_email", [PAT]) is None
+    # the carried count is in the log too: a file edited down does not refill it
+    _edit_send_row(newer["grant_id"], uses=0)
+    assert sg.reserve_use(newer["grant_id"], "send_email", [PAT]) is None
+    # an expired grant is not re-approved (and is left as it was)
+    _edit_send_row(newer["grant_id"], expires_at=time.time() - 1)
+    with pytest.raises(ValueError):
+        sg.reapprove(newer["grant_id"])
+    assert sg.get(newer["grant_id"])["revoked_at"] is None
+    assert len(sg._read()) == 3
+
+
+def test_rolling_the_send_grant_file_back_does_not_give_uses_back(gate, monkeypatch):
+    from agent_friday.governance import send_grants as sg
+    g = sg.create(scope="recipients", recipients=[PAT], limits={"max_uses": 2})
+    gid = g["grant_id"]
+    saved = sg._path().read_bytes()          # an older signed copy: no uses
+    assert sg.reserve_use(gid, "send_email", [PAT]) is not None
+    sg.record_use(g, "send_email", [PAT], reserved=True)   # logged once queued: not counted twice
+    assert sg.reserve_use(gid, "send_email", [PAT]) is not None
+    assert sg.reserve_use(gid, "send_email", [PAT]) is None
+    sg._path().write_bytes(saved)
+    assert sg.get(gid)["uses"] == 0 and sg._signed_ok(sg._read()[0])
+    assert sg.reserve_use(gid, "send_email", [PAT]) is None
+    assert sg.covering_tool("draft_email", MAIL, {}) is None
+    assert sg.exclusion_for_tool("draft_email", MAIL, {})["grant_excluded_by"] == "max_uses"
+    # the first use too: the log's earlier one runs the time cap, not the file's
+    h = sg.create(scope="recipients", recipients=["@example.net"], limits={"time_cap_s": 60})
+    sg._log("reserved", grant_id=h["grant_id"], by="friday", action="send_email",
+            at=time.time() - 3600)
+    assert sg.get(h["grant_id"])["first_used_at"] is None
+    assert sg.reserve_use(h["grant_id"], "send_email", ["sam@example.net"]) is None
+    other = dict(MAIL, to="sam@example.net")
+    assert sg.exclusion_for_tool("draft_email", other, {})["grant_excluded_by"] == "time_cap_s"
+    # a log that cannot be read: no send grant covers
+    k = sg.create(scope="recipients", recipients=["@example.com"])
+
+    def _unreadable():
+        raise OSError("the log cannot be read")
+    monkeypatch.setattr(sg, "_uses_in_log", _unreadable)
+    third = dict(MAIL, to="lee@example.com")
+    assert sg.covering_tool("draft_email", third, {}) is None
+    assert sg.exclusion_for_tool("draft_email", third, {}) == {
+        "grant_excluded": k["grant_id"], "grant_excluded_by": "status"}
+    assert sg.reserve_use(k["grant_id"], "send_email", ["lee@example.com"]) is None
+
+
+def test_a_queued_send_is_checked_again_for_quiet_hours_and_the_time_cap_when_due(gate, monkeypatch):
+    from agent_friday.governance import send_grants as sg
+    from agent_friday.services import approvals, gmail_send, interruption_policy
+    g = sg.create(scope="recipients", recipients=[PAT],
+                  limits={"quiet_hours": "respect", "time_cap_s": 60, "max_uses": 1})
+    gid = g["grant_id"]
+    assert sg.reserve_use(gid, "send_email", [PAT]) is not None   # its use, taken when queued
+    # that was its last use, and the message it was taken for may still go
+    assert sg.send_time_refusal(gid, "send_email", [PAT]) == ""
+    monkeypatch.setattr(interruption_policy, "quiet_state",
+                        lambda now=None, s=None: {"active": True, "why": "quiet_hours", "until": 0.0})
+    assert sg.send_time_refusal(gid, "send_email", [PAT]) == sg.SEND_TIME_WHY["quiet_hours"]
+    monkeypatch.setattr(interruption_policy, "quiet_state",
+                        lambda now=None, s=None: {"active": False, "why": "", "until": 0.0})
+    _edit_send_row(gid, first_used_at=time.time() - 3600)
+    assert sg.send_time_refusal(gid, "send_email", [PAT]) == sg.SEND_TIME_WHY["time_cap_s"]
+    # through the one function that sends: refused, its approval burned, nothing sent
+    appr = {"approval_id": "apv_due", "status": "approved", "kind": gmail_send.APPROVAL_KIND,
+            "pre_approved": gid, "payload": {"to": [PAT], "subject": "Notes", "body": "Hi"}}
+    monkeypatch.setattr(approvals, "get_approval", lambda aid: dict(appr))
+    burned: list = []
+    monkeypatch.setattr(gmail_send, "_burn", lambda aid, why, detail: burned.append((aid, why, detail)))
+    with pytest.raises(gmail_send.SendRefused) as e:
+        gmail_send.send("apv_due")
+    assert "time limit" in str(e.value)
+    assert burned == [("apv_due", "gmail_send_grant_refused",
+                       {"reason": sg.SEND_TIME_WHY["time_cap_s"]})]
+    # revoked: as before
+    assert sg.revoke(gid) is True
+    assert sg.send_time_refusal(gid, "send_email", [PAT]) == sg.REVOKED_WHY
+
+
+def _edit_scoped_row(**fields):
+    """Edit the one scoped grant row in grants.json, its signature left as it was."""
+    raw = json.loads(action_gate._grants_file().read_text(encoding="utf-8"))
+    raw[0].update(fields)
+    action_gate._grants_file().write_text(json.dumps(raw, indent=1), encoding="utf-8")
+
+
+@pytest.mark.parametrize("field,value", [
+    ("quiet_hours", "respect"), ("remote_allowed", False), ("money_cap", 10),
+    ("time_cap_s", 3600), ("arg_constraints", {"title": {"prefix": "Weekly"}}),
+    ("data_scope", ["calendar"]), ("starts_at", 1.0)])
+def test_stripping_a_signed_limit_from_a_new_scoped_grant_makes_it_cover_nothing(gate, field, value):
+    g = _limited(**{field: value})
+    assert field in g and [x["grant_id"] for x in action_gate._read_grants()] == [g["grant_id"]]
+    raw = json.loads(action_gate._grants_file().read_text(encoding="utf-8"))
+    del raw[0][field]                      # the limit taken off by hand, its sig kept
+    action_gate._grants_file().write_text(json.dumps(raw, indent=1), encoding="utf-8")
+    assert action_gate._read_grants() == [], "a grant with a limit taken off still verified"
+    v = _decide(ctx=dict(BG, action_cost=1, data_labels=["calendar"]))
+    assert v.action == "card" and v.grant is None
+
+
+def test_scoped_counters_edited_down_in_the_file_do_not_loosen_its_caps(gate):
+    from agent_friday.services import action_ledger
+    g = _limited(money_cap=10, time_cap_s=3600)
+    assert _decide(ctx=dict(BG, action_cost=8)).action == "allow"
+    _edit_scoped_row(money_spent=0.0, used_count=0)
+    assert [x["grant_id"] for x in action_gate._read_grants()] == [g["grant_id"]]
+    row = action_gate.ledger_grant_rows()[0]
+    assert row["money_spent"] == 8 and row["used_count"] == 1
+    v = _decide(ctx=dict(BG, action_cost=5))
+    assert v.action == "card" and v.detail["grant_excluded_by"] == "money_cap"
+    # the ledger holds a use two hours old; the file says the first use was just now
+    action_ledger.append("grant_use", {"grant": g["grant_id"], "tool": TOOL, "scope": SCOPE,
+                                       "at": time.time() - 7200}, durable=True)
+    _edit_scoped_row(first_used_at=time.time())
+    assert action_gate.ledger_grant_rows()[0]["first_used_at"] <= time.time() - 7000
+    v = _decide(ctx=dict(BG, action_cost=1))
+    assert v.action == "card" and v.detail["grant_excluded_by"] == "time_cap_s"
+
+
+def test_a_scoped_money_cap_adds_up_from_the_ledger_over_several_uses(gate):
+    g = _limited(money_cap=10)
+    assert _decide(ctx=dict(BG, action_cost=3)).action == "allow"
+    assert _decide(ctx=dict(BG, action_cost=4)).action == "allow"
+    _edit_scoped_row(money_spent=0.0)      # the file's total wiped: the ledger's stands
+    assert action_gate.ledger_grant_rows()[0]["money_spent"] == 7
+    v = _decide(ctx=dict(BG, action_cost=4))
+    assert v.action == "card" and v.detail == {"grant_excluded": g["grant_id"],
+                                               "grant_excluded_by": "money_cap"}
+    v = _decide(ctx=dict(BG, action_cost=3))
+    assert v.action == "allow" and v.grant["grant_id"] == g["grant_id"]
+    assert action_gate.ledger_grant_rows()[0]["money_spent"] == 10
+
+
 def test_the_policy_version_changes_when_a_limit_changes_and_not_when_used():
     from agent_friday.services import policy_version as pv
     base = _legacy_row(quiet_hours="allow", remote_allowed=True, max_uses=3, used_count=0,
