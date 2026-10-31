@@ -73,7 +73,7 @@ def test_an_observer_credential_never_reads_memory(client, monkeypatch, path):
     # Even if the observer allowlist ever let this route through, the route refuses it.
     cm.add("user", "Keeps a sailing boat called Wren.", actor="friday")
     monkeypatch.setattr(obs, "verify", lambda token: True)
-    monkeypatch.setattr(obs, "is_read_allowed", lambda method, path: True)
+    monkeypatch.setattr(obs, "is_read_allowed", lambda method, path, rule=None: True)
     r = client.get(path, headers={obs.HEADER: "fobs_test"})
     assert r.status_code == 403
     assert "Wren" not in r.get_data(as_text=True)

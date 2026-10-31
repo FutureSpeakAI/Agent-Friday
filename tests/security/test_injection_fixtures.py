@@ -241,6 +241,9 @@ def _html(mp, tmp, request):
 
 @reader("pdf")
 def _pdf(mp, tmp, request):
+    # The file lands in pytest's temp folder: make it the folder file tools may use
+    # (services/path_policy confines read_file to the home folder by default; #211).
+    mp.setenv("FRIDAY_SANDBOX_ROOT", str(tmp))
     p = tmp / "q3-report.pdf"
     p.write_bytes(_pdf_bytes(fixture("pdf_lines.txt").splitlines()))
     return Read("read_file", {"path": str(p)}, "q3-report.pdf", "Read the Q3 report PDF and summarise it.")
@@ -310,6 +313,9 @@ def _spreadsheet(mp, tmp, request):
 
 @reader("repo")
 def _repo(mp, tmp, request):
+    # The file lands in pytest's temp folder: make it the folder file tools may use
+    # (services/path_policy confines read_file to the home folder by default; #211).
+    mp.setenv("FRIDAY_SANDBOX_ROOT", str(tmp))
     repo = tmp / "vendor-sdk"
     (repo / ".git").mkdir(parents=True)
     p = repo / "README.md"
