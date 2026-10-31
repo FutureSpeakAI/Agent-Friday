@@ -175,7 +175,10 @@ def settle(result: Any) -> Any:
     notes = _NOTES.get()
     if (notes is not None and not notes and isinstance(result, dict)
             and result.get("ok") is not True and (result.get("error") or result.get("ok") is False)):
-        notes.append({"kind": "not_attempted", "service": ""})
+        # A write the account has no permission for yet (calendar_write.write_ready says so):
+        # the owner can give it; the task waits on them (NS-32.7-1).
+        notes.append({"kind": "scope" if result.get("needs_reconnect") else "not_attempted",
+                      "service": "Google" if result.get("needs_reconnect") else ""})
     return result
 
 
