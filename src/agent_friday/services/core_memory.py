@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent_friday.paths import friday_home
+from agent_friday.user_errors import exception_text
 
 #: The two files, by the name the tool and the routes use.
 TARGETS = ("user", "friday")
@@ -840,7 +841,7 @@ def suppress(pending_id: str) -> Dict[str, Any]:
         rule = _ms.add_rule(basis, kind="remove" if op == "remove" else "change",
                             origin="card." + (str(row.get("source") or "").split(":", 1)[0] or "unknown"))
     except Exception as e:
-        return _err(f"the rule could not be saved: {e}")
+        return _err(exception_text(e, "the rule could not be saved: %s"))
     if not rule.get("ok"):
         return rule
     res = decide(pending_id, False)
@@ -858,7 +859,7 @@ def suppression_rules() -> Dict[str, Any]:
         from agent_friday.services import memory_suppress as _ms
         return {"ok": True, **_ms.summary()}
     except Exception as e:
-        return _err(str(e))
+        return _err(exception_text(e, "the suppressed list could not be read: %s"))
 
 
 def remove_suppression(rule_id: str) -> Dict[str, Any]:
@@ -866,7 +867,7 @@ def remove_suppression(rule_id: str) -> Dict[str, Any]:
         from agent_friday.services import memory_suppress as _ms
         return _ms.remove_rule(str(rule_id or ""))
     except Exception as e:
-        return _err(str(e))
+        return _err(exception_text(e, "the rule could not be removed: %s"))
 
 
 # ── forget-person (services/forget_derived, NS-15.7-2) ───────────────────────
