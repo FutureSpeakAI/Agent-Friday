@@ -155,6 +155,15 @@ def versions(profile_id: Optional[str] = None) -> Dict[str, str]:
             out["personal"] = laya_personal.version_id(profile_id)
         except Exception:
             pass
+    try:
+        # Decision heads (services/decision_heads): the version and override in
+        # force for each, from what warm() already loaded; never a file read here.
+        from agent_friday.services import decision_heads
+        heads = decision_heads.versions()
+        if heads:
+            out["heads"] = heads
+    except Exception:
+        pass
     return out
 
 
@@ -272,6 +281,24 @@ def _store(rec: dict, persist: bool) -> None:
             return
         rec["dropped_writes"] = _dropped          # rows lost before this one (see status())
         _enqueue_counted(lambda: _append(rec, p))
+
+
+def persist_receipt(receipt_id) -> bool:
+    """Write a receipt that an ``ask`` kept in memory only (``opts.log`` False)
+    to the append-only log, on the writer thread. Shadow heads ask without
+    logging, re-check that the owner is still on the record, then call this.
+    False when the receipt is no longer in the ring or the queue is full."""
+    with _lock:
+        rec = _ring.get(str(receipt_id or ""))
+        rec = dict(rec) if rec else None
+    if rec is None:
+        return False
+    try:
+        p = log_path()
+    except Exception:  # noqa: BLE001
+        return False
+    rec["dropped_writes"] = _dropped
+    return _enqueue_counted(lambda: _append(rec, p))
 
 
 def receipt(receipt_id: str) -> Optional[dict]:
@@ -535,21 +562,76 @@ def _preset_triage(ctx: Ctx, spec: dict) -> dict:
                 "why": "the triage heads are not part of this build"}
     head = _triage_head(spec.get("_name", "triage.mail"), spec)
     texts = ctx.opts.get("texts") or [ctx.text]
-    if len(texts) == 1 and triage_heads._embed_override is None and triage_heads.available():
+    request_path = bool(ctx.opts.get("request_path", False))
+    # On a request path the head reads its cache and never waits for the encoder
+    # (services/triage_heads, DM7 gate), so the context vector is not taken here.
+    if (len(texts) == 1 and not request_path and triage_heads._embed_override is None
+            and triage_heads.available()):
         ctx.vector(triage_heads._clip(texts[0]))       # the one embedding; the head's peek hits it
     out = triage_heads._read_core(head, list(texts), allowed=ctx.opts.get("allowed"),
-                                  block=bool(ctx.opts.get("block", False)), cached=bool(ctx.opts.get("cached", False)))
+                                  block=bool(ctx.opts.get("block", False)), cached=bool(ctx.opts.get("cached", False)),
+                                  request_path=request_path)
     if not out:
         return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
                 "why": "the reading model or this head's prototypes are not ready"}
-    label, p = triage_heads.argmax(out[0])
-    cal = _calibrated_triage(ctx, head, texts, ctx.opts.get("allowed"))
+    # The head's decision head (services/decision_heads) supplies the abstain rule:
+    # a reading below its abstain threshold is "other" (or "none"), never a guess.
+    decide = getattr(triage_heads, "decide", None)
+    label, p = decide(head, out[0]) if callable(decide) else triage_heads.argmax(out[0])
+    # The calibrated reading embeds the text again; a request path skips it.
+    cal = None if request_path else _calibrated_triage(ctx, head, texts, ctx.opts.get("allowed"))
     return {"answer": _answer(label, p, (cal or {}).get("set")), "layer": "t1", "verdict": None, "native": out,
             "calibrated": cal, "why": "nearest prototype over the %s head's seeds" % head}
 
 
 for _h in ("mail", "news", "notify", "memory"):
     PRESETS["triage.%s" % _h] = _preset_triage
+
+
+def _preset_evidence(ctx: Ctx, spec: dict) -> dict:
+    """The evidence heads (services/evidence_heads, DM4): shadow readings of
+    whether retrieved passages answer the question. Degraded when the module
+    or its scorer is not available; the caller's own path never waits on it."""
+    try:
+        from agent_friday.services import evidence_heads
+    except ImportError:
+        return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
+                "why": "the evidence heads are not part of this build"}
+    name = str(spec.get("preset") or spec.get("_name") or "")
+    fn = evidence_heads.preset_holds if name.endswith("holds") else evidence_heads.preset_sufficient
+    return fn(ctx, spec)
+
+
+PRESETS["evidence.holds"] = _preset_evidence
+PRESETS["evidence.sufficient"] = _preset_evidence
+
+
+def _preset_loop(ctx: Ctx, spec: dict) -> dict:
+    """The loop no-progress head (services/loop_heads, DM5): a replayed trace's
+    'would have stopped here', in shadow. Stop-only; it never says done."""
+    try:
+        from agent_friday.services import loop_heads
+    except ImportError:
+        return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
+                "why": "the loop head is not part of this build"}
+    return loop_heads.preset(ctx, spec)
+
+
+PRESETS["loop.no_progress"] = _preset_loop
+
+
+def _preset_supports(ctx: Ctx, spec: dict) -> dict:
+    """The citation support head (services/citation_heads, second wave): does
+    each footnote's passage support its sentence, in shadow. Label only."""
+    try:
+        from agent_friday.services import citation_heads
+    except ImportError:
+        return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
+                "why": "the citation head is not part of this build"}
+    return citation_heads.preset(ctx, spec)
+
+
+PRESETS["evidence.supports"] = _preset_supports
 
 
 def _clamp_add_only(ans: dict, res: dict) -> bool:
@@ -834,11 +916,11 @@ def point_act_turn(text: str, *, quiet: bool = False, stage=_UNSET, pointed=_UNS
 
 
 def triage_read(head: str, texts: List[str], *, allowed=None, block: bool = False, cached: bool = False,
-                caller: Optional[str] = None):
+                caller: Optional[str] = None, request_path: bool = False):
     """A triage head's {label: p} per text through ``ask``, or None when the
     reading model or prototypes are not ready (the incumbent then answers)."""
     opts = {"texts": list(texts), "allowed": None if allowed is None else list(allowed), "block": block,
-            "cached": cached}
+            "cached": cached, "request_path": request_path}
     name = "triage.%s" % head
     res = ask({"text": texts[0] if texts else "", "surface": "background", "opts": opts},
               {name: {"type": "choice", "preset": name}}, caller or name,
@@ -852,8 +934,9 @@ def warm() -> None:
     only; no model is loaded (laya_router.warm does that, separately)."""
     def run():
         try:
-            from agent_friday.services import laya_calibration, laya_router  # noqa: F401
+            from agent_friday.services import decision_heads, laya_calibration, laya_router  # noqa: F401
             laya_calibration.load_table()
+            decision_heads.warm()
             versions()
         except Exception as e:  # noqa: BLE001
             _log.debug("laya warm skipped: %s", e)

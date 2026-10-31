@@ -115,7 +115,22 @@ _VAULT_DOC_MARKERS = (
     "vault\\legal\\", "vault\\finances\\", "vault\\family\\",
 )
 
-_NEVER_CACHE: dict[str, Any] = {"mtime": -1.0, "items": []}
+_NEVER_CACHE: dict[str, Any] = {"mtime": -1.0, "items": [], "broken": False}
+
+
+import contextvars as _cv
+
+#: Set only by the gate's startup self-test (egress_gate.startup_self_test): the probe tests the gate
+#: itself, and an unreadable list must not mark the whole gate broken until a restart. Every real
+#: send still stops while the list cannot be read.
+IGNORE_UNREADABLE: "_cv.ContextVar[bool]" = _cv.ContextVar("friday_never_send_ignore_unreadable",
+                                                           default=False)
+_UNREADABLE_LOGGED = [0.0]
+
+
+class NeverSendListUnreadable(RuntimeError):
+    """The owner's never-send list exists but could not be read. Every cloud send stops (the
+    gate turns this into a block) until it can be: an unreadable floor is never an empty one."""
 # Tokens injected in-memory for the duration of the probe battery. A separate
 # list rather than a poke at _NEVER_CACHE: the cache is mtime-driven, so a
 # planted token was silently discarded by the next disk reload — which made the
@@ -624,7 +639,8 @@ def never_send_tokens() -> list[str]:
         from agent_friday.core import FRIDAY_DIR
         path = Path(FRIDAY_DIR) / "privacy_shield.json"
         mtime = path.stat().st_mtime if path.exists() else 0.0
-        if mtime != _NEVER_CACHE["mtime"]:
+        # re-read while broken too: a fix that keeps the old mtime (a restored copy) still counts
+        if _NEVER_CACHE.get("broken") or mtime != _NEVER_CACHE["mtime"]:
             items: list[str] = []
             if path.exists():
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -632,9 +648,15 @@ def never_send_tokens() -> list[str]:
                 if isinstance(raw, list):
                     items = [str(x).strip() for x in raw
                              if isinstance(x, (str, int, float)) and str(x).strip()]
-            _NEVER_CACHE.update({"mtime": mtime, "items": items})
-    except Exception:
-        pass
+            _NEVER_CACHE.update({"mtime": mtime, "items": items, "broken": False})
+    except Exception as e:
+        # The file is there but could not be read (corrupt, half-written, locked): the floor is
+        # unknown, which is not the same as empty (NS-34.6-7). never_send_hits stops every send.
+        _NEVER_CACHE["broken"] = True
+        import time as _t
+        if _t.monotonic() - _UNREADABLE_LOGGED[0] > 60:
+            _UNREADABLE_LOGGED[0] = _t.monotonic()
+            _log.warning("the never-send list could not be read: %s", type(e).__name__)
     return list(_NEVER_CACHE["items"]) + _PROBE_EXTRA_NEVER
 
 
@@ -653,7 +675,12 @@ def never_send_hits(text: str) -> list[str]:
     # services/never_send_defaults) names a kind of number, matched by pattern; every
     # other entry is the owner's own words, matched as written.
     from agent_friday.services import never_send_defaults as _nsd
-    hits = [t for t in never_send_tokens()
+    tokens = never_send_tokens()
+    if _NEVER_CACHE.get("broken") and not IGNORE_UNREADABLE.get():
+        raise NeverSendListUnreadable(
+            "Your never-send list (privacy_shield.json) could not be read, so nothing is sent to a "
+            "cloud model until it can be. Open Settings > Privacy & Data to check it.")
+    hits = [t for t in tokens
             if (_nsd.category_hit(t, text) if _nsd.is_category(t) else _token_pattern(t).search(text))]
     low = text.lower()
     hits += [m for m in _VAULT_DOC_MARKERS if m in low]
@@ -1242,7 +1269,11 @@ def dry_run(text: str) -> dict:
         return {"cloud_allowed": True, "question_sent": "", "scrub_tags": [],
                 "scrub_count": 0, "reason": "nothing to protect"}
 
-    never = never_send_hits(raw)
+    try:
+        never = never_send_hits(raw)
+    except NeverSendListUnreadable as e:
+        return {"cloud_allowed": False, "question_sent": None, "scrub_tags": [], "scrub_count": 0,
+                "reason": str(e)}
     if never:
         return {"cloud_allowed": False, "question_sent": None,
                 "scrub_tags": [], "scrub_count": 0,

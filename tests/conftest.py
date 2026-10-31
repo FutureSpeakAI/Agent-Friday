@@ -140,6 +140,13 @@ else:
     _sweep_stale_test_homes(Path(tempfile.gettempdir()))
     _TEST_HOME = Path(tempfile.mkdtemp(prefix="friday_test_home_"))
     os.environ["_FRIDAY_TEST_HOME"] = f"{_PID_TAG}{_TEST_HOME}"
+    # A FRIDAY_HOME this process inherited is not this run's home. It may be a
+    # real Friday's folder (set in a developer's shell) or another test's
+    # scratch home, inherited by a test that runs pytest in a child process.
+    # The test home below is the only home: FRIDAY_HOME would win over it in
+    # paths.friday_home() and split state across two folders. A test that
+    # wants FRIDAY_HOME sets it itself (monkeypatch.setenv).
+    os.environ.pop("FRIDAY_HOME", None)
 os.environ["FRIDAY_TESTING"] = "1"
 # The Hugging Face cache stays the machine's shared one. Replacing the home
 # below would otherwise move it into the empty test home, and the first test
@@ -160,6 +167,17 @@ os.environ["HOMEPATH"] = str(_TEST_HOME)[len(_TEST_HOME.drive):] or "\\"
 # across runs (the economy/leaderboard flakes in the Chaos Engineer review).
 os.environ["HOME"] = str(_TEST_HOME)
 os.environ.setdefault("FRIDAY_PASSWORD", "test-vault-passphrase")
+# The shared test home is an EXISTING install (north-star A16/A17): its first
+# settings.json keeps the choices tests were written against (no daily
+# spending cap; an unpicked route is not reported as pending). Every test file
+# shares one costs.db, so a cap on by default would pause whichever later file
+# reached a paid choke point after earlier files had recorded spend. Tests of
+# the new-install behaviour use a home of their own.
+_shared_friday = _TEST_HOME / ".friday"
+_shared_friday.mkdir(parents=True, exist_ok=True)
+if not (_shared_friday / "install_choices.json").exists():
+    (_shared_friday / "install_choices.json").write_text(
+        '{"install": "existing", "daily_cap_card": "not_needed"}', encoding="utf-8")
 # FRIDAY_VAULT_PASSPHRASE is the canonical vault key env var; FRIDAY_PASSWORD is
 # the backward-compat fallback.  Set both so tests exercise the new code path.
 os.environ.setdefault("FRIDAY_VAULT_PASSPHRASE", "test-vault-passphrase")
@@ -204,6 +222,14 @@ _silence_child_consoles()
 from tests.exposure_guard import PublicExposureRefused, install as _install_exposure_guard  # noqa: E402,F401
 
 _install_exposure_guard()
+
+# The pages UI tests load come from a small socketserver on loopback. Its
+# listen backlog defaults to 5; a browser opens several connections at once,
+# and under a loaded suite a refused one is a script that never loads (a page
+# error such as "THREE is not defined"). A deeper backlog keeps every request.
+import socketserver  # noqa: E402
+
+socketserver.TCPServer.request_queue_size = 64
 
 import pytest  # noqa: E402
 
@@ -365,6 +391,39 @@ def federation_on(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _homes_are_existing_installs(request, monkeypatch):
+    """Every home a test points FRIDAY_DIR at is an EXISTING install (north-star
+    A16/A17): its first settings keep the choices tests were written against
+    (no daily spending cap; no route reported as unpicked). costs.db is the
+    shared home's in every test, so a $2 cap on by default in a temp home would
+    pause whichever test reached a paid choke point after earlier tests had
+    recorded spend. Tests of new-install behaviour opt in with the
+    `new_install` marker."""
+    if request.node.get_closest_marker("new_install") is not None:
+        yield
+        return
+    try:
+        from agent_friday import core
+    except Exception:
+        yield
+        return
+    real = getattr(core, "install_origin", None)
+    if real is None:
+        yield
+        return
+
+    def _existing_unless_recorded():
+        if not core.install_choices_state().get("install"):
+            try:
+                core.update_install_choices_state(install=core.EXISTING_INSTALL)
+            except Exception:
+                return core.EXISTING_INSTALL
+        return real()
+    monkeypatch.setattr(core, "install_origin", _existing_unless_recorded)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _held_detail_cards_off(request, monkeypatch):
     """The gate raises a card for every private detail it holds back (services/cloud_release,
     owner ruling 2026-10-17). Hundreds of tests seal private text through a shared scratch home;
@@ -378,6 +437,40 @@ def _held_detail_cards_off(request, monkeypatch):
     if request.node.get_closest_marker("held_cards") is None:
         monkeypatch.setattr(cloud_release, "HELD_CARDS", False)
     yield
+
+
+_HOME_ENV_KEYS = ("FRIDAY_HOME", "HOME", "USERPROFILE")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _home_env_does_not_outlive_its_file(request):
+    """Every test file ends with FRIDAY_HOME, HOME and USERPROFILE as it found them.
+
+    paths.friday_home() reads FRIDAY_HOME on every call while core read it once
+    at import. A FRIDAY_HOME left behind splits one worker's later tests across
+    two folders: a settings save lands in core's file while a reader that asks
+    friday_home() looks elsewhere (the intelligence card's key), and a test that
+    runs pytest in a child hands the stray home to the child, where it reads as
+    a brand-new install (A16a then holds platforms and mail). The value is put
+    back and the file that left it is named in the warnings summary. Per file,
+    not per test: a file's own module-scoped fixture may set a home for all of
+    its tests (tests/unit/test_browser_session.py) and puts it back itself.
+    """
+    before = {k: os.environ.get(k) for k in _HOME_ENV_KEYS}
+    yield
+    for k, v in before.items():
+        now = os.environ.get(k)
+        if now == v:
+            continue
+        # A built-in category: xdist sends warnings to the controller by class,
+        # and a class defined in this conftest cannot be found there.
+        import warnings as _warnings
+        _warnings.warn(RuntimeWarning(
+            "HomeEnvLeak: %s left %s changed (%r, was %r); put back" % (request.node.nodeid, k, now, v)))
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
 
 
 @pytest.fixture(autouse=True)
@@ -407,6 +500,42 @@ def _fresh_swr_cache():
     swr_cache.invalidate("")
     yield
     swr_cache.invalidate("")
+
+
+@pytest.fixture(autouse=True)
+def _own_action_ledger(tmp_path_factory, monkeypatch):
+    """Every test writes to an action ledger of its own (services/action_ledger.py).
+    Receipts, decisions and activity rows from one test must not show up in the
+    next one's reads, and a test that breaks the chain on purpose must not hold
+    the outward actions of the tests after it. FRIDAY_LEDGER_DIR is honoured
+    only with FRIDAY_TESTING=1."""
+    import uuid
+    # a name never used before: a test that removes its ledger folder must not
+    # hand the same path (and so the same anchor) to the next test. Not
+    # tmp_path_factory.mktemp: it lists the whole base folder on every call,
+    # which grows by one folder per test and doubled the Windows suite time.
+    name = uuid.uuid4().hex
+    d = tmp_path_factory.getbasetemp() / "ledgers" / name[:2] / name
+    d.mkdir(parents=True)
+    monkeypatch.setenv("FRIDAY_LEDGER_DIR", str(d))
+    try:
+        from agent_friday.services import action_ledger, action_journal
+        action_ledger.reset_caches()
+        action_journal.reset()
+    except Exception:
+        pass
+    try:
+        # safe mode is decided once per process; each test decides afresh
+        from agent_friday.services import safe_mode
+        safe_mode.reset_for_tests()
+    except Exception:
+        pass
+    yield
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.reset_caches()
+    except Exception:
+        pass
 
 
 class NetworkModelDownload(RuntimeError):
@@ -549,12 +678,23 @@ def _no_real_gpu(request, monkeypatch):
     not torch, so a test that reaches the device choice unstubbed would ask the
     real card. CUDA is hidden and the probe's caches start empty; a test that
     means to look past this says so with ``@pytest.mark.real_gpu``."""
+    th = None
     if request.node.get_closest_marker("real_gpu") is None:
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+        # The heat check (services/thermal) reads nvidia-smi too; a test sees no reading
+        # unless it fakes one (tests/unit/test_thermal_holds_heavy_work.py does).
+        try:
+            from agent_friday.services import thermal as th
+            th.reset_for_tests()
+            th.reading_override = lambda: None
+        except Exception:
+            th = None
     gp = sys.modules.get("agent_friday.services.gpu_probe")
     if gp is not None:
         gp.reset()
     yield
+    if th is not None:
+        th.reset_for_tests()
     gp = sys.modules.get("agent_friday.services.gpu_probe")
     if gp is not None:
         gp.reset()

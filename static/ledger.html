@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Friday™ Ledger</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { background:#04070e; color:#dfe7ef; font:14px/1.5 system-ui, sans-serif; margin:0; padding:24px; }
+  h1 { font-size:20px; color:#00d4ff; margin:0 0 4px; }
+  p.lead { color:#9aa8b8; margin:0 0 18px; max-width:820px; }
+  section { border:1px solid rgba(0,212,255,0.2); border-radius:8px; padding:14px 16px; margin:0 0 16px; max-width:1100px; }
+  h2 { font-size:15px; margin:0 0 8px; }
+  label { display:inline-block; margin:0 12px 8px 0; font-size:12px; color:#9aa8b8; }
+  input, select { background:#0b1220; color:#dfe7ef; border:1px solid rgba(0,212,255,0.3); border-radius:5px; padding:4px 6px; font:inherit; font-size:12px; }
+  button, a.btn { background:rgba(0,212,255,0.12); color:#00d4ff; border:1px solid rgba(0,212,255,0.45); border-radius:6px; padding:6px 12px; font:inherit; cursor:pointer; margin-right:8px; text-decoration:none; display:inline-block; }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid #fbbf24; outline-offset:2px; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  td, th { text-align:left; padding:4px 8px; border-bottom:1px solid rgba(255,255,255,0.06); vertical-align:top; }
+  th { color:#9aa8b8; font-weight:600; }
+  .ok { color:#3effa1 } .bad { color:#f87171 } .muted { color:#7c8a9c }
+  pre { white-space:pre-wrap; background:rgba(0,0,0,0.3); padding:8px; border-radius:6px; font:11px/1.4 'JetBrains Mono', monospace; max-height:320px; overflow:auto; margin:4px 0; }
+  details summary { cursor:pointer; color:#00d4ff; }
+  .state { padding:6px 10px; border-radius:6px; }
+  .state.ok { background:rgba(62,255,161,0.08); } .state.bad { background:rgba(248,113,113,0.1); }
+</style>
+</head>
+<body>
+<main>
+<h1>Ledger</h1>
+<p class="lead">Everything Friday did that left a receipt, in one signed chain: checkpoint decisions, changes to your things, sends, goals and the rest. Each entry shows whether its signature holds. Entries older than the retention period are kept in an encrypted archive, never deleted, and you can search them here too.</p>
+
+<section aria-labelledby="state-h">
+  <h2 id="state-h">State of the record</h2>
+  <div id="state" class="state" role="status">Checking…</div>
+  <p class="muted" id="arch"></p>
+  <p id="audit" role="status"></p>
+  <button type="button" id="verify">Check every entry now</button>
+  <a class="btn" id="exp-report" href="/api/ledger/export?format=report">Save the verification report</a>
+</section>
+
+<section aria-labelledby="f-h">
+  <h2 id="f-h">Find entries</h2>
+  <form id="f">
+    <label>Kind <select name="kind" id="kind"><option value="">any</option></select></label>
+    <label>Tool <input name="tool" size="14"></label>
+    <label>Goal <input name="goal" size="12"></label>
+    <label>Task <input name="task" size="12"></label>
+    <label>Principal <input name="principal" size="8"></label>
+    <label>Provider <input name="provider" size="10"></label>
+    <label>Status <input name="status" size="10"></label>
+    <label>From <input name="since" type="date"></label>
+    <label>To <input name="until" type="date"></label>
+    <label>Words <input name="q" size="16"></label>
+    <label><input type="checkbox" name="archive" value="1"> search the archive too</label>
+    <div><button type="submit">Show</button><a class="btn" id="exp" href="/api/ledger/export?format=jsonl">Save these as a file</a></div>
+  </form>
+  <p class="muted" id="count" role="status"></p>
+  <table>
+    <thead><tr><th>#</th><th>When (UTC)</th><th>What</th><th>Signature</th><th>Details</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <button type="button" id="more" hidden>Older entries</button>
+</section>
+
+<section aria-labelledby="r-h">
+  <h2 id="r-h">How long entries stay live</h2>
+  <p class="muted">After this period an entry moves into the encrypted archive. It is still kept, still in every Friday Bundle and backup, and still checked as part of the chain.</p>
+  <label>Keep live for <select id="days">
+    <option value="365">1 year</option><option value="730">2 years</option>
+    <option value="1825">5 years</option><option value="3650">10 years</option>
+    <option value="0">always (never archive)</option></select></label>
+  <button type="button" id="save-days">Save</button>
+  <span id="days-note" role="status"></span>
+</section>
+</main>
+<script>
+(function () {
+  'use strict';
+  const tok = window.__FRIDAY_API_TOKEN || '';
+  // A press counts only with this launch's desk key, which the loopback door
+  // hands to Friday's own pages on this PC (services/desk_press).
+  let deskKey = '';
+  function refreshDesk() {
+    return fetch('/api/desk/where', { cache: 'no-store', headers: { 'X-Friday-Token': tok } })
+      .then(r => r.ok ? r.json() : null).then(w => {
+        const port = w && Number(w.port);
+        if (!port || port < 1 || port > 65535 || Math.floor(port) !== port) return false;
+        return fetch('http://127.0.0.1:' + port + '/desk-key', { cache: 'no-store', credentials: 'omit', mode: 'cors' })
+          .then(r => r.ok ? r.json() : null).then(d => {
+            if (d && typeof d.key === 'string' && d.key) { deskKey = d.key; return true; }
+            return false;
+          });
+      }).catch(() => false);
+  }
+  const once = (url, opts) => fetch(url, Object.assign({}, opts || {}, {
+    headers: Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' },
+                           deskKey ? { 'X-Friday-Desk': deskKey } : {}, (opts || {}).headers || {})
+  })).then(r => r.json().then(d => ({ ok: r.ok, status: r.status, d })));
+  // A key from an earlier launch is refused with desk_proof_required: fetch the
+  // current one and press once more.
+  const api = (url, opts) => once(url, opts).then(res =>
+    (res.status === 403 && res.d && res.d.code === 'desk_proof_required')
+      ? refreshDesk().then(ok => ok ? once(url, opts) : res) : res);
+  refreshDesk();
+  const $ = id => document.getElementById(id);
+  const el = (tag, txt, cls) => { const e = document.createElement(tag); if (txt != null) e.textContent = String(txt); if (cls) e.className = cls; return e; };
+  let lastSeq = null;
+
+  function showState(l) {
+    if (!l) return;
+    const s = $('state');
+    s.className = 'state ' + (l.ok ? 'ok' : 'bad');
+    s.textContent = l.ok
+      ? 'Intact: ' + l.records + ' live entries' + (l.archived_records ? ' and ' + l.archived_records + ' archived' : '') + ', every link and signature checked.'
+      : l.open_problem_count + ' break(s) to review. Outward actions are held until you review them in Activity.';
+  }
+  function query(extra) {
+    const p = new URLSearchParams();
+    new FormData($('f')).forEach((v, k) => { if (v) p.set(k, v); });
+    Object.keys(extra || {}).forEach(k => p.set(k, extra[k]));
+    return p;
+  }
+  function render(entries, append) {
+    const body = $('rows');
+    if (!append) body.textContent = '';
+    entries.forEach(e => {
+      const tr = el('tr');
+      tr.appendChild(el('td', e.seq));
+      tr.appendChild(el('td', (e.ts || '').replace('T', ' ').slice(0, 19)));
+      const what = el('td');
+      what.appendChild(el('div', e.plain || e.label));
+      what.appendChild(el('div', e.label + (e.migrated ? ' · brought in from ' + e.migrated.from : ''), 'muted'));
+      tr.appendChild(what);
+      tr.appendChild(el('td', e.verified ? 'holds' : 'does not hold', e.verified ? 'ok' : 'bad'));
+      const det = el('td');
+      const d = el('details');
+      d.appendChild(el('summary', 'open'));
+      if (e.links && Object.keys(e.links).length) d.appendChild(el('div', 'Linked: ' + Object.entries(e.links).map(([k, v]) => k + ' ' + v).join(', ')));
+      if (e.before_after) { d.appendChild(el('div', 'Before and after:')); d.appendChild(el('pre', JSON.stringify(e.before_after, null, 1))); }
+      d.appendChild(el('pre', JSON.stringify(e.record, null, 1)));
+      d.appendChild(el('div', 'hash ' + (e.hash || ''), 'muted'));
+      det.appendChild(d);
+      tr.appendChild(det);
+      body.appendChild(tr);
+      lastSeq = e.seq;
+    });
+  }
+  function load(append) {
+    const p = query(append && lastSeq != null ? { before: lastSeq } : {});
+    $('exp').href = '/api/ledger/export?format=jsonl&' + query().toString();
+    api('/api/ledger?' + p.toString()).then(({ ok, d }) => {
+      if (!ok) { $('count').textContent = d.error || 'The ledger could not be read.'; return; }
+      showState(d.ledger);
+      const sel = $('kind');
+      if (sel.options.length === 1) Object.entries(d.kinds || {}).forEach(([k, v]) => { const o = el('option', v); o.value = k; sel.appendChild(o); });
+      render(d.entries || [], append);
+      $('count').textContent = (append ? 'More: ' : 'Showing ') + (d.entries || []).length + ' entr' + ((d.entries || []).length === 1 ? 'y' : 'ies') + (d.archive_searched ? ', the archive included.' : '.') + (d.archive_error ? ' The archive could not be read: ' + d.archive_error + '.' : '');
+      $('more').hidden = (d.entries || []).length < 100;
+    });
+  }
+  function retention() {
+    api('/api/ledger/retention').then(({ d }) => {
+      const a = d.archive || {};
+      const sel = $('days');
+      if (![...sel.options].some(o => o.value === String(a.after_days))) {
+        const o = el('option', a.after_days + ' days'); o.value = String(a.after_days); sel.appendChild(o);
+      }
+      sel.value = String(a.after_days);
+      $('arch').textContent = a.files
+        ? a.records + ' entries in the encrypted archive, from ' + (a.first_ts || '?') + ' to ' + (a.through_ts || '?') + '.'
+        : 'Nothing is archived yet.';
+    });
+  }
+  // Every outward action: its decision and one terminal receipt (services/outward_audit).
+  function outwardAudit() {
+    api('/api/ledger/audit').then(({ ok, d }) => {
+      const p = $('audit');
+      if (!ok || !d.audit) { p.className = 'muted'; p.textContent = 'Outward actions could not be checked.'; return; }
+      const c = d.audit.counts || {};
+      const problems = (c.open || 0) + (c.duplicate || 0) + (c.duplicate_key || 0) + (c.false_done || 0);
+      p.className = problems ? 'bad' : 'ok';
+      p.textContent = 'Outward actions, last ' + d.audit.window_days + ' days: ' + (c.decisions || 0) + ' decided, '
+        + (c.closed || 0) + ' with their final receipt, ' + (c.waiting || 0) + ' waiting for you, '
+        + (c.unconfirmed || 0) + ' unconfirmed (nobody said whether it happened), '
+        + (c.open || 0) + ' with no final receipt, ' + (c.duplicate || 0) + ' with more than one, '
+        + (c.duplicate_key || 0) + ' run twice, ' + (c.false_done || 0) + ' task(s) marked done too early.';
+    });
+  }
+  $('f').addEventListener('submit', ev => { ev.preventDefault(); lastSeq = null; load(false); });
+  $('more').addEventListener('click', () => load(true));
+  $('verify').addEventListener('click', () => api('/api/ledger/verify').then(({ d }) => showState(d.report)));
+  $('save-days').addEventListener('click', () => {
+    api('/api/ledger/retention', { method: 'POST', body: JSON.stringify({ days: Number($('days').value) }) }).then(({ ok, d }) => {
+      $('days-note').textContent = ok ? ('Saved.' + (d.result && d.result.archived ? ' ' + d.result.records + ' entries moved to the archive.' : '')) : (d.error || 'Not saved.');
+      retention();
+    });
+  });
+  load(false);
+  retention();
+  outwardAudit();
+})();
+</script>
+</body>
+</html>

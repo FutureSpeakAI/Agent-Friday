@@ -56,7 +56,9 @@ def test_ask_returns_the_contract_shape(preset):
     assert set(r) >= {"answers", "verdict", "layer", "versions", "latency_ms", "receipt_id"}
     assert r["answers"]["q"] == {"value": "x", "p": 0.9, "set": ["x"], "abstain": False}
     assert r["verdict"] == "act" and r["layer"] == "t1"
-    assert set(r["versions"]) == {"base", "head", "personal", "calibration"}
+    # "heads" (services/decision_heads) joins once the decision-head files are loaded.
+    assert {"base", "head", "personal", "calibration"} <= set(r["versions"]) <= {"base", "head", "personal",
+                                                                                 "calibration", "heads"}
 
 
 def test_the_router_is_a_preset_and_keeps_its_signature():
@@ -277,7 +279,9 @@ def test_every_ask_has_a_receipt_with_versions_and_no_words(preset):
                                          "layer": "rule", "why": "a sealed pattern"})
     r = _ask({"q": ok}, text=words)
     rec = laya.receipt(r["receipt_id"])
-    assert rec["versions"] == r["versions"] and set(rec["versions"]) == {"base", "head", "personal", "calibration"}
+    assert rec["versions"] == r["versions"]
+    assert {"base", "head", "personal", "calibration"} <= set(rec["versions"]) <= {"base", "head", "personal",
+                                                                                   "calibration", "heads"}
     assert rec["caller"] == "test.caller" and rec["layer"] == "rule"
     assert words not in json.dumps(rec) and "garden" not in json.dumps(rec)
     assert "sealed rule" in rec["explain"] and "R0" in rec["explain"]

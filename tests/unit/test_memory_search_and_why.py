@@ -565,7 +565,9 @@ def test_deleting_a_kept_line_purges_the_change_record_whose_reason_quotes_it():
     q = cm.queue("user", "add", text="Is fond of the boat.", source="dream:2026-09-05",
                  reason="The card says:\n" + line)
     assert cm.decide(q["id"], True)["ok"]
-    assert any("old girl" in str((r.get("via") or {}).get("reason")) for r in cm.journal_rows())
+    # Where a kept line came from is its change record's "origin"; "via" is live's marker of how it
+    # was kept (e.g. "edited_suggestion", tests/unit/test_memory_edit_and_suppress.py).
+    assert any("old girl" in str((r.get("origin") or {}).get("reason")) for r in cm.journal_rows())
     assert cm.remove("user", line, actor="owner")["ok"]
     on_disk = (cm._dir() / "changes.jsonl").read_text(encoding="utf-8") \
         if (cm._dir() / "changes.jsonl").exists() else ""

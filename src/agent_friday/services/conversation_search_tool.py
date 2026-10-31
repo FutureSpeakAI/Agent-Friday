@@ -68,13 +68,26 @@ def _tool_search_conversations_typed(inp=None) -> str:
     if not query:
         return "search_past_conversations needs something to look for."
     from agent_friday.services import conversation_recall as rc
-    hits = rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12)
+    from agent_friday.services import recall_health
+    local = _loop_is_local()
+    # A cloud model: within a near-duplicate group the turn this provider
+    # already received is the one kept (services/recall_dedupe `prefer`), so
+    # the dedupe never trades a shown turn for a withheld twin.
+    prov = None if local else _provider()
+    try:
+        hits = rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12,
+                         provider=prov)
+    except Exception as e:
+        # A search index that cannot be read is not "nothing matches" (services/recall_health).
+        recall_health.note_failure("conversation_search", e)
+        return ("Earlier conversations could not be searched right now (the search index could not "
+                "be read). Do not answer as if you remembered; say you cannot check right now.")
+    recall_health.note_ok("conversation_search")
     if not hits:
         return f'Nothing in earlier conversations matches "{query}".'
-    if _loop_is_local():
+    if local:
         _record(hits[:10])
         return "From earlier conversations (best match first):\n" + _format(hits[:10])
-    prov = _provider()
     direct = [h for h in hits if prov in (h.get("sent_to") or [])]
     rest = len(hits) - len(direct)
     parts = []

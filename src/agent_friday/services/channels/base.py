@@ -16,6 +16,12 @@ _CHANNEL_SEND_WITHHELD = ("[withheld by egress gate — this message stayed "
                           "on this device]")
 
 
+def _mask_chat(chat_id) -> str:
+    """A chat id in a receipt: enough to tell two chats apart, not to find one."""
+    c = str(chat_id or "")
+    return ("…" + c[-4:]) if len(c) > 4 else "…"
+
+
 def _gate_channel_text(text: str, channel: str) -> str:
     """Gate any text before it reaches a channel adapter's transport.
     FAIL-CLOSED: any gate exception, including NeverSendBlocked, withholds
@@ -35,6 +41,36 @@ def _gate_channel_text(text: str, channel: str) -> str:
         return _CHANNEL_SEND_WITHHELD
 
 
+_CHANNEL_HOSTS = {"telegram": "api.telegram.org", "discord": "discord.com"}
+
+
+def record_channel_send(channel: str, chat_id: str, text: str, ok: bool, unsure: bool = False) -> None:
+    """A message to a chat channel in the egress ledger and on the privacy map
+    (§26.7): which platform, the gated words fingerprinted and, by default
+    (A20), kept encrypted. A send that may have arrived (a timeout) is
+    sent_unconfirmed and keeps its words. Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        _eg.record_service_send("chat_channel", f"channel:{channel}"[:80],
+                                destination=_CHANNEL_HOSTS.get(channel, channel),
+                                content={"chat": str(chat_id)[:80], "text": text},
+                                result="sent" if ok else ("sent_unconfirmed" if unsure else "failed"),
+                                recipients=1, part="message")
+    except Exception:
+        pass
+
+
+def send_unsure(exc) -> bool:
+    """True when a send that raised may still have reached the platform (a
+    timeout, a dropped connection, a server error), so it is recorded as
+    sent_unconfirmed and its words kept. Never raises."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        return _eg.result_for_error(exc) == "sent_unconfirmed"
+    except Exception:
+        return True
+
+
 class ChannelAdapter:
     """Base class for a messaging-platform bridge.
 
@@ -44,6 +80,9 @@ class ChannelAdapter:
     """
 
     name: str = "channel"
+    #: The most characters the platform's send carries; the record keeps
+    #: what was sent, not words that were cut off (0: no limit).
+    max_chars: int = 0
 
     def __init__(self) -> None:
         self._config: Dict[str, Any] = {}
@@ -89,6 +128,10 @@ class ChannelAdapter:
             return {"ok": False, "error": "missing_dependency"}
         if not self.has_token():
             return {"ok": False, "error": "no_token"}
+        from agent_friday.services.cloud_intent import outbound_held
+        _held = outbound_held("connector", "channel " + str(self.name))   # A16a
+        if _held:
+            return {"ok": False, "error": "route_not_chosen", "detail": _held}
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name=f"channel-{self.name}",
                                         daemon=True)
@@ -132,8 +175,75 @@ class ChannelAdapter:
     # entirely. Gating HERE, once, means the reply path is no longer the
     # only guarded door, and no future adapter can add a new one.
     def send(self, chat_id: str, text: str) -> Dict[str, Any]:
+        from agent_friday.services.cloud_intent import outbound_held
+        _held = outbound_held("connector", "channel send " + str(self.name))   # A16a
+        if _held:
+            return {"ok": False, "error": "route_not_chosen", "detail": _held}
         gated = _gate_channel_text(text, self.name)
-        return self._send_raw(chat_id, gated)
+        passed, decision = self._checkpoint_ref(chat_id)
+        if not passed:
+            return {"ok": False, "error": "held by the action checkpoint"}
+        from agent_friday.governance import action_gate as _gate
+        try:
+            res = self._send_raw(chat_id, gated)
+        except Exception:
+            _gate.close_external(decision, False, detail="transport_error")
+            raise
+        ok = bool(isinstance(res, dict) and res.get("ok"))
+        unsure = bool(isinstance(res, dict) and res.get("unsure"))
+        # the service's own id for the message is its confirmation
+        verified = ok and bool(isinstance(res, dict) and (res.get("message_id") or res.get("id")))
+        self.report_outbound(decision, ok, unsure, verified=verified)
+        record_channel_send(self.name, chat_id, gated[:self.max_chars] if self.max_chars else gated,
+                            ok, unsure)
+        return res
+
+    @staticmethod
+    def report_outbound(decision, ok: bool, unsure: bool = False, *, verified: bool = False) -> None:
+        """The send's outcome for its checkpoint decision: sent -> executed
+        (completed_verified when the service returned the message's id); not
+        sent -> failed; a send the transport could not confirm either way ->
+        unconfirmed (not terminal, and never counted as done)."""
+        from agent_friday.governance import action_gate as _gate
+        if unsure:
+            _gate.close_external(decision, True, detail="unsure", outcome=_gate.UNCONFIRMED)
+        else:
+            _gate.close_external(decision, ok, detail="sent" if ok else "not_sent",
+                                 verified=bool(ok and verified))
+
+    def prepare_outbound_ref(self, chat_id: str, text: str):
+        """(text, decision) for an adapter that sends on its own (a gateway's
+        reply): the egress gate's text after the action checkpoint's receipt,
+        or (None, None) when the checkpoint holds it. The adapter reports the
+        send with `report_outbound(decision, ok, unsure)`."""
+        gated = _gate_channel_text(text, self.name)
+        passed, decision = self._checkpoint_ref(chat_id)
+        return (gated, decision) if passed else (None, None)
+
+    def prepare_outbound(self, chat_id: str, text: str):
+        """`prepare_outbound_ref` for a caller that cannot report the send: its
+        decision is marked unconfirmed at once (nobody will say what became of
+        it), so it is never left open nor counted as done."""
+        gated, decision = self.prepare_outbound_ref(chat_id, text)
+        if gated is not None:
+            from agent_friday.governance import action_gate as _gate
+            _gate.close_external(decision, True, detail="not_reported", outcome=_gate.UNCONFIRMED)
+        return gated
+
+    def _checkpoint(self, chat_id: str) -> bool:
+        """The action checkpoint's signed receipt for this send
+        (action_gate.record_external: the cLaws intact, no hold)."""
+        return self._checkpoint_ref(chat_id)[0]
+
+    def _checkpoint_ref(self, chat_id: str):
+        """`_checkpoint` as (passed, the decision for the send's outcome)."""
+        try:
+            from agent_friday.governance import action_gate as _gate
+            return True, _gate.record_external("channel:%s:send" % self.name, surface="channel",
+                                               target=_mask_chat(chat_id))
+        except Exception as e:  # Held, or the receipt could not be written
+            self._last_error = "held: %s" % e
+            return False, None
 
     # ── inbound dispatch (adapters call this per received message) ────────────
     def _dispatch(self, chat_id: str, text: str) -> None:

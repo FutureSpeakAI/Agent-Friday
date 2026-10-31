@@ -57,8 +57,14 @@ PROPOSALS_MAX = 200
 #: A semantic match below this is noise for a search the owner reads.
 SEMANTIC_FLOOR = 0.35
 
-#: Sources of a user-model fact that mean the owner entered or approved it.
-CONFIRMED_SOURCES = ("manual", "setup", "proposed:", "meeting:")
+def _confirmed(src) -> bool:
+    """A user-model fact source that means the owner entered or approved it: user_model's own rule
+    (exact names, prefixes only for the colon forms), so an inferred "setup_research" is not the owner's."""
+    try:
+        from agent_friday.services.user_model import is_confirmed_source
+        return is_confirmed_source(src)
+    except Exception:
+        return False
 
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _STOP = {"the", "and", "for", "with", "that", "this", "what", "when", "where", "who",
@@ -196,6 +202,8 @@ def _fact_source(source: str) -> str:
         return "You entered this"
     if s == "setup":
         return "You told Friday this during setup"
+    if s == "user_stated":
+        return "You told Friday this"
     if s.startswith("proposed:"):
         return "Approved suggestion from " + s.split(":", 1)[1]
     if s.startswith("meeting:"):
@@ -398,16 +406,31 @@ def _conversation(query, terms, since, until, lo, hi, include_superseded, n, not
     return list(out.values())
 
 
+def _origin(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """A card change record's "origin" (where an owner-approved line came from), or {}."""
+    o = (row or {}).get("origin")
+    return o if isinstance(o, dict) else {}
+
+
 def _card_label(row: Optional[Dict[str, Any]]) -> str:
     if not row:
         return "On the memory card (no change record says who added it)"
     when = _when(row.get("ts"))[:10]
-    via = row.get("via") or {}
+    origin = _origin(row)
+    # core_memory journals how a line was kept as "via" (e.g. "edited_suggestion": the owner's own
+    # wording of a suggestion) and where it came from as "origin" (the suggestion or proposal).
+    edited = row.get("via") == "edited_suggestion"
     if row.get("actor") == "owner":
-        if via.get("suggestion"):
-            return f"You kept this from a suggestion by {_from(via.get('source'))}, on {when}"
-        if via.get("proposal"):
-            return f"You approved this suggestion ({_from(via.get('source'))}) on {when}"
+        if origin.get("suggestion"):
+            if edited:
+                return (f"You kept this, in your own words, from a suggestion by "
+                        f"{_from(origin.get('source'))}, on {when}")
+            return f"You kept this from a suggestion by {_from(origin.get('source'))}, on {when}"
+        if origin.get("proposal"):
+            if edited:
+                return (f"You kept this suggestion ({_from(origin.get('source'))}) in your own words "
+                        f"on {when}")
+            return f"You approved this suggestion ({_from(origin.get('source'))}) on {when}"
         return f"You wrote this on {when}"
     if row.get("actor") == "friday":
         return f"Friday saved this in a conversation on {when}"
@@ -484,7 +507,7 @@ def _facts(terms, phrase, lo, hi):
         if not sc or not _in_window(ts, lo, hi):
             continue
         src = str(f.get("source") or "")
-        confirmed = src.startswith(CONFIRMED_SOURCES)
+        confirmed = _confirmed(src)
         out.append({"kind": "fact", "id": str(f.get("fact_id")), "text": f.get("text") or "",
                     "ts": ts, "when": _when(ts),
                     "source": {"label": _fact_source(src), "origin": src, "category": f.get("category"),
@@ -668,28 +691,30 @@ def _why_card(item_id: str) -> Dict[str, Any]:
     history = []
     added_by = None
     for r in rows:
-        via = r.get("via") or {}
+        origin = _origin(r)
         ev = _card_label(r)
         if r.get("op") == "replace" and r.get("before"):
             ev += f" (it replaced “{r.get('before')}”)"
-        if via.get("reason"):
-            ev += f". The suggestion said: {via.get('reason')}"
+        if origin.get("reason"):
+            ev += f". The suggestion said: {origin.get('reason')}"
         history.append(_event(r.get("ts"), ev))
     last = rows[-1] if rows else None
     if last:
-        via = last.get("via") or {}
+        origin = _origin(last)
         added_by = {"actor": last.get("actor"), "who": _who(last.get("actor")), "when": _when(last.get("ts")),
                     "change_id": last.get("id"), "op": last.get("op")}
-        if via:
-            added_by["suggestion"] = {k: via.get(k) for k in ("suggestion", "proposal", "source", "reason")
-                                      if via.get(k)}
-            added_by["suggestion"]["from"] = _from(via.get("source"))
-            if via.get("queued_ts"):
-                added_by["suggestion"]["suggested_on"] = _when(via.get("queued_ts"))
-            if via.get("proposal"):
+        if origin:
+            added_by["suggestion"] = {k: origin.get(k) for k in ("suggestion", "proposal", "source", "reason")
+                                      if origin.get(k)}
+            added_by["suggestion"]["from"] = _from(origin.get("source"))
+            if last.get("via") == "edited_suggestion":
+                added_by["suggestion"]["edited"] = True
+            if origin.get("queued_ts"):
+                added_by["suggestion"]["suggested_on"] = _when(origin.get("queued_ts"))
+            if origin.get("proposal"):
                 try:
                     from agent_friday.services import memory_proposals as mp
-                    pr = mp.rows(fact_id=via.get("proposal"))
+                    pr = mp.rows(fact_id=origin.get("proposal"))
                     if pr and pr[0].get("evidence"):
                         added_by["suggestion"]["evidence"] = pr[0]["evidence"]
                 except Exception:
@@ -746,7 +771,7 @@ def _why_fact(item_id: str) -> Dict[str, Any]:
     if not f:
         return {"ok": False, "error": "Friday does not keep that fact now."}
     src = str(f.get("source") or "")
-    confirmed = src.startswith(CONFIRMED_SOURCES)
+    confirmed = _confirmed(src)
     hist = [_event(f.get("ts"), _fact_source(src))]
     evidence = ""
     if src.startswith(("proposed:", "meeting:")):
@@ -796,6 +821,9 @@ def _why_proposal(item_id: str) -> Dict[str, Any]:
                    + (f" by {p.get('model')}" if p.get("model") else ""))]
     if p.get("status") == "approved":
         hist.append(_event(p.get("decided_ts"), "You approved it"))
+    elif p.get("status") == "edited":
+        # Kept in the owner's own words (memory_proposals.approve edits): this wording is not what was kept.
+        hist.append(_event(p.get("decided_ts"), "You kept it in your own words"))
     elif p.get("status") == "rejected":
         hist.append(_event(p.get("decided_ts"), "You discarded it"))
     summary = (f"The Memory keeper read your conversations from {p.get('day')} and suggested this"

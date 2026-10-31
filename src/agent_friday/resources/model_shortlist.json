@@ -32,6 +32,29 @@
         }
       },
       "server_binary": {"windows": "llama-server.exe", "linux": "llama-server", "darwin": "llama-server"}
+    },
+    "llama.cpp-flint": {
+      "label": "llama.cpp b11803 (Flint's runtime)",
+      "repo": "ggml-org/llama.cpp",
+      "releases_api": "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
+      "release_by_tag_api": "https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}",
+      "pinned_tag": "b11803",
+      "pinned_note": "The first official llama.cpp release with Flint (ggml-org/llama.cpp#30928, merge a37cc461, and the chat template's hex escapes, #30929). Every asset is fetched only against the sha256 below, as the GitHub release publishes it; a build with no pin is refused, never fetched unpinned. CUDA 13.4 builds. Spec core_models_flint_laya_bonsai2 CT-E05, CT-E25.",
+      "minimum_build": 11803,
+      "known_bad_builds": {},
+      "pinned_sha256": {
+        "llama-b11803-bin-win-cuda-13.4-x64.zip": "04b36b76c3708a6ce6120a45011f880054a179b6d9906ad54b1a8eb79cbb3d8b",
+        "cudart-llama-bin-win-cuda-13.4-x64.zip": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668",
+        "llama-b11803-bin-win-cpu-x64.zip": "68a11f1f0ab78587bfc42071d2dbd4aa1b621357ddc375c1ee25a24e76d27954"
+      },
+      "assets": {
+        "windows": {
+          "cpu": "bin-win-cpu-x64.zip",
+          "cuda": "bin-win-cuda-13.4-x64.zip",
+          "cuda_runtime": "cudart-llama-bin-win-cuda-13.4-x64.zip"
+        }
+      },
+      "server_binary": {"windows": "llama-server.exe", "linux": "llama-server", "darwin": "llama-server"}
     }
   },
   "models": [
@@ -119,6 +142,43 @@
       "files": [
         {"file": "Ternary-Bonsai-8B-PQ2_0.gguf", "packing": "PQ2_0", "bytes": 2182184672, "sha256": "1376f942aa90e60f7b570c1d81b3916fea1315ff85aa1c4d19006af68fb4b922", "default": true},
         {"file": "Ternary-Bonsai-8B-Q2_0_g64.gguf", "packing": "Q2_0_g64", "bytes": 2310125920, "sha256": "e17b298d84ee78797916ae5c2ecc8211469cc65cccfe3080cd9a9bb503fbc55e", "runtime": "llama.cpp", "note": "loads on stock llama.cpp"}
+      ]
+    },
+    {
+      "id": "flint:40b",
+      "label": "Flint (Recursive)",
+      "publisher": "Recursive",
+      "roles": ["coder"],
+      "status": "experimental",
+      "status_note": "Friday's planned local coder (spec core_models_flint_laya_bonsai2). Experimental until a bench on Friday's own coding tasks shows it beats Bonsai 2 (CT-E19); never offered at first setup (D7: downloaded on first coding use).",
+      "seat_hold": "Flint gets its own code-session seat in a later release; until then it is installed but not used for anything",
+      "runtime": "llama.cpp-flint",
+      "repo": "unsloth/flint-GGUF",
+      "repo_url": "https://huggingface.co/unsloth/flint-GGUF",
+      "revision": "20468edfc38ab43d6914cc88b08cbecb05d0fc62",
+      "base_repo": "RecursiveSI/flint",
+      "base_repo_url": "https://huggingface.co/RecursiveSI/flint",
+      "licence": "Apache-2.0",
+      "licence_class": "permissive",
+      "telemetry": "none",
+      "telemetry_note": "The weights are data. Recursive's hosted API and its rec engine are never used (their terms allow training on inputs and usage metrics); CT-E14, CT-E15.",
+      "architecture": "flint",
+      "params_total_b": 39.8,
+      "params_active_b": 2.5,
+      "is_moe": true,
+      "context_training": 262144,
+      "kv_layout": {"full_attention_layers": 14, "kv_heads": 4, "head_dim": 128, "sliding_window_layers": 35, "sliding_window": 513, "note": "49 layers (2 dense + 47 MoE, 256 routed experts, 6 per token + 1 shared); only the 14 full-attention layers grow with context"},
+      "chat_template_sha256": "7940f4ffa3275c36caa4a582f845aaad79da11018b3961e8fbcad6ae29733466",
+      "chat_template_note": "sha256 of the UTF-8 chat template the Hub reports for this commit's GGUFs; the code-session seat (CT2) checks the file's template against it (CT-E21).",
+      "published_speed": {"source": "https://recursive.com/updates/introducing-recursive-flint", "note": "vendor figures are for 48 GB Apple Silicon and RTX Spark with Recursive's engine; none apply to this runtime"},
+      "serve": {"serve_num_ctx": 32768, "serve_args": ["-np", "1", "--n-cpu-moe", "20", "--load-mode", "none", "--cache-ram", "0", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0"]},
+      "serve_note": "Measured on an RTX 4070 12 GB with 32 GB RAM, the brain stood down: about 9.7 GB of VRAM, about 5.9 GB of host working set, available RAM >= 6.3 GB, ~54 tok/s. --load-mode none is also enforced at spawn by services/flint_seat.py: the default memory-mapped mode grew the seat to 11.3 GB of host memory.",
+      "files": [
+        {"file": "flint-UD-Q2_K_XL.gguf", "packing": "UD-Q2_K_XL", "bytes": 13562207680, "sha256": "7f43dd99e7d574c43c3f1b24e0e8269cf1ec92ba6c25f11b3ff126cde4c7a0cb", "default": true, "min_ram_mib": 32768, "note": "12 GB cards with 32 GB of memory: experts on the processor (CT-E07)"},
+        {"file": "flint-UD-IQ2_XXS.gguf", "packing": "UD-IQ2_XXS", "bytes": 11855541696, "sha256": "c1fa4a6d5ec67fbeff460c68829984e4aa3eea95dc9d2067691f19e5406deeee", "min_ram_mib": 32768, "note": "8 GB cards with 32 GB of memory; not offered until measured"},
+        {"file": "flint-UD-IQ3_XXS.gguf", "packing": "UD-IQ3_XXS", "bytes": 14535427520, "sha256": "7a0a095dde1d931063a5d571e19497d997edbc783eb1ed6b86529bfab9d94804", "min_ram_mib": 32768, "note": "16 GB cards"},
+        {"file": "flint-UD-Q3_K_XL.gguf", "packing": "UD-Q3_K_XL", "bytes": 18494977472, "sha256": "91b8d85ab6ff7fb095d9a972f9afa6f3fa2b9acb642867a079f3e013ea3c350c", "min_ram_mib": 32768, "note": "16-24 GB cards"},
+        {"file": "flint-UD-Q4_K_XL.gguf", "packing": "UD-Q4_K_XL", "bytes": 25054688704, "sha256": "63c2ecc461ca545134b670c660e76fa20f47240f8d39b6510bfd21c4dd6e072f", "min_ram_mib": 49152, "note": "24 GB cards and up"}
       ]
     }
   ]

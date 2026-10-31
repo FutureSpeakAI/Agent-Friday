@@ -69,7 +69,10 @@ def _svc(account_id: str):
     if not creds:
         raise NotPermitted("this account's credentials could not be read")
     from agent_friday.services.gmail_read import _service
-    return _service(creds)
+    from agent_friday.services import egress_record as _er
+    # Mailbox changes (labels, read/unread, archive, trash, label create and
+    # delete) in the egress ledger and on the privacy map; reads untouched.
+    return _er.recorded(_service(creds), "mail_changes", "gmail-mailbox", "gmail.googleapis.com")
 
 
 #: Gmail's batchModify takes at most this many message ids.

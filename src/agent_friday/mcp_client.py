@@ -54,6 +54,28 @@ _CREATE_FLAGS = 0
 if sys.platform == "win32":
     _CREATE_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+_REAL_POPEN = subprocess.Popen
+
+
+def _own_workdir(name: str):
+    """Where a stdio server runs when its config names no folder of its own: a folder
+    of its own OUTSIDE Friday's state folder (a relative '..\\..' from it must not reach
+    the vault), named from the server plus a hash so two names never share one.
+    Windows: %LOCALAPPDATA%\\AgentFriday\\mcp-work\\<name>-<hash>; elsewhere
+    ~/.cache/agent-friday/mcp-work/<name>-<hash>."""
+    import hashlib
+    from pathlib import Path
+    import agent_friday.core as core
+    raw = str(name or "")
+    safe = ("".join(ch for ch in raw if ch.isalnum() or ch in "-_") or "server")[:40]
+    tag = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:8]
+    home = Path(core.HOME)
+    base = (home / "AppData" / "Local" / "AgentFriday" / "mcp-work" if sys.platform == "win32"
+            else home / ".cache" / "agent-friday" / "mcp-work")
+    d = base / f"{safe}-{tag}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 # MCP protocol revision we advertise in `initialize`. Servers negotiate down if
 # they only speak an older revision; this is just our preferred version.
 _PROTOCOL_VERSION = "2024-11-05"
@@ -63,6 +85,20 @@ _HTTP_PROTOCOL_VERSION = "2025-06-18"
 
 _DEFAULT_START_TIMEOUT = 30.0   # seconds to wait for initialize + tools/list
 _DEFAULT_CALL_TIMEOUT = 120.0   # seconds to wait for a single tools/call reply
+
+#: A server's status while it waits for the owner to choose where Friday
+#: thinks (north-star A16a): configured, not started.
+WAITING_FOR_ROUTE = "waiting_for_route"
+
+
+def _route_held(what: str) -> str:
+    """The A16a refusal sentence while no route is chosen, else "". This
+    module must import without the app, so a missing cloud_intent holds nothing."""
+    try:
+        from agent_friday.services.cloud_intent import outbound_held
+    except Exception:
+        return ""
+    return outbound_held("connector", what)
 
 # `for raw in proc.stdout:`/`for raw in proc.stderr:` has no per-line size
 # cap -- a malicious or buggy MCP server that never emits a newline (or
@@ -158,6 +194,7 @@ class MCPServerProcess:
         cwd: str | None = None,
         log: Callable[[str], None] | None = None,
         trust_level: str = "sandboxed",
+        network: dict | None = None,
     ) -> None:
         self.name = name
         self.command = command
@@ -169,8 +206,13 @@ class MCPServerProcess:
         # does the same) -- a server config has to opt IN to "trusted" to
         # ever see Friday's own inherited secrets, not opt out of leaking them.
         self.trust_level = trust_level
+        # allow_hosts (enforced through Friday's proxy) and isolation
+        # ("appcontainer": no network, its own folder only), from mcp_servers.json.
+        self.network = dict(network or {})
+        self._proxy_token = None
 
         self.proc: subprocess.Popen | None = None
+        self._job = None                      # Windows job holding the server's tree
         self.tools: list[dict] = []           # raw MCP tool dicts (inputSchema form)
         self.status = "stopped"               # stopped|starting|ready|error|crashed
         self.error: str | None = None
@@ -225,20 +267,86 @@ class MCPServerProcess:
                       f"({e}) — reconnect this connector to re-enter it")
             raise
         full_env.update({k: str(v) for k, v in env.items()})
+        # Network through Friday's loopback proxy (services/egress_proxy): a server
+        # with allow_hosts reaches only those; one without is observed (every host
+        # recorded). Set after the server's own env, so it cannot point elsewhere.
+        # Not a boundary: a server that ignores proxy variables goes around it.
+        try:
+            from agent_friday.services import egress_proxy as _ep
+            if self._proxy_token:
+                _ep.close_session(self._proxy_token)
+            mode, hosts = _ep.mcp_policy(self.name, self.network)
+            sess = _ep.open_session("connector: %s" % self.name, mode=mode, allow_hosts=hosts)
+            self._proxy_token = sess["token"]
+            _ep.apply_env(full_env, sess["env"])
+        except Exception as e:
+            self._log(f"[mcp:{self.name}] could not route through Friday's proxy: {e}")
         cmd = [self._resolve_command(), *self.args]
+        # Its own working folder, never Friday's app folder (her code and an older
+        # release's key files) nor her state folder. A configured cwd is kept.
+        cwd = self.cwd or str(_own_workdir(self.name))
+        # Held from its first instruction (services/code_sandbox.contain_helper): on
+        # Windows it starts suspended, goes into its own job (memory ceiling,
+        # process cap, the whole tree ends with the job), then runs. If the job
+        # cannot be made the server does not run.
+        contained = sys.platform == "win32"
+        from agent_friday.services import code_sandbox as _sbx
+        # "isolation": "appcontainer" (the server's own config): Windows' fully
+        # isolated mode, no network at all and only its own folder. It runs in its
+        # own job already; if isolation cannot be set up, the server does not run.
+        if str(self.network.get("isolation") or "").lower() == "appcontainer":
+            from pathlib import Path
+            from agent_friday.services import appcontainer as _ac
+            own = _own_workdir(self.name)
+            if self.cwd and Path(self.cwd).resolve() != own.resolve():
+                # Only the folder Friday made for it is ever opened to it.
+                raise RuntimeError("an isolated server runs in its own folder only; "
+                                   "remove its 'cwd' to isolate it")
+            self.proc = _ac.start(cmd, cwd=str(own), env=full_env, write=[own],
+                                  profile=_ac.server_profile(self.name))
+            self._job = None
+            self._reader = threading.Thread(
+                target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True)
+            self._reader.start()
+            threading.Thread(target=self._drain_stderr, name=f"mcp-{self.name}-stderr",
+                             daemon=True).start()
+            return
         self.proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=full_env,
-            cwd=self.cwd or None,
+            cwd=cwd,
             text=True,
             encoding="utf-8",
             errors="replace",
             bufsize=1,                       # line-buffered
-            creationflags=_CREATE_FLAGS,
+            creationflags=_CREATE_FLAGS | (_sbx.CREATE_SUSPENDED if contained else 0),
+            start_new_session=not contained,  # POSIX: stop() ends the whole group
         )
+        self._job = None
+        if contained:
+            try:
+                if not isinstance(self.proc, _REAL_POPEN):
+                    raise RuntimeError("not a process this can hold")
+                self._job = _sbx.contain_helper(self.proc)
+            except Exception:
+                # Killed and its pipes closed: never left suspended or running unheld.
+                _p, self.proc = self.proc, None
+                for _act in (lambda: _p.kill(), lambda: _p.wait(5)):
+                    try:
+                        _act()
+                    except Exception:
+                        pass
+                for _s in (getattr(_p, "stdin", None), getattr(_p, "stdout", None),
+                           getattr(_p, "stderr", None)):
+                    try:
+                        if _s:
+                            _s.close()
+                    except Exception:
+                        pass
+                raise
         self._reader = threading.Thread(
             target=self._read_loop, name=f"mcp-{self.name}-reader", daemon=True
         )
@@ -308,6 +416,35 @@ class MCPServerProcess:
             pass
         finally:
             self.proc = None
+            # An isolated server (services/appcontainer) holds raw handles.
+            if not isinstance(proc, subprocess.Popen) and callable(getattr(proc, "close", None)):
+                try:
+                    proc.close()
+                except Exception:
+                    pass
+            # POSIX: the server runs in its own session; end the whole group so
+            # what it started does not outlive it.
+            if sys.platform != "win32" and getattr(proc, "pid", None):
+                try:
+                    import signal as _sig
+                    os.killpg(proc.pid, _sig.SIGKILL)
+                except Exception:
+                    pass
+            # Ends anything the server started that outlived it.
+            job, self._job = getattr(self, "_job", None), None
+            if job:
+                try:
+                    from agent_friday.services import code_sandbox as _sbx
+                    _sbx.release_helper(job)
+                except Exception:
+                    pass
+            tok, self._proxy_token = getattr(self, "_proxy_token", None), None
+            if tok:
+                try:
+                    from agent_friday.services import egress_proxy as _ep
+                    _ep.close_session(tok)
+                except Exception:
+                    pass
             if self.status == "ready":
                 self.status = "stopped"
             # Fail any in-flight requests.
@@ -428,6 +565,9 @@ class MCPServerProcess:
                             break
                     continue
                 line = raw.rstrip()
+                tok = self._proxy_token
+                if line and tok:
+                    line = line.replace(tok, "[proxy credential]")
                 if line:
                     self._stderr_tail.append(line)
         except Exception:
@@ -612,6 +752,36 @@ def iter_sse_data(fp, deadline: float, *, max_bytes: int = _MAX_HTTP_BODY_BYTES,
         yield "\n".join(buf)
 
 
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """A remote add-on server may redirect within its own host only. Following a redirect to
+    another host would carry the request (and its sign-in header) to a place the owner never
+    allowed (governance/mcp_hosts)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from agent_friday.governance import mcp_hosts
+        same_scheme = newurl.split(":", 1)[0].lower() == req.full_url.split(":", 1)[0].lower()
+        if not same_scheme or mcp_hosts.host_key(newurl) != mcp_hosts.host_key(req.full_url):
+            raise RuntimeError(
+                "the server redirected to %s, a different host; Friday did not follow it"
+                % (mcp_hosts.display(mcp_hosts.host_key(newurl)) or "another address"))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(req, timeout: float):
+    """Every request to a remote add-on server goes through here: same-host redirects only."""
+    return urllib.request.build_opener(_SameHostRedirect()).open(req, timeout=timeout)
+
+
+def _host_refusal(url: str) -> str:
+    """"" when the owner allowed this server's host, else the reason (governance/mcp_hosts).
+    A list that cannot be checked refuses."""
+    try:
+        from agent_friday.governance import mcp_hosts
+        return mcp_hosts.check(url)
+    except Exception as e:  # noqa: BLE001
+        return "the add-on server host list could not be checked (%s)" % type(e).__name__
+
+
 class MCPServerHTTP:
     """One remote MCP server reached over the Streamable HTTP transport.
 
@@ -647,6 +817,35 @@ class MCPServerHTTP:
         self._id = 0
         self._id_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
+        self.ask_again = False      # a restart from Settings asks again after a declined card
+        self.approval_id: str | None = None
+
+    def _not_allowed(self) -> str:
+        """"" when this server's host is on the owner's list; otherwise park the server in
+        "needs_approval", raise (or point at) the card, and return the reason."""
+        why = _host_refusal(self.url)
+        if not why:
+            return ""
+        state = "none"
+        try:
+            from agent_friday.services import mcp_host_cards
+            card = mcp_host_cards.ask(self.url, self.name, again=self.ask_again)
+            state, self.approval_id = card.get("state", "none"), card.get("approval_id") or None
+        except Exception as e:  # noqa: BLE001
+            self._log(f"[mcp:{self.name}] host card not raised: {type(e).__name__}")
+        self.ask_again = False
+        if state == "pending":
+            tail = "; approve the card to connect it"
+        elif state == "declined":
+            tail = "; you declined it. Restart the server in Settings to be asked again"
+        elif state == "blocked":
+            tail = "; the card was stopped by Friday's safety rules"
+        else:
+            tail = ""
+        self.status = "needs_approval"
+        self.error = f"not connected: {why}{tail}"
+        self._log(f"[mcp:{self.name}] not connected: host not allowed")
+        return why
 
     # ── auth plumbing ────────────────────────────────────────────────────────
 
@@ -662,6 +861,9 @@ class MCPServerHTTP:
     def begin_auth(self, *, open_browser: bool = True,
                    on_complete: Callable[[str, bool], None] | None = None) -> dict:
         """Kick off the OAuth 2.1 browser flow for this server."""
+        why = self._not_allowed()
+        if why:
+            return {"ok": False, "error": self.error or why}
         from agent_friday import mcp_oauth
         return mcp_oauth.begin_authorization(
             self.name, self.url,
@@ -681,6 +883,11 @@ class MCPServerHTTP:
         """POST one JSON-RPC message. Returns the matching response dict, or
         None for accepted notifications. Raises _AuthRequired / _SessionExpired
         for the two recoverable HTTP conditions."""
+        why = _host_refusal(self.url)
+        if why:                                    # checked at every request, not only at start,
+            self.status = "needs_approval"         # and before a sign-in token is fetched
+            self.error = f"not connected: {why}"
+            raise RuntimeError(f"not sent to {self.name}: {why}")
         body = json.dumps(payload, default=str).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -700,7 +907,7 @@ class MCPServerHTTP:
                                      method="POST")
         deadline = time.time() + timeout           # the whole reply, not one socket operation
         try:
-            resp = urllib.request.urlopen(req, timeout=timeout)
+            resp = _open(req, timeout)
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 self.auth_challenge = e.headers.get("WWW-Authenticate")
@@ -814,6 +1021,8 @@ class MCPServerHTTP:
         with self._lifecycle_lock:
             if self.status == "ready":
                 return True
+            if self._not_allowed():
+                return False
             self.status = "starting"
             self.error = None
             try:
@@ -839,12 +1048,12 @@ class MCPServerHTTP:
     def stop(self) -> None:
         """Best-effort session teardown (servers MAY support DELETE)."""
         sid = self.session_id
-        if sid:
+        if sid and not _host_refusal(self.url):
             try:
                 req = urllib.request.Request(
                     self.url, method="DELETE",
                     headers={"Mcp-Session-Id": sid, **self.headers})
-                urllib.request.urlopen(req, timeout=5).close()
+                _open(req, 5).close()
             except Exception:
                 pass
         self.session_id = None
@@ -912,6 +1121,32 @@ class MCPServerHTTP:
         }
 
 
+import re as _re
+
+#: Argument names whose values are credentials, whatever their format.
+_SECRET_KEY = _re.compile(r"(pass(word|wd|phrase)?|secret|token|api[_-]?key|apikey|auth|authorization|"
+                          r"credential|private[_-]?key|cookie|session|bearer)", _re.I)
+_URL_USERINFO = _re.compile(r"(?<=://)[^/@\s:]+:[^/@\s]+@")
+
+
+def _scrubbed_for_keeping(obj):
+    """What a tool call sent, safe to keep with its receipt (A20 keeps the
+    content): values under credential-like names withheld, user:password@ in
+    addresses withheld, then vendor-format keys withheld by the shared filter."""
+    def walk(v, key=""):
+        if key and _SECRET_KEY.search(str(key)):
+            return "[withheld: credential]"
+        if isinstance(v, dict):
+            return {k: walk(x, k) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [walk(x) for x in v]
+        if isinstance(v, str):
+            return _URL_USERINFO.sub("[withheld]@", v)
+        return v
+    from agent_friday.services.credential_paths import redact_secrets
+    return redact_secrets(json.dumps(walk(obj), default=str))
+
+
 class MCPManager:
     """Owns the set of configured MCP servers and routes calls to them."""
 
@@ -952,6 +1187,7 @@ class MCPManager:
                         cwd=spec.get("cwd"),
                         log=self._log,
                         trust_level=_extsec.get_trust_level(spec),
+                        network={k: spec[k] for k in ("allow_hosts", "isolation") if k in spec},
                     )
                 if spec.get("enabled") is False:
                     # Keep a stopped placeholder so status() still lists it.
@@ -960,7 +1196,17 @@ class MCPManager:
 
     def start_all(self, on_ready: Callable[[str, list[dict]], None] | None = None) -> None:
         """Start every enabled server in its own thread. on_ready(name, tools)
-        fires per-server as each handshake completes. Returns immediately."""
+        fires per-server as each handshake completes. Returns immediately.
+
+        North-star A16a: before the owner chooses where Friday thinks, no
+        add-on connector starts (a stdio server may download or reach the
+        internet; an HTTP one is remote). Each waits as "waiting_for_route"
+        and starts once a route is chosen (agent._mcp_resume_after_route_pick)."""
+        if _route_held("start"):
+            for name, sp in list(self.servers.items()):
+                if sp.status != "disabled":
+                    sp.status = WAITING_FOR_ROUTE
+            return
         for name, sp in list(self.servers.items()):
             if sp.status == "disabled":
                 continue
@@ -975,13 +1221,18 @@ class MCPManager:
         sp = self.servers.get(name)
         if sp is None:
             return
+        if _route_held("start " + name):
+            sp.status = WAITING_FOR_ROUTE
+            return
         if sp.start() and on_ready:
             try:
                 on_ready(name, sp.tools)
             except Exception as e:  # noqa: BLE001
                 self._log(f"[mcp:{name}] on_ready callback failed: {e}")
 
-    def restart(self, name: str, on_ready=None) -> bool:
+    def restart(self, name: str, on_ready=None, *, ask_again: bool = False) -> bool:
+        """Stop and start one server. ``ask_again`` (only the owner's press on screen, from the
+        restart route) raises a fresh host card after a declined one."""
         sp = self.servers.get(name)
         if sp is None:
             return False
@@ -992,7 +1243,11 @@ class MCPManager:
             # reaches for after seeing a blocked connector's status actually
             # started it for real.
             return False
+        if _route_held("restart " + name):
+            return False
         sp.stop()
+        if isinstance(sp, MCPServerHTTP):
+            sp.ask_again = bool(ask_again)
         ok = sp.start()
         if ok and on_ready:
             try:
@@ -1014,6 +1269,9 @@ class MCPManager:
                                           "it does not use OAuth"}
         if sp.status == "disabled":
             return {"ok": False, "error": f"server '{name}' is disabled"}
+        _held = _route_held("authorize " + name)
+        if _held:
+            return {"ok": False, "error": _held, "route_not_chosen": True}
 
         def _done(server_name: str, success: bool) -> None:
             if not success:
@@ -1044,7 +1302,35 @@ class MCPManager:
             return f"[mcp error] no such server: {server}"
         if sp.status == "disabled":
             return f"[mcp error] server '{server}' is disabled"
-        return sp.call_tool(tool, arguments, timeout=timeout)
+        _held = _route_held(f"call {server}.{tool}")
+        if _held:
+            return f"[NOT RUN] {_held}"
+        out = sp.call_tool(tool, arguments, timeout=timeout)
+        # §26.7: every call to a tool server is in the egress ledger and on the
+        # privacy map, whichever path made it: where it went, and the
+        # arguments that left (fingerprinted; kept encrypted by default, A20).
+        try:
+            from urllib.parse import urlparse
+            from agent_friday.services import egress_gate as _eg
+            url = getattr(sp, "url", None)
+            dest = (urlparse(str(url)).hostname or str(url)) if url else f"a program on this PC ({server})"
+            # "unavailable" never reached the server; an error after the call
+            # went out (a timeout, a server error) may have been acted on.
+            if isinstance(out, str) and out.startswith("[mcp") and "unavailable" in out[:80]:
+                result = "failed"
+            elif isinstance(out, str) and out.startswith("[mcp"):
+                result = "sent_unconfirmed"
+            else:
+                result = "sent"
+            try:
+                kept = _scrubbed_for_keeping({"tool": tool, "arguments": arguments})
+            except Exception:
+                kept = {"tool": tool, "arguments": "(not kept: could not be checked for secrets)"}
+            _eg.record_service_send("mcp", f"mcp:{server}"[:80], destination=dest, content=kept,
+                                    result=result, part=f"tool {tool}"[:60])
+        except Exception:
+            pass
+        return out
 
     def all_tools(self) -> list[tuple[str, dict]]:
         out: list[tuple[str, dict]] = []

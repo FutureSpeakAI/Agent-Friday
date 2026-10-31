@@ -1251,7 +1251,7 @@ _COMPACT_PARAMETER_DESCRIPTIONS = {
                       "category": None,
                       "key": "lane, unread, q, folder, category, sort, status, kind, project."},
     "organize_media": {"action": None, "cards": None, "value": None, "replaces": None, "why": None, "selection": None},
-    "task_control": {"target": "Workflow, task id or name words; empty: the one on screen.", "message": "For steer: what to tell it."},
+    "task_control": {"target": "Workflow, task id or name words; empty: what is on screen.", "message": "For steer: the words."},
     # The same date words media_show's `when` shows.
     "media_cards": {"when": None},
 }
@@ -1930,7 +1930,10 @@ def _tool_search_past_conversations(inp, session=None):
     if not query:
         return "search_past_conversations needs something to look for."
     from agent_friday.services import conversation_recall as _rc
-    hits = _rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12)
+    # Near-duplicates collapse to the turn Gemini already heard, if any, so the
+    # dedupe never swaps a direct turn for a card-only twin (recall_dedupe).
+    hits = _rc.search(query, since=inp.get("since"), until=inp.get("until"), limit=12,
+                      provider=_rc.prov.GEMINI)
     direct, rest = _rc.split_by_provenance(hits)
     parts = []
     handed = list(direct[:6])         # what a model reads: Gemini directly, the local model for the rest
@@ -2798,6 +2801,15 @@ def validate_gemini_key(key, timeout=5.0, force=False):
     key = (key or "").strip()
     if not key:
         return False, "no key"
+    # North-star A16a: before a route is picked nothing goes to the cloud, a
+    # key check included. Not a verdict on the key (ok=True, like offline).
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return True, ("not checked yet: nothing goes to the cloud until you "
+                          "choose where Friday thinks (Settings > Models)")
+    except Exception:
+        pass
     if os.environ.get("FRIDAY_TESTING"):
         return True, "testing mode — not validated"
     cache_id = _hmac.new(_KEY_CHECK_SALT, key.encode(),
@@ -3347,12 +3359,16 @@ def _persist_owned_voice_turn(user_text, agent_text, _conv, _cid, provider, sett
             _lib_cite.remember_library_reply(agent_text)
         except Exception:
             pass
-    if not _unsaved and user_text:
+    if not off_record and user_text:
         # Use the same reversible, session-level adaptation as typed turns.
         # Lasting traits still require the existing owner/acceptance path.
+        # Off the record nothing is learned, whether or not the transcript is
+        # kept (NS-15.8-2): gated on the setting itself, not on storage, and
+        # the turn's snapshot is passed so user_model does not re-read it.
         try:
             from agent_friday.services.user_model import observe_message
-            observe_message(user_text, role="user", workspace="voice")
+            observe_message(user_text, role="user", workspace="voice",
+                            off_record=off_record)
         except Exception:
             pass
     if not off_record:
