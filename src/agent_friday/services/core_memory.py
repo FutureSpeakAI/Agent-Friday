@@ -219,7 +219,12 @@ def render_prompt(gate=None) -> str:
             except Exception:
                 body = ""                       # fail closed
             if not body:
-                body = "(withheld from this model: it stays on this PC)"
+                # Not permitted here (NS-3.4-1): say that, never the content.
+                try:
+                    from agent_friday.services.knowledge_kinds import withheld_note
+                    body = withheld_note("it stays on this PC")
+                except Exception:
+                    body = "(withheld from this model: it stays on this PC)"
         parts.append(f"{TITLES[t].upper()} [{pct}% — {u:,}/{cap:,} chars]\n" + body)
     if not parts:
         return ""

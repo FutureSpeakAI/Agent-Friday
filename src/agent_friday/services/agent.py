@@ -1161,7 +1161,8 @@ def _tool_search_web(inp):
                 + _ws.status_note(out))
     header = (f"Search results for '{q}' (backend: {out.get('backend')}, "
               f"{len(results)} results). URLs below are real and fetchable — "
-              f"pass one verbatim to browse_web:")
+              f"pass one verbatim to browse_web. Snippets are UNVERIFIABLE "
+              f"(what the pages say; not checked):")
     # Each row is its OWN paragraph (a blank line between rows), and that exact
     # rendered paragraph is registered as published text: the egress gate's
     # span pass splits a replayed result on blank lines and lets a paragraph
@@ -1246,10 +1247,20 @@ def _tool_browse_web(inp):
         return f"Browse error ({url}): {rec.get('error')}"
 
     text = _wf.load_extraction(rec['id']) or ''
+    try:
+        # A page line shaped like one of Friday's kind labels ("KNOWN (...)")
+        # is the page's text, not a label: prefix it so it cannot pass for one.
+        from agent_friday.services.knowledge_kinds import neutralise_labels as _nl
+        text = _nl(text)
+    except Exception:
+        pass
     _log_context("browse_web", {"url": url, "chars": len(text),
                                 "cached": rec.get('from_cache')})
     _note_web_read([rec.get('final_url') or url])
     header = f"[{rec.get('final_url') or url}]"
+    # A web page is UNVERIFIABLE (services/knowledge_kinds, NS-3.4-1): Friday
+    # read it and cannot check it. The first line stays the address.
+    header += "\n[UNVERIFIABLE: a web page; read, cannot be checked]"
     if rec.get('redirect_chain'):
         header += f"\n[followed {len(rec['redirect_chain'])} redirect(s), each safety-checked]"
     tail = (f"\n...[truncated — {rec.get('chars')} chars extracted]"

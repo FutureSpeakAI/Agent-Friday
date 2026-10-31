@@ -56,7 +56,8 @@ still carried a line about Dana. This module registers those stores:
                          them; the one-time move of those facts onto the card
                          runs before the card is purged, so it cannot bring a
                          line back.
-``dreams``               the nightly dreaming log (dreams.db and dreams/<day>.md):
+``dreams``               the nightly dreaming log (dreams.db, dreams/<day>.md and
+                         the <day>.json sidecar with its source message ids):
                          consolidated facts and topics naming them leave each
                          day; the day's summary line is written again.
 ``action_receipts``      nothing is removed: listed as retained.
