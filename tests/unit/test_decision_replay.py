@@ -157,6 +157,10 @@ def test_gold_needs_an_allowed_source_a_reference_and_a_real_label(dr, monkeypat
     assert dr._gold() == {("r1", "triage.mail"): "career"}
 
 
+#: Where an owner's correction becomes gold (decision_replay.gold_for_text).
+OWNER_GOLD_PATHS = {"routes/messages.py"}
+
+
 def test_no_head_and_not_laya_ever_writes_gold():
     # Gold is written only through record_gold, and only by owner and answer-key
     # paths. No head, no Laya module and nothing else here writes it today.
@@ -166,6 +170,8 @@ def test_no_head_and_not_laya_ever_writes_gold():
             continue
         text = f.read_text(encoding="utf-8", errors="replace")
         assert "record_gold" not in text and "outcomes.jsonl" not in text, f
+        if "gold_for_text" in text:      # the owner's own correction paths, and only those
+            assert f.relative_to(root).as_posix() in OWNER_GOLD_PATHS, f
     services = root / "services"
     for f in [services / "laya.py", services / "decision_heads.py"] + sorted(services.glob("*_heads.py")):
         assert "decision_replay" not in f.read_text(encoding="utf-8"), f.name
