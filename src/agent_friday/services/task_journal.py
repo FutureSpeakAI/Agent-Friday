@@ -305,6 +305,17 @@ def append(task_id: str, kind: str, **fields) -> Optional[int]:
             for k, v in fields.items():
                 if v is not None:
                     ev[k] = v
+            if "correlation_id" not in ev:
+                # The request that wrote this event (a start, a steer, a stop): its
+                # id joins the event to that request's log lines, egress rows and
+                # decision receipts (NS-26.17-2). Work on a task's own thread has none.
+                try:
+                    from agent_friday.services import correlation as _corr
+                    _cid = _corr.current()
+                    if _cid:
+                        ev["correlation_id"] = _cid
+                except Exception:
+                    pass
             p = task_dir(task_id) / "journal.jsonl"
             p.parent.mkdir(parents=True, exist_ok=True)
             _append_line(p, _encode_line(ev))
@@ -687,6 +698,11 @@ def reconcile_on_boot(now: Optional[float] = None) -> Dict[str, Any]:
             interrupted.append(st)
     except Exception as e:
         _log.error("task journal reconciliation failed: %s", e)
+    try:  # the crash-free session rate (services/session_log, NS-33.6-1)
+        from agent_friday.services import session_log
+        session_log.note_start(previous.get("kind"), now=now)
+    except Exception:
+        pass
     return {"interrupted": interrupted, "restored": restored, "previous_exit": previous}
 
 
@@ -1062,7 +1078,10 @@ def digest(task_id: str, n: int = 20, include_reasoning: bool = False) -> Option
         "checkpoints": [{"seq": c.get("seq"), "ts": c.get("ts"), "iteration": c.get("iteration"),
                          "summary": c.get("summary")} for c in checkpoints],
         "halts": [{"seq": h.get("seq"), "cause": h.get("cause"), "detail": h.get("detail"),
-                   "resume_hint": h.get("resume_hint")} for h in halts],
+                   "resume_hint": h.get("resume_hint"),
+                   # a stopped run: what it had already done (services/cancel_effects)
+                   **({"effects": h["effects"]} if isinstance(h.get("effects"), dict) else {})}
+                  for h in halts],
         "journal_last_seq": (events[-1]["seq"] if events else 0),
         "unrecorded": bool(st.get("unrecorded")),
     }
@@ -1078,6 +1097,8 @@ def digest(task_id: str, n: int = 20, include_reasoning: bool = False) -> Option
 _SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reason", "chosen",
                   "alternatives", "prompt", "result", "message", "description", "name",
                   "detail", "last_checkpoint", "now",
+                  # a stopped run's effects (services/cancel_effects): file paths
+                  "files_written",
                   # task rows served by /api/tasks and /api/tasks/<id> (these
                   # are on the observer allowlist, so they must be sealed)
                   "log", "label", "output", "error",

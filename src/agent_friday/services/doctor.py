@@ -752,6 +752,15 @@ def _stores() -> dict:
         return {"error": "unavailable:" + type(e).__name__}
 
 
+def _reliability() -> dict:
+    """Connector change success and crash-free runs (services/reliability_metrics)."""
+    try:
+        from agent_friday.services import reliability_metrics
+        return reliability_metrics.for_report(reliability_metrics.metrics())
+    except Exception as e:  # noqa: BLE001
+        return {"state": "unknown", "why": type(e).__name__}
+
+
 # ── the report ──────────────────────────────────────────────────────────────
 
 def build() -> dict:
@@ -763,13 +772,14 @@ def build() -> dict:
         "report_version": REPORT_VERSION,
         "id": "doctor-%s-%s" % (stamp, hashlib.sha256(os.urandom(8)).hexdigest()[:6]),
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "content": "none: versions, checks, error signatures, drift, performance and the store inventory only",
+        "content": "none: versions, checks, error signatures, drift, performance, reliability counts and the store inventory only",
         "sharing": "by hand only; Friday never sends this file anywhere",
         "versions": _versions(),
         "checks": [_check(cid, dom, fn) for cid, dom, fn in CHECKS],
         "errors": _errors(),
         "drift": _drift(),
         "performance": _performance(),
+        "reliability": _reliability(),
     }
     report["summary"] = {s: sum(1 for c in report["checks"] if c["state"] == s)
                          for s in STATES if any(c["state"] == s for c in report["checks"])}
@@ -825,6 +835,13 @@ def render_text(report: dict) -> str:
         lines += [""] + store_inventory.render_text(inv)
     elif isinstance(inv, dict) and inv.get("error"):
         lines += ["", "Stores: %s" % inv["error"]]
+    rel = report.get("reliability")
+    if isinstance(rel, dict) and (rel.get("connectors") or rel.get("sessions")):
+        try:
+            from agent_friday.services import reliability_metrics
+            lines += [""] + reliability_metrics.render_lines(rel)
+        except Exception:
+            pass
     return "\n".join(lines) + "\n"
 
 

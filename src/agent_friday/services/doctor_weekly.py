@@ -268,6 +268,9 @@ def _render(rep: dict, partly_off_record: bool) -> str:
     r.pop("stores", None)
     r.pop("known_issues", None)
     r.pop("safety_metrics", None)
+    # Reliability counts stay on the Doctor page and in a report the owner
+    # saves by hand; the weekly mail carries what it always has.
+    r.pop("reliability", None)
     r["content"] = "none: versions, checks, error signatures, drift and performance only"
     if partly_off_record:
         r["errors"] = {}

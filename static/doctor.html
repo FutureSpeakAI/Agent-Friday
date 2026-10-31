@@ -44,6 +44,11 @@
   <p>Read live. <strong>Off</strong> means a setting, a choice of yours or this PC keeps something off: nothing is wrong. <strong>Needs attention</strong> means something is wrong, with what to do.</p>
   <div id="caps" role="status">Checking...</div>
 </section>
+<section id="reliability" aria-labelledby="rel-h">
+  <h2 id="rel-h">How reliably Friday's changes land</h2>
+  <p>Measured on this PC from Friday's own receipts, over the last 30 days. Nothing here is sent anywhere. The bar for changes at a supported service is 99 out of 100; a change the service itself could not take, or one that needs you, is counted apart.</p>
+  <div id="rel" role="status">Measuring...</div>
+</section>
 <section id="restore" aria-labelledby="restore-h" hidden>
   <h2 id="restore-h">After a restore</h2>
   <p id="restore-why" role="status"></p>
@@ -273,6 +278,35 @@
         box.appendChild(ul);
       });
     });
+  }
+  const REL_WORDS = { ok: 'Meets the bar', attention: 'Below the bar', not_enough: 'Not enough changes yet to say',
+                      measured: 'Measured', unknown: 'Cannot be measured' };
+  function reliability() {
+    api('/api/doctor/reliability').then(({ ok, d }) => {
+      const box = $('rel'); box.textContent = '';
+      if (!ok) { box.textContent = 'Could not be read: ' + (d.error || 'unknown'); return; }
+      const c = d.connectors || {}, s = d.sessions || {};
+      const p1 = document.createElement('p');
+      p1.textContent = c.state === 'unknown' ? 'Changes at services: ' + (c.why || 'cannot be measured') :
+        'Changes at services: ' + c.succeeded + ' of ' + c.attempts + ' did what they said' +
+        (c.rate_pct != null ? ' (' + c.rate_pct + '%)' : '') + '. ' + (REL_WORDS[c.state] || c.state) + '.';
+      box.appendChild(p1);
+      const ul = document.createElement('ul');
+      (c.connectors || []).forEach(r => {
+        const li = document.createElement('li');
+        li.textContent = r.label + ': ' + r.succeeded + ' of ' + r.attempts + ' ok' +
+          (r.never_reported ? ', ' + r.never_reported + ' never reported back' : '') +
+          (r.provider_unavailable ? ', ' + r.provider_unavailable + ' the service could not take' : '') +
+          (r.needs_owner ? ', ' + r.needs_owner + ' need you' : '') + ' — ' + (REL_WORDS[r.state] || r.state);
+        ul.appendChild(li);
+      });
+      if (ul.childNodes.length) box.appendChild(ul);
+      const p2 = document.createElement('p');
+      p2.textContent = s.state === 'unknown' ? 'Runs: ' + (s.why || 'cannot be measured') :
+        s.state === 'not_enough' ? 'Runs: not enough finished runs yet to say (' + (s.ended || 0) + ' so far).' :
+        'Runs: ' + (s.ended - s.crashed) + ' of ' + s.ended + ' ended because you closed or restarted Friday (' + s.rate_pct + '% crash-free).';
+      box.appendChild(p2);
+    }).catch(() => { $('rel').textContent = 'Could not be read.'; });
   }
   function row(c) {
     const tr = document.createElement('tr');
@@ -582,7 +616,7 @@
     .then(({ ok, d }) => { text($('auth-note'), ok ? 'Restored. Give back the permissions you want, one by one.' + (d.note ? ' ' + d.note : '') : (d.error || 'Not done.')); authState(); }));
   authState();
   weekly();
-  caps();
+  caps(); reliability();
   schedState();
   restoreState();
   $('safe-on').addEventListener('click', () => setNext(true));

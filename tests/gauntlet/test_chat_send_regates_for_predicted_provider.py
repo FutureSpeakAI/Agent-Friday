@@ -47,9 +47,7 @@ def client(app):
 def _patch_common(monkeypatch, *, predicted_provider):
     captured = {"providers_seen": []}
 
-    def _fake_build_context_prompt(message, workspace, workspace_context,
-                                    vision_description, *, provider,
-                                    vault_control=None, vault_fallback=None):
+    def _fake_build_context_prompt(message, workspace='', *args, provider='cloud', **kw):
         captured["providers_seen"].append(provider)
         return f"PROMPT-FOR-{provider}", []
 

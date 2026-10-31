@@ -1968,7 +1968,8 @@ def _front_page_schema(categories, want_day_ctx=False, has_prev=False):
 
 
 def _extract_json_block(text):
-    """Pull the first JSON object out of an LLM reply (tolerates code fences)."""
+    """Pull the JSON object out of an LLM reply (tolerates code fences, prose
+    and spilled thinking; services/reply_json)."""
     if not text:
         return None
     s = text.strip()
@@ -1979,13 +1980,8 @@ def _extract_json_block(text):
         return json.loads(s)
     except Exception:
         pass
-    m = re.search(r"\{.*\}", s, re.S)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            return None
-    return None
+    from agent_friday.services.reply_json import last_object
+    return last_object(s)
 
 
 # The deterministic lead note used when the editor does not answer. A module

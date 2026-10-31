@@ -20390,15 +20390,24 @@ function ClawsRepinPanel(){
     if(!window.confirm(("Re-confirm " + fridayName() + "'s rules on this PC?\n\nDo this only if you moved " + FRIDAY_BRAND.name + "'s data to this PC or Windows account, or updated " + FRIDAY_BRAND.name + ". ")+
       "It accepts the current rules text under this PC's signing key, and outward actions stop being held for this reason."))return;
     setBusy(true);setMsg('');
-    apiFetch('/api/governance/claws/repin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})})
-      .then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{if(ok){setSt(d);setMsg('Re-confirmed. The rules are pinned to this PC again.');}else setMsg(d&&(d.message||d.error)||'Not re-confirmed.');})
+    apiFetch('/api/governance/claws/repin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true,text_sha256:st&&st.text_sha256})})
+      .then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{if(ok){setSt(d);setMsg('Re-confirmed. The rules are pinned to this PC again.');}else{if(d&&d.state)setSt(d);setMsg(d&&(d.message||d.error)||'Not re-confirmed.');}})
       .catch(()=>setMsg('Could not reach the server.')).finally(()=>setBusy(false));
   };
   const muted={fontSize:11,color:'rgba(255,255,255,0.45)',lineHeight:1.6};
   if(!st)return <div style={muted}>Reading the rules status…</div>;
   const colour=st.state==='intact'?'#00ff80':st.state==='not_pinned'?'#00d4ff':'#f59e0b';
+  // What changed since the owner last confirmed the rules, shown before she re-confirms.
+  const ch=st.changes;
+  const line=(sign,text,c,k)=><div key={k} style={{fontFamily:'JetBrains Mono',fontSize:11,color:c,whiteSpace:'pre-wrap',lineHeight:1.5}}>{sign+' '+text}</div>;
   return <div data-testid="claws-repin">
     <div style={{fontSize:12,color:colour,marginBottom:6,lineHeight:1.6}}>{st.summary||st.state}</div>
+    {ch&&<div data-testid="claws-changes" style={{margin:'6px 0 10px',padding:8,border:'1px solid rgba(255,255,255,0.12)',borderRadius:6}}>
+      <div style={{fontSize:11,color:'#cfefff',marginBottom:6,lineHeight:1.6}}>{ch.words||''}</div>
+      {(ch.lines||[]).map((x,i)=>x.op==='-'?line('−',x.text,'#f59e0b','l'+i):line('+',x.text,'#00ff80','l'+i))}
+      {ch.kind!=='text_changed'&&(ch.current||[]).map((t,i)=>line(' ',t,'rgba(255,255,255,0.75)','c'+i))}
+      {ch.truncated&&<div style={{fontSize:11,color:'#cfefff',marginTop:4}}>Only part of it is shown here.</div>}
+    </div>}
     <div style={{...muted,fontFamily:'JetBrains Mono',marginBottom:10}}>Rules text SHA-256 {(st.text_sha256||'').slice(0,16)}…{st.pinned_at?' · pinned '+new Date(st.pinned_at*1000).toLocaleString():''}</div>
     <div style={{...muted,marginBottom:10}}>{fridayName()} signs her rules with a key kept in this PC’s Credential Manager. After moving her data to another PC or Windows account, or after an update that changed the rules, the signature no longer matches and every outward action waits. Reads keep working.</div>
     <button className="settings-btn" style={{fontSize:12}} disabled={busy||st.state!=='mismatch'} onClick={repin}>{busy?'Re-confirming…':('Re-confirm ' + fridayName() + '’s rules on this PC')}</button>
