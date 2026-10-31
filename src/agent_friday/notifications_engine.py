@@ -136,11 +136,19 @@ def _save(items: List[Dict[str, Any]], ledger: Optional[Dict[str, Any]] = None) 
         keep = sorted(ledger.items(), key=lambda kv: str((kv[1] or {}).get("at") or ""))
         ledger = dict(keep[-_LEDGER_MAX:])
     items = [_disk_view(n) if isinstance(n, dict) else n for n in items]
+    # Written beside and swapped in: a write that fails (a full disk, services/disk_guard) leaves
+    # the cards already saved as they were instead of an empty file.
+    tmp = NOTIF_FILE.with_name(NOTIF_FILE.name + ".tmp")
     try:
-        NOTIF_FILE.write_text(json.dumps({"items": items, "dismissed_jobs": ledger}, indent=2),
-                              encoding="utf-8")
+        tmp.write_text(json.dumps({"items": items, "dismissed_jobs": ledger}, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, NOTIF_FILE)
     except Exception as e:
         print(f"[notifications_engine] save failed: {e}")
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
 
 
 # ── Dismissal, keyed to the job ──────────────────────────────────────────────
@@ -324,6 +332,15 @@ def push(
                     continue
                 if approval:
                     return n                     # the same approval, already waiting
+                if safety and not off:
+                    try:                         # a safety repeat reaches the owner again: recorded first
+                        from agent_friday.services import events as _ev
+                        _ev.record_critical("notification.safety_repeat", source="notifications_engine",
+                                            payload={"kind": kind, "source": source, "priority": priority,
+                                                     "count": int(n.get("count") or 1) + 1},
+                                            related_ids={"notification": n.get("id"), "job": job})
+                    except Exception:
+                        pass
                 if safety and n.get("held"):
                     n["held"] = False            # a safety-critical repeat is never held
                 before = _rank_of(n)
@@ -410,6 +427,23 @@ def push(
             entry["read"] = True              # an FYI never bumps the badge
         if off:
             entry["off_record"] = True
+        elif approval or safety or t == _pol.NEEDS_YOU:
+            # NS-31.6-1 / 31.7-1: a critical event is recorded, in the one envelope, before the
+            # owner is told. Ids and kinds only: the words stay in the card. If the record cannot
+            # be written the owner is still told (a safety notice must reach him); event_id stays
+            # None and the failure is logged.
+            try:
+                from agent_friday.services import events as _ev
+                rec = _ev.record_critical(
+                    "notification." + ("approval" if approval else "safety" if safety else "needs_you"),
+                    source="notifications_engine",
+                    payload={"kind": kind, "source": source, "priority": priority, "tier": t,
+                             "place": place, "emitter": entry["emitter"], "safety_critical": safety},
+                    related_ids={"notification": entry["id"], "job": job,
+                                 "approval": (meta or {}).get("approval_id")})
+                entry["event_id"] = rec.id if rec else None
+            except Exception:
+                entry["event_id"] = None
         items.append(entry)
         _save(items, ledger)
         _notice_line(em, kind, place, not entry["held"] and (interrupt or t != _pol.NEEDS_YOU), safety)
@@ -644,6 +678,29 @@ def visible(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def groups(limit: int = 200) -> List[Dict[str, Any]]:
     """The tray's cards grouped by job, then kind, then source: needs-you
+    groups first, each with its cards. (See below.)"""
+    return _groups(limit)
+
+
+def _with_live_detail(n: Dict[str, Any]) -> Dict[str, Any]:
+    """A memory proposal's words, read from its waiting card for this answer only: the
+    stored notice carries none (owner ruling 5). A card no longer waiting shows none."""
+    meta = n.get("meta") or {}
+    aid = meta.get("approval_id") or n.get("approval_id")
+    if not aid:
+        return n
+    try:
+        from agent_friday.services import approvals as _ap
+        rec = _ap.get_approval(str(aid)) or {}
+    except Exception:  # noqa: BLE001
+        return n
+    if rec.get("status") != "pending":
+        return n
+    return dict(n, meta=dict(meta, detail=str(rec.get("action_description") or "")[:300]))
+
+
+def _groups(limit):
+    """The tray's cards grouped by job, then kind, then source: needs-you
     groups first, each with its cards. A memory-proposal group lists each
     proposal as its own item to keep or skip."""
     from agent_friday.services import notification_policy as _pol
@@ -664,6 +721,7 @@ def groups(limit: int = 200) -> List[Dict[str, Any]]:
             grp["tier"] = _pol.NEEDS_YOU
     for grp in out.values():
         if grp["memory"]:
+            grp["items"] = [_with_live_detail(n) for n in grp["items"]]
             k = len(grp["items"])
             grp["title"] = "%d memory proposal%s to keep or skip" % (k, "" if k == 1 else "s")
     return sorted(out.values(), key=lambda g: g["tier"] != _pol.NEEDS_YOU)

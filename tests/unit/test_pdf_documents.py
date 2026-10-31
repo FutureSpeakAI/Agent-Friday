@@ -33,6 +33,9 @@ FAKE_SSN_SPACED = FAKE_SSN.replace("-", " ")
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("FRIDAY_HOME", str(tmp_path / "home"))
+    # The test's PDFs live in pytest's temp folder: make it the folder file tools may use
+    # (services/path_policy confines them to the home folder by default).
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     monkeypatch.setattr(core, "CREATIONS_DIR", tmp_path / "creations")
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(approvals, "FRIDAY_DIR", tmp_path)

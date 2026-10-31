@@ -54,14 +54,31 @@ def _iter_messages():
             yield conv, cid, m
 
 
-def search(query: str, since=None, until=None, limit: int = 8, windows=None) -> list:
+def search(query: str, since=None, until=None, limit: int = 8, windows=None,
+           provider: str | None = None) -> list:
     """Matching turns, best first, from the full-text index
     (services/conversation_fts: keys withheld, off-record turns never there).
-    It replaced a linear substring scan over every transcript."""
+    It replaced a linear substring scan over every transcript.
+
+    Near-duplicate turns are collapsed to one per group, from a slightly
+    larger fetch, so repeats do not crowd out distinct matches (NS-14.6-2,
+    services/recall_dedupe): the newest, except that with `provider` (a cloud
+    caller about to `split_by_provenance`) a turn that provider already
+    received wins its group first. So a repeat that provider already saw is
+    shown directly and its unsent twin is dropped here, never formatted, sent
+    or counted on either side of the split."""
     if not _terms(query):
         return []
     from agent_friday.services import conversation_fts
-    return conversation_fts.search(query, since=since, until=until, limit=limit)
+    from agent_friday.services import recall_dedupe
+    limit = max(1, int(limit))
+    hits = conversation_fts.search(query, since=since, until=until,
+                                   limit=recall_dedupe.overfetch(limit))
+    prefer = None
+    if provider:
+        prefer = lambda h: provider in (h.get("sent_to") or [])   # noqa: E731
+    # Compares the index's snippets, not full messages (accepted: the exact-sequence rule keeps false merges rare).
+    return recall_dedupe.select(hits, limit, prefer=prefer, path="conversation_search")
 
 
 def split_by_provenance(hits: list, provider: str = prov.GEMINI):
@@ -71,21 +88,39 @@ def split_by_provenance(hits: list, provider: str = prov.GEMINI):
     return direct, rest
 
 
+def _speaker(h: dict) -> str:
+    if h.get("role") == "user":
+        return "the user"
+    # Another assistant's words brought in from an export are never labelled as Friday's.
+    return "that assistant" if str(h.get("via") or "").startswith("imported ") else "Friday"
+
+
 def format_hits(hits: list) -> str:
-    return "\n".join(f"- {h['date']} ({h['via']}, {'the user' if h['role'] == 'user' else 'Friday'}): "
-                     f"{h['text']}" for h in hits)
+    return "\n".join(f"- {h['date']} ({h['via']}, {_speaker(h)}): {h['text']}" for h in hits)
 
 
 def recent_voice_pin(max_sessions: int = 3, max_chars: int = 900, windows=None) -> str:
-    """What recent voice calls were about, from turns already spoken to Gemini."""
+    """What recent voice calls were about, from turns already spoken to Gemini.
+    A turn forget-person took out (conversation_fts.forgotten_ids) is left
+    out of the pin entirely: its text never reaches the call again."""
     if windows is None:
         windows = prov.gemini_windows()
-    sessions = {}
+    picked = []
     for conv, cid, m in _iter_messages():
         meta = m.get("meta") or {}
         if meta.get("via") != "voice" or prov.is_off_record(m):
             continue
         if prov.GEMINI not in prov.sent_to(m, windows):
+            continue
+        picked.append((conv, cid, m))
+    try:
+        from agent_friday.services import conversation_fts as _fts
+        gone = _fts.forgotten_ids([m.get("id") for _c, _i, m in picked if m.get("id")])
+    except Exception:
+        gone = set()                     # fail open, as the chat's replay does
+    sessions = {}
+    for conv, cid, m in picked:
+        if gone and str(m.get("id")) in gone:
             continue
         ts = float(m.get("ts") or 0)
         key = (cid, time.strftime("%Y-%m-%d", time.localtime(ts)))

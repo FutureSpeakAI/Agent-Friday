@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import json
 import glob
@@ -598,6 +598,9 @@ def _parse_feed(url, limit=12, timeout=None):
         if hit and (now - hit[0]) < _RSS_CACHE_TTL:
             return hit[1][:limit]
     recorded = attempted = False
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_fetch", "news feed"):         # A16a
+        return []
     try:
         import urllib.request
         import feedparser
@@ -714,12 +717,25 @@ def _brave_results(query, limit=8):
     if not (query or "").strip():
         # An empty beat (Local with nothing set) has nothing to search for.
         return []
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_search", "news search"):      # A16a
+        return []
     try:
         from agent_friday.services.web_search import brave_key as _bk
         key = _bk()
     except Exception:
         key = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
     if not key:
+        return []
+    # The query is gated like a web search's (NS-34.6-14): a beat can carry the owner's own words.
+    try:
+        from agent_friday.services.web_search import _gate_search_query
+        query, refusal = _gate_search_query(query, "brave-news")
+    except Exception as e:
+        _log.warning("news search not sent: the privacy gate could not run (%s)", type(e).__name__)
+        return []
+    if refusal or not (query or "").strip():
+        _log.info("news search not sent: the query held content that stays on this device")
         return []
     try:
         import requests as _req
@@ -1605,6 +1621,9 @@ def _fetch_brutalist_links(limit=200):
         from bs4 import BeautifulSoup
     except Exception as e:
         print(f"  [brutalist] missing dependency: {e}")
+        return []
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_fetch", "news scrape"):       # A16a
         return []
     try:
         resp = requests.get(_BRUTALIST_URL, timeout=15,

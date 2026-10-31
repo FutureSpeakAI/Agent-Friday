@@ -7,6 +7,14 @@
   GET  /api/doctor/reports/<id>.<json|txt>
                                       a saved report as a file to save and
                                       attach by hand (A3: never sent by Friday)
+  POST /api/doctor/support            make the support bundle (a zip in
+                                      Documents, Friday Support; a press here)
+  GET  /api/doctor/safety-metrics    the safety metrics held at zero (this PC only)
+  GET  /api/doctor/local-model        the local model's state and the repairs offered
+  POST /api/doctor/local-model/repair a repair: restart, verify or runtime (a press here)
+  GET  /api/doctor/known-issues       this release's known issues (KNOWN_ISSUES.md)
+  GET  /api/doctor/stores             every store Friday keeps: version, size,
+                                      location (read-only, this PC only)
   GET  /api/safe-mode                 is this run in safe mode, and the next?
   POST /api/safe-mode                 {"next_start": true|false}: start in safe
                                       mode next time, or leave it. A press on
@@ -80,6 +88,9 @@ def doctor_report():
 @doctor_bp.route("/api/doctor/reports", methods=["GET"])
 @login_required
 def doctor_reports():
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     try:
         return jsonify({"status": "ok", "reports": doctor.history()})
     except Exception as e:  # noqa: BLE001
@@ -89,6 +100,9 @@ def doctor_reports():
 @doctor_bp.route("/api/doctor/reports/<rid>.<kind>", methods=["GET"])
 @login_required
 def doctor_report_file(rid, kind):
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
     p = doctor.saved(rid, kind)
     if p is None:
         return jsonify({"status": "error", "error": "No such report."}), 404
@@ -96,6 +110,84 @@ def doctor_report_file(rid, kind):
                      as_attachment=True, download_name=p.name)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@doctor_bp.route("/api/doctor/safety-metrics", methods=["GET"])
+@login_required
+def doctor_safety_metrics():
+    """The safety and privacy metrics held at zero (services/safety_metrics,
+    §35.7-1). Read-only; this PC only; never sent."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    from agent_friday.services import safety_metrics
+    checks = [doctor._check(cid, dom, fn) for cid, dom, fn in doctor.CHECKS
+              if cid in safety_metrics.SELF_TEST_CHECKS]
+    resp = jsonify({"status": "ok", **safety_metrics.metrics(checks)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@doctor_bp.route("/api/doctor/local-model", methods=["GET"])
+@login_required
+def doctor_local_model():
+    """The local model's state and the repairs offered (services/local_repair).
+    This PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    from agent_friday.services import local_repair
+    resp = jsonify({"status": "ok", **local_repair.state()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@doctor_bp.route("/api/doctor/local-model/repair", methods=["POST"])
+@login_required
+def doctor_local_model_repair():
+    """Start one repair: {"repair": "restart"|"verify"|"runtime"}. A press on
+    Friday's own page, on this PC; one at a time."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Repair on Friday's own page, on this PC."}), 403
+    from agent_friday.services import local_repair
+    what = (request.get_json(silent=True) or {}).get("repair")
+    try:
+        job = local_repair.start(str(what or ""), by="owner:ui")
+        return jsonify({"status": "ok", "job": job}), 202
+    except local_repair.RepairError as e:
+        busy = "running already" in str(e)
+        return jsonify({"status": "error", "code": "busy" if busy else "not_offered",
+                        "error": str(e)}), 409 if busy else 400
+
+
+@doctor_bp.route("/api/doctor/known-issues", methods=["GET"])
+@login_required
+def doctor_known_issues():
+    """The known issues of this release (KNOWN_ISSUES.md, §36.0-7). Public
+    text; read-only."""
+    from agent_friday.services import known_issues
+    resp = jsonify({"status": "ok", **known_issues.load()})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@doctor_bp.route("/api/doctor/stores", methods=["GET"])
+@login_required
+def doctor_stores():
+    """Every store Friday keeps: version, size, location (§37.3-1). Read-only;
+    on this PC only, like the page that shows it."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    try:
+        from agent_friday.services import store_inventory
+        inv = store_inventory.public(store_inventory.cached(doctor._home()))
+        resp = jsonify({"status": "ok", **inv})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The list of stores could not be made.")
 
 
 @doctor_bp.route("/api/safe-mode", methods=["GET"])
@@ -120,8 +212,11 @@ def safe_mode_set():
     try:
         plan = safe_mode.set_next_start(body["next_start"])
         try:
-            from agent_friday.services import action_ledger
+            from agent_friday.services import action_ledger, policy_version
+            # a receipt names its action (BD-11a): the ledger refuses one without
             action_ledger.try_append("decision", {
+                "action_id": policy_version.new_action_id(),
+                "policy_version": policy_version.current_id(),
                 "tool": "safe_mode:next_start", "class": "owner", "decision": "allow",
                 "surface": "doctor", "reason": "on" if body["next_start"] else "off"})
         except Exception:
@@ -144,6 +239,28 @@ def _press_here():
     from agent_friday.core import _is_local_request
     from agent_friday.services import screen_click
     return _is_local_request() and screen_click.screen_session(request)
+
+
+@doctor_bp.route("/api/doctor/repair/search-index", methods=["POST"])
+@login_required
+def repair_search_index():
+    """Rebuild the conversation search index from the transcripts (NS-32.6-1, 32.5 'Doctor offers
+    index repair'). The owner's press on this PC; the transcripts are only read."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": _DESK_PROOF,
+                        "error": "Rebuild the search index on Friday's own page, on this PC."}), 403
+    from agent_friday.services import conversation_fts
+    if conversation_fts.repair_running():
+        return jsonify({"status": "error", "error": "The search index is already being rebuilt."}), 409
+
+    def _run():
+        try:
+            conversation_fts.repair("owner:doctor")
+        except Exception as e:  # noqa: BLE001
+            print(f"[doctor] search index rebuild failed: {type(e).__name__}")
+    _threading.Thread(target=_run, name="doctor-search-index-repair", daemon=True).start()
+    return jsonify({"status": "ok", "started": True,
+                    "message": "Rebuilding the search index from your conversations. They are not changed."}), 202
 
 
 @doctor_bp.route("/api/restore/state", methods=["GET"])
@@ -299,7 +416,32 @@ def bundle_schedule_act(what):
     return jsonify({"status": "ok", "started": what})
 
 
-# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
+# ── The support bundle (services/support_bundle.py; A3) ─────────────────────
+
+@doctor_bp.route("/api/doctor/support", methods=["POST"])
+@login_required
+def doctor_support_bundle():
+    """Make the support bundle (services/support_bundle.py) in Documents,
+    Friday Support: the Doctor report, the store inventory and redacted log
+    excerpts, to attach by hand (A3: Friday never sends it). A press on
+    Friday's own page, on this PC."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Make it on Friday's own page, on this PC."}), 403
+    from agent_friday.services import support_bundle
+    body = request.get_json(silent=True) or {}
+    try:
+        r = support_bundle.make(by="owner:ui", cloud_ok=body.get("cloud_ok") is True)
+        return jsonify({"status": "ok", **r})
+    except support_bundle.CloudFolder as e:
+        return api_error(e, "The support bundle could not be made.", 409, key="error", code="cloud_folder")
+    except support_bundle.SupportError as e:
+        return api_error(e, "The support bundle could not be made.", 400, key="error")
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The support bundle could not be made.")
+
+
+# ── The readable export (services/readable_export.py) ───────────────────────
 
 @doctor_bp.route("/api/export/readable", methods=["POST"])
 @login_required
@@ -330,6 +472,8 @@ def export_readable():
         return api_error(e, "The export could not be made.")
 
 
+# ── The first backup (services/first_backup.py) ─────────────────────────────
+
 @doctor_bp.route("/api/bundle/first-run", methods=["GET"])
 @login_required
 def first_backup_status():
@@ -355,6 +499,8 @@ def first_backup_answer():
     except Exception as e:  # noqa: BLE001
         return api_error(e, "That could not be saved.")
 
+
+# ── The weekly "send a Doctor report?" ask (A3; services/doctor_weekly.py) ──
 
 @doctor_bp.route("/api/doctor/weekly", methods=["GET"])
 @login_required

@@ -50,7 +50,8 @@ _SECRET_NAME = re.compile(r"(?i)(secret|token|passw|passphrase|pwd|api.?key|apik
                           r"credential|auth_?(?:token|key|header)|authorization|bearer|cookie|"
                           r"session_?(?:id|key|token)|webhook|signing|_pat$|^pat$|_pass$|^pass$)")
 #: Fields of a ledger entry that are its chain, not its content.
-_CHAIN_FIELDS = frozenset({"v", "seq", "ts", "t", "kind", "principal", "kid", "prev", "hash", "sig"})
+_CHAIN_FIELDS = frozenset({"v", "seq", "ts", "t", "kind", "principal", "pv", "kid", "prev", "hash",
+                           "sig"})
 #: Values that carry a credential whatever their name: a webhook, a token or
 #: key in a query, a user and password in a URL.
 _SECRET_VALUE = re.compile(r"(?i)(hooks\.slack\.com/|discord(?:app)?\.com/api/webhooks/|"
@@ -449,6 +450,16 @@ def _check_dest(dest: Path) -> Path:
     return dest
 
 
+def _stores() -> dict:
+    """Every store in the data folder with its version, size and location
+    (services/store_inventory.py, §37.3-1)."""
+    try:
+        from agent_friday.services import store_inventory
+        return store_inventory.public(store_inventory.inventory(_home()))
+    except Exception as e:  # noqa: BLE001 - an export is never refused for its inventory
+        return {"error": "unavailable:" + type(e).__name__}
+
+
 def export(dest_parent: Path, *, only: Optional[list] = None, by: str = "owner") -> dict:
     """Write a new folder `friday-readable-<stamp>` inside dest_parent.
     Returns {folder, counts, notes, files}."""
@@ -490,7 +501,8 @@ def export(dest_parent: Path, *, only: Optional[list] = None, by: str = "owner")
         readme += ["", "## Left out or not readable", ""] + ["- %s" % n for n in notes]
     out.write("README.md", "\n".join(readme) + "\n")
     manifest = {"made_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "counts": counts,
-                "notes": notes, "files": dict(sorted(out.files.items()))}
+                "notes": notes, "files": dict(sorted(out.files.items())),
+                "stores": _stores()}
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding="utf-8")
     try:
         from agent_friday.services import action_ledger

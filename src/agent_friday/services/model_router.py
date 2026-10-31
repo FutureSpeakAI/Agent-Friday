@@ -165,6 +165,7 @@ def _seal_or_block(payload, provider, model=""):
         raise _sc.PrivacyCheckStarting(_sc.HOLD_NOTICE)
     if not operational:
         _log.error("egress gate failed its startup self-test — BLOCKING cloud send")
+        _eg.record_blocked(provider, "the privacy gate failed its startup self-test", model=model or "")
         raise RuntimeError(
             "Egress gate is non-functional (startup self-test failed); cloud "
             "send blocked. Fix the gate (see boot log) or use a local model."
@@ -2655,8 +2656,14 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
         from agent_friday.services import off_record
         if off_record.skip("conversation_index"):
             return
+        # NS-15.8-2: everything below LEARNS from the turn (the memory review,
+        # the emotional arc, and the index that recall, the day's summary and
+        # dreaming read), so it keys on the learning check, not on storage: an
+        # owner who keeps off-record transcripts still teaches Friday nothing.
+        if off_record.skip_learning("conversation_index"):
+            return
     except Exception:
-        pass
+        return                                   # cannot tell: learn nothing
     if library:
         try:
             from agent_friday.services.library import cite as _library_cite
@@ -2938,6 +2945,15 @@ def _run_session_summary_job():
     days that already have a summary are skipped.
     """
     try:
+        # Days whose summary a correction took away are written again first,
+        # whatever their age (services/memory_derived).
+        try:
+            from agent_friday.services import memory_derived as _md
+            redone = _md.redo_summaries()
+            if redone:
+                print(f"  [SUMMARY] wrote {redone} summary(ies) again after a correction")
+        except Exception as _e:
+            print(f"  [SUMMARY] corrected days not written again: {_e}")
         today = datetime.now().date()
         made = 0
         for back in range(0, 3):  # today, yesterday, day before
@@ -2998,6 +3014,13 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             return live_block
         mem = _get_conversation_memory()
         if not mem.available():
+            if (getattr(mem, "_init_error", None) is not None
+                    and not isinstance(mem._init_error, ImportError)):
+                # (An ImportError is recall not installed, by choice: not a failure.)
+                # The store is there but would not open: recall is degraded, not empty
+                # (services/recall_health; the turn's context says so).
+                from agent_friday.services import recall_health as _rh
+                _rh.note_failure("past_conversations", mem._init_error)
             return live_block
         # The turn's one embedding of this message (services/turn_vector), when
         # there is one; the store checks it is the same model and width.
@@ -3006,8 +3029,14 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             _qvec = _tv.compute(message)
         except Exception:
             _qvec = None
-        hits = (mem.search(message, n=n, query_embedding=_qvec)
-                if _qvec is not None else mem.search(message, n=n))
+        # Near-duplicates must not crowd out distinct evidence (NS-14.6-2,
+        # services/recall_dedupe): fetch a few more than the slots, then keep
+        # one line per near-duplicate group (the newest), so the freed slots
+        # go to things that say something else.
+        from agent_friday.services import recall_dedupe as _rd
+        _want = _rd.overfetch(n)
+        hits = (mem.search(message, n=_want, query_embedding=_qvec)
+                if _qvec is not None else mem.search(message, n=_want))
         kept = []
         for h in hits:
             rel = h.get("relevance")
@@ -3017,6 +3046,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             if not text:
                 continue
             kept.append(h)
+        kept = _rd.select(kept, n, path="conversation_memory")
         if not kept:
             return live_block
         # The guidance sits OUTSIDE the fence below: inside it, everything is
@@ -3065,6 +3095,11 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
                 + guide + "\n" + _mf.fence("past_conversations", "\n".join(lines)) + "\n")
     except Exception as _e:
+        try:
+            from agent_friday.services import recall_health as _rh
+            _rh.note_failure("past_conversations", _e)
+        except Exception:
+            pass
         return ""
 
 
@@ -3912,8 +3947,18 @@ def _get_career_context():
 
 
 def _get_wiki_context(topic):
-    """Search wiki for content matching a topic."""
-    results = []
+    """Search wiki for content matching a topic.
+
+    Up to three excerpts. A page that repeats one already chosen (the same
+    note in both wiki folders, a copied page) does not take a slot: a few more
+    are read and near-duplicates collapsed to the first (NS-14.6-2,
+    services/recall_dedupe). Pages are compared on their body (YAML
+    frontmatter stripped), and pages with a different H1 title or a different
+    file name are never treated as copies of each other."""
+    from agent_friday.services import recall_dedupe as _rd
+    slots = 3
+    want = _rd.overfetch(slots, factor=2)
+    found = []                      # (result, body for comparing, h1, stem)
     for wiki_dir in [HOME / "wiki", WIKI_DIR_FRIDAY]:
         if not wiki_dir.exists():
             continue
@@ -3921,15 +3966,35 @@ def _get_wiki_context(topic):
             try:
                 content = wiki_read_text(md_file)
                 if topic.lower() in content.lower() or topic.lower() in md_file.stem.lower():
-                    results.append({
+                    body = _wiki_body(content)
+                    found.append(({
                         'file': str(md_file.relative_to(wiki_dir)),
                         'excerpt': content[:500],
-                    })
-                    if len(results) >= 3:
-                        return results
+                    }, body[:500], _wiki_h1(body), md_file.stem.lower()))
+                    if len(found) >= want:
+                        break
             except Exception:
                 continue
-    return results
+        if len(found) >= want:
+            break
+    picked = _rd.select(found, slots, text=lambda f: f[1], ident=lambda f: None,
+                        partition=lambda f: (f[2], f[3]), keep="first", path="wiki")
+    return [f[0] for f in picked]
+
+
+_WIKI_FRONTMATTER = re.compile(r"\A﻿?---[ \t]*\r?\n.*?^(?:---|\.\.\.)[ \t]*(?:\r?\n|\Z)",
+                               re.S | re.M)
+_WIKI_H1 = re.compile(r"^#[ \t]+(.+?)[ \t#]*$", re.M)
+
+
+def _wiki_body(content):
+    """A wiki page without its YAML frontmatter."""
+    return _WIKI_FRONTMATTER.sub("", str(content or ""), count=1)
+
+
+def _wiki_h1(body):
+    m = _WIKI_H1.search(body or "")
+    return " ".join(m.group(1).lower().split()) if m else None
 
 
 def _detect_context_needs(message, workspace):

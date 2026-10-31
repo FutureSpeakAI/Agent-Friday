@@ -183,6 +183,12 @@
       }).catch(() => { setBusy(''); setMsg('That could not be done just now.'); });
     };
     const decide = (id, keep) => post('/api/memory/proposals/' + (keep ? 'approve' : 'reject'), { fact_ids: [id] }).then(d => { if (d && d.message) setMsg(d.message); else if (d && d.reason) setMsg(d.reason); loadProps(); }).catch(() => {});
+    // Edit and keep: the owner's own wording is kept instead of the suggestion's.
+    const [pedit, setPedit] = useState(null);
+    useEffect(() => { setPedit(null); }, [m.id]);   // another meeting: no half-made edit carries over
+    const keepMine = (id, text) => post('/api/memory/proposals/approve', { fact_ids: [id], text: text }).then(d => { if (d && d.message) setMsg(d.message); else if (d && d.reason) setMsg(d.reason); else setPedit(null); loadProps(); }).catch(() => {});
+    // Don't suggest things like this: discards it and holds back similar suggestions (listed under Settings > Memory card > Suppressed).
+    const suppress = id => post('/api/memory/proposals/suppress', { fact_id: id }).then(d => { setMsg((d && (d.message || d.reason)) || 'Discarded. Suggestions like it are held back now.'); loadProps(); }).catch(() => {});
     const attach = () => {
       setBusy('calendar'); setMsg('');
       post('/api/meetings/' + m.id + '/calendar').then(d => { setBusy(''); setMsg(say(d) || 'Done.'); }).catch(() => { setBusy(''); setMsg('That could not be done just now.'); });
@@ -211,10 +217,19 @@
         h('div', { className: 'mt-title' }, 'Suggested for her memory'),
         h('ul', { className: 'mt-list' }, props.map(p => h('li', { key: p.fact_id },
           h('span', { className: 'mt-pill' }, p.category),
-          h('span', { style: { flex: '1 1 280px' } }, p.text),
+          (pedit && pedit.id === p.fact_id)
+            ? h('input', { className: 'input', 'aria-label': 'Your wording of this suggestion', maxLength: 400, style: { flex: '1 1 280px' }, value: pedit.text, onChange: e => setPedit({ id: p.fact_id, text: e.target.value }) })
+            : h('span', { style: { flex: '1 1 280px' } }, p.text),
           p.provenance && h('span', { className: 'mt-time' }, 'line ' + p.provenance.span.segment + ' · ' + clock(p.provenance.span.t) + ' · ' + p.provenance.model),
-          h('button', { className: 'btn', onClick: () => decide(p.fact_id, true) }, 'Keep (it joins what Friday knows about you, which a cloud model may be told)'),
-          h('button', { className: 'btn', onClick: () => decide(p.fact_id, false) }, 'Not now'))))),
+          (pedit && pedit.id === p.fact_id)
+            ? h(React.Fragment, null,
+                h('button', { className: 'btn', disabled: !String(pedit.text || '').trim(), onClick: () => keepMine(p.fact_id, pedit.text) }, 'Keep my wording (it joins what Friday knows about you, which a cloud model may be told)'),
+                h('button', { className: 'btn', onClick: () => setPedit(null) }, 'Cancel'))
+            : h(React.Fragment, null,
+                h('button', { className: 'btn', onClick: () => decide(p.fact_id, true) }, 'Keep (it joins what Friday knows about you, which a cloud model may be told)'),
+                h('button', { className: 'btn', onClick: () => setPedit({ id: p.fact_id, text: p.text || '' }) }, 'Edit and keep'),
+                h('button', { className: 'btn', onClick: () => decide(p.fact_id, false) }, 'Not now'),
+                h('button', { className: 'btn', onClick: () => suppress(p.fact_id) }, 'Don’t suggest things like this')))))),
       h('div', { className: 'mt-row' },
         h('button', { className: 'btn', onClick: remember, disabled: !!busy || !hasNotes }, busy === 'memory' ? 'Reading…' : 'Suggest what to remember'),
         m.event_id && h('button', { className: 'btn', onClick: attach, disabled: !!busy || !(m.summary && m.summary.status === 'done') }, 'Add the summary to the calendar event'),

@@ -11,6 +11,10 @@
                                  (whole entries, checkable elsewhere) or
                                  ?format=report (the verification report)
   GET  /api/ledger/verify        check every line now: the full report
+  GET  /api/ledger/audit         the terminal-receipt invariant for outward
+                                 actions (services/outward_audit): counts and
+                                 action ids; ?days= window (1 to 365, default 30).
+                                 Read-only.
   GET  /api/ledger/retention     the retention period and the archive (A22)
   POST /api/ledger/retention     {"days": n}: change it (0 = off, at least 30);
                                  on this PC only. Archives at once; never deletes.
@@ -65,6 +69,15 @@ KIND_LABELS = {
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
     "authority": "Action authority revoked or restored",
+    "policy_version": "The rules actions ran under changed",
+    "item_batch_run": "Approved change run",
+}
+
+#: What an approved change's run marker (services/item_actions.RUN_KIND) says happened.
+_BATCH_RUN_WORDS = {
+    "started": "started",
+    "finished": "finished",
+    "interrupted": "was cut off when Friday stopped (all, some or none of it may have happened)",
 }
 
 _LAST_FULL = [0.0]
@@ -171,6 +184,19 @@ def plain_line(e: dict) -> str:
         return "%s: %s (decision #%s)." % (rec.get("tool") or "an action", rec.get("status") or "done",
                                            rec.get("decision_seq") if rec.get("decision_seq") is not None
                                            else "none")
+    if k == "item_batch_run":
+        # counts and codes only: the marker never holds a name, a subject or a path
+        try:
+            n = int(rec.get("count") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        what = str(rec.get("domain") or "").replace("_", " ").strip()
+        size = (" (%d %s)" % (n, "item" if n == 1 else "items")) if n else ""
+        state = str(rec.get("state") or "")
+        said = _BATCH_RUN_WORDS.get(state, state.replace("_", " ") or "recorded")
+        if state == "finished" and rec.get("ok") is False:
+            said = "finished without going through"
+        return "Approved %schange%s %s." % ((what + " ") if what else "", size, said)
     if k == "archived":
         return "%s records up to %s moved to the encrypted archive (kept, not deleted)." % (
             rec.get("records"), rec.get("through"))
@@ -295,6 +321,24 @@ def api_ledger_verify():
         return jsonify({"status": "ok", "report": action_ledger.verify(force=force)})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The action ledger could not be checked.")
+
+
+@ledger_bp.route("/api/ledger/audit", methods=["GET"])
+@login_required
+def api_ledger_audit():
+    """Every outward action's decision and terminal receipt: open, duplicate,
+    the same request run twice, a task said done too early. Owner only (the
+    session, as for the rest of the ledger; not on the observer's list).
+    Reads; writes nothing."""
+    try:
+        from agent_friday.services import outward_audit
+        try:
+            days = max(1.0, min(float(request.args.get("days") or 30), 365.0))
+        except (TypeError, ValueError):
+            days = 30.0
+        return jsonify({"status": "ok", "audit": outward_audit.audit(days * 86400.0)})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The outward actions could not be checked.")
 
 
 @ledger_bp.route("/api/ledger/acknowledge", methods=["POST"])

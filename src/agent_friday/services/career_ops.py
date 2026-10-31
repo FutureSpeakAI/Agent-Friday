@@ -562,11 +562,16 @@ def apply_approved(approval_id: str, actor: str = "owner") -> dict:
         raise CareerError(f"{p.name} changed after you approved the card. Nothing was written; "
                           f"ask again.")
     try:
-        action_gate.record_external("career:tracker_update", surface="career_ops",
-                                    approval_id=approval_id, target=p.name)
+        decision = action_gate.record_external("career:tracker_update", surface="career_ops",
+                                               approval_id=approval_id, target=p.name)
     except action_gate.Held as e:
         raise CareerError(f"held by governance: {e}. Nothing was written.")
-    _write_change(plan)
+    try:
+        _write_change(plan)
+    except Exception:
+        action_gate.close_external(decision, False, detail="write_failed")
+        raise
+    action_gate.close_external(decision, True, detail="written")
     ap.mark_used(approval_id, actor, {"tracker": str(p), "line": plan["line"]})
     return {"written": True, "tracker": str(p), "row": plan["after"]}
 
@@ -799,6 +804,10 @@ def _record_fetch(url: str, result) -> None:
 def fetch_json(url: str, timeout: int = 20):
     """GET a public job-board API. SSRF-checked, no redirects, size-capped."""
     import requests
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_fetch", "career scan")          # A16a
+    if _held:
+        raise CareerError(_held)
     from agent_friday.services.web_safety import UnsafeURLError, pinned
     try:
         with pinned(url):

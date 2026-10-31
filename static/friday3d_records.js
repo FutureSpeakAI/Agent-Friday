@@ -964,7 +964,7 @@
       return () => window.removeEventListener('friday-nav', f);
     }, [ws]);
     const src = source === 'code' ? { label: 'Projects' } : SOURCES[source];
-    if (!src || typeof THREE === 'undefined') return children;
+    if (!src || typeof THREE === 'undefined' || (window.fridayRender3dOff && window.fridayRender3dOff())) return children;
     // The engine's GPU set-up starts while the pointer is still on the way
     // to the button, not after the click.
     const warm = () => { if (source !== 'code') prefetch(source); if (F.prewarm) setTimeout(F.prewarm, 0); };

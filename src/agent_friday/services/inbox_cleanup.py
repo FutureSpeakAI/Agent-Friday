@@ -831,11 +831,29 @@ def propose(sender_ids: list, *, requested_by: str, reason: str = "") -> dict:
                                 listing, ("\n\nWhy: " + reason.strip()) if reason.strip() else "")),
         description="Nothing is sent unless you approve this card.")
     if v.action == "allow":
-        return {"status": "done", "result": unsubscribe(ids, decided_by="owner approval",
-                                                         expected_urls=detail["urls"])}
+        return {"status": "done", "result": _unsubscribe_closing(
+            action_gate.decision_ref_of(v), ids, expected_urls=detail["urls"])}
     if v.action == "deny":
         return {"status": "refused", "message": "Friday's governance check held this: %s" % v.reason}
     return {"status": "pending_approval", "message": "Waiting for your approval card."}
+
+
+def _unsubscribe_closing(ref, sender_ids: list, *, expected_urls: dict) -> dict:
+    """`unsubscribe` for an approved card, closing the checkpoint's decision
+    from what the senders answered: every request confirmed (HTTP 2xx) ->
+    completed_verified; some -> executed (partial); none -> failed. An
+    exception closes failed and is raised as before."""
+    from agent_friday.governance import action_gate
+    try:
+        out = unsubscribe(sender_ids, decided_by="owner approval", expected_urls=expected_urls)
+    except BaseException:
+        action_gate.close_external(ref, False, detail="unsubscribe_error")
+        raise
+    done, not_done = len(out.get("done") or []), len(out.get("not_done") or [])
+    action_gate.close_external(ref, done > 0, verified=done > 0 and not not_done,
+                               detail="unsubscribed" if done and not not_done else
+                               "unsubscribed_partly" if done else "none_unsubscribed")
+    return out
 
 
 def _on_decision(record: dict) -> None:
@@ -848,8 +866,8 @@ def _on_decision(record: dict) -> None:
                                            approval_id=record.get("approval_id"))
         if v.action != "allow":
             return
-        out = unsubscribe(detail.get("senders") or [], decided_by="owner approval",
-                          expected_urls=dict(detail.get("urls") or {}))
+        out = _unsubscribe_closing(action_gate.decision_ref_of(v), detail.get("senders") or [],
+                                   expected_urls=dict(detail.get("urls") or {}))
         _notify("Inbox clean-up: %d unsubscribed" % len(out["done"]),
                 ("%d couldn't be done here; they're listed in Messages > Clean up."
                  % len(out["not_done"])) if out["not_done"] else "Each one has a receipt.")

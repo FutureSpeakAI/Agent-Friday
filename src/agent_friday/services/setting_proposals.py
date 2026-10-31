@@ -219,14 +219,51 @@ def hold(tool: str, inp: dict, *, old: str, new: str, consequence: str = "", lab
     if v.action == "deny":
         return "SETTING_FAIL: Friday's governance check held this: %s" % v.reason
     if v.action == "allow":
-        # An approved, unused card for exactly this change existed and the check used it: carry it out now.
-        record_change(tool, label=label, old=old, new=new, snapshot=_snapshot(keys), by="Friday, by a proposal you accepted")
-        return None
+        # An approved, unused card for exactly this change existed and the check used it: carry it out now,
+        # the way the Yes does (the tool again, with the approval in effect), so the change's own result
+        # closes the decision authorize_external wrote.
+        ref = action_gate.decision_ref_of(v)
+        handler = None
+        try:
+            handler = _ag.CLAUDE_TOOL_HANDLERS.get(detail["tool"])
+        except Exception:
+            handler = None
+        if handler is None:
+            # nothing to run it through here: the caller writes it, as before; nobody reports back
+            record_change(tool, label=label, old=old, new=new, snapshot=_snapshot(keys), by="Friday, by a proposal you accepted")
+            action_gate.close_external(ref, True, detail="setting_written_by_caller",
+                                       outcome=action_gate.UNCONFIRMED)
+            return None
+        ok, text = False, ""
+        try:
+            tok = _APPROVED.set(True)
+            try:
+                text = str(handler(dict(inp or {})))
+            finally:
+                _APPROVED.reset(tok)
+            ok = _changed(text)
+        except Exception as e:
+            # the tool's own failure closes the decision; it never escapes hold(), and the answer is never
+            # None (None would tell the caller to write the setting a second time)
+            action_gate.close_external(ref, False, detail="setting_not_changed")
+            return "SETTING_FAIL: %s could not be changed: %s: %s" % (label, type(e).__name__, str(e)[:300])
+        except BaseException:
+            action_gate.close_external(ref, False, detail="setting_not_changed")
+            raise
+        action_gate.close_external(ref, ok, detail="setting_changed" if ok else "setting_not_changed")
+        return text or ("Done. %s" % said)
     return ("SETTING_NEEDS_YES: %s %s Nothing has changed. The card is waiting for the owner's own yes; "
             "a conditional yes does not count." % (said, consequence)).strip()
 
 
 # ── On the Yes ──────────────────────────────────────────────────────────────
+
+def _changed(text: str) -> bool:
+    """Did the tool's own answer say the setting changed?"""
+    text = str(text or "")
+    return not text.upper().startswith(("SWITCH_FAIL", "LAYOUT_FAIL", "DAY_FAIL", "SETTING_FAIL")) \
+        and "error" not in text[:40].lower()
+
 
 def _on_decision(record: dict) -> None:
     detail = record.get("payload") or {}
@@ -259,9 +296,12 @@ def _on_decision(record: dict) -> None:
             text = str(handler(dict(detail.get("input") or {})))
         finally:
             _APPROVED.reset(tok)
-        ok = not text.upper().startswith(("SWITCH_FAIL", "LAYOUT_FAIL", "DAY_FAIL", "SETTING_FAIL")) and "error" not in text[:40].lower()
+        ok = _changed(text)
     except Exception as e:
         text = "%s: %s" % (type(e).__name__, e)
+    # the change's own result closes the decision authorize_external wrote (BD-11a)
+    action_gate.close_external((v.detail or {}).get("decision_ref"), ok,
+                               detail="setting_changed" if ok else "setting_not_changed")
     try:
         ap.mark_used(aid, "setting_proposals", {"ok": ok, "summary": text[:300]})
     except Exception:
@@ -400,6 +440,21 @@ def _dock_list() -> str:
                                              ", ".join(name(i) for i in st["hidden"]) or "none"))
 
 
+def _read_outside_content() -> bool:
+    """Whether the tool call running now belongs to a conversation that recently read outside content
+    (services/taint). Outside a governed tool call (no ledger key set) there is nothing to judge: False.
+    A check that cannot run says True, so the change keeps its card.
+    The window is the ledger's whole life (not the 30-minute memory window), and carried text written
+    from outside content (a task's working notes, a workflow's previous result) counts too."""
+    try:
+        from agent_friday.services import taint as _taint
+        key = _taint.CURRENT_KEY.get()
+        return bool(key) and bool(_taint.recent_content(key, window=_taint.TTL_SECONDS,
+                                                        for_grants=True))
+    except Exception:
+        return True
+
+
 def _dock(inp: dict, path: str, value: str) -> str:
     """show, hide or list the dock's workspaces. A change is a diff the owner says Yes to, like every row."""
     from agent_friday.services import workspace_registry as wr
@@ -428,8 +483,11 @@ def _dock(inp: dict, path: str, value: str) -> str:
     row_label = "whether %s is in the dock" % label
     # The owner's choice (Settings > Appearance: dock_by_asking): by default asking IS the decision, so
     # the change is made at once, recorded, and offered back with an Undo; "ask_first" keeps the card.
+    # Asking is the decision only when the asking can be the owner's: a call made after this conversation
+    # read outside content (an email, a page, a document) may be repeating it, so it keeps the card.
     from agent_friday.services import owner_choices as _oc
-    direct = _oc.dock_by_asking() == "apply_with_undo" and not _APPROVED.get()
+    direct = (_oc.dock_by_asking() == "apply_with_undo" and not _APPROVED.get()
+              and not _read_outside_content())
     if direct:
         if was == now:
             return "SETTING_UNCHANGED: %s already reads %s." % (row_label, now)

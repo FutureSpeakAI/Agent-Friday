@@ -60,6 +60,8 @@ import hashlib
 import json
 import logging
 import re
+import threading as _threading
+import time as _time
 from email import policy as _email_policy
 from email.message import EmailMessage
 from agent_friday.user_errors import UserFacingError, log_failure
@@ -306,6 +308,44 @@ CLOUD_SENSITIVE_NOTE = ("Written on a cloud model, and it has private details in
                         "what would be sent. Send, or Don't send.")
 
 
+#: Why a pre-approval does not carry a message that may already have been sent.
+MAYBE_SENT_WHY = ("a message exactly like this one may already have been sent before Friday "
+                  "restarted (its send was cut off), so you see it first")
+MAYBE_SENT_NOTE = ("A message exactly like this one may already have been sent before Friday "
+                   "restarted (its send was cut off). Check your Sent folder before sending it again.")
+
+
+#: How long a cut-off send keeps an identical message off a pre-approval.
+MAYBE_SENT_WINDOW_S = 7 * 86400
+
+
+def _maybe_sent(fingerprint: str, now: float | None = None) -> bool:
+    """The last send of this exact message was cut off by a restart
+    (card_recovery, or the held-mail tick, marked its card's outcome unknown),
+    so it may already have gone. Only the newest spent card for the message
+    counts, and only for MAYBE_SENT_WINDOW_S: once the owner has sent it again
+    (or a week has passed), a repeat of the same message is a normal send.
+    Never raises."""
+    try:
+        from agent_friday.services import approvals as _ap
+        now = _time.time() if now is None else now
+        for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):  # newest first
+            if (rec.get("payload") or {}).get("fingerprint") != fingerprint:
+                continue
+            if (rec.get("status") or "").lower() != "approved" or not rec.get("consumed"):
+                continue                         # undecided, unspent, denied or expired: nothing went
+            if rec.get("outcome") != "unknown":
+                return False                     # the newest spend is known
+            found = rec.get("outcome_found_at")
+            try:
+                return found is None or now - float(found) < MAYBE_SENT_WINDOW_S
+            except (TypeError, ValueError):
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def ccs_for_note(cc, bcc) -> list:
     return _addresses(cc or []) + _addresses(bcc or [])
 
@@ -328,12 +368,114 @@ def _withheld_reason() -> str:
         return ""
 
 
-def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
-                 account_id: str | None = None,
-                 requested_by: str = "friday", html: str | None = None,
-                 thread_id: str | None = None, in_reply_to: str | None = None,
-                 references: str | None = None, attachments=None,
-                 send_at: str | None = None) -> dict:
+#: One request at a time: the "is there already a card for this message" check and the record it
+#: creates happen together, so two identical requests at once make one card (or one pre-approved
+#: send), not two.
+_REQUEST_LOCK = _threading.RLock()
+
+#: An identical message (same recipients, subject, text) that went out under a pre-approval this
+#: recently is not sent again by that pre-approval: a repeat is a retry far more often than an
+#: intent, and a retry after an unclear failure must not put a second copy in someone's inbox. The
+#: repeat asks on a card instead, which says why.
+REPEAT_WINDOW_S = 6 * 3600
+
+
+def repeat_key(to, cc, bcc, subject, body) -> str:
+    """The same message for retry purposes: every recipient (lower-cased, in any order, to/cc/bcc
+    alike), the subject and the text with case and spacing folded. Looser than the fingerprint,
+    which must match the approved bytes exactly: a retry that reorders recipients or adds a
+    trailing newline is still a retry."""
+    rc = sorted({a.lower() for a in _addresses(to or []) + _addresses(cc or []) + _addresses(bcc or [])})
+    fold = lambda s: " ".join(str(s or "").split()).lower()  # noqa: E731
+    return hashlib.sha256(json.dumps([rc, fold(subject), fold(body)]).encode("utf-8")).hexdigest()
+
+
+def _record_key(rec: dict) -> str:
+    p = rec.get("payload") or {}
+    return p.get("repeat_key") or repeat_key(p.get("to"), p.get("cc"), p.get("bcc"),
+                                             p.get("subject"), p.get("body"))
+
+
+def _outbox_row(approval_id: str) -> dict | None:
+    for row in outbox(limit=500):
+        if row.get("approval_id") == approval_id:
+            return row
+    return None
+
+
+def _repeat_outcome(rec: dict) -> str | None:
+    """What became of an earlier copy, for the words on the repeat's card, or None when it
+    plainly did not go and was not refused by the owner (Gmail said no), so a retry is safe."""
+    status = (rec.get("status") or "").lower()
+    if status == "denied":
+        return "you said no to an identical message"
+    if not rec.get("consumed"):
+        # approved and waiting out its undo window or its scheduled time
+        return "an identical message is already waiting to go to them" if status == "approved" else None
+    used = str(rec.get("used_by") or "")
+    if used == "gmail_send":
+        return "an identical message was sent to them"
+    if used == "gmail_send_cancelled":
+        return "you took back an identical message"
+    if used == "gmail_send_grant_revoked":
+        return "an identical message was taken back when the pre-approval was revoked"
+    if used == "gmail_send_missed":
+        return "an identical message was not sent (Friday was off when it was due)"
+    row = _outbox_row(rec.get("approval_id") or "")
+    if row is None:
+        return "an identical message is being sent to them right now"
+    if row.get("unconfirmed"):
+        return "an identical message may have reached them (Gmail did not confirm it)"
+    if row.get("ok"):
+        return "an identical message was sent to them"
+    return None                                   # Gmail refused it outright: nothing went
+
+
+def _recent_copy(key: str, now: float | None = None) -> tuple[dict, str] | None:
+    """The newest earlier copy of this message within REPEAT_WINDOW_S that a pre-approval must
+    not repeat on its own (sent, maybe sent, in flight, taken back, or refused by the owner;
+    by card or by pre-approval alike), with what became of it; or None."""
+    from agent_friday.services import approvals as _ap
+    now = _time.time() if now is None else now
+    for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):
+        try:
+            if _record_key(rec) != key:
+                continue
+        except Exception:
+            continue
+        when = max(float(rec.get(k) or 0) for k in ("created_at", "decided_at", "consumed_at", "used_at"))
+        if now - when > REPEAT_WINDOW_S:
+            continue
+        what = _repeat_outcome(rec)
+        if what:
+            return rec, what
+    return None
+
+
+def _repeat_words(rec: dict, what: str, now: float | None = None) -> str:
+    now = _time.time() if now is None else now
+    when = max(float(rec.get(k) or 0) for k in ("created_at", "decided_at", "consumed_at", "used_at"))
+    mins = max(1, int(round((now - (when or now)) / 60)))
+    ago = ("%d minute%s ago" % (mins, "" if mins == 1 else "s")) if mins < 120 \
+        else ("%d hours ago" % (mins // 60))
+    went = what.startswith(("an identical message was sent", "an identical message may have",
+                            "an identical message is being sent", "an identical message is already waiting"))
+    return ("%s %s, so this one waits for you: %s" % (
+        what, ago, "Send puts a second copy in their inbox" if went else "Send sends it"))
+
+
+def request_send(**kw) -> dict:
+    """See _request_send. Serialised by _REQUEST_LOCK (one card per message, even at once)."""
+    with _REQUEST_LOCK:
+        return _request_send(**kw)
+
+
+def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
+                  account_id: str | None = None,
+                  requested_by: str = "friday", html: str | None = None,
+                  thread_id: str | None = None, in_reply_to: str | None = None,
+                  references: str | None = None, attachments=None,
+                  send_at: str | None = None) -> dict:
     """Ask to send. Returns the approval card; sends nothing.
 
     This is the only way to start a send, and it never delivers.
@@ -388,8 +530,11 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     fp = message_fingerprint(tos, subject, body, cc, bcc, extras or None)
     live = _live_card(fp)
     if live is not None:
+        # A held pre-approved message is not waiting on a card: say which it is.
         return {"status": live.get("status"), "approval": live,
-                "approval_id": live.get("approval_id")}
+                "approval_id": live.get("approval_id"),
+                **({"pre_approved": live["pre_approved"]}
+                   if live.get("pre_approved") and live.get("status") == "approved" else {})}
 
     ccs = _addresses(cc or [])
     notes = []
@@ -410,6 +555,15 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     except Exception:
         pass
     withheld = _withheld_reason()
+    # NS-34.16-4: an identical message whose send a restart cut off (card_recovery marked its
+    # card's outcome unknown) may already have gone. Asking again is the owner's call on a
+    # card, never a standing pre-approval's: a resumed task or a retry does not send it twice.
+    maybe_sent = _maybe_sent(fp)
+    if maybe_sent:
+        if not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
+            withheld = MAYBE_SENT_WHY
+        else:
+            notes.append(MAYBE_SENT_NOTE)
     # Written on a cloud model with private details (privacy/vault_access: cloud_send_card_<tier>):
     # the owner sees exactly what would go and decides on this card, whatever was pre-approved.
     sensitive = bool(_tool_context().get("sensitive_cloud_send"))
@@ -418,6 +572,15 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
         if not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
             withheld = ("this message has private details and was written on a cloud model, "
                         "so you see it first")
+    # The same message went (or may have, or is waiting to, or the owner took it back or said
+    # no) a short while ago: a repeat is not covered by a pre-approval. It asks on this card,
+    # which says what became of the earlier one and what Send would do.
+    rkey = repeat_key(tos, cc, bcc, subject, body)
+    repeat = None
+    if not sensitive and not withheld and _pre_approval_names(tos + ccs_for_note(cc, bcc)):
+        repeat = _recent_copy(rkey)
+        if repeat is not None:
+            withheld = _repeat_words(*repeat)
     if withheld:
         # A reason that names its own subject ("This chat read an outside email, so your
         # pre-approval doesn't cover this send") stands as it is.
@@ -442,7 +605,7 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
                  # it knows a card is one of ours; without it, approving an
                  # unrelated external message would reach send().
                  "handler": "gmail_send",
-                 "fingerprint": fp, "to": tos,
+                 "fingerprint": fp, "repeat_key": rkey, "to": tos,
                  "cc": ccs, "bcc": _addresses(bcc or []),
                  "subject": str(subject or ""), "body": str(body or ""),
                  "account_id": account_id,
@@ -455,7 +618,7 @@ def request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     # for the exact message, so a grant revoked a moment ago is not used. The
     # record is created approved by that grant: no card, but the same undo
     # window, burn-once send, outbox and a logged use.
-    grant = None if sensitive else _pre_approval(tos + ccs + _addresses(bcc or []))
+    grant = None if (sensitive or repeat is not None or maybe_sent) else _pre_approval(tos + ccs + _addresses(bcc or []))
     if grant is not None:
         appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
         if appr.get("status") == "approved" and not appr.get("consumed"):
@@ -637,8 +800,8 @@ def send(approval_id: str) -> dict:
     # once whatever held it is fixed.
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external("gmail:send", surface="mail", approval_id=approval_id,
-                              target=_fingerprint_target(payload))
+        decision_ref = _gate.record_external("gmail:send", surface="mail", approval_id=approval_id,
+                                             target=_fingerprint_target(payload), once=True)
     except _gate.Held as e:
         raise SendRefused("held by the action checkpoint (error %s). Nothing was sent."
                           % log_failure(e, "Mail send held by the action checkpoint"),
@@ -646,28 +809,79 @@ def send(approval_id: str) -> dict:
 
     _burned, was_first = _ap._consume(appr)
     if not was_first:
-        raise SendRefused("that approval is already being used to send. "
-                          "Nothing was sent twice.")
+        _gate.close_external(decision_ref, False, detail="approval_in_use",
+                             outcome=_gate.FORBIDDEN)
+        raise SendRefused("that approval is already being used to send (or could not be marked "
+                          "as used). Nothing was sent by this request.")
 
+    request_started = False
     try:
         from googleapiclient.discovery import build
         svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        request_started = True
         sent = svc.users().messages().send(userId="me", body=send_body).execute()
     except Exception as e:
+        _gate.close_external(decision_ref, False, detail="provider_refused")
         _log.warning("send failed: %s", e)
-        _outbox_record(appr, ok=False, error=str(e)[:500])
-        _record_egress(payload, raw, "failed")
-        raise SendRefused("Gmail refused the message (error %s)." % log_failure(e, "Gmail send failed"),
+        # Only a refusal from Gmail (an HTTP 4xx) means it did not go. A timeout, a dropped
+        # connection or a server error may have come after Gmail accepted it: say so, record it
+        # as unconfirmed, and never invite a blind resend (a second copy in someone's inbox).
+        try:
+            from agent_friday.services import egress_gate as _eg
+            outcome = _eg.result_for_error(e)
+        except Exception:
+            outcome = "sent_unconfirmed"
+        if not request_started:
+            outcome = "failed"           # the client was never built: nothing left this PC
+        else:
+            try:
+                from google.auth.exceptions import RefreshError
+                if isinstance(e, RefreshError):
+                    outcome = "failed"   # the sign-in refresh fails before the message is posted
+            except Exception:
+                pass
+        unconfirmed = outcome != "failed"
+        _outbox_record(appr, ok=False, error=str(e)[:500], unconfirmed=unconfirmed)
+        _record_egress(payload, raw, outcome)
+        code = log_failure(e, "Gmail send failed")
+        if unconfirmed:
+            err = SendRefused(
+                "Gmail did not confirm the message (error %s). It may have been sent: check your "
+                "Sent folder before sending it again." % code,
+                detail="Gmail did not confirm the message, so it may have been sent; do not send "
+                       "it again without checking: %s" % str(e)[:300])
+            err.unconfirmed = True
+            raise err
+        raise SendRefused("Gmail refused the message (error %s)." % code,
                           detail="Gmail refused the message: %s" % str(e)[:300])
 
     _record_egress(payload, raw, "sent")
+    # Gmail's message id is the service's confirmation that it was sent
+    _gate.close_external(decision_ref, True, detail="sent", verified=bool((sent or {}).get("id")))
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),
                                               "thread_id": sent.get("threadId")})
     _outbox_record(appr, ok=True, message_id=sent.get("id"))
+    _record_attachment_deliveries(extras, (decision_ref or {}).get("receipt"), approval_id,
+                                  sent.get("id"))
     _log.info("sent message %s via approval %s", sent.get("id"), approval_id)
     return {"ok": True, "message_id": sent.get("id"),
             "thread_id": sent.get("threadId"),
             "to": payload.get("to"), "approval_id": approval_id}
+
+
+def _record_attachment_deliveries(extras: dict, receipt, approval_id, message_id) -> None:
+    """Each attachment that is a file Friday made gets this send's receipt in
+    the artifact manifest (NS-24.1-2), found by its bytes. Never raises."""
+    try:
+        atts = (extras or {}).get("attachments") or []
+        if not atts or not receipt:
+            return
+        from agent_friday.services import artifact_manifest as _am
+        for a in atts:
+            _am.record_delivery(receipt, channel="gmail", sha256=str(a.get("sha256") or ""),
+                                ref=message_id, approval_id=approval_id)
+    except Exception as e:
+        _log.warning("attachment delivery not recorded in the artifact manifest: %s", type(e).__name__)
 
 
 def _fingerprint_target(payload: dict) -> str:
@@ -1051,7 +1265,12 @@ def hold(record: dict, now: float | None = None, undo_seconds: int | None = None
            # revoking that grant takes this message back (cancel_for_grant).
            "pre_approved": record.get("pre_approved") or None}
     with _HELD_LOCK:
-        rows = [r for r in _load_held() if r.get("approval_id") != row["approval_id"]]
+        rows = _load_held()
+        sending = next((r for r in rows if r.get("approval_id") == row["approval_id"]
+                        and r.get("state") == SENDING), None)
+        if sending is not None:
+            return sending                       # already on its way (or settled by the tick)
+        rows = [r for r in rows if r.get("approval_id") != row["approval_id"]]
         rows.append(row)
         _save_held(rows)
     _WAKE.set()
@@ -1063,7 +1282,9 @@ def held() -> list:
     now = _time.time()
     with _HELD_LOCK:
         rows = sorted(_load_held(), key=lambda r: r.get("due") or 0)
-    return [dict(r, seconds_left=max(0, round(r["due"] - now))) for r in rows]
+    inner = ("sending_by", "sending_pid", "sending_started")   # the tick's own bookkeeping
+    return [dict({k: v for k, v in r.items() if k not in inner}, seconds_left=max(0, round(r["due"] - now)))
+            for r in rows]
 
 
 def _burn(approval_id: str, why: str, detail: dict) -> None:
@@ -1085,6 +1306,8 @@ def cancel(approval_id: str) -> dict:
         if not mine:
             raise SendRefused("that message is not waiting to be sent (it has already gone, "
                               "or was never approved)")
+        if any(r.get("state") == SENDING for r in mine):
+            raise SendRefused("that message is being sent now, so it can no longer be taken back")
         _save_held([r for r in rows if r.get("approval_id") != approval_id])
     _burn(approval_id, "gmail_send_cancelled", {"reason": "cancelled by you before it was sent"})
     return {"ok": True, "approval_id": approval_id, "sent": False}
@@ -1138,9 +1361,10 @@ def cancel_for_grant(grant_id: str) -> list:
         return []
     with _HELD_LOCK:
         rows = _load_held()
-        mine = [r for r in rows
-                if (r.get("pre_approved") or
-                    (_ap.get_approval(r.get("approval_id") or "") or {}).get("pre_approved")) == gid]
+        # a row being sent is past taking back (the held-mail tick settles it)
+        mine = [r for r in rows if r.get("state") != SENDING and
+                (r.get("pre_approved") or
+                 (_ap.get_approval(r.get("approval_id") or "") or {}).get("pre_approved")) == gid]
         if not mine:
             return []
         ids = {r.get("approval_id") for r in mine}
@@ -1168,16 +1392,138 @@ def _deliver(approval_id: str, to) -> None:
         _log.info("held message sent %s", result.get("message_id"))
     except SendRefused as e:
         # The owner pressed approve and reasonably believes the message went.
-        _notify("Email NOT sent", str(e), priority="high", kind="warning")
+        _notify("Email may have been sent" if getattr(e, "unconfirmed", False) else "Email NOT sent",
+                str(e), priority="high", kind="warning")
     except Exception as e:
         _log.warning("held send crashed: %s", e)
         _notify("Email NOT sent", "Something went wrong sending it: %s" % str(e)[:200],
                 priority="high", kind="warning")
 
 
+#: A held row the tick has taken to send: it stays in the queue, marked, until
+#: the send's result is recorded (NS-34.16-4). A row left marked by a process
+#: that is gone is never sent again automatically: it may have gone out.
+SENDING = "sending"
+_INSTANCE = __import__("uuid").uuid4().hex
+
+#: What the owner reads on the card raised for a send a stop cut off.
+INTERRUPTED_MAYBE_NOTE = ("Friday stopped while sending this message, so it may already have been "
+                          "sent, or may not. Check your Sent folder first: approve this card only "
+                          "to send it again.")
+INTERRUPTED_NOT_SENT_NOTE = ("Friday stopped just before sending this approved message, so it was "
+                             "not sent. Approve this card to send it now.")
+
+
+def _process_started() -> float | None:
+    try:
+        from agent_friday.services import card_recovery as _cr
+        return _cr.process_started()
+    except Exception:
+        return None
+
+
+def _sender_alive(row: dict) -> bool:
+    """Is the process that marked this row still running (and so still
+    sending it)? This process always is. Another one is judged by its pid and
+    start time; when that cannot be read it is taken as gone (one Friday
+    server runs per home: server._acquire_single_instance_lock)."""
+    if row.get("sending_by") == _INSTANCE:
+        return True
+    try:
+        import psutil
+        pid = int(row.get("sending_pid") or 0)
+        if not pid or not psutil.pid_exists(pid):
+            return False
+        started = row.get("sending_started")
+        return started is not None and abs(psutil.Process(pid).create_time() - float(started)) < 1.0
+    except Exception:
+        return False
+
+
+def _drop(approval_id: str, by: str | None) -> None:
+    """Take a sent (or settled) row out of the queue: only the marked row
+    itself, never a newer one for the same card."""
+    with _HELD_LOCK:
+        rows = _load_held()
+        keep = [r for r in rows if not (r.get("approval_id") == approval_id
+                                        and r.get("state") == SENDING and r.get("sending_by") == by)]
+        if len(keep) != len(rows):
+            _save_held(keep)
+
+
+def _send_again_card(appr: dict, maybe_went: bool) -> dict | None:
+    """A card for the same message, for the owner to decide: never sent by a
+    pre-approval, and raised once per interrupted card."""
+    from agent_friday.services import approvals as _ap
+    import uuid
+    aid = appr.get("approval_id")
+    for rec in _ap.list_approvals(kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE):
+        if (rec.get("payload") or {}).get("resend_of") == aid:
+            return rec
+    payload = dict(appr.get("payload") or {}, resend_of=aid)
+    fp = str(payload.get("fingerprint") or "")
+    note = INTERRUPTED_MAYBE_NOTE if maybe_went else INTERRUPTED_NOT_SENT_NOTE
+    return _ap.create_approval(
+        force_gate=True, kind=APPROVAL_KIND, subject_type=SUBJECT_TYPE,
+        subject_id="%s:%s" % (fp, uuid.uuid4().hex[:8]),
+        title=str(appr.get("title") or "Send email"),
+        action_description=note + "\n\n" + str(appr.get("action_description") or ""),
+        description=str(appr.get("description") or "This leaves your machine and arrives as a "
+                                                    "message from you. It cannot be unsent."),
+        payload=payload, requested_by="friday")
+
+
+def _settle_interrupted(row: dict) -> str:
+    """A row a process that is gone left marked `sending`: never sent again
+    here. Its result on record (the send finished) ends it quietly. Otherwise
+    the card can never send (burned, or its outcome unknown), a card for the
+    same message asks the owner whether to send it again, and they are told.
+    Its decision, if one was written, is marked unconfirmed by the boot sweep
+    (card_recovery.settle_interrupted_decisions). Returns what was done."""
+    from agent_friday.services import approvals as _ap
+    aid = row.get("approval_id") or ""
+    appr = _ap.get_approval(aid) if aid else None
+    if not appr or appr.get("used_at"):
+        _drop(aid, row.get("sending_by"))
+        return "recorded"
+    # The card is burned just before Gmail is called (send): unburned, nothing went.
+    maybe_went = bool(appr.get("consumed"))
+    if maybe_went:
+        if appr.get("outcome") != "unknown":
+            try:
+                from agent_friday.services.card_recovery import NOTE as _note
+            except Exception:
+                _note = ""
+            _ap._patch(aid, outcome="unknown", outcome_note=_note,
+                       outcome_found_at=_time.time(), consumed=True)
+    else:
+        _burn(aid, "gmail_send_interrupted",
+              {"reason": "not sent: Friday stopped before it went out"})
+    again = _send_again_card(appr, maybe_went)
+    who = ", ".join(row.get("to") or []) or "your recipient"
+    _notify("Email may or may not have been sent" if maybe_went else "Email NOT sent",
+            ("Friday stopped while sending your message to %s (\"%s\"). It may or may not have "
+             "gone: check your Sent folder. To send it again, approve the new card."
+             if maybe_went else
+             "Friday stopped just before sending your message to %s (\"%s\"), so it was not "
+             "sent. To send it now, approve the new card.")
+            % (who, row.get("subject") or ""),
+            priority="high", kind="warning", key="interrupted:%s" % aid,
+            target={"workspace": "system", "tab": "approvals"})
+    _drop(aid, row.get("sending_by"))
+    _log.info("held send %s was cut off by a stop; card %s asks the owner",
+              aid, (again or {}).get("approval_id"))
+    return "interrupted"
+
+
 def _tick(now: float | None = None) -> list:
     """Send what is due. A message due more than LATE_LIMIT_S ago (Friday was
-    off) is not sent: its approval is burned and the owner is told."""
+    off) is not sent: its approval is burned and the owner is told.
+
+    Crash-safe (NS-34.16-4): a due row is marked `sending` on disk before it
+    is sent and leaves the queue only once the send's result is recorded, so a
+    kill in between never loses it silently. A row a dead process left marked
+    is never resent: `_settle_interrupted` asks the owner instead."""
     now = _time.time() if now is None else now
     # Stop everything (services/global_stop): nothing is sent while stopped; the
     # rows stay held and are judged again after Resume.
@@ -1186,16 +1532,35 @@ def _tick(now: float | None = None) -> list:
         return []
     with _HELD_LOCK:
         rows = _load_held()
-        due = [r for r in rows if (r.get("due") or 0) <= now]
-        if not due:
+        stuck = [dict(r) for r in rows if r.get("state") == SENDING and not _sender_alive(r)]
+        due = [r for r in rows if r.get("state") != SENDING and (r.get("due") or 0) <= now]
+        if not due and not stuck:
             return []
-        _save_held([r for r in rows if (r.get("due") or 0) > now])
+        if due:
+            mark = {"state": SENDING, "sending_by": _INSTANCE, "sending_at": now,
+                    "sending_pid": __import__("os").getpid(), "sending_started": _process_started()}
+            for r in due:
+                r.update(mark)
+            _save_held(rows)                    # on disk before anything is sent
+        due = [dict(r) for r in due]
     done = []
+    for r in stuck:
+        try:
+            done.append((r.get("approval_id"), _settle_interrupted(r)))
+        except Exception as e:  # the row stays marked; the next tick tries again
+            _log.warning("could not settle an interrupted send: %s", e)
     for i, r in enumerate(due):
         if _core_gs.GLOBAL_STOP.is_set():
             # Stopped after the rows were taken: they go back, held, for after Resume.
+            back = {x["approval_id"] for x in due[i:]}
             with _HELD_LOCK:
-                _save_held(_load_held() + due[i:])
+                rows = _load_held()
+                for x in rows:
+                    if (x.get("approval_id") in back and x.get("state") == SENDING
+                            and x.get("sending_by") == _INSTANCE):
+                        for k in ("state", "sending_by", "sending_at", "sending_pid", "sending_started"):
+                            x.pop(k, None)
+                _save_held(rows)
             break
         if now - r["due"] > LATE_LIMIT_S:
             _burn(r["approval_id"], "gmail_send_missed",
@@ -1206,9 +1571,13 @@ def _tick(now: float | None = None) -> list:
                     % ("scheduled" if r.get("scheduled") else "approved",
                        ", ".join(r.get("to") or []), r.get("subject") or ""),
                     priority="high", kind="warning")
+            _drop(r["approval_id"], _INSTANCE)
             done.append((r["approval_id"], "missed"))
             continue
-        _deliver(r["approval_id"], r.get("to"))
+        try:
+            _deliver(r["approval_id"], r.get("to"))   # records its result (outbox, card, receipt)
+        finally:
+            _drop(r["approval_id"], _INSTANCE)    # this process saw the attempt end
         done.append((r["approval_id"], "sent"))
     return done
 
@@ -1218,7 +1587,8 @@ def _scheduler_loop():
         try:
             _tick()
             with _HELD_LOCK:
-                nxt = min([r.get("due") or 0 for r in _load_held()] or [_time.time() + 30])
+                nxt = min([r.get("due") or 0 for r in _load_held() if r.get("state") != SENDING]
+                          or [_time.time() + 30])
         except Exception as e:
             _log.warning("held-mail scheduler: %s", e)
             nxt = _time.time() + 5
@@ -1255,10 +1625,11 @@ def _outbox_path():
 
 
 def _outbox_record(appr: dict, *, ok: bool, message_id: str | None = None,
-                   error: str | None = None) -> None:
+                   error: str | None = None, unconfirmed: bool = False) -> None:
     import time
     payload = appr.get("payload") or {}
     row = {"at": time.time(), "ok": bool(ok),
+           **({"unconfirmed": True} if unconfirmed else {}),
            "approval_id": appr.get("approval_id"),
            "from": payload.get("from_email"),
            "to": payload.get("to"), "cc": payload.get("cc"),

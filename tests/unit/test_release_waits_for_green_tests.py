@@ -250,6 +250,10 @@ def test_no_required_job_can_be_skipped_into_a_green_run(name):
         # a job that runs only on a pull request: never part of a counted run
         "${{ github.event_name == 'pull_request' && "
         "contains(github.event.pull_request.labels.*.name, 'red-evidence') }}",
+        # the same, for the red-evidence PR's changed app specs (only when it has some)
+        "${{ !cancelled() && github.event_name == 'pull_request' && "
+        "contains(github.event.pull_request.labels.*.name, 'red-evidence') && "
+        "needs.red-evidence.outputs.specs != '' }}",
     }
     for jname, job in (_wf(name).get("jobs") or {}).items():
         assert "if" not in job or job["if"] in allowed, (name, jname, job.get("if"))

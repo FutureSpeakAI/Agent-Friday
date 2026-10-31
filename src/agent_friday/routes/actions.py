@@ -49,7 +49,8 @@ def receipt_read(rid):
 # Undos that change something outside Friday's own state go through the action
 # checkpoint (cLaws, signed receipt, held while everything is stopped). A
 # file goes back over whatever is on disk now, so it is one of them.
-_OUTWARD_UNDO = {"email": "gmail:undo", "calendar": "calendar:undo", "file_write": "file:undo"}
+_OUTWARD_UNDO = {"email": "gmail:undo", "calendar": "calendar:undo", "tasks": "tasks:undo",
+                 "file_write": "file:undo"}
 
 
 @actions_bp.route("/api/actions/receipts/<rid>/undo", methods=["POST"])
@@ -68,15 +69,21 @@ def receipt_undo(rid):
         return refused
     rec = action_journal.get(rid)
     outward = _OUTWARD_UNDO.get((rec or {}).get("domain"))
+    from agent_friday.governance import action_gate as _gate
+    decision = None
     if outward:
-        from agent_friday.governance import action_gate as _gate
         try:
-            _gate.record_external(outward, surface="receipts_undo", target=rid)
+            decision = _gate.record_external(outward, surface="receipts_undo", target=rid)
         except _gate.Held:
             return jsonify({"status": "error", "error": "Nothing was put back: the action checkpoint held "
                                                         "this undo (integrity check or signed receipt failed)."}), 403
     try:
         out = item_actions.undo(rid, by_owner=True, requested_by="owner:ui")
     except item_actions.Refused as e:
+        _gate.close_external(decision, False, detail="undo_refused", outcome=_gate.DENIED)
         return jsonify({"status": "error", "error": e.user_message}), 409
+    except Exception:
+        _gate.close_external(decision, False, detail="undo_failed")
+        raise
+    _gate.close_external(decision, True, detail="undone")
     return jsonify({"status": "ok", "result": out})

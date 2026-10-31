@@ -1204,11 +1204,27 @@ def _bootstrap_env_from_launch_scripts():
                         sources.append(fname)
         except Exception as _be:
             print(f"  [FRIDAY] env bootstrap skipped {fname}: {_be}")
+    # Keys moved out of these scripts into the credential store
+    # (services/launch_script_keys) come back from the store here, with the
+    # precedence their script line had, so every process (the server, the CLI,
+    # the voice path, constants computed below) sees them exactly as before.
+    global ENV_FROM_LAUNCH_SCRIPTS
+    # Published BEFORE the store is read, so anything resolved during the read sees
+    # which variables came from a launch script.
+    ENV_FROM_LAUNCH_SCRIPTS = set(loaded)
+    try:
+        from agent_friday.services.launch_script_keys import restore_moved_keys
+        for _n in restore_moved_keys(already_loaded=loaded, force_names=_FORCE_OVERRIDE):
+            loaded.add(_n)
+            if "credential store" not in sources:
+                sources.append("credential store")
+    except Exception:
+        pass
     # Publish WHICH names came from a launch script. A value this process
     # read out of start.bat is not the same kind of fact as a variable the
     # user set in Windows, and until now nothing downstream could tell them
     # apart -- so a key saved in Settings lost to start.bat on every boot.
-    global ENV_FROM_LAUNCH_SCRIPTS
+    # (Declared global above, before the store is read.)
     ENV_FROM_LAUNCH_SCRIPTS = set(loaded)
     if loaded:
         # Do NOT name the variables. This runs at package import, so it fires on
@@ -1548,11 +1564,15 @@ def _context_logging_enabled():
 
 
 def _off_record_now():
+    # The process registry's `off_record` mark keeps a process out of
+    # forensic snapshots (ops/forensics-snapshot.py), so it follows the
+    # learning check (NS-15.8-2), not storage: marked whenever off-record is
+    # on, whether or not off-record transcripts are kept. Cannot tell: marked.
     try:
         from agent_friday.services import off_record as _off
-        return _off.active()
+        return bool(_off.active() or _off.excludes_learning())
     except Exception:
-        return False
+        return True
 
 
 def _log_context(event_type, data):
@@ -1683,10 +1703,10 @@ _RUN_COMMAND_ALLOW = (
     "get-childitem", "select-string", "findstr", "where", "which", "test-path",
     "dotnet", "cargo", "go", "rustc", "pytest", "ruff", "black", "mypy", "flake8",
 )
-# Only WRITES are path-confined by default (reads are lower-risk and confining
-# them would break legitimate reads of files outside HOME the user references).
-# Add "read_file" here, or run strict mode, to also confine reads.
-_SANDBOX_PATH_TOOLS = {"write_file": "path"}
+# Reads and writes are both confined (services/path_policy, BD-26): the owner's home
+# folder minus application data and Friday's own state, Friday's output folders, the
+# Library and file-search roots (reads), and folders the owner granted on screen.
+_SANDBOX_PATH_TOOLS = {"write_file": ("path", "write"), "read_file": ("path", "read")}
 
 
 def _sandbox_policy(name, args):
@@ -1701,18 +1721,18 @@ def _sandbox_policy(name, args):
         return True, "sandbox off"
     args = args or {}
 
-    field = _SANDBOX_PATH_TOOLS.get(name)
-    if field:
+    spec = _SANDBOX_PATH_TOOLS.get(name)
+    if spec:
+        field, op = spec
         raw = str(args.get(field) or "").strip()
         if raw:
             try:
-                p = Path(raw).expanduser().resolve()
-                root = Path(FRIDAY_SANDBOX_ROOT).expanduser().resolve()
-                p.relative_to(root)
-            except ValueError:
-                return False, f"path {raw!r} escapes sandbox root {FRIDAY_SANDBOX_ROOT}"
+                from agent_friday.services import path_policy as _pp
+                _p, why = _pp.judge(raw, op)
             except Exception as e:
                 return False, f"path check failed: {e}"
+            if _p is None:
+                return False, f"path {raw!r} is not allowed: {why}"
 
     if name == "run_command":
         cmd = str(args.get("command") or "").strip()
@@ -1918,6 +1938,57 @@ def turn_liveness(turn_id, now=None):
     }
 
 
+def _task_context(task_id) -> dict:
+    """What the task record says about a process's task (BD-16 / NS-29.2-1): the goal and
+    milestone it serves (goal_ancestry), whose task it is (principal: owner or crew:<id>) and
+    the schedule it runs for. Read from services/agent.TASKS, the one place _spawn_task records
+    them (inherited by child tasks, restored after a restart). A plain dict read, no lock taken,
+    so it is safe from inside PROCESSES_LOCK. Never raises."""
+    if not task_id:
+        return {}
+    try:
+        import sys as _sys
+        agent = _sys.modules.get("agent_friday.services.agent")
+        rec = (getattr(agent, "TASKS", {}) or {}).get(task_id) if agent else None
+        if not isinstance(rec, dict):
+            return {}
+        anc = rec.get("goal_ancestry") or {}
+        return {"goal_id": anc.get("goal_id") if isinstance(anc, dict) else None,
+                "milestone_id": anc.get("milestone_id") if isinstance(anc, dict) else None,
+                "principal": rec.get("principal") or None,
+                "schedule_id": rec.get("schedule_id") or None}
+    except Exception:
+        return {}
+
+
+def _stop_capability(pid, task_id) -> str:
+    """How this process can be stopped (NS-29.2-1 'stop capability'): an image or video job is
+    cancelled at once (its job flag, then the sampler); a task Friday is running stops after its
+    current step; anything else stops with Stop everything (its cancel button only gives the
+    GPU back after a short wait, and the work itself carries on). Read-only: it changes no stop
+    path."""
+    p = str(pid)
+    if p.startswith(("image-", "video-")):
+        return "cancel_now"
+    if task_id:
+        try:
+            import sys as _sys
+            agent = _sys.modules.get("agent_friday.services.agent")
+            if agent is not None and task_id in (getattr(agent, "TASKS", {}) or {}):
+                return "after_this_step"
+        except Exception:
+            pass
+    return "stop_everything"
+
+
+def _apply_task_context(row: dict, ctx: dict) -> None:
+    for k in ("goal_id", "milestone_id", "schedule_id"):
+        if ctx.get(k) and not row.get(k):
+            row[k] = ctx[k]
+    if ctx.get("principal") and row.get("principal") in (None, "owner"):
+        row["principal"] = ctx["principal"]
+
+
 def process_register(pid, *, name="Task", label=None, category="default",
                      icon="⚡", steps=None, model=None, color=None,
                      task_id=None, eta_s=None, step_total=None):
@@ -1947,9 +2018,17 @@ def process_register(pid, *, name="Task", label=None, category="default",
                 task_id = _job.id
     except Exception:
         pass
+    _ctx = _task_context(task_id)
     with PROCESSES_LOCK:
         PROCESSES[pid] = {
             "id": pid,
+            # NS-29.2-1 (one process registry): ancestry and principal from the task record,
+            # cost and the receipt it produced (process_update), and how it can be stopped.
+            "goal_id": None, "milestone_id": None, "schedule_id": None,
+            "principal": "owner",
+            "cost_usd": 0.0,
+            "receipt_id": None,
+            "stop_capability": _stop_capability(pid, task_id),
             "name": name,
             "label": label or name,
             "category": category,
@@ -1993,6 +2072,7 @@ def process_register(pid, *, name="Task", label=None, category="default",
             # row can expand into the reasoning behind it.
             "trace_id": _current_trace_id(),
         }
+        _apply_task_context(PROCESSES[pid], _ctx)
     turn_pet(label=label or name, model=model)
     # The lattice's background orbiter (avatar-visual-genome.md §13): a
     # scheduled run is background work from the moment it is registered.
@@ -2021,13 +2101,14 @@ def _current_trace_id():
 
 def process_update(pid, *, status=None, progress=None, label=None,
                    step=None, steps=None, task_id=None, result=None,
-                   step_n=None, step_total=None):
+                   step_n=None, step_total=None, cost_usd=None, receipt=None):
     """Update an existing process entry.
 
     `result` attaches the process's final output (e.g. a local model's reply)
     so the notification detail panel has a real process to show — a subagent
     task whose orb carries no log/result renders as an empty "nothing".
     """
+    _ctx = _task_context(task_id) if task_id is not None else {}
     with PROCESSES_LOCK:
         p = PROCESSES.get(pid)
         if not p:
@@ -2050,6 +2131,16 @@ def process_update(pid, *, status=None, progress=None, label=None,
             p["steps"] = steps
         if task_id is not None:
             p["task_id"] = task_id
+            _apply_task_context(p, _ctx)
+            if p.get("stop_capability") == "stop_everything":
+                p["stop_capability"] = _stop_capability(pid, task_id)
+        if cost_usd is not None:
+            try:
+                p["cost_usd"] = round(float(p.get("cost_usd") or 0.0) + max(0.0, float(cost_usd)), 6)
+            except (TypeError, ValueError):
+                pass
+        if receipt is not None:
+            p["receipt_id"] = str(receipt)[:120]
         if result is not None:
             p["result"] = str(result)[:4000]
         p["updated"] = _time.time()
@@ -2431,6 +2522,16 @@ DEFAULT_SETTINGS = {
     # default. Read by services/agent.py::_maybe_auto_open and
     # services/creations.py::_notify_creation.
     "auto_open_created_files": False,
+    # Friday's loopback allow-list proxy (services/egress_proxy). An approved
+    # command reaches only these hosts; an MCP stdio server reaches its own
+    # `allow_hosts` (mcp_servers.json) or, without them, is "observe"d (every host
+    # recorded) unless this says "enforce". Not a boundary: a program that
+    # ignores proxy settings goes around it.
+    "command_network": {"allow_hosts": [
+        "pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "registry.yarnpkg.com",
+        "github.com", "*.github.com", "objects.githubusercontent.com", "codeload.github.com",
+        "raw.githubusercontent.com"]},
+    "mcp_network_default": "observe",
     "memory_recall_enabled": True,        # RAG over persistent ChromaDB conversation memory
     "news_priorities": ["AI/Tech", "Politics", "Media", "Local", "Business"],
     # The Local beat is the owner's to name; nothing ships with a city.
@@ -2724,6 +2825,7 @@ DEFAULT_SETTINGS = {
     "library_cloud_char_cap": 6000,
     "library_kg_learn": "",
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
+    "render_3d": True,                    # False: no 3D anywhere, no WebGL context (Settings > Appearance; NS-21.22-3)
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.
     # The owner's own dock arrangement: {"order": [ws_id, ...], "hidden": [ws_id, ...]}.
@@ -3877,18 +3979,51 @@ def install_origin_file() -> Path:
     return Path(FRIDAY_DIR) / INSTALL_ORIGIN_NAME
 
 
+#: Its own decoder: the record is read under every settings read (A16a), and
+#: must not show up in (or be skewed by) anything that counts json.loads calls.
+_INSTALL_RECORD_DECODER = json.JSONDecoder()
+
+
+def _read_install_record():
+    """(state, data). state is "missing", "ok" (data is the record dict),
+    "damaged" (the file holds no JSON object) or "busy" (it could not be read
+    just now: on Windows a scanner or another process can hold it for a moment;
+    never taken as damage). Read fresh every time: a cached answer could
+    outlive a write the cache did not see."""
+    p = install_origin_file()
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "missing", None
+    except OSError:
+        return "busy", None
+    try:
+        data = _INSTALL_RECORD_DECODER.decode(text)
+    except ValueError:
+        return "damaged", None
+    return ("ok", data) if isinstance(data, dict) else ("damaged", None)
+
+
 def install_choices_state() -> dict:
     """The install-origin record ({} when there is none or it cannot be read)."""
-    try:
-        data = json.loads(install_origin_file().read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    _state, data = _read_install_record()
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def install_record_unreadable() -> bool:
+    """True when the install-origin record exists but cannot be read as one
+    (damaged, half-written, not a JSON object). Such a record is never
+    overwritten: what it said is unknown, so nothing may be decided over it."""
+    return _read_install_record()[0] == "damaged"
 
 
 def update_install_choices_state(**fields) -> None:
-    """Merge `fields` into the install-origin record (atomic replace)."""
+    """Merge `fields` into the install-origin record (atomic replace).
+
+    An unreadable record is left as it is (install_record_unreadable)."""
     with _INSTALL_ORIGIN_LOCK:
+        if install_record_unreadable():
+            return
         cur = install_choices_state()
         known = _INSTALL_ORIGIN_CACHE.get(str(install_origin_file()))
         if known and "install" not in cur:
@@ -3916,6 +4051,12 @@ def install_origin() -> str:
     if got in (NEW_INSTALL, EXISTING_INSTALL):
         _INSTALL_ORIGIN_CACHE[key] = got
         return got
+    if install_record_unreadable():
+        # Neither decided again nor overwritten. EXISTING keeps the person's
+        # stored choices (A17); route_pick_pending separately keeps an
+        # unpicked route local-only (A16a), so this never opens the cloud.
+        _INSTALL_ORIGIN_CACHE[key] = EXISTING_INSTALL
+        return EXISTING_INSTALL
     home = Path(FRIDAY_DIR)
     fresh = not (Path(SETTINGS_FILE).exists() or (home / ".setup_complete").exists()
                  or (home / "costs.db").exists() or (home / "config.yaml").exists())
@@ -3948,18 +4089,32 @@ def route_pick_pending(settings=None) -> bool:
     not a pick. An install that already existed is never pending: its stored
     route is its choice."""
     try:
-        if install_origin() != NEW_INSTALL:
+        unreadable = install_record_unreadable()
+        if install_origin() != NEW_INSTALL and not unreadable:
             return False
+        if not unreadable and install_choices_state().get("route_picked") is True:
+            return False                    # a verified pick was made (sticky)
         s = _load_settings_raw() if settings is None else settings
         mr = (s or {}).get("model_routing")
         mr = mr if isinstance(mr, dict) else {}
         mode = str(mr.get("mode") or "").strip().lower()
         chosen = str(mr.get("mode_chosen") or "").strip().lower()
+        via = str(mr.get("mode_chosen_via") or "")
         if not mode or chosen != mode:
+            # A damaged record cannot say this install existed before A16, so
+            # a route with no recorded pick stays local-only (fails closed).
             return True
-        return str(mr.get("mode_chosen_via") or "") == ROUTE_KEPT_VIA
+        if via == ROUTE_KEPT_VIA:
+            return True
+        # Only a pick the owner verifiably made ends it (A16a).
+        return via not in ROUTE_PICK_VIAS
     except Exception:
-        return False
+        # A check that cannot run keeps a new install local-only (A16a) and
+        # never changes an existing one.
+        try:
+            return install_origin() == NEW_INSTALL
+        except Exception:
+            return False
 
 
 def _persist_spending_caps_migration(delta: dict):
@@ -4204,19 +4359,58 @@ def _save_settings(data, *, _internal_cloud_consent_write: bool = False,
                    owner_fallback_order_change: bool = False):
     """Serialize read/merge/replace so simultaneous partial saves keep siblings."""
     with _SETTINGS_WRITE_LOCK:
-        return _save_settings_locked(data,
+        out = _save_settings_locked(data,
             _internal_cloud_consent_write=_internal_cloud_consent_write,
             owner_routing_change=owner_routing_change,
             owner_safe_writes_change=owner_safe_writes_change,
             routing_change_via=routing_change_via,
             owner_room_approvals_change=owner_room_approvals_change,
             owner_fallback_order_change=owner_fallback_order_change)
+    # A16a: a verified pick, once made, stays made. Kept in the install record
+    # (which no client and no whole-file settings rewrite can touch), so a
+    # later routing change that cannot be tied to a screen (the chat's mode
+    # button) moves the mode without taking the person back to "not chosen".
+    if owner_routing_change and routing_change_via in ROUTE_PICK_VIAS:
+        _mr_saved = (data or {}).get("model_routing") if isinstance(data, dict) else None
+        if isinstance(_mr_saved, dict) and str(_mr_saved.get("mode") or "").strip():
+            try:
+                if not install_choices_state().get("route_picked"):
+                    update_install_choices_state(route_picked=True)
+            except Exception:
+                pass
+            _after_route_pick()
+    return out
+
+
+def _after_route_pick() -> None:
+    """A16a: once a route is chosen, the add-on connectors that were held
+    start. Only in a running app (the agent module already loaded); never
+    imports it, never blocks the save."""
+    import sys as _sys
+    _agent = _sys.modules.get("agent_friday.services.agent")
+    fn = getattr(_agent, "_mcp_resume_after_route_pick", None) if _agent else None
+    if fn is None:
+        return
+    try:
+        threading.Thread(target=fn, name="mcp-after-route-pick", daemon=True).start()
+    except Exception:
+        pass
 
 
 #: How an owner routing change was made, as `model_routing.mode_chosen_via`
 #: records it (privacy/cloud_consent.ROUTING_CONSENT_VIAS says which count as
 #: consent when the mode is cloud only). Anything else is stored as "unverified".
-ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified")
+#: "consent_screen" is the route picked on the first-run consent screen (A16a):
+#: a pick, not cloud consent.
+ROUTING_CHANGE_VIAS = ("settings", "setup", "posture", "migration", "unverified",
+                       "consent_screen")
+
+#: The vias that end a new install's route-not-chosen state (A16, A16a): a
+#: pick the owner verifiably made on a screen or at the terminal question.
+#: "unverified" (a routing change whose request could not be tied to an
+#: owner's screen) is recorded but does not end it; "migration" only ever
+#: runs on an install that already existed.
+ROUTE_PICK_VIAS = ("settings", "setup", "posture", "consent_screen", "migration")
 
 
 def _save_settings_locked(data, *, _internal_cloud_consent_write: bool = False,
@@ -4621,12 +4815,17 @@ def _apply_offline_routing_overlay(settings):
     try:
         with _NETWORK_LOCK:
             offline = NETWORK_STATE["status"] == "offline"
+        # North-star A16a: an install whose owner has not picked a route is
+        # local-only until they do, whatever the stored starting mode says. The
+        # same overlay as offline, so every reader of the mode sees it; nothing
+        # is persisted (route_pick_pending reads the stored settings).
+        pending = route_pick_pending(settings)
         try:
             from agent_friday.services import safe_mode as _sm
             safe = _sm.active()          # safe mode: local only for this run
         except Exception:
             safe = False
-        if not safe and (not offline or not settings.get("offline_auto_local", True)):
+        if not safe and not pending and (not offline or not settings.get("offline_auto_local", True)):
             return settings
         mr = dict(settings.get("model_routing") or {})
         if mr.get("mode") != "local_only" or mr.get("fallback_to_cloud") is not False:
@@ -4989,6 +5188,45 @@ def _answer_correlation(resp):
     return resp
 
 
+@app.after_request
+def _settle_external_actions(resp):
+    """Every outward decision this request wrote outside a tool call
+    (action_gate.record_external) that its executor neither closed nor
+    deferred is marked `unconfirmed`, never executed or failed: the answer is
+    not evidence of what became of the action. The code says how the request
+    answered (request_ok / request_error) (BD-11a, NS-36.3-12). Records only."""
+    try:
+        from flask import g as _g
+        if getattr(_g, "_friday_externals", None):
+            ok = resp.status_code < 400
+            if ok and resp.is_json and not (resp.is_streamed or resp.direct_passthrough):
+                body = resp.get_json(silent=True)
+                if isinstance(body, dict) and (body.get("status") == "error" or body.get("ok") is False):
+                    ok = False
+            from agent_friday.governance import action_gate as _ag
+            _ag.settle_request_externals(ok)
+    except Exception:  # noqa: BLE001 - a receipt never changes the answer
+        pass
+    return resp
+
+
+@app.teardown_request
+def _settle_external_actions_on_error(exc=None):
+    """A request that ended in an exception: what it decided and left open is
+    unconfirmed (request_exception). Only on an exception: a context torn down
+    without one (a streamed reply's copied request context, whose after_request
+    already ran on the original) is left to its executor, never marked failed."""
+    if exc is None:
+        return
+    try:
+        from flask import g as _g
+        if getattr(_g, "_friday_externals", None):
+            from agent_friday.governance import action_gate as _ag
+            _ag.settle_request_externals(False, "request_exception")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @app.teardown_request
 def _end_correlation(_exc=None):
     try:
@@ -5018,7 +5256,8 @@ def check_auth():
             pass
         if not _obs.verify(_obs_token):
             return jsonify({"error": "observer credential not recognised"}), 401
-        if not _obs.is_read_allowed(request.method, request.path):
+        _rule = getattr(getattr(request, "url_rule", None), "rule", None)
+        if not _obs.is_read_allowed(request.method, request.path, _rule):
             return jsonify({"error": "observer credential is read-only: this route is not available to it",
                             "principal": "observer"}), 403
         return None
@@ -5288,6 +5527,12 @@ def _idempotency_begin():
                    "that cannot be sent again. It was not run again."),
         "mismatch": ("idempotency_key_reused", 422,
                      "This Idempotency-Key was already used for a different request. Nothing was run."),
+        "handled": ("idempotency_used", 409,
+                    "A request with this Idempotency-Key was already handled (before Friday restarted, or "
+                    "long enough ago that its answer was not kept). It was not run again."),
+        "restarted": ("idempotency_may_have_run", 409,
+                      "A request with this Idempotency-Key was still running when Friday stopped, so it may "
+                      "have run. It was not run again: check before trying with a new key."),
     }[decision]
     return jsonify({"status": "error", "code": words[0], "message": words[2]}), words[1]
 

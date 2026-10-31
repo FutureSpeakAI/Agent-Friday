@@ -76,7 +76,7 @@ const flush = () => new Promise(r => setImmediate(r));
   out.cancel_amb = H.run({ op: 'cancel', target: 'cancel the green one' });
   out.none = H.run({ op: 'cancel', target: 'cancel the purple one' });
 
-  // cancel, waited out: stop-after-step; 409 (not running) falls back to DELETE
+  // cancel, waited out: stop-after-step; 409 (not running: finished meanwhile, paused, waiting) stops and deletes nothing
   answer = (m, u) => (u.endsWith('/stop-after-step') ? 409 : 200);
   out.cancel = H.run({ op: 'cancel', target: 'cancel the research one' });
   clock += 4900; H._undo.tick(clock); await flush(); out.before = fetches.slice();
@@ -176,7 +176,8 @@ def test_voice_resolves_where_the_orbs_are(o):
 def test_a_cancel_waits_out_its_undo_window_then_stops_the_helper(o):
     assert o["cancel"]["ok"] is True and o["cancel"]["results"][0]["pending"] is True
     assert o["before"] == []
-    assert o["after"] == [["POST", "/api/tasks/ta/stop-after-step"], ["DELETE", "/api/tasks/ta"]]
+    # A task that is no longer running is not DELETEd: for a finished task that would remove its record (AX16 review).
+    assert o["after"] == [["POST", "/api/tasks/ta/stop-after-step"]]
 
 
 def test_an_undo_inside_the_window_sends_nothing(o):

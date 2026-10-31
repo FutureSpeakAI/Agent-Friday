@@ -401,6 +401,10 @@ def mail_send():
     try:
         result = _gs.send(approval_id)
     except _gs.SendRefused as e:
+        if getattr(e, "unconfirmed", False):
+            # Not a refusal: it may have gone. The page must not offer a plain "try again".
+            return jsonify({"status": "unconfirmed", "unconfirmed": True,
+                            "message": error_text(e, "Couldn't confirm the message was sent")}), 502
         return jsonify({"status": "refused", "message": error_text(e, "Couldn't send the message")}), 409
     except Exception as e:
         return api_error(e, "Couldn't send the message")

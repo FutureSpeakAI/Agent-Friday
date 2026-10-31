@@ -29,7 +29,8 @@ def home(tmp_path, monkeypatch):
     from agent_friday.services import action_ledger, backup_schedule
     action_ledger.reset_caches()
     backup_schedule._TEST_SECRETS.clear()
-    action_ledger.append("decision", {"tool": "probe", "decision": "allow"}, durable=True)
+    action_ledger.append("decision", {"tool": "probe", "decision": "allow",
+                                      "action_id": "act_backup_probe"}, durable=True)
     return h
 
 

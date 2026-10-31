@@ -49,15 +49,24 @@ def _scopes_in(url):
     return set(parse_qs(urlparse(url).query)["scope"][0].split())
 
 
+def _diff_id(client, account_id, caps):
+    """A new write permission is asked for only after its permission difference was shown
+    (tests/api/test_permission_diff.py): the caller sends back its diff_id."""
+    return client.get("/api/google/accounts/%s/permission-diff?capability=%s"
+                      % (account_id, ",".join(caps))).get_json()["diff"]["diff_id"]
+
+
 def test_saving_contacts_is_asked_for_only_from_its_own_button(client):
     _account([ga.CONTACTS_READ])
     plain = client.post("/api/google/accounts/connect", json={"account_id": "a1"}).get_json()
     assert ga.CONTACTS_RW not in _scopes_in(plain["auth_url"])
     mailbox = client.post("/api/google/accounts/connect",
-                          json={"account_id": "a1", "mailbox": True}).get_json()
+                          json={"account_id": "a1", "mailbox": True,
+                                "diff_id": _diff_id(client, "a1", ["send"])}).get_json()
     assert ga.CONTACTS_RW not in _scopes_in(mailbox["auth_url"])
     d = client.post("/api/google/accounts/connect",
-                    json={"account_id": "a1", "include_contacts_write": True}).get_json()
+                    json={"account_id": "a1", "include_contacts_write": True,
+                          "diff_id": _diff_id(client, "a1", ["contacts"])}).get_json()
     assert d["requesting_contacts_write"] is True
     asked = _scopes_in(d["auth_url"])
     assert ga.CONTACTS_RW in asked and ga.GMAIL_SEND not in asked
@@ -73,17 +82,54 @@ def test_the_contacts_panel_sees_which_accounts_can_save(client):
     assert client.get("/api/contacts/google-write").get_json()["accounts"][0]["can_save"]
 
 
-def test_linkedin_import_route(client):
-    csv_text = ("First Name,Last Name,URL,Email Address,Company,Position,Connected On\n"
-                "Rae,Lin,https://www.linkedin.com/in/rae-example,rae@initech.example.com,"
-                "Initech,Recruiter,03 Mar 2026\n")
-    d = client.post("/api/contacts/import/linkedin", json={"csv": csv_text}).get_json()
-    assert d["status"] == "ok" and d["result"]["created"] == 1
+_RAE_CSV = ("First Name,Last Name,URL,Email Address,Company,Position,Connected On\n"
+            "Rae,Lin,https://www.linkedin.com/in/rae-example,rae@initech.example.com,"
+            "Initech,Recruiter,03 Mar 2026\n")
+
+
+def _clear_staging(home):
+    d = home / "wiki" / "_staging"
+    if d.exists():
+        for p in d.glob("imp-*"):
+            p.unlink()
+
+
+def _names(client):
+    return [c["name"] for c in client.get("/api/contacts").get_json()["contacts"]]
+
+
+def test_linkedin_import_route_stages_for_review(client, clean):
+    from tests.desk_press_support import desk_headers, page_headers
+    _clear_staging(clean)
+    d = client.post("/api/contacts/import/linkedin", json={"csv": _RAE_CSV}).get_json()
+    assert d["status"] == "ok" and d["result"]["staged"] == 1
+    assert "Rae Lin" not in _names(client), "the import was saved before the owner answered"
+    listed = client.get("/api/import-staging?source=linkedin_csv", headers=page_headers()).get_json()
+    assert [i["label"] for i in listed["items"]] == ["Rae Lin · Recruiter at Initech"]
+    item = listed["items"][0]
+    # An answer from another device (the page's token, no desk key) saves nothing.
+    r = client.post("/api/import-staging/review", json={"id": item["id"], "answer": "accept"},
+                    headers=page_headers())
+    assert r.status_code == 403 and r.get_json()["code"] == "desk_proof_required"
+    assert "Rae Lin" not in _names(client)
+    r = client.post("/api/import-staging/review", json={"id": item["id"], "answer": "accept"},
+                    headers=desk_headers())
+    assert r.status_code == 200, r.get_json()
     rows = client.get("/api/contacts").get_json()["contacts"]
     rae = next(c for c in rows if c["name"] == "Rae Lin")
     assert rae["company"] == "Initech" and rae["sources"] == ["linkedin"]
     bad = client.post("/api/contacts/import/linkedin", json={"csv": "a,b\n1,2\n"})
     assert bad.status_code == 400
+    _clear_staging(clean)
+
+
+def test_linkedin_preview_writes_nothing(client, clean):
+    _clear_staging(clean)
+    d = client.post("/api/contacts/import/linkedin", json={"csv": _RAE_CSV, "preview": True}).get_json()
+    assert d["status"] == "ok" and d["result"]["preview"] is True and d["result"]["rows"] == 1
+    from tests.desk_press_support import page_headers
+    listed = client.get("/api/import-staging?source=linkedin_csv", headers=page_headers()).get_json()
+    assert listed["items"] == []
 
 
 def test_follow_up_routes(client):
