@@ -89,8 +89,11 @@ service's card.
   you picked in setup (see [Getting started](getting-started.md)), and each row
   says whether it is ready and why if not. Nothing is picked for you: on a new
   install no routing mode is pressed until you choose one (here or in setup),
-  and the card says "Not chosen yet" and how Friday works until you do. An
-  install that already had a mode keeps it.
+  and the card says "Not chosen yet". Until you choose, Friday works only on
+  this computer and sends nothing to the cloud, even with a key entered: no
+  cloud AI, no web search or web pages, and no add-on connectors (they wait,
+  and start once you choose). Where it would have offered any of these it offers **Choose where Friday thinks**
+  instead. An install that already had a mode keeps it.
 - **Model for each job.** Click a job to choose its model. The list shows only
   models that can do that job. Voice is chosen in Voice.
 - **Your stack**, **Find a model**, **Local models** (what your PC can run,
@@ -228,8 +231,14 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
     moving, only more gently, when your system asks for reduced motion.
 - **Dock.** Which workspaces the dock shows, and in what order.
 - **Start screen.** **Show my day**, and when your day shows over the scene.
+- **Text size** (100% to 200%) makes what you read bigger: the text in every workspace
+  window and in the chat. Windows keep their size and the text wraps inside them.
 - **3D effects.** **3D dazzle** (full, subtle or off) controls glow, particles and
   motion in every 3D view. Off is the calmest and lightest on the graphics card.
+  **3D rendering** (on or off) turns every 3D view off entirely: the scene behind
+  the desktop, the knowledge galaxy and the 3D views of files, records and the
+  Library. Everything keeps working in its flat form and nothing is drawn on the
+  graphics card. It takes effect the next time Friday opens (**Reload now**).
 - **Knowledge graph** display options.
 - **Head and hand tracking**: parallax, viewing distance, depth, smoothing and
   the hand cursor's sensitivity, region and clicking. Both need the camera on.

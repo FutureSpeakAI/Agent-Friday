@@ -68,7 +68,7 @@ SNIPPET_CHARS = 160
 SEEN_KEEP = 300
 
 _TERMINAL = {"complete", "completed", "completed_unverified", "failed",
-             "timeout", "error", "cancelled"}
+             "timeout", "error", "cancelled", "outcome_unknown"}
 
 #: The heartbeat's standing instructions in the slim call.
 INSTRUCTIONS = (

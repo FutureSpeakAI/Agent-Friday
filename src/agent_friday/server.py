@@ -15,6 +15,27 @@ import sys
 import threading
 import logging
 
+# A Friday Bundle restore cut off by a crash or a power cut is finished (its
+# folders were swapped) or rolled back (they were not) before anything else
+# here imports a module that writes to the data folder (services/friday_bundle).
+# A start that finds a restore running, or a journal it cannot use with the
+# folder missing, stops: starting would make a fresh, empty Friday where the
+# owner's folder belongs.
+if __name__ == '__main__':
+    try:
+        from agent_friday.services import friday_bundle as _fb_boot
+        _rr = _fb_boot.recover_interrupted_restore()
+    except Exception as _rr_err:
+        print(f"  Restore: the check for an interrupted restore failed ({_rr_err}); not starting.")
+        sys.exit(3)
+    if _rr:
+        print("  Restore: an interrupted restore was %s (%s)"
+              % ({"forward": "finished", "back": "rolled back", "swept": "cleaned up"}.get(_rr.get("rolled"), "left as it was"),
+                 _rr.get("bundle_id") or _rr.get("why") or ""))
+        if _rr.get("stop"):
+            print("  Restore: Friday is not starting on this data folder yet.")
+            sys.exit(3)
+
 # Native thread pools are sized when their library first loads, so the caps
 # go in before anything heavy is imported (services/thread_caps.py).
 try:
@@ -126,11 +147,11 @@ from flask import Blueprint as _Blueprint
 # is the frozen fallback. tests/unit/test_blueprint_discovery.py fails if it
 # drifts from the actual routes/ directory, so it can't silently go stale.
 ROUTE_MODULES = [
-    'actions', 'agent_workspaces', 'activity', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
+    'actions', 'agent_workspaces', 'activity', 'ai_history_import', 'first_synthesis', 'arbiter', 'artifacts', 'avatar', 'codebases', 'publish', 'ambient',
     'browser', 'budget_policy', 'calendar', 'channels', 'chat', 'cloud_voice_routes', 'code', 'compute',
     'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_memory', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'doctor', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
-    'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'inbox_cleanup', 'insights',
+    'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'import_staging', 'inbox_cleanup', 'insights',
     'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'privacy_map', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
@@ -533,11 +554,52 @@ if not _TESTING:
               "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
               "Leave it there or with `friday safe-mode off`, then restart."
               % _safe.state().get("why"))
+
+
+    # Plaintext .env / secrets.yaml an older release left beside the app: their
+    # keys go into the credential store, the file is kept encrypted, the
+    # plaintext is removed (services/legacy_key_files). Before the load below, so
+    # an imported key is live on this boot. Never raises.
+    try:
+        from agent_friday.services.legacy_key_files import migrate as _migrate_legacy_keys
+        _migrate_legacy_keys()
+    except Exception:
+        pass
+    # Provider keys in start.bat / launch_now.bat / friday_startup.bat go into the
+    # credential store; the lines are blanked in place (services/launch_script_keys).
+    try:
+        from agent_friday.services.launch_script_keys import migrate as _migrate_launch_keys
+        _migrate_launch_keys()
+    except Exception:
+        pass
+    # Windows: Low-integrity processes (the code sandbox, read-only commands) are
+    # kept out of Friday's state folder by a mandatory label; her output folders in
+    # it stay readable (services/code_sandbox.fence_from_low). In the background:
+    # labelling walks the folder. A failure is logged; the command rules still hold.
+    def _fence_state_folder():
+        try:
+            from agent_friday.services import code_sandbox as _sbx
+            from agent_friday.services import path_policy as _pp
+            _state = _Path(FRIDAY_DIR)
+            _open = [d for d in _pp.output_dirs() if _pp._within(d, _state.resolve(strict=False))]
+            if _sbx.fence_from_low(_state, _open):
+                print("  [sandbox] Friday's state folder is closed to Low-integrity processes")
+        except Exception as _fe:
+            print(f"  [sandbox] could not label Friday's state folder: {_fe}")
+    threading.Thread(target=_fence_state_folder, name="fence-state", daemon=True).start()
+
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
         from agent_friday.services.credential_store import bootstrap_provider_env_detail
         _pk_detail = bootstrap_provider_env_detail()
+        # Constants core computed at import (GEMINI_API_KEY) take a key that
+        # moved out of start.bat and is now in the store.
+        try:
+            from agent_friday.services.launch_script_keys import refresh_core_constants
+            refresh_core_constants()
+        except Exception:
+            pass
         # Gate on candidates existing at all, not on the count that
         # succeeded: printing only a nonzero success count means a run where
         # every stored key fails to decrypt prints NOTHING, the least visible

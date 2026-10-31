@@ -18,6 +18,7 @@ import pathlib
 import re
 import shutil
 import socketserver
+import os
 import subprocess
 import threading
 
@@ -110,7 +111,13 @@ def probe():
     text = _read("index.html")
     script = "".join(_block(text, n) for n in ("fridayLandingJudge", "fridayTrayKeys", "fridaySnap",
                                                "fridayShortcuts")) + _PROBE
-    out = subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    # From a file, not "-e": the script is longer than a Windows command line may be (32,767 characters).
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        js = os.path.join(d, "probe.js")
+        with open(js, "w", encoding="utf-8") as fh:
+            fh.write(script)
+        out = subprocess.run([node, js], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
@@ -198,6 +205,7 @@ CENSUS = [
     (r"fridayLandingInput\(", None),           # the landing judge noting that a key was pressed
     (r"fridaySceneKey\(e\)", None),            # keeps the scene's arrows from it while a workspace is open
     (r"localAiMarkActive\(\)", None),          # typing counts as activity for the Local AI queue's idle gate; acts on no key
+    (r"closest\('\[role=\"radio\"\]'\)", None),  # arrows inside a focused radio group: the control's own keys (WAI-ARIA), not a shortcut
 ]
 
 

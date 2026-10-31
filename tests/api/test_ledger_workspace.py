@@ -122,7 +122,8 @@ def test_archived_entries_are_searchable_from_the_workspace(client):
     d = client.get("/api/ledger?tool=probe_archived&archive=1").get_json()
     assert len(d["entries"]) == 3 and d["archive_searched"] is True
     assert all(e["verified"] for e in d["entries"])
-    assert d["ledger"]["archived_records"] == 3 and d["ledger"]["ok"] is True
+    # the three decisions and the policy version they were made under (BD-11a)
+    assert d["ledger"]["archived_records"] == 4 and d["ledger"]["ok"] is True
 
 
 def test_settings_shows_the_retention_row_in_both_ui_files():

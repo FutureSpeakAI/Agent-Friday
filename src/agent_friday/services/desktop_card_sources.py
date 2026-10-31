@@ -90,7 +90,7 @@ def _tasks(now):
         ended = _number(row.get("ended"))
         records.append(_record(task_id, row.get("name") or "Task", body,
             updated=ended or seen or row.get("started") or row.get("created"),
-            priority=90 if status in {"failed", "stalled", "interrupted"} else 80,
+            priority=90 if status in {"failed", "stalled", "interrupted", "outcome_unknown"} else 80,
             expires=ended + 86400 if ended else None, state=status))
     return records, max((row["updated_at"] or 0 for row in records), default=None), "Reported task state from Friday's local registry; this is not an independent heartbeat check."
 
@@ -357,7 +357,9 @@ def automatic(observations, now):
             rows = [r for r in rows if (r.get("expires_at") or 0) > now and r.get("starts_at", now) <= now + 86400]
             rows.sort(key=lambda r: r.get("starts_at", now))
         elif kind == "task":
-            rows = [r for r in rows if r.get("state") in {"running", "queued", "failed", "stalled", "interrupted"}]
+            # outcome_unknown: ended, and the owner has to check whether its approved action happened
+            rows = [r for r in rows if r.get("state") in {"running", "queued", "failed", "stalled", "interrupted",
+                                                          "outcome_unknown"}]
             rows.sort(key=lambda r: (-r["priority"], -(r["updated_at"] or 0), r["id"]))
         elif kind == "schedule":
             rows = [r for r in rows if r.get("enabled") and (r.get("state") in {"failed", "error", "waiting", "missed"}
@@ -367,7 +369,7 @@ def automatic(observations, now):
             rows = [r for r in rows if r.get("available") and r.get("state") in {"failed", "error"}]
         elif kind == "goal":
             rows = [r for r in rows if r.get("state") in {"interrupted", "needs_owner", "waiting",
-                                                          "at_risk", "running", "active"}
+                                                          "at_risk", "running", "active", "outcome_unknown"}
                     and r.get("notify", True)]
             rows.sort(key=lambda r: (-r["priority"], -(r["updated_at"] or 0), r["id"]))
         elif kind == "project":

@@ -40,7 +40,7 @@ import threading
 import time
 import uuid
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -218,6 +218,12 @@ SELF_GATED = frozenset({"draft_email", "call_by_phone", "sign_pdf",
 #: back through this checkpoint one by one).
 LIBRARY_SCREEN_ACTIONS = frozenset({"library_add", "library_remove", "library_forget", "library_shelf",
                                     "library_reindex", "library_tracked", "library_draft_review"})
+#: Answers to imported items in staging (services/import_staging): internal only as the owner's
+#: verified click on Friday's page.
+IMPORT_SCREEN_ACTIONS = frozenset({"import_review"})
+#: The owner's marks on "What I see so far" (services/first_synthesis); "remember this" writes the
+#: memory card, so only the owner's verified click on Friday's page counts.
+SYNTHESIS_SCREEN_ACTIONS = frozenset({"synthesis_mark"})
 
 INTERNAL_TOOLS = frozenset({
     # Reads the machine and the model catalogue; downloads nothing and
@@ -603,6 +609,12 @@ def classify_command(cmd: str) -> tuple:
     c = _literal_search_patterns(c)
     if _SELF_API.search(c):
         return "forbidden", "it addresses Friday's own local API"
+    # The file tools' policy, for commands too (services/path_policy, BD-26): no
+    # command, approved or not, reaches Friday's own state, a store of sign-ins,
+    # or a file a shell runs at start-up.
+    zone = _command_forbidden_reason(c)
+    if zone:
+        return "forbidden", zone
     if _DANGEROUS.search(c):
         return OUTWARD, "it chains, redirects, changes or reaches outside"
     if _GROUPING.search(c):
@@ -619,7 +631,187 @@ def classify_command(cmd: str) -> tuple:
             return OUTWARD, f"'{words[0]}' is not on the read-only list"
         if head == "git" and (len(words) < 2 or words[1].lower() not in _GIT_READ):
             return OUTWARD, "a git command that is not read-only"
+    reach = _command_reach_reason(c)
+    if reach:
+        return OUTWARD, reach
     return INTERNAL, "read-only"
+
+
+def _command_path_tokens(cmd: str):
+    """(token, expanded text) for every word of a command that names a path by
+    absolute, home-relative or environment spelling. '..' relatives are left to
+    _command_reach_reason."""
+    import os as _os
+    import re as _re
+    try:
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return
+    for raw in _re.split(r"[\s,;()]+", cmd or ""):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        if not (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
+                or low.startswith(("$env:", "$home", "$pshome", "$profile"))):
+            continue
+        if drive and _os.name != "nt":
+            continue
+        yield tok, _expand_path_text(tok)
+
+
+#: Segment names that are a store of sign-ins or history wherever they appear
+#: (services/path_policy._SIGN_IN_STORES, first segments).
+_SIGN_IN_NAMES = (".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker", ".claude", ".codex",
+                  ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".m2", ".terraform.d",
+                  ".bash_history", ".zsh_history", ".python_history", ".node_repl_history",
+                  ".psql_history", ".mysql_history", ".lesshst", ".viminfo")
+#: Start-up files a command that may write may not name (path_policy._AUTORUN dot-files).
+_AUTORUN_NAMES = (".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv",
+                  ".gitconfig", ".gitattributes", ".inputrc", ".wgetrc", ".curlrc")
+#: Friday's own output folders inside her state folder (core.DAILY_CREATIONS_DIR,
+#: office_engine.DOCUMENTS_DIR).
+_STATE_OUTPUT_SUBDIRS = ("creations", "documents", "friday-creations")
+#: Spellings of the home folder that may come right before a sign-in or start-up name.
+_HOME_MARKERS = ("~", "$home", "$env:userprofile", "${env:userprofile}", "%userprofile%",
+                 "$env:home", "${env:home}", "%homepath%")
+
+
+def _named_zone(cmd: str, state_name: str, op: str, home_name: str = "") -> str:
+    import fnmatch as _fn
+    import re as _re
+    segs = _re.findall(r"[^\\/\s'\"`,;()|={}<>]+", (cmd or "").casefold())
+    state = (state_name or ".friday").casefold()
+    homes = set(_HOME_MARKERS) | ({home_name.casefold()} if home_name else set())
+
+    def clean(seg: str) -> str:
+        return seg.split("::")[-1].split(":")[-1] if ":" in seg and not seg.startswith("$") else seg
+
+    def state_hit(seg: str) -> bool:
+        if seg == state:
+            return True
+        # A wildcard aimed at the state folder's own name ('.fri*', '.f?iday'): at
+        # least three literal characters, all of them a prefix-compatible pattern.
+        literal = sum(1 for ch in seg if ch not in "*?[]")
+        return (state.startswith(".") and seg.startswith(".") and literal >= 3
+                and any(ch in seg for ch in "*?[") and _fn.fnmatchcase(state, seg))
+
+    for i, raw in enumerate(segs):
+        seg = clean(raw)
+        if not seg:
+            continue
+        # Friday's state folder by name, in any spelling (only a dot-named one: a
+        # bare word like 'friday' is too common to refuse on).
+        if state.startswith(".") and state_hit(seg):
+            nxt = segs[i + 1] if i + 1 < len(segs) else ""
+            if nxt in _STATE_OUTPUT_SUBDIRS:
+                continue
+            return "it reaches Friday's own state folder"
+        # Sign-in stores and start-up files only where they ARE those: right under
+        # the home folder (a project's own .claude/ or .gitattributes is not).
+        prev = clean(segs[i - 1]) if i else ""
+        if prev in homes or raw in homes:
+            if seg in _SIGN_IN_NAMES:
+                return "it reaches a store of sign-ins or history"
+            if op == "write" and seg in _AUTORUN_NAMES:
+                return "it reaches a file run or obeyed at start-up"
+    return ""
+
+
+def _command_forbidden_reason(cmd: str) -> str:
+    """Why a command may not run even with the owner's approval, or "": it names (by
+    segment, in any spelling) Friday's own state folder, a store of sign-ins or history,
+    or, for a command that may write, a file a shell runs at start-up. Text matching:
+    for an APPROVED command (owner integrity) this is the protection; a read-only command
+    also runs at Low integrity, which Windows keeps out of Friday's state folder
+    (code_sandbox.fence_from_low)."""
+    try:
+        from agent_friday.services import path_policy as _pp
+    except Exception:
+        return ""
+    import os as _os
+    from pathlib import Path as _P
+    import agent_friday.core as _core
+    state = _P(_core.FRIDAY_DIR).resolve(strict=False)
+    outs = _pp.output_dirs()
+    # Start-up files are refused to commands that may write; a read-only command
+    # (every stage on the read-only list, nothing chained or redirected) may still
+    # read .gitconfig.
+    heads = [s.strip().split()[0].lower() for s in (cmd or "").split("|") if s.strip()]
+    op = ("read" if heads and all(h in READ_ONLY_COMMANDS for h in heads)
+          and not _DANGEROUS.search(cmd or "") else "write")
+    # By NAME first, whatever the spelling around it: a path segment that is (or a
+    # wildcard that matches) Friday's state folder or a sign-in store refuses. Path
+    # parsing alone misses -Path:x, ${env:..}, FileSystem::, a relative 'cd ~; gc
+    # .friday\x', Join-Path pieces. Matching too much only refuses more; Friday's
+    # own output folders inside the state folder stay allowed.
+    named = _named_zone(cmd, state.name, op, _P(_core.HOME).name)
+    if named:
+        return named
+    for _tok, expanded in _command_path_tokens(cmd):
+        why = _pp._text_reason(expanded)
+        if why:
+            continue                       # judged (and carded) by _command_reach_reason
+        try:
+            # Text only (normalised, not resolved): no filesystem access for a
+            # model-supplied path; a link is caught by the Low fence, not here.
+            p = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
+        except Exception:
+            continue
+        if any(_pp._within(p, d) for d in outs):
+            continue
+        if _pp._within_folded(p, state):
+            return "it reaches Friday's own state folder"
+        zone = _pp.off_limits_reason(p, op) or ""
+        if ("sign-ins" in zone or "start-up" in zone) and _pp._grant_for(p, op) is None:
+            return zone.replace("it is inside", "it reaches", 1)
+    return ""
+
+
+def _command_reach_reason(cmd: str) -> str:
+    """A read-only command still READS: every path it names is judged by the same
+    policy as read_file (services/path_policy, BD-26). A path outside the folders
+    Friday may use, or a walk up with '..', makes the command outward (a card)."""
+    import re as _re
+    try:
+        from agent_friday.services import path_policy as _pp
+        from agent_friday.services.credential_paths import _expand_path_text
+    except Exception:
+        return ""
+    import os as _os
+    from pathlib import Path as _P
+    for raw in _re.split(r"[\s,;()]+", cmd):
+        tok = raw.strip().strip("'\"`")
+        if not tok or tok.startswith("-"):
+            continue
+        low = tok.lower()
+        drive = bool(_re.match(r"^[a-z]:[\\/]", low))
+        # On Windows a leading "/" is a switch (dir /s), elsewhere an absolute path.
+        posix_abs = tok.startswith("/") and not tok.startswith("//") and _os.name != "nt"
+        looks = (drive or posix_abs or tok.startswith(("~", "\\\\", "//", "%"))
+                 or low.startswith(("$env:", "$home", "$pshome", "$profile")) or ".." in tok)
+        if not looks:
+            continue
+        if ".." in tok and not _re.match(r"^[a-z]:[\\/]|^[~\\/%$]", low):
+            return "it walks up out of its working folder with '..'"
+        if drive and _os.name != "nt":
+            continue        # a drive path names nothing on this machine
+        expanded = _expand_path_text(tok)
+        p, why = _pp.judge(expanded, "read")
+        if p is None:
+            # A folder ABOVE the home (C:\Users, C:\) shows names only to a
+            # listing; it holds no content of its own to read.
+            try:
+                # Text only (no filesystem access): normalised, not resolved.
+                q = _P(_os.path.normpath(_os.path.abspath(_os.path.expanduser(expanded))))
+                if _pp._within_folded(_pp._home(), q):
+                    continue
+            except Exception:
+                pass
+            return f"it reads a place Friday's file tools may not ({why})"
+    return ""
 
 
 def _resolve(path) -> Optional[Path]:
@@ -874,6 +1066,16 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
         if (ctx or {}).get("screen_click") is True:
             return INTERNAL, "the owner's own change, made on the Library page"
         return OUTWARD, "a change to the Library that did not come from the Library page"
+    if tool_name in IMPORT_SCREEN_ACTIONS:
+        # The owner's answer to an imported item (services/import_staging): accepting one is
+        # what makes it durable, so only a verified click on Friday's page counts.
+        if (ctx or {}).get("screen_click") is True:
+            return INTERNAL, "the owner's own answer to an imported item, made on Friday's page"
+        return OUTWARD, "an answer to an imported item that did not come from Friday's page"
+    if tool_name in SYNTHESIS_SCREEN_ACTIONS:
+        if (ctx or {}).get("screen_click") is True:
+            return INTERNAL, "the owner's own mark on what Friday sees so far, made on Friday's page"
+        return OUTWARD, "a mark on what Friday sees so far that did not come from Friday's page"
     if tool_name in OUTWARD_TOOLS:
         return OUTWARD, "it acts outside this conversation"
     if tool_name in INTERNAL_TOOLS:
@@ -1037,11 +1239,161 @@ def _grants_file() -> Path:
     return _gov_dir() / "grants.json"
 
 
-def _read_grants() -> list:
+def _read_raw_grants() -> list:
     try:
-        return json.loads(_grants_file().read_text(encoding="utf-8"))
+        data = json.loads(_grants_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+# A grant is signed with the governance key, and its uses and its revocation are
+# entries in the action ledger (services/action_ledger: append-only, chained,
+# anchored outside the data folder). grants.json is only a list for display: a
+# grant written into it by hand, or an older copy put back (to get spent uses or a
+# revoked grant back), is not honoured. NS-34.5-5 / NS-34.5-6.
+_GRANT_SIGNED = ("grant_id", "tools", "scope", "expires_at", "max_uses", "created_by",
+                 "note", "created_at")
+_GRANTS_MARK = "grants.signed-v1"
+
+
+def _grant_sig(g: dict, key: Optional[bytes] = None) -> str:
+    body = json.dumps({k: g.get(k) for k in _GRANT_SIGNED}, sort_keys=True, default=str)
+    return _hmac.new(key or _governance_key(), b"agent-friday/grant/v1\0" + body.encode("utf-8"),
+                     hashlib.sha256).hexdigest()
+
+
+def _grant_signed(g: dict, key: Optional[bytes] = None) -> bool:
+    # One operation reads the governance key once and passes it here: each read
+    # is a call into the OS keychain, and a list of grants must not be N of them.
+    try:
+        return isinstance(g, dict) and bool(g.get("sig")) and _hmac.compare_digest(
+            str(g.get("sig")), _grant_sig(g, key))
+    except Exception:
+        return False
+
+
+def _write_grants(gs: list) -> None:
+    """grants.json, replaced whole (a crash never leaves half a list)."""
+    f = _grants_file()
+    tmp = f.with_name(f.name + ".tmp")
+    tmp.write_text(json.dumps(gs, indent=1), encoding="utf-8")
+    import os as _os
+    _os.replace(tmp, f)
+
+
+#: A grant made before signing keeps working at most this much longer.
+_MIGRATED_MAX_SECONDS = 7 * 24 * 3600
+#: This process has seen the ledger's record of the one-time signing.
+_MIGRATION_SEEN = False
+
+
+def _migrate_grants_locked(gs: list) -> list:
+    """Grants written before signing (no `sig`) are signed ONCE, the first time this
+    version reads them. That one time is a durable entry in the action ledger, not
+    a file: deleting the marker file does not sign a hand-written grant later. A
+    signed-at-migration grant keeps its uses and expires within a week at most. When
+    the ledger cannot be read or written, nothing is signed (fail closed)."""
+    global _MIGRATION_SEEN
+    if _MIGRATION_SEEN:
+        return gs
+    from agent_friday.services import action_ledger
+    try:
+        done = action_ledger.entries(["grants_migrated"], newest_first=False, strict=True,
+                                     archive=True)
+    except Exception:
+        return gs
+    if done:
+        _MIGRATION_SEEN = True
+        return gs
+    # The first read on this version records the one-time signing even when there is
+    # nothing to sign (a fresh install): from then on nothing unsigned is ever signed.
+    now = time.time()
+    signed = []
+    key = None
+    for g in gs:
+        if isinstance(g, dict) and not g.get("sig") and isinstance(g.get("created_at"), (int, float)) \
+                and g["created_at"] <= now:
+            g.setdefault("max_uses", int(g.get("uses_left") or 0))
+            g["expires_at"] = min(float(g.get("expires_at") or 0), now + _MIGRATED_MAX_SECONDS)
+            try:
+                key = key or _governance_key()
+                g["sig"] = _grant_sig(g, key)
+            except Exception:
+                return gs                # no key: nothing signed
+            signed.append(str(g.get("grant_id")))
+    try:
+        action_ledger.append("grants_migrated", {"signed": signed[:500]}, durable=True)
+    except Exception:
+        for g in gs:
+            if str(g.get("grant_id")) in signed:
+                g.pop("sig", None)
+        return gs
+    _MIGRATION_SEEN = True
+    if signed:
+        _write_grants(gs)
+    try:
+        (_gov_dir() / _GRANTS_MARK).write_text(
+            "grants are signed; uses and revocations are in the action ledger\n", encoding="utf-8")
+    except OSError:
+        pass
+    return gs
+
+
+def _grant_events() -> dict:
+    """{grant_id: [uses recorded, revoked?]} from the action ledger, in one read.
+    Raises when the ledger cannot be read, has a break, or a matching line's signature
+    does not hold (a strict read, archive included): no grant is then used."""
+    from agent_friday.services import action_ledger
+    out: dict = {}
+    for e in action_ledger.entries(["grant_use", "grant_revoke", "grant_revoke_all"],
+                                   newest_first=False, strict=True, archive=True):
+        if e.get("kind") == "grant_revoke_all":
+            # Every grant made before this moment is revoked, wherever it is listed.
+            at = float((e.get("rec") or {}).get("at") or e.get("t") or 0)
+            out["*revoked_all_at"] = max(float(out.get("*revoked_all_at") or 0), at)
+            continue
+        gid = str((e.get("rec") or {}).get("grant") or "")
+        if not gid:
+            continue
+        slot = out.setdefault(gid, [0, False])
+        if e.get("kind") == "grant_use":
+            slot[0] += 1
+        else:
+            slot[1] = True
+    return out
+
+
+def _live_view(g: dict, events: Optional[dict] = None,
+               key: Optional[bytes] = None) -> Optional[dict]:
+    """The grant as it stands (uses left counted from the ledger), or None when it
+    is unsigned, revoked, expired or used up."""
+    if not _grant_signed(g, key) or g.get("expires_at", 0) <= time.time():
+        return None
+    try:
+        events = events if events is not None else _grant_events()
+        ev = events.get(str(g.get("grant_id")), [0, False])
+        uses, revoked = int(ev[0]), bool(ev[1])
+        if float(g.get("created_at") or 0) <= float(events.get("*revoked_all_at") or 0):
+            revoked = True
+    except Exception:
+        return None
+    left = int(g.get("max_uses") or 0) - uses
+    if revoked or left <= 0:
+        return None
+    return dict(g, uses_left=left)
+
+
+def _read_grants(key: Optional[bytes] = None) -> list:
+    """Every signed grant in the file (expired or not); see _live_view for use.
+    No governance key: no grant is signed, so the list is empty."""
+    with _LOCK:
+        gs = _migrate_grants_locked(_read_raw_grants())
+    try:
+        key = key or _governance_key()
+    except Exception:
+        return []
+    return [g for g in gs if _grant_signed(g, key)]
 
 
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
@@ -1057,25 +1409,95 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
         raise ValueError("a grant needs tools, a scope, a positive expiry and uses")
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
          "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
-         "uses_left": int(max_uses), "created_by": created_by, "note": note[:200],
-         "created_at": time.time()}
+         "max_uses": int(max_uses), "uses_left": int(max_uses), "created_by": created_by,
+         "note": note[:200], "created_at": time.time(),
+         # the governing policy version it was issued under (NS-30.19-1)
+         "policy_version": _policy_version_id()}
+    key = _governance_key()
+    g["sig"] = _grant_sig(g, key)
     with _LOCK:
-        gs = [x for x in _read_grants() if x.get("expires_at", 0) > time.time()]
+        gs = [x for x in _read_grants(key) if x.get("expires_at", 0) > time.time()]
         gs.append(g)
-        _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
-    return g
+        _write_grants(gs)
+    _grant_event("grant.created", g["grant_id"], tools=g["tools"], scope=g["scope"],
+                 expires_at=round(g["expires_at"]), max_uses=g["max_uses"])
+    return dict(g)
+
+
+def revoke_all_grants() -> list:
+    """Revoke every grant: one durable ledger entry that ends every grant made until
+    now (so one taken off the list beforehand and put back afterwards is dead too),
+    then each grant in the list. Returns the ids taken off the list."""
+    from agent_friday.services import action_ledger
+    with _LOCK:
+        action_ledger.append("grant_revoke_all", {"at": time.time()}, durable=True)
+        ids = all_grant_ids()
+        # Each listed grant by id as well: a grant whose created_at is later than the
+        # moment above (a clock that ran fast when it was made) is still revoked.
+        for gid in ids:
+            action_ledger.append("grant_revoke", {"grant": gid}, durable=True)
+        _write_grants([])
+    for gid in ids:
+        _grant_event("grant.revoked", gid)
+    return ids
+
+
+def all_grant_ids() -> list:
+    """Every grant id in the file, signed or not, live or not: what a revoke-all must
+    take back (list_grants shows only the live ones)."""
+    return [str(g.get("grant_id")) for g in _read_raw_grants()
+            if isinstance(g, dict) and g.get("grant_id")]
+
+
+def _grant_event(kind: str, grant_id: str, **payload) -> None:
+    """NS-31.7-1: a grant made or taken back is in the canonical event log (ids, tool names and
+    limits; never a note's words). Never raises."""
+    try:
+        from agent_friday.services import events
+        events.record_critical(kind, source="action_gate", payload=payload,
+                               related_ids={"grant": grant_id})
+    except Exception:
+        pass
 
 
 def list_grants() -> list:
-    return [g for g in _read_grants() if g.get("expires_at", 0) > time.time()]
+    """Live grants: signed, in time, not revoked, uses left (counted from the ledger)."""
+    out = []
+    try:
+        key = _governance_key()
+    except Exception:
+        return out
+    gs = _read_grants(key)
+    if not gs:
+        return out
+    try:
+        events = _grant_events()
+    except Exception:
+        return out
+    for g in gs:
+        v = _live_view(g, events, key)
+        if v is not None:
+            out.append(v)
+    return out
 
 
 def revoke_grant(grant_id: str) -> bool:
+    """Revoke a grant: a durable entry in the action ledger first (so an older copy
+    of grants.json cannot bring it back), then off the list."""
+    if not re.fullmatch(r"grant_[0-9a-zA-Z_-]{1,64}", str(grant_id or "")):
+        return False
     with _LOCK:
-        gs = _read_grants()
-        keep = [g for g in gs if g.get("grant_id") != grant_id]
-        _grants_file().write_text(json.dumps(keep, indent=1), encoding="utf-8")
-    return len(keep) != len(gs)
+        gs = _read_raw_grants()
+        found = any(isinstance(g, dict) and g.get("grant_id") == grant_id for g in gs)
+        # Recorded even when the list no longer shows it: a copy of the list put back
+        # later cannot bring it back.
+        from agent_friday.services import action_ledger
+        action_ledger.append("grant_revoke", {"grant": str(grant_id)}, durable=True)
+        keep = [g for g in gs if not (isinstance(g, dict) and g.get("grant_id") == grant_id)]
+        _write_grants(keep)
+    if found:
+        _grant_event("grant.revoked", grant_id)
+    return found
 
 
 def _scopes(ctx: dict) -> set:
@@ -1084,8 +1506,10 @@ def _scopes(ctx: dict) -> set:
 
 
 def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
-    """Spend one use of a scoped grant for an executor that is not a tool
-    call (a Claude Code launch, a codebase task). None when nothing is live."""
+    """Spend one use of a scoped grant for an executor that is not a tool call (a
+    Claude Code launch, a codebase task: scope "codebase:<id>"). None when no grant
+    covers the tool, has uses left, or is still in time. (One definition: an older
+    second copy of this function was removed.)"""
     if not tool_name or not scope:
         return None
     return _use_grant(tool_name, {"grant_scope": str(scope)})
@@ -1095,25 +1519,58 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
     scopes = _scopes(ctx)
     if not scopes:
         return None
+    # The same hold authorize() applies, for every caller (consume_grant, local
+    # context, authorize): while the action ledger has a break, authority is revoked
+    # or everything is stopped, no grant is spent.
+    try:
+        if outward_hold():
+            return None
+    except Exception:
+        return None
+    try:
+        key = _governance_key()
+    except Exception:
+        return None
     with _LOCK:
-        gs = _read_grants()
-        now = time.time()
+        gs = [g for g in _read_grants(key)
+              if g.get("scope") in scopes and tool_name in (g.get("tools") or [])]
+        if not gs:
+            return None
+        try:
+            events = _grant_events()
+        except Exception:
+            return None
         for g in gs:
-            if (g.get("scope") in scopes and tool_name in (g.get("tools") or [])
-                    and g.get("expires_at", 0) > now and int(g.get("uses_left") or 0) > 0):
-                g["uses_left"] = int(g["uses_left"]) - 1
-                _grants_file().write_text(json.dumps(gs, indent=1), encoding="utf-8")
-                return dict(g)
+            live = _live_view(g, events, key)
+            if live is None:
+                continue
+            # The use is a durable ledger entry BEFORE anything runs: no entry, no use.
+            try:
+                from agent_friday.services import action_ledger
+                action_ledger.append("grant_use", {"grant": str(g.get("grant_id")),
+                                                   "tool": str(tool_name)[:80],
+                                                   "scope": str(g.get("scope"))[:120]},
+                                     durable=True)
+            except Exception:
+                return None
+            live["uses_left"] = int(live["uses_left"]) - 1
+            # the policy version this use was made under (NS-30.19-1); the
+            # decision receipt that names the grant carries it too
+            live["last_used_policy_version"] = _policy_version_id()
+            # The file's count and version are records only: the ledger holds the count.
+            try:
+                raw = _read_raw_grants()
+                for x in raw:
+                    if isinstance(x, dict) and x.get("grant_id") == g.get("grant_id"):
+                        x["uses_left"] = live["uses_left"]
+                        x["last_used_policy_version"] = live["last_used_policy_version"]
+                _write_grants(raw)
+            except OSError:
+                pass
+            return dict(live, used_policy_version=live["last_used_policy_version"])
     return None
 
 
-def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
-    """One use of a grant for `scope`, spent by a self-gated tool that checks
-    its own grant (a codebase task: scope "codebase:<id>"). None when no grant
-    covers the tool, has uses left, or is still in time."""
-    if not tool_name or not scope:
-        return None
-    return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
 # ── 4. Receipts ─────────────────────────────────────────────────────────────
@@ -1123,16 +1580,216 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
 #: target, or hash of the arguments (a hash of a short message can be guessed).
 _OFF_RECORD_RECEIPT_KEYS = ("tool", "class", "decision", "surface", "approval",
                             "grant", "task_id", "tainted", "chosen_by",
-                            "plan_version")
+                            "plan_version", "action_id", "policy_version", "envelope",
+                            "outcome")
 
 
-def _receipt(entry: dict) -> dict:
+def _policy_version_id() -> Optional[str]:
+    """The governing policy version now (services/policy_version). Records
+    only: nothing here reads it to decide. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        return _pv.current_id()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@dataclass(frozen=True)
+class ActionEnvelope:
+    """The single action envelope (NS-36.3-1, BD-11a): built once per decision
+    on the gate path (`authorize`; `_receipt` builds it for any other decision
+    receipt) and carried to the receipts. Ids, labels and hashes only.
+
+    action_id          ``act_`` + 20 hex: the action every receipt names
+    principal          who the action is for (action_ledger.PRINCIPAL)
+    tool               the tool or executor action
+    args_hash          SHA-256 of the canonical arguments (None when there are none)
+    idempotency_key    ``idk_`` + 24 hex: the same request (same tool, arguments
+                       and turn or task) gets the same key; a caller-supplied
+                       ``idempotency_key`` in the session context is hashed in
+                       instead. Never the arguments themselves.
+    verification_plan  what checks the decision and what record it must leave
+    policy_version     the governing policy version (services/policy_version)
+    claws_state        {"hash", "status"}: the cLaws as this action found them
+    created_at         unix seconds
+    """
+    action_id: str
+    principal: str
+    tool: str
+    args_hash: Optional[str]
+    idempotency_key: Optional[str]
+    verification_plan: dict
+    policy_version: Optional[str]
+    claws_state: dict
+    created_at: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+ENVELOPE_FIELDS = tuple(f.name for f in fields(ActionEnvelope))
+
+
+def _verification_plan(klass, decision, via=None) -> dict:
+    """Labels: the checks the decision passes and the record it must leave."""
+    checks = ["signed_receipt"]
+    if klass == OUTWARD:
+        checks += ["claws_pin", "outward_hold"]
+    if decision == "card":
+        checks.append("approval_card")
+    elif decision == "confirm":
+        checks.append("chat_confirmation")
+    expects = klass in (OUTWARD, OBSERVE) and decision not in ("deny", None)
+    return {"checks": checks, "outcome": "outcome_receipt" if expects else "none",
+            "via": str(via)[:40] if via else None}
+
+
+def _idempotency_key(tool, args_hash, ctx, principal) -> Optional[str]:
+    c = ctx if isinstance(ctx, dict) else {}
+    supplied = str(c.get("idempotency_key") or "").strip()
+    if supplied:
+        basis = "client|%s|%s" % (principal, supplied)
+    elif args_hash:
+        scope = next((str(c[k]) for k in ("turn_id", "task_id", "run_id", "schedule_id",
+                                          "session_id") if c.get(k)), "") or (_turn_id() or "")
+        basis = "derived|%s|%s|%s|%s" % (principal, tool, args_hash, scope)
+    else:
+        return None
+    return "idk_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
+
+
+def _current_pv() -> Optional[dict]:
+    """The governing policy version now ({"id", "parts"}), or None when the
+    module cannot be used. Read once per decision and passed along. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        v = _pv.current()
+        return v if isinstance(v, dict) and v.get("id") else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _given_pv(pv: Any) -> Optional[dict]:
+    return pv if isinstance(pv, dict) and pv.get("id") else None
+
+
+#: The policy version `authorize` read for the decision it is recording, so
+#: `_receipt` does not read it again (set only around that one call).
+_DECISION_PV: ContextVar = ContextVar("friday_decision_policy_version", default=None)
+
+
+def build_envelope(tool, *, args_hash: Optional[str] = None, ctx: Optional[dict] = None,
+                   klass=None, decision=None, via=None, action_id: Optional[str] = None,
+                   key: Optional[bytes] = None, pv: Optional[dict] = None) -> ActionEnvelope:
+    """The envelope for one action; records only. `pv`: the policy version
+    the caller already read (else it is read here)."""
+    from agent_friday.services import policy_version as _pv
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    pvd = _given_pv(pv) or _current_pv()
+    principal = str((ctx or {}).get("principal") or _principal)[:40]
+    aid = action_id if _pv.valid_action_id(action_id) else _pv.new_action_id()
+    tool = str(tool or "")[:120]
+    return ActionEnvelope(
+        action_id=aid, principal=principal, tool=tool,
+        args_hash=str(args_hash) if args_hash else None,
+        idempotency_key=_idempotency_key(tool, args_hash, ctx, principal),
+        verification_plan=_verification_plan(klass, decision, via),
+        policy_version=(pvd or {}).get("id"), claws_state=_pv.claws_state(key, pv=pvd),
+        created_at=time.time())
+
+
+def _envelope_of(entry: dict, key: Optional[bytes], pv: Optional[dict] = None) -> dict:
+    """The envelope a receipt carries: the one the gate built (`authorize`
+    puts it in the entry), else one built now, with the cLaws status read
+    under the signing key and the policy version as of this receipt (`pv`)."""
+    from agent_friday.services import policy_version as _pv
+    pvd = _given_pv(pv) or _current_pv()
+    env = entry.get("envelope") if isinstance(entry.get("envelope"), dict) else None
+    if env is None or not _pv.valid_action_id(env.get("action_id")):
+        env = build_envelope(entry.get("tool"), args_hash=entry.get("args_hash"),
+                             klass=entry.get("class"), decision=entry.get("decision"),
+                             via=entry.get("via"), action_id=entry.get("action_id"),
+                             key=key, pv=pvd).to_dict()
+    else:
+        env = {k: env.get(k) for k in ENVELOPE_FIELDS}
+        env["claws_state"] = _pv.claws_state(key, pv=pvd)
+    env["policy_version"] = (pvd or {}).get("id") or env.get("policy_version")
+    return env
+
+
+#: The policy version a receipt names when the version could not be read.
+PV_UNAVAILABLE = "pv_unavailable"
+_LOCAL_ACTION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{3,79}")
+
+
+def _fallback_envelope(entry: dict) -> dict:
+    """The envelope when the policy version module cannot be used: the
+    action id the entry already names (else a local ``act_`` id) and
+    PV_UNAVAILABLE. Still recorded; never holds a decision. Never raises."""
+    given = entry.get("envelope") if isinstance(entry.get("envelope"), dict) else {}
+    aid = next((a for a in (given.get("action_id"), entry.get("action_id"))
+                if isinstance(a, str) and _LOCAL_ACTION_ID.fullmatch(a)), None)
+    try:
+        plan = _verification_plan(entry.get("class"), entry.get("decision"), entry.get("via"))
+    except Exception:  # noqa: BLE001
+        plan = {"checks": ["signed_receipt"], "outcome": "none", "via": None}
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    idk = given.get("idempotency_key")
+    ah = entry.get("args_hash")
+    return {"action_id": aid or "act_" + uuid.uuid4().hex[:20],
+            "principal": str(given.get("principal") or _principal)[:40],
+            "tool": str(entry.get("tool") or "")[:120],
+            "args_hash": str(ah) if ah else None,
+            "idempotency_key": idk if isinstance(idk, str) else None,
+            "verification_plan": plan, "policy_version": PV_UNAVAILABLE,
+            "claws_state": {"hash": None, "status": "unavailable"},
+            "created_at": time.time()}
+
+
+def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
     """Sign and append; returns the ledger entry. Raises on failure, so the
-    caller can hold the action."""
+    caller can hold the action.
+
+    Every decision receipt carries its action envelope (`envelope`, and its
+    `action_id` and `policy_version` at the top), and the policy version it
+    names is on record in the ledger first (policy_version.ensure_recorded).
+    The ledger refuses a receipt without an action id.
+
+    `pv`: the policy version the caller already read for this decision
+    (`authorize` passes it through _DECISION_PV); else it is read once here.
+    The envelope never holds a decision: if it cannot be built, a fallback
+    with a local action id and PV_UNAVAILABLE is recorded instead."""
+    key = _governance_key()
+    pvd = _given_pv(pv) or _given_pv(_DECISION_PV.get()) or _current_pv()
+    try:
+        env = _envelope_of(entry, key, pvd)
+        if not (isinstance(env, dict) and isinstance(env.get("action_id"), str)):
+            raise ValueError("no action id")
+    except Exception as e:  # noqa: BLE001 - the envelope records; it never holds
+        _log.warning("action envelope fell back: %s", type(e).__name__)
+        env = _fallback_envelope(entry)
+    if not env.get("policy_version"):
+        env["policy_version"] = PV_UNAVAILABLE
+    entry = dict(entry, envelope=env, action_id=env["action_id"],
+                 policy_version=env["policy_version"])
+    if pvd is not None and env["policy_version"] == pvd["id"]:
+        try:
+            from agent_friday.services import policy_version as _pvm
+            _pvm.ensure_recorded(pvd)
+        except Exception:  # noqa: BLE001 - recording the version never holds a decision
+            pass
     try:
         from agent_friday.services import off_record as _off
         if _off.active():
             entry = {k: entry.get(k) for k in _OFF_RECORD_RECEIPT_KEYS if k in entry}
+            # no hash of the arguments off the record (a short message can be guessed)
+            entry["envelope"] = dict(env, args_hash=None, idempotency_key=None)
             entry["off_record"] = True
     except ImportError:
         pass
@@ -1146,7 +1803,7 @@ def _receipt(entry: dict) -> dict:
     except ImportError:
         pass
     canonical = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
-    entry["hmac"] = _hmac.new(_governance_key(), canonical, hashlib.sha256).hexdigest()
+    entry["hmac"] = _hmac.new(key, canonical, hashlib.sha256).hexdigest()
     # One store for what Friday did (services/action_ledger.py): the decision
     # is an entry in the hash-chained ledger, written to disk (fsync) before
     # the action runs. The entry keeps its own HMAC as well, so a decision can
@@ -1160,33 +1817,352 @@ def _receipt(entry: dict) -> dict:
 #: exact decision it carried out (north star §18.9, NS-34.17-7).
 LAST_RECEIPT: ContextVar = ContextVar("friday_last_decision_receipt", default=None)
 
-#: Outcome statuses an outcome entry may carry.
-OUTCOMES = ("ok", "error", "refused", "held")
+#: Statuses an outcome entry may carry: how the call ended, as its caller saw it.
+OUTCOME_STATUSES = ("ok", "error", "refused", "held")
+
+# ── The outcome vocabulary (NS-31.5-2, BD-11a) ──────────────────────────────
+#
+# One word for what became of an action, on every verdict, decision receipt
+# and outcome receipt. Labels only: no decision reads them.
+#
+#   executed            it runs (a verdict), or it ran (an outcome)
+#   approval_required   it waits for the owner's yes (a card or a chat question)
+#   denied              the owner said no, or the handler refused it
+#   forbidden           a rule or a hold stopped it (forbidden class, safe mode,
+#                       a revocation, a ledger break, a later check)
+#   waiting             a card for it is already open, or everything is stopped
+#   failed              it was tried and did not work, or the check itself failed
+#   completed_verified  it ran and the service confirmed it (an id came back)
+#   unconfirmed         nobody knows yet: the request that carried it out
+#                       answered, but its executor never said what became of it
+#                       (settle_request_externals), or a send the gateway could
+#                       not confirm. Not terminal: a later outcome may close it.
+
+EXECUTED = "executed"
+APPROVAL_REQUIRED = "approval_required"
+DENIED = "denied"
+FORBIDDEN = "forbidden"
+WAITING = "waiting"
+FAILED = "failed"
+COMPLETED_VERIFIED = "completed_verified"
+UNCONFIRMED = "unconfirmed"
+OUTCOMES = (EXECUTED, APPROVAL_REQUIRED, DENIED, FORBIDDEN, WAITING, FAILED, COMPLETED_VERIFIED,
+            UNCONFIRMED)
+#: After one of these nothing more happens to the action: its terminal receipt.
+TERMINAL_OUTCOMES = frozenset({EXECUTED, FAILED, COMPLETED_VERIFIED, DENIED, FORBIDDEN})
+#: An outcome entry's status as an outcome word.
+STATUS_OUTCOME = {"ok": EXECUTED, "error": FAILED, "refused": DENIED, "held": FORBIDDEN}
+#: A task's state (services/task_states.derive) as an outcome word.
+TASK_STATE_OUTCOME = {
+    "completed_verified": COMPLETED_VERIFIED, "completed_unverified": EXECUTED,
+    "failed": FAILED, "recovered_after_crash": FAILED, "cancelled": DENIED,
+    "waiting_for_approval": WAITING, "waiting_for_input": WAITING,
+    "waiting_for_external_event": WAITING,
+    "outcome_unknown": UNCONFIRMED,     # it may or may not have happened: never executed
+}
+
+
+def verdict_outcome(action: str, klass: str = "", reason: str = "") -> str:
+    """The outcome word for a checkpoint verdict (allow/confirm/card/deny)."""
+    if action == "allow":
+        return EXECUTED
+    if action in ("confirm", "card"):
+        return APPROVAL_REQUIRED
+    why = str(reason or "").strip().lower()
+    if klass == "forbidden" or why.startswith(("not allowed", "held")):
+        return FORBIDDEN
+    if why.startswith("declined"):
+        return DENIED
+    return FAILED                       # the check itself failed: nothing ran
+
+
+def outcome_of_status(status: str) -> str:
+    """An outcome entry's status (ok/error/refused/held), or a task status, as
+    an outcome word. Unknown words are `failed`, never `executed`."""
+    s = str(status or "").strip().lower()
+    if s in STATUS_OUTCOME:
+        return STATUS_OUTCOME[s]
+    if s in OUTCOMES:
+        return s
+    try:
+        from agent_friday.services import task_states
+        return TASK_STATE_OUTCOME.get(task_states.derive({"status": s}), FAILED)
+    except Exception:  # noqa: BLE001
+        return FAILED
 
 
 def record_outcome(tool: str, decision: Optional[dict], status: str, *,
                    approval: Optional[str] = None, duration_ms: Optional[float] = None,
-                   detail: str = "") -> None:
+                   detail: str = "", outcome: Optional[str] = None) -> None:
     """The terminal receipt of an outward or reading action: what happened
     after the decision (it ran: ok or error; the handler refused; a later
     check held it), linked to the decision's seq and hash. `detail` is a
-    fixed code, never free text, and is left out off the record. Never raises."""
+    fixed code, never free text, and is left out off the record. Never raises.
+
+    `outcome`: the outcome word (OUTCOMES), else the status's (STATUS_OUTCOME).
+    `completed_verified` stands only on a status of ok. A `decision` dict
+    passed in is marked closed (`_closed`), so it is not settled twice."""
     try:
+        st = status if status in OUTCOME_STATUSES else "error"
+        oc = outcome if outcome in OUTCOMES else STATUS_OUTCOME[st]
+        if oc in (EXECUTED, COMPLETED_VERIFIED) and st != "ok":
+            oc = STATUS_OUTCOME[st]
         from agent_friday.services import action_ledger
+        from agent_friday.services import policy_version as _pv
         try:
             from agent_friday.services import off_record as _off
             if _off.active():
                 detail = ""
         except Exception:
             pass
+        # The action this outcome belongs to: the one its decision names. An
+        # outcome with no decision to name (a call that ran on an approved
+        # card before the checkpoint) gets an action id of its own, marked so.
+        aid = (decision or {}).get("action_id")
+        minted = not _pv.valid_action_id(aid)
+        if minted:
+            aid = _pv.new_action_id()
         action_ledger.try_append("outcome", {
-            "tool": tool, "status": status if status in OUTCOMES else "error",
+            "action_id": aid,
+            **({"action_id_origin": "outcome"} if minted else {}),
+            "policy_version": _policy_version_id(),
+            "decision_policy_version": (decision or {}).get("policy_version"),
+            "tool": tool, "status": st, "outcome": oc, "terminal": oc in TERMINAL_OUTCOMES,
             "decision_seq": (decision or {}).get("seq"), "decision_hash": (decision or {}).get("hash"),
             "approval": approval or (decision or {}).get("approval"),
             "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
             "detail": str(detail or "")[:120]})
+        if isinstance(decision, dict) and oc in TERMINAL_OUTCOMES:
+            decision["_closed"] = True
     except Exception:
         pass
+
+
+# ── Outcomes for executors outside a tool call ──────────────────────────────
+
+def _external_ref(out: Any, tool: str, approval_id: Optional[str]) -> dict:
+    """The decision as an outcome names it (seq, hash, action id), returned
+    for `close_external` and kept in a request's list for
+    `settle_request_externals`."""
+    out = out if isinstance(out, dict) else {}
+    rec = out.get("rec") if isinstance(out.get("rec"), dict) else {}
+    ref = {"seq": out.get("seq"), "hash": out.get("hash"), "tool": tool, "class": OUTWARD,
+           "decision": "allow", "action_id": rec.get("action_id"),
+           "policy_version": rec.get("policy_version"), "approval": approval_id,
+           "t": time.time(), "receipt": dict(rec) if rec else None}
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            g._friday_externals = (getattr(g, "_friday_externals", None) or []) + [ref]
+    except Exception:  # noqa: BLE001 - outside Flask: the executor closes it itself
+        pass
+    return ref
+
+
+def close_external(ref: Optional[dict], ok: bool = True, *, detail: str = "",
+                   verified: bool = False, outcome: Optional[str] = None) -> bool:
+    """Write the terminal outcome of an action decided by `record_external`
+    (or an allowing `authorize_external`), given the decision it returned:
+    `ok` executed, else failed; `verified` (the service confirmed it, an id
+    came back) completed_verified; `outcome` names another word. Once per
+    decision; anything but a decision it returned is ignored. True when an
+    outcome was written. Never raises.
+
+    `outcome=UNCONFIRMED` is not terminal: it is written at most once and the
+    decision stays open for the real outcome."""
+    try:
+        r = ref
+        # a decision the ledger did not keep (no action id) has nothing to close
+        if not (isinstance(r, dict) and r.get("class") == OUTWARD and r.get("action_id")) \
+                or r.get("_closed"):
+            return False
+        oc = outcome if outcome in OUTCOMES else (
+            COMPLETED_VERIFIED if ok and verified else EXECUTED if ok else FAILED)
+        if oc == UNCONFIRMED and r.get("_unconfirmed"):
+            return False
+        record_outcome(str(r.get("tool") or ""), r, "ok" if ok else "error",
+                       approval=r.get("approval"), detail=detail, outcome=oc)
+        if oc in TERMINAL_OUTCOMES:
+            r["_closed"] = True
+        else:
+            r["_unconfirmed"] = oc == UNCONFIRMED or bool(r.get("_unconfirmed"))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def answer_outcome(resp) -> Optional[str]:
+    """The outcome word a route's own answer gives for the change it made
+    itself (the route is the executor, and builds its answer from the change's
+    result): failed for an error status or an error body, unconfirmed for a
+    partial or streamed answer, else executed. None when it cannot be read."""
+    try:
+        if resp.status_code >= 400:
+            return FAILED
+        if resp.is_streamed or resp.direct_passthrough or not resp.is_json:
+            return UNCONFIRMED
+        body = resp.get_json(silent=True)
+        if not isinstance(body, dict):
+            return UNCONFIRMED
+        st = str(body.get("status") or "").lower()
+        if st in ("error", "conflict", "denied", "failed") or body.get("ok") is False:
+            return FAILED
+        if st in ("partial", "unsure", "pending", "queued") or resp.status_code == 202:
+            return UNCONFIRMED
+        return EXECUTED
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def close_on_answer(ref: Optional[dict], detail: str = "route_answer") -> Optional[dict]:
+    """For a route that carries out the change itself, inside this request:
+    close `ref` from the route's own answer (`answer_outcome`) as the answer
+    leaves. Outside a request this does nothing (the caller closes it).
+    Returns `ref`."""
+    if not isinstance(ref, dict):
+        return ref
+    try:
+        from flask import after_this_request, has_request_context
+        if not has_request_context():
+            return ref
+
+        @after_this_request
+        def _close(resp):
+            oc = answer_outcome(resp)
+            if oc is not None:
+                close_external(ref, oc in (EXECUTED, UNCONFIRMED), detail=detail, outcome=oc)
+            return resp
+    except Exception:  # noqa: BLE001
+        pass
+    return ref
+
+
+def defer_external(ref: Optional[dict]) -> Optional[dict]:
+    """Mark a decision as one its executor closes later, outside this request
+    (a scheduled publish closes when the publish finishes): the request's
+    settlement leaves it alone. Returns `ref`."""
+    if isinstance(ref, dict):
+        ref["_deferred"] = True
+    return ref
+
+
+def decision_ref_of(verdict: Any) -> Optional[dict]:
+    """The decision an allowing `authorize_external` verdict carries
+    (`detail['decision_ref']`), for its executor to close with the action's
+    own result. None for any other verdict. Never raises."""
+    try:
+        if getattr(verdict, "action", None) != "allow":
+            return None
+        ref = (getattr(verdict, "detail", None) or {}).get("decision_ref")
+        return ref if isinstance(ref, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+#: What of a decision a record keeps so a later reconcile can close it.
+_PORTABLE_KEYS = ("seq", "hash", "tool", "class", "decision", "action_id", "policy_version",
+                  "approval", "t", "_unconfirmed", "_closed")
+
+
+def portable_ref(ref: Optional[dict]) -> Optional[dict]:
+    """A decision as an operation record keeps it (JSON-safe), for an action
+    whose final state is known only later (a site publish the provider is
+    still building): `close_persisted` closes it from the reconcile. None when
+    there is nothing to keep. Never raises."""
+    try:
+        if not (isinstance(ref, dict) and ref.get("class") == OUTWARD and ref.get("action_id")):
+            return None
+        return {k: ref[k] for k in _PORTABLE_KEYS if k in ref}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _has_terminal_outcome(action_id: str) -> bool:
+    from agent_friday.services import action_ledger
+    for e in action_ledger.entries(["outcome"], newest_first=True,
+                                   where=lambda e: isinstance(e.get("rec"), dict)
+                                   and e["rec"].get("action_id") == action_id):
+        rec = e.get("rec") or {}
+        if rec.get("outcome") in TERMINAL_OUTCOMES or rec.get("terminal") is True:
+            return True
+    return False
+
+
+def _ledger_decision_matches(ref: dict, expected_tool: Optional[str]) -> bool:
+    """Is `ref` exactly a decision the ledger holds? The decision entry with
+    its action id must carry the same seq and hash, be outward, and name the
+    tool the caller expects (`expected_tool`, when given; the ref's own tool
+    must agree). A ref read back from a record is data, not proof: a forged
+    or swapped one (another action's id, a wrong hash, another kind) matches
+    nothing and closes nothing."""
+    from agent_friday.services import action_ledger
+    aid = str(ref.get("action_id") or "")
+    if not aid:
+        return False
+    if expected_tool is not None and str(ref.get("tool") or "") != str(expected_tool):
+        return False
+    # verified: only a line whose hash and signature hold; archive: a decision kept long enough to
+    # have been archived still counts
+    for e in action_ledger.entries(["decision"], newest_first=True, verified=True, archive=True,
+                                   where=lambda e: isinstance(e.get("rec"), dict)
+                                   and e["rec"].get("action_id") == aid):
+        rec = e.get("rec") or {}
+        if (e.get("seq") == ref.get("seq") and isinstance(e.get("hash"), str)
+                and e.get("hash") == ref.get("hash")
+                and rec.get("class") == OUTWARD
+                and str(rec.get("tool") or "") == str(ref.get("tool") or "")
+                and (expected_tool is None or rec.get("tool") == expected_tool)):
+            return True
+    return False
+
+
+def close_persisted(ref: Optional[dict], ok: bool = True, *, detail: str = "",
+                    verified: bool = False, outcome: Optional[str] = None,
+                    expected_tool: Optional[str] = None) -> bool:
+    """`close_external` for a decision kept on a record (`portable_ref`) and
+    read back, possibly after a restart. The ref is checked against the
+    ledger first (`_ledger_decision_matches`: the decision with its action id,
+    the same seq and hash, outward, and the `expected_tool` the caller names);
+    one that does not match is refused (logged, nothing written). Then the
+    ledger is asked whether the action already has its terminal outcome, so
+    it never gets a second one. True when an outcome was written. Never
+    raises."""
+    try:
+        if not (isinstance(ref, dict) and ref.get("action_id")) or ref.get("_closed"):
+            return False
+        if not _ledger_decision_matches(ref, expected_tool):
+            _log.warning("close_persisted refused a decision ref that matches no ledger decision "
+                         "(expected tool %s)", expected_tool or "any")
+            return False
+        if _has_terminal_outcome(str(ref["action_id"])):
+            ref["_closed"] = True
+            return False
+        return close_external(ref, ok, detail=detail, verified=verified, outcome=outcome)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def settle_request_externals(ok: bool, detail: str = "") -> int:
+    """At the end of a request: every decision `record_external` wrote in it
+    that its executor neither closed nor deferred is marked `unconfirmed` (not
+    terminal), with a fixed code saying how the request ended (`ok`: it answered
+    without an error). The request's answer is not evidence of what became of
+    the action, so settlement never writes executed or failed. Returns how
+    many. Never raises."""
+    try:
+        from flask import g, has_request_context
+        if not has_request_context():
+            return 0
+        refs = getattr(g, "_friday_externals", None) or []
+        g._friday_externals = []
+    except Exception:  # noqa: BLE001
+        return 0
+    n = 0
+    for r in refs:
+        if isinstance(r, dict) and not r.get("_closed") and not r.get("_deferred"):
+            n += bool(close_external(r, ok, outcome=UNCONFIRMED,
+                                     detail=detail or ("request_ok" if ok else "request_error")))
+    return n
 
 
 def receipts_path() -> Path:
@@ -1240,6 +2216,13 @@ class Verdict:
     reason: str
     grant: Optional[dict] = None
     detail: dict = field(default_factory=dict)
+    #: The outcome word (OUTCOMES); derived from action, class and reason
+    #: (verdict_outcome) unless the checkpoint names it.
+    outcome: str = ""
+
+    def __post_init__(self):
+        if self.outcome not in OUTCOMES:
+            self.outcome = verdict_outcome(self.action, self.klass, self.reason)
 
 
 #: The owner's decision behind the tool call running now: an approved card's
@@ -1308,13 +2291,33 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
+        _args_hash = hashlib.sha256(json.dumps(args or {}, sort_keys=True,
+                                               default=str).encode()).hexdigest()
+        # The single action envelope (NS-36.3-1), built once here and carried
+        # to the decision receipt and, through LAST_RECEIPT, to the outcome.
+        # Records only: nothing reads it to decide. The policy version is read
+        # once and passed on to the receipt.
+        _pvd = _current_pv()
+        try:
+            _env = build_envelope(tool_name, args_hash=_args_hash, ctx=ctx, klass=v.klass,
+                                  decision=v.action, via=via or None, pv=_pvd).to_dict()
+        except Exception as e:  # noqa: BLE001 - _receipt builds one instead
+            _log.warning("action envelope not built here: %s", type(e).__name__)
+            _env = None
+        # (through a context variable, not an argument: callers and tests
+        # replace _receipt with one-argument callables)
+        _pv_token = _DECISION_PV.set(_pvd)
+        try:
+            _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
+                  # what became of it as the checkpoint sees it (OUTCOMES); a
+                  # deny is its own terminal receipt
+                  "outcome": v.outcome,
                   # "tool_call": the governance hook of _execute_tool, whose
                   # call writes an outcome (services/receipt_audit expects one)
                   "via": via or None,
-                  "args_hash": hashlib.sha256(json.dumps(args or {}, sort_keys=True,
-                                                         default=str).encode()).hexdigest(),
+                  "args_hash": _args_hash,
+                  **({"envelope": _env, "action_id": _env["action_id"]} if _env else {}),
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
                                                      "background" if ctx.get("is_background_task") else "other"),
                   "grant": (v.grant or {}).get("grant_id"),
@@ -1325,9 +2328,15 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "chosen_by": _chosen_by(ctx),
                   "plan_version": _plan_version(),
                   "turn_id": _turn_id()})
+        finally:
+            _DECISION_PV.reset(_pv_token)
         _out = _out if isinstance(_out, dict) else {}
+        _orec = _out.get("rec") if isinstance(_out.get("rec"), dict) else {}
         LAST_RECEIPT.set({"seq": _out.get("seq"), "hash": _out.get("hash"), "tool": tool_name,
-                          "class": v.klass, "decision": v.action})
+                          "class": v.klass, "decision": v.action,
+                          "action_id": _orec.get("action_id") or (_env or {}).get("action_id"),
+                          "policy_version": _orec.get("policy_version")
+                          or (_env or {}).get("policy_version")})
     except Exception as e:
         _log.error("governance receipt failed: %s", e)
         if v.klass != INTERNAL and v.action != "deny":
@@ -1563,17 +2572,9 @@ class Held(RuntimeError):
     """An outward action the checkpoint would not let through."""
 
 
-def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
-                    target: str = "") -> None:
-    """The checkpoint's integrity check and signed receipt, for an executor
-    that carries out an already-decided action outside a tool call (an
-    approved email, an approved text).
-
-    The decision itself (the card) is the caller's to verify. This adds the
-    two steps every tool call gets in `authorize`: the cLaws are intact, and
-    a signed receipt of the action is written. Raises `Held` if either fails,
-    so the caller stops before anything leaves the machine.
-    """
+def check_external() -> None:
+    """The checks `record_external` makes before its receipt (Stop is not
+    pressed, the cLaws are intact, no outward hold). Raises `Held`."""
     import agent_friday.core as _core_gs
     if _core_gs.GLOBAL_STOP.is_set():
         # Stop everything (services/global_stop): held; the decision is not spent.
@@ -1587,13 +2588,56 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     hold = outward_hold()
     if hold:
         raise Held(hold)
+
+
+def record_external(action: str, *, surface: str, approval_id: Optional[str] = None,
+                    target: str = "", task_id: Optional[str] = None, once: bool = False) -> dict:
+    """The checkpoint's integrity check and signed receipt, for an executor
+    that carries out an already-decided action outside a tool call (an
+    approved email, an approved text).
+
+    The decision itself (the card) is the caller's to verify. This adds the
+    two steps every tool call gets in `authorize`: the cLaws are intact, and
+    a signed receipt of the action is written. Raises `Held` if either fails,
+    so the caller stops before anything leaves the machine.
+
+    Returns the decision as an outcome names it; the executor writes the
+    action's terminal outcome with `close_external` (inside a request, one it
+    leaves open is marked unconfirmed: settle_request_externals). The
+    decision receipt carries no outcome word: nothing has run yet, and what
+    became of the action is its outcome receipt's to say. Its `receipt` is
+    the signed record itself, which a delivery names
+    (services/artifact_manifest.record_delivery).
+
+    `once` (with `approval_id`), for an executor whose card buys exactly one
+    action (the approval executor, a mail send): the decision's idempotency
+    key is the card's (with the action and target), so the outward audit sees
+    that card carried out twice (`duplicate_key`), across restarts too. Not
+    the default: some cards rightly carry more than one decision of the same
+    action and target (a site build's operation and its process launch, a
+    publisher series).
+    `task_id`: the task the card was raised for, so the audit can tell a task
+    marked done whose approved action never ended executed (false_done).
+    """
+    check_external()
+    entry = {"tool": action, "class": OUTWARD, "decision": "allow",
+             "surface": surface,
+             "reason": "approved card" if approval_id else surface,
+             "approval": approval_id, "target": target}
+    if task_id:
+        entry["task_id"] = str(task_id)[:120]
+    if approval_id and once:
+        try:
+            entry["envelope"] = build_envelope(
+                action, klass=OUTWARD, decision="allow", via=surface,
+                ctx={"idempotency_key": "approval|%s|%s|%s" % (approval_id, action, target)}).to_dict()
+        except Exception:  # noqa: BLE001 - the envelope records; _receipt builds one without a key
+            pass
     try:
-        _receipt({"tool": action, "class": OUTWARD, "decision": "allow",
-                  "surface": surface,
-                  "reason": "approved card" if approval_id else surface,
-                  "approval": approval_id, "target": target})
+        out = _receipt(entry)
     except Exception as e:
         raise Held(f"the signed receipt could not be written ({e})")
+    return _external_ref(out, action, approval_id)
 
 
 def external_subject(action: str, detail: dict) -> str:
@@ -1629,7 +2673,8 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
         if _core_gs.GLOBAL_STOP.is_set():
             # Stop everything (services/global_stop): held, and the card is not used up.
             # "card", not "deny": callers wait (as for a card) instead of recording a decline.
-            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)")
+            return Verdict("card", OUTWARD, "held: everything is stopped (the owner pressed Stop)",
+                           outcome=WAITING)
     except Exception:
         pass
     try:
@@ -1653,23 +2698,37 @@ def authorize_external(action: str, detail: dict, *, requested_by: str,
                 rec = named
         if rec is None:
             rec = _ap.find_for_subject("external_action", subject, "governed_action")
+        card_id = (rec or {}).get("approval_id")
         if rec and rec.get("status") == "approved" and not rec.get("consumed"):
-            _ap.mark_used(rec["approval_id"], requested_by)
-            v = Verdict("allow", OUTWARD, "approved on a card")
+            # spent here and now, by exactly one caller: two at once cannot both run on it
+            if _ap.spend_once(rec["approval_id"], requested_by):
+                v = Verdict("allow", OUTWARD, "approved on a card")
+            else:
+                v = Verdict("deny", OUTWARD, "that card's one approval was already used by "
+                                             "another call at the same moment; nothing was done twice")
         elif rec and rec.get("status") in ("denied", "blocked"):
-            v = Verdict("deny", OUTWARD, "declined on a card")
+            v = Verdict("deny", OUTWARD, "declined on a card", outcome=DENIED)
         else:
             if rec is None or rec.get("status") == "expired" or rec.get("consumed"):
-                _ap.create_approval(
+                made = _ap.create_approval(
                     kind="governed_action", subject_type="external_action",
                     subject_id=subject + (f":{uuid.uuid4().hex[:6]}" if rec else ""),
                     title=title or f"Allow {action}",
                     description=description or json.dumps(detail, default=str)[:600],
                     action_description=action_description or action, force_gate=True,
                     payload=detail, requested_by=requested_by)
-            v = Verdict("card", OUTWARD, "waiting for the owner's decision")
-        _receipt({"tool": action, "class": OUTWARD, "decision": v.action,
-                  "reason": v.reason, "surface": requested_by})
+                card_id = (made or {}).get("approval_id") if isinstance(made, dict) else None
+                v = Verdict("card", OUTWARD, "waiting for the owner's decision",
+                            outcome=APPROVAL_REQUIRED)
+            else:
+                # its card is already open: the action waits on it
+                v = Verdict("card", OUTWARD, "waiting for the owner's decision", outcome=WAITING)
+        out = _receipt({"tool": action, "class": OUTWARD, "decision": v.action,
+                        "reason": v.reason, "surface": requested_by, "outcome": v.outcome,
+                        **({"approval": card_id} if card_id else {})})
+        if v.action == "allow":
+            # the caller carries it out next: its outcome closes this decision
+            v.detail["decision_ref"] = _external_ref(out, action, card_id)
         return v
     except Exception as e:
         return Verdict("deny", OUTWARD, f"governance check failed ({e})")

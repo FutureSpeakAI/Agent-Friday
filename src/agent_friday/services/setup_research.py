@@ -56,92 +56,13 @@ MAX_ITEMS_PER_PAGE = 8          # the prompt asks for 5; a model that over-deliv
 MAX_CANDIDATES = 40
 
 # ── The sensitive categories, one list for queries and findings ─────────────
+# The table and its matchers live in services/sensitive_categories (shared with
+# the memory paths' special-category filter); imported back under the same names.
 
-SENSITIVE_CATEGORIES = {
-    "health": (
-        "health", "healthy", "medical", "medicine", "diagnosis", "diagnosed",
-        "illness", "ill", "disease", "cancer", "tumou?r", "surgery", "hospital",
-        "hospitali[sz]ed", "therapy", "therapist", "medication", "prescription",
-        "pregnan\\w*", "disabilit\\w*", "disabled", "mental", "depression",
-        "anxiety", "rehab", "addiction", "clinic", "patient", "symptoms?",
-        "chronic", "condition", "recovery", "vaccin\\w*", "hiv", "diabet\\w*",
-    ),
-    "sexuality": (
-        "sex", "sexual", "sexuality", "gay", "lesbian", "bisexual", "queer",
-        "transgender", "trans", "lgbt\\w*", "dating", "boyfriend", "girlfriend",
-        "orientation", "nude", "nudes",
-    ),
-    "finances": (
-        "salary", "salaries", "income", "net worth", "wealth", "bank",
-        "banking", "loan", "loans", "debt", "debts", "mortgage", "bankrupt\\w*",
-        "credit score", "tax", "taxes", "earnings", "paycheck", "portfolio",
-        "invest\\w*", "compensation", "bonus", "inheritance", "donation",
-    ),
-    "family": (
-        "wife", "husband", "spouse", "partner", "son", "sons", "daughter",
-        "daughters", "child", "children", "kid", "kids", "baby", "mother",
-        "father", "mom", "mum", "dad", "parent", "parents", "sibling",
-        "siblings", "brother", "sister", "family", "married", "marriage",
-        "divorce", "divorced", "wedding", "fianc\\w*", "grandchild",
-        "grandchildren", "nephew", "niece", "cousin", "stepson",
-        "stepdaughter", "widow\\w*",
-    ),
-    "home_address": (
-        "home address", "lives at", "lives in", "lives on", "resides",
-        "residence", "resident of", "street address", "zip code", "zipcode",
-        "postcode", "postal code", "apartment", "flat \\d", "neighbou?rhood",
-        "hometown", "home town", "moved to",
-    ),
-}
-
-_CATEGORY_RES = {cat: re.compile(r"\b(?:" + "|".join(words) + r")\b", re.IGNORECASE)
-                 for cat, words in SENSITIVE_CATEGORIES.items()}
-#: An amount of money is a finance signal whatever words surround it.
-_MONEY_RE = re.compile(r"[$£€¥]\s?\d|\b\d[\d,.]*\s?(?:dollars|pounds|euros|usd|gbp|eur)\b",
-                       re.IGNORECASE)
-
-
-def sensitive_category(text) -> str | None:
-    """The first sensitive category `text` touches, or None."""
-    if not text:
-        return None
-    s = str(text)
-    for cat, rx in _CATEGORY_RES.items():
-        if rx.search(s):
-            return cat
-    if _MONEY_RE.search(s):
-        return "finances"
-    try:
-        from agent_friday.services.sensitivity_classifier import _ADDRESS_RE
-        if _ADDRESS_RE.search(s):
-            return "home_address"
-    except Exception:
-        pass
-    return None
-
-
-#: Plain category words long enough to look for INSIDE a handle or domain,
-#: where there are no word boundaries ("sam_health_diary", "samsalary").
-_COMPACT_WORDS = tuple(sorted({w for words in SENSITIVE_CATEGORIES.values()
-                               for w in words
-                               if re.fullmatch(r"[a-z]{4,}", w)}))
-
-
-def compact_sensitive(token) -> str | None:
-    """sensitive_category for a handle or domain: also matches category words
-    run together with other letters. Used for handles and sites only, where a
-    false refusal costs one query; a person's name is never held to it."""
-    s = str(token or "").lower()
-    hit = sensitive_category(re.sub(r"[^a-z0-9]+", " ", s))
-    if hit:
-        return hit
-    squashed = re.sub(r"[^a-z]", "", s)
-    for w in _COMPACT_WORDS:
-        if w in squashed:
-            for cat, words in SENSITIVE_CATEGORIES.items():
-                if w in words:
-                    return cat
-    return None
+from agent_friday.services.sensitive_categories import (  # noqa: E402,F401
+    SENSITIVE_CATEGORIES, _CATEGORY_RES, _COMPACT_WORDS, _MONEY_RE, compact_sensitive,
+    sensitive_category,
+)
 
 
 def classified_sensitive(text) -> bool:
@@ -410,6 +331,10 @@ def start(seeds: dict, reader: dict, *, engine: ResearchEngine | None = None,
     """
     if (reader or {}).get("kind") not in ("local", "cloud"):
         raise NoModel("no model is available to read pages")
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "setup research")      # A16a
+    if _held:
+        raise UserFacingValueError(_held)
     plan = build_queries(seeds)
     if not plan["queries"]:
         raise UserFacingValueError("nothing to search for: add your name or a handle")

@@ -136,7 +136,10 @@ def _is_public_query_card(rec: Dict[str, Any]) -> bool:
 PRIVATE_DETAIL_KINDS = frozenset({"tool_confirm", "seat_handoff",
                                   # Website task cards carry the values to type, or a
                                   # question written after reading a page: never in a notice.
-                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question"})
+                                  "web_task_plan", "web_task_plan_new_sites", "web_task_question",
+                                  # The first action (services/first_action) names a contact from
+                                  # the owner's mail: on Friday's page only.
+                                  "first_action"})
 
 
 def notice_title(rec: Dict[str, Any]) -> str:
@@ -150,6 +153,34 @@ def notice_title(rec: Dict[str, Any]) -> str:
             tool = str((rec.get("payload") or {}).get("tool") or "").strip() or "an action"
         return "Friday needs your approval for %s" % tool
     return str(rec.get("title") or "")
+
+
+_WAITING_WHAT = (
+    (("calendar", "event", "meeting"), "a calendar change"),
+    (("task",), "a task change"),
+    (("mail", "gmail", "email"), "an email"),
+    (("sms", "text_message", "phone", "external_message", "message"), "a message or call"),
+    (("file", "folder", "path", "library", "pdf"), "a file action"),
+    (("mcp", "connector", "add-on", "addon"), "an add-on"),
+    (("memory",), "something to remember"),
+)
+WAITING_NOTICE_BODY = "Open Friday to see what it would do, and to approve or decline it."
+
+
+def waiting_notice_title(rec: Dict[str, Any]) -> str:
+    """The title of a waiting card's notice in the tray (owner ruling 5, 2026-10-28): a
+    generic line by kind, never the card's own title, which can name an event, a task,
+    a person or a file. The card itself keeps its words, on the screen."""
+    rec = rec or {}
+    if rec.get("kind") in PRIVATE_DETAIL_KINDS:
+        return notice_title(rec)            # already generic: names only the tool
+    payload = rec.get("payload") or {}
+    key = " ".join(str(x or "") for x in (payload.get("tool"), payload.get("handler"),
+                                          rec.get("kind"), rec.get("subject_type"))).lower()
+    for words, what in _WAITING_WHAT:
+        if any(w in key for w in words):
+            return "Friday needs your approval for %s" % what
+    return "Friday needs your approval for an action"
 
 
 def notice_body(rec: Dict[str, Any]) -> str:
@@ -170,6 +201,9 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     "web_task_plan": frozenset({"owner:ui"}),
     "file_grant_request": frozenset({"owner:ui"}),
     "file_access_reset": frozenset({"owner:ui"}),
+    # The first governed action of onboarding (services/first_action, amendment A27): the owner's
+    # own press on this PC, never a spoken or typed yes.
+    "first_action": frozenset({"owner:ui"}),
     # Library changes Friday proposes (services/library/cards.py): the click is
     # the consent, as it is for a file grant.
     "library_add_request": frozenset({"owner:ui"}),
@@ -325,7 +359,19 @@ def classify(action_description: str, *, action_class: Optional[str] = None) -> 
 _OFF_RECORD_CARDS: Dict[str, dict] = {}
 _RECEIPT_KEYS = ("approval_id", "kind", "subject_type", "policy_class", "gated",
                  "status", "consumed", "created_at", "expires_at", "decided_at",
-                 "decided_by", "decided_source", "decided_check", "used_at", "off_record")
+                 "decided_by", "decided_source", "decided_check", "used_at", "off_record",
+                 "policy_version", "decided_policy_version")
+
+
+def _policy_version_id() -> Optional[str]:
+    """The governing policy version now (services/policy_version, NS-30.19-1):
+    stamped on a card when it is raised and when it is decided. Records only;
+    no decision here reads it. Never raises."""
+    try:
+        from agent_friday.services import policy_version as _pv
+        return _pv.current_id()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _disk_view(record: dict) -> dict:
@@ -569,7 +615,11 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
         "decided_source": (None if status == "pending" else
                            ("law1_block" if status == "blocked" else "auto_policy")),
         "decision_note": "",
+        "policy_version": _policy_version_id(),
     }
+    if status != "pending":
+        # raised already decided (by the policy table or Law 1): decided under it too
+        record["decided_policy_version"] = record["policy_version"]
     try:
         from agent_friday.services import off_record as _off
         if _off.skip("approvals"):
@@ -621,7 +671,9 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
         "decided_source": "law1_block" if law1_blocked else "standing_grant",
         "decision_note": "" if law1_blocked else "pre-approved by you in Settings",
         "pre_approved": str(grant_id),
+        "policy_version": _policy_version_id(),
     }
+    record["decided_policy_version"] = record["policy_version"]
     _upsert(record)
     return record
 
@@ -641,6 +693,24 @@ def mark_used(approval_id: str, actor: str, detail: Optional[dict] = None
     """
     return _patch(approval_id, consumed=True, used_by=actor,
                   used_at=time.time(), used_detail=detail or {})
+
+
+def spend_once(approval_id: str, actor: str, detail: Optional[dict] = None) -> bool:
+    """Spend an approved, unspent card for the call about to run on it: True for exactly one
+    caller. The check and the write happen together under the store lock, against the stored
+    record. (Reading the card, then `mark_used`, let two calls that read it at once both run on
+    one decision.) A spend that does not read back from disk counts as not spent."""
+    with _LOCK:
+        recs = _read_store()
+        rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
+        if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
+            return False
+        now = time.time()
+        rec.update(consumed=True, consumed_at=now, used_by=actor, used_at=now,
+                   used_detail=detail or {})
+        _write_store(recs)
+        back = next((r for r in _read_store() if r.get("approval_id") == approval_id), None)
+        return bool(back and back.get("consumed") and back.get("used_by") == actor)
 
 
 def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
@@ -702,7 +772,8 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
             rec["decided_source"] = "typed"
         rec.update(status="approved", consumed=True, executing_at=now,
                    used_at=now, used_by="chat_confirmation", decided_at=now,
-                   decided_by="owner", decision_note="answered in chat")
+                   decided_by="owner", decision_note="answered in chat",
+                   decided_policy_version=_policy_version_id())
         _write_store(recs)
         out = dict(rec)
     _feed("card_resolved", out)
@@ -714,10 +785,26 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
     — was_first is True only the FIRST time this is observed."""
     if approval.get("status") != "approved" or approval.get("consumed"):
         return approval, False
-    # When it was burned: a crash after this and before mark_used is judged
-    # from this moment (services/card_recovery), never from the decision.
-    updated = _patch(approval["approval_id"], consumed=True, consumed_at=time.time())
-    return (updated or approval), True
+    # The check and the burn happen together under the store lock, against the stored record,
+    # not the caller's copy: two sends that both read the card before either burned it used to
+    # both see was_first=True and both go out. Only one of them wins now.
+    with _LOCK:
+        recs = _read_store()
+        rec = next((r for r in recs if r.get("approval_id") == approval.get("approval_id")), None)
+        if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
+            return (dict(rec) if rec else approval), False
+        # When it was burned: a crash after this and before mark_used is judged
+        # from this moment (services/card_recovery), never from the decision.
+        rec.update(consumed=True, consumed_at=time.time())
+        _write_store(recs)
+        # _write_store logs a failed write and carries on. A burn that never reached the disk
+        # would let the next sender win too, so it counts only once it reads back burned: if it
+        # does not, nothing is sent by this caller (fail closed; the owner can ask again).
+        back = next((r for r in _read_store() if r.get("approval_id") == rec.get("approval_id")), None)
+        if not back or not back.get("consumed"):
+            _log.error("an approval could not be marked used, so nothing was sent on it")
+            return dict(rec), False
+        return dict(rec), True
 
 
 def gate_action(*, kind: str, subject_type: str, subject_id: str, title: str,
@@ -856,6 +943,7 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
         rec["decided_source"] = source
+        rec["decided_policy_version"] = _policy_version_id()
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
@@ -1036,8 +1124,10 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
         recs = _read_store()
         for r in recs:
             if r.get("status") in ("approved", "auto_approved") and not r.get("used_by") \
-                    and not r.get("consumed"):
+                    and not r.get("consumed") and not r.get("executing_at"):
+                # (a card already claimed by its runner is mid-action: it is not taken back)
                 r["status"] = "expired"
+                r["withdrawn"] = True
                 r["decided_at"] = time.time()
                 r["decided_by"] = by
                 r["decision_note"] = note
@@ -1046,6 +1136,11 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
             _write_store(recs)
     for rec in withdrawn:
         _feed("card_resolved", rec)
+        # A task waiting on its tool card is told now (it closes with its typed blocker), not at the
+        # next sweep. Only these kinds: other owners never mark their cards used, so an old card of
+        # theirs that already acted would be re-judged as declined.
+        if rec.get("kind") in ("tainted_action", "tool_confirm"):
+            _fire_hook(rec)
     return len(withdrawn)
 
 
@@ -1133,7 +1228,9 @@ def _notify_expired_while_held(rec: Dict[str, Any]) -> None:
             title = "An off-the-record approval expired before you saw it"
             body = "It was waiting in your badge and its time ran out. Nothing was done."
         else:
-            title = "An approval expired before you saw it: %s" % (rec.get("title") or "an action")
+            # Owner ruling 5: generic, never the card's own title.
+            title = "An approval expired before you saw it: %s" % (
+                waiting_notice_title(rec).replace("Friday needs your approval for ", "", 1))
             body = ("It was waiting in your badge while quiet hours, the hourly limit or Focus Assist "
                     "held it back, and its time ran out. Nothing was done. Ask again if you still want it.")
         _ne.push(title=title, body=body, priority="medium", source="approvals",
@@ -1258,6 +1355,20 @@ def _feed(name: str, record: Dict[str, Any]) -> None:
     """Tell every open Friday page (services/approval_feed.py). Best-effort:
     a page that misses this picks the card up from the pending list when it
     reconnects, and nothing here can fail an approval."""
+    if name == "card_resolved" and not record.get("off_record"):
+        # NS-31.7-1: the decision (or expiry, or withdrawal) is in the event log before any page
+        # or the tray hears of it. Ids and kinds only. A record that fails is logged; the
+        # decision itself is already saved and still reaches the owner.
+        try:
+            from agent_friday.services import events as _ev
+            _ev.record_critical(
+                "approval.resolved", source="approvals",
+                payload={"status": str(record.get("status") or "")[:20],
+                         "kind": str(record.get("kind") or "")[:40],
+                         "decided_by": str(record.get("decided_by") or "")[:40]},
+                related_ids={"approval": record.get("approval_id")})
+        except Exception:
+            pass
     try:
         from agent_friday.services import approval_feed
         if name == "card_pending":
@@ -1330,18 +1441,21 @@ def _notify_pending(record: Dict[str, Any]) -> None:
         # kept or skipped by its own approval; the card is still an approval.
         if _pol.is_memory_proposal(record):
             meta["group"] = _pol.MEMORY_GROUP
-            meta["detail"] = (record.get("action_description") or "")[:300]
+            # Owner ruling 5: what Friday proposes to remember is not kept in the notice;
+            # the tray reads it from the waiting card when it is shown
+            # (notifications_engine.groups).
     except Exception:
         pass
-    body = notice_body(record)
+    # Owner ruling 5: the notice (kept in notifications.json, and shown by anything that
+    # forwards it) says that something is waiting and where to look, never what the card
+    # names. The card keeps its own words on the screen.
+    body = WAITING_NOTICE_BODY
     if (record.get("payload") or {}).get("origin") == "laya_safe_write":
-        # A card Laya raised lists subjects, sender names and addresses on its on-screen lines. The notice
-        # (and anything that forwards it) says only what was asked and where to look.
         body = "Open Friday to see which conversations, and to approve or decline it."
     try:
         _ne.push(
             meta=meta,
-            title=f"Approval needed: {notice_title(record)}",
+            title=f"Approval needed: {waiting_notice_title(record)}",
             body=body[:300],
             priority="medium", source="approvals", kind="approval_pending",
             # `target` is the shape the notification tray's click handler

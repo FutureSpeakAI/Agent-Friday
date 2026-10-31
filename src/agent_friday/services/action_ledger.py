@@ -17,9 +17,19 @@ The file
 ``<home>/ledger/actions.jsonl``, one JSON object per line::
 
     {"v":1, "seq":n, "ts":"...Z", "t":<unix>, "kind":"decision",
-     "principal":"owner", "rec":{...}, "kid":"<key id>",
+     "principal":"owner", "rec":{...}, "pv":"pv_<16 hex>", "kid":"<key id>",
      "prev":"<hash of line n-1>", "hash":"<sha256 of this line's body>",
      "sig":"<HMAC-SHA256 of hash>"}
+
+``pv`` is the governing policy version the entry was written under
+(services/policy_version.py, NS-30.19-1); every entry written through
+``append`` carries it, except the ledger's own integrity entries (break flags,
+acknowledgements, the migration), and lines written before it existed.
+
+A receipt (kind ``decision`` or ``outcome``) must name its action: ``append``
+refuses one whose record has no ``action_id`` (RECEIPT_KINDS; BD-11a, the
+single action envelope of NS-36.3-1). The receipts brought in from the old
+files by the one-time migration predate action ids and keep none.
 
 ``hash`` is SHA-256 over the canonical JSON of every field except ``hash`` and
 ``sig``; ``prev`` is the previous line's ``hash`` (64 zeros for the first);
@@ -95,7 +105,9 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac
 import json
+import logging
 import os
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -122,6 +134,12 @@ ANCHOR_EVERY_S = 30.0
 MAX_PROBLEMS = 50
 #: Entries that are themselves a break the owner must look at.
 FLAG_KINDS = ("truncation_detected", "torn_tail", "legacy_reappeared")
+#: Receipts: each names the action it belongs to (`action_id`), or is refused.
+RECEIPT_KINDS = ("decision", "outcome")
+#: The ledger's own integrity entries carry no policy version.
+_UNSTAMPED_KINDS = frozenset(FLAG_KINDS) | {"integrity_ack", "migration_complete"}
+
+_log = logging.getLogger("friday.action_ledger")
 #: The archive (amendment A22).
 ARCHIVE_DIR = "archive"
 ARCHIVE_MANIFEST = "manifest.json"
@@ -232,6 +250,13 @@ def reset_caches() -> None:
     with _TLOCK:
         _STATE.clear()
         _STATE.update(_fresh_state(None))
+    # which policy version each ledger last recorded is read from disk again
+    _pv = sys.modules.get("agent_friday.services.policy_version")
+    if _pv is not None:
+        try:
+            _pv._RECORDED.clear()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ── Keys and hashing ────────────────────────────────────────────────────────
@@ -630,6 +655,17 @@ def _read_head() -> Optional[dict]:
 def _write_head(key: bytes, seq: int, h: str) -> None:
     p = head_path()
     tmp = p.with_name(p.name + f".{os.getpid()}.{threading.get_ident()}.tmp")
+    # The caller holds the ledger lock: any other head temp file is a killed
+    # writer's (NS-34.16-2), never a live one's. Cleared, so crashes do not pile up.
+    try:
+        for stale in p.parent.glob(p.name + ".*.tmp"):
+            if stale != tmp:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        pass
     try:
         tmp.write_text(json.dumps({"seq": seq, "hash": h, "kid": key_id(key),
                                    "sig": _head_sig(key, seq, h)}), encoding="utf-8")
@@ -694,9 +730,10 @@ def _seal_live_locked(d: Path, live: Path) -> None:
             n += 1
 
 
-def _append_locked(key: bytes, items: list, durable: bool) -> dict:
+def _append_locked(key: bytes, items: list, durable: bool, pv: Optional[str] = None) -> dict:
     """Write each (kind, rec) of `items` in one open of the live file. The
-    caller holds both locks."""
+    caller holds both locks. `pv` (the policy version) is stamped on each of
+    `items`, never on a break flag this write finds first."""
     d = ledger_dir()
     d.mkdir(parents=True, exist_ok=True)
     live = d / LIVE_NAME
@@ -731,12 +768,14 @@ def _append_locked(key: bytes, items: list, durable: bool) -> dict:
     out = None
     written = 0
     with open(live, "ab") as f:
-        for k, r in pending + list(items):
+        for n, (k, r) in enumerate(pending + list(items)):
             ts, t = _now()
             seq += 1
             entry = {"v": VERSION, "seq": seq, "ts": ts, "t": t, "kind": k,
                      "principal": PRINCIPAL, "rec": _normalise(r),
                      "kid": key_id(key), "prev": prev}
+            if pv and n >= len(pending) and k not in _UNSTAMPED_KINDS:
+                entry["pv"] = str(pv)
             entry["hash"] = body_hash(entry)
             entry["sig"] = _sign(key, entry["hash"])
             f.write(canon(entry) + b"\n")
@@ -770,26 +809,90 @@ def _append_locked(key: bytes, items: list, durable: bool) -> dict:
     return out
 
 
-def _guarded_append(key: bytes, items: list, durable: bool) -> dict:
+def _guarded_append(key: bytes, items: list, durable: bool, pv: Optional[str] = None) -> dict:
     with _lock():
         _HELD_HERE.n = getattr(_HELD_HERE, "n", 0) + 1
         try:
-            return _append_locked(key, items, durable)
+            return _append_locked(key, items, durable, pv)
         finally:
             _HELD_HERE.n -= 1
+
+
+def _policy_stamp(kind: str, rec: dict) -> Optional[str]:
+    """The policy version to stamp on an entry: the one its record already
+    names when that is a well-formed version id (a decision signs its own; a
+    ``policy_version`` entry is its own id), else the current one. None for
+    the ledger's own integrity entries, or when it cannot be worked out (the
+    entry is still written: the stamp records, it never holds)."""
+    if kind in _UNSTAMPED_KINDS:
+        return None
+    try:
+        from agent_friday.services import policy_version
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        named = rec.get("id") if kind == policy_version.KIND else rec.get("policy_version")
+        if policy_version.is_id(named):
+            return named
+        return policy_version.current_id()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def newest_in_live(kind: str) -> Optional[dict]:
+    """The newest entry of `kind` in the live file only (the tail segment;
+    sealed segments and the archive are not read), or None. Unverified, for
+    a cheap "is this already on record" check. Never raises."""
+    try:
+        live = ledger_dir() / LIVE_NAME
+        if not live.is_file():
+            return None
+        needle = b'"kind":' + json.dumps(str(kind)).encode("ascii")   # lines are canon()
+        for raw in _reverse_lines(live):
+            if needle not in raw and b'"kind": ' not in raw:
+                continue
+            e = _safe_json(raw)
+            if isinstance(e, dict) and e.get("kind") == kind:
+                return e
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def receipt_refusal(kind: str, rec: Any) -> Optional[str]:
+    """Why this record cannot be written as a receipt, or None: a decision or
+    an outcome must name the action it belongs to (`action_id`)."""
+    if kind not in RECEIPT_KINDS:
+        return None
+    aid = rec.get("action_id") if isinstance(rec, dict) else None
+    try:
+        from agent_friday.services.policy_version import valid_action_id
+        ok = valid_action_id(aid)
+    except Exception:  # noqa: BLE001
+        ok = isinstance(aid, str) and bool(aid.strip())
+    return None if ok else "a %s receipt needs an action id" % kind
 
 
 def append(kind: str, rec: dict, *, durable: bool = False) -> dict:
     """Append one entry and return it. Raises LedgerError (or OSError) when it
     cannot be written, so a caller that must not act without a receipt can
-    hold. Callers whose record is best-effort catch the error."""
+    hold. Callers whose record is best-effort catch the error.
+
+    A receipt (RECEIPT_KINDS) without an `action_id` is refused (LedgerError,
+    logged): every receipt names the action it belongs to."""
     if not kind or not isinstance(rec, dict):
         raise LedgerError("an entry needs a kind and a record")
+    why = receipt_refusal(kind, rec)
+    if why:
+        _log.error("action ledger refused a receipt: %s (tool %s)", why,
+                   str(rec.get("tool") or "?")[:60])
+        raise LedgerError(why)
+    pv = _policy_stamp(kind, rec)
     key = _key()
     with _TLOCK:
         _check_dir()
         _ensure_migrated()
-        return _guarded_append(key, [(kind, rec)], durable)
+        return _guarded_append(key, [(kind, rec)], durable, pv)
 
 
 def try_append(kind: str, rec: dict, **kw) -> Optional[dict]:
@@ -1992,6 +2095,20 @@ def _legacy_present() -> list[Path]:
         return []
 
 
+def _crash_shaped(p: dict) -> bool:
+    """A problem a crash part-way through a receipt leaves: an unfinished last line of the
+    live file, or the signed note that it was set aside. Nothing else (a cut that removed
+    records also shows the head ahead of the file, a separate problem)."""
+    return ((p.get("reason") == "an unfinished write" and p.get("segment") == LIVE_NAME)
+            or (p.get("segment") == "entry" and "unfinished write was set aside" in str(p.get("reason"))))
+
+
+def _only_a_crash(report: dict) -> bool:
+    """Every break the owner has not looked at yet is crash-shaped (so the crash sentence is true)."""
+    open_ = [p for p in report.get("problems", []) if not p.get("acknowledged")]
+    return bool(open_) and all(_crash_shaped(p) for p in open_)
+
+
 def hold_reason() -> Optional[str]:
     """A sentence when an outward action must wait for the owner to look at
     the ledger; None while it is intact (or every break is acknowledged). A
@@ -2005,6 +2122,12 @@ def hold_reason() -> Optional[str]:
         first = next((p for p in r.get("problems", []) if not p.get("acknowledged")), {})
         if first.get("segment") == "key":
             return "the action ledger cannot be checked: the governance key is unavailable"
+        if _only_a_crash(r):
+            # What a crash (or a kill) part-way through writing a receipt leaves: the
+            # cut-off bytes are kept under ledger/torn/, nothing earlier is touched.
+            return ("Friday stopped part-way through writing a receipt (record %s); the cut-off "
+                    "part is kept and nothing earlier changed. Open Activity to look at it "
+                    "before anything goes out" % (first.get("seq") or "at the end"))
         return ("the action ledger was changed on disk (%s, record %s: %s); "
                 "open Activity to review it" % (first.get("segment"), first.get("seq"),
                                                 first.get("reason")))

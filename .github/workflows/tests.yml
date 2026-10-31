@@ -103,6 +103,7 @@ jobs:
 
   guards:
     name: repository guards
+    if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -172,14 +173,14 @@ jobs:
         run: >
           npx playwright test --config=playwright.app.config.ts --workers=1
           --timeout=180000 --output=test-results/app
-          settings_walk.spec.ts smoke.spec.ts
+          settings_walk.spec.ts smoke.spec.ts colour_independent_state.spec.ts headings.spec.ts keyboard_flows.spec.ts announce.spec.ts
           camera_mode.spec.ts
           fill_in_place.spec.ts messages_friday_select.spec.ts open_only_stage.spec.ts
           point_and_chips.spec.ts settings_highlight.spec.ts step_panel.spec.ts
           studio_alias_nav.spec.ts this_and_these.spec.ts calendar_views.spec.ts calendar_move.spec.ts calendar_reminders.spec.ts
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
           activity_never_collapses.spec.ts connect_services.spec.ts laya_settings.spec.ts
-          posting_screens.spec.ts
+          posting_screens.spec.ts three_d_off.spec.ts accessibility_keyboard.spec.ts accessibility_audit.spec.ts target_size.spec.ts text_size.spec.ts
       # The run's output folder, uploaded on success as well as failure: it holds
       # the Settings walk table, failure traces, and the screenshots specs save
       # for a person to look at (posting_screens.spec.ts: posting-*.png).
@@ -229,29 +230,67 @@ jobs:
 
   # A PR labelled red-evidence carries only new tests on unchanged code, to show
   # they fail by assertion before the fix. It runs just the test files it changes,
-  # once, instead of the whole matrix: the fix PR runs the full suites.
+  # once, instead of the whole matrix: the fix PR runs the full suites. Every
+  # other job in every PR workflow is skipped for it (test_red_evidence_runs_only_changed_tests).
   red-evidence:
     name: red evidence (changed test files)
     if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      specs: ${{ steps.changed.outputs.specs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: List the changed test files and app specs
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          py=$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- 'tests/*.py' 'tests/**/*.py' | grep -E '(^|/)test_[^/]*\.py$' || true)
+          specs=$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- 'tests/app/**/*.spec.ts' || true)
+          if [ -z "$py$specs" ]; then
+            echo "A red-evidence PR must add or change at least one test file or app spec."; exit 1
+          fi
+          echo "py=$(echo $py)" >> "$GITHUB_OUTPUT"
+          echo "specs=$(echo $specs)" >> "$GITHUB_OUTPUT"
+          echo "pytest files: $py"; echo "app specs: $specs"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
       - name: Install agent-friday with the dev extra
+        if: ${{ steps.changed.outputs.py != '' }}
         run: pip install -e ".[dev,google,federation,podcast,compose]"
       - name: Run the changed test files
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        if: ${{ steps.changed.outputs.py != '' }}
+        run: pytest ${{ steps.changed.outputs.py }} -q
+
+  # The changed app specs of a red-evidence PR, and only those, on the platform
+  # the app specs job uses. Nothing runs here when the PR changes no spec.
+  red-evidence-specs:
+    name: red evidence (changed app specs)
+    needs: red-evidence
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'red-evidence') && needs.red-evidence.outputs.specs != '' }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install agent-friday with the dev extra
+        run: pip install -e ".[dev,google,federation,podcast]"
+      - name: Install the pinned Playwright and its Chromium
         run: |
-          files=$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- 'tests/*.py' 'tests/**/*.py' | grep -E '(^|/)test_[^/]*\.py$' || true)
-          if [ -z "$files" ]; then
-            echo "A red-evidence PR must add or change at least one test file."; exit 1
-          fi
-          echo "$files"
-          pytest $files -q
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run the changed app specs
+        env:
+          FRIDAY_PYTHON: python
+        run: >
+          npx playwright test --config=playwright.app.config.ts --workers=1
+          --timeout=180000 --output=test-results/red-specs
+          ${{ needs.red-evidence.outputs.specs }}

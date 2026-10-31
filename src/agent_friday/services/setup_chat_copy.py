@@ -767,7 +767,7 @@ GOOGLE_SCOPE_WORDS = {
     "https://www.googleapis.com/auth/calendar.readonly": "See your calendar",
     "https://www.googleapis.com/auth/tasks.readonly": "See your Google Tasks",
     "https://www.googleapis.com/auth/calendar":
-        "Add, change and delete calendar events (only after you press Allow calendar changes)",
+        "See, edit, share and delete your calendars and their events",
     "https://www.googleapis.com/auth/drive.readonly": "Read your Drive files",
     "https://www.googleapis.com/auth/documents.readonly": "Read your Google Docs",
     "https://www.googleapis.com/auth/spreadsheets.readonly": "Read your Google Sheets",
@@ -777,6 +777,8 @@ GOOGLE_SCOPE_WORDS = {
     "https://www.googleapis.com/auth/userinfo.email": "See your email address",
     "https://www.googleapis.com/auth/gmail.send":
         "Send email as you. Every message still waits for your approval card.",
+    "https://www.googleapis.com/auth/contacts":
+        "Create and edit your contacts. Each save still waits for your approval card.",
     "https://www.googleapis.com/auth/gmail.modify":
         "Change your mailbox: labels, archive, star, read/unread and drafts. "
         "Never permanent delete.",

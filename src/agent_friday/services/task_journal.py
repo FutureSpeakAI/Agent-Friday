@@ -61,7 +61,10 @@ TERMINAL = ("complete", "completed", "completed_unverified", "done", "failed",
             "error", "timeout", "cancelled", "interrupted", "superseded", "killed",
             # The worker is finished and what is left is the owner's decision on a card
             # (services/agent.settle_waiting_task): a restart must never run it again.
-            "waiting_approval", "declined")
+            "waiting_approval", "declined",
+            # An approved action it waited on may or may not have happened (agent.settle_waiting_task):
+            # finished, never done, and never run again by a restart.
+            "outcome_unknown")
 
 
 def is_terminal(status) -> bool:
@@ -1081,7 +1084,9 @@ _SEALED_FIELDS = ("summary", "text", "thinking", "args", "result_summary", "reas
                   # Saved workflow contracts and output references also carry
                   # user content when included in task snapshots.
                   "inputs", "success_criteria", "title", "path", "content",
-                  "result_tail", "log_tail", "note")
+                  "result_tail", "log_tail", "note",
+                  # a process's step list (routes/tasks.get_task fallback)
+                  "steps")
 
 WITHHELD = "[withheld by the privacy gate]"
 

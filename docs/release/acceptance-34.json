@@ -13,29 +13,33 @@
    "id": "NS-34.2-1",
    "strength": "REQUIRED",
    "requirement": "Green unit tests gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests.yml job pytest step 'Run unit + API suites' (pytest tests/unit tests/api) on windows+ubuntu, py3.11/3.12; scripts/release_gate.py makes the release wait for tests.yml green on the tag commit, guarded by tests/unit/test_release_waits_for_green_tests.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-2",
    "strength": "REQUIRED",
    "requirement": "Green API tests gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Same step 'Run unit + API suites' runs pytest tests/api in tests.yml; release_gate.py (installer.yml tests-green job and publish step) refuses a tag unless tests.yml is green, tested by tests/unit/test_release_waits_for_green_tests.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-3",
    "strength": "REQUIRED",
    "requirement": "Green integration tests gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests.yml step 'Run the integration suite' (pytest tests/integration) with FRIDAY_REQUIRE_OFFICECLI=1 on Windows so the office end-to-end fails rather than skips; guarded by tests/unit/test_integration_suite_in_ci.py. Only test_residency_live.py stays opt-in (multi-GB local models). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-4",
    "strength": "REQUIRED",
    "requirement": "Security and egress boundary tests gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests.yml step 'Run security + egress boundary suites': pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py on all four pytest legs; gated through release_gate.py on tests.yml. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-5",
@@ -49,92 +53,106 @@
    "id": "NS-34.2-6",
    "strength": "REQUIRED",
    "requirement": "Packaging tests gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests.yml 'package build' job: python -m build, then scripts/check_package_data.py dist/*.whl fails a wheel missing the bundled skill data; tests.yml is a required workflow in scripts/release_gate.py. CI: tests run 40076304478 on main df2872452 (package build job green).",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-7",
    "strength": "REQUIRED",
    "requirement": "Installer tests gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "The installer tests gate the release on main: .github/workflows/installer.yml's release job needs fresh-install and upgrade (packaging/windows/tests/verify-clean-install.ps1), pinned by tests/unit/test_installer_inno.py and tests/unit/test_installer_build_guard.py; CI: tests run 40076304478 on main df2872452. The installer jobs themselves last ran green off main (installer run 39882247495, dispatch on 4a4dee190); not yet on a release tag.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-8",
    "strength": "REQUIRED",
    "requirement": "Update and rollback tests gate",
    "status": "open",
-   "evidence": ""
+   "evidence": "",
+   "missing": "Half met on live: the rollback leg (packaging/windows/tests/rollback/verify-boot-rollback.ps1) is green in clean-machine run 41094117529 off main. The update half, the installer.yml upgrade matrix, has not run on live code (its only green run, 39882247495, was on 4a4dee190).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-9",
    "strength": "REQUIRED",
    "requirement": "Static analysis gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": ".github/workflows/codeql.yml analyses python and javascript on push/PR/tag; release_gate.py also refuses a tag with open high/critical code-scanning alerts (tested in tests/unit/test_release_waits_for_green_tests.py); tests.yml guards job runs ruff fatal rules. CI: codeql run 40076304491 and tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-10",
    "strength": "REQUIRED",
    "requirement": "Dependency review gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "scripts/supply_chain.py, run by .github/workflows/supply-chain.yml job dependency-review: only findings a PR adds fail it; tests/unit/test_supply_chain.py::test_a_pull_request_fails_only_on_what_it_adds. dependency-review green in run 41094103383; unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-11",
    "strength": "REQUIRED",
    "requirement": "Secret and personal-data scan gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests.yml guards step 'Secret / PII scan of the whole tracked tree': python .githooks/security_scan.py --tree (keys, passwords, private keys, personal emails, SSNs, phones, private paths); scanner tested by tests/unit/test_security_scan.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-12",
    "strength": "REQUIRED",
    "requirement": "Documentation link and example tests",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "scripts/check_doc_examples.py with tests/unit/test_doc_examples.py::test_the_docs_examples_are_real (pytest unit step) and scripts/check_doc_links.py (repository guards, Markdown links). Both green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-13",
    "strength": "REQUIRED",
    "requirement": "Settings schema tests",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "The checked-in settings schema (resources), src/agent_friday/services/settings_schema.py, scripts/gen_settings_schema.py; tests/unit/test_settings_schema.py::test_every_default_fits_the_schema and tests/unit/test_settings_schema.py::test_a_first_runs_settings_fit_the_schema. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-14",
    "strength": "REQUIRED",
    "requirement": "Action-gate completeness tests",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests/unit/test_every_action_is_governed.py discovers every registered tool and executor path and asserts the checkpoint runs first, with a planted-bypass self-test (test_the_scanner_catches_a_planted_bypass); no skip markers. Code: governance/action_gate.py, services/agent.py; plus scripts/check_gated_prompt_callers.py guard. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-15",
    "strength": "REQUIRED",
    "requirement": "Receipt completeness tests",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests/unit/test_receipt_completeness.py runs every registered tool through _execute_tool by discovery and asserts each outward or read decision has a linked outcome in the action ledger (services/action_ledger.py); also test_receipts_match_the_action.py, test_write_claims_need_a_receipt.py; no skip markers. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.2-16",
    "strength": "REQUIRED",
    "requirement": "Model and capability registry validation",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "scripts/check_model_registry.py; tests/unit/test_model_registry_is_valid.py::test_the_shipped_registries_are_consistent and tests/unit/test_model_registry_is_valid.py::test_a_seat_naming_an_unknown_provider_or_model_is_caught. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-17",
    "strength": "REQUIRED",
    "requirement": "License and SBOM generation",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "scripts/supply_chain.py (CycloneDX SBOM and licence check) in .github/workflows/supply-chain.yml; tests/unit/test_supply_chain.py::test_the_sbom_is_cyclonedx_with_exact_versions_hashes_and_purls. dependency-review green in run 41094103383; unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.2-18",
    "strength": "MUST NOT",
    "requirement": "Security suites not skipped when earlier general tests fail; report independently",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": ".github/workflows/tests.yml: 'Run security + egress boundary suites' has if: ${{ !cancelled() }}, so it runs and reports as its own step even when 'Run unit + API suites' fails; pinned by tests/unit/test_acceptance_evidence.py::test_the_security_suites_run_and_report_even_when_unit_tests_fail. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.3-1",
@@ -147,8 +165,9 @@
    "id": "NS-34.3-2",
    "strength": "MUST",
    "requirement": "Clean-machine: minimum RAM",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Memory-cap leg (4096 MiB job object): packaging/windows/tests/clean-machine/verify-clean-machine.ps1 in .github/workflows/clean-machine.yml; tests/unit/test_clean_machine_matrix.py::test_the_memory_cap_is_a_job_object_and_reaching_it_is_a_failure. leg (memory-cap) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-3",
@@ -161,36 +180,42 @@
    "id": "NS-34.3-4",
    "strength": "MUST",
    "requirement": "Clean-machine: non-English locale",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Locale leg (tr-TR): packaging/windows/tests/clean-machine/verify-clean-machine.ps1 in .github/workflows/clean-machine.yml; tests/unit/test_clean_machine_matrix.py::test_the_locale_leg_is_not_english. leg (locale) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-5",
    "strength": "MUST",
    "requirement": "Clean-machine: restricted user account",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "packaging/windows/tests/clean-machine/run-as-standard-user.ps1 in .github/workflows/clean-machine.yml; tests/unit/test_clean_machine_matrix.py::test_the_standard_user_is_not_an_administrator_and_has_a_non_ascii_profile. leg (standard-user) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-6",
    "strength": "MUST",
    "requirement": "Upgrade from oldest supported and immediately prior version",
    "status": "open",
-   "evidence": ""
+   "evidence": "",
+   "missing": "The upgrade matrix in .github/workflows/installer.yml stops at v1.2.0-beta.1; v1.2.0-beta.2 is the latest published release, and the upgrade jobs have not run on live code.",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.3-7",
    "strength": "MUST",
    "requirement": "Restore from portable bundle",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "restore.yml: machine A makes a Friday Bundle (cli bundle create/verify), a separate Windows runner and an Ubuntu runner restore it and tests/clean_machine/check_restore.py checks files, vault and receipts; a tampered bundle is refused. Code: services/friday_bundle.py, cli.py. CI: restore run 40076304471 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.3-8",
    "strength": "MUST",
    "requirement": "Results recorded in release evidence",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "scripts/clean_machine_evidence.py, the evidence job in .github/workflows/clean-machine.yml (reads every leg, even a failed one); tests/unit/test_clean_machine_matrix.py::test_the_evidence_job_reads_every_leg_even_when_one_failed and tests/unit/test_clean_machine_matrix.py::test_the_release_build_calls_it_and_the_release_waits_for_it. evidence job green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-1",
@@ -204,8 +229,9 @@
    "id": "NS-34.4-2",
    "strength": "MUST",
    "requirement": "First-run: preflight accuracy",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "packaging/windows/installer/probe-hardware.ps1, checked on real Windows by tests/unit/test_preflight_is_accurate.py::test_the_preflight_reports_this_computers_memory_disk_and_graphics. pytest (windows-latest, py3.12) unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-3",
@@ -218,29 +244,33 @@
    "id": "NS-34.4-4",
    "strength": "MUST",
    "requirement": "First-run: setup without a model",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "packaging/windows/tests/verify-clean-install.ps1 checks first run with no model (cloud choice, no download), zero keys and set-up-later. leg (windows-2022) and leg (windows-2025) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-5",
    "strength": "MUST",
    "requirement": "First-run: local-model download and checksum",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/first_run_models.py + services/model_download.py: tests/unit/test_first_run_models.py (both models download verified and seat; checksum mismatch installs and seats nothing; resume) and tests/unit/test_model_download.py, against a local server. CI: tests run 40076304478 on main df2872452. Not in the clean-machine installer run (it picks cloud, downloads nothing).",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.4-6",
    "strength": "MUST",
    "requirement": "First-run: cloud-key setup through secure fields",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "POST /api/providers/<p>/key to credential_store; tests/api/test_setup_chat_routes.py (secure field goes to the store, never the chat/transcript; key typed as an answer refused; no secret comes back) and tests/app/specs/connect_services.spec.ts (password field, masked, fresh zero-key home). CI: tests run 40076304478 on main df2872452. Not in the installer clean-machine run.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.4-7",
    "strength": "MUST",
    "requirement": "First-run: connector scope display",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests/unit/test_connector_scopes_on_the_card.py::test_the_card_lists_exactly_the_scopes_google_is_asked_for and tests/api/test_read_first_google_scopes.py::test_allowing_changes_asks_for_exactly_that_on_googles_screen. pytest unit + API step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.4-8",
@@ -253,43 +283,49 @@
    "id": "NS-34.4-9",
    "strength": "MUST",
    "requirement": "First-run: backup setup",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/first_backup.py offers the first backup once setup is done; tests/clean_machine/check_first_backup.py (offered, turned on, one verified scheduled bundle, offer ends, Doctor healthy) in restore.yml job 'the first backup on a freshly set up Friday', green in restore run 40076304471 on main df2872452; tests/unit/test_first_backup.py in tests run 40076304478.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.4-10",
    "strength": "MUST",
    "requirement": "First-run: uninstall",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Uninstall check in packaging/windows/tests/verify-clean-install.ps1: install folder, Apps entry and shortcuts gone, ~/.friday kept byte for byte, then reinstall. leg (windows-2022) and leg (windows-2025) green in run 41094117529. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.5-1",
    "strength": "MUST",
    "requirement": "Every registered tool reaches the action gate (test)",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "governance/action_gate.authorize via the governance_rings hook in agent._execute_tool; tests/unit/test_every_action_is_governed.py::test_every_registered_tool_passes_the_checkpoint_first sends every CLAUDE_TOOL_HANDLERS entry incl. a registered MCP connector through _execute_tool and asserts the gate runs first. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.5-2",
    "strength": "MUST",
    "requirement": "Direct handler call sites cannot bypass gate",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests/unit/test_every_action_is_governed.py::test_no_executor_path_skips_the_checkpoint AST-scans src/ for direct handler/connector calls outside reviewed sites, with a permanent planted-bypass self-test; plus scripts/check_gated_prompt_callers.py guard. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.5-3",
    "strength": "MUST",
    "requirement": "Unknown tools are conservative",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "governance/action_gate.py classify(): 'an unknown tool is treated as outward'; tests/unit/test_outward_reads_observe.py::test_an_unknown_tool_is_untouched asserts classify('frobnicate_everything') == OUTWARD, and test_every_action_is_governed.py asserts outward actions with no decision never run. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.5-4",
    "strength": "MUST",
    "requirement": "Approvals bind exact arguments",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/agent.py _approved_card_allows compares tool and sorted-key JSON of arguments, consumes the card once; tests/unit/test_approval_executes.py (exact call allowed once, different tool or details refused, key order irrelevant). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.5-5",
@@ -309,22 +345,25 @@
    "id": "NS-34.5-7",
    "strength": "MUST",
    "requirement": "Untrusted parameters force stronger approval",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/taint.py + agent hook: tests/unit/test_taint_provenance.py (recipient/account/path from read content stops at a card naming the source; a chat yes does not satisfy it; approving buys one call; background gated too). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.5-8",
    "strength": "MUST",
    "requirement": "Receipt failure holds action",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "action_gate._receipt raises on failure and the call is held: tests/unit/test_every_action_is_governed.py::test_it_fails_closed (receipt OSError holds an outward action) and tests/unit/test_ring_check_receipt.py (ring-2 call held, nothing unsigned written). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.5-9",
    "strength": "MUST",
    "requirement": "STOP works while model loop is wedged",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/global_stop.py, model_router._AnyCancel: tests/unit/test_global_stop.py::test_a_model_call_already_streaming_is_cut_at_once (a stream that never sends another byte is cut under 2 s), no model call or tool runs while stopped. CI: tests run 40076304478 on main df2872452. Covers the streaming read; a non-streaming hung call is not tested.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.5-10",
@@ -338,29 +377,34 @@
    "id": "NS-34.5-11",
    "strength": "MUST",
    "requirement": "Constitution drift holds outward actions",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "src/agent_friday/governance/action_gate.py verify_claws pin check: tests/unit/test_every_action_is_governed.py::test_it_fails_closed tampers the cLaws pin file and asserts a background outward action is held ('cLaws'), reads still work (test_reads_keep_working_when_the_cLaws_check_fails). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.6-1",
    "strength": "MUST",
    "requirement": "Egress tests: structured PII",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/sensitivity_classifier.py + egress_gate.seal_outbound: tests/test_egress_adversarial.py TestSSNVariants, TestStructuredTokenRegex (card, routing), tests/security/test_egress_gate_adversarial.py TestPIIFormats (SSN/card never leak verbatim). CI: tests run 40076304478 on main df2872452. (security+egress step)",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.6-2",
    "strength": "MUST",
    "requirement": "Egress tests: unstructured sensitive meaning",
    "status": "open",
-   "evidence": ""
+   "evidence": "",
+   "missing": "Layers 3 and 4 are plumbing-tested only (tests/unit/test_sensitivity_classifier_layers.py stubs the embedding tier; CI installs no encoder). No green test shows sensitive meaning with no listed keyword being withheld.",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.6-3",
    "strength": "MUST",
    "requirement": "Egress tests: secrets",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "sensitivity_classifier regex layer: tests/test_egress_adversarial.py TestStructuredTokenRegex (sk-ant, sk-, AQ. keys), tests/unit/test_egress_recognises_credentials.py (private keys, GitHub/AWS/Slack/Twilio tokens), tests/security/test_egress_gate_adversarial.py test_api_keys_never_leak. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.6-4",
@@ -380,8 +424,9 @@
    "id": "NS-34.6-6",
    "strength": "MUST",
    "requirement": "Egress tests: provider echo",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "egress_gate.register_provider_echo: tests/unit/test_egress_grant_origin.py TestProviderEchoOrigin (echo replay to the same provider is allowed and attributed, does not cross to another provider, unregistered text still withheld). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.6-7",
@@ -394,15 +439,17 @@
    "id": "NS-34.6-8",
    "strength": "MUST",
    "requirement": "Egress tests: malformed payloads",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "src/agent_friday/services/egress_gate.py; tests/unit/test_egress_malformed_payloads.py::test_a_malformed_message_never_carries_sensitive_text_to_a_cloud_model and tests/unit/test_egress_malformed_payloads.py::test_a_malformed_messages_field_is_gated_not_skipped. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.6-9",
    "strength": "MUST",
    "requirement": "Egress tests: oversized payloads",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "egress_gate.MAX_PAYLOAD_BYTES refuses and records oversized sends: tests/unit/test_egress_ledger_fields.py::test_a_payload_over_the_size_limit_is_refused_and_recorded; tests/test_egress_adversarial.py TestVeryLongMessage finds an SSN/legal needle in 10K+ text. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.6-10",
@@ -450,22 +497,25 @@
    "id": "NS-34.7-2",
    "strength": "MUST",
    "requirement": "Tests verify content cannot create grants",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Grants are minted only on owner approval/routes: tests/unit/test_file_grants_front_door.py (model's file_access tool asks, never grants), tests/api/test_preapproved_sends.py (tainted send never uses a grant; a skill's declared permissions grant nothing until approved), test_preapproved_sends_hardening.py (grant routes need the page token). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.7-3",
    "strength": "MUST",
    "requirement": "Tests verify content cannot change recipients silently",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests/unit/test_taint_provenance.py (an address from an email body stops at a card naming it; chat yes not enough) and tests/api/test_preapproved_sends_hardening.py (a send after reading outside content gets its card even to a granted recipient). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.7-4",
    "strength": "MUST",
    "requirement": "Tests verify content cannot modify policy",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/action_policy.py strip_authority_overrides + policy appended last in model_router._get_friday_system_prompt: tests/unit/test_ingested_text_cannot_grant_authority.py (overrides in vault/wiki, learned heuristics and injected context never reach the prompt; policy is last). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.7-5",
@@ -493,57 +543,65 @@
    "id": "NS-34.9-2",
    "strength": "MUST",
    "requirement": "Memory tests: source citation / provenance",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Recalled memory lines carry date and stored message id (model_router._build_memory_context_block, conversation_memory.search returns id); Library answers cite documents. Tests: tests/unit/test_memory_truth.py (recalled with its date and source), tests/unit/test_response_provenance.py, tests/unit/test_library_cite.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.9-3",
    "strength": "MUST",
    "requirement": "Memory tests: current-state override and freshness",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "src/agent_friday/services/memory_derived.py (wired into conversation memory and the graph indexer); tests/unit/test_correction_reaches_derived.py::test_a_correction_takes_the_day_s_summary_away_and_queues_it_again. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-4",
    "strength": "MUST",
    "requirement": "Memory tests: correction and supersession",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "src/agent_friday/services/memory_derived.py; tests/unit/test_correction_reaches_derived.py::test_the_graph_drops_what_only_the_corrected_turn_said and tests/unit/test_correction_reaches_derived.py::test_a_correction_takes_the_day_s_summary_away_and_queues_it_again. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-5",
    "strength": "MUST",
    "requirement": "Memory tests: deletion and tombstones",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/forget_person.py and services/forget_registry.py purge every registered store and keep a forgotten person from coming back on reindex (undo before final removal). Tests: tests/unit/test_forget_person.py, tests/unit/test_forget_registry.py, tests/api/test_forget_person_routes.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.9-6",
    "strength": "MUST",
    "requirement": "Memory tests: off-record exclusion",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Off-the-record sessions write nothing across chat, voice, conversations, journals, receipts, caches, notifications and forensics. Test: tests/unit/test_off_record_writes_nothing.py (28 tests, no skip markers). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.9-7",
    "strength": "MUST",
    "requirement": "Memory tests: import staging",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "src/agent_friday/services/import_staging.py (contacts and AI chat exports); tests/unit/test_import_staging.py::test_staging_writes_nothing_durable and tests/unit/test_ai_history_import.py::test_staging_creates_no_conversation_until_accepted. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-8",
    "strength": "MUST",
    "requirement": "Memory tests: inferred vs confirmed state",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests/unit/test_memory_inferred_vs_confirmed.py::test_every_inferring_path_stores_its_output_marked_as_waiting_for_the_owner and tests/unit/test_memory_inferred_vs_confirmed.py::test_a_recalled_guess_friday_voiced_is_labelled_hers_not_the_owners. pytest unit step green in run 41094103402. Checked off main (PR #444, 13c3872b9 == live).",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.9-9",
    "strength": "MUST",
    "requirement": "Memory tests: index rebuild",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "ConversationMemory.rebuild_from_transcripts (src/agent_friday/conversation_memory.py), conversation_fts rebuild and KG full/delta rebuild keep deletions and corrections. Tests: tests/unit/test_memory_rebuild.py, tests/unit/test_memory_truth.py (rebuild keeps deletions), tests/unit/test_kg_delta_truth.py, tests/unit/test_kg_indexer.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.9-10",
@@ -557,57 +615,65 @@
    "id": "NS-34.10-1",
    "strength": "MUST",
    "requirement": "Goal tests: state transitions",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/goal_state.py defines allowed transitions; services/goals.py enforces them. Tests: tests/unit/test_goals_state_machine.py (happy path, illegal transitions raise), tests/unit/test_goal_states_and_blockers.py (every spec state exists). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.10-2",
    "strength": "MUST",
    "requirement": "Goal tests: typed blockers, continuation preconditions",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/goals.py typed stops (policy blocked, over budget, waiting on answer, dependency, no expected result, another piece running). Tests: tests/unit/test_goal_states_and_blockers.py (blocker and nothing-starts-unless tests), tests/unit/test_goals_survive_restart.py (failed task leaves a typed blocker), test_goal_cards_bound_to_plan.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.10-3",
    "strength": "MUST",
    "requirement": "Goal tests: no-progress detection",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/goals.py stops a goal when the same result or critique repeats and holds until the owner restarts. Tests: tests/unit/test_goal_states_and_blockers.py (same result twice / same critique twice -> no-progress blocker, holds across runs, new plan resets), plus test_task_watchdog.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.10-4",
    "strength": "MUST",
    "requirement": "Goal tests: crash recovery",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/goals.py adopts or holds interrupted milestones via the task journal's resume verdict. Tests: tests/unit/test_goals_survive_restart.py (23 tests: unknown send never re-run, finished task checked not redone), test_goal_restart_persistence.py, tests/api/test_task_resume.py, tests/unit/test_reconcile_resume.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.10-5",
    "strength": "MUST",
    "requirement": "Goal tests: budget enforcement",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Goal budget caps reserve against services/budget_enforcer before each milestone and inside repair loops. Tests: tests/unit/test_goal_budget_cap.py (blocks before execution, cumulative hard stop, concurrent siblings cannot overspend), tests/unit/test_budget_enforcer.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.10-6",
    "strength": "MUST",
    "requirement": "Goal tests: plan revision, approval waiting",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/goals.py records plan changes and binds approval cards to the exact plan. Tests: tests/unit/test_goal_states_and_blockers.py (repair stops on plan change, old yes does not run new plan, waiting milestone not re-run), test_goal_cards_bound_to_plan.py, test_goal_rollover_needs_owner_approval.py, tests/api/test_goals_card_route.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.10-7",
    "strength": "MUST",
    "requirement": "Goal tests: evidence-first completion, receipt-first evaluation, manual completion labeling",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "src/agent_friday/services/goal_state.py: met_verified only from the goal's own checks, owner marking gives met_unverified ('marked met without automatic proof'), manual confirmations write a milestone_manual_confirmed receipt. Tests: tests/unit/test_goal_checks_on_receipts.py, tests/unit/test_goal_states_and_blockers.py, tests/unit/test_goal_verification_repair.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.10-8",
    "strength": "MUST",
    "requirement": "Goal tests: archive and reopen",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "goal_state.py allows met->archived->active and abandoned->active; routes/goals.py exposes it. Tests: tests/unit/test_goal_states_and_blockers.py::test_a_met_goal_can_be_archived_and_reopened, tests/api/test_goals_card_route.py (pause/resume/end/reopen/archive), tests/unit/test_goals_card.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.11-1",
@@ -634,22 +700,26 @@
    "id": "NS-34.12-1",
    "strength": "MUST",
    "requirement": "Artifact tests: validity, rendering, bounds, formulas, charts, fonts, accessibility",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/artifact_qa.py checks validity, bounds, formulas, charts, fonts, accessibility for docx/xlsx/pptx/pdf/html/csv/images: tests/unit/test_artifact_checks.py. Rendering: tests/integration/test_office_end_to_end.py renders a deck to PNG with the pinned officecli on the Windows legs (FRIDAY_REQUIRE_OFFICECLI=1 makes skip a failure). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.12-2",
    "strength": "MUST",
    "requirement": "Artifact tests: source preservation, overwrite safety, provenance, receipt linkage",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/artifact_manifest.py signs a line per created file linking task, turn and the exact action receipt; save_output never replaces an existing file; write_file keeps a backup. Tests: tests/unit/test_artifact_manifest.py, test_office_safety.py, test_credentials_on_every_save.py, test_write_file_keeps_a_backup_and_receipt.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.13-1",
    "strength": "MUST",
    "requirement": "Persona goldens: directness, dissent, uncertainty, non-sycophancy",
    "status": "open",
-   "evidence": ""
+   "evidence": "",
+   "missing": "No workflow sets FRIDAY_PERSONA_EVAL_LIVE: the goldens are scored against committed transcripts or crafted replies, never against Friday's live persona and model.",
+   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
   },
   {
    "id": "NS-34.13-2",
@@ -718,8 +788,9 @@
    "id": "NS-34.16-1",
    "strength": "MUST",
    "requirement": "Chaos: kill during model call and outward action",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Real os._exit kills: tests/unit/test_task_journal.py kills a child during a blocked model call and the restart marks it interrupted; tests/unit/test_chaos_outward_actions.py kills mid outward action (not retried, asks before resuming, approved card -> outcome unknown). Code: services/task_journal.py, services/card_recovery.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.16-2",
@@ -761,8 +832,9 @@
    "id": "NS-34.17-3",
    "strength": "MUST NOT",
    "requirement": "No plaintext credential fallback",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "services/credential_store.py raises CredentialProtectionUnavailable and writes nothing when it cannot encrypt; the keystore is the only write tier; old plaintext blobs are read only for migration. Tests: tests/unit/test_credential_store_never_plaintext.py, tests/unit/test_keystore_migration.py. CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.17-4",
@@ -790,15 +862,17 @@
    "id": "NS-34.17-7",
    "strength": "MUST NOT",
    "requirement": "No missing receipt for outward action",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Every registered tool is run through agent._execute_tool and each outward or reading action must leave an outcome entry linked to its decision in services/action_ledger; services/receipt_audit flags orphans. Test: tests/unit/test_receipt_completeness.py (plus every channel send, phone texts). CI: tests run 40076304478 on main df2872452.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.17-8",
    "strength": "MUST NOT",
    "requirement": "No skipped mandatory security suites or unexplained red checks",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "tests.yml runs security/egress/integration steps with if: !cancelled(); installer.yml tests-green job and publish re-check run scripts/release_gate.py so a tag publishes only when tests, codeql and restore are green on its commit with no high alert. Test: tests/unit/test_release_waits_for_green_tests.py. CI: tests run 40076304478 on main df2872452. Gate not yet run on a release tag.",
+   "checked": "2026-10-28, against main df2872452"
   },
   {
    "id": "NS-34.18-1",

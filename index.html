@@ -26,6 +26,29 @@ window.addEventListener('error',function(e){
   }
 },true);
 </script>
+<script id="friday-render-3d">
+// 3D rendering can be switched off entirely (north star 21.22-3; Settings >
+// Appearance > 3D rendering). Read before anything draws: with it off no WebGL
+// context is ever made, and every 3D view shows its flat form instead.
+// The answer is fixed for this page: the WebGL switch below is installed once,
+// so a change made in Settings takes effect when Friday next opens.
+(function(){
+  var off=false;try{off=localStorage.getItem('friday.render3d')==='off';}catch(_){}
+  window.fridayRender3dOff=function(){return off;};
+  window.fridaySyncRender3d=function(on){try{if(on===false)localStorage.setItem('friday.render3d','off');else if(on===true)localStorage.removeItem('friday.render3d');}catch(_){}};
+  if(!off)return;
+  document.documentElement.setAttribute('data-render3d','off');
+  var get=HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext=function(kind){
+    if(/^(webgl2?|experimental-webgl)$/i.test(String(kind||'')))return null;
+    return get.apply(this,arguments);
+  };
+})();
+</script>
+<style id="friday-render-3d-style">
+:root[data-render3d="off"] #friday-scene-canvas{display:none!important}
+:root[data-render3d="off"] body{background:#070b14}
+</style>
 <!-- UI libraries are vendored (static/vendor/, SRI-verified against the same
      pinned versions the old CDN tags carried) so the shell loads offline.
      Babel below is the sole remaining CDN script and only for fallback builds:
@@ -58,6 +81,9 @@ window.addEventListener('error',function(e){
 <script src="/static/js/friday_stop_everything.js" defer></script>
 <!-- Settings > Privacy > When a cloud provider fails (A6). -->
 <script src="/static/js/friday_cloud_fallback_order.js" defer></script>
+<script src="/static/js/friday_route_why.js" defer></script>
+<!-- Settings > Privacy > Folders Friday may use (BD-26). -->
+<script src="/static/js/friday_folder_grants.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -350,6 +376,10 @@ window.addEventListener('DOMContentLoaded',function(){
            told from "camera off" without a face. Green (holo-active) still
            means a face is being tracked. */
         #camera-indicator[data-status="live"]:not(.holo-active) { background: #1f6f7f; }
+        /* The camera light by shape too: off a ring, on a half-filled circle, following a face a filled circle. */
+        #camera-indicator { width: 8px; height: 8px; box-sizing: border-box; }
+        #camera-indicator:not(.holo-active):not([data-status="live"]) { background: transparent; border: 1.5px solid #666; }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: linear-gradient(90deg, #1f6f7f 50%, transparent 50%); border: 1.5px solid #1f6f7f; }
         /* What the camera is doing when it is not simply working: busy in
            another app, stopped and reconnecting, released while hidden. Empty
            and invisible while the camera is live or off. */
@@ -391,6 +421,40 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 4px;
         }
 
+        /* Accessibility (north star §33.1, BD-21 AX1). Every control that can
+           take keyboard focus shows it: the roles the rule above missed, and
+           over the few rules that hid the ring (the hand cursor's highlight,
+           the chat edge pill, the snap zones, the keys sheet). */
+        [role="radio"]:focus-visible, [role="switch"]:focus-visible,
+        [role="checkbox"]:focus-visible, [role="menuitem"]:focus-visible,
+        [role="option"]:focus-visible, summary:focus-visible,
+        .fr-snap:focus-visible, .chat-edge-pill:focus-visible,
+        .snap-zone:focus-visible, .keys-sheet-close:focus-visible {
+            outline: 2px solid #00d4ff !important;
+            outline-offset: 2px;
+        }
+        /* The first Tab stop: straight to the app, past the scene. */
+        .skip-link {
+            position: fixed; left: 12px; top: -60px; z-index: 2147483647;
+            padding: 10px 16px; border-radius: 8px; background: #00141c;
+            color: #fff; font: 600 14px Inter, sans-serif; text-decoration: none;
+            border: 2px solid #00d4ff;
+        }
+        .skip-link:focus, .skip-link:focus-visible { top: 12px; }
+        /* Windows high contrast (forced colours): the focus ring uses the
+           system's own highlight so it is never drawn in a colour the theme
+           replaced. */
+        @media (forced-colors: active) {
+            :focus-visible { outline: 3px solid Highlight !important; outline-offset: 2px; }
+            .dock-btn, .btn, .settings-toggle, [role="radio"], [role="switch"] { border: 1px solid ButtonText; }
+        }
+        /* "More contrast" asked for by the system: dim text and hairlines get
+           stronger, so nothing sits below a readable contrast. */
+        @media (prefers-contrast: more) {
+            :root { --st-dim: rgba(255,255,255,0.86); --fr-dim: rgba(255,255,255,0.86); }
+            :focus-visible { outline-width: 3px !important; }
+        }
+
         /* Base button (used by React UI) */
         .btn {
             background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.14); color: rgba(255, 255, 255, 0.78);
@@ -429,7 +493,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
         .fr-lockup-name { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
             color: var(--fr-cyan); text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); cursor: pointer;
-            user-select: none; background: none; border: 0; padding: 0; transition: text-shadow .2s; }
+            user-select: none; background: none; border: 0; padding: 0; min-height: 24px; transition: text-shadow .2s; }
         .fr-lockup-name:hover { text-shadow: 0 0 18px rgba(0,212,255,0.75); }
         .fr-lockup-name.fr-lockup-static { cursor: default; }
         .fr-lockup-tm { font-size: 0.5em; vertical-align: super; line-height: 0; margin-left: 1px; }
@@ -559,7 +623,8 @@ window.addEventListener('DOMContentLoaded',function(){
         /* A card Friday raised inside this workspace is waiting: one quiet
            dot under the label, no count and no pulse. It clears when the
            workspace is opened or the card is dismissed. */
-        .dock-btn.has-notice .dot { background: #00d4ff; }
+        /* A notice is a ring, an open window a filled dot: told apart by shape, not only by being cyan. */
+        .dock-btn.has-notice .dot { background: transparent; border: 1px solid #00d4ff; width: 5px; height: 5px; box-sizing: border-box; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -604,6 +669,11 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin-btns button:hover { color: #fff; }
         .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
+        /* Text size (Settings > Appearance; north star 33.1-8, WCAG 1.4.4): what you read grows and reflows
+           inside its window; frames, the dock and the scene keep their size. */
+        .fwin-body, .ws-tab-body, .fx-chat-transcript, [data-chat-input] { zoom: var(--fr-text-zoom, 1); }
+        /* Zoom multiplies: a chat drawn inside a window (Code, News) takes the window's size once, not twice. */
+        :is(.fwin-body, .ws-tab-body) :is(.fx-chat-transcript, [data-chat-input]) { zoom: 1; }
         /* The browser refused a workspace's own tab: said under the title bar. */
         .fwin-tab-blocked { display: flex; gap: 8px; align-items: flex-start; margin: 6px 10px 0; padding: 7px 10px; border-radius: 8px; background: rgba(255,196,0,0.10); border: 1px solid rgba(255,196,0,0.38); color: #ffe7a3; font-size: 12px; line-height: 1.45; }
         .fwin-tab-blocked b { color: #fff3c9; }
@@ -774,7 +844,7 @@ window.addEventListener('DOMContentLoaded',function(){
            until the pointer comes to it. A click brings the tray back. */
         .chat-edge-pill {
             position: fixed; top: 50%; right: 0; z-index: 66;
-            width: 14px; height: 76px; margin-top: -38px; padding: 0;
+            width: 24px; height: 76px; margin-top: -38px; padding: 0;
             display: flex; align-items: center; justify-content: center;
             background: rgba(10,14,26,0.82); color: var(--fr-cyan);
             border: 1px solid rgba(0,212,255,0.28); border-right: none;
@@ -783,7 +853,7 @@ window.addEventListener('DOMContentLoaded',function(){
             font-size: 13px; line-height: 1; opacity: 0.45;
             transition: opacity 0.2s ease, width 0.2s ease;
         }
-        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
+        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 30px; outline: none; }
         .chat-edge-pill.left { right: auto; left: 0; border-left: none;
             border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
         /* Snap layouts (unified-shell.md §11): the outline a release would
@@ -2540,6 +2610,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
         .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
         .thread-dot.error { background: #ff0080; color: #ff0080; }
+        /* A step's state by shape too: done a circle, in progress half filled, pending a ring, error a square. */
+        .thread-dot.in-progress { background: linear-gradient(90deg, #f59e0b 50%, transparent 50%); border: 2px solid #f59e0b; box-sizing: border-box; }
+        .thread-dot.pending { background: transparent; border: 2px solid #3b82f6; box-sizing: border-box; }
+        .thread-dot.error { border-radius: 2px; }
         .thread-step-content { flex: 1; min-width: 0; }
         .thread-step-text {
             font-family: 'Inter', sans-serif; font-size: 12px;
@@ -2935,10 +3009,27 @@ window.addEventListener('DOMContentLoaded',function(){
             padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
             border:1px solid rgba(255,255,255,0.07);
         }
+        /* State is never shown by colour alone (WCAG 1.4.1; north star 33.1-11). One shape per kind of
+           state: ok a filled circle, busy a half-filled circle, warn a diamond, bad a square, off a hollow
+           ring. The colour stays; the shape says the same thing to someone who cannot tell the colours apart. */
+        .fr-state { display:inline-block; width:8px; height:8px; flex-shrink:0; vertical-align:middle; box-sizing:border-box;
+            border-radius:50%; background:currentColor; }
+        .fr-state[data-state="ok"] { color:#00ff80; }
+        .fr-state[data-state="busy"] { color:#f59e0b; border:1.5px solid currentColor; background:linear-gradient(90deg, currentColor 50%, transparent 50%); }
+        .fr-state[data-state="warn"] { color:#f59e0b; border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .fr-state[data-state="bad"] { color:#ff5470; border-radius:1px; }
+        .fr-state[data-state="off"] { color:rgba(255,255,255,0.4); border:1.5px solid currentColor; background:transparent; }
+        .fr-state[data-kind="cloud"] { border-radius:1px; }
+        /* Read by a screen reader, not drawn (the page's one top-level heading, say). */
+        .fr-sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+            clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Trust by shape too: high a circle, medium a diamond, low a square. */
+        .trust-dot.yellow, .trust-obs-dot.yellow { border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .trust-dot.red, .trust-obs-dot.red { border-radius:1px; }
 
         /* ── Source-trust badge + hover tooltip (article cards) ── */
         .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
@@ -3033,6 +3124,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .sentiment-dot.positive { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .sentiment-dot.neutral { background:#7a8190; box-shadow:0 0 4px rgba(122,129,144,0.4); }
         .sentiment-dot.negative { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Tone by shape too: positive a circle, neutral a ring, negative a square. */
+        .sentiment-dot.neutral { background:transparent; border:1.5px solid #7a8190; box-sizing:border-box; }
+        .sentiment-dot.negative { border-radius:1px; }
         /* "In your wiki" connection link */
         .wiki-connect { font-size:10px; color:#9fb0c4; margin-top:7px; }
         .wiki-link { color:#00d4ff; cursor:pointer; text-decoration:none; border-bottom:1px dotted rgba(0,212,255,0.4); }
@@ -3699,6 +3793,7 @@ window.addEventListener('DOMContentLoaded',function(){
 </head>
 
 <body>
+    <a class="skip-link" href="#ui-inner">Skip to Agent Friday™</a>
     <style>
     /* Offline-first: desaturate the holographic scene when the network monitor
        reports we're offline, so the environment visibly (but calmly) reflects
@@ -3736,7 +3831,11 @@ window.addEventListener('DOMContentLoaded',function(){
     </div>
 
     <!-- Parallax Tracker Dot -->
-    <div id="camera-indicator"></div>
+    <div id="camera-indicator" role="img" aria-label="Camera off" title="Camera off"></div>
+    <!-- What a screen reader says when something needs you (north star 33.3-6): standing live regions, read
+         and not drawn; fridayAnnounce() sets their text. -->
+    <div id="fr-announce-polite" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0"></div>
+    <div id="fr-announce-assertive" role="alert" aria-live="assertive" aria-atomic="true" style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0"></div>
     <div id="camera-status" role="status" aria-live="polite"></div>
     <div id="call-mode-chip" role="status" aria-live="polite"></div>
 
@@ -3757,7 +3856,10 @@ window.addEventListener('DOMContentLoaded',function(){
 
     <!-- Friday OS React UI Layer -->
     <div id="ui-root" style="position:fixed;inset:0;z-index:60;pointer-events:none">
-        <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
+        <!-- The page's one top-level heading: a screen reader's heading list starts here, and each open window
+             is a level-2 heading under it (north star 33.1-6). -->
+        <h1 class="fr-sr-only">Agent Friday™</h1>
+        <div id="ui-inner" tabindex="-1" style="pointer-events:auto;height:100vh;outline:none"></div>
     </div>
 
     <!-- Undocked chat mode (?chrome=chat), set as early as the body exists.
@@ -4675,7 +4777,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             function render() {
                 const ind = document.getElementById('camera-indicator');
-                if (ind) ind.dataset.status = state.status;
+                if (ind) { ind.dataset.status = state.status; const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab; }
                 const s = document.getElementById('camera-status');
                 if (!s) return;
                 const show = state.wanted && state.status !== 'live' && state.status !== 'off';
@@ -5071,6 +5173,7 @@ window.addEventListener('DOMContentLoaded',function(){
             if (!ind) return;
             if (active && isHologramMode) { ind.classList.add('holo-active'); }
             else { ind.classList.remove('holo-active'); }
+            const lab = ind.classList.contains('holo-active') ? 'Camera on, following your face' : ind.dataset.status === 'live' ? 'Camera on' : (!ind.dataset.status || ind.dataset.status === 'off') ? 'Camera off' : 'Camera not live'; ind.setAttribute('aria-label', lab); ind.title = lab;
         }
 
         // --- AESTHETIC CONFIGURATION ---
@@ -5966,7 +6069,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 // task (an image or a video render) is cancelled as a process.
                 if (o.task_id) {
                     return post('/api/tasks/' + encodeURIComponent(o.task_id) + '/stop-after-step').then(r => {
-                        if (r.status === 409) return fetch('/api/tasks/' + encodeURIComponent(o.task_id), { method: 'DELETE' });
+                        // Not running (finished meanwhile, paused, or waiting for your OK): nothing is stopped and
+                        // nothing is deleted (a DELETE here would remove a finished task's record); say so.
+                        if (r.status === 409) return r.json().catch(() => ({})).then(d => {
+                            const st = String((d && d.status) || '');
+                            note('cancel:' + o.id, Name(o) + (/^(paused|awaiting_approval)$/.test(st)
+                                ? ' is waiting, so it was not stopped. Find it in Activity.'
+                                : ' had already stopped; its record is kept.'), { ms: 4500 });
+                            return r;
+                        });
                         return r;
                     }).catch(() => {});
                 }
@@ -5976,10 +6087,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 U.tick(performance.now());
                 if (!U.keys().length) { clearInterval(undoTimer); undoTimer = 0; }
             }
+            // What became of a cancel, for anything showing it (the process panel's Cancel button).
+            function said(o, state) {
+                try { window.dispatchEvent(new CustomEvent('friday:orb-cancel', { detail: { id: o.id, state } })); } catch (_) {}
+            }
             function cancel(o) {
                 if (U.has(o.id)) return { ok: true, pending: true };
                 call('mark', o.id, 'cancelling');
-                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); }, performance.now());
+                U.schedule(o.id, () => { dropNote('undo:' + o.id); call('mark', o.id, 'cancelled'); commitCancel(o); said(o, 'committed'); }, performance.now());
+                said(o, 'pending');
                 note('undo:' + o.id, Name(o) + ' will stop.', { undo: () => undo(o), ms: UNDO_MS });
                 if (!undoTimer) undoTimer = setInterval(undoTick, 200);
                 return { ok: true, pending: true, undo_s: UNDO_MS / 1000 };
@@ -5987,6 +6103,7 @@ window.addEventListener('DOMContentLoaded',function(){
             function undo(o) {
                 if (!U.undo(o.id)) return { ok: false, reason: 'nothing to undo' };
                 dropNote('undo:' + o.id);
+                said(o, 'undone');
                 call('mark', o.id, null);
                 note('undone:' + o.id, Name(o) + ' carries on.', { ms: 2500 });
                 return { ok: true };
@@ -6075,7 +6192,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 return { ok: results.every(r => r.ok !== false), results };
             }
 
-            return { attach, run, act, onScene, statusLine, note, _undo: U };
+            return { attach, run, act, onScene, statusLine, note, _undo: U, cancelOrb: o => cancel(Object.assign({}, find(o.id) || {}, o)) };
         })();
         // </orb-hands>
         // <orb-scene>
@@ -11314,7 +11431,10 @@ window.addEventListener('DOMContentLoaded',function(){
         // A workspace in its own tab (/w/<id>), or an undocked chat
         // (?chrome=chat), has no room around it: the scene, its GPU context
         // and its render loop are never started. The orb mode is the scene.
-        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat') window.onload = init;
+        // With 3D rendering switched off (Settings > Appearance) the scene is never
+        // started either: no GPU context, no render loop.
+        if (!window.__FRIDAY_STANDALONE__ && window.__FRIDAY_CHROME__ !== 'chat'
+            && !(window.fridayRender3dOff && window.fridayRender3dOff())) window.onload = init;
     </script>
 
 <script>
@@ -11510,10 +11630,40 @@ window.fridayAddThreadStep = function(orbId, step) {
 };
 
 // === KEYBOARD CONTROLS ===
+// Arrow keys belong to a focused control that uses them (radios, lists, menus,
+// tabs, sliders: NS-33.1-2); the scene takes them only when no such control
+// has focus.
+var FRIDAY_ARROW_WIDGETS = 'select, [role="radio"], [role="radiogroup"], [role="listbox"], [role="option"], ' +
+    '[role="menu"], [role="menuitem"], [role="menubar"], [role="tablist"], [role="tab"], [role="slider"], ' +
+    '[role="spinbutton"], [role="grid"], [role="tree"], [role="treeitem"], [role="combobox"]';
 document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.defaultPrevented || (e.target.closest && e.target.closest(FRIDAY_ARROW_WIDGETS))) return;
     if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
     if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
+});
+
+// A radio group is one Tab stop's worth of choices: the arrow keys move to the
+// next or previous choice and pick it, Home and End go to the first and last
+// (WAI-ARIA radio group pattern; NS-33.1-2).
+document.addEventListener('keydown', function(e) {
+    var step = {ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, Home: 'first', End: 'last'}[e.key];
+    // A group that handles its own arrows (the display-style picker previews
+    // without committing) has already taken the key: leave it alone.
+    if (step === undefined || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    var radio = e.target && e.target.closest && e.target.closest('[role="radio"]');
+    var group = radio && radio.closest('[role="radiogroup"]');
+    if (!group) return;
+    var all = Array.prototype.filter.call(group.querySelectorAll('[role="radio"]'), function(r) {
+        return r.closest('[role="radiogroup"]') === group && r.getAttribute('aria-disabled') !== 'true'
+            && !r.hasAttribute('disabled');
+    });
+    var at = all.indexOf(radio);
+    if (at < 0 || !all.length) return;
+    var to = step === 'first' ? 0 : step === 'last' ? all.length - 1 : (at + step + all.length) % all.length;
+    e.preventDefault();
+    all[to].focus();
+    if (all[to].getAttribute('aria-checked') !== 'true') all[to].click();
 });
 </script>
 
@@ -13069,6 +13219,18 @@ function useSnapMenuOpener() {
     }
   };
 }
+// Moving a floating panel without dragging (WCAG 2.5.7; north star 33.1-14): each press puts the panel in
+// the next corner of the desktop, clockwise from the top left.
+function fridayNextCorner(p, w, h) {
+  const a = typeof fridayDesktopArea === 'function' ? fridayDesktopArea() : { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+  const m = 12, W = Math.min(w, Math.max(0, a.w - 2 * m)), H = Math.min(h, Math.max(0, a.h - 2 * m));
+  const corners = [{ x: a.x + m, y: a.y + m }, { x: a.x + a.w - W - m, y: a.y + m },
+    { x: a.x + a.w - W - m, y: a.y + a.h - H - m }, { x: a.x + m, y: a.y + a.h - H - m }];
+  const cur = p || {};
+  const at = corners.findIndex(c => Math.abs(c.x - (cur.x || 0)) < 24 && Math.abs(c.y - (cur.y || 0)) < 24);
+  return corners[(at + 1) % corners.length];
+}
+if (typeof window !== 'undefined') window.fridayNextCorner = fridayNextCorner;
 function SnapMenu({
   id, windowTitle, workspaceId, maxed, onToggle,
   anchor,
@@ -13138,6 +13300,13 @@ function SnapMenu({
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r3", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('chat_left', f, 'Chat on the left, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('left', f), traySide === 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat'), zone('rest', 1 - f, 'The workspace in the rest', () => onTray('left', f), false)))));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "t4", className: "snap-menu-title" }, "Chat on the right"));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r4", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('rest', 1 - f, 'The workspace in the rest', () => onTray('right', f), false), zone('chat_right', f, 'Chat on the right, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('right', f), traySide !== 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat')))));
+    // The tray's height without dragging its top edge (WCAG 2.5.7; north star 33.1-14).
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t5", className: "snap-menu-title" }, "Height"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r5", className: "snap-menu-row" }, [['full', 'Full height'], ['half', 'Half height']].map(([v, label]) => /*#__PURE__*/React.createElement("button", { key: v, type: "button", role: "menuitem", className: "btn", "data-chat-height": v, onClick: e => {
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent('friday:chat-height', { detail: v }));
+        onClose(false);
+      } }, label))));
     if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
         e.stopPropagation();
         onHide();
@@ -13411,6 +13580,21 @@ function FridayLockup({
 // dismiss for the user; it also blocks the whole tab until clicked. It was how a
 // dead button confessed to being dead ("Noted, but nothing enforces machine
 // levels yet"), which is the worst possible surface for that sentence.
+// Said to a screen reader, not drawn (north star 33.3-6: what matters is heard as well as seen). The page keeps two
+// live regions; a message is set into one after clearing it, so the same words twice are said twice.
+function fridayAnnounce(msg, opts) {
+  try {
+    var text = fridayTM(msg == null ? '' : String(msg)).trim();
+    if (!text || typeof document === 'undefined') return;
+    var el = document.getElementById(opts && opts.assertive ? 'fr-announce-assertive' : 'fr-announce-polite');
+    if (!el) return;
+    el.textContent = '';
+    // The latest words win: a message set within the pause replaces one still waiting to be set.
+    clearTimeout(el._frAnnounce);
+    el._frAnnounce = setTimeout(function () { el.textContent = text; }, 60);
+  } catch (e) { /* never in the way */ }
+}
+if (typeof window !== 'undefined') window.fridayAnnounce = fridayAnnounce;
 function fridayToast(msg, opts) {
   try {
     var text = fridayTM(msg == null ? '' : String(msg));
@@ -14025,6 +14209,9 @@ function renderFridayMarkdown(mdText, opts) {
   }
   body = body.replace(/<a\s+(?![^>]*\btarget=)([^>]*)>/gi, '<a target="_blank" rel="noopener" $1>');
   body = fridaySanitizeMarkup(body);
+  // A document's headings sit under the page's h1 and the window title's level 2 (north star 33.1-6): a screen
+  // reader hears its `# Title` at level 3. Only the level read out changes; the drawn size stays.
+  body = body.replace(/<h([1-6])(?=[\s>])/gi, (m, n) => m + ' aria-level="' + Math.min(6, Number(n) + 2) + '"');
   return '<div class="friday-doc' + (compact ? ' compact' : '') + '">' + body + '</div>';
 }
 if (typeof window !== 'undefined') {
@@ -14101,16 +14288,16 @@ function ConnectorDot({
   const col = s === 'connected' ? '#00ff80' : s === 'connecting' ? '#f59e0b' : '#ff5470';
   const tip = s === 'connected' ? 'Live data source connected' : s === 'connecting' ? 'Connecting data source…' : 'Data source error — check Settings → Connections';
   return /*#__PURE__*/React.createElement("span", {
+    className: "fr-state",
+    "data-state": s === 'connected' ? 'ok' : s === 'connecting' ? 'busy' : 'bad',
+    role: "img",
+    "aria-label": tip,
     title: tip,
     style: {
-      display: 'inline-block',
+      color: col,
       width: 7,
       height: 7,
-      borderRadius: '50%',
-      background: col,
-      boxShadow: `0 0 6px ${col}`,
-      marginLeft: 7,
-      verticalAlign: 'middle'
+      marginLeft: 7
     }
   });
 }
@@ -14629,6 +14816,25 @@ function FWin({
   const LSK = 'friday_fwin_' + id;
   // The window grows out of (and folds back into) its own dock icon.
   const fwinRef = useRef(null);
+  // A workspace's own headings are read under the window's title (level 2): an h1 or h2 inside
+  // is announced at level 3, an h3 at 4, and so on (north star 33.1-6). Headings that already
+  // carry a level (a document's Markdown, read two levels down) keep it. Checked once a frame
+  // at most while the window's content changes.
+  useEffect(() => {
+    const body = fwinRef.current && fwinRef.current.querySelector('.fwin-body');
+    if (!body || typeof MutationObserver === 'undefined') return undefined;
+    let raf = 0;
+    const fix = () => {
+      raf = 0;
+      body.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.hasAttribute('aria-level')) h.setAttribute('aria-level', String(Math.max(3, Math.min(6, Number(h.tagName[1]) + 1))));
+      });
+    };
+    fix();
+    const mo = new MutationObserver(() => { if (!raf) raf = requestAnimationFrame(fix); });
+    mo.observe(body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
   const [historyTop, setHistoryTop] = useState(37);
   React.useLayoutEffect(() => {
     const bar = fwinRef.current && fwinRef.current.querySelector('.fwin-bar');
@@ -14950,7 +15156,9 @@ function FWin({
     ws: id,
     glyph: emoji
   }), /*#__PURE__*/React.createElement("span", {
-    className: "fwin-title-text"
+    className: "fwin-title-text",
+    role: "heading",
+    "aria-level": 2
   }, title), /*#__PURE__*/React.createElement(ConnectorDot, {
     wsId: id
   }), /*#__PURE__*/React.createElement(WsCustomizedMark, {
@@ -15362,6 +15570,21 @@ function WorkspaceChat({
       color: '#8891a8'
     }
   }, "Shape this workspace by talking to ", fridayName())), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    "data-panel-move": "studio",
+    onClick: () => setPos(p => fridayNextCorner(p, 390, Math.min(620, window.innerHeight * 0.76))),
+    "aria-label": "Move this panel to the next corner",
+    title: "Move to the next corner",
+    style: {
+      background: 'none',
+      border: '1px solid rgba(255,255,255,0.14)',
+      borderRadius: 6,
+      color: '#9fb4c8',
+      minWidth: 24,
+      minHeight: 24,
+      cursor: 'pointer'
+    }
+  }, "\u21F2"), /*#__PURE__*/React.createElement("button", {
     onClick: () => setShowVer(v => !v),
     "aria-label": "Version history",
     title: "Version history",
@@ -15759,6 +15982,107 @@ function useFridayOffRecord() {
   }, []);
   return on;
 }
+// What off the record does not cover (NS-15.8-3): services Friday is connected
+// to keep their own records. Read from what is connected now, when shown.
+const FRIDAY_OFF_RECORD_ELSEWHERE_TITLE = 'Off the record does not cover';
+function FridayOffRecordElsewhere() {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let live = true;
+    apiFetch('/api/off-record/external').then(r => r.json()).then(j => { if (live && j && j.ok) setD(j); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!d) return null;
+  return React.createElement('details', { 'data-off-record-elsewhere': 'true', style: { fontSize: 11, color: 'rgba(255,255,255,0.6)', padding: '0 12px 8px', lineHeight: 1.5 } },
+    React.createElement('summary', { style: { cursor: 'pointer' } }, d.short || FRIDAY_OFF_RECORD_ELSEWHERE_TITLE),
+    React.createElement('ul', { 'aria-label': FRIDAY_OFF_RECORD_ELSEWHERE_TITLE, style: { margin: '4px 0 0', paddingLeft: 16 } },
+      (d.lines || []).map((t, i) => React.createElement('li', { key: i }, t))));
+}
+// Owner ruling 12 (2026-10-28): turning off the record on first shows the list
+// of services that keep their own records. Every switch that turns it on asks
+// here first and writes the setting only on "Go off the record"; turning it off
+// asks nothing. If the list cannot be read the dialog still opens and says so.
+const FRIDAY_OFF_RECORD_CONFIRM_TITLE = 'Go off the record?';
+const FRIDAY_OFF_RECORD_CONFIRM_LEAD = 'Off the record stops this conversation being kept or learned from on this PC. Services you connected still keep their own records:';
+const FRIDAY_OFF_RECORD_CONFIRM_UNREAD = "The list of connected services couldn't be read right now. Any service you connected can still keep its own records of what it is asked to do.";
+const FRIDAY_OFF_RECORD_CONFIRM_LIMIT = 'Off the record cannot delete what other services keep.';
+const FRIDAY_OFF_RECORD_CONFIRM_GO = 'Go off the record';
+const FRIDAY_OFF_RECORD_CONFIRM_CANCEL = 'Cancel';
+// Resolves true only when the owner presses "Go off the record".
+function fridayConfirmOffRecord() {
+  return new Promise(resolve => {
+    const detail = { resolve: ok => resolve(!!ok), handled: false };
+    try { window.dispatchEvent(new CustomEvent('friday:off-record-confirm', { detail })); } catch (e) {}
+    // No dialog host on this page: ask plainly rather than skip the question.
+    if (!detail.handled) resolve(!!window.confirm(FRIDAY_OFF_RECORD_CONFIRM_LEAD.replace(/:$/, '.') + ' ' + FRIDAY_OFF_RECORD_CONFIRM_LIMIT));
+  });
+}
+// The switch handler: on asks first; off is written at once.
+function fridayToggleOffRecord(isOn, write) {
+  if (isOn) { write({ off_record: false }); return; }
+  fridayConfirmOffRecord().then(ok => { if (ok) write({ off_record: true }); });
+}
+function FridayOffRecordConfirmHost() {
+  const [req, setReq] = useState(null);
+  const [d, setD] = useState(null);
+  const ref = useRef(null), goRef = useRef(null), cancelRef = useRef(null), seq = useRef(0);
+  useEffect(() => {
+    const on = e => {
+      const det = e.detail || {};
+      det.handled = true;
+      const n = ++seq.current;
+      setD(null);
+      setReq({ resolve: typeof det.resolve === 'function' ? det.resolve : () => {}, back: document.activeElement });
+      apiFetch('/api/off-record/external').then(r => r.json())
+        .then(j => { if (seq.current === n) setD(j && j.ok ? j : { failed: true }); })
+        .catch(() => { if (seq.current === n) setD({ failed: true }); });
+    };
+    window.addEventListener('friday:off-record-confirm', on);
+    return () => window.removeEventListener('friday:off-record-confirm', on);
+  }, []);
+  useEffect(() => { if (req && ref.current) ref.current.focus(); }, [req]);
+  if (!req) return null;
+  const finish = ok => {
+    const r = req;
+    seq.current++;
+    setReq(null); setD(null);
+    try { if (r.back && r.back.focus && document.contains(r.back)) r.back.focus(); } catch (_) {}
+    r.resolve(!!ok);
+  };
+  const cancel = () => finish(false);
+  const onKey = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
+    else if (e.key === 'Tab') {
+      const a = goRef.current, b = cancelRef.current, at = document.activeElement;
+      const order = [b, a].filter(x => x && !x.disabled);
+      if (!order.length) return;
+      e.preventDefault();
+      const i = order.indexOf(at);
+      order[(i < 0 ? 0 : (i + (e.shiftKey ? order.length - 1 : 1)) % order.length)].focus();
+    }
+  };
+  const E = React.createElement;
+  const failed = !!(d && (d.failed || d.readable === false));
+  const lines = d && !d.failed ? (d.lines || []).filter(t => t !== d.always) : [];
+  return E('div', { className: 'keys-sheet-overlay key-form-overlay', onClick: cancel },
+    E('div', { ref, className: 'keys-sheet key-form-sheet', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'off-record-confirm-title', 'aria-describedby': 'off-record-confirm-lead',
+      tabIndex: -1, 'data-testid': 'off-record-confirm', onClick: e => e.stopPropagation(), onKeyDown: onKey },
+      E('div', { className: 'keys-sheet-head' },
+        E('h2', { id: 'off-record-confirm-title' }, FRIDAY_OFF_RECORD_CONFIRM_TITLE)),
+      E('div', { className: 'key-form-body' },
+        E('p', { id: 'off-record-confirm-lead', className: 'sc-sub' }, FRIDAY_OFF_RECORD_CONFIRM_LEAD),
+        !d ? E('p', { className: 'sc-sub', role: 'status' }, 'Reading which services are connected…')
+          : E(React.Fragment, null,
+            failed && E('p', { className: 'sc-sub', role: 'alert', 'data-off-record-unread': 'true' }, FRIDAY_OFF_RECORD_CONFIRM_UNREAD),
+            !d.failed && d.short && E('p', { className: 'sc-sub', 'data-off-record-short': 'true' }, d.short),
+            lines.length > 0 && E('ul', { 'aria-label': FRIDAY_OFF_RECORD_ELSEWHERE_TITLE, style: { margin: '0 0 12px', paddingLeft: 18, lineHeight: 1.5 } },
+              lines.map((t, i) => E('li', { key: i }, t)))),
+        E('p', { className: 'sc-sub', 'data-off-record-limit': 'true' }, E('strong', null, FRIDAY_OFF_RECORD_CONFIRM_LIMIT)),
+        E('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          E('button', { ref: cancelRef, type: 'button', className: 'sc-btn quiet', onClick: cancel }, FRIDAY_OFF_RECORD_CONFIRM_CANCEL),
+          E('button', { ref: goRef, type: 'button', className: 'sc-btn', disabled: !d, onClick: () => finish(true) }, FRIDAY_OFF_RECORD_CONFIRM_GO)))));
+}
 function FridayChatInput({ value, onChange, onSend, placeholder, disabled, inputRef, className, style, maxHeight, autoFocus }) {
   const offRecord = useFridayOffRecord();
   if (offRecord) placeholder = FRIDAY_OFF_RECORD_TEXT;
@@ -15946,6 +16270,14 @@ function ChatSurface(props) {
      the owner's own message. Nothing is sent until one is clicked, nothing is
      preselected, and the card is single-use. */
   const chooseLocalFallback = (msg, id) => {
+    /* North-star A16a: before a route is picked the only choice opens
+       Settings > Models, where local, cloud and both are offered. */
+    if (id === 'choose_route') {
+      window.__fridaySettingsTab = 'intelligence';
+      try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'intelligence' } })); } catch (_) {}
+      if (window.fridayOpenWorkspace) window.fridayOpenWorkspace({ workspace: 'settings' });
+      return;
+    }
     const src = msg.source_text || '';
     if (!src) return;
     setChatMsgs(p => p.map(x => x === msg ? { ...x, local_fallback: null } : x));
@@ -16233,7 +16565,7 @@ function ChatSurface(props) {
       fontSize: 12,
       marginTop: 30
     }
-  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
+  }, ("Talk to " + fridayName() + ". Type, speak, or attach a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
   /* B2: system lines — seat changes and other transparency notices.
      Amber, centered, unmistakably NOT Friday speaking. Never sent to
      the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
@@ -16414,7 +16746,7 @@ function ChatSurface(props) {
       marginLeft: 3,
       color: '#f59e0b'
     }
-  }, "\u26A0") : null)))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, pausePending.kind === 'privacy_hold' ? /*#__PURE__*/React.createElement(PrivacyHoldCard, {
+  }, "\u26A0") : null), m.role === 'friday' && m.route && window.FridayRouteWhy ? /*#__PURE__*/React.createElement(window.FridayRouteWhy, { route: m.route }) : null))), pausePending && /*#__PURE__*/React.createElement("div", { style: { position: "sticky", bottom: 0, zIndex: 5, background: "#0a0e1a", borderTop: "1px solid rgba(255,255,255,0.10)", boxShadow: "0 -14px 22px -6px rgba(10,14,26,0.98)", paddingTop: 10, marginTop: 6 } }, pausePending.kind === 'privacy_hold' ? /*#__PURE__*/React.createElement(PrivacyHoldCard, {
     hold: pausePending.hold,
     msg: pausePending.message,
     onChoose: id => {
@@ -16567,7 +16899,10 @@ function ChatSurface(props) {
   }), /*#__PURE__*/React.createElement("span", null, "LIVE \xB7 ", voiceStatus || 'connecting…'), voiceContract && ['ear', 'mind', 'mouth'].map(k => {
     const st = voiceStages[k] && voiceStages[k].state || 'idle';
     const col = st === 'busy' ? '#38bdf8' : st === 'degraded' ? '#ffb347' : st === 'refused' ? '#ef4444' : '#3effa1';
-    return /*#__PURE__*/React.createElement("span", { key: k, title: k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : ''), style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ●');
+    // The state by its mark too, not only its colour: ● ready, ◐ busy, ▲ degraded, ✕ refused.
+    const mark = st === 'busy' ? '◐' : st === 'degraded' ? '▲' : st === 'refused' ? '✕' : '●';
+    const said = k + ': ' + st + (voiceStages[k] && voiceStages[k].detail ? ' — ' + voiceStages[k].detail : '');
+    return /*#__PURE__*/React.createElement("span", { key: k, title: said, "aria-label": said, role: "img", style: { marginLeft: 6, color: col } }, k.toUpperCase() + ' ' + mark);
   }), voiceContract && voiceContract.tools && /*#__PURE__*/React.createElement("span", { style: { marginLeft: 8, opacity: 0.75 } }, voiceContract.line || (voiceContract.tools.length + ' tools · KG ' + (voiceContract.knowledge_graph ? '✓' : '✗') + ' · memory ' + (voiceContract.memory ? '✓' : '✗')))), voiceOn && voicePartial && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#8a94a6', fontStyle: 'italic', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, '“' + voicePartial + '…'), voiceOn && voiceNotices.map(n => /*#__PURE__*/React.createElement("div", { key: n.code, style: { fontSize: 10, color: '#ffb347', marginBottom: 4, fontFamily: 'JetBrains Mono', lineHeight: 1.4 } }, '⚠ ', n.message)), voiceOn && voiceEgress && voiceEgress.active && /*#__PURE__*/React.createElement("div", {
     title: voiceEgress.text || '',
     style: {
@@ -17369,6 +17704,7 @@ function ConversationWindow({
           model: d.model || (d.friday_msg || {}).model,
           seat: d.seat,
           fallback_chain: d.fallback_chain || [],
+          route: d.route || (d.friday_msg || {}).route || null,
           trace_id: d.trace_id || streamTraceId || null,
           reasoning_sources: d.reasoning_sources || [],
           offer_cloud_switch: !!d.offer_cloud_switch,
@@ -20556,6 +20892,43 @@ function kgNodeHue(entity, communityIndex = 0) {
 function kgEdgeOpacity(count, focused, mode) {
   return focused ? Math.max(.07, .24 * Math.sqrt(180 / Math.max(180, count))) : Math.max(.015, .16 * Math.pow(4500 / Math.max(4500, count), .85));
 }
+// The knowledge graph as a list (north star 33.1-12: a text alternative for the 3D graph). The
+// same notes and links the galaxy draws, most connected first, each opening its page; read by a
+// screen reader, used from the keyboard, and there with 3D rendering off. Built only when opened.
+function KgAsList({ kg, stats, onOpen }) {
+  const h = React.createElement;
+  const [open, setOpen] = useState(false);
+  const rows = React.useMemo(() => {
+    if (!open || !kg || !Array.isArray(kg.entities)) return [];
+    const byId = {}, links = {};
+    kg.entities.forEach(e => { byId[e.id] = e; links[e.id] = new Set(); });
+    // Each neighbour once: a pair linked both ways, or twice, is one link; a self-link is none.
+    (kg.relationships || []).forEach(r => {
+      if (r.source === r.target) return;
+      if (links[r.source] && byId[r.target]) links[r.source].add(byId[r.target]);
+      if (links[r.target] && byId[r.source]) links[r.target].add(byId[r.source]);
+    });
+    return kg.entities.map(e => { const w = Array.from(links[e.id]); return { e, n: w.length, with: w }; })
+      .sort((a, b) => b.n - a.n || String(a.e.title || '').localeCompare(String(b.e.title || ''))).slice(0, 200);
+  }, [open, kg, stats]);
+  const total = stats ? stats.nodes : (kg && kg.entities ? kg.entities.length : 0);
+  return h('details', { className: 'kw-as-list', 'data-kg-list': '', onToggle: e => setOpen(e.currentTarget.open),
+      style: { margin: '6px 0', fontSize: 12, color: '#c7d2e2', flexShrink: 0 } },
+    h('summary', { style: { cursor: 'pointer', minHeight: 24 } },
+      'The graph as a list' + (stats ? ' (' + stats.nodes + ' notes, ' + stats.edges + ' links, ' + stats.comms + ' groups)' : '')),
+    open && h('div', null,
+      rows.length === 0 ? h('p', { style: { margin: '4px 0', color: '#8fa8c8' } }, total ? 'The list fills once the galaxy has loaded its notes (the grouped view shows groups, not notes).' : 'No notes yet.')
+        : total > rows.length && h('p', { style: { margin: '4px 0', color: '#8fa8c8' } },
+        'The ' + rows.length + ' most connected of ' + total + ' notes. Search finds any of them.'),
+      // At most a third of the window: the galaxy below keeps most of the room.
+      h('ul', { style: { margin: 0, paddingLeft: 18, maxHeight: 'min(320px, 33vh)', overflow: 'auto' } },
+        rows.map(({ e, n, with: w }) => h('li', { key: e.id, style: { margin: '3px 0' } },
+          e.type === 'soul' ? h('strong', null, e.title || e.id)        // no page of its own to open
+            : h('button', { type: 'button', className: 'ws-tab-link', onClick: () => onOpen && onOpen(e),
+              style: { minHeight: 24 } }, e.title || e.id),
+          ' \u2014 ' + (n ? 'linked to ' + w.slice(0, 5).map(x => x.title || x.id).join(', ') + (n > 5 ? ' and ' + (n - 5) + ' more' : '')
+                          : 'no links yet'))))));
+}
 function KnowledgeGraphWS(props) {
   const P = props || {};
   const embedded = !!P.embedded;
@@ -20641,7 +21014,7 @@ function KnowledgeGraphWS(props) {
   };
   useEffect(() => {
     const mount = mountRef.current;
-    if (!mount || typeof THREE === 'undefined') return;
+    if (!mount || typeof THREE === 'undefined' || (window.fridayRender3dOff && window.fridayRender3dOff())) return;
     const S = kgRef.current;
     let disposed = false;
 
@@ -23071,9 +23444,15 @@ function KnowledgeGraphWS(props) {
       color: '#667',
       fontSize: 11
     }
-  }, h.section)))), /*#__PURE__*/React.createElement("div", {
+  }, h.section)))), /*#__PURE__*/React.createElement(KgAsList, {
+    kg: kgRef.current,
+    stats: stats,
+    onOpen: openWikiPage
+  }), /*#__PURE__*/React.createElement("div", {
     ref: mountRef,
     className: "kw-scene",
+    role: "group",
+    "aria-label": (stats ? 'Knowledge graph: ' + stats.nodes + ' notes and ' + stats.edges + ' links, drawn in 3D. The same, as a list: "The graph as a list" above.' : 'Knowledge graph'),
     style: {
       flex: 1,
       minHeight: 0,
@@ -23270,6 +23649,8 @@ function kwSlug(title) {
   return String(title || '').trim().toLowerCase().replace(/[^a-z0-9 _-]+/g, '').trim().split(/\s+/).join('-').slice(0, 80);
 }
 function kwLoadView() {
+  // 3D off (Settings > Appearance): the pages are the whole view.
+  if (window.fridayRender3dOff && window.fridayRender3dOff()) return 'pages';
   try {
     const v = localStorage.getItem('friday_kw_view');
     if (KW_VIEWS.some(x => x.id === v)) return v;
@@ -23334,6 +23715,7 @@ function KnowledgeWS() {
   const pageRef = useRef(page);
   pageRef.current = page;
   const setView = useCallback(v => {
+    if (window.fridayRender3dOff && window.fridayRender3dOff()) v = 'pages';   // 3D off: the pages are the view
     setViewRaw(v);
     kwSaveView(v);
   }, []);
@@ -23432,7 +23814,7 @@ function KnowledgeWS() {
   // What its own tab (↗) opens on: the keys useNavTarget below reads.
   useTabState('knowledge', () => ({ view, query: q, path: page || '', node: sel && sel.type !== 'page' && sel.type !== 'soul' ? sel.id : '' }));
   useNavTarget('knowledge', t => {
-    if (t.view && KW_VIEWS.some(x => x.id === t.view)) setView(t.view);
+    if (t.view && KW_VIEWS.some(x => x.id === t.view) && (t.view === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff()))) setView(t.view);
     if (t.query) setQ(String(t.query));else if (t.path || t.page) setQ('');
     if (t.path) openPage(String(t.path), {
       view: t.view
@@ -23649,7 +24031,7 @@ function KnowledgeWS() {
     className: 'kw-views',
     role: 'tablist',
     'aria-label': 'View'
-  }, KW_VIEWS.map(v => h('button', {
+  }, KW_VIEWS.filter(v => v.id === 'pages' || !(window.fridayRender3dOff && window.fridayRender3dOff())).map(v => h('button', {
     key: v.id,
     role: 'tab',
     'aria-selected': view === v.id,
@@ -23707,7 +24089,7 @@ function KnowledgeWS() {
     className: 'kw-sp'
   }), !page && !sel && !section && h('span', {
     className: 'kw-dim kw-hint'
-  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && h('button', {
+  }, view === 'pages' ? 'Pick a page to read it; Split shows where it sits in the galaxy' : 'Click a node to open its page'), page && view === 'pages' && !(links && links.missing) && !(window.fridayRender3dOff && window.fridayRender3dOff()) && h('button', {
     className: 'kw-btn',
     onClick: showInGraph,
     title: 'Show this page in the galaxy'
@@ -26365,6 +26747,149 @@ function ProvenanceBar({
 // list is backend-driven via useModelCatalog() (role 'creative'), filtered by
 // modality. Posts to the unified /api/creations/generate endpoint; the process
 // orb in the 3-D scene shows progress while it renders.
+// The artifact manifest of a file Friday made (NS-24.1-2): whose work it is,
+// which goal it serves, its sensitivity level, its checks, whether it was
+// verified and delivered, and its earlier versions. Self-contained: fetches
+// /api/artifacts/manifest, and says so when Friday has no record of the file.
+function ManifestBar({
+  path
+}) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const load = () => {
+    if (!path) {
+      setData(null);
+      return Promise.resolve();
+    }
+    return apiFetch('/api/artifacts/manifest?path=' + encodeURIComponent(path)).then(r => r.json()).then(d => setData(d)).catch(() => setData(null));
+  };
+  useEffect(() => {
+    setData(null);
+    setOpen(false);
+    load();
+  }, [path]);
+  if (!path || !data) return null;
+  if (data.status !== 'ok' || !data.manifest) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#6a8b98',
+      fontFamily: 'JetBrains Mono',
+      marginBottom: 8
+    }
+  }, "Manifest: no record for this file as it is now.");
+  const m = data.manifest;
+  const st = m.verification_state || 'unverified';
+  const ga = m.goal_ancestry;
+  const sens = m.sensitivity || {};
+  const dr = m.delivery_receipt;
+  const vh = m.version_history || [];
+  const qa = m.qa || {};
+  const qaFailed = !!(qa.checked && qa.ok === false);
+  const col = {
+    qa_passed: '#00e87a',
+    owner_verified: qaFailed ? '#ffb454' : '#00ff80',
+    qa_failed: '#ff5470'
+  }[st] || '#8891a8';
+  const lbl = {
+    qa_passed: 'Checks passed',
+    qa_failed: 'Checks failed',
+    owner_verified: qaFailed ? 'Verified by you (checks failed)' : 'Verified by you',
+    unverified: 'Not verified'
+  }[st] || st;
+  const verify = async () => {
+    if (qaFailed && !window.confirm('This file failed its checks' + (qa.summary ? ': ' + qa.summary : '.') + '\n\nMark it verified anyway?')) return;
+    setBusy(true);
+    try {
+      await apiFetch('/api/artifacts/manifest/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          path
+        })
+      });
+      await load();
+    } catch (e) {}
+    setBusy(false);
+  };
+  const row = (k, v) => /*#__PURE__*/React.createElement("div", {
+    key: k,
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#6a8b98',
+      minWidth: 110
+    }
+  }, k), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#aab',
+      wordBreak: 'break-all'
+    }
+  }, v));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 10,
+      padding: '8px 10px',
+      borderRadius: 8,
+      background: 'rgba(127,182,201,0.05)',
+      border: '1px solid rgba(127,182,201,0.14)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: '#7fb6c9'
+    }
+  }, "Manifest"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      color: col
+    }
+  }, lbl), dr && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 9,
+      color: '#7fb6c9'
+    }
+  }, "Delivered"), /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 9,
+      padding: '1px 7px',
+      marginLeft: 'auto'
+    },
+    onClick: () => setOpen(!open)
+  }, open ? 'Close' : 'Manifest')), open && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      fontSize: 10,
+      fontFamily: 'JetBrains Mono',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 3
+    }
+  }, row('Made by', (m.tool || '?') + (m.task_id ? ' · task ' + m.task_id : '')), row('For', m.principal || 'unknown'), row('Goal', ga ? ga.goal_id + (ga.milestone_id ? ' › ' + ga.milestone_id : '') : 'none'), row('Sensitivity', sens.level || 'unknown'), row('Checks', qa.summary || (qa.checked ? 'checked' : 'not checked')), st === 'unverified' && m.verification_reason && row('Why not verified', m.verification_reason), row('Delivery receipt', dr ? (dr.channel || '') + ' · ' + String(dr.id || '').slice(0, 16) + '…' : 'not sent'), row('Versions', vh.length ? vh.length + ' earlier: ' + vh.map(v => String(v.sha256 || '').slice(0, 8) + (v.backup ? ' (backup kept)' : '')).join(', ') : 'first version'), row('SHA-256', String(m.sha256 || '').slice(0, 16) + '…'), st !== 'owner_verified' && /*#__PURE__*/React.createElement("button", {
+    className: "btn",
+    style: {
+      fontSize: 10,
+      marginTop: 4
+    },
+    disabled: busy,
+    onClick: verify
+  }, busy ? 'Saving…' : 'I checked it: mark verified')));
+}
 const IMG_STYLES = ['none', 'photorealistic', 'cinematic', 'digital-art', 'watercolor', 'oil-painting', 'anime', '3d-render', 'neon', 'minimalist', 'sketch'];
 function GeneratePanel({
   onCreated
@@ -27169,10 +27694,34 @@ function TimelinePanel({
         borderRadius: 3,
         padding: '0 4px'
       }
-    }, i + 1), /*#__PURE__*/React.createElement("div", {
+    }, i + 1), i > 0 && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Move clip ' + (i + 1) + ' earlier',
+      title: "Move earlier",
+      onClick: () => reorder(i, i - 1),
+      style: {
+        position: 'absolute', bottom: 2, left: 3, minWidth: 24, minHeight: 24, padding: 0, fontSize: 11,
+        color: '#7fb6c9', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: 3, cursor: 'pointer'
+      }
+    }, "\u25C0"), i < clips.length - 1 && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Move clip ' + (i + 1) + ' later',
+      title: "Move later",
+      onClick: () => reorder(i, i + 1),
+      style: {
+        position: 'absolute', bottom: 2, right: 3, minWidth: 24, minHeight: 24, padding: 0, fontSize: 11,
+        color: '#7fb6c9', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: 3, cursor: 'pointer'
+      }
+    }, "\u25B6"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Remove clip ' + (i + 1),
       onClick: () => removeClip(n),
       title: "remove",
       style: {
+        border: 'none',
+        padding: 0,
+        minWidth: 24,
+        minHeight: 24,
         position: 'absolute',
         top: 2,
         right: 3,
@@ -28991,6 +29540,8 @@ function StudioWS() {
       }
     }, "\u2197 Open in Tab"))), /*#__PURE__*/React.createElement(ProvenanceBar, {
       filename: selected.name
+    }), /*#__PURE__*/React.createElement(ManifestBar, {
+      path: selected.path
     }), ext === 'html' && /*#__PURE__*/React.createElement("iframe", {
       src: url,
       ref: window.fridayAttachFrame,
@@ -33410,6 +33961,7 @@ function TaskRecordsCard() {
       color: '#ccc'
     }
   }, "Keep records for"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Keep records for (days)",
     type: "number",
     min: "0",
     step: "1",
@@ -34153,6 +34705,7 @@ style: {
     }
   }), /*#__PURE__*/React.createElement("input", {
     type: "date",
+    "aria-label": "From date",
     value: ctxFrom,
     onChange: e => setCtxFrom(e.target.value),
     style: {
@@ -34165,6 +34718,7 @@ style: {
     }
   }), /*#__PURE__*/React.createElement("input", {
     type: "date",
+    "aria-label": "To date",
     value: ctxTo,
     onChange: e => setCtxTo(e.target.value),
     style: {
@@ -34176,6 +34730,7 @@ style: {
       fontSize: 11
     }
   }), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Type of entry",
     value: ctxType,
     onChange: e => setCtxType(e.target.value),
     style: {
@@ -35693,6 +36248,8 @@ function SentimentDot({
   }[s] || 'Neutral tone';
   return /*#__PURE__*/React.createElement("span", {
     className: 'sentiment-dot ' + s,
+    role: "img",
+    "aria-label": tip,
     title: tip
   });
 }
@@ -35719,7 +36276,9 @@ function TrustBadge({
     className: "trust-badge",
     tabIndex: 0
   }, /*#__PURE__*/React.createElement("span", {
-    className: 'trust-dot ' + color
+    className: 'trust-dot ' + color,
+    role: "img",
+    "aria-label": ({ green: 'Trust: high', yellow: 'Trust: medium', red: 'Trust: low' }[color] || 'Trust: medium')
   }), score != null && !compact && /*#__PURE__*/React.createElement("span", {
     className: "trust-num"
   }, score.toFixed(2)), /*#__PURE__*/React.createElement("span", {
@@ -38460,7 +39019,9 @@ function NewsWS() {
     key: oi,
     className: "trust-obs"
   }, /*#__PURE__*/React.createElement("span", {
-    className: 'trust-obs-dot ' + trustColor(o.signal)
+    className: 'trust-obs-dot ' + trustColor(o.signal),
+    role: "img",
+    "aria-label": ({ green: 'Good signal', yellow: 'Mixed signal', red: 'Poor signal' }[trustColor(o.signal)] || 'Mixed signal')
   }), /*#__PURE__*/React.createElement("span", {
     className: "trust-obs-type"
   }, o.type), /*#__PURE__*/React.createElement("span", {
@@ -40050,6 +40611,8 @@ function CalendarWS() {
     }, window.CalendarViews.reminderText(e)), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.RsvpButtons, {
       ev: e
     }), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.DeleteButton, {
+      ev: e
+    }), window.CalendarViews && window.CalendarViews.MoveButtons && /*#__PURE__*/React.createElement(window.CalendarViews.MoveButtons, {
       ev: e
     }), e.prep_available && /*#__PURE__*/React.createElement("span", {
       className: "cal-prep-badge"
@@ -42961,7 +43524,7 @@ function RelationshipPanel({ onImported }) {
       const d = await r.json();
       if (d.status === 'ok') {
         const x = d.result;
-        setMsg('LinkedIn: ' + x.created + ' added, ' + x.updated + ' updated' + (x.skipped_count ? ', ' + x.skipped_count + ' rows skipped' : '') + (x.skipped_forgotten ? ', ' + x.skipped_forgotten + ' forgotten people left out' : '') + '.');
+        setMsg('LinkedIn: ' + x.staged + ' people staged for your review below; nothing is saved until you accept' + (x.already_decided ? ', ' + x.already_decided + ' already answered' : '') + (x.skipped_count ? ', ' + x.skipped_count + ' rows skipped' : '') + (x.skipped_forgotten ? ', ' + x.skipped_forgotten + ' forgotten people left out' : '') + '.');
         if (onImported) onImported();
       } else setMsg(d.message || 'Import failed.');
     } catch (err) { setMsg('Import failed.'); }
@@ -42970,7 +43533,10 @@ function RelationshipPanel({ onImported }) {
   const allowSaving = async a => {
     setMsg('');
     try {
-      const r = await fetch('/api/google/accounts/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: a.id, email: a.email, include_contacts_write: true }) });
+      const df = await fetchPermissionDiff(a.id, ['contacts']);
+      if (!df) { setMsg('Could not load what this would add.'); return; }
+      if (!window.confirm(permissionDiffText(df))) return;
+      const r = await fetch('/api/google/accounts/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: a.id, email: a.email, include_contacts_write: true, diff_id: df.diff_id }) });
       const d = await r.json();
       if (d.status === 'ok' && d.auth_url) setConsent({ url: d.auth_url, brief: d.prebrief || '', email: a.email });
       else setMsg(d.message || 'Could not start sign-in.');
@@ -43011,11 +43577,146 @@ function RelationshipPanel({ onImported }) {
       " ",
       e("button", { className: "btn", style: small, onClick: () => setConsent(null) }, "Cancel")),
     msg && e("div", { style: { fontSize: 11, color: '#00d4ff', marginTop: 4 } }, msg),
+    e(StagedImportReview, { source: 'linkedin_csv', refresh: msg, onDone: onImported }),
     follow.length > 0 && e("div", { style: { marginTop: 8 } },
       e("div", { style: { fontSize: 11, color: '#888', marginBottom: 4 } }, "Follow-ups"),
       follow.slice(0, 8).map(f => e("div", { key: f.id, style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, fontSize: 11, padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)' } },
         e("span", null, e("b", null, f.person), f.note ? " — " + f.note : "", e("span", { style: { color: '#999' } }, " · due " + String(f.due || '').slice(0, 10))),
         e("button", { className: "btn", style: { fontSize: 10 }, onClick: () => done(f.id) }, "Done")))));
+}
+// ── Imported items waiting for your answer (services/import_staging) ──
+// Nothing an import brings in is saved until you accept it here. Accepting is a press in
+// Friday's window on this PC (routes/import_staging.py); Reject keeps it from being proposed again.
+function StagedImportReview({ source, refresh, onDone }) {
+  const E = React.createElement;
+  const [d, setD] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    apiFetch('/api/import-staging?status=open&source=' + encodeURIComponent(source)).then(r => r.json()).then(setD).catch(() => setD(null));
+  }, [source]);
+  useEffect(() => {
+    load();
+  }, [load, refresh]);
+  const answer = (body, done) => {
+    setBusy(true);
+    setMsg('');
+    apiFetch('/api/import-staging/review', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    }).then(r => r.json()).then(x => {
+      setMsg(x.ok ? done(x) : x.error || 'Nothing changed.');
+      load();
+      if (x.ok && onDone) onDone();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  const items = d && d.items || [];
+  if (!items.length) return msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null;
+  const small = {
+    fontSize: 10
+  };
+  return E('div', {
+    'data-testid': 'import-staging-review',
+    style: {
+      marginTop: 8,
+      padding: 8,
+      border: '1px solid rgba(0,212,255,0.15)',
+      borderRadius: 6
+    }
+  }, E('div', {
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginBottom: 6,
+      lineHeight: 1.5
+    }
+  }, items.length + (d.more ? '+' : '') + ' imported ' + (items.length === 1 ? 'item waits' : 'items wait') + ' for your answer. Nothing is saved until you accept it.'), E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginBottom: 6
+    }
+  }, E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'accept',
+      all: true
+    }, x => 'Saved ' + x.done + (x.failed ? '; ' + x.failed + ' could not be saved and still wait' : '') + '.')
+  }, 'Accept all ' + ((d.counts || {}).proposed + (d.counts || {}).deferred || items.length)), E('button', {
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => answer({
+      source,
+      answer: 'reject',
+      all: true
+    }, x => 'Left out ' + x.done + '.')
+  }, 'Reject all')), E('ul', {
+    style: {
+      listStyle: 'none',
+      padding: 0,
+      margin: 0,
+      maxHeight: 220,
+      overflowY: 'auto'
+    }
+  }, items.slice(0, 200).map(it => E('li', {
+    key: it.id,
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: 6,
+      fontSize: 11,
+      padding: '2px 0'
+    }
+  }, E('span', null, it.label + (it.status === 'deferred' ? ' (later)' : '') + (it.error ? ' (' + it.error + ')' : '')), E('span', null, E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'accept'
+    }, () => 'Saved.')
+  }, 'Accept'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'reject'
+    }, () => 'Left out.')
+  }, 'Reject'), ' ', E('button', {
+    className: 'btn',
+    style: small,
+    disabled: busy,
+    onClick: () => answer({
+      id: it.id,
+      answer: 'defer'
+    }, () => 'Kept for later.')
+  }, 'Later'))))), msg ? E('div', {
+    role: 'status',
+    style: {
+      fontSize: 11,
+      color: '#00d4ff',
+      marginTop: 4
+    }
+  }, msg) : null);
 }
 function PersonTimelineCard({ name }) {
   const e = React.createElement;
@@ -43306,6 +44007,19 @@ function ContactsWS() {
       /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#999', lineHeight: 1.5 }
       }, forgetReceipt.note),
+      Array.isArray(forgetReceipt.stores) && forgetReceipt.stores.length > 0 && /*#__PURE__*/React.createElement("div", {
+        style: { fontSize: 11, color: '#bbb', marginTop: 6, lineHeight: 1.5 }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: { fontWeight: 600, color: '#ddd', marginBottom: 2 }
+      }, "Deletion receipt"),
+        forgetReceipt.stores.map((s, i) => /*#__PURE__*/React.createElement("div", { key: s.store || i },
+          (s.removed || 0) + " " + (s.kind || s.store) + " removed",
+          (s.not_removable || []).map((x, j) => /*#__PURE__*/React.createElement("div", {
+            key: 'n' + j, style: { color: '#ff6b6b', paddingLeft: 10 }
+          }, "Not removable: " + x.what + " (" + x.reason + ")")),
+          (s.retained || []).map((x, j) => /*#__PURE__*/React.createElement("div", {
+            key: 'r' + j, style: { color: '#f59e0b', paddingLeft: 10 }
+          }, "Kept: " + (x.count != null ? x.count + " " : "") + x.what + " (" + x.reason + ")"))))),
       forgetReceipt.remaining_sources && forgetReceipt.remaining_sources.length > 0 && /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: '#f59e0b', marginTop: 6, lineHeight: 1.5 }
       }, "Still mentioned in your own notes: ",
@@ -46127,7 +46841,7 @@ function ContentAnalyticsTab() {
   };
   const s = sum || {};
   const rate = s.engagement_rate != null ? (Number(s.engagement_rate) * 100).toFixed(1) + '%' : null;
-  const cards = [['Impressions · 7d', s.impressions_7d], ['Impressions · 30d', s.impressions_30d != null ? s.impressions_30d : s.impressions], ['Engagement rate', rate], ['ψ earned from content', s.psi_earned != null ? s.psi_earned : s.psi]];
+  const cards = [['Impressions · 7d', s.impressions_7d], ['Impressions · 30d', s.impressions_30d != null ? s.impressions_30d : s.impressions], ['Engagement rate', rate], ].concat(fridayHeldOn('federation') ? [['ψ earned from content', s.psi_earned_mpsi != null ? s.psi_earned_mpsi + ' mψ' : (s.psi_earned != null ? s.psi_earned : s.psi)]] : []);  // positrons are held with the federation (BD-00)
   const series = s.series && typeof s.series === 'object' ? s.series : {};
   const seriesKeys = Object.keys(series).filter(k => Array.isArray(series[k]) && series[k].length > 1);
   const top = s.top_posts || s.best_posts || [];
@@ -47707,7 +48421,23 @@ function CameraMode({
       e.stopPropagation();
       onChangeFacing();
     }
-  }, "\u21C4"), /*#__PURE__*/React.createElement("button", { "aria-label": "Stop camera", 
+  }, "\u21C4"), /*#__PURE__*/React.createElement("button", { "aria-label": "Move the camera view to the next corner",
+    type: "button",
+    className: "cam-close",
+    "data-panel-move": "camera",
+    style: {
+      right: refKey === 'webcam' && onChangeFacing ? 56 : 30,
+      padding: '1px 6px',
+      minWidth: 24,
+      minHeight: 24
+    },
+    title: "Move to the next corner",
+    onMouseDown: e => e.stopPropagation(),
+    onClick: e => {
+      e.stopPropagation();
+      setPos(p => { if (!isBoth) return fridayNextCorner(p, 160, 120); const c = fridayNextCorner({ x: p.x - 130, y: p.y }, 250, 90); return { x: c.x + 130, y: c.y }; });
+    }
+  }, "\u21F2"), /*#__PURE__*/React.createElement("button", { "aria-label": "Stop camera", 
     className: "cam-close",
     onMouseDown: e => e.stopPropagation(),
     onClick: e => {
@@ -48912,13 +49642,33 @@ function fridayProcessSteps(steps) {
       timestamp: step.timestamp || (Number.isFinite(step.ts) ? new Date(step.ts * 1000).toLocaleTimeString() : '')};
   });
 }
-function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose}) {
+function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, onDrag, onClose, onMove}) {
   const surfaceRef = useRef(null);
   useFridaySpatialSurface(surfaceRef, () => ({x:position.x,y:position.y,w:400,h:320}), 'overlay');
   const traceId = meta?.trace_id || orb.trace_id || null;
   const taskId = meta?.linked_task_id || orb.task_id || null;
   const status = meta?.status || orb.status || 'running';
   const running = /^(running|queued|paused|awaiting_approval)$/.test(status);
+  // Cancel without throwing the orb (Stephen's ruling, 2026-10-28; WCAG 2.5.7): the same cancel as a throw, with its
+  // undo window and its note; the button says so while it waits.
+  const [cancelling,setCancelling] = useState(false);
+  const cancellable = /^(running|queued)$/.test(status);
+  useEffect(()=>{
+    setCancelling(false);
+    // Undo in the note puts the button back; a committed cancel leaves it until the panel reads the new status.
+    const on=e=>{const d=e.detail||{};if(d.id===orb.id&&d.state==='undone')setCancelling(false);};
+    window.addEventListener('friday:orb-cancel',on);
+    return()=>window.removeEventListener('friday:orb-cancel',on);
+  },[orb.id]);
+  const cancelTask = e => {
+    e.stopPropagation();
+    if (typeof FridayOrbHands === 'undefined') return;
+    let r = (FridayOrbHands.act('cancel',[orb.id],'button')||[])[0];
+    // The orb is behind Friday just now, or was opened another way: cancel it by id all the same.
+    if ((!r || !r.ok) && FridayOrbHands.cancelOrb) r = FridayOrbHands.cancelOrb({id:orb.id,task_id:taskId,label:orb.label,status});
+    if (r && r.ok) setCancelling(true);
+    else if (typeof fridayToast === 'function') fridayToast('This task could not be cancelled from here. Find it in Activity.');
+  };
   const hasActivity = !!(log?.length || steps.length || meta?.result);
   const [area,setArea] = useState(()=>fridayDesktopArea());
   useEffect(()=>{
@@ -48943,7 +49693,8 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
     rtEl('div', {className:'thread-header', onMouseDown:onDrag, style:{cursor:'grab',gap:6,flexWrap:'wrap'}},
       rtEl('div',{className:'thread-header-left',style:{flex:'1 1 120px',minWidth:0}},rtEl('span',{className:'thread-icon'},orb.icon||'⚡'),rtEl('span',{className:'thread-name'},orb.label||'Process')),
       rtEl('span',{className:'thread-status-badge '+(/^(complete|completed|completed_unverified|done)$/.test(status)?'completed':/^(failed|error|timeout)$/.test(status)?'error':running?'running':status)},status),
-      rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
+      cancellable&&typeof FridayOrbHands!=='undefined'&&rtEl('button',{type:'button',className:'thread-cancel','data-orb-cancel':orb.id,'aria-label':cancelling?'Cancelling this task; undo it from the note':'Cancel this task',title:cancelling?'Stopping. Undo it from the note while it shows.':'Stop this task (you can undo it for a few seconds)',disabled:cancelling,onMouseDown:e=>e.stopPropagation(),onClick:cancelTask,style:{minHeight:24,minWidth:24,padding:'2px 8px',borderRadius:6,border:'1px solid rgba(255,0,128,0.45)',background:'transparent',color:'#ff6fa8',font:'600 11px Inter,system-ui,sans-serif',cursor:cancelling?'default':'pointer'}},cancelling?'Cancelling…':'Cancel'),
+      onMove&&rtEl('button',{type:'button',className:'thread-close','data-panel-move':'thread','aria-label':'Move this process panel to the next corner',title:'Move to the next corner',onMouseDown:e=>e.stopPropagation(),onClick:e=>{e.stopPropagation();onMove();}},'⇲'),rtEl('button',{className:'thread-close','aria-label':'Close this process panel',title:'Close this process panel',onClick:onClose},'✕'),
       (meta?.model||orb.model)&&rtEl('div',{style:{flexBasis:'100%',fontSize:10,overflowWrap:'anywhere',color:'var(--fr-cyan)'}},meta?.model||orb.model,meta?.elapsed!=null?' · '+meta.elapsed+'s':'')),
     rtEl('div',{className:'thread-body',ref:bodyRef,style:{color:'var(--fr-text)'}},
       readState==='loading'&&rtEl('div',{role:'status',className:'thread-log-line'},'Loading process activity…'),
@@ -48955,7 +49706,7 @@ function ProcessOrbThread({orb, meta, log, steps, readState, position, bodyRef, 
           emptyText:'No reasoning was recorded for this process.'}) : rtMuted(readState==='loading'?'Looking for a linked reasoning thread…':'No reasoning trace is linked to this process.')),
       rtEl('details',{open:activityExpanded,style:{marginTop:10}},rtEl('summary',{style:{cursor:'pointer',fontSize:11},onClick:e=>{e.preventDefault();setActivityExpanded(value=>!value);}},'Activity and result'),
         Array.isArray(log)&&log.map((line,i)=>rtEl('div',{key:'log'+i,className:'thread-log-line'},String(line))),
-        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending')}),
+        steps.map((step,i)=>rtEl('div',{key:'step'+i,className:'thread-step'},rtEl('div',{className:'thread-dot '+(step.status||'pending'),role:'img','aria-label':({done:'Done','in-progress':'In progress',pending:'Waiting',error:'Failed'})[step.status||'pending']||String(step.status)}),
           rtEl('div',{className:'thread-step-content'},rtEl('div',{className:'thread-step-text'},step.text),
             step.detail&&rtEl('details',null,rtEl('summary',null,'Details'),rtEl('div',{className:'thread-log-line'},step.detail)),
             step.timestamp&&rtEl('div',{className:'thread-step-time'},step.timestamp)))),
@@ -50720,10 +51471,12 @@ function ConsentFlow({ onDone }) {
         style: { color: '#ff0080', fontSize: 12, marginTop: 8 }
       }, err)),
 
-    s.name === 'routing' && React.createElement('div', { style: { marginBottom: 18 } },
+    s.name === 'routing' && React.createElement('div', {
+      role: 'radiogroup', 'aria-label': s.title, style: { marginBottom: 18 } },
       (s.choices || []).map(c => React.createElement('div', {
-        key: c.mode,
+        key: c.mode, role: 'radio', tabIndex: 0, 'aria-checked': mode === c.mode,
         onClick: () => setMode(c.mode),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMode(c.mode); } },
         style: {
           padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
           border: '1px solid ' + (mode === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
@@ -50924,7 +51677,7 @@ function CloudConsentGate({ onDone }) {
       err && React.createElement('div', {
         style: { color: '#ff0080', fontSize: 12, marginBottom: 12 }
       }, err),
-      [
+      React.createElement('div', { role: 'radiogroup', 'aria-label': 'Where ' + fridayName() + ' thinks' }, [
         { mode: 'local_private', label: 'Private (local)',
           detail: 'Reasoning, voice, image, and video stay on this device.' },
         { mode: 'cloud_guarded', label: 'Cloud, safeguards on',
@@ -50934,7 +51687,9 @@ function CloudConsentGate({ onDone }) {
           detail: 'Full context reaches your configured cloud provider — ' +
                   'no safeguard held back.' },
       ].map(c => React.createElement('div', {
-        key: c.mode, onClick: () => setChoice(c.mode),
+        key: c.mode, role: 'radio', tabIndex: 0, 'aria-checked': choice === c.mode,
+        onClick: () => setChoice(c.mode),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setChoice(c.mode); } },
         style: {
           padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
           border: '1px solid ' + (choice === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
@@ -50944,7 +51699,7 @@ function CloudConsentGate({ onDone }) {
         React.createElement('div', { style: { fontWeight: 600, color: '#fff' } }, c.label),
         React.createElement('div', {
           style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
-        }, c.detail))),
+        }, c.detail)))),
       React.createElement('button', {
         className: 'btn', disabled: saving || !choice, style: { marginTop: 8 },
         onClick: () => submit(choice)
@@ -51399,7 +52154,8 @@ function SetupConnectionItem({
       const d = await post(c.endpoint, {
         label: label.trim(),
         include_send: !!opts.include_send,
-        include_modify: !!opts.include_modify
+        include_modify: !!opts.include_modify,
+        include_contacts_write: !!opts.include_contacts_write
       });
       openUrl(d.auth_url);
       setMsg({
@@ -53561,6 +54317,17 @@ function StToggle({
     }
   })));
 }
+// Text size (Settings > Appearance; north star 33.1-8): the percentages offered, and the one place the page
+// applies one. The size is a CSS variable that window contents and the chat read (see .fwin-body).
+const FRIDAY_TEXT_SCALES = [100, 125, 150, 175, 200];
+function fridayTextScale(v) {
+  const n = Math.round(Number(v));
+  return FRIDAY_TEXT_SCALES.includes(n) ? n : 100;
+}
+function fridayApplyTextScale(v) {
+  try { document.documentElement.style.setProperty('--fr-text-zoom', String(fridayTextScale(v) / 100)); } catch (_) {}
+}
+window.fridayApplyTextScale = fridayApplyTextScale;
 function StSection({
   title,
   desc,
@@ -55314,9 +56081,11 @@ function ModelRow({ m, need, current, onPick, machine, servingId }) {
   },
     E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
       E('span', {
+        className: 'fr-state', 'data-kind': m.local ? 'local' : 'cloud', role: 'img',
+        'aria-label': (m.local ? 'Runs on this PC' : 'Runs in the cloud') + (m.state === 'resident' ? ', loaded' : ''),
+        title: (m.local ? 'Runs on this PC' : 'Runs in the cloud') + (m.state === 'resident' ? ', loaded' : ''),
         style: {
-          width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-          background: m.local ? '#00ff80' : '#7b61ff',
+          width: 7, height: 7, color: m.local ? '#00ff80' : '#7b61ff',
           boxShadow: m.state === 'resident' ? '0 0 6px #00ff80' : 'none',
         },
       }),
@@ -56354,10 +57123,10 @@ function RoleRow({ r, intel, onOpen, openFor, pickerErr, onRetry }) {
       },
         E('div', { style: { display: 'flex', alignItems: 'center', gap: 7 } },
           E('span', {
-            style: {
-              width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-              background: m ? (m.local ? '#00ff80' : '#7b61ff') : 'rgba(255,255,255,0.3)',
-            },
+            className: 'fr-state', role: 'img',
+            'data-kind': m ? (m.local ? 'local' : 'cloud') : undefined, 'data-state': m ? undefined : 'off',
+            'aria-label': m ? (m.local ? 'Runs on this PC' : 'Runs in the cloud') : 'No model',
+            style: { width: 7, height: 7, color: m ? (m.local ? '#00ff80' : '#7b61ff') : 'rgba(255,255,255,0.3)' },
           }),
           E('span', {
             style: {
@@ -57082,11 +57851,10 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
   const modes = d.routing_modes || [];
   // A16: nothing is pre-selected. With no mode picked, no button is pressed and
   // the card says what Friday does until the owner picks.
-  const actualLabel = ((modes.filter(m => m.id === d.routing_mode)[0]) || {}).label || d.routing_mode || 'the starting setting';
   const notPicked = !mode && E('div', {
     'data-route-not-picked': '1',
     style: { fontSize: 11.5, color: '#f59e0b', fontFamily: 'var(--st-font)', marginTop: 8, lineHeight: 1.5 },
-  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' uses its starting setting, ' + actualLabel + '.');
+  }, 'Not chosen yet: nothing is picked for you. Choose where ' + fridayName() + ' thinks: on this computer, in the cloud, or both. Until you do, ' + fridayName() + ' works only on this computer and sends nothing to the cloud, even with a key entered.');
   const modeButtonRow = E('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 } },
     modes.map(m => {
       const on = mode === m.id;
@@ -57129,7 +57897,7 @@ function ModelSoupCard({ soup, d, mode, setMode, savingMode, reload }) {
     : x.state === 'cloud' ? 'cloud'
     : x.state === 'cold' ? 'not loaded' : x.state === 'refused' ? 'unavailable' : x.state || '';
   const postureTxt = [
-    !mode ? 'Route not chosen yet (starting setting: ' + actualLabel + ')' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
+    !mode ? 'Route not chosen yet: only this computer until you choose' : mode === 'local_only' ? 'Local only' : mode === 'cloud_only' ? 'Cloud only' : 'Local preferred',
     post.vault_local_only ? 'vault kept local' : 'vault may reach the cloud',
     'knowledge indexing ' + (post.kg_indexing_mode === 'cloud' ? 'in the cloud' : 'on this machine' + (post.kg_local_possible ? '' : ' (cannot run: no local model is serving)')),
   ].join(' · ');
@@ -57749,11 +58517,10 @@ function IntelligenceDiagnostics() {
         },
       },
         E('span', {
+          className: 'fr-state', 'data-state': p.connected ? 'ok' : 'off', role: 'img',
+          'aria-label': p.connected ? 'Connected' : 'Not connected',
           title: p.connected ? 'connected' : 'not connected',
-          style: {
-            width: 7, height: 7, borderRadius: 4, flexShrink: 0,
-            background: p.connected ? '#00ff80' : 'rgba(255,255,255,0.25)',
-          },
+          style: { width: 7, height: 7 },
         }),
         E('div', { style: { width: 170, flexShrink: 0 } },
           E('div', { style: { fontSize: 12.5, color: 'var(--st-text)' } }, p.label),
@@ -59410,6 +60177,62 @@ function ClawsRepinPanel() {
 // file permissions only. This panel wraps it with the vault passphrase through
 // /api/security/keystore/wrap, which answers only this page on this PC and
 // needs the passphrase typed. Nothing changes it on its own.
+// Every stored credential (BD-06, NS-23.3-4/-5): what it is for, where it came from and when,
+// last changed and used, how it is protected; where to replace it, and Remove (a press on this
+// PC; revoked at the provider where the provider allows it). /api/security/credentials.
+function CredentialsPanel() {
+  const [rows, setRows] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState('');
+  const load = useCallback(() => {
+    apiFetch('/api/security/credentials').then(r => r.json()).then(d => setRows(d && d.ok ? d.credentials || [] : [])).catch(() => setRows([]));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) : 'never';
+  const remove = row => {
+    if (!window.confirm('Remove ' + row.kind + ' (' + row['for'] + ')?\n\n' + (row.remove && row.remove.note || ''))) return;
+    setBusy(row.name);
+    setMsg('');
+    apiFetch('/api/security/credentials/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: row.name })
+    }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+      setMsg(d && d.message || (ok ? 'Removed.' : 'Nothing changed.'));
+      load();
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(''));
+  };
+  const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
+  if (!rows) return /*#__PURE__*/React.createElement("div", { style: muted }, "Reading the stored credentials\u2026");
+  return /*#__PURE__*/React.createElement("div", {
+    "data-testid": "credential-list",
+    style: { marginTop: 12 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 12, color: '#fff', marginBottom: 6 }
+  }, "Stored credentials"), rows.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, fridayName() + " holds no credentials."), rows.map(row => /*#__PURE__*/React.createElement("div", {
+    key: row.name,
+    style: { borderTop: '1px solid rgba(255,255,255,0.06)', padding: '6px 0' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', gap: 8, alignItems: 'center' }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { flex: 1, fontSize: 12, color: 'rgba(255,255,255,0.85)' }
+  }, row.kind, ": ", row['for']), /*#__PURE__*/React.createElement("button", {
+    className: "settings-btn",
+    style: { fontSize: 11 },
+    disabled: !!busy,
+    onClick: () => remove(row)
+  }, busy === row.name ? 'Removing\u2026' : 'Remove')), /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "Came from: ", row.came_from, row.first_set ? ' (' + when(row.first_set) + ')' : '', ". Last changed ", when(row.last_changed), ", last used ", when(row.last_used), ". ", row.protection, "."), row.replace_in && /*#__PURE__*/React.createElement("div", {
+    style: muted
+  }, "To replace it: ", row.replace_in, "."))), msg && /*#__PURE__*/React.createElement("div", {
+    style: { fontSize: 11, color: '#cfefff', marginTop: 8 }
+  }, msg));
+}
 function KeystoreWrapPanel() {
   const [st, setSt] = useState(null);
   const [pw, setPw] = useState('');
@@ -59708,6 +60531,110 @@ function CalDeleteConfirm({ e, onDone }) {
 // ── Privacy & Data > Locks: how things are locked on this PC, in plain words ──
 // Read from /api/locks (services/locks.py): every line comes from the store that
 // decides it, and a line Friday cannot read says so. The honest limit is always shown.
+// ── Privacy & Data > Bring your AI history in (services/ai_history_import) ──
+// A ChatGPT or Claude data export, read on this PC only. A preview first; then each
+// conversation waits in import staging until the owner accepts it (StagedImportReview).
+function SettingsAiHistoryImport() {
+  const E = React.createElement;
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [prev, setPrev] = useState(null);
+  const [file, setFile] = useState(null);
+  const fileRef = useRef(null);
+  const send = (f, previewOnly) => {
+    setBusy(true);
+    setMsg('');
+    const fd = new FormData();
+    fd.append('file', f);
+    if (previewOnly) fd.append('preview', '1');
+    apiFetch('/api/import/ai-history', {
+      method: 'POST',
+      body: fd
+    }).then(r => r.json()).then(x => {
+      if (!x.ok) {
+        setPrev(null);
+        setFile(null);
+        setMsg(x.error || 'The file could not be read.');
+        return;
+      }
+      if (x.preview) {
+        setPrev(x);
+        setFile(f);
+        return;
+      }
+      setPrev(null);
+      setFile(null);
+      setMsg(x.service + ': ' + x.staged + ' conversation' + (x.staged === 1 ? '' : 's') + ' staged for your review below' + (x.already_decided ? ', ' + x.already_decided + ' already answered' : '') + '. Nothing is saved until you accept it.');
+    }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
+  };
+  return E(StSection, {
+    title: 'Bring your AI history in',
+    desc: 'Your ChatGPT or Claude data export, read on this PC only: no model reads it and nothing is sent anywhere. You see what it holds first, and each conversation is saved only when you accept it.'
+  }, E('input', {
+    ref: fileRef,
+    type: 'file',
+    accept: '.json,.zip,application/json,application/zip',
+    style: {
+      display: 'none'
+    },
+    onChange: ev => {
+      const f = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (f) send(f, true);
+    }
+  }), E('button', {
+    type: 'button',
+    className: 'btn',
+    'data-testid': 'ai-history-choose',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => fileRef.current && fileRef.current.click()
+  }, busy ? 'Reading…' : 'Choose an export (conversations.json or .zip)'), prev ? E('div', {
+    'data-testid': 'ai-history-preview',
+    style: {
+      fontSize: 11,
+      color: '#ddd',
+      marginTop: 6,
+      lineHeight: 1.5
+    }
+  }, prev.service + ' export: ' + prev.conversations + ' conversation' + (prev.conversations === 1 ? '' : 's') + ', ' + prev.messages + ' messages' + (prev.first ? ', ' + prev.first + ' to ' + prev.last : '') + (prev.cut ? ' (' + prev.cut + ' long ones will be cut)' : '') + '. Nothing has been saved.', E('div', {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 6
+    }
+  }, E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy || !file,
+    onClick: () => send(file, false)
+  }, 'Stage them for my review'), E('button', {
+    type: 'button',
+    className: 'btn',
+    style: {
+      fontSize: 11
+    },
+    disabled: busy,
+    onClick: () => {
+      setPrev(null);
+      setFile(null);
+    }
+  }, 'Cancel'))) : null, msg ? E('div', {
+    role: 'status',
+    className: 'sc-msgline'
+  }, msg) : null, E(StagedImportReview, {
+    source: 'chatgpt',
+    refresh: msg
+  }), E(StagedImportReview, {
+    source: 'claude',
+    refresh: msg
+  }));
+}
 function SettingsLocks() {
   const [d, setD] = useState(null);
   const [msg, setMsg] = useState('');
@@ -59933,6 +60860,8 @@ function SettingsPrivacyMap() {
     E('div', { className: 'lk-words' }, (svc.remote || []).length ? (svc.remote.length + ' phone or remote channel' + (svc.remote.length === 1 ? '' : 's') + ' can reach ' + fridayName() + ' from outside this PC.') : 'No phone or remote channel can reach ' + fridayName() + ' from outside this PC.'),
     d.vault_access && E('div', { className: 'lk-words' }, d.vault_access.allowed_7_days == null ? 'I couldn’t read the private-data access log.' : 'In the last 7 days, private data was used by a model on this PC or allowed to the cloud ' + d.vault_access.allowed_7_days + ' time' + (d.vault_access.allowed_7_days === 1 ? '' : 's') + ', and refused ' + d.vault_access.refused_7_days + ' time' + (d.vault_access.refused_7_days === 1 ? '' : 's') + '.'),
     d.off_record && E('p', { className: 'lk-words', role: 'note' }, E('strong', null, 'When you go off the record. '), d.off_record.words),
+    d.off_record && d.off_record.external && E('h4', { className: 'pm-h' }, 'Off the record does not cover'),
+    d.off_record && d.off_record.external && E('ul', { className: 'lk-sub', 'aria-label': 'Off the record does not cover' }, (d.off_record.external.lines || []).map((t, i) => E('li', { key: i }, t))),
     E('div', null, d.export && ctl(d.export), d.erase && ctl(d.erase)),
     E('p', { className: 'pm-limit', role: 'note' }, E('strong', null, 'The honest limit. '), d.honest_limit),
     E('div', { role: 'status', 'aria-live': 'polite', className: 'sc-msgline' }, msg),
@@ -59991,7 +60920,7 @@ function SettingsTabPrivacy({
     }).then(r => r.json()).then(d => setEraseMsg(d.status === 'ok' ? '✓ ' + (d.message || 'Erased.') : '✗ ' + (d.message || 'Failed'))).catch(() => setEraseMsg('✗ Could not reach the server.'));
   };
   const armed = vaultStatus && vaultStatus.encryption === 'AES-256-GCM';
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(SettingsPrivacyMap, null), /*#__PURE__*/React.createElement(StSection, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(SettingsLocks, null), /*#__PURE__*/React.createElement(SettingsAiHistoryImport, null), /*#__PURE__*/React.createElement(SettingsPrivacyMap, null), /*#__PURE__*/React.createElement(StSection, {
     title: "Vault"
   }, vaultStatus && /*#__PURE__*/React.createElement("div", {
     style: {
@@ -60132,6 +61061,9 @@ function SettingsTabPrivacy({
     title: "When a cloud provider fails",
     desc: "If a cloud provider fails, " + fridayName() + " says so and offers the other one; she never switches on her own. An order set here lets her move along it, and she still tells you each time."
   }, window.FridayCloudFallbackOrder ? /*#__PURE__*/React.createElement(window.FridayCloudFallbackOrder, null) : null), /*#__PURE__*/React.createElement(StSection, {
+    title: "Folder grants",
+    desc: "Her file tools read and write only inside your home folder (not app data or her own state folder), her output folders, and the folders you add here. Adding one is a press on this screen; removing one is always allowed."
+  }, window.FridayFolderGrants ? /*#__PURE__*/React.createElement(window.FridayFolderGrants, null) : null), /*#__PURE__*/React.createElement(StSection, {
     title: "Meeting recordings",
     desc: ("How long " + fridayName() + " keeps what she records in Meetings. Nothing is chosen for you; until you choose, nothing is deleted on a timer. Deleting audio never touches the transcript or notes.")
   }, /*#__PURE__*/React.createElement(StRow, {
@@ -60269,7 +61201,7 @@ function SettingsTabPrivacy({
     title: (fridayName() + "’s rules on this PC")
   }, /*#__PURE__*/React.createElement(ClawsRepinPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "Stored keys"
-  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null)), React.createElement(StSection, {
+  }, /*#__PURE__*/React.createElement(KeystoreWrapPanel, null), /*#__PURE__*/React.createElement(CredentialsPanel, null)), React.createElement(StSection, {
     title: "Agent workspaces"
   }, window.FridayAgentWorkspacePermission && React.createElement(window.FridayAgentWorkspacePermission, {apiFetch})), /*#__PURE__*/React.createElement(StSection, {
     title: "Computer control"
@@ -60309,11 +61241,9 @@ function SettingsTabPrivacy({
   }), /*#__PURE__*/React.createElement(StToggle, {
     label: "Go off the record",
     value: !!s.off_record,
-    onChange: () => save({
-      off_record: !s.off_record
-    }),
+    onChange: () => fridayToggleOffRecord(!!s.off_record, save),
     desc: "Nothing about your conversations is written to disk until you turn this back off: no messages, transcripts, summaries, traces or indexes. Approvals and signed receipts keep only what was done and when."
-  }), /*#__PURE__*/React.createElement(StToggle, {
+  }), fridayOffRecordFrom(s) && React.createElement(FridayOffRecordElsewhere, null), /*#__PURE__*/React.createElement(StToggle, {
     label: "Artifact panel beside the chat",
     value: s.artifact_panel_enabled !== false,
     onChange: () => save({
@@ -61431,18 +62361,24 @@ function MemoryCardPanel({s, save}) {
   // Messages a correction stopped using as evidence (north star 34.9-4), so
   // the owner sees it happened and can put them back.
   const [retired, setRetired] = useState(null);
+  const [sedit, setSedit] = useState(null);
+  const [sup, setSup] = useState({rules: [], dropped_total: 0});
   const load = useCallback(() => {
     apiFetch('/api/core-memory')
       .then(r => r.json())
       .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
       .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+    apiFetch('/api/core-memory/suppressed')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setSup(d); })
+      .catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
   const post = (path, body, key, after) => {
     setBusy(key || path); setMsg(''); setRetired(null);
     apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
-      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else if (after) after(d); load(); })
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else { if (d.suppressed && d.note) setMsg(d.note); if (after) after(d); } load(); })
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
@@ -61511,14 +62447,30 @@ function MemoryCardPanel({s, save}) {
     rep && E('div', null,
       file('user'), file('friday'),
       (rep.pending || []).length > 0 && E('div', {style: head}, 'Waiting for your review'),
-      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card; Discard drops them.'),
+      (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card. Edit and keep puts your own wording on the card instead. Discard drops them. Don’t suggest things like this drops them and holds back similar suggestions.'),
       (rep.pending || []).slice(0, 30).map(p => E('div', {key: p.id, style: row},
         E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, what(p)),
         E('div', {style: dim}, (p.target === 'friday' ? 'Working with you' : 'About you') + ' · from ' + from(p.source) + ' · ' + when(p.ts)),
         p.reason ? E('div', {style: dim}, p.reason) : null,
-        E('div', {style:{display:'flex', gap:6, marginTop:4}},
-          btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
-          btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard')))),
+        (sedit && sedit.id === p.id)
+          ? E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap', alignItems:'center'}},
+              E('input', {className:'input', 'aria-label':'Your wording of this suggestion', maxLength: 400, style:{flex:'1 1 240px', fontSize:12}, value: sedit.text,
+                onChange: e => setSedit({id: p.id, text: e.target.value})}),
+              btn('Keep my wording', () => post('review', {id: p.id, keep: true, text: sedit.text}, 'k' + p.id, () => setSedit(null)), 'keepmine',
+                {disabled: !!busy || !String(sedit.text || '').trim()}),
+              btn('Cancel', () => setSedit(null), 'cancel'))
+          : E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}},
+              btn('Keep', () => post('review', {id: p.id, keep: true}, 'k' + p.id), 'keep'),
+              p.op !== 'remove' && btn('Edit and keep', () => setSedit({id: p.id, text: p.text || ''}), 'editkeep'),
+              btn('Discard', () => post('review', {id: p.id, keep: false}, 'x' + p.id), 'discard'),
+              btn('Don’t suggest things like this', () => post('suppress', {id: p.id}, 's' + p.id), 'suppress')))),
+      (sup.rules || []).length > 0 && E('div', {style: head}, 'Suppressed'),
+      (sup.rules || []).length > 0 && E('div', {style: dim}, 'Suggestions like these are held back. Each rule keeps only the main words of the suggestion you turned down (for a meeting, only a code made from them).' + (sup.dropped_total ? ' Held back so far: ' + sup.dropped_total + '.' : '') + ' Remove a rule to see suggestions like it again.'),
+      (sup.rules || []).map(r => E('div', {key: r.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+        E('div', {style:{flex:1}},
+          E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, r.from_meeting ? 'From a meeting (its words are not kept)' : (r.kind === 'remove' ? 'Removing a line about: ' : 'About: ') + (r.words || []).join(', ')),
+          E('div', {style: dim}, when(r.ts) + (r.hits ? ' · held back ' + r.hits + (r.hits === 1 ? ' time' : ' times') : ''))),
+        btn('Remove', () => post('suppressed/remove', {id: r.id}, 'r' + r.id), 'unsuppress'))),
       (rep.changes || []).length > 0 && E('div', {style: head}, 'What ' + fridayName() + ' changed'),
       (rep.changes || []).slice(0, 20).map(c => E('div', {key: c.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
         E('div', {style:{flex:1}},
@@ -62462,6 +63414,17 @@ function TasksInboxPanel() {
     }, 'Off, and ' + fridayName() + '’s list was removed from Google Tasks.')
   }, 'Turn off and remove the list')), limit, status);
 }
+// The permission difference (BD-06, NS-23.2-2): shown before Google is asked for a new write
+// permission; the connect route refuses one without its diff_id.
+function permissionDiffText(df) {
+  const adds = (df.adds || []).map(a => '+ ' + a.what);
+  return 'This asks Google for:\n' + (adds.length ? adds.join('\n') : 'nothing new (already allowed)') + ((df.lets_friday || []).length ? '\n\nIt lets ' + fridayName() + ': ' + df.lets_friday.join(', ') + '.' : '') + '\n\n' + (df.still || []).join(' ') + '\n\nEverything else stays as it is. Continue to Google?';
+}
+async function fetchPermissionDiff(accountId, caps) {
+  const r = await apiFetch('/api/google/accounts/' + encodeURIComponent(accountId) + '/permission-diff?capability=' + encodeURIComponent(caps.join(',')));
+  const d = await r.json();
+  return d && d.diff || null;
+}
 function GoogleAccountsPanel() {
   const [accounts, setAccounts] = useState([]);
   const [msg, setMsg] = useState('');
@@ -62547,6 +63510,22 @@ function GoogleAccountsPanel() {
     const include_tasks_write = !!(opts && opts.tasksWrite);
     setLoading(true);
     try {
+      let diff_id = '';
+      const caps = account ? [mailbox && 'send', include_calendar_write && 'calendar', include_tasks_write && 'tasks'].filter(Boolean) : [];
+      if (caps.length) {
+        const df = await fetchPermissionDiff(account.id, caps);
+        if (!df) {
+          setMsg('Could not load what this would add.');
+          setLoading(false);
+          return;
+        }
+        // Every new write permission is shown here before Google is asked.
+        if (!window.confirm(permissionDiffText(df))) {
+          setLoading(false);
+          return;
+        }
+        diff_id = df.diff_id;
+      }
       const r = await apiFetch('/api/google/accounts/connect', {
         method: 'POST',
         headers: {
@@ -62557,7 +63536,8 @@ function GoogleAccountsPanel() {
           email: account.email,
           mailbox,
           include_calendar_write,
-          include_tasks_write
+          include_tasks_write,
+          diff_id
         } : {
           label,
           include_send: allowSend
@@ -62584,11 +63564,16 @@ function GoogleAccountsPanel() {
   const removeAccount = async (id, email) => {
     if (!window.confirm('Remove ' + email + '? This revokes access.')) return;
     try {
-      await apiFetch('/api/google/accounts/' + id + '/remove', {
+      const r = await apiFetch('/api/google/accounts/' + id + '/remove', {
         method: 'POST'
       });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.message || 'Error.');
+        return;
+      }
       setAccounts(a => a.filter(x => x.id !== id));
-      setMsg('Removed.');
+      setMsg(d.message || 'Removed.');
     } catch (e) {
       setMsg('Error.');
     }
@@ -62920,7 +63905,36 @@ function GoogleAccountsPanel() {
       color: '#00d4ff',
       marginTop: 8
     }
-  }, msg));
+  }, msg), /*#__PURE__*/React.createElement(GoogleConnectorCard, null));
+}
+// The Google connection's card (BD-06, NS-8.9-2): what it lets Friday do, the permissions it asks
+// for (reading and changing apart), what runs without a card, what Google receives, what is kept
+// on this PC, the limits and how to remove it. Read from /api/google/accounts/contract, which
+// tests tie to the code (services/connector_contracts.google_card).
+function GoogleConnectorCard() {
+  const [card, setCard] = useState(null);
+  useEffect(() => {
+    apiFetch('/api/google/accounts/contract').then(r => r.json()).then(d => {
+      const c = d && d.contract && d.contract.card;
+      if (Array.isArray(c)) setCard(c);
+    }).catch(() => {});
+  }, []);
+  if (!card) return null;
+  return /*#__PURE__*/React.createElement("details", {
+    className: "google-connector-card",
+    style: { marginTop: 10, fontSize: 11, color: 'rgba(255,255,255,0.78)' }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: { cursor: 'pointer', color: '#00d4ff' }
+  }, "What this connection does"), card.map(sec => /*#__PURE__*/React.createElement("div", {
+    key: sec.heading,
+    style: { marginTop: 6 }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: { fontWeight: 600, color: '#fff' }
+  }, sec.heading), /*#__PURE__*/React.createElement("ul", {
+    style: { margin: '2px 0 0 16px', padding: 0 }
+  }, (sec.lines || []).map((l, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, l))))));
 }
 // ─── Settings → Connections — the model-agnostic provider layer (P1/P2) ───
 // Lists every registered provider with live health (status dot + p50 latency),
@@ -62952,16 +63966,17 @@ function ProviderStatusDot({
     color = '#ef4444';
     title = 'down — circuit breaker open';
   }
+  const state = color === '#00ff80' ? 'ok' : color === '#f59e0b' ? 'warn' : color === '#ef4444' ? 'bad' : 'off';
   return /*#__PURE__*/React.createElement("span", {
+    className: "fr-state",
+    "data-state": state,
+    role: "img",
+    "aria-label": 'Status: ' + title,
     title: title,
     style: {
-      display: 'inline-block',
+      color: color,
       width: 9,
-      height: 9,
-      borderRadius: 5,
-      background: color,
-      boxShadow: `0 0 6px ${color}`,
-      flexShrink: 0
+      height: 9
     }
   });
 }
@@ -64110,12 +65125,13 @@ function SettingsTabConnectors({
       color: c.connected ? 'var(--st-text)' : 'var(--st-dim)'
     }
   }, /*#__PURE__*/React.createElement("span", {
-    "aria-hidden": "true",
+    className: "fr-state",
+    "data-state": c.connected ? 'ok' : 'off',
+    role: "img",
+    "aria-label": c.connected ? 'Connected' : 'Not connected',
     style: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-      background: c.connected ? '#00ff80' : 'rgba(255,255,255,0.25)'
+      width: 7,
+      height: 7
     }
   }), c.name || c.id)))));
 }
@@ -66420,6 +67436,37 @@ function SettingsTabAppearance({
       }));
     }
   }, FRIDAY_LANDING_MODE_NAMES[v]))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Text size"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Text size",
+    desc: "Makes what you read bigger: the text in every workspace window and in the chat. Windows keep their size and the text wraps inside them. Your browser's own zoom (Ctrl and +) still works too."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Text size",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, FRIDAY_TEXT_SCALES.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-text-scale": v,
+    "aria-checked": fridayTextScale(s.text_scale) === v,
+    className: 'settings-btn' + (fridayTextScale(s.text_scale) === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 14px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        text_scale: v
+      });
+      fridayApplyTextScale(v);
+    }
+  }, v + '%'))))), /*#__PURE__*/React.createElement(StSection, {
     title: "3D effects"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "3D dazzle",
@@ -66450,7 +67497,47 @@ function SettingsTabAppearance({
         detail: v
       }));
     }
-  }, v.charAt(0).toUpperCase() + v.slice(1)))))), /*#__PURE__*/React.createElement(StSection, {
+  }, v.charAt(0).toUpperCase() + v.slice(1))))), /*#__PURE__*/React.createElement(StRow, {
+    label: "3D rendering",
+    desc: "Off turns every 3D view off: the scene behind the desktop, the knowledge galaxy and the 3D views of files, records and the Library. Lists and pages stay; views that are only 3D (the Library's shelves, Files in 3D) and head and hand tracking are off with it. Nothing is drawn on the graphics card. Takes effect when " + fridayName() + " next opens."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "3D rendering",
+    style: {
+      display: 'flex',
+      gap: 6,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, ['on', 'off'].map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-render3d-choice": v,
+    "aria-checked": (s.render_3d === false ? 'off' : 'on') === v,
+    className: 'settings-btn' + ((s.render_3d === false ? 'off' : 'on') === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 16px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        render_3d: v === 'on'
+      });
+      window.fridaySyncRender3d && window.fridaySyncRender3d(v === 'on');
+    }
+  }, v === 'on' ? 'On' : 'Off'))), (s.render_3d === false) !== !!(window.fridayRender3dOff && window.fridayRender3dOff()) && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "settings-btn",
+    style: {
+      fontSize: 12,
+      padding: '6px 12px',
+      marginTop: 6,
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => window.location.reload()
+  }, "Reload now"))), /*#__PURE__*/React.createElement(StSection, {
     title: "Knowledge graph"
   }, /*#__PURE__*/React.createElement(KnowledgeSettings, {
     s: s,
@@ -66945,17 +68032,20 @@ function LaneReceipts() {
       h('div', { className: 'local-ai-row-text' },
         h('div', { className: 'local-ai-row-label' }, t.label || t.kind || 'A trace'),
         h('div', { className: 'local-ai-row-meta' }, [t.model, t.status, laneAgo(t.started)].filter(Boolean).join(' · '))),
-      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
+      h('button', { type: 'button', className: 'ws-tab-link', 'data-testid': 'lane-open-trace', 'aria-label': 'Open the trace: ' + (t.label || t.kind || 'a trace'), onClick: () => window.fridayOpenTrace(t.trace_id) }, 'Open'))));
 }
 function LaneBody({ tab, onTab, lane, q, onLocal, busy, onChanged }) {
   const h = React.createElement;
   const counts = { needs: lane && lane.needs_you || 0, activity: lane && lane.activity || 0, updates: lane && lane.updates || 0, receipts: 0 };
   const onKey = e => {
-    const i = LANE_TABS.findIndex(x => x[0] === tab);
-    if (e.key === 'ArrowRight') onTab(LANE_TABS[(i + 1) % LANE_TABS.length][0]);
-    else if (e.key === 'ArrowLeft') onTab(LANE_TABS[(i + LANE_TABS.length - 1) % LANE_TABS.length][0]);
-    else return;
+    const i = LANE_TABS.findIndex(x => x[0] === tab), n = LANE_TABS.length;
+    const to = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (to < 0) return;
     e.preventDefault();
+    const next = LANE_TABS[to][0];
+    onTab(next);
+    // Focus goes with the selection (WAI-ARIA tabs): the tab left behind is out of the Tab order (tabIndex -1).
+    setTimeout(() => { const b = document.getElementById('lane-tab-' + next); if (b) b.focus(); }, 0);
   };
   return h(React.Fragment, null,
     h('div', { className: 'place-tabs', role: 'tablist', 'aria-label': 'Needs you, Activity, Updates, Receipts and traces', onKeyDown: onKey },
@@ -67895,6 +68985,8 @@ function ApprovalCardBody({
     },
     "data-testid": "approval-card",
     "data-approval-id": a.approval_id,
+    role: "group",
+    "aria-label": a.title || 'A request waiting for you',
     ...fridayRow('card', a.approval_id, a.title, { kind: String(a.kind || '').slice(0, 30), status: 'pending' })
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -67995,9 +69087,14 @@ function ApprovalPopups() {
   const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
-    const fresh = items.some(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const freshItems = items.filter(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const fresh = freshItems.length > 0;
     seen.current = new Set(items.filter(a => !fridayApprovalQuiet(a.approval_id)).map(a => a.approval_id));
     if (fresh) setLater(false);
+    // Heard as well as seen: a screen reader says what has just started waiting for you (north star 33.3-6).
+    if (fresh) fridayAnnounce(freshItems.length === 1
+      ? fridayName() + ' is waiting for your approval: ' + (freshItems[0].title || 'a request') + '.'
+      : freshItems.length + ' requests are waiting for your approval: ' + freshItems.slice(0, 3).map(a => a.title || 'a request').join('; ') + (freshItems.length > 3 ? '; and more' : '') + '.');
   }, [items]);
   // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
   // unfold to the card it is waiting on, the same card, and outline it.
@@ -68766,6 +69863,18 @@ function App() {
       if (chatH) localStorage.setItem('friday_chat_h', String(Math.round(chatH)));
     } catch (_) {}
   }, [chatH]);
+  // "Where the chat goes" > Height: the tray's height without dragging its edge (WCAG 2.5.7).
+  useEffect(() => {
+    const on = e => {
+      const v = e && e.detail;
+      if (v === 'full') {
+        try { localStorage.removeItem('friday_chat_h'); } catch (_) {}
+        setChatH(0);
+      } else if (v === 'half') setChatH(clampChatH(Math.round(vh() * 0.5)));
+    };
+    window.addEventListener('friday:chat-height', on);
+    return () => window.removeEventListener('friday:chat-height', on);
+  }, []);
   // Keep within viewport when the window is resized.
   useEffect(() => {
     const on = () => {
@@ -69014,6 +70123,8 @@ function App() {
   if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name, ((agentSettings.identity || {}).name_in_lockup));
   useEffect(() => { fridaySetOffRecord(fridayOffRecordFrom(agentSettings)); },
     [agentSettings.off_record, agentSettings.off_record_stops_storage]);
+  // The saved text size, applied once settings have come from the server (Settings > Appearance).
+  useEffect(() => { fridayApplyTextScale(agentSettings.text_scale); }, [agentSettings.text_scale]);
   // Mic / Speaker test state (used by the Audio & Voice section).
   const [micTestActive, setMicTestActive] = useState(false);
   const [micTestLevel, setMicTestLevel] = useState(0);
@@ -71074,7 +72185,7 @@ function App() {
   }, [threadOrb]);
   // Drag the window by its header.
   const startThreadDrag = e => {
-    if(e.target.closest('.thread-close'))return;
+    if(e.target.closest('.thread-close,.thread-cancel'))return;
     const box=e.currentTarget.closest('.thread-panel').getBoundingClientRect();
     threadDrag.current={sx:e.clientX,sy:e.clientY,ox:box.left,oy:box.top,w:box.width,h:box.height};
     const move=event=>{
@@ -72488,6 +73599,7 @@ function App() {
         model: d.model,
         seat: d.seat,
         fallback_chain: d.fallback_chain || [],
+        route: d.route || (d.friday_msg || {}).route || null,
         trace_id: d.trace_id || streamTraceId || null,
         reasoning_sources: d.reasoning_sources || [],
         // local_only mode refused (no local seat available) rather than
@@ -72537,6 +73649,11 @@ function App() {
   // Held features first: the dock, the palette and every workspace below
   // read the switch through fridayHeldOn during this same render.
   fridaySetHeldFeatures(agentSettings.held_features);
+  // 3D rendering (Settings > Appearance): the saved choice is mirrored where the
+  // next page load reads it before anything draws.
+  React.useEffect(() => {
+    if (window.fridaySyncRender3d) window.fridaySyncRender3d(agentSettings.render_3d);
+  }, [agentSettings.render_3d]);
   const dockShape = React.useMemo(
     () => dockArrangement(agentSettings.dock_custom, showAllWorkspaces),
     [agentSettings.dock_custom, showAllWorkspaces, agentSettings.held_features]);
@@ -73666,7 +74783,9 @@ function App() {
       border: 'none',
       color: fsOn ? '#00d4ff' : '#bbb',
       cursor: 'pointer',
-      fontSize: 14
+      fontSize: 14,
+      minWidth: 24,
+      minHeight: 24
     },
     title: fsOn ? 'Back to the normal layout (Ctrl+Shift+F)' : 'Fullscreen with the chat beside it (Ctrl+Shift+F)',
     "aria-label": fsOn ? 'Leave fullscreen with chat' : 'Fullscreen with chat',
@@ -74411,6 +75530,9 @@ function App() {
   dockShape.configured
     ? /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
+        role: "button",
+        tabIndex: 0,
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
         style: { opacity: 0.5, cursor: 'default' },
         title: "Your own dock arrangement is in use, so this no longer applies.",
         onClick: () => { window.__fridaySettingsTab = 'appearance'; setSettingsOpen(false); toggle('settings'); try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); } catch (e) {} }
@@ -74419,6 +75541,10 @@ function App() {
       }, "Show all workspaces — set in Settings → Appearance"))
     : /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
+        role: "switch",
+        "aria-checked": !!showAllWorkspaces,
+        tabIndex: 0,
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
         onClick: () => saveAgentSettings({
           show_all_workspaces: !showAllWorkspaces
         })
@@ -74429,9 +75555,11 @@ function App() {
       })),
   /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
-    onClick: () => saveAgentSettings({
-      off_record: !agentSettings.off_record
-    })
+    role: "switch",
+    "aria-checked": !!agentSettings.off_record,
+    tabIndex: 0,
+    onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
+    onClick: () => fridayToggleOffRecord(!!agentSettings.off_record, saveAgentSettings)
   }, /*#__PURE__*/React.createElement("span", {
     className: "settings-toggle-label",
     style: {
@@ -74443,7 +75571,7 @@ function App() {
     role: "note",
     "data-off-record-notice": "true",
     style: { fontSize: 11, color: 'rgba(255,255,255,0.6)', padding: '0 12px 8px', lineHeight: 1.5 }
-  }, FRIDAY_OFF_RECORD_NOTICE), /*#__PURE__*/React.createElement("div", {
+  }, FRIDAY_OFF_RECORD_NOTICE), fridayOffRecordFrom(agentSettings) && React.createElement(FridayOffRecordElsewhere, null), /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
     role: "button",
     tabIndex: 0,
@@ -74740,7 +75868,7 @@ function App() {
     const sw = wsInfo[STANDALONE_WS];
     return /*#__PURE__*/React.createElement(WsCustomCtx.Provider, {
       value: { map: wsCustMap, setCust }
-    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
+    }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), React.createElement(FridayOffRecordConfirmHost, null), shellMeeting, shellTopBar, shellKillSwitch, sw ? /*#__PURE__*/React.createElement(StandaloneShell, { ws: sw, histOpen: tabHistOpen, onCloseHistory: () => setTabHistOpen(false) },
       /*#__PURE__*/React.createElement(Safe, { name: sw.label }, wsMap[sw.id] || fridayBundleBody(sw.id)))
       : /*#__PURE__*/React.createElement("div", { className: 'ws-tab', style: { padding: 40 } },
         'There is no workspace called “' + STANDALONE_WS + '”. ',
@@ -74751,7 +75879,7 @@ function App() {
       map: wsCustMap,
       setCust
     }
-  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), /*#__PURE__*/React.createElement(CloudSlicingCard, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
+  }, /*#__PURE__*/React.createElement(ApprovalPopups, null), /*#__PURE__*/React.createElement(KeyFormHost, null), React.createElement(FridayOffRecordConfirmHost, null), /*#__PURE__*/React.createElement(CloudSlicingCard, null), !setupDone && consentDone === false && /*#__PURE__*/React.createElement(ConsentFlow, {
     // The server stores the passphrase as the chat begins; this page does
     // not keep it.
     onDone: seed => {
@@ -75072,8 +76200,10 @@ function App() {
         apiFetch: apiFetch,
       })
     : null,
-  shellChatPanel, threadOrb && React.createElement(ProcessOrbThread,{orb:threadOrb,meta:taskMeta,log:taskLog,steps:threadSteps,readState:threadReadState,position:threadPos,bodyRef:threadBodyRef,onDrag:startThreadDrag,onClose:closeThread}), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
-    className: `dock ${dockHidden ? 'hidden' : ''}`
+  shellChatPanel, threadOrb && React.createElement(ProcessOrbThread,{orb:threadOrb,meta:taskMeta,log:taskLog,steps:threadSteps,readState:threadReadState,position:threadPos,bodyRef:threadBodyRef,onDrag:startThreadDrag,onClose:closeThread,onMove:()=>setThreadPos(p=>fridayNextCorner(p,400,320))}), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
+    className: `dock ${dockHidden ? 'hidden' : ''}`,
+    role: "navigation",
+    "aria-label": "Workspaces"
   }, dockShape.groups.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: g.name + ':' + gi
   }, gi > 0 && /*#__PURE__*/React.createElement("div", {
@@ -75086,6 +76216,7 @@ function App() {
     key: w.id,
     className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${noticeWs.has(w.id) && !openWins.has(w.id) ? 'has-notice' : ''}`,
     "data-ws": w.id,
+    "aria-pressed": openWins.has(w.id),
     // Ctrl/Cmd-click or middle-click: the workspace in a new BACKGROUND tab,
     // the way a link would -- the person chose to stay here. A plain click
     // still opens (or closes) the window.

@@ -31,6 +31,10 @@ _LOCK = threading.Lock()
 # DROPPED on write — this is the egress-tier guarantee: names, ids, counts and
 # durations only; never prompt text, never tool args/results.
 _ALLOWED_FIELDS = {
+    # services/first_action: the owner skipped the first governed action (A27): how, nothing else.
+    "first_action_skipped": {"how"},
+    # services/disk_guard: background work paused for a full disk, and resumed (no paths).
+    "disk_full": {"free_mib", "state"},
     "model_invocation": {
         "model", "provider", "seat", "duration_ms",
         "tokens_in", "tokens_out", "orb_id", "task_id", "workspace",
@@ -116,6 +120,14 @@ def record(kind, /, **fields):
             _unsaved = False
         if _unsaved:
             rec["off_record"] = True
+        # The row came from an off-record turn: nothing may LEARN from it
+        # (NS-15.8-2; services/avatar_growth's nightly signals read this),
+        # even when the owner keeps off-record content (no storage mark).
+        try:
+            if _unsaved or _off.excludes_learning():
+                rec["no_learning"] = True
+        except Exception:
+            rec["no_learning"] = True
         if kind == "notification" and "kind" in fields:
             fields = dict(fields, notification_kind=fields.pop("kind"))
         for key, val in fields.items():

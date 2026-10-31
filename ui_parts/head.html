@@ -26,6 +26,29 @@ window.addEventListener('error',function(e){
   }
 },true);
 </script>
+<script id="friday-render-3d">
+// 3D rendering can be switched off entirely (north star 21.22-3; Settings >
+// Appearance > 3D rendering). Read before anything draws: with it off no WebGL
+// context is ever made, and every 3D view shows its flat form instead.
+// The answer is fixed for this page: the WebGL switch below is installed once,
+// so a change made in Settings takes effect when Friday next opens.
+(function(){
+  var off=false;try{off=localStorage.getItem('friday.render3d')==='off';}catch(_){}
+  window.fridayRender3dOff=function(){return off;};
+  window.fridaySyncRender3d=function(on){try{if(on===false)localStorage.setItem('friday.render3d','off');else if(on===true)localStorage.removeItem('friday.render3d');}catch(_){}};
+  if(!off)return;
+  document.documentElement.setAttribute('data-render3d','off');
+  var get=HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext=function(kind){
+    if(/^(webgl2?|experimental-webgl)$/i.test(String(kind||'')))return null;
+    return get.apply(this,arguments);
+  };
+})();
+</script>
+<style id="friday-render-3d-style">
+:root[data-render3d="off"] #friday-scene-canvas{display:none!important}
+:root[data-render3d="off"] body{background:#070b14}
+</style>
 <!-- UI libraries are vendored (static/vendor/, SRI-verified against the same
      pinned versions the old CDN tags carried) so the shell loads offline.
      Babel below is the sole remaining CDN script and only for fallback builds:
@@ -56,6 +79,9 @@ window.addEventListener('error',function(e){
 <script src="/static/js/friday_stop_everything.js" defer></script>
 <!-- Settings > Privacy > When a cloud provider fails (A6). -->
 <script src="/static/js/friday_cloud_fallback_order.js" defer></script>
+<script src="/static/js/friday_route_why.js" defer></script>
+<!-- Settings > Privacy > Folders Friday may use (BD-26). -->
+<script src="/static/js/friday_folder_grants.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -283,6 +309,11 @@ window.addEventListener('DOMContentLoaded',function(){
             position: fixed; bottom: 20px; right: 20px; width: 6px; height: 6px;
             border-radius: 50%; background: #666; z-index: 200; transition: background 0.3s, box-shadow 0.3s;
         }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: #1f6f7f; }
+        /* The camera light by shape too: off a ring, on a half-filled circle, following a face a filled circle. */
+        #camera-indicator { width: 8px; height: 8px; box-sizing: border-box; }
+        #camera-indicator:not(.holo-active):not([data-status="live"]) { background: transparent; border: 1.5px solid #666; }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: linear-gradient(90deg, #1f6f7f 50%, transparent 50%); border: 1.5px solid #1f6f7f; }
 
         /* --- REACT UI LAYER STYLES --- */
 
@@ -296,6 +327,40 @@ window.addEventListener('DOMContentLoaded',function(){
             outline: 2px solid #00d4ff;
             outline-offset: 2px;
             border-radius: 4px;
+        }
+
+        /* Accessibility (north star §33.1, BD-21 AX1). Every control that can
+           take keyboard focus shows it: the roles the rule above missed, and
+           over the few rules that hid the ring (the hand cursor's highlight,
+           the chat edge pill, the snap zones, the keys sheet). */
+        [role="radio"]:focus-visible, [role="switch"]:focus-visible,
+        [role="checkbox"]:focus-visible, [role="menuitem"]:focus-visible,
+        [role="option"]:focus-visible, summary:focus-visible,
+        .fr-snap:focus-visible, .chat-edge-pill:focus-visible,
+        .snap-zone:focus-visible, .keys-sheet-close:focus-visible {
+            outline: 2px solid #00d4ff !important;
+            outline-offset: 2px;
+        }
+        /* The first Tab stop: straight to the app, past the scene. */
+        .skip-link {
+            position: fixed; left: 12px; top: -60px; z-index: 2147483647;
+            padding: 10px 16px; border-radius: 8px; background: #00141c;
+            color: #fff; font: 600 14px Inter, sans-serif; text-decoration: none;
+            border: 2px solid #00d4ff;
+        }
+        .skip-link:focus, .skip-link:focus-visible { top: 12px; }
+        /* Windows high contrast (forced colours): the focus ring uses the
+           system's own highlight so it is never drawn in a colour the theme
+           replaced. */
+        @media (forced-colors: active) {
+            :focus-visible { outline: 3px solid Highlight !important; outline-offset: 2px; }
+            .dock-btn, .btn, .settings-toggle, [role="radio"], [role="switch"] { border: 1px solid ButtonText; }
+        }
+        /* "More contrast" asked for by the system: dim text and hairlines get
+           stronger, so nothing sits below a readable contrast. */
+        @media (prefers-contrast: more) {
+            :root { --st-dim: rgba(255,255,255,0.86); --fr-dim: rgba(255,255,255,0.86); }
+            :focus-visible { outline-width: 3px !important; }
         }
 
         /* Base button (used by React UI) */
@@ -348,7 +413,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
         .fr-lockup-name { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
             color: var(--fr-cyan); text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); cursor: pointer;
-            user-select: none; background: none; border: 0; padding: 0; transition: text-shadow .2s; }
+            user-select: none; background: none; border: 0; padding: 0; min-height: 24px; transition: text-shadow .2s; }
         .fr-lockup-name:hover { text-shadow: 0 0 18px rgba(0,212,255,0.75); }
         .fr-lockup-name.fr-lockup-static { cursor: default; }
         .fr-lockup-tm { font-size: 0.5em; vertical-align: super; line-height: 0; margin-left: 1px; }
@@ -471,7 +536,8 @@ window.addEventListener('DOMContentLoaded',function(){
         /* A card Friday raised inside this workspace is waiting: one quiet
            dot under the label, no count and no pulse. It clears when the
            workspace is opened or the card is dismissed. */
-        .dock-btn.has-notice .dot { background: #00d4ff; }
+        /* A notice is a ring, an open window a filled dot: told apart by shape, not only by being cyan. */
+        .dock-btn.has-notice .dot { background: transparent; border: 1px solid #00d4ff; width: 5px; height: 5px; box-sizing: border-box; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -516,6 +582,11 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin-btns button:hover { color: #fff; }
         .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
+        /* Text size (Settings > Appearance; north star 33.1-8, WCAG 1.4.4): what you read grows and reflows
+           inside its window; frames, the dock and the scene keep their size. */
+        .fwin-body, .ws-tab-body, .fx-chat-transcript, [data-chat-input] { zoom: var(--fr-text-zoom, 1); }
+        /* Zoom multiplies: a chat drawn inside a window (Code, News) takes the window's size once, not twice. */
+        :is(.fwin-body, .ws-tab-body) :is(.fx-chat-transcript, [data-chat-input]) { zoom: 1; }
         .ws-typing-dot { width: 6px; height: 6px; border-radius: 50%; background: #00d4ff; display: inline-block; animation: wsTyping 1s infinite ease-in-out; }
         @keyframes wsTyping { 0%,80%,100% { transform: scale(0.5); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
         /* Indeterminate progress sweep — used by the Music/Timeline export panels
@@ -603,7 +674,7 @@ window.addEventListener('DOMContentLoaded',function(){
            until the pointer comes to it. A click brings the tray back. */
         .chat-edge-pill {
             position: fixed; top: 50%; right: 0; z-index: 66;
-            width: 14px; height: 76px; margin-top: -38px; padding: 0;
+            width: 24px; height: 76px; margin-top: -38px; padding: 0;
             display: flex; align-items: center; justify-content: center;
             background: rgba(10,14,26,0.82); color: var(--fr-cyan);
             border: 1px solid rgba(0,212,255,0.28); border-right: none;
@@ -612,7 +683,7 @@ window.addEventListener('DOMContentLoaded',function(){
             font-size: 13px; line-height: 1; opacity: 0.45;
             transition: opacity 0.2s ease, width 0.2s ease;
         }
-        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
+        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 30px; outline: none; }
         .chat-edge-pill.left { right: auto; left: 0; border-left: none;
             border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
         /* Snap layouts (unified-shell.md §11): the outline a release would
@@ -1680,6 +1751,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
         .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
         .thread-dot.error { background: #ff0080; color: #ff0080; }
+        /* A step's state by shape too: done a circle, in progress half filled, pending a ring, error a square. */
+        .thread-dot.in-progress { background: linear-gradient(90deg, #f59e0b 50%, transparent 50%); border: 2px solid #f59e0b; box-sizing: border-box; }
+        .thread-dot.pending { background: transparent; border: 2px solid #3b82f6; box-sizing: border-box; }
+        .thread-dot.error { border-radius: 2px; }
         .thread-step-content { flex: 1; min-width: 0; }
         .thread-step-text {
             font-family: 'Inter', sans-serif; font-size: 12px;
@@ -2058,10 +2133,27 @@ window.addEventListener('DOMContentLoaded',function(){
             padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
             border:1px solid rgba(255,255,255,0.07);
         }
+        /* State is never shown by colour alone (WCAG 1.4.1; north star 33.1-11). One shape per kind of
+           state: ok a filled circle, busy a half-filled circle, warn a diamond, bad a square, off a hollow
+           ring. The colour stays; the shape says the same thing to someone who cannot tell the colours apart. */
+        .fr-state { display:inline-block; width:8px; height:8px; flex-shrink:0; vertical-align:middle; box-sizing:border-box;
+            border-radius:50%; background:currentColor; }
+        .fr-state[data-state="ok"] { color:#00ff80; }
+        .fr-state[data-state="busy"] { color:#f59e0b; border:1.5px solid currentColor; background:linear-gradient(90deg, currentColor 50%, transparent 50%); }
+        .fr-state[data-state="warn"] { color:#f59e0b; border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .fr-state[data-state="bad"] { color:#ff5470; border-radius:1px; }
+        .fr-state[data-state="off"] { color:rgba(255,255,255,0.4); border:1.5px solid currentColor; background:transparent; }
+        .fr-state[data-kind="cloud"] { border-radius:1px; }
+        /* Read by a screen reader, not drawn (the page's one top-level heading, say). */
+        .fr-sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+            clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Trust by shape too: high a circle, medium a diamond, low a square. */
+        .trust-dot.yellow, .trust-obs-dot.yellow { border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .trust-dot.red, .trust-obs-dot.red { border-radius:1px; }
 
         /* ── Source-trust badge + hover tooltip (article cards) ── */
         .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
@@ -2156,6 +2248,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .sentiment-dot.positive { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .sentiment-dot.neutral { background:#7a8190; box-shadow:0 0 4px rgba(122,129,144,0.4); }
         .sentiment-dot.negative { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Tone by shape too: positive a circle, neutral a ring, negative a square. */
+        .sentiment-dot.neutral { background:transparent; border:1.5px solid #7a8190; box-sizing:border-box; }
+        .sentiment-dot.negative { border-radius:1px; }
         /* "In your wiki" connection link */
         .wiki-connect { font-size:10px; color:#9fb0c4; margin-top:7px; }
         .wiki-link { color:#00d4ff; cursor:pointer; text-decoration:none; border-bottom:1px dotted rgba(0,212,255,0.4); }

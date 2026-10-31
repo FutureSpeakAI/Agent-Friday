@@ -356,6 +356,7 @@ def api_messages_classify():
         return jsonify({"status": "error",
                         "message": "id and a valid lane are required"}), 400
     sender = ""
+    _corr = None
     with _MESSAGE_LOCK:
         # Persist a lane override onto the cached message so reclassification
         # survives the next live fetch (overrides are honored in _normalize).
@@ -363,6 +364,8 @@ def api_messages_classify():
         found = False
         for r in cached:
             if str(_message_id(r)) == mid:
+                # What the triage head's correction row needs, read before the lane changes.
+                _corr = (r.get("subject"), r.get("snippet") or r.get("preview"), r.get("lane"))
                 r["lane"] = lane
                 sender = str(r.get("sender") or r.get("from") or "")
                 found = True
@@ -382,6 +385,16 @@ def api_messages_classify():
         state[mid] = st
         _save_message_state(state)
 
+    if _corr is not None:
+        try:
+            # The correction is also a DAgger row for the triage lane head (hashes
+            # and labels only). It returns at once when the head is off or the
+            # owner is off the record, and otherwise reads on the head's own
+            # worker: nothing is encoded on this request.
+            from agent_friday.services import triage_heads
+            triage_heads.note_mail_correction(_corr[0], _corr[1], owner_lane=lane, previous_lane=_corr[2], ref=mid)
+        except Exception:
+            pass
     learned = None
     if learn and sender:
         try:

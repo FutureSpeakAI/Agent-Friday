@@ -74,7 +74,7 @@ print("vault passphrase stored in:", stored)
 from agent_friday.services import action_ledger  # noqa: E402
 action_ledger.migrate_legacy()
 action_ledger.append("decision", {"tool": "ci_probe_send", "class": "outward", "decision": "allow",
-                                  "surface": "ci"}, durable=True)
+                                  "surface": "ci", "action_id": "act_ci_probe_send"}, durable=True)
 action_ledger.append("activity", {"kind": "tool_call", "tool": "ci_probe_tool", "ok": True})
 rep = action_ledger.verify()
 assert rep["ok"], rep

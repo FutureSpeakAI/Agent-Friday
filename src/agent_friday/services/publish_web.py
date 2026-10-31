@@ -216,7 +216,24 @@ _BASE_CSS = ("html,body{margin:0;background:#0b0e14;color:#e6eef8;font-family:In
              "font-weight:400}.diff .add{color:#00ff80}.diff .del{color:#ff5a7a}.diff .hunk{color:#ff6dd9}"
              ".diff .meta{color:#888}figure{margin:0}img,svg{max-width:100%}#chart{height:min(70vh,560px)}"
              ".legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;margin-top:8px}.legend i{display:inline-block;"
-             "width:9px;height:9px;border-radius:2px;margin-right:5px}")
+             "width:9px;height:9px;border-radius:2px;margin-right:5px}.legend svg{vertical-align:-2px}"
+             "details.data{margin-top:12px}details.data summary{cursor:pointer;color:#00d4ff;font-size:13px}")
+
+def _data_table(cols, rows, title) -> str:
+    """A chart's rows as an HTML table: the first column names each row."""
+    if not cols:
+        return ""
+    head = "".join('<th scope="col">%s</th>' % _html.escape(str(c)) for c in cols)
+
+    def _row(r):
+        cells = list(r) + [None] * (len(cols) - len(r))
+        first = '<th scope="row">%s</th>' % _html.escape("" if cells[0] is None else str(cells[0]))
+        rest = "".join('<td class="num">%s</td>' % _html.escape("" if v is None else str(v)) for v in cells[1:len(cols)])
+        return "<tr>" + first + rest + "</tr>"
+
+    return ("<table><caption>%s</caption><thead><tr>%s</tr></thead><tbody>%s</tbody></table>"
+            % (_html.escape(str(title or "The data")), head, "".join(_row(r) for r in rows)))
+
 
 def _made_with() -> str:
     """The product's credit line, from the brand (unified-shell.md §1: published pages carry MADE_WITH)."""
@@ -327,12 +344,16 @@ def pack(rec: dict, *, mark: Optional[bool] = None) -> Bundle:
                   "\n(function(){var spec=" + spec_json + ";var el=document.getElementById('chart');"
                   "var r=FridayChart.renderSVG(spec, el.clientWidth||960, el.clientHeight||540);"
                   "el.innerHTML=r.svg||'<p>Nothing to chart.</p>';var lg=document.getElementById('legend');"
-                  "lg.innerHTML=r.legend.map(function(l){return '<span><i style=\"background:'+l.color+'\"></i>'+"
+                  "lg.innerHTML=r.legend.map(function(l){return '<span>'+FridayChart.legendSwatch(l)+' '+"
                   "String(l.name).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];})+'</span>';}).join('');})();</script>")
-        body = ("<h1>%s</h1><figure><div id=\"chart\"></div><div class=\"legend\" id=\"legend\"></div></figure>"
-                "<p class=\"dl\"><a href=\"data.csv\" download>Download the data as CSV</a></p>" % _html.escape(title))
-        files["index.html"] = _page(title, body + script, CHART_CSP, mark=mark)
         cols, rows = _chart_rows(spec)
+        # The same data as a table under the chart (north star 33.1-12: a text alternative a screen reader can
+        # move through cell by cell, there with or without the script).
+        body = ("<h1>%s</h1><figure><div id=\"chart\"></div><div class=\"legend\" id=\"legend\"></div></figure>"
+                "<details class=\"data\"><summary>The data as a table</summary>%s</details>"
+                "<p class=\"dl\"><a href=\"data.csv\" download>Download the data as CSV</a></p>"
+                % (_html.escape(title), _data_table(cols, rows, title)))
+        files["index.html"] = _page(title, body + script, CHART_CSP, mark=mark)
         files["data.csv"] = _csv(cols, rows).encode("utf-8")
     elif kind == "image":
         src = str((content or {}).get("src") or "")
@@ -390,17 +411,27 @@ def _chart_rows(spec: dict):
         rows = [[r.get(c) for c in cols] for r in rows]
     if not cols and spec.get("series"):
         cols = ["x"] + [s.get("name") or "series %d" % (i + 1) for i, s in enumerate(spec["series"])]
-        length = max((len(s.get("data") or []) for s in spec["series"]), default=0)
-        rows = []
-        for i in range(length):
-            first = (spec["series"][0].get("data") or [None] * length)[i]
-            x = first[0] if isinstance(first, (list, tuple)) else (first or {}).get("x") if isinstance(first, dict) else None
-            row = [x]
-            for s in spec["series"]:
-                d = (s.get("data") or [])
-                p = d[i] if i < len(d) else None
-                row.append(p[1] if isinstance(p, (list, tuple)) else (p or {}).get("y") if isinstance(p, dict) else None)
-            rows.append(row)
+        # One row per x value, in the order first seen across all series: a series that skips an x has an
+        # empty cell there, so no number is paired with another series' x (the table under a chart says the same
+        # as the chart, north star 33.1-12).
+        def _xy(p):
+            if isinstance(p, (list, tuple)):
+                return (p[0] if len(p) > 0 else None), (p[1] if len(p) > 1 else None)
+            if isinstance(p, dict):
+                return p.get("x"), p.get("y")
+            return None, None
+        order, at, seen = [], [], set()
+        for s in spec["series"]:
+            m = {}
+            for p in (s.get("data") or []):
+                x, y = _xy(p)
+                k = str(x)
+                if k not in seen:
+                    seen.add(k)
+                    order.append(x)
+                m[k] = y
+            at.append(m)
+        rows = [[x] + [m.get(str(x)) for m in at] for x in order]
     return [str(c) for c in cols], rows
 
 
@@ -452,7 +483,9 @@ def scan(bundle: Bundle) -> dict:
         if ns:
             refusals.append("never-send material is in the bundle (%d item%s)" % (len(ns), "" if len(ns) == 1 else "s"))
     except Exception as e:
-        warnings.append("the egress floor could not run (%s)" % e)
+        # A public page is never published past a floor that could not be checked (NS-34.6-7).
+        refusals.append("the never-send check could not run (%s), so nothing is published until it can"
+                        % type(e).__name__)
     ids += len(_SSN_RE.findall(text))
     if ids:
         refusals.append("hard identifier(s) found: %d (a national id, card or account number)" % ids)
@@ -835,7 +868,8 @@ def _on_decision(record: dict) -> None:
     url = _this_pc_url(bundle.slug) if adapter == "this_pc" else ""
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external(KIND, surface="approval_card", approval_id=aid, target=url or bundle.slug)
+        decision = _gate.record_external(KIND, surface="approval_card", approval_id=aid,
+                                         target=url or bundle.slug)
     except Exception as e:
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": "held: %s" % e})
         _post_back(record, 'I could not publish "%s": %s. Nothing was published.' % (title, e))
@@ -847,11 +881,13 @@ def _on_decision(record: dict) -> None:
             from agent_friday.services import publish_hosting as _ph
             url = _ph.publish_remote(adapter, bundle)
     except Exception as e:
+        _gate.close_external(decision, False, detail="publish_failed")
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": str(e)})
         _record_egress(adapter, label, bundle, "failed")
         _post_back(record, 'Publishing "%s" via %s failed: %s. Nothing is up.' % (title, label, e))
         return
     _record_egress(adapter, label, bundle, "sent", url)
+    _gate.close_external(decision, True, detail="published")
     with _LOCK:
         items = [i for i in _read_index() if i.get("slug") != bundle.slug]
         items.append({"slug": bundle.slug, "title": bundle.title, "kind": bundle.kind,
@@ -862,6 +898,18 @@ def _on_decision(record: dict) -> None:
         _write_index(items)
         shutil.rmtree(_staging_root() / str(payload.get("staging") or ""), ignore_errors=True)
     _ap.mark_used(aid, "publish_web", detail={"ok": True, "url": url})
+    # A published file that Friday made (a picture, a page) gets this
+    # publication's receipt in the artifact manifest, found by its bytes.
+    try:
+        publish_receipt = (decision or {}).get("receipt")
+        if publish_receipt:
+            import hashlib as _hl
+            from agent_friday.services import artifact_manifest as _am
+            for _data in bundle.files.values():
+                _am.record_delivery(publish_receipt, channel="publish_web:%s" % adapter,
+                                    sha256=_hl.sha256(_data).hexdigest(), ref=bundle.slug, approval_id=aid)
+    except Exception:
+        pass
     note = (" It is reachable only while this PC is on and its tunnel is up." if adapter == "this_pc" else "")
     _post_back(record, 'Published "%s" (v%d) via %s: %s%s Say "take it down" to unpublish.'
                % (title, bundle.version, label, url, note))

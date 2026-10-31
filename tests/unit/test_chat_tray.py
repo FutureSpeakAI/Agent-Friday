@@ -265,7 +265,8 @@ def test_one_click_hides_the_tray_fully_and_the_workspace_takes_the_width(open_p
     g = page.evaluate(GEOMETRY)
     assert not g["open"] and g["onScreen"] == 0 and g["visibility"] == "hidden", g
     assert g["dock"] == "0px" and g["tabPad"] == "0px" and g["bodyRight"] == g["vw"], g
-    assert g["pill"] and g["pill"]["right"] == g["vw"] and g["pill"]["width"] <= 22, g
+    # the pill is a slim edge target, no wider than the 24px minimum target (WCAG 2.5.8; #385)
+    assert g["pill"] and g["pill"]["right"] == g["vw"] and g["pill"]["width"] <= 24, g
     page.click('[data-testid="chat-edge-pill"]')
     page.wait_for_selector(".chat-panel.open", timeout=5000)
     assert page.locator('[data-testid="chat-edge-pill"]').count() == 0

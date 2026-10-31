@@ -1,0 +1,88 @@
+{
+ "about": "Reviewed exceptions for scripts/supply_chain.py (north star 34.2-10, 34.2-17, 34.17-6). A licence entry clears one package whose licence, exactly as the SBOM reads it, is copyleft (strong or weak) or not machine-readable. An advisory entry clears one advisory id or alias for one package. A component entry clears one exact version of a component no advisory database covers. An entry counts only when `reviewed_by` is the owner, Stephen Webster (only he signs reviews; scripts/supply_chain.py REVIEW_SIGNERS, and .github/CODEOWNERS makes any change here need his approval), and `until` is a date that has not passed and is no more than a year away; until then it is listed as awaiting review and clears nothing. The proposed entries below carry over the project's own record in THIRD_PARTY_LICENSES.md and wait for the owner to sign them before the public 1.0 (amendment A19: betas are exempt).",
+ "licences": [
+  {
+   "package": "mutagen",
+   "licence": "GPL-2.0-or-later",
+   "reason": "THIRD_PARTY_LICENSES.md: GPL-2.0-or-later, recommended tier (audio metadata), shipped unmodified in the wheelhouse.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "piper-tts",
+   "licence": "GPL-3.0-or-later",
+   "reason": "THIRD_PARTY_LICENSES.md: GPL-3.0-or-later (piper1-gpl), recommended tier, the local text-to-speech engine, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "imageio-ffmpeg",
+   "licence": "BSD-2-Clause AND GPL-3.0-or-later",
+   "reason": "THIRD_PARTY_LICENSES.md: BSD-2-Clause wrapper plus the GPL-3.0 ffmpeg.exe it bundles, run as a separate program.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "certifi",
+   "licence": "MPL-2.0",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), the CA bundle, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pyttsx3",
+   "licence": "MPL-2.0",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), recommended tier, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "tqdm",
+   "licence": "MPL-2.0 AND MIT",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 AND MIT, shipped unmodified.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pypdfium2",
+   "licence": "BSD-3-Clause, Apache-2.0, dependency licenses",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "sherpa-onnx",
+   "licence": "Apache licensed, as found in the LICENSE file",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records Apache-2.0.",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "tiktoken",
+   "licence": "(none found)",
+   "reason": "The wheel names no licence; THIRD_PARTY_LICENSES.md records MIT (Copyright (c) 2022 OpenAI, Shantanu Jain).",
+   "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "",
+   "until": ""
+  }
+ ],
+ "advisories": [],
+ "components": [
+  {
+   "package": "CPython",
+   "version": "3.12.10",
+   "reason": "The embeddable CPython the installer bundles (packaging/windows/sources.json). No advisory database is queried for it; 3.12.10 is the last 3.12 release with an embeddable build, and later 3.12 security fixes (3.12.11+) are source-only. Someone must read the CPython security advisories published since 3.12.10 and accept or act on them for this exact version.",
+   "proposed_by": "CM-2 builder, 2026-10-21",
+   "reviewed_by": "",
+   "until": ""
+  }
+ ]
+}

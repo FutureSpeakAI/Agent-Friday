@@ -78,6 +78,16 @@ def _learning(settings: dict) -> bool:
     return bool(mods and mods[0].learn_enabled(settings))
 
 
+def _off_record(settings: Optional[dict] = None) -> bool:
+    """Off the record nothing is learned from the owner's words (NS-15.8-2): no
+    routed turn is held and no correction row is written. Fails closed."""
+    try:
+        from agent_friday.services import off_record
+        return off_record.skip_learning("laya_router_learn", settings)
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _sha(text: str) -> str:
     """A keyed hash (this install's local key): a short utterance cannot be found again from a dictionary."""
     from agent_friday.services import laya_safe_writes
@@ -92,6 +102,8 @@ def note_route(text: str, r, *, surface: str = "voice", conversation_id: Optiona
     never a correction to learn from."""
     if not owner or not text or r is None or r.tool == "answer_card":
         return
+    if _off_record(settings):
+        return                      # off the record: the turn is not held, hashed or otherwise
     if not _sha(text):
         return                      # no local key to hash with: nothing is kept, hashed or otherwise
     keep = _learning(settings if settings is not None else _settings())
@@ -233,6 +245,8 @@ def note_undo(*, conversation_id: Optional[str] = None, tainted=False, settings:
         if ent is None:
             return False
         ent["resolved"] = True
+    if _off_record(settings):
+        return False                # an off-record correction teaches nothing
     return _write(ent, actor="owner", op="ask", args=None, tainted=False,
                   settings=settings if settings is not None else _settings(), root=root)
 
@@ -277,5 +291,7 @@ def note_executed(tool: str, args: Optional[dict] = None, *, ok: bool, tainted=F
             return False
         ent["resolved"] = True
     who = "owner" if ent["decision"] == "ask" else "brain"
+    if _off_record(settings):
+        return False                # an off-record correction teaches nothing
     return _write(ent, actor=who, op=tool, args=args, tainted=False,
                   settings=settings if settings is not None else _settings(), root=root)
