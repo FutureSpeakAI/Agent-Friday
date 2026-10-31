@@ -1502,7 +1502,15 @@ def _tool_write_file(inp):
             with open(p, 'a', encoding='utf-8') as f:
                 f.write(content)
         else:
-            p.write_text(content, encoding='utf-8')
+            # Whole or not at all (north star NS-34.16-2, file creation): a process killed
+            # part-way leaves the earlier file (or none), never a torn one under the real
+            # name. A partial a killed write left beside this file is cleared first. Line
+            # ends are the platform's, as Path.write_text gave them.
+            import os as _os, re as _re
+            from agent_friday.services import whole_file as _wf
+            _wf.sweep_partials(p.parent, "^" + _re.escape(p.name) + "$")
+            _text = content if _os.linesep == "\n" else content.replace("\n", _os.linesep)
+            _wf.write_whole_text(p, _text)
     except Exception as e:
         _fwr.finish(rid, False, error=str(e))
         return (f"Write error: {e}. Receipt {rid}"
