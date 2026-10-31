@@ -156,9 +156,9 @@ def doctor_local_model_repair():
         job = local_repair.start(str(what or ""), by="owner:ui")
         return jsonify({"status": "ok", "job": job}), 202
     except local_repair.RepairError as e:
-        busy = "running already" in str(e)
+        busy = "running already" in e.user_message
         return jsonify({"status": "error", "code": "busy" if busy else "not_offered",
-                        "error": str(e)}), 409 if busy else 400
+                        "error": e.user_message}), 409 if busy else 400
 
 
 @doctor_bp.route("/api/doctor/known-issues", methods=["GET"])
@@ -495,7 +495,7 @@ def first_backup_answer():
     try:
         return jsonify({"status": "ok", **first_backup.answer(str(body.get("choice") or ""))})
     except first_backup.FirstBackupError as e:
-        return jsonify({"status": "error", "error": str(e)}), 400
+        return api_error(e, "That could not be saved.", 400, key="error")
     except Exception as e:  # noqa: BLE001
         return api_error(e, "That could not be saved.")
 

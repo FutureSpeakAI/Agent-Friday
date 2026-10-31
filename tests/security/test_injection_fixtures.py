@@ -150,6 +150,9 @@ def world(tmp_path, monkeypatch, friday_dir):
     from agent_friday.services import desktop_bus, dissent_gate
     from agent_friday.services import setting_proposals as sp
     import agent_friday.notifications_engine as ne
+    # The PDF and the repo are written in pytest's temp folder: make it the folder
+    # file tools may use (services/path_policy confines them to the home folder by default).
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(approvals, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)

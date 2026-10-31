@@ -24,13 +24,15 @@ import threading
 import time
 from typing import Optional
 
+from agent_friday.user_errors import UserFacingValueError
+
 REPAIRS = ("restart", "verify", "runtime")
 
 _LOCK = threading.Lock()
 _JOB: dict = {"state": "idle"}
 
 
-class RepairError(ValueError):
+class RepairError(UserFacingValueError):
     """Said plainly to the owner."""
 
 

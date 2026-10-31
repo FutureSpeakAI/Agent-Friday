@@ -231,6 +231,8 @@ provider, kind, workspace, key and codebase, and scheduled jobs this month.
     moving, only more gently, when your system asks for reduced motion.
 - **Dock.** Which workspaces the dock shows, and in what order.
 - **Start screen.** **Show my day**, and when your day shows over the scene.
+- **Text size** (100% to 200%) makes what you read bigger: the text in every workspace
+  window and in the chat. Windows keep their size and the text wraps inside them.
 - **3D effects.** **3D dazzle** (full, subtle or off) controls glow, particles and
   motion in every 3D view. Off is the calmest and lightest on the graphics card.
   **3D rendering** (on or off) turns every 3D view off entirely: the scene behind

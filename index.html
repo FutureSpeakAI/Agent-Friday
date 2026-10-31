@@ -421,6 +421,40 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 4px;
         }
 
+        /* Accessibility (north star §33.1, BD-21 AX1). Every control that can
+           take keyboard focus shows it: the roles the rule above missed, and
+           over the few rules that hid the ring (the hand cursor's highlight,
+           the chat edge pill, the snap zones, the keys sheet). */
+        [role="radio"]:focus-visible, [role="switch"]:focus-visible,
+        [role="checkbox"]:focus-visible, [role="menuitem"]:focus-visible,
+        [role="option"]:focus-visible, summary:focus-visible,
+        .fr-snap:focus-visible, .chat-edge-pill:focus-visible,
+        .snap-zone:focus-visible, .keys-sheet-close:focus-visible {
+            outline: 2px solid #00d4ff !important;
+            outline-offset: 2px;
+        }
+        /* The first Tab stop: straight to the app, past the scene. */
+        .skip-link {
+            position: fixed; left: 12px; top: -60px; z-index: 2147483647;
+            padding: 10px 16px; border-radius: 8px; background: #00141c;
+            color: #fff; font: 600 14px Inter, sans-serif; text-decoration: none;
+            border: 2px solid #00d4ff;
+        }
+        .skip-link:focus, .skip-link:focus-visible { top: 12px; }
+        /* Windows high contrast (forced colours): the focus ring uses the
+           system's own highlight so it is never drawn in a colour the theme
+           replaced. */
+        @media (forced-colors: active) {
+            :focus-visible { outline: 3px solid Highlight !important; outline-offset: 2px; }
+            .dock-btn, .btn, .settings-toggle, [role="radio"], [role="switch"] { border: 1px solid ButtonText; }
+        }
+        /* "More contrast" asked for by the system: dim text and hairlines get
+           stronger, so nothing sits below a readable contrast. */
+        @media (prefers-contrast: more) {
+            :root { --st-dim: rgba(255,255,255,0.86); --fr-dim: rgba(255,255,255,0.86); }
+            :focus-visible { outline-width: 3px !important; }
+        }
+
         /* Base button (used by React UI) */
         .btn {
             background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.14); color: rgba(255, 255, 255, 0.78);
@@ -459,7 +493,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
         .fr-lockup-name { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
             color: var(--fr-cyan); text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); cursor: pointer;
-            user-select: none; background: none; border: 0; padding: 0; transition: text-shadow .2s; }
+            user-select: none; background: none; border: 0; padding: 0; min-height: 24px; transition: text-shadow .2s; }
         .fr-lockup-name:hover { text-shadow: 0 0 18px rgba(0,212,255,0.75); }
         .fr-lockup-name.fr-lockup-static { cursor: default; }
         .fr-lockup-tm { font-size: 0.5em; vertical-align: super; line-height: 0; margin-left: 1px; }
@@ -635,6 +669,11 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin-btns button:hover { color: #fff; }
         .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
+        /* Text size (Settings > Appearance; north star 33.1-8, WCAG 1.4.4): what you read grows and reflows
+           inside its window; frames, the dock and the scene keep their size. */
+        .fwin-body, .ws-tab-body, .fx-chat-transcript, [data-chat-input] { zoom: var(--fr-text-zoom, 1); }
+        /* Zoom multiplies: a chat drawn inside a window (Code, News) takes the window's size once, not twice. */
+        :is(.fwin-body, .ws-tab-body) :is(.fx-chat-transcript, [data-chat-input]) { zoom: 1; }
         /* The browser refused a workspace's own tab: said under the title bar. */
         .fwin-tab-blocked { display: flex; gap: 8px; align-items: flex-start; margin: 6px 10px 0; padding: 7px 10px; border-radius: 8px; background: rgba(255,196,0,0.10); border: 1px solid rgba(255,196,0,0.38); color: #ffe7a3; font-size: 12px; line-height: 1.45; }
         .fwin-tab-blocked b { color: #fff3c9; }
@@ -805,7 +844,7 @@ window.addEventListener('DOMContentLoaded',function(){
            until the pointer comes to it. A click brings the tray back. */
         .chat-edge-pill {
             position: fixed; top: 50%; right: 0; z-index: 66;
-            width: 14px; height: 76px; margin-top: -38px; padding: 0;
+            width: 24px; height: 76px; margin-top: -38px; padding: 0;
             display: flex; align-items: center; justify-content: center;
             background: rgba(10,14,26,0.82); color: var(--fr-cyan);
             border: 1px solid rgba(0,212,255,0.28); border-right: none;
@@ -814,7 +853,7 @@ window.addEventListener('DOMContentLoaded',function(){
             font-size: 13px; line-height: 1; opacity: 0.45;
             transition: opacity 0.2s ease, width 0.2s ease;
         }
-        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
+        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 30px; outline: none; }
         .chat-edge-pill.left { right: auto; left: 0; border-left: none;
             border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
         /* Snap layouts (unified-shell.md §11): the outline a release would
@@ -3754,6 +3793,7 @@ window.addEventListener('DOMContentLoaded',function(){
 </head>
 
 <body>
+    <a class="skip-link" href="#ui-inner">Skip to Agent Friday™</a>
     <style>
     /* Offline-first: desaturate the holographic scene when the network monitor
        reports we're offline, so the environment visibly (but calmly) reflects
@@ -3792,6 +3832,10 @@ window.addEventListener('DOMContentLoaded',function(){
 
     <!-- Parallax Tracker Dot -->
     <div id="camera-indicator" role="img" aria-label="Camera off" title="Camera off"></div>
+    <!-- What a screen reader says when something needs you (north star 33.3-6): standing live regions, read
+         and not drawn; fridayAnnounce() sets their text. -->
+    <div id="fr-announce-polite" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0"></div>
+    <div id="fr-announce-assertive" role="alert" aria-live="assertive" aria-atomic="true" style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0"></div>
     <div id="camera-status" role="status" aria-live="polite"></div>
     <div id="call-mode-chip" role="status" aria-live="polite"></div>
 
@@ -3815,7 +3859,7 @@ window.addEventListener('DOMContentLoaded',function(){
         <!-- The page's one top-level heading: a screen reader's heading list starts here, and each open window
              is a level-2 heading under it (north star 33.1-6). -->
         <h1 class="fr-sr-only">Agent Friday™</h1>
-        <div id="ui-inner" style="pointer-events:auto;height:100vh"></div>
+        <div id="ui-inner" tabindex="-1" style="pointer-events:auto;height:100vh;outline:none"></div>
     </div>
 
     <!-- Undocked chat mode (?chrome=chat), set as early as the body exists.
@@ -11586,10 +11630,40 @@ window.fridayAddThreadStep = function(orbId, step) {
 };
 
 // === KEYBOARD CONTROLS ===
+// Arrow keys belong to a focused control that uses them (radios, lists, menus,
+// tabs, sliders: NS-33.1-2); the scene takes them only when no such control
+// has focus.
+var FRIDAY_ARROW_WIDGETS = 'select, [role="radio"], [role="radiogroup"], [role="listbox"], [role="option"], ' +
+    '[role="menu"], [role="menuitem"], [role="menubar"], [role="tablist"], [role="tab"], [role="slider"], ' +
+    '[role="spinbutton"], [role="grid"], [role="tree"], [role="treeitem"], [role="combobox"]';
 document.addEventListener('keydown', function(e) {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.defaultPrevented || (e.target.closest && e.target.closest(FRIDAY_ARROW_WIDGETS))) return;
     if (e.key === 'ArrowRight') { window.fridayVibe.nextStructure(); e.preventDefault(); }
     if (e.key === 'ArrowLeft')  { window.fridayVibe.prevStructure(); e.preventDefault(); }
+});
+
+// A radio group is one Tab stop's worth of choices: the arrow keys move to the
+// next or previous choice and pick it, Home and End go to the first and last
+// (WAI-ARIA radio group pattern; NS-33.1-2).
+document.addEventListener('keydown', function(e) {
+    var step = {ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1, Home: 'first', End: 'last'}[e.key];
+    // A group that handles its own arrows (the display-style picker previews
+    // without committing) has already taken the key: leave it alone.
+    if (step === undefined || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    var radio = e.target && e.target.closest && e.target.closest('[role="radio"]');
+    var group = radio && radio.closest('[role="radiogroup"]');
+    if (!group) return;
+    var all = Array.prototype.filter.call(group.querySelectorAll('[role="radio"]'), function(r) {
+        return r.closest('[role="radiogroup"]') === group && r.getAttribute('aria-disabled') !== 'true'
+            && !r.hasAttribute('disabled');
+    });
+    var at = all.indexOf(radio);
+    if (at < 0 || !all.length) return;
+    var to = step === 'first' ? 0 : step === 'last' ? all.length - 1 : (at + step + all.length) % all.length;
+    e.preventDefault();
+    all[to].focus();
+    if (all[to].getAttribute('aria-checked') !== 'true') all[to].click();
 });
 </script>
 
@@ -13226,6 +13300,13 @@ function SnapMenu({
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r3", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('chat_left', f, 'Chat on the left, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('left', f), traySide === 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat'), zone('rest', 1 - f, 'The workspace in the rest', () => onTray('left', f), false)))));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "t4", className: "snap-menu-title" }, "Chat on the right"));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r4", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('rest', 1 - f, 'The workspace in the rest', () => onTray('right', f), false), zone('chat_right', f, 'Chat on the right, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('right', f), traySide !== 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat')))));
+    // The tray's height without dragging its top edge (WCAG 2.5.7; north star 33.1-14).
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t5", className: "snap-menu-title" }, "Height"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r5", className: "snap-menu-row" }, [['full', 'Full height'], ['half', 'Half height']].map(([v, label]) => /*#__PURE__*/React.createElement("button", { key: v, type: "button", role: "menuitem", className: "btn", "data-chat-height": v, onClick: e => {
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent('friday:chat-height', { detail: v }));
+        onClose(false);
+      } }, label))));
     if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
         e.stopPropagation();
         onHide();
@@ -13499,6 +13580,21 @@ function FridayLockup({
 // dismiss for the user; it also blocks the whole tab until clicked. It was how a
 // dead button confessed to being dead ("Noted, but nothing enforces machine
 // levels yet"), which is the worst possible surface for that sentence.
+// Said to a screen reader, not drawn (north star 33.3-6: what matters is heard as well as seen). The page keeps two
+// live regions; a message is set into one after clearing it, so the same words twice are said twice.
+function fridayAnnounce(msg, opts) {
+  try {
+    var text = fridayTM(msg == null ? '' : String(msg)).trim();
+    if (!text || typeof document === 'undefined') return;
+    var el = document.getElementById(opts && opts.assertive ? 'fr-announce-assertive' : 'fr-announce-polite');
+    if (!el) return;
+    el.textContent = '';
+    // The latest words win: a message set within the pause replaces one still waiting to be set.
+    clearTimeout(el._frAnnounce);
+    el._frAnnounce = setTimeout(function () { el.textContent = text; }, 60);
+  } catch (e) { /* never in the way */ }
+}
+if (typeof window !== 'undefined') window.fridayAnnounce = fridayAnnounce;
 function fridayToast(msg, opts) {
   try {
     var text = fridayTM(msg == null ? '' : String(msg));
@@ -16469,7 +16565,7 @@ function ChatSurface(props) {
       fontSize: 12,
       marginTop: 30
     }
-  }, ("Talk to " + fridayName() + ". Type, speak, or drop a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
+  }, ("Talk to " + fridayName() + ". Type, speak, or attach a file.")), (window.FridayCrew?.messages(chatMsgs)||chatMsgs).map((m, i) => m.role === 'system'
   /* B2: system lines — seat changes and other transparency notices.
      Amber, centered, unmistakably NOT Friday speaking. Never sent to
      the model (server excludes role:system from context replay). */ ? /*#__PURE__*/React.createElement("div", {
@@ -27624,10 +27720,34 @@ function TimelinePanel({
         borderRadius: 3,
         padding: '0 4px'
       }
-    }, i + 1), /*#__PURE__*/React.createElement("div", {
+    }, i + 1), i > 0 && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Move clip ' + (i + 1) + ' earlier',
+      title: "Move earlier",
+      onClick: () => reorder(i, i - 1),
+      style: {
+        position: 'absolute', bottom: 2, left: 3, minWidth: 24, minHeight: 24, padding: 0, fontSize: 11,
+        color: '#7fb6c9', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: 3, cursor: 'pointer'
+      }
+    }, "\u25C0"), i < clips.length - 1 && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Move clip ' + (i + 1) + ' later',
+      title: "Move later",
+      onClick: () => reorder(i, i + 1),
+      style: {
+        position: 'absolute', bottom: 2, right: 3, minWidth: 24, minHeight: 24, padding: 0, fontSize: 11,
+        color: '#7fb6c9', background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: 3, cursor: 'pointer'
+      }
+    }, "\u25B6"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      "aria-label": 'Remove clip ' + (i + 1),
       onClick: () => removeClip(n),
       title: "remove",
       style: {
+        border: 'none',
+        padding: 0,
+        minWidth: 24,
+        minHeight: 24,
         position: 'absolute',
         top: 2,
         right: 3,
@@ -33867,6 +33987,7 @@ function TaskRecordsCard() {
       color: '#ccc'
     }
   }, "Keep records for"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Keep records for (days)",
     type: "number",
     min: "0",
     step: "1",
@@ -34610,6 +34731,7 @@ style: {
     }
   }), /*#__PURE__*/React.createElement("input", {
     type: "date",
+    "aria-label": "From date",
     value: ctxFrom,
     onChange: e => setCtxFrom(e.target.value),
     style: {
@@ -34622,6 +34744,7 @@ style: {
     }
   }), /*#__PURE__*/React.createElement("input", {
     type: "date",
+    "aria-label": "To date",
     value: ctxTo,
     onChange: e => setCtxTo(e.target.value),
     style: {
@@ -34633,6 +34756,7 @@ style: {
       fontSize: 11
     }
   }), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Type of entry",
     value: ctxType,
     onChange: e => setCtxType(e.target.value),
     style: {
@@ -40513,6 +40637,8 @@ function CalendarWS() {
     }, window.CalendarViews.reminderText(e)), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.RsvpButtons, {
       ev: e
     }), window.CalendarViews && /*#__PURE__*/React.createElement(window.CalendarViews.DeleteButton, {
+      ev: e
+    }), window.CalendarViews && window.CalendarViews.MoveButtons && /*#__PURE__*/React.createElement(window.CalendarViews.MoveButtons, {
       ev: e
     }), e.prep_available && /*#__PURE__*/React.createElement("span", {
       className: "cal-prep-badge"
@@ -51371,10 +51497,12 @@ function ConsentFlow({ onDone }) {
         style: { color: '#ff0080', fontSize: 12, marginTop: 8 }
       }, err)),
 
-    s.name === 'routing' && React.createElement('div', { style: { marginBottom: 18 } },
+    s.name === 'routing' && React.createElement('div', {
+      role: 'radiogroup', 'aria-label': s.title, style: { marginBottom: 18 } },
       (s.choices || []).map(c => React.createElement('div', {
-        key: c.mode,
+        key: c.mode, role: 'radio', tabIndex: 0, 'aria-checked': mode === c.mode,
         onClick: () => setMode(c.mode),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMode(c.mode); } },
         style: {
           padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
           border: '1px solid ' + (mode === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
@@ -51575,7 +51703,7 @@ function CloudConsentGate({ onDone }) {
       err && React.createElement('div', {
         style: { color: '#ff0080', fontSize: 12, marginBottom: 12 }
       }, err),
-      [
+      React.createElement('div', { role: 'radiogroup', 'aria-label': 'Where ' + fridayName() + ' thinks' }, [
         { mode: 'local_private', label: 'Private (local)',
           detail: 'Reasoning, voice, image, and video stay on this device.' },
         { mode: 'cloud_guarded', label: 'Cloud, safeguards on',
@@ -51585,7 +51713,9 @@ function CloudConsentGate({ onDone }) {
           detail: 'Full context reaches your configured cloud provider — ' +
                   'no safeguard held back.' },
       ].map(c => React.createElement('div', {
-        key: c.mode, onClick: () => setChoice(c.mode),
+        key: c.mode, role: 'radio', tabIndex: 0, 'aria-checked': choice === c.mode,
+        onClick: () => setChoice(c.mode),
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setChoice(c.mode); } },
         style: {
           padding: '12px 14px', marginBottom: 8, borderRadius: 10, cursor: 'pointer',
           border: '1px solid ' + (choice === c.mode ? '#00d4ff' : 'rgba(255,255,255,0.15)'),
@@ -51595,7 +51725,7 @@ function CloudConsentGate({ onDone }) {
         React.createElement('div', { style: { fontWeight: 600, color: '#fff' } }, c.label),
         React.createElement('div', {
           style: { fontSize: 12, color: '#9aa5b1', marginTop: 3 }
-        }, c.detail))),
+        }, c.detail)))),
       React.createElement('button', {
         className: 'btn', disabled: saving || !choice, style: { marginTop: 8 },
         onClick: () => submit(choice)
@@ -54215,6 +54345,17 @@ function StToggle({
     }
   })));
 }
+// Text size (Settings > Appearance; north star 33.1-8): the percentages offered, and the one place the page
+// applies one. The size is a CSS variable that window contents and the chat read (see .fwin-body).
+const FRIDAY_TEXT_SCALES = [100, 125, 150, 175, 200];
+function fridayTextScale(v) {
+  const n = Math.round(Number(v));
+  return FRIDAY_TEXT_SCALES.includes(n) ? n : 100;
+}
+function fridayApplyTextScale(v) {
+  try { document.documentElement.style.setProperty('--fr-text-zoom', String(fridayTextScale(v) / 100)); } catch (_) {}
+}
+window.fridayApplyTextScale = fridayApplyTextScale;
 function StSection({
   title,
   desc,
@@ -67842,6 +67983,37 @@ function SettingsTabAppearance({
       }));
     }
   }, FRIDAY_LANDING_MODE_NAMES[v]))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Text size"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Text size",
+    desc: "Makes what you read bigger: the text in every workspace window and in the chat. Windows keep their size and the text wraps inside them. Your browser's own zoom (Ctrl and +) still works too."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Text size",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, FRIDAY_TEXT_SCALES.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-text-scale": v,
+    "aria-checked": fridayTextScale(s.text_scale) === v,
+    className: 'settings-btn' + (fridayTextScale(s.text_scale) === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 14px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        text_scale: v
+      });
+      fridayApplyTextScale(v);
+    }
+  }, v + '%'))))), /*#__PURE__*/React.createElement(StSection, {
     title: "3D effects"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "3D dazzle",
@@ -69462,9 +69634,14 @@ function ApprovalPopups() {
   const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
-    const fresh = items.some(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const freshItems = items.filter(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const fresh = freshItems.length > 0;
     seen.current = new Set(items.filter(a => !fridayApprovalQuiet(a.approval_id)).map(a => a.approval_id));
     if (fresh) setLater(false);
+    // Heard as well as seen: a screen reader says what has just started waiting for you (north star 33.3-6).
+    if (fresh) fridayAnnounce(freshItems.length === 1
+      ? fridayName() + ' is waiting for your approval: ' + (freshItems[0].title || 'a request') + '.'
+      : freshItems.length + ' requests are waiting for your approval: ' + freshItems.slice(0, 3).map(a => a.title || 'a request').join('; ') + (freshItems.length > 3 ? '; and more' : '') + '.');
   }, [items]);
   // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
   // unfold to the card it is waiting on, the same card, and outline it.
@@ -70233,6 +70410,18 @@ function App() {
       if (chatH) localStorage.setItem('friday_chat_h', String(Math.round(chatH)));
     } catch (_) {}
   }, [chatH]);
+  // "Where the chat goes" > Height: the tray's height without dragging its edge (WCAG 2.5.7).
+  useEffect(() => {
+    const on = e => {
+      const v = e && e.detail;
+      if (v === 'full') {
+        try { localStorage.removeItem('friday_chat_h'); } catch (_) {}
+        setChatH(0);
+      } else if (v === 'half') setChatH(clampChatH(Math.round(vh() * 0.5)));
+    };
+    window.addEventListener('friday:chat-height', on);
+    return () => window.removeEventListener('friday:chat-height', on);
+  }, []);
   // Keep within viewport when the window is resized.
   useEffect(() => {
     const on = () => {
@@ -70481,6 +70670,8 @@ function App() {
   if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name, ((agentSettings.identity || {}).name_in_lockup));
   useEffect(() => { fridaySetOffRecord(fridayOffRecordFrom(agentSettings)); },
     [agentSettings.off_record, agentSettings.off_record_stops_storage]);
+  // The saved text size, applied once settings have come from the server (Settings > Appearance).
+  useEffect(() => { fridayApplyTextScale(agentSettings.text_scale); }, [agentSettings.text_scale]);
   // Mic / Speaker test state (used by the Audio & Voice section).
   const [micTestActive, setMicTestActive] = useState(false);
   const [micTestLevel, setMicTestLevel] = useState(0);
@@ -75139,7 +75330,9 @@ function App() {
       border: 'none',
       color: fsOn ? '#00d4ff' : '#bbb',
       cursor: 'pointer',
-      fontSize: 14
+      fontSize: 14,
+      minWidth: 24,
+      minHeight: 24
     },
     title: fsOn ? 'Back to the normal layout (Ctrl+Shift+F)' : 'Fullscreen with the chat beside it (Ctrl+Shift+F)',
     "aria-label": fsOn ? 'Leave fullscreen with chat' : 'Fullscreen with chat',
@@ -75884,6 +76077,9 @@ function App() {
   dockShape.configured
     ? /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
+        role: "button",
+        tabIndex: 0,
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
         style: { opacity: 0.5, cursor: 'default' },
         title: "Your own dock arrangement is in use, so this no longer applies.",
         onClick: () => { window.__fridaySettingsTab = 'appearance'; setSettingsOpen(false); toggle('settings'); try { window.dispatchEvent(new CustomEvent('friday:settings-tab', { detail: { tab: 'appearance' } })); } catch (e) {} }
@@ -75892,6 +76088,10 @@ function App() {
       }, "Show all workspaces — set in Settings → Appearance"))
     : /*#__PURE__*/React.createElement("div", {
         className: "settings-toggle",
+        role: "switch",
+        "aria-checked": !!showAllWorkspaces,
+        tabIndex: 0,
+        onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
         onClick: () => saveAgentSettings({
           show_all_workspaces: !showAllWorkspaces
         })
@@ -75902,6 +76102,10 @@ function App() {
       })),
   /*#__PURE__*/React.createElement("div", {
     className: "settings-toggle",
+    role: "switch",
+    "aria-checked": !!agentSettings.off_record,
+    tabIndex: 0,
+    onKeyDown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
     onClick: () => fridayToggleOffRecord(!!agentSettings.off_record, saveAgentSettings)
   }, /*#__PURE__*/React.createElement("span", {
     className: "settings-toggle-label",
@@ -76544,7 +76748,9 @@ function App() {
       })
     : null,
   shellChatPanel, threadOrb && React.createElement(ProcessOrbThread,{orb:threadOrb,meta:taskMeta,log:taskLog,steps:threadSteps,readState:threadReadState,position:threadPos,bodyRef:threadBodyRef,onDrag:startThreadDrag,onClose:closeThread,onMove:()=>setThreadPos(p=>fridayNextCorner(p,400,320))}), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
-    className: `dock ${dockHidden ? 'hidden' : ''}`
+    className: `dock ${dockHidden ? 'hidden' : ''}`,
+    role: "navigation",
+    "aria-label": "Workspaces"
   }, dockShape.groups.map((g, gi) => /*#__PURE__*/React.createElement(React.Fragment, {
     key: g.name + ':' + gi
   }, gi > 0 && /*#__PURE__*/React.createElement("div", {
@@ -76557,6 +76763,7 @@ function App() {
     key: w.id,
     className: `dock-btn ${openWins.has(w.id) ? 'active' : ''} ${noticeWs.has(w.id) && !openWins.has(w.id) ? 'has-notice' : ''}`,
     "data-ws": w.id,
+    "aria-pressed": openWins.has(w.id),
     // Ctrl/Cmd-click or middle-click: the workspace in a new BACKGROUND tab,
     // the way a link would -- the person chose to stay here. A plain click
     // still opens (or closes) the window.

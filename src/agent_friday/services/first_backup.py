@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from agent_friday.user_errors import UserFacingValueError
+
 ASK_AGAIN_DAYS = 7
 MAX_ASKS = 3
 ANSWERS = ("not_now", "never")
@@ -27,7 +29,7 @@ ANSWERS = ("not_now", "never")
 _LOCK = threading.Lock()
 
 
-class FirstBackupError(ValueError):
+class FirstBackupError(UserFacingValueError):
     """Said plainly to the owner."""
 
 
