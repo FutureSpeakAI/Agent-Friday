@@ -12,8 +12,12 @@ def _exists():
 
 
 def _press():
+    """A press from Friday's own page on this PC: with this launch's desk key
+    (services/desk_press), as the page sends it."""
     from agent_friday.core import _current_api_token
-    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": _current_api_token()}
+    from agent_friday.services import desk_press
+    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": _current_api_token(),
+            "X-Friday-Desk": desk_press._KEY}
 
 
 def test_the_list_is_read_on_this_pc_only(client):
