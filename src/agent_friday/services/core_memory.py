@@ -189,13 +189,30 @@ def render_prompt(gate=None) -> str:
     local. Friday's own lessons are behavioural text and are not gated."""
     ensure_migrated()
     parts = []
+    # A line the owner corrected recently carries its citation (north star
+    # §15.6-1 cite the correction), so the model knows it is the corrected one.
+    try:
+        fixed = _recent_corrections()
+    except Exception:
+        fixed = {}
+    cite = None
+    if fixed:
+        try:
+            from agent_friday.services.corrections import cite
+        except Exception:
+            cite = None
     for t in TARGETS:
         items = entries(t)
         if not items:
             continue
         u, cap = used(items), CAPS[t]
         pct = int(round(100 * u / cap)) if cap else 0
-        body = "\n".join("- " + e for e in items)
+
+        def _shown(e):
+            ref = _line_ref(e) if (fixed and cite) else ""
+            at = fixed.get(ref) if ref else None
+            return e + " " + cite(at) if at else e
+        body = "\n".join("- " + _shown(e) for e in items)
         if gate is not None and t == "user":
             try:
                 body = gate(body)
@@ -476,14 +493,25 @@ def _write_jsonl(p: Path, rows: List[Dict[str, Any]]) -> None:
     os.replace(tmp, p)
 
 
-def _purge_text(text: str) -> None:
+def _purge_text(text: str, events: bool = True) -> None:
     """Drop every journal and queue row that carries `text` (an owner delete),
     and every queued change aimed at that line (its `old` names part of it):
-    the line is gone, so a suggestion about it would only keep a copy."""
+    the line is gone, so a suggestion about it would only keep a copy.
+
+    With `events` (an owner delete or edit that is not itself a correction)
+    the card corrections whose claim holds the line go too
+    (services/corrections.purge_claim). A correction keeps its own history,
+    so its caller passes ``events=False``."""
     low = (text or "").lower()
     if not low:
         return
     ref = line_ref(text)
+    if events:
+        try:
+            from agent_friday.services import corrections
+            corrections.purge_claim(text, store="card")
+        except Exception:
+            pass
 
     def _about_it(r) -> bool:
         old = _clean(r.get("old") or "").lower()
@@ -549,12 +577,19 @@ CARD_CORRECTED = "the owner corrected this on the memory card"
 CARD_WRONG = "the owner marked this wrong and deleted it from the memory card"
 
 
+#: The correction event (services/corrections) being applied: each message a
+#: correction retires points to it as ``superseded_by``.
+_EVENT: ContextVar[str] = ContextVar("core_memory_correction_event", default="")
+
+
 def _supersede_turns(old_line: str, why: str) -> list:
     """North star §34.9-3/-4: when the owner corrects or deletes a card line,
     the owner's own earlier messages that stated it stop being recalled as
     evidence (conversation memory and conversation search). The messages stay
-    in the transcript, flagged; nothing is deleted. Returns how many. Never
-    raises."""
+    in the transcript, flagged; nothing is deleted. Each points to the
+    correction event in ``_EVENT`` as ``superseded_by``. Returns the ids.
+    Never raises."""
+    by = _EVENT.get()
     want = _content_words(old_line)
     if len(want) < MIN_CONTENT_WORDS:
         return []
@@ -568,14 +603,17 @@ def _supersede_turns(old_line: str, why: str) -> list:
                if h.get("id") and want <= _content_words(h.get("text") or "")]
         if not ids:
             return []
-        return list(mem.supersede(ids, why).get("superseded") or [])
+        return list(mem.supersede(ids, why, superseded_by=by).get("superseded") or [])
     except Exception:
         return []
 
 
 def restore_superseded(ids) -> int:
     """The owner puts messages a card correction retired back into recall
-    (the ids a correction returned). Returns how many. Never raises."""
+    (the ids a correction returned). Returns how many. Never raises.
+
+    A restore is itself recorded (services/corrections): a ``restored`` event
+    that names the correction event(s) it undoes."""
     try:
         from agent_friday.services import model_router
         mem = model_router._get_conversation_memory()
@@ -586,13 +624,93 @@ def restore_superseded(ids) -> int:
             got = mem._collection.get(ids=ids, include=["metadatas"])
         # Only what a card correction retired: other corrections are not the
         # card's to undo.
-        mine = [i for i, m in zip(got.get("ids") or [], got.get("metadatas") or [])
-                if (m or {}).get("superseded_reason") in (CARD_CORRECTED, CARD_WRONG)]
+        pairs = [(i, m or {}) for i, m in zip(got.get("ids") or [], got.get("metadatas") or [])
+                 if (m or {}).get("superseded_reason") in (CARD_CORRECTED, CARD_WRONG)]
+        mine = [i for i, _m in pairs]
         if not mine:
             return 0
-        return len(mem.unsupersede(mine).get("superseded") or [])
+        back = list(mem.unsupersede(mine).get("superseded") or [])
+        if back:
+            origs = []
+            for i, m in pairs:
+                b = str(m.get("superseded_by") or "")
+                if i in back and b and b not in origs:
+                    origs.append(b)
+            try:
+                from agent_friday.services import corrections
+                corrections.record("card", "restored",
+                                   reason="the owner put these messages back into recall",
+                                   sources=["msg:" + i for i in back], affected=["msg:" + i for i in back],
+                                   repair={"restored_turns": len(back)}, restores=origs)
+            except Exception:
+                pass
+        return len(back)
     except Exception:
         return 0
+
+
+def _line_ref(text: str) -> str:
+    """How the change journal names a corrected line, never by its text (the
+    owner's own lines are not journaled): the same keyed hash every add and
+    replace row carries (``line_ref``), so a correction's citation and "why do
+    you know this" (services/memory_search) read one field. "" when there is no
+    key: such a line is not cited."""
+    return line_ref(text)
+
+
+def _recent_corrections() -> Dict[str, float]:
+    """{line_ref: when} for card lines the owner corrected within
+    corrections.CITE_DAYS, from the card's own change journal."""
+    try:
+        from agent_friday.services.corrections import CITE_DAYS
+    except Exception:
+        CITE_DAYS = 30
+    since = time.time() - CITE_DAYS * 86400
+    out: Dict[str, float] = {}
+    for r in _read_jsonl(_journal_path()):
+        if r.get("actor") == "owner" and r.get("correction_id") and r.get("line_ref") \
+                and float(r.get("ts") or 0) >= since:
+            out[str(r["line_ref"])] = float(r.get("ts") or 0)
+    return out
+
+
+def _record_card_correction(eid: str, action: str, target: str, index: int, before: str,
+                            after: str, ids: list, reason: str) -> str:
+    try:
+        from agent_friday.services import corrections
+        msgs = ["msg:" + str(i) for i in ids]
+        line = f"card:{target}#{index}"
+        return corrections.record(
+            "card", action, event_id=eid, claim=before,
+            correction=after if action == "corrected" else corrections.REMOVED,
+            reason=reason, sources=[line] + msgs, affected=[line] + msgs,
+            repair={"superseded_turns": len(ids), "card_lines_changed": 1})
+    except Exception:
+        return ""
+
+
+#: The standard reason for "Edit and keep": the owner rewrote Friday's suggestion.
+SUGGESTION_EDITED = "the owner corrected Friday's suggestion before keeping it"
+
+
+def _record_suggestion_edit(eid: str, target: str, index: int, kept: str,
+                            extra_sources=None) -> str:
+    """Record the owner's "Edit and keep" of a suggestion (a queued card
+    change or a proposed fact) as a correction of what Friday suggested. The
+    correction is the owner's own line; the suggested wording is NOT copied
+    here (it is kept nowhere for a card suggestion; a proposal keeps its own
+    row): the sources name the suggestion instead. No message is retired
+    (approving a suggestion never does)."""
+    try:
+        from agent_friday.services import corrections
+        line = f"card:{target}#{index}"
+        extra = [str(s) for s in (extra_sources or []) if str(s or "").strip()]
+        return corrections.record(
+            "card", "corrected", event_id=eid, claim="", correction=kept,
+            reason=SUGGESTION_EDITED, sources=extra + [line], affected=[line],
+            repair={"superseded_turns": 0, "card_lines_changed": 1, "suggestion_edited": 1})
+    except Exception:
+        return ""
 
 
 def _changed(actor: str, reason: str) -> None:
@@ -723,7 +841,8 @@ def _confirmed_source(source: str) -> bool:
 
 def add(target: str, text: str, *, actor: str = "friday",
         dedupe: Optional[bool] = None, owner_ok: bool = False, via: str = "",
-        origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        origin: Optional[Dict[str, Any]] = None,
+        suggestion_edit: Optional[List[str]] = None) -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
     typing it themselves (`dedupe` overrides, e.g. an approved suggestion).
 
@@ -733,8 +852,13 @@ def add(target: str, text: str, *, actor: str = "friday",
 
     `via` marks how the owner kept it (e.g. "edited_suggestion"); `origin`
     names the suggestion or proposal an owner-approved line came from, so
-    "why do you know this" can say (services/memory_search)."""
+    "why do you know this" can say (services/memory_search).
 
+    `suggestion_edit` (a list, possibly empty, of ids naming the suggestion,
+    e.g. ``fact:<id>``): the owner rewrote a suggestion before keeping it
+    ("Edit and keep": `decide`, memory_proposals.approve). The line the owner
+    kept is recorded as a correction of that suggestion (services/corrections)
+    and cited like any card correction; the suggested wording is not copied."""
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -767,6 +891,8 @@ def add(target: str, text: str, *, actor: str = "friday",
         new = items + [text]
         if used(new) > CAPS[target]:
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
+        edit_fix = actor == "owner" and suggestion_edit is not None
+        eid = _new_event_id() if edit_fix else ""
         _write(target, new)
         row = {"actor": actor, "op": "add", "target": target, "line_ref": line_ref(text),
                "before": None, "after": None if actor == "owner" else text}
@@ -774,14 +900,101 @@ def add(target: str, text: str, *, actor: str = "friday",
             row["via"] = via
         if _origin(origin):
             row["origin"] = _origin(origin)
+        if eid:
+            # Named by a hash only (the row's line_ref), like a card correction.
+            row["correction_id"] = eid
         cid = _journal(row)
+    out = {"ok": True, "change_id": cid, "usage": usage(target)}
+    if eid:
+        got = _record_suggestion_edit(eid, target, len(new) - 1, text, suggestion_edit)
+        if got:
+            out["correction_id"] = got
+        else:
+            _unrecorded(eid, [])
     _changed(actor, "core memory line added by the owner")
-    return {"ok": True, "change_id": cid, "usage": usage(target)}
+    return out
+
+
+def _new_event_id() -> str:
+    try:
+        from agent_friday.services import corrections
+        return corrections.new_id()
+    except Exception:
+        return ""
+
+
+def _unlink_journal(eid: str) -> None:
+    """Strip ``correction_id`` from every journal row naming `eid`, under the
+    card lock. The row's ``line_ref`` stays: every add and replace row carries
+    it (the keyed hash "why do you know this" matches, services/memory_search),
+    and without the correction_id it no longer cites anything."""
+    if not eid:
+        return
+    with _LOCK:
+        rows = _read_jsonl(_journal_path())
+        hit = False
+        for r in rows:
+            if r.get("correction_id") == eid:
+                r.pop("correction_id", None)
+                hit = True
+        if hit:
+            try:
+                _write_jsonl(_journal_path(), rows)
+            except Exception:
+                pass
+
+
+def _unlink_turns(eid: str, ids) -> None:
+    """Blank ``superseded_by`` on retired messages that point at `eid`,
+    keeping each one retired with its own reason."""
+    ids = [str(i) for i in (ids or []) if str(i)]
+    if not eid or not ids:
+        return
+    try:
+        from agent_friday.services import model_router
+        mem = model_router._get_conversation_memory()
+        if not mem or not getattr(mem, "_collection", None):
+            return
+        got = mem._collection.get(ids=ids, include=["metadatas"])
+        by_reason: Dict[str, list] = {}
+        for i, m in zip(got.get("ids") or [], got.get("metadatas") or []):
+            m = m or {}
+            if str(m.get("superseded_by") or "") == eid and str(m.get("superseded") or "") == "1":
+                by_reason.setdefault(str(m.get("superseded_reason") or ""), []).append(i)
+        for why, these in by_reason.items():
+            # Re-pointing turns already retired is not a new correction (services/memory_metrics).
+            mem.supersede(these, why, superseded_by="", count=False)
+    except Exception:
+        pass
+
+
+def _unrecorded(eid: str, ids) -> None:
+    """The event could not be recorded: nothing may point at it."""
+    _unlink_journal(eid)
+    _unlink_turns(eid, ids)
+
+
+def unlink_correction(eid: str, msg_ids=None) -> None:
+    """The owner deleted correction `eid` (routes/core_memory): the card
+    journal stops citing it and its retired messages stop pointing at it.
+    The messages stay retired; only the link goes. Never raises."""
+    try:
+        _unlink_journal(str(eid or ""))
+        _unlink_turns(str(eid or ""), msg_ids)
+    except Exception:
+        pass
 
 
 def replace(target: str, old: str, text: str, *, actor: str = "friday",
             supersede: bool = True, owner_ok: bool = False, via: str = "",
-            origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+            origin: Optional[Dict[str, Any]] = None, reason: str = "",
+            suggestion_edit: Optional[List[str]] = None) -> Dict[str, Any]:
+    """`origin`: where an owner-approved line came from (see `add`).
+
+    `suggestion_edit` (ids naming the suggestion): the owner rewrote a
+    suggested change before keeping it ("Edit and keep", `decide`); the kept
+    line is recorded as a correction of that suggestion (services/corrections)
+    and cited like any card correction. The suggested wording is not copied."""
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -794,6 +1007,7 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
         hit = _special(text, f"core_memory.{actor}.replace")
         if hit:
             return hit
+    eid = ""
     with _LOCK:
         items = entries(target)
         i, miss = _match(items, old)
@@ -803,6 +1017,16 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
         new = items[:i] + [text] + items[i + 1:]
         if used(new) > CAPS[target]:
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
+        # Only a correction retires what was said: a re-save, a typo fix or a
+        # line that keeps every word and adds detail still states the old fact.
+        # A correction is an event of its own (services/corrections).
+        corrected = actor == "owner" and supersede and not (_content_words(before) <= _content_words(text))
+        # The owner rewrote a suggestion before keeping it: a correction of
+        # what Friday suggested (not of the line it replaces, so no message
+        # is retired: approving a suggestion never does).
+        edit_fix = actor == "owner" and not corrected and suggestion_edit is not None
+        if corrected or edit_fix:
+            eid = _new_event_id()
         _write(target, new)
         row = {"actor": actor, "op": "replace", "target": target, "line_ref": line_ref(text),
                "before": None if actor == "owner" else before,
@@ -811,9 +1035,13 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
             row["via"] = via
         if _origin(origin):
             row["origin"] = _origin(origin)
+        if eid:
+            # The journal names the correction, and the new line by its keyed hash only (line_ref).
+            row["correction_id"] = eid
         cid = _journal(row)
         if actor == "owner":
-            _purge_text(before)
+            # A correction keeps its own history; any other owner edit leaves no trace of the old line.
+            _purge_text(before, events=not corrected)
     marked = True
     if actor == "owner":
         # The line the owner edited away is not written back by Friday; the
@@ -821,39 +1049,78 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
         # punctuation lifts the tombstone it just made).
         marked = _tombstone(before)
         _affirmed(text)
-    out ={"ok": True, "change_id": cid, "usage": usage(target),
+    out = {"ok": True, "change_id": cid, "usage": usage(target),
            **({} if marked else _NOT_TOMBSTONED)}
-    # Only a correction retires what was said: a re-save, a typo fix or a line
-    # that keeps every word and adds detail still states the old fact.
-    if actor == "owner" and supersede and not (_content_words(before) <= _content_words(text)):
-        ids = _supersede_turns(before, CARD_CORRECTED)
+    if corrected:
+        tok = _EVENT.set(eid)
+        try:
+            ids = _supersede_turns(before, CARD_CORRECTED)
+        finally:
+            _EVENT.reset(tok)
         out["superseded_turns"], out["superseded_ids"] = len(ids), ids
+        if eid:
+            got = _record_card_correction(eid, "corrected", target, i, before, text, ids,
+                                          str(reason or "").strip() or CARD_CORRECTED)
+            if got:
+                out["correction_id"] = got
+            else:
+                # The record failed: the journal row and the retired messages
+                # must not point at an event that does not exist.
+                _unrecorded(eid, ids)
+    elif edit_fix and eid:
+        got = _record_suggestion_edit(eid, target, i, text, suggestion_edit)
+        if got:
+            out["correction_id"] = got
+        else:
+            _unrecorded(eid, [])
     _changed(actor, "core memory line edited by the owner")
     return out
 
 
-def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = False) -> Dict[str, Any]:
+def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = False,
+           reason: str = "") -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
+    # A delete makes room or keeps something private; only a delete the owner
+    # marks as wrong retires the messages that said it, and only that delete
+    # is a correction event (a plain delete leaves no copy anywhere).
+    wrong = actor == "owner" and supersede
+    eid = ""
     with _LOCK:
         items = entries(target)
         i, miss = _match(items, old)
         if miss:
             return _err("NOT CHANGED: " + miss)
         before = items[i]
+        if wrong:
+            # The id is fixed before the journal row is written, so the row
+            # names it from the start (no later rewrite of the journal).
+            eid = _new_event_id()
         _write(target, items[:i] + items[i + 1:])
-        cid = _journal({"actor": actor, "op": "remove", "target": target,
-                        "before": None if actor == "owner" else before, "after": None})
+        row = {"actor": actor, "op": "remove", "target": target,
+               "before": None if actor == "owner" else before, "after": None}
+        if eid:
+            row["correction_id"] = eid
+        cid = _journal(row)
         if actor == "owner":
-            _purge_text(before)
+            _purge_text(before, events=not wrong)
     marked = _tombstone(before) if actor == "owner" else True
     out = {"ok": True, "change_id": cid, "usage": usage(target),
            **({} if marked else _NOT_TOMBSTONED)}
-    # A delete makes room or keeps something private; only a delete the owner
-    # marks as wrong retires the messages that said it.
-    if actor == "owner" and supersede:
-        ids = _supersede_turns(before, CARD_WRONG)
+    if wrong:
+        tok = _EVENT.set(eid)
+        try:
+            ids = _supersede_turns(before, CARD_WRONG)
+        finally:
+            _EVENT.reset(tok)
         out["superseded_turns"], out["superseded_ids"] = len(ids), ids
+        if eid:
+            got = _record_card_correction(eid, "marked_wrong", target, i, before, "", ids,
+                                          str(reason or "").strip() or CARD_WRONG)
+            if got:
+                out["correction_id"] = got
+            else:
+                _unrecorded(eid, ids)
     _changed(actor, "core memory line deleted by the owner")
     return out
 
@@ -878,27 +1145,30 @@ def _owner_line(target: str, index: Any, expect: Optional[str]):
     return items, index, None
 
 
-def owner_set(target: str, index: int, text: str, expect: Optional[str] = None) -> Dict[str, Any]:
+def owner_set(target: str, index: int, text: str, expect: Optional[str] = None,
+              reason: str = "") -> Dict[str, Any]:
     """The owner's edit of line `index` (0-based) from the panel; with `expect`, only if that line still
-    reads `expect`."""
+    reads `expect`. `reason` is the owner's why, kept on the correction event (services/corrections)."""
     with _LOCK:
         items, index, bad = _owner_line(target, index, expect)
         if bad:
             return bad
-        res = replace(target, items[index], text, actor="owner")
+        res = replace(target, items[index], text, actor="owner", reason=reason)
     if res.get("ok"):
         _metric("correction", store="core_memory", op="edit")
     return res
 
 
-def owner_delete(target: str, index: int, wrong: bool = False, expect: Optional[str] = None) -> Dict[str, Any]:
+def owner_delete(target: str, index: int, wrong: bool = False, expect: Optional[str] = None,
+                 reason: str = "") -> Dict[str, Any]:
     """The owner's delete of line `index`; with `expect`, only if that line still reads `expect`. With
-    `wrong`, the messages that said it are retired too (live's supersede)."""
+    `wrong`, the messages that said it are retired too (live's supersede) and the delete is a
+    correction event carrying `reason`."""
     with _LOCK:
         items, index, bad = _owner_line(target, index, expect)
         if bad:
             return bad
-        res = remove(target, items[index], actor="owner", supersede=bool(wrong))
+        res = remove(target, items[index], actor="owner", supersede=bool(wrong), reason=reason)
     if res.get("ok"):
         _metric("correction", store="core_memory", op="delete")
     return res
@@ -1120,11 +1390,16 @@ def decide(pending_id: str, approve: bool, text: Optional[str] = None) -> Dict[s
             origin = {"suggestion": row.get("id"), "source": row.get("source"),
                       "reason": row.get("reason"), "queued_ts": row.get("ts")}
             keep_text = edited if edited is not None else (row.get("text") or "")
+            # An edited Keep is the owner correcting Friday's suggestion: a
+            # correction event (services/corrections, NS-29.9-1), named by the
+            # suggestion's id, never by its wording.
+            fix = ["suggestion:" + str(pending_id)[:40]] if edited is not None else None
             if op == "add":
-                res = add(t, keep_text, actor="owner", dedupe=True, via=via, origin=origin)
+                res = add(t, keep_text, actor="owner", dedupe=True, via=via, origin=origin,
+                          suggestion_edit=fix)
             elif op == "replace":
                 res = replace(t, row.get("old") or "", keep_text, actor="owner", supersede=False,
-                              via=via, origin=origin)
+                              via=via, origin=origin, suggestion_edit=fix)
             else:
                 res = remove(t, row.get("old") or "", actor="owner")
             if not res.get("ok") and not res.get("unchanged"):
@@ -1132,6 +1407,10 @@ def decide(pending_id: str, approve: bool, text: Optional[str] = None) -> Dict[s
         rows = [r for r in _read_jsonl(_pending_path()) if r.get("id") != pending_id]
         _write_jsonl(_pending_path(), rows)
     _metric("inference_kept" if approve else "inference_discarded", path="core_memory")
+    if approve and res.get("correction_id"):
+        # "Edit and keep" is the owner correcting Friday's suggestion (a correction event, M16):
+        # counted with the card's other corrections.
+        _metric("correction", store="core_memory", op="suggestion_edit")
     if not approve and row.get("op") in ("add", "replace") and (row.get("text") or "").strip():
         # Discarding a suggested line is the owner's no, as rejecting a
         # proposal is: the line is tombstoned so the nightly pass (or the

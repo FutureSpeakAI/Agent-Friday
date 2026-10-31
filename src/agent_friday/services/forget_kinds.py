@@ -748,6 +748,18 @@ def forget_fact(text: str = "", *, fact_id: str = "", proposal_id: str = "",
             rows.append(_proposals_purge(match))
         except Exception as e:
             rows.append(_failed("memory_proposals", "memory suggestions", e, "memory suggestions"))
+        # 4b. The owner's correction history (services/corrections): an event
+        #     whose old claim or new wording is this statement keeps a sealed
+        #     copy of it, so it goes too.
+        try:
+            from agent_friday.services import corrections
+            c = corrections.forget_matching(match)
+            nr = ([{"what": "correction records", "count": c["locked"],
+                    "reason": "they are sealed and the keystore is locked; running forget again retries"}]
+                  if c.get("locked") else [])
+            rows.append(_row("corrections", c["removed"], "records of your corrections", nr))
+        except Exception as e:
+            rows.append(_failed("corrections", "records of your corrections", e, "the correction history"))
         # 5. The nightly dreaming log.
         try:
             from agent_friday.services import memory_dreaming

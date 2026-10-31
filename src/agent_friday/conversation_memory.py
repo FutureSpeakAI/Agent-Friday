@@ -551,6 +551,7 @@ class ConversationMemory:
                     "relevance": rel,
                     "superseded": is_superseded,
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                 })
                 if len(out) >= want:
                     break
@@ -598,13 +599,17 @@ class ConversationMemory:
     # comes back wearing their authority.
     # See docs/DECISIONS.md, "Recall can be poisoned by a broken display".
 
-    def supersede(self, ids, reason, superseded_by=""):
+    def supersede(self, ids, reason, superseded_by="", count=True):
         """Strip evidential authority from stored turns. Reversible.
 
         ids            iterable of document ids (see find_ids / get_session)
         reason         why -- shown in the history paths, required
         superseded_by  optional pointer to what is now authoritative
                        (e.g. "services.google_accounts.accounts_summary")
+        count          False when turns that are already retired are only
+                       re-pointed (a deleted correction record unlinking them,
+                       services/core_memory._unlink_turns): not a new
+                       correction, so services/memory_metrics does not count it.
 
         Returns {"superseded": [ids...], "missing": [ids...]}.
         """
@@ -612,7 +617,8 @@ class ConversationMemory:
         if not reason:
             raise ValueError("supersede() requires a reason")
         out = self._set_supersession(ids, "1", reason, superseded_by)
-        self._note_supersession(out, True, superseded_by)
+        if count:
+            self._note_supersession(out, True, superseded_by)
         return out
 
     def unsupersede(self, ids):
@@ -844,6 +850,7 @@ class ConversationMemory:
                         "timestamp": meta.get("timestamp"),
                         "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                         "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                        "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                     })
                     if len(hits) >= limit:
                         break
@@ -1001,6 +1008,7 @@ class ConversationMemory:
                     # of what was said survives; only its authority is gone.
                     "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "")
             return rows
@@ -1050,6 +1058,7 @@ class ConversationMemory:
                     # of what was said survives; only its authority is gone.
                     "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                     # The sites a reply read (registered domains), for the
                     # graph and the proposals that learn from it.
                     "web_sources": [d for d in str(meta.get("web_sources") or "").split(",") if d],

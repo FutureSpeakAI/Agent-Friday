@@ -781,9 +781,16 @@ def approve(fact_ids: List[str], edits: Optional[Dict[str, str]] = None) -> Dict
             # full card leaves it in the review queue rather than dropping it.
             try:
                 from agent_friday.services import core_memory
+                # An edited Keep is the owner correcting the proposal: recorded
+                # as a correction event (services/corrections, NS-29.9-1), named
+                # by the proposal's id; its wording stays in this table only.
                 _cm = core_memory.add("user", text, actor="owner", dedupe=True,
                                       via="edited_suggestion" if edited else "",
-                                      origin={"proposal": fact_id, "source": origin})
+                                      origin={"proposal": fact_id, "source": origin},
+                                      suggestion_edit=["fact:" + str(fact_id)] if edited else None)
+                if _cm.get("correction_id"):
+                    # Counted with the owner's other corrections (services/memory_metrics).
+                    _metric("correction", store="proposals", op="suggestion_edit")
                 if not _cm.get("ok") and _cm.get("full"):
                     core_memory.queue("user", "add", text=text, source=origin, owner=True,
                                       reason="You kept this, but the memory card was full.")

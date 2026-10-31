@@ -427,6 +427,9 @@ def _ensure_defaults() -> None:
     # people too: those entries go, and that change can then no longer be undone.
     from agent_friday.services import undo_store as _undo_store
     register_store("undo_data", _undo_store.forget_find, _undo_store.forget_purge)
+    # The owner's corrections keep the old claim (sealed) in their own log (services/corrections).
+    from agent_friday.services import corrections as _corrections
+    register_store("corrections", _corrections.people_find, _corrections.people_purge)
 
 
 def _norm(s: str) -> str:
