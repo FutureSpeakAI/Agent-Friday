@@ -184,7 +184,9 @@ export async function assertReadableContrast(page: Page, label: string, minRatio
     const parse = (s: string): number[] => {
       const n = (s.match(/[0-9.]+/g) || []).map(Number);
       if (n.length < 3) return [0, 0, 0, 0];
-      return [n[0], n[1], n[2], n.length > 3 ? n[3] : 1];
+      // color(srgb r g b / a) gives channels from 0 to 1, not 0 to 255.
+      const k = /^\s*color\(\s*srgb\s/i.test(s) ? 255 : 1;
+      return [n[0] * k, n[1] * k, n[2] * k, n.length > 3 ? n[3] : 1];
     };
     const over = (fg: number[], bg: number[]) => {
       const a = fg[3];
