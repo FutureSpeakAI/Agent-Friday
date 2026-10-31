@@ -284,12 +284,14 @@ def purge_library_documents(doc_ids) -> dict:
     if ids:
         try:
             from pathlib import Path as _P
-            from agent_friday.conversation_memory import get_conversation_memory
-            cm = get_conversation_memory()
-            # An index that was never made has nothing to delete, and opening it just to say so would
-            # load the embedding model.
-            if _P(cm.persist_dir).exists() and cm._ensure():
-                cm._client.get_or_create_collection("knowledge-graph").delete(ids=ids)
+            from agent_friday import conversation_memory as _cmm
+            with _cmm.SWAP_LOCK:                # a rebuild's switch is waited out; one running notes it
+                cm = _cmm.get_conversation_memory()
+                _cmm._journal(cm, "kg_delete", ids=list(ids))
+                # An index that was never made has nothing to delete, and opening it just to say so
+                # would load the embedding model.
+                if _P(cm.persist_dir).exists() and cm._ensure():
+                    cm._client.get_or_create_collection("knowledge-graph").delete(ids=ids)
         except Exception:
             pass
     try:
@@ -1386,17 +1388,19 @@ def kg_vectors(texts: list[str]) -> list[list[float]]:
     return [[float(x) for x in r] for r in rows]
 
 
-def _embed_entities(entities: list[dict], say) -> int:
+def _embed_entities(entities: list[dict], say, cm=None) -> int:
     """Embed entity title+description into a dedicated local ChromaDB
-    collection (all-MiniLM-L6-v2 — on-device, never leaves the machine)."""
+    collection (all-MiniLM-L6-v2 — on-device, never leaves the machine).
+    `cm`: the store to write into (a rebuild's new store); the live one when omitted. A write
+    to the live one waits out a rebuild's switch, goes to the store live at that moment, and
+    is noted for a rebuild in progress (services/memory_store_repair)."""
     try:
-        from agent_friday.conversation_memory import ConversationMemory
-        cm = ConversationMemory()
+        from agent_friday import conversation_memory as _cmm
+        live = cm is None
+        cm = cm or _cmm.ConversationMemory()
         if not cm._ensure():
             return 0
         from agent_friday.services.pasted_secrets import withhold
-        client = cm._client
-        coll = client.get_or_create_collection("knowledge-graph")
         ids, docs, metas = [], [], []
         for e in entities:
             ids.append(e["id"])
@@ -1405,9 +1409,18 @@ def _embed_entities(entities: list[dict], say) -> int:
             docs.append(withhold(f"{e['title']}: {e.get('description', '')[:500]}")[0])
             metas.append({"type": e.get("type", ""),
                           "community": str(e.get("community", ""))})
-        if ids:
-            coll.upsert(ids=ids, documents=docs, metadatas=metas,
-                        embeddings=kg_vectors(docs))
+        if not ids:
+            return 0
+        vecs = kg_vectors(docs)
+        with _cmm.SWAP_LOCK:
+            if live:
+                if cm.persist_dir != _cmm.live_dir():
+                    cm = _cmm.ConversationMemory()      # the store was rebuilt meanwhile
+                    if not cm._ensure():
+                        return 0
+                _cmm._journal(cm, "kg_upsert", entities=list(entities))
+            cm._client.get_or_create_collection("knowledge-graph").upsert(
+                ids=ids, documents=docs, metadatas=metas, embeddings=vecs)
         return len(ids)
     except Exception as e:
         say(f"embeddings unavailable: {e}")
