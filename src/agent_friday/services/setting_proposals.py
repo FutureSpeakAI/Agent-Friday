@@ -138,7 +138,18 @@ def record_change(tool: str, *, label: str, old: str, new: str, snapshot: dict, 
         rows = _read()
         rows.append(row)
         _write(rows)
+    _ledger({"change": row["id"], "tool": tool, "path": row["path"], "by": by, "card_id": card_id})
     return row
+
+
+def _ledger(rec: dict) -> None:
+    """The one record of what Friday did (services/action_ledger): which setting
+    changed, by whom and on which card; never its old or new value."""
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("setting_change", rec)
+    except Exception:
+        pass
 
 
 def changes(path: str = "", limit: int = 20) -> list:
@@ -183,6 +194,7 @@ def undo(change_id: str = "", path: str = "") -> dict:
         _save_settings({k: v for k, v in (target.get("snapshot") or {}).items() if v is not None})
         target["undone"] = True
         _write(rows)
+    _ledger({"change": target.get("id"), "path": target.get("path"), "undone": True})
     _tell_pages(target.get("path") or "")
     return {"ok": True, "text": "Put back: %s is %s again." % (target.get("label"), target.get("old")), "path": target.get("path")}
 

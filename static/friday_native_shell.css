@@ -167,3 +167,4 @@ body.friday-experience-enabled .fx-home-card-deck[data-expanded=true]{flex:1 1 0
 @media(max-width:760px){
   body.friday-experience-enabled .fwin-bar{box-sizing:border-box;min-height:46px;padding:7px 11px}
 }
+:where(body.friday-experience-enabled) .fx-leftovers{border-left:2px solid var(--fr-warn);padding:8px 12px;margin:0 0 12px}:where(body.friday-experience-enabled) .fx-leftovers h2{font:500 13px var(--fr-font-body);margin:0 0 6px}:where(body.friday-experience-enabled) .fx-leftovers ul{margin:0 0 8px;padding-left:18px;font-size:12px}
