@@ -152,7 +152,7 @@ def test_a_migration_asks_for_the_rebuilds_its_change_needs(home, monkeypatch):
 def test_a_failed_migration_is_listed_for_the_owner_and_cleared_when_it_runs(home, monkeypatch):
     mg, ur = _mod("migrations"), _mod("upgrade_review")
     from agent_friday.services import safe_mode
-    monkeypatch.setattr(safe_mode, "set_next_start", lambda on: {})
+    monkeypatch.setattr(safe_mode, "set_next_start", lambda on, reason=None: {})
     (home / "notes.txt").write_text("before", encoding="utf-8")
     state = {"fail": True}
 
