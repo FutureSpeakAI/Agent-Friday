@@ -193,11 +193,8 @@ def _parse(raw: Any) -> Dict[str, list]:
     try:
         data = json.loads(text)
     except Exception:
-        m = re.search(r"\{.*\}", text, re.S)
-        try:
-            data = json.loads(m.group(0)) if m else {}
-        except Exception:
-            data = {}
+        from agent_friday.services.reply_json import last_object
+        data = last_object(text, keys=("add", "change", "remove")) or {}
     if not isinstance(data, dict):
         data = {}
     out = {}

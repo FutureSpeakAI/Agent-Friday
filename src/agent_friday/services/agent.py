@@ -3173,10 +3173,14 @@ def _tool_run_command(inp):
     # fenced at Low integrity because it may change what the owner approved it to change.
     # If the sandbox cannot be set up the command is NOT run: there is no unsandboxed fallback.
     from agent_friday.governance.action_gate import INTERNAL as _INTERNAL
+    from agent_friday.governance.action_gate import harden_read_only_git as _harden_git
     from agent_friday.services import code_sandbox as _sbx
+    _read_only = classify_command(cmd)[0] == _INTERNAL
+    if _read_only:
+        # a read-only git stage must not run what the repository's config names
+        cmd = _harden_git(cmd)
     try:
-        res = _sbx.run_shell(cmd, read_only=(classify_command(cmd)[0] == _INTERNAL),
-                             timeout_s=300)
+        res = _sbx.run_shell(cmd, read_only=_read_only, timeout_s=300)
     except Exception as e:
         return f"Command error: {e}"
     if not res.get("ok"):
@@ -5501,6 +5505,157 @@ def _task_log(task_id, line):
     _journal_state(task_id)
 
 
+#: task id -> the effects a stopped run had already taken (cancel_effects), as
+#: of the moment it was marked cancelled. Bounded; the notice reads afresh.
+_CANCEL_EFFECTS: dict = {}
+_CANCEL_EFFECTS_MAX = 200
+
+
+def _cancel_effects_for(task_id, started):
+    """What run `task_id` had already done when it was stopped. Never raises:
+    a record that cannot be read is named as unknown."""
+    try:
+        from agent_friday.services import cancel_effects as _ce
+        eff = _ce.effects_taken(task_id, since=started)
+    except Exception as e:  # noqa: BLE001
+        eff = {"outward": [], "may_have_acted": [], "files_written": [], "cards": 0,
+               "unknown": ["the run's record (%s)" % type(e).__name__]}
+    if len(_CANCEL_EFFECTS) >= _CANCEL_EFFECTS_MAX:
+        _CANCEL_EFFECTS.clear()
+    _CANCEL_EFFECTS[task_id] = eff
+    return eff
+
+
+#: Terminal statuses that are not the task's ending: the worker is done but the
+#: owner's card still decides it (settle_waiting_task writes the real ending).
+_NOT_AN_ENDING = frozenset({"waiting_approval"})
+#: Receipts are settled by one thread at a time (the settler); a task whose status
+#: changes while another is being settled is marked dirty and the settler looks
+#: at it again before it stops. The guard is never held while TASKS_LOCK is taken,
+#: so a caller already holding TASKS_LOCK cannot deadlock with the settler.
+_SETTLE_GUARD = threading.Lock()
+_SETTLE_DIRTY: set = set()
+_SETTLER = {"active": False}
+
+
+def _ends_task(status) -> bool:
+    return _is_terminal_status(status) and str(status) not in _NOT_AN_ENDING
+
+
+def _seq_of(receipt) -> int:
+    try:
+        return int((receipt or {}).get('seq') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _settle_terminal_receipt(task_id):
+    """After a status is committed (north star §30.9, NS-30.9-1): make the
+    record's terminal receipt name the status the record now ends with.
+
+    * an ending with no receipt, or a receipt naming another ending (complete,
+      then failed; or a stop racing the worker): write a signed 'task_end' entry,
+      superseding the earlier one, and point the record at it;
+    * not an ending any more (running again, or back to a card): the receipt
+      moves to previous_terminal_receipts and the next ending gets its own;
+    * the same ending again: nothing.
+
+    Whichever status is committed last is settled last, so the record and its
+    last receipt always agree."""
+    with _SETTLE_GUARD:
+        _SETTLE_DIRTY.add(task_id)
+        if _SETTLER["active"]:
+            return
+        _SETTLER["active"] = True
+    done = False
+    try:
+        while True:
+            with _SETTLE_GUARD:
+                if not _SETTLE_DIRTY:
+                    _SETTLER["active"] = False
+                    done = True
+                    return
+                tid = _SETTLE_DIRTY.pop()
+            try:
+                _settle_one(tid)
+            except Exception:
+                pass
+    finally:
+        if not done:
+            # Left abnormally (an interrupt in this thread): never leave the
+            # settler marked busy, or every later receipt would be skipped.
+            with _SETTLE_GUARD:
+                _SETTLER["active"] = False
+
+
+def _settle_one(task_id):
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if t is None:
+            return
+        status, cur = t.get('status'), (t.get('terminal_receipt') or None)
+        if not _ends_task(status):
+            if cur:
+                t['previous_terminal_receipts'] = (
+                    list(t.get('previous_terminal_receipts') or []) + [cur])[-10:]
+                t['terminal_receipt'] = None
+                fresh = dict(t)
+            else:
+                return
+            view = None
+        elif cur and cur.get('status') == status:
+            return
+        else:
+            view = dict(t)
+    if view is None:
+        _write_state_quietly(task_id, fresh)
+        return
+    receipt = _task_terminal_receipt(task_id, view, supersedes=cur.get('seq') if cur else None)
+    if not receipt:
+        return
+    with TASKS_LOCK:
+        t = TASKS.get(task_id)
+        if t is None:
+            return
+        if _seq_of(t.get('terminal_receipt')) <= _seq_of(receipt):
+            t['terminal_receipt'] = receipt
+        fresh = dict(t)
+    _write_state_quietly(task_id, fresh)
+
+
+def _write_state_quietly(task_id, rec):
+    try:
+        _journal().write_state(task_id, rec)
+    except Exception:
+        pass
+
+
+def _task_terminal_receipt(task_id, snap, supersedes=None):
+    """Write the signed 'task_end' entry for a task that just ended and return
+    {"seq", "hash", "status"} of it, or None when it could not be written. Ids,
+    status, origin and times only: never the task's name, prompt or result. Off
+    the record it says only that a task ended and how."""
+    try:
+        from agent_friday.services import action_ledger
+        if snap.get('off_record'):
+            rec = {"task_id": task_id, "status": snap.get('status'), "off_record": True}
+        else:
+            rec = {"task_id": task_id, "status": snap.get('status'),
+                   "origin": snap.get('origin'), "principal": snap.get('principal'),
+                   "parent_task_id": snap.get('parent_task_id'),
+                   "schedule_id": snap.get('schedule_id'),
+                   "created": snap.get('created'), "started": snap.get('started'),
+                   "ended": snap.get('ended'), "verified": snap.get('verified')}
+        if supersedes is not None:
+            rec["supersedes"] = supersedes
+        entry = action_ledger.try_append("task_end", rec)
+        if entry and entry.get("seq") is not None:
+            return {"seq": entry["seq"], "hash": entry.get("hash"), "status": snap.get('status')}
+    except Exception:
+        pass
+    return None
+
+
 def _task_set(task_id, **fields):
     with TASKS_LOCK:
         t = TASKS.get(task_id)
@@ -5576,8 +5731,11 @@ def _task_set(task_id, **fields):
                 tj.append(task_id, "started", model=snap.get('model'),
                           seat=snap.get('seat'), provider=snap.get('provider'))
             elif new_status == 'cancelled':
+                # NS-32.22-1: the halt says what the run had already done.
+                _eff = _cancel_effects_for(task_id, snap.get('started'))
                 tj.append(task_id, "halt", cause="cancelled",
-                          detail=str(snap.get('result') or '')[:300])
+                          detail=str(snap.get('result') or '')[:300],
+                          effects=_eff)
             elif _is_terminal_status(new_status):
                 tj.append(task_id, "ended", status=new_status,
                           result=str(snap.get('result') or ''),
@@ -5590,10 +5748,20 @@ def _task_set(task_id, **fields):
         tj.write_state(task_id, snap)
     except Exception:
         pass
+    _receipt_moved = None
     with TASKS_LOCK:
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+            if (t.get('terminal_receipt') != snap.get('terminal_receipt')
+                    or t.get('previous_terminal_receipts') != snap.get('previous_terminal_receipts')):
+                # The receipt settler moved the pointer after this call took its
+                # snapshot: the state file this call wrote lacks it, so write it again.
+                _receipt_moved = dict(t)
+    if _receipt_moved is not None:
+        _write_state_quietly(task_id, _receipt_moved)
+    if 'status' in fields:
+        _settle_terminal_receipt(task_id)
 
 
 def _task_state_sync(task_id):
@@ -7099,6 +7267,43 @@ _JOB_KEY_LOCK = threading.RLock()
 _JOB_KEY_LOCAL = threading.local()
 
 
+#: Where a task can come from (north star §30.9, NS-30.9-1), first match wins.
+TASK_ORIGINS = ("schedule", "workflow", "crew", "subagent", "goal", "local_job",
+                "conversation", "internal")
+
+
+def _task_origin(*, schedule_id=None, workflow_context=None, crew_context=None,
+                 parent_task_id=None, goal_ancestry=None, job=None, conversation_id=None) -> str:
+    """How this task came to exist, from the arguments it was spawned with only:
+    never from its name, prompt or a description a model wrote."""
+    if schedule_id:
+        return "schedule"
+    if (workflow_context or {}).get("run_id"):
+        return "workflow"
+    if crew_context:
+        return "crew"
+    if parent_task_id:
+        return "subagent"
+    if goal_ancestry:
+        return "goal"
+    if job:
+        return "local_job"
+    if conversation_id:
+        return "conversation"
+    return "internal"
+
+
+def _model_policy(rec) -> dict:
+    """The model policy a task runs under, in one place (north star §30.9): the
+    model asked for, the seat it was admitted to, and the pins that bind it."""
+    return {"model": rec.get("model"), "seat": rec.get("seat"),
+            "seat_is_local": bool(rec.get("seat_is_local")),
+            "pinned_to_seat": bool(rec.get("pin_to_seat")),
+            "local_only": bool(rec.get("local_only")),
+            "cloud_pinned": bool(rec.get("cloud_pin")),
+            "local_only_result": bool(rec.get("local_only_result"))}
+
+
 def _queue_job_fields(job, *, runner=None, prompt=''):
     """The TASKS fields that describe a task in the Local AI queue."""
     import hashlib as _hl
@@ -7478,6 +7683,19 @@ def _report_task_completion(task_id, name, status, result_text):
     body = (result_text or '').strip()
     ok = status not in ('failed', 'error')
     waiting = status == WAITING_APPROVAL
+    stopped = status == 'cancelled'
+    if stopped:
+        # A stopped run is not "finished", and it says what it already did.
+        try:
+            from agent_friday.services import cancel_effects as _ce
+            # Read again now: the run has left its loop, so a step that was
+            # still in flight when the stop was asked is on record by now.
+            _CANCEL_EFFECTS.pop(task_id, None)
+            _eff = _cancel_effects_for(task_id, (rec or {}).get('started'))
+            _CANCEL_EFFECTS.pop(task_id, None)
+            body = (_ce.summary(_eff) + ("\n\n" + body if body else "")).strip()
+        except Exception:
+            pass
     cid = None
     try:
         cid = _task_conversation_id(task_id)
@@ -7487,6 +7705,7 @@ def _report_task_completion(task_id, name, status, result_text):
     # in the chat line, the panel card and the spoken notice alike.
     said = ('is waiting for your decision on an approval card (Approvals, in the System '
             'workspace); nothing it asked for has run yet' if waiting
+            else 'was stopped at your request' if stopped
             else 'finished' if ok else 'FAILED')
     text = (f"Background task \"{name}\" {said}.\n\n"
             f"{body or '(no output)'}")
@@ -7500,8 +7719,10 @@ def _report_task_completion(task_id, name, status, result_text):
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
         notifications_engine.push(
             title=(f"Task needs your decision: {name}" if waiting
+                   else f"Task stopped: {name}" if stopped
                    else f"Task {'finished' if ok else 'failed'}: {name}"),
             body=lede or ('Waiting for your decision.' if waiting
+                          else 'Stopped.' if stopped
                           else 'Finished with no output.' if ok else 'Failed.'),
             emitter='E02', dedupe_key=f'task-done:{task_id}',
             target={"kind": "task", "id": task_id},
@@ -7796,7 +8017,15 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             # on the spawning thread; the worker thread has no context of its own.
             'trace_id': "tr_" + uuid.uuid4().hex[:16],
             'parent_trace_id': _rtrace.current(),
+            # §30.9: how it came to exist; its model policy is added below; the
+            # signed receipt of how it ended is added when it ends (_task_set).
+            'origin': _task_origin(schedule_id=schedule_id, workflow_context=workflow_context,
+                                   crew_context=crew_context, parent_task_id=parent_task_id,
+                                   goal_ancestry=goal_ancestry or _parent_rec.get('goal_ancestry'),
+                                   job=job, conversation_id=conversation_id),
+            'terminal_receipt': None,
         }
+        TASKS[task_id]['model_policy'] = _model_policy(TASKS[task_id])
     # The scope is registered once the record exists and before the worker
     # thread starts (never for a duplicate or a refused spawn, which return
     # above): no window in which the task's first tool call runs unscoped.
@@ -7822,7 +8051,8 @@ def _spawn_task(name, prompt, description='', on_complete=None,
                    model=model, run_id=(workflow_context or {}).get('run_id'),
                    conversation_id=conversation_id, schedule_id=schedule_id,
                    principal=TASKS[task_id]['principal'], goal_ancestry=TASKS[task_id]['goal_ancestry'],
-                   parent_task_id=parent_task_id, scope=scope)
+                   parent_task_id=parent_task_id, scope=scope,
+                   origin=TASKS[task_id]['origin'], model_policy=TASKS[task_id]['model_policy'])
         _tj.index_put(task_id, name, 'queued', TASKS[task_id]['created'])
         stored = _tj.write_state(task_id, TASKS[task_id])
         # Only storage being off (task_journal declines the write) excuses an
@@ -13246,17 +13476,8 @@ def _get_vault_key() -> bytes | None:
         return None
 
     try:
-        _VAULT_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        cfg = {}
-        if _VAULT_CONFIG_FILE.exists():
-            cfg = json.loads(_VAULT_CONFIG_FILE.read_text(encoding="utf-8"))
-        salt_hex = cfg.get("salt_hex")
-        if not salt_hex:
-            salt_hex = os.urandom(16).hex()
-            cfg.update({"salt_hex": salt_hex, "kdf": "argon2id", "cipher": "aes-256-gcm"})
-            _tmp = _VAULT_CONFIG_FILE.with_name(_VAULT_CONFIG_FILE.name + ".tmp")
-            _tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-            _tmp.replace(_VAULT_CONFIG_FILE)
+        from agent_friday.services.credential_store import vault_salt_hex as _vault_salt_hex
+        salt_hex = _vault_salt_hex(_VAULT_CONFIG_FILE)
         _VAULT_KEY = _vc.derive_key(_passphrase, bytes.fromhex(salt_hex))
         _VAULT_ENCRYPTION_STATE["enabled"] = True
         _VAULT_ENCRYPTION_STATE["error"] = ""
@@ -14721,13 +14942,27 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, detail=_nd)
         _outcome("error", _nd)
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
+    elif _tool_call_status(result) == "error":
+        # The handler returned rather than raised, with an error result: the
+        # call did not succeed, and its receipt says so (a content-free reason).
+        _receipts.record(name, ok=False, detail="error result")
+        _outcome("error", "error_result")
     else:
         _receipts.record(name, ok=True)
-        # the handler returned; a line of Friday's own saying it was not done
-        # (its own card, a refusal) is that outcome, not "executed". A connector's
+        # The handler returned. The outcome says what happened at the service: a
+        # result that waits for the owner's card changed nothing yet (held), one the
+        # handler declined did not run (refused); a line of Friday's own saying it
+        # was not done (its own card, a refusal) labels the outcome. A connector's
         # reply is never read for it. Labelling never raises after the action ran.
         try:
-            _outcome("ok", "", _handler_outcome(name, result))
+            _label = _handler_outcome(name, result)
+            _st_now = _tool_call_status(result) if _result_is_fridays(name, result) else "ok"
+            if _st_now == "pending":
+                _outcome("held", "waiting_for_card", _label)
+            elif _st_now == "deny":
+                _outcome("refused", "declined_by_handler", _label)
+            else:
+                _outcome("ok", "", _label)
         except Exception:  # noqa: BLE001
             pass
         try:  # a tool that resolved a routed ask or defer is a router correction

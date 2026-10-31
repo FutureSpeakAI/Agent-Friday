@@ -68,6 +68,7 @@ KIND_LABELS = {
     "export": "Export",
     "doctor_weekly": "Weekly Doctor report",
     "outcome": "What an action did",
+    "task_end": "A task ended",
     "authority": "Action authority revoked or restored",
     "policy_version": "The rules actions ran under changed",
     "item_batch_run": "Approved change run",

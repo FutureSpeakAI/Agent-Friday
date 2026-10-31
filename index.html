@@ -60008,17 +60008,26 @@ function ClawsRepinPanel() {
     apiFetch('/api/governance/claws/repin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirm: true })
+      body: JSON.stringify({ confirm: true, text_sha256: st && st.text_sha256 })
     }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
       if (ok) { setSt(d); setMsg('Re-confirmed. The rules are pinned to this PC again.'); }
-      else setMsg(d && (d.message || d.error) || 'Not re-confirmed.');
+      else { if (d && d.state) setSt(d); setMsg(d && (d.message || d.error) || 'Not re-confirmed.'); }
     }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
   };
   const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
   if (!st) return E('div', { style: muted }, 'Reading the rules status…');
   const colour = st.state === 'intact' ? '#00ff80' : st.state === 'not_pinned' ? '#00d4ff' : '#f59e0b';
+  // What changed since the owner last confirmed the rules, shown before she re-confirms.
+  const ch = st.changes;
+  const line = (sign, text, c) => E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11, color: c, whiteSpace: 'pre-wrap', lineHeight: 1.5 } }, sign + ' ' + text);
+  const changesView = ch && E('div', { 'data-testid': 'claws-changes', style: { margin: '6px 0 10px', padding: 8, border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6 } },
+    E('div', { style: { fontSize: 11, color: '#cfefff', marginBottom: 6, lineHeight: 1.6 } }, ch.words || ''),
+    (ch.lines || []).map((x, i) => E('div', { key: 'l' + i }, x.op === '-' ? line('−', x.text, '#f59e0b') : line('+', x.text, '#00ff80'))),
+    ch.kind !== 'text_changed' && (ch.current || []).map((t, i) => E('div', { key: 'c' + i }, line(' ', t, 'rgba(255,255,255,0.75)'))),
+    ch.truncated && E('div', { style: { fontSize: 11, color: '#cfefff', marginTop: 4 } }, 'Only part of it is shown here.'));
   return E('div', { 'data-testid': 'claws-repin' },
     E('div', { style: { fontSize: 12, color: colour, marginBottom: 6, lineHeight: 1.6 } }, st.summary || st.state),
+    changesView,
     E('div', { style: Object.assign({}, muted, { fontFamily: 'JetBrains Mono', marginBottom: 10 }) },
       'Rules text SHA-256 ', (st.text_sha256 || '').slice(0, 16), '…',
       st.pinned_at ? ' · pinned ' + new Date(st.pinned_at * 1000).toLocaleString() : ''),

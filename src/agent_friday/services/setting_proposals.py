@@ -27,6 +27,12 @@ from pathlib import Path
 _log = logging.getLogger(__name__)
 
 HANDLER = "setting_change"
+#: The only tools a setting card may run: each settings tool that holds its
+#: change for a Yes (`hold`), and the one the dock change runs as.
+SETTINGS_TOOLS = frozenset({
+    "switch_model", "set_workspace_layout", "show_my_day", "big_mode", "hologram_window",
+    "call_mode", "live_laya", "podcast_format", "podcast_length", "set_setting",
+})
 APPROVAL_KIND = "governed_action"
 UNDO_DAYS = 30
 HISTORY_MAX = 200
@@ -291,6 +297,11 @@ def _on_decision(record: dict) -> None:
         handler = _ag.CLAUDE_TOOL_HANDLERS.get(tool)
         if handler is None:
             raise Refused("the tool %s is not available" % tool)
+        # A setting card runs one of the settings tools, never anything else,
+        # whatever its payload names.
+        if tool not in SETTINGS_TOOLS or \
+                action_gate.classify(tool, dict(detail.get("input") or {}))[0] != action_gate.INTERNAL:
+            raise Refused("the tool %s is not a settings change" % tool)
         tok = _APPROVED.set(True)
         try:
             text = str(handler(dict(detail.get("input") or {})))
@@ -565,6 +576,9 @@ def tool(inp) -> str:
     from agent_friday.services import agent as _ag
     handler = _ag.CLAUDE_TOOL_HANDLERS.get(name)
     if handler is None:
+        return "SETTING_FAIL: that setting is not available here."
+    from agent_friday.governance import action_gate
+    if name not in SETTINGS_TOOLS or action_gate.classify(name, args)[0] != action_gate.INTERNAL:
         return "SETTING_FAIL: that setting is not available here."
     return str(handler(args))
 

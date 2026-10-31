@@ -1310,12 +1310,9 @@ def _parse_report(raw: str) -> Optional[dict]:
     """Community-report prompt returns JSON (sometimes fenced)."""
     if not raw:
         return None
-    m = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-    except ValueError:
+    from agent_friday.services.reply_json import last_object
+    data = last_object(raw, keys=("title", "summary", "findings", "rating"))
+    if data is None:
         return None
     findings = data.get("findings") or []
     full = data.get("summary", "") + "\n\n" + "\n".join(
