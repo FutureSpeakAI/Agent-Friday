@@ -62560,9 +62560,50 @@ function MemoryCardPanel({s, save}) {
         E('div', {style:{flex:1}},
           E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, x.label),
           E('div', {style: dim}, (x.kind === 'proposal' ? 'A rejected suggestion' : 'A discarded card suggestion') + (x.day ? ' · ' + x.day : ''))),
-        btn('Allow again', () => allow(x.id), 'allow')))));
+        btn('Allow again', () => allow(x.id), 'allow')))),
+    E(MemoryMeasures, null));
 }
 // End memory card panel
+
+function MemoryMeasures() {
+  // How memory is doing (services/memory_metrics, GET /api/memory/metrics): counts and
+  // rates kept on this PC over the last 30 days. Read-only; no memory text is stored or shown.
+  const E = React.createElement;
+  const [m, setM] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    apiFetch('/api/memory/metrics?days=30')
+      .then(r => r.json())
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory measures.'); setM(d); })
+      .catch(e => setErr(e.message || 'Could not read the memory measures.'));
+  }, []);
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'14px 0 4px'};
+  const pct = v => (v === null || v === undefined) ? 'not enough yet' : Math.round(v * 100) + '%';
+  const num = v => Number(v || 0).toLocaleString();
+  const line = (label, value, key) => E('div', {key: key || label, style:{display:'flex', justifyContent:'space-between', fontSize:11.5, color:'rgba(255,255,255,0.75)', padding:'2px 0'}},
+    E('span', null, label), E('span', {style:{color:'rgba(255,255,255,0.9)'}}, value));
+  if (err) return E('div', {'data-memory-measures': 'error'}, E('div', {style: head}, 'How memory is doing'), E('div', {style: dim}, err));
+  if (!m) return null;
+  const c = m.counts || {}, r = m.rates || {};
+  return E('div', {'data-memory-measures': 'ok'},
+    E('div', {style: head}, 'How memory is doing (last ' + (m.days || 30) + ' days)'),
+    E('div', {style: dim}, 'Counts kept on this PC. No memory text is stored here, only numbers.'),
+    line('Times past conversations were recalled', num(c.recalls), 'recalls'),
+    line('Recalled items shown / cited in replies', num(c.shown) + ' / ' + num(c.cited), 'shown'),
+    line('Citation coverage', pct(r.citation_coverage), 'cov'),
+    line('Corrections (card edits and corrected turns)', num(c.corrections) + ' (' + pct(r.correction_rate) + ' of items shown)', 'corr'),
+    line('Precision estimate (recalled items not later corrected)', pct(r.precision_proxy), 'prec'),
+    line('Stale / live-state errors', (r.stale_error_rate === null || r.stale_error_rate === undefined) ? 'not enough yet' : num(c.stale_errors) + ' / ' + num(c.live_state_errors), 'stale'),
+    line('Suggestions made, kept, discarded', num(c.inference_queued) + ', ' + num(c.inference_kept) + ', ' + num(c.inference_discarded), 'inf'),
+    line('Suggestions kept', pct(r.inference_acceptance_rate), 'acc'),
+    line('Duplicates left out', num(c.duplicates_suppressed), 'dup'),
+    line('Sensitive-category guesses dropped', num(c.special_category_dropped), 'spec'),
+    line('Fields containing recalled memory withheld from a cloud model', num(c.leakage_blocked), 'leak'),
+    line('Turns forgotten', num(c.forgets), 'forget'),
+    E('div', {style: dim}, 'The precision figure is an estimate: real precision needs someone to mark each recalled item right or wrong. It and the stale figures read ‘not enough yet’ until a recalled conversation turn is itself corrected; memory card edits do not say which recalled turn they correct.'));
+}
+// End memory measures
 
 function ConversationSearchPanel() {
   // Full-text search over every conversation (services/conversation_fts), with a Delete

@@ -611,11 +611,27 @@ class ConversationMemory:
         reason = (reason or "").strip()
         if not reason:
             raise ValueError("supersede() requires a reason")
-        return self._set_supersession(ids, "1", reason, superseded_by)
+        out = self._set_supersession(ids, "1", reason, superseded_by)
+        self._note_supersession(out, True, superseded_by)
+        return out
 
     def unsupersede(self, ids):
         """Restore evidential authority. The exact reverse of supersede()."""
-        return self._set_supersession(ids, "", "", "")
+        out = self._set_supersession(ids, "", "", "")
+        self._note_supersession(out, False, "")
+        return out
+
+    @staticmethod
+    def _note_supersession(out, on, superseded_by):
+        # Counts and one-way hashes only (services/memory_metrics), of the ids
+        # this store actually held. Recorded here rather than in
+        # _set_supersession so a rebuild re-applying an existing correction
+        # (rebuild_from_transcripts) is not counted as a new one.
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_supersession((out or {}).get("superseded") or [], bool(on), superseded_by)
+        except Exception:
+            pass
 
     def _set_supersession(self, ids, flag, reason, superseded_by):
         ids = [str(i) for i in (ids or []) if str(i).strip()]
@@ -900,6 +916,11 @@ class ConversationMemory:
                             deleted.extend(str(i) for i in same)
         except Exception as e:
             print(f"  [MEMORY] delete failed (non-fatal): {e}")
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_count("forget", removed, store="conversation")
+        except Exception:
+            pass
         return removed
 
     def matching(self, predicate):

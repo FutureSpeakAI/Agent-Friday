@@ -14,6 +14,7 @@ Agent Friday — Memory card API (services/core_memory)
   POST  /api/core-memory/suppress     {id}                      "Don't suggest things like this"
   GET   /api/core-memory/suppressed                             the suppression rules and drop counts
   POST  /api/core-memory/suppressed/remove {id}                 remove one suppression rule
+  GET   /api/memory/metrics?days=30   memory measures, counts and rates only (services/memory_metrics)
 
   GET   /api/memory/search  ?q=&kinds=a,b&since=&until=&superseded=1&limit=
                                       the owner's search over everything Friday keeps
@@ -27,7 +28,7 @@ only (principal "user"; an observer or any other is refused), the parameters are
 neither the query nor a result is logged (services/memory_search). The export also
 answers only Friday's own page (its X-Friday-Token, or a same-origin non-navigation
 fetch), never a cross-site link or navigation. The card's read, edit, delete,
-review, suppression rules and restore-messages are the owner's only too.
+review, suppression rules, restore-messages, add, undo and the memory measures are the owner's only too.
 """
 from flask import Blueprint, Response, g, jsonify, request, stream_with_context
 
@@ -163,6 +164,8 @@ def get_core_memory():
 @core_memory_bp.route("/api/core-memory/add", methods=["POST"])
 @login_required
 def add_line():
+    if _not_owner():
+        return _not_the_owner_card()
     d = _body()
     return jsonify(public_result(core_memory.add(str(d.get("target") or ""), str(d.get("text") or ""),
                                                  actor="owner"), "Couldn't add that line"))
@@ -207,6 +210,8 @@ def restore_messages():
 @core_memory_bp.route("/api/core-memory/undo", methods=["POST"])
 @login_required
 def undo_change():
+    if _not_owner():
+        return _not_the_owner_card()
     d = _body()
     return jsonify(public_result(core_memory.undo(str(d.get("change_id") or "")), "Couldn't undo that"))
 
@@ -250,3 +255,17 @@ def remove_suppression_rule():
     d = _body()
     return jsonify(public_result(core_memory.remove_suppression(str(d.get("id") or "")),
                                  "Couldn't remove that rule"))
+
+
+@core_memory_bp.route("/api/memory/metrics", methods=["GET"])
+@login_required
+def memory_metrics_summary():
+    """How memory is doing (services/memory_metrics): counts and rates only."""
+    if _not_owner():
+        return jsonify({"ok": False, "error": "Only the owner can read how memory is doing."}), 403
+    from agent_friday.services import memory_metrics
+    try:
+        days = int(request.args.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    return jsonify(public_result(memory_metrics.summary(days), "Couldn't read the memory measures"))

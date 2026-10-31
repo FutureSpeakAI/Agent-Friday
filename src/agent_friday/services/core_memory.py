@@ -675,6 +675,15 @@ _TOMBSTONED = ("the owner deleted this line from the memory card; Friday does no
                "it again (only the owner can put it back)")
 
 
+def _metric(kind: str, n: int = 1, **labels: str) -> None:
+    """A count for services/memory_metrics (never the line's text)."""
+    try:
+        from agent_friday.services import memory_metrics as _mm
+        _mm.note_count(kind, n, **labels)
+    except Exception:
+        pass
+
+
 #: Why an inferred line touching a special category is not kept (NS-15.4-3).
 SPECIAL_REFUSAL = ("it would record {cat} about a person, which Friday never infers or keeps "
                    "on her own; only the owner's own words, kept by the owner, can put it on the card")
@@ -752,6 +761,7 @@ def add(target: str, text: str, *, actor: str = "friday",
             # (services/memory_dedupe). The owner's own add is theirs to make.
             dup = _near_duplicate(text, items)
             if dup:
+                _metric("duplicate_suppressed", path="core_memory_add")
                 return {"ok": True, "unchanged": True, "duplicate_of": dup,
                         "note": f"already on the card as: {dup!r}; use replace to reword it"}
         new = items + [text]
@@ -875,7 +885,10 @@ def owner_set(target: str, index: int, text: str, expect: Optional[str] = None) 
         items, index, bad = _owner_line(target, index, expect)
         if bad:
             return bad
-        return replace(target, items[index], text, actor="owner")
+        res = replace(target, items[index], text, actor="owner")
+    if res.get("ok"):
+        _metric("correction", store="core_memory", op="edit")
+    return res
 
 
 def owner_delete(target: str, index: int, wrong: bool = False, expect: Optional[str] = None) -> Dict[str, Any]:
@@ -885,7 +898,10 @@ def owner_delete(target: str, index: int, wrong: bool = False, expect: Optional[
         items, index, bad = _owner_line(target, index, expect)
         if bad:
             return bad
-        return remove(target, items[index], actor="owner", supersede=bool(wrong))
+        res = remove(target, items[index], actor="owner", supersede=bool(wrong))
+    if res.get("ok"):
+        _metric("correction", store="core_memory", op="delete")
+    return res
 
 
 # ── what Friday changed, and undoing it ───────────────────────────────────────
@@ -994,6 +1010,7 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
         if why:
             return _err("NOT QUEUED: " + why)
         if op == "add" and _near_duplicate(text, entries(target)):
+            _metric("duplicate_suppressed", path="core_memory_queue")
             return {"ok": True, "unchanged": True}
     with _LOCK:
         rows = _read_jsonl(_pending_path())
@@ -1006,6 +1023,7 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
             dup = _near_duplicate(text, waiting)
             if dup:
                 hit = next(r for r in rows if r.get("op") == "add" and r.get("text") == dup)
+                _metric("duplicate_suppressed", path="core_memory_queue")
                 return {"ok": True, "unchanged": True, "id": hit.get("id")}
         if op != "replace" and not owner_stated and not _confirmed_source(source):
             # "Don't suggest things like this" (NS-15.5-1): a suggestion similar to
@@ -1034,6 +1052,7 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
             _write_jsonl(_pending_path(), rows)
         except Exception as e:
             return _err(str(e))
+    _metric("inference_queued", path="core_memory")
     return {"ok": True, "id": row["id"], **({"deleted_before": True} if deleted_before else {})}
 
 
@@ -1112,6 +1131,7 @@ def decide(pending_id: str, approve: bool, text: Optional[str] = None) -> Dict[s
                 return res
         rows = [r for r in _read_jsonl(_pending_path()) if r.get("id") != pending_id]
         _write_jsonl(_pending_path(), rows)
+    _metric("inference_kept" if approve else "inference_discarded", path="core_memory")
     if not approve and row.get("op") in ("add", "replace") and (row.get("text") or "").strip():
         # Discarding a suggested line is the owner's no, as rejecting a
         # proposal is: the line is tombstoned so the nightly pass (or the

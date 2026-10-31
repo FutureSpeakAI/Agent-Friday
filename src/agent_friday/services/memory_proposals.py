@@ -318,6 +318,15 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _metric(kind: str, n: int = 1, **labels: str) -> None:
+    """A count for services/memory_metrics (never a fact's text)."""
+    try:
+        from agent_friday.services import memory_metrics as _mm
+        _mm.note_count(kind, n, **labels)
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
 def _already_proposed(conn, text: str) -> bool:
     # A rejected row still blocks (a second guard beside its tombstone, which
     # a damaged list or key would lose). "Allow again" (tombstones.undo_discard)
@@ -433,7 +442,10 @@ def propose(day: Optional[str] = None, *, memory=None,
         conn = _connect()
         try:
             for f in facts:
-                if _already_proposed(conn, f["text"]) or _refused_before(f["text"]):
+                if _already_proposed(conn, f["text"]):
+                    _metric("duplicate_suppressed", 1, path="proposals")
+                    continue
+                if _refused_before(f["text"]):
                     continue
                 web, blocked = web_sources_of(f.get("evidence") or "", turns)
                 if blocked:
@@ -449,6 +461,7 @@ def propose(day: Optional[str] = None, *, memory=None,
             conn.commit()
         finally:
             conn.close()
+        _metric("inference_queued", stored, path="proposals")
 
     if barren:
         summary = (f"Read {len(turns)} turns from {day} and found no durable "
@@ -576,6 +589,7 @@ def propose_from_meeting(candidates: List[Dict[str, Any]], meeting_id: str, day:
         conn.commit()
     finally:
         conn.close()
+    _metric("inference_queued", stored, path="meeting")
     return stored
 
 
@@ -793,6 +807,7 @@ def approve(fact_ids: List[str], edits: Optional[Dict[str, str]] = None) -> Dict
         conn.commit()
     finally:
         conn.close()
+    _metric("inference_kept", len(promoted), path="proposals")
     out = {"ok": True, "approved": len(promoted), "facts": promoted}
     if unopened:
         out.update(ok=bool(promoted), refused=unopened,
@@ -869,6 +884,7 @@ def reject(fact_ids: List[str]) -> Dict[str, Any]:
             conn.execute("UPDATE proposed_facts SET provenance=? WHERE fact_id=?",
                          (json.dumps(meta, ensure_ascii=False), fid))
         conn.commit()
+        _metric("inference_discarded", cur.rowcount, path="proposals")
         out: Dict[str, Any] = {"ok": True, "rejected": cur.rowcount}
         if unmarked:
             out.update(tombstoned=False,
