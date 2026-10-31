@@ -30,3 +30,16 @@ def test_a_dock_button_says_its_name_once():
     assert "\"aria-label\": w.label + (noticeWs.has(w.id) && !openWins.has(w.id) ? ', something waiting' : '')," in idx
     app = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
     assert "aria-label={w.label+((noticeWs.has(w.id)&&!openWins.has(w.id))?', something waiting':'')}" in app
+
+def test_the_mirror_carries_322s_switches_and_pressed_dock_buttons():
+    """#322 (AX1) gave index.html the quick-toggle switches and the dock buttons'
+    pressed state; ui_parts/app.html, its JSX mirror, did not get them."""
+    idx = (ROOT / "index.html").read_text(encoding="utf-8")
+    app = (ROOT / "ui_parts" / "app.html").read_text(encoding="utf-8")
+    assert '"aria-checked": !!showAllWorkspaces' in idx and '"aria-checked": !!agentSettings.off_record' in idx
+    assert 'role="switch" aria-checked={!!showAllWorkspaces} tabIndex={0}' in app
+    assert 'role="switch" aria-checked={!!agentSettings.off_record} tabIndex={0}' in app
+    assert '"aria-pressed": openWins.has(w.id)' in idx
+    assert "data-ws={w.id} aria-pressed={openWins.has(w.id)}" in app
+    # Enter and Space work on every quick toggle in both.
+    assert app.count("onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click()}}}") >= 3
