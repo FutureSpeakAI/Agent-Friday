@@ -1396,6 +1396,44 @@ def _read_grants(key: Optional[bytes] = None) -> list:
     return [g for g in gs if _grant_signed(g, key)]
 
 
+#: Outward consequential actions that cannot be granted broadly (north star §18.2 Class 4): each
+#: has no undo Friday can reach (software installed, a calendar entry or task deleted at the
+#: service, a domain bought or changed, a signature that binds the owner), and so is a connected
+#: service's tool that deletes or removes. A grant for one covers one use, within a day: a wider
+#: one is refused when it is made, and one made before this rule is never spent on it.
+#: (domain_action and sign_pdf raise their own card and never spend a grant today; they are listed
+#: so that stays true if that changes.)
+NARROW_GRANT_ONLY = frozenset({"install_package", "delete_calendar_event", "delete_task",
+                               "domain_action", "sign_pdf"})
+NARROW_GRANT_MAX_SECONDS = 24 * 3600
+_MCP_NO_UNDO = re.compile(r"(?:^|_)(?:delete|remove|destroy|purge|uninstall|drop|erase|wipe)(?:_|$)", re.I)
+
+
+def narrow_grant_only(tool_name) -> bool:
+    name = str(tool_name or "")
+    return name in NARROW_GRANT_ONLY or (name.startswith("mcp_") and bool(_MCP_NO_UNDO.search(name)))
+
+
+def _grant_is_broad(g: dict) -> bool:
+    try:
+        return (int(g.get("max_uses") or g.get("uses_left") or 0) > 1
+                or float(g.get("expires_at") or 0) - float(g.get("created_at") or 0) > NARROW_GRANT_MAX_SECONDS + 60)
+    except (TypeError, ValueError):
+        return True
+
+
+def broad_grant_refusal(tools, expires_in_seconds, max_uses) -> Optional[str]:
+    """Why this grant is too broad for a tool in NARROW_GRANT_ONLY, in the owner's words, or None."""
+    try:
+        narrow = sorted(t for t in set(tools or []) if narrow_grant_only(t))
+        if narrow and (int(max_uses) > 1 or float(expires_in_seconds) > NARROW_GRANT_MAX_SECONDS):
+            return ("%s can be pre-approved only one at a time: one use, within a day. "
+                    "Make a separate grant for it, or let it ask each time." % ", ".join(narrow))
+    except (TypeError, ValueError):
+        return "the grant's uses or expiry could not be read"
+    return None
+
+
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
                  max_uses: int = 1, created_by: str = "owner", note: str = "") -> dict:
     """Pre-approve named outward tools for one scheduled job or task.
@@ -1407,6 +1445,10 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
     """
     if not tools or not scope or expires_in_seconds <= 0 or max_uses < 1:
         raise ValueError("a grant needs tools, a scope, a positive expiry and uses")
+    _broad = broad_grant_refusal(tools, expires_in_seconds, max_uses)
+    if _broad:
+        from agent_friday.user_errors import UserFacingValueError
+        raise UserFacingValueError(_broad, status=400)
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
          "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
          "max_uses": int(max_uses), "uses_left": int(max_uses), "created_by": created_by,
@@ -1541,6 +1583,8 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
         except Exception:
             return None
         for g in gs:
+            if narrow_grant_only(tool_name) and _grant_is_broad(g):
+                continue                 # broader than the narrow-only rule: never spent on these
             live = _live_view(g, events, key)
             if live is None:
                 continue
@@ -2290,6 +2334,12 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
     except Exception as e:
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
+    _six = "outward_consequential"
+    try:
+        _six = action_class(tool_name, args, v.klass)
+        v.detail["action_class"] = _six
+    except Exception:
+        pass
     try:
         _args_hash = hashlib.sha256(json.dumps(args or {}, sort_keys=True,
                                                default=str).encode()).hexdigest()
@@ -2309,6 +2359,7 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         _pv_token = _DECISION_PV.set(_pvd)
         try:
             _out = _receipt({"tool": tool_name, "class": v.klass, "decision": v.action,
+                  "action_class": _six,
                   "reason": v.reason, "tainted": tainted, "clean": clean,
                   # what became of it as the checkpoint sees it (OUTCOMES); a
                   # deny is its own terminal receipt
@@ -2333,7 +2384,7 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         _out = _out if isinstance(_out, dict) else {}
         _orec = _out.get("rec") if isinstance(_out.get("rec"), dict) else {}
         LAST_RECEIPT.set({"seq": _out.get("seq"), "hash": _out.get("hash"), "tool": tool_name,
-                          "class": v.klass, "decision": v.action,
+                          "class": v.klass, "decision": v.action, "action_class": _six,
                           "action_id": _orec.get("action_id") or (_env or {}).get("action_id"),
                           "policy_version": _orec.get("policy_version")
                           or (_env or {}).get("policy_version")})
@@ -2418,6 +2469,65 @@ CONNECTED_SERVICE_TOOLS = frozenset({
 CONNECTED_SERVICE_WRITES = frozenset({
     "release_holds", "create_task", "update_task", "complete_task", "draft_email",
 })
+
+
+# ── The six action classes (north star §18.2) ─────────────────────────────
+
+#: The spec's names, in order: 0 observe, 1 internal create, 2 internal modify,
+#: 3 outward reversible, 4 outward consequential, 5 forbidden.
+ACTION_CLASSES = ("observe", "internal_create", "internal_modify",
+                  "outward_reversible", "outward_consequential", "forbidden")
+
+#: Outward changes the spec names reversible (§18.2 Class 3): a new entry on
+#: the owner's own calendar that invites nobody, a task-system write, a hold the
+#: owner can release (it shows as busy to others until released, which the spec
+#: counts as reversible). Changing an existing event is not here: it may have
+#: guests whose copies change, and the tool cannot say. Everything else outward,
+#: and every tool not named anywhere (§18.3), is outward consequential.
+OUTWARD_REVERSIBLE_TOOLS = frozenset({
+    "create_calendar_event", "hold_slots", "release_holds",
+    "create_task", "update_task", "complete_task",
+})
+
+_READ_VERB = re.compile(r"(?:^|_)(?:get|list|read|search|find|query|fetch|show|describe|check|view|"
+                        r"understand|lookup|status|inspect|preview|recall)(?:_|$)", re.I)
+_CREATE_VERB = re.compile(r"(?:^|_)(?:create|new|add|generate|draft|make|build|save|capture|record|"
+                          r"note|remember|compose|render|export)(?:_|$)", re.I)
+
+
+def action_class(tool_name: str, args: Optional[dict], klass: str) -> str:
+    """Which of the spec's six classes this call is, given the gate's decision
+    class (`classify`). A label for receipts, cards and the owner's view: it
+    never loosens the decision. Internal and outward stay what classify says;
+    this only names which kind of each. Never raises; when unsure it answers
+    the stricter class of the pair (modify over create, consequential over
+    reversible)."""
+    try:
+        name = str(tool_name or "")
+        a = args if isinstance(args, dict) else {}
+        if klass == "forbidden":
+            return "forbidden"
+        if klass == OBSERVE:
+            return "observe"
+        if klass == INTERNAL:
+            if _READ_VERB.search(name) and not _CREATE_VERB.search(name):
+                return "observe"
+            if name == "write_file":
+                # It may replace a file; the label does not look at the disk for a model's path.
+                return "internal_modify"
+            return "internal_create" if _CREATE_VERB.search(name) else "internal_modify"
+        if name in OUTWARD_REVERSIBLE_TOOLS:
+            # An event that invites other people sends them mail, and another
+            # calendar is not the owner's own: consequential.
+            if name == "create_calendar_event" and (
+                    a.get("attendees") or a.get("invitees") or a.get("guests")
+                    or str(a.get("send_updates") or a.get("sendUpdates") or "").lower() in ("all", "externalonly")
+                    or str(a.get("calendar_id") or "primary").strip().lower() != "primary"):
+                return "outward_consequential"
+            return "outward_reversible"
+        return "outward_consequential"
+    except Exception:
+        return "outward_consequential"
 
 
 def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,

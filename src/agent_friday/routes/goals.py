@@ -683,7 +683,9 @@ def list_outward_tools():
             # travels (docs/security/codeql-residual.md).
             out.append({"name": name, "why": message_only(why),
                         "label": _GRANT_LABELS.get(name)
-                        or _connector_label(name)})
+                        or _connector_label(name),
+                        # one use within a day only (action_gate.NARROW_GRANT_ONLY)
+                        "one_at_a_time": action_gate.narrow_grant_only(name)})
     return jsonify({"tools": out})
 
 
