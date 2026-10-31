@@ -24,9 +24,13 @@ from agent_friday.governance import action_gate as gate
 
 @pytest.fixture
 def grants_file(tmp_path, monkeypatch):
+    """These tests are about grants, not the gate's holds: a break in the shared action ledger,
+    safe mode or Stop left by another file's test in this xdist worker must not refuse a use
+    here (the gate's and Stop's own tests cover those; as #562 does for the calendar card)."""
     f = tmp_path / "grants.json"
     monkeypatch.setattr(gate, "_grants_file", lambda: f)
     monkeypatch.setattr(gate, "_gov_dir", lambda: tmp_path)
+    monkeypatch.setattr(gate, "outward_hold", lambda: None)
     return f
 
 
@@ -88,10 +92,8 @@ def test_a_grant_expires(grants_file):
 
 def test_a_use_that_cannot_be_recorded_does_not_happen(grants_file, monkeypatch):
     from agent_friday.services import action_ledger
-    # This test is about the ledger, not the holds: a hold another test left in this
-    # worker must not refuse the second use. The real append comes back on its own,
-    # so every other isolation patch stays in place (undo() would drop them all).
-    monkeypatch.setattr(gate, "outward_hold", lambda: None)
+    # The real append comes back on its own, so every isolation patch stays in place
+    # (undo() would drop them all).
     g = _grant(uses=1)
     real_append = action_ledger.append
 
