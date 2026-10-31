@@ -263,6 +263,31 @@ def repair_search_index():
                     "message": "Rebuilding the search index from your conversations. They are not changed."}), 202
 
 
+@doctor_bp.route("/api/doctor/repair/knowledge-graph", methods=["POST"])
+@login_required
+def repair_knowledge_graph():
+    """Keep the graph's damaged files aside and rebuild its wiki layer from the wiki pages
+    (BD-16; 32.5). Runs no model. The owner's press on this PC."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": _DESK_PROOF,
+                        "error": "Rebuild the knowledge graph on Friday's own page, on this PC."}), 403
+    from agent_friday.services import memory_store_repair as m
+    if not m.begin_kg_repair():
+        return jsonify({"status": "error", "error": "The knowledge graph is already being rebuilt."}), 409
+
+    def _run():
+        try:
+            m.repair_kg("owner:doctor", begun=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[doctor] knowledge graph rebuild failed: {type(e).__name__}")
+    _threading.Thread(target=_run, name="doctor-knowledge-graph-repair", daemon=True).start()
+    return jsonify({"status": "ok", "started": True,
+                    "message": "Rebuilding the knowledge graph's page layer from your wiki. Damaged "
+                               "files are kept, not deleted; facts a model found that were in them "
+                               "are in the kept copy, and re-finding them (which runs a model) is "
+                               "on the knowledge graph page."}), 202
+
+
 @doctor_bp.route("/api/restore/state", methods=["GET"])
 @login_required
 def restore_state():
