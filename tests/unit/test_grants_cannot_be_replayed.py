@@ -22,15 +22,20 @@ import pytest
 from agent_friday.governance import action_gate as gate
 
 
-@pytest.fixture
-def grants_file(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def _no_hold_left_by_other_files(monkeypatch):
     """These tests are about grants, not the gate's holds: a break in the shared action ledger,
     safe mode or Stop left by another file's test in this xdist worker must not refuse a use
-    here (the gate's and Stop's own tests cover those; as #562 does for the calendar card)."""
+    here (the gate's and Stop's own tests cover those; as #562 does for the calendar card).
+    A test about a hold sets its own."""
+    monkeypatch.setattr(gate, "outward_hold", lambda: None)
+
+
+@pytest.fixture
+def grants_file(tmp_path, monkeypatch):
     f = tmp_path / "grants.json"
     monkeypatch.setattr(gate, "_grants_file", lambda: f)
     monkeypatch.setattr(gate, "_gov_dir", lambda: tmp_path)
-    monkeypatch.setattr(gate, "outward_hold", lambda: None)
     return f
 
 
