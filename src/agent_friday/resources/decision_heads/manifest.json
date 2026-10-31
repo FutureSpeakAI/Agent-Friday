@@ -1,0 +1,14 @@
+{
+  "about": "Decision heads (specs/decision_models_STORM_2026-10-24.md section 6). Each row pins one head file by sha256 (LF text). Directions, allowed scorers and the abstain rule live in services/decision_heads.py, not here.",
+  "version": 1,
+  "heads": [
+    {"id": "triage.mail", "file": "triage.mail.json", "version": 1, "sha256": "93d85fa20e7d55ca905c8d02d9b70825e0d93759513611f5abc5002bfd256f71"},
+    {"id": "triage.news", "file": "triage.news.json", "version": 1, "sha256": "6de50fe7a11cdb22140d9c05718280897d2dfb87b05d25681cb0a87890070f73"},
+    {"id": "triage.notify", "file": "triage.notify.json", "version": 1, "sha256": "5ef547459955edc1c7935c0a3c7152a30c9dfddd8902566fe6fceb9de90fb12d"},
+    {"id": "triage.memory", "file": "triage.memory.json", "version": 1, "sha256": "7af897cdbb65d129aeaac3bf441a80150e91c4322e7c6a09881876484e869fe9"},
+    {"id": "evidence.holds", "file": "evidence.holds.json", "version": 1, "sha256": "2dffb13489db1d801adebb083954e84f2b1f74b123913e5d034dcae45b928ef4"},
+    {"id": "evidence.sufficient", "file": "evidence.sufficient.json", "version": 1, "sha256": "ac4c46d6d20cc8c413e52239907d6d0c4ecfea5f7daabed1d67762e8e31970c5"},
+    {"id": "loop.no_progress", "file": "loop.no_progress.json", "version": 1, "sha256": "eff1267bcaba0388f42682b6acdc46b337c926b324d6dbfc4b18e1fe7c81d9f8"},
+    {"id": "evidence.supports", "file": "evidence.supports.json", "version": 1, "sha256": "903afb7026c93b4fa8d515321de4449260846c7d6b52eefe7d40209f80a609ba"}
+  ]
+}

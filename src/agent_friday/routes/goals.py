@@ -13,7 +13,12 @@ backend/API-first.
   POST   /api/goals/<goal_id>/transition          {"status": "..."} — state-machine move
   POST   /api/goals/<goal_id>/milestones          add a milestone
   POST   /api/goals/<goal_id>/milestones/<mid>/run   advance one attempt-cycle now
+  POST   /api/goals/<goal_id>/milestones/<mid>/restart  start a milestone a restart
+                                                   or a failed run stopped; needs
+                                                   {"confirm_unknown_outcome": true}
+                                                   from a click on Friday's own page
   GET    /api/goals/<goal_id>/receipts            signed proof-of-work receipts
+  GET    /api/goals/summary                       the Goals card (?finished=1 adds archived)
   GET    /api/goals/review                        latest weekly review doc
   POST   /api/goals/review/run                    force-run the weekly review job now
 
@@ -57,6 +62,18 @@ from agent_friday.user_errors import message_only
 
 goals_bp = Blueprint("goals", __name__)
 
+#: Milestone fields only Friday itself writes. A request names a milestone's
+#: work; it never sets how far that work got (a milestone posted as already
+#: running or done would be settled or counted as if Friday had done it).
+_SERVER_MILESTONE_FIELDS = ("status", "done_at", "verification", "approval_id", "attempts",
+                            "artifacts", "run", "last_run", "blocker", "last_blocker")
+
+
+def _requested_milestone(m):
+    if not isinstance(m, dict):
+        return {}
+    return {k: v for k, v in m.items() if k not in _SERVER_MILESTONE_FIELDS}
+
 
 # ── A press on this PC's own screen ────────────────────────────────────────
 # Approving a card over HTTP is a press on a card in Friday's page, and it counts
@@ -95,9 +112,18 @@ def desk_where():
 @goals_bp.route("/api/goals", methods=["GET"])
 def list_goals_route():
     status = request.args.get("status")
-    if status and status not in _goals.STATUSES:
-        return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)}"}), 400
-    return jsonify({"ok": True, "goals": _goals.list_goals(status=status)})
+    if status and status not in _goals.STATUSES + _goals.LEGACY_STATUSES + ("live",):
+        return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)} or 'live'"}), 400
+    return jsonify({"ok": True, "goals": _goals.list_goals(status=status),
+                    "unreadable": _goals.unreadable_goals()})
+
+
+@goals_bp.route("/api/goals/summary", methods=["GET"])
+def goals_summary_route():
+    """The Goals card: every goal with its state, what each milestone waits
+    on, and the moves the owner can make (§17.13)."""
+    include = request.args.get("finished") in ("1", "true", "yes")
+    return jsonify({"ok": True, **_goals.summaries(include_finished=include)})
 
 
 @goals_bp.route("/api/goals", methods=["POST"])
@@ -111,13 +137,14 @@ def create_goal_route():
     if verification_mode not in ("auto", "manual"):
         return jsonify({"ok": False, "error": "verification_mode must be 'auto' or 'manual'"}), 400
     status = data.get("status", "proposed")
-    if status not in _goals.STATUSES:
-        return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)}"}), 400
+    if status not in ("proposed", "draft", "approved", "active", "paused"):
+        return jsonify({"ok": False, "error": "a new goal starts proposed, approved, active or paused"}), 400
     try:
         goal = _goals.create_goal(
             title=title, description=data.get("description", ""),
             owner=data.get("owner", "owner"), deadline=data.get("deadline"),
-            milestones=data.get("milestones"), success_criteria=data.get("success_criteria", ""),
+            milestones=[_requested_milestone(m) for m in (data.get("milestones") or [])],
+            success_criteria=data.get("success_criteria", ""),
             linked_schedules=data.get("linked_schedules"), linked_chains=data.get("linked_chains"),
             budget_cap_mψ=data.get("budget_cap_mψ", 0),
             approval_required=bool(data.get("approval_required", False)),
@@ -125,6 +152,62 @@ def create_goal_route():
         )
     except Exception as e:
         return api_error(e, "Couldn't create the goal", 400, shape="ok")
+    return jsonify({"ok": True, "goal": goal}), 201
+
+
+@goals_bp.route("/api/goals/drafts", methods=["GET"])
+@login_required
+def goal_drafts_route():
+    """Goal drafts Friday wrote from conversation (draft_goal), waiting for
+    the owner: each with its questions, plain summary and summary_id."""
+    from agent_friday.services import goal_tools
+    return jsonify({"ok": True, "drafts": goal_tools.drafts()})
+
+
+@goals_bp.route("/api/goals/drafts/<draft_id>", methods=["DELETE"])
+@login_required
+def goal_draft_discard_route(draft_id):
+    from agent_friday.services import goal_tools
+    if not goal_tools.discard(str(draft_id)[:40]):
+        return jsonify({"ok": False, "error": "no such draft"}), 404
+    return jsonify({"ok": True})
+
+
+@goals_bp.route("/api/goals/draft", methods=["POST"])
+@login_required
+def draft_goal_route():
+    """§17.4: what Friday understood, the questions it still needs answered,
+    and the goal in plain words. Creates nothing."""
+    from agent_friday.services import goal_definition
+    spec = request.get_json(silent=True)
+    if not isinstance(spec, dict):
+        return jsonify({"ok": False, "error": "send the goal as a JSON object"}), 400
+    return jsonify({"ok": True, **goal_definition.draft(spec)})
+
+
+@goals_bp.route("/api/goals/define", methods=["POST"])
+@login_required
+def define_goal_route():
+    """Create the goal the owner confirmed: {"goal": <the same spec>,
+    "summary_id": <from /api/goals/draft>}. Refused (409) while a question is
+    open or when the goal is not the one whose summary was confirmed."""
+    from agent_friday.services import goal_definition
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("goal"), dict):
+        return jsonify({"ok": False, "error": "send {goal, summary_id}"}), 400
+    # The owner's yes to the summary is a click in Friday's own window: a
+    # program on this PC can draft a goal, but cannot confirm one for them.
+    if not _screen_click.screen_session(request):
+        return jsonify({"ok": False, "error": "needs_screen_click",
+                        "message": "Confirm a new goal from the Goals card in Friday's window."}), 403
+    try:
+        goal = _goals.define_goal(body["goal"], body.get("summary_id"))
+    except goal_definition.DefinitionRefused as e:
+        return api_error(e, "Couldn't create the goal", 409, shape="ok")
+    if isinstance(body.get("draft_id"), str):
+        # A draft Friday wrote from conversation is used up once confirmed.
+        from agent_friday.services import goal_tools
+        goal_tools.discard(body["draft_id"][:40])
     return jsonify({"ok": True, "goal": goal}), 201
 
 
@@ -140,7 +223,21 @@ def get_goal_route(goal_id):
 @login_required
 def update_goal_route(goal_id):
     patch = request.get_json(silent=True) or {}
-    goal = _goals.update_goal(goal_id, patch)
+    if not isinstance(patch, dict):
+        return jsonify({"ok": False, "error": "send a JSON object"}), 400
+    if "autonomy" in patch:
+        # Letting Friday do more on her own is the owner's click, never a
+        # request from a program (tightening needs no click).
+        from agent_friday.services import goal_definition
+        current = _goals.get_goal(goal_id)
+        if current is not None and goal_definition.loosens(current.get("autonomy"), patch["autonomy"]) \
+                and not _screen_click.screen_session(request):
+            return jsonify({"ok": False, "error": "needs_screen_click",
+                            "message": "Allow more from the Goals card in Friday's window."}), 403
+    try:
+        goal = _goals.update_goal(goal_id, patch)
+    except ValueError as e:
+        return api_error(e, "Couldn't update the goal", 400, shape="ok")
     if not goal:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "goal": goal})
@@ -151,7 +248,7 @@ def update_goal_route(goal_id):
 def transition_goal_route(goal_id):
     data = request.get_json(silent=True) or {}
     new_status = (data.get("status") or "").strip()
-    if new_status not in _goals.STATUSES:
+    if new_status not in _goals.STATUSES + _goals.LEGACY_STATUSES:
         return jsonify({"ok": False, "error": f"status must be one of {sorted(_goals.STATUSES)}"}), 400
     try:
         goal = _goals.transition_goal(goal_id, new_status, reason=data.get("reason", ""))
@@ -168,7 +265,7 @@ def add_milestone_route(goal_id):
     data = request.get_json(silent=True) or {}
     if not (data.get("name") or "").strip():
         return jsonify({"ok": False, "error": "milestone name is required"}), 400
-    goal = _goals.add_milestone(goal_id, data)
+    goal = _goals.add_milestone(goal_id, _requested_milestone(data))
     if not goal:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "goal": goal}), 201
@@ -182,6 +279,27 @@ def run_milestone_route(goal_id, milestone_id):
         # goal/milestone not found, or goal not active — a request-shape problem
         return jsonify(public_result(result, "Couldn't run the milestone")), 404 if "not found" in (result.get("error") or "") else 409
     return jsonify(public_result(result, "Couldn't run the milestone")), 200
+
+
+@goals_bp.route("/api/goals/<goal_id>/milestones/<milestone_id>/restart", methods=["POST"])
+@login_required
+def restart_milestone_route(goal_id, milestone_id):
+    """Start again a milestone that a restart or a failed run stopped. Its
+    earlier attempt had begun, so a step such as a send may already have
+    happened: the confirmation must be a click on Friday's own page, never a
+    word or a program that names itself the owner (services/screen_click)."""
+    data = request.get_json(silent=True) or {}
+    confirm = data.get("confirm_unknown_outcome") is True
+    if confirm and not _screen_click.screen_session(request):
+        return jsonify({"ok": False, "error": "needs_screen_click",
+                        "message": "Starting this again is confirmed with a click in Friday's own window."}), 403
+    result = _goals.restart_milestone(goal_id, milestone_id, confirm_unknown_outcome=confirm)
+    if result.get("status") == "not_found":
+        return jsonify({"ok": False, "error": "not found"}), 404
+    if not result.get("ok"):
+        return jsonify({"ok": False, "status": result.get("status"),
+                        "message": message_only(result.get("error") or "")}), 409
+    return jsonify(public_result(result, "Couldn't start the milestone again")), 200
 
 
 @goals_bp.route("/api/goals/<goal_id>/receipts", methods=["GET"])
@@ -579,6 +697,9 @@ _GRANT_LABELS = {
     "content_create_post": "Schedule a new social post",
     "content_schedule_post": "Schedule an existing social post",
     "delete_task": "Delete tasks",
+    "complete_task": "Complete Google Tasks",
+    "create_task": "Create Google Tasks",
+    "update_task": "Change Google Tasks",
     "install_package": "Install software",
     "run_command": "Run commands that change things",
     "run_sandboxed": "Run Python code in the sandbox",

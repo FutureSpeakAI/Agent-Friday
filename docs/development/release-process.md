@@ -107,8 +107,37 @@ The full matrix, with what each path can and cannot do, is in
    `RELEASE_NOTES.md`. It is public the moment it is created. Pushing the tag
    is the release decision.
 
-The release job runs only after `fresh-install` and every `upgrade` leg have
-passed on the tag. Before it publishes it adds the `Build sequence: N` line to
+The release job runs only after `fresh-install`, every `upgrade` leg,
+`tests-green` and `acceptance` have passed on the tag. `tests-green` runs
+`scripts/release_gate.py`, which waits for the `tests` and `codeql` workflows
+on the tag's exact commit (both also run on the tag push itself) and refuses
+unless both are green there; a pull request run does not count, because it
+tested a merge rather than that commit. The release job asks the gate once
+more immediately before `gh release create`, so step 5 is enforced by CI and
+not only by this document. Green also means no open high or critical
+code-scanning alert on the tag (a CodeQL run ends green even when it finds
+something), and the publish step checks that the tag still names the commit
+that was gated. A failed run on that commit blocks the release until it is
+re-run green (a re-run replaces its conclusion; a fresh manual run does not).
+
+A tag that is not a beta (anything but `vX.Y.Z-beta.N`, release candidates
+included) is a public release, and it also needs the section 34
+release-acceptance checklist all green (north-star amendment A26). The
+`acceptance` job runs `scripts/release_acceptance.py`, and the publish step
+runs it again. It reads `docs/release/acceptance-34.json`, which lists every
+section 34 row once. Before such a tag, record each row's result: `pass` with
+its `evidence` (the run, test or report that shows it), and set `verified_for`
+to the version being released, since results recorded for one version do not
+carry over to the next. A row is exempt only by the amendment that covers it
+(A10 deferred, A11 moved, A12 removed); those exemptions are written in the
+script, so editing the checklist alone cannot exempt a row. Betas pass this
+gate (A19) and go through every other check as before. The checklist is
+readiness; the release stays the owner's call (A7).
+
+The gate lives in the workflow file at the tagged commit, so it binds only
+tags on commits that carry it. Protect `refs/tags/v*` with a tag ruleset
+(Settings → Rules) so only the release owners can create or move a version
+tag. Before it publishes it adds the `Build sequence: N` line to
 the notes if it is missing, replaces the SHA-256 placeholder with the real
 hash (and fails if any placeholder is left), and writes
 `release-manifest.json`. It publishes the exe, its `.sha256` and the manifest.

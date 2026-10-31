@@ -1,4 +1,4 @@
-﻿"""
+"""
 Egress Gate — the security boundary for all outbound cloud API calls.
 
 seal_outbound(payload, provider) runs immediately before EVERY cloud HTTP call,
@@ -50,9 +50,11 @@ only as a fallback for non-registry provider strings.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import logging
 import os
+import uuid
 import threading
 import time
 from pathlib import Path
@@ -590,6 +592,24 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
             entry["turn_id"] = _turn
     except Exception:
         pass
+    _call = _CALL.get()
+    if _call is not None:
+        # The field row belongs to one send: its call row (written when the
+        # send is sealed) carries the §29.6 fields for the whole payload.
+        entry["call_id"] = _call["call_id"]
+        if _call.get("model"):
+            entry["model"] = _call["model"]
+        _call["fields"] += 1
+        if action in ("redact", "drop", "block"):
+            _call["withheld"] += 1
+        try:
+            from agent_friday.services import context_manifest as _cm
+            _cm.tally(_call, field, entry["tier"], action)
+        except Exception:
+            pass
+        _grant = _grant_marker(reason)
+        if _grant:
+            _call["grants"].add(_grant)
     verdict = "ALLOW" if action == "allow" else "BLOCK"
     # Structured log (survives pythonw / no-console launches). INFO for allow,
     # WARNING for a block so a withheld leak is visible even at a raised log level.
@@ -618,6 +638,303 @@ def _log(provider: str, field: str, tier: int, action: str, reason: str,
                 f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
+
+
+# ── The egress ledger's call rows (north star §29.6, BD-15 slice P2) ─────────
+# Every send that leaves through seal_outbound, gate_text, gate_worker_payload
+# or a stand-alone field gate gets ONE call row beside its field rows:
+# destination, purpose, context-manifest id, the sensitivity classes seen, how
+# many fields were withheld, the grants that let otherwise restricted content
+# through, a fingerprint of the content the gate released, the time, the model
+# and the result. The row is written when the gate releases the content to the
+# caller, before the provider answers: "sent" means released to be sent.
+#
+# THE FINGERPRINT is HMAC-SHA256 of the released content in canonical JSON,
+# keyed with the governance key. Keyed, so nobody who can read the ledger can
+# confirm a guess at a short send ("yes", a search query) by hashing it. It
+# proves which content the gate released; the HTTP client serialises that same
+# content again (its own key order and spacing), so it is not a hash of the
+# bytes on the wire. Off the record no fingerprint is written at all.
+#
+# The words themselves are never in the ledger. By the owner's ruling A20 the
+# full content is kept by default beside it, encrypted, in
+# services/sent_text_store under the same fingerprint (the owner can switch to
+# fingerprints only); off the record nothing is kept.
+
+_CALL: contextvars.ContextVar = contextvars.ContextVar("egress_call", default=None)
+
+#: The largest payload the gate lets leave in one call (§26.7 payload-size
+#: check). Images travel inside model payloads, so this is generous (above the
+#: largest provider request limit); anything larger is refused and recorded,
+#: never truncated silently.
+MAX_PAYLOAD_BYTES = int(os.environ.get("FRIDAY_EGRESS_MAX_PAYLOAD_BYTES", str(48 * 1024 * 1024)))
+
+
+def _grant_marker(reason: str) -> str:
+    """A short, content-free name for the grant a field row relied on."""
+    r = str(reason or "")
+    if r.startswith("owner-released"):
+        return "owner released on its card"
+    if "file grant" in r or "file-grant" in r:
+        return "file permission"
+    if r.startswith("trusted-self-authored"):
+        return "Friday's own words"
+    return ""
+
+
+def _off_record_now(*, unknown: bool = False) -> bool:
+    """Whether the owner is off the record. `unknown` is the answer when it
+    can't be told: the call row passes True (no fingerprint is written when
+    it can't be sure), the purpose words keep False (they never claim it)."""
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.active())
+    except Exception:
+        return unknown
+
+
+def _purpose() -> str:
+    """Why this send happened, in words that never quote the content."""
+    if _off_record_now():
+        return "off the record"
+    try:
+        from agent_friday.services import turn_plan as _tp
+        if _tp.current_turn_id():
+            return "answering you"
+    except Exception:
+        pass
+    try:
+        from agent_friday.services import task_journal as _tj
+        if _tj.current_task():
+            return "a background task"
+    except Exception:
+        pass
+    return "background work"
+
+
+def _destination(provider: str) -> str:
+    """The host the provider sends to, when the registry knows it."""
+    try:
+        from urllib.parse import urlparse
+        from agent_friday.services.provider_registry import get_provider_registry
+        p = get_provider_registry().get_provider((provider or "").lower().strip())
+        url = (p or {}).get("base_url") if isinstance(p, dict) else getattr(p, "base_url", None)
+        host = urlparse(str(url or "")).hostname
+        if host:
+            return host
+    except Exception:
+        pass
+    return str(provider or "unknown")
+
+
+def _canonical(obj: Any) -> str:
+    if isinstance(obj, str):
+        return obj
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _fingerprint(obj: Any) -> tuple:
+    """(keyed fingerprint hex or None, byte length, canonical text) of the
+    content the gate released. None when the governance key is unavailable:
+    an unkeyed hash would let anyone confirm guesses, so none is written."""
+    text = _canonical(obj)
+    raw = text.encode("utf-8")
+    try:
+        import hmac as _hmac
+        from agent_friday.governance.proof_of_integrity import get_governance_key
+        key = get_governance_key()
+        fp = _hmac.new(key, b"egress-fingerprint\x00" + raw, hashlib.sha256).hexdigest()
+    except Exception:
+        fp = None
+    return fp, len(raw), text
+
+
+def _open_call(provider: str, model: str, via: str, *, joinable: bool = False):
+    """Start one send's row. Inside a joinable send (gate_worker_payload, which
+    seals the body and then gates its prompt) the inner steps are part of the
+    same send and open nothing. Any other send made while one is being sealed
+    (the judgment gate asking a cloud judge, say) is its own send."""
+    cur = _CALL.get()
+    if cur is not None and cur.get("joinable"):
+        return None
+    return _CALL.set({"call_id": "eg-" + uuid.uuid4().hex[:16], "provider": provider,
+                      "model": model or "", "via": via, "fields": 0, "withheld": 0,
+                      "grants": set(), "joinable": joinable, "nested": cur is not None})
+
+
+def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
+                note: str = "") -> dict | None:
+    """Write the call row and, if the owner chose it, keep the exact text."""
+    if token is None:
+        return None
+    call = _CALL.get()
+    _CALL.reset(token)
+    if call is None:
+        return None
+    off = _off_record_now(unknown=True)
+    entry: dict[str, Any] = {
+        "ts": time.time(), "kind": "call", "call_id": call["call_id"],
+        # Readers that only know field rows see a row they can skip by its
+        # action; it is never an "allow" or a "block" of a field.
+        "action": "call", "field": "(the whole send)", "tier": "CALL",
+        "provider": call["provider"], "model": call["model"], "via": call["via"],
+        "destination": call.get("destination") or _destination(call["provider"]), "purpose": _purpose(),
+        "fields": call["fields"], "withheld": call["withheld"],
+        "grants": sorted(call["grants"]), "result": result,
+    }
+    if call.get("channel"):
+        entry["channel"] = call["channel"]
+        if call.get("recipients") is not None:
+            entry["recipients"] = int(call["recipients"])
+    try:
+        from agent_friday.services import turn_plan as _tp
+        _turn = _tp.current_turn_id()
+        if _turn:
+            entry["turn_id"] = _turn
+    except Exception:
+        _turn = None
+    # One manifest per assembly (§12.5, §14.3): a turn that calls a model
+    # three times has three, each linked back to the turn by its turn_id.
+    entry["manifest_id"] = "cm-" + call["call_id"]
+    if note:
+        entry["note"] = note[:200]
+    entry["text_kept"] = False
+    if sent is not None:
+        fp, size, text = _fingerprint(sent)
+        entry["bytes"] = size
+        if fp and not off:
+            entry["payload_fingerprint"] = fp
+            entry["fingerprint_alg"] = "hmac-sha256"
+            # Kept only for sends recorded in the real ledger (a self-test
+            # probe writes to its own throwaway log and is never kept).
+            real = log_path is None or Path(log_path) == Path(_DEFAULT_LOG)
+            try:
+                from agent_friday.services import sent_text_store as _sts
+                entry["text_kept"] = bool(real and _sts.keep(fp, text, provider=call["provider"],
+                                                             model=call["model"], purpose=entry["purpose"]))
+            except Exception:
+                entry["text_kept"] = False
+    dest = log_path or _DEFAULT_LOG
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with _LOG_LOCK:
+            with open(dest, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+    try:
+        # Real sends only: a self-test or probe battery (its own log, often
+        # os.devnull) writes no manifest anywhere.
+        if log_path is None or Path(log_path) == Path(_DEFAULT_LOG):
+            from agent_friday.services import context_manifest as _cm
+            _cm.write(_cm.build(call, entry, off_record=off))
+    except Exception:
+        pass
+    return entry
+
+
+#: The sends that leave through a service rather than a model (§26.7: no
+#: unannounced egress). Each has its own name in the ledger and on the map.
+SERVICE_CHANNELS = ("mail", "mcp", "calendar", "tasks", "contacts", "publishing", "web_publish",
+                    "web_fetch", "web_search", "news_search",
+                    # P5: the channels the map used to list as not recorded.
+                    "sms", "phone_call", "chat_channel", "mail_changes", "mail_draft", "news_feed",
+                    "unsubscribe", "federation", "career_fetch")
+
+
+def result_for_error(exc: BaseException) -> str:
+    """How a send that raised is recorded. "failed" only when the far end
+    answered with a refusal (an HTTP 4xx), so nothing was acted on; a timeout,
+    a dropped connection or a server error may have been acted on, so it is
+    "sent_unconfirmed" and the words are kept like a send."""
+    for obj, attr in ((exc, "code"), (exc, "status"), (exc, "status_code"),
+                      (getattr(exc, "resp", None), "status"),
+                      (getattr(exc, "response", None), "status_code")):
+        if obj is None:
+            continue
+        try:
+            v = int(getattr(obj, attr, None))
+        except (TypeError, ValueError):
+            continue
+        if 100 <= v <= 599:
+            return "failed" if 400 <= v < 500 else "sent_unconfirmed"
+    return "sent_unconfirmed"
+
+
+def record_address(channel: str, url: str, result: Any = "sent", *, content: Any = None,
+                   prefix: str = "web") -> dict | None:
+    """A request whose address is what leaves (a feed, a page, an unsubscribe
+    link, a peer's card), recorded like any service send. `result` may be the
+    exception the send raised (see result_for_error). Never raises."""
+    try:
+        if isinstance(result, BaseException):
+            result = result_for_error(result)
+        from urllib.parse import urlparse
+        host = urlparse(str(url or "")).hostname or "a website"
+        return record_service_send(channel, f"{prefix}:{host}"[:80], destination=host,
+                                   content=content if content is not None else {"url": url},
+                                   result=result, part="address")
+    except Exception:
+        return None
+
+
+def record_blocked(provider: str, reason: str, *, model: str = "", log_path: Path | None = None) -> None:
+    """A send stopped before the gate could seal it (its startup self-test failed): one call row,
+    result "blocked", so the egress ledger shows every send that was refused, not only the gated
+    ones (NS-34.6-7). Never raises."""
+    try:
+        tok = _open_call(provider, model, "blocked:" + str(reason or "")[:40])
+        _close_call(tok, None, result="blocked", log_path=log_path, note=str(reason or ""))
+    except Exception:
+        pass
+
+
+def record_service_send(channel: str, provider: str, *, destination: str = "", content: Any = None,
+                        result: str = "sent", recipients: int | None = None, note: str = "",
+                        part: str = "") -> dict | None:
+    """One ledger row (and its context manifest) for a send that leaves
+    through a service: mail, a tool server, a calendar/tasks/contacts write,
+    a post, a page Friday fetches, a search. The same row a model call gets:
+    destination, purpose, the time, the result, a keyed fingerprint of what
+    left and, by the owner's default (A20), its full content kept encrypted.
+    Never raises; a send is never stopped because its record failed.
+
+    `content` is what left (the message, the arguments, the URL); it is not
+    written into the ledger, only fingerprinted and, unless the owner chose
+    fingerprints only or is off the record, kept encrypted beside it."""
+    try:
+        if channel not in SERVICE_CHANNELS:
+            channel = "other"
+        if _off_record_now(unknown=True):
+            # Off the record the ledger keeps that a send happened and by
+            # which channel, not where (a website's or a tool server's name).
+            provider, destination = channel, "(off the record)"
+        cur = _CALL.get()
+        token = _CALL.set({"call_id": "eg-" + uuid.uuid4().hex[:16], "provider": str(provider or channel)[:80],
+                           "model": "", "via": "service:" + channel, "fields": 0, "withheld": 0,
+                           "grants": set(), "joinable": False, "nested": cur is not None,
+                           "channel": channel, "destination": str(destination or "")[:200],
+                           "recipients": recipients})
+        try:
+            from agent_friday.services import context_manifest as _cm
+            _cm.tally(_CALL.get(), part or channel, "SERVICE",
+                      "allow" if result in ("sent", "sent_with_parts_withheld", "sent_unconfirmed") else "block")
+        except Exception:
+            pass
+        # "sent_unconfirmed": it went out and no answer came back (a timeout).
+        left = result in ("sent", "sent_with_parts_withheld", "sent_unconfirmed")
+        # Only what actually left is fingerprinted and kept.
+        return _close_call(token, content if left else None, result=str(result or "sent")[:40], note=note)
+    except Exception as e:
+        _dlog.warning("service send not recorded (%s): %s", channel, type(e).__name__)
+        return None
+
+
+def _result_of(out: Any) -> str:
+    c = _CALL.get()
+    if out in (None, ""):
+        return "nothing_sent"
+    return "sent_with_parts_withheld" if (c and c["withheld"]) else "sent"
 
 
 def record_binary_egress(provider: str, field: str, *, action: str,
@@ -652,6 +969,14 @@ def record_binary_egress(provider: str, field: str, *, action: str,
         "reason": reason,
         "bytes": int(byte_len or 0),
     }
+    _call = _CALL.get()
+    if _call is not None:
+        entry["call_id"] = _call["call_id"]
+        try:
+            from agent_friday.services import context_manifest as _cm
+            _cm.tally(_call, field, "UNCLASSIFIABLE", action)
+        except Exception:
+            pass
     _dlog.log(
         logging.INFO if action == "allow" else logging.WARNING,
         "%s provider=%s field=%s tier=UNCLASSIFIABLE bytes=%d (%s)",
@@ -848,9 +1173,35 @@ def _owner_released(text: str, provider: str) -> bool:
 
 def _gate_text(text: str, provider: str, field: str,
                log_path: Path | None = None) -> str:
-    """See _gate_text_held; this opens the scope whose held spans become one card."""
-    with _held_scope(provider):
-        return _gate_text_held(text, provider, field, log_path)
+    """See _gate_text_held; this opens the scope whose held spans become one card.
+
+    Called on its own (a tool's query, a voice line, a calendar write: the
+    sites that gate one field rather than a whole payload), it is a send of
+    its own and gets its own ledger row; inside a sealed payload it is one
+    field of that send.
+
+    A tool result in the data envelope (services/untrusted_input) is judged by
+    what is inside it, exactly as an unwrapped one is (so a JSON result still
+    gets its field-wise rescue), and leaves wrapped again. Withheld whole, it
+    is "" as before, and the caller puts its own withheld notice in its place.
+    The envelope's contents are the send: its ledger row is the inner call's.
+    Envelopes nested inside one another are peeled in one linear pass
+    (untrusted_input.unwrap_all) and the output leaves inside exactly one."""
+    from agent_friday.services import untrusted_input as _ui
+    inner, depth = _ui.unwrap_all(text)
+    body = inner if depth else text
+    standalone = _CALL.get() is None
+    call_tok = _open_call(provider, "", "field:" + str(field)[:40]) if standalone else None
+    try:
+        with _held_scope(provider):
+            out = _gate_text_held(body, provider, field, log_path)
+    except BaseException:
+        _close_call(call_tok, None, result="blocked", log_path=log_path)
+        raise
+    _close_call(call_tok, out, result=_result_of(out), log_path=log_path)
+    if depth:
+        return _ui.wrap(out) if out else ""
+    return out
 
 
 def _gate_text_held(text: str, provider: str, field: str,
@@ -967,11 +1318,14 @@ def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> st
         changed = _changed_paths(parsed, gated)
         if changed:
             shown = ", ".join(changed[:8]) + (" and %d more" % (len(changed) - 8) if len(changed) > 8 else "")
-            gated["privacy_gate"] = (
+            # First in the result, so a cut that keeps the head (voice, compaction) keeps it too.
+            # this notice always wins over a key of that name already in the result
+            gated = dict({"privacy_gate": (
                 "The privacy gate withheld %d part(s) of this result because they were classified "
                 "sensitive; they stayed on this device: %s. Tell the owner which items (which message "
                 "or field) were withheld and why; they can be read on a local seat. Do not guess what "
-                "the withheld parts said." % (len(changed), shown))
+                "the withheld parts said." % (len(changed), shown))},
+                         **{k: v for k, v in gated.items() if k != "privacy_gate"})
             if mail is not None:
                 # Money paragraphs: the owner is shown exactly that text and asked (no silent hold).
                 try:
@@ -1052,7 +1406,13 @@ def _gate_text_span(text: str, provider: str, field: str,
     try:
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
-    except Exception:
+    except Exception as _floor_err:
+        if type(_floor_err).__name__ == "NeverSendListUnreadable":
+            # Say what actually happened: the owner's list could not be read (not "your text
+            # matched it"), and nothing is sent until it can be.
+            _log(provider, field, Tier.SENSITIVE, "block",
+                 "the never-send list could not be read - payload blocked", log_path)
+            raise NeverSendBlocked(str(_floor_err))
         # The floor that cannot be checked holds the payload: a floor that
         # opens when its check breaks is not a floor.
         _never = ["the never-send check could not run"]
@@ -1203,20 +1563,61 @@ def _gate_text_span(text: str, provider: str, field: str,
     return _redact_placeholder(tier)
 
 
+def _gate_loose_text(text: str, provider: str, field: str, log_path: Path | None = None) -> str:
+    """Text found where the gate did not expect it (NS-34.6-8), gated like message content."""
+    if LOCAL_ONLY_MARK in text:
+        _log(provider, field, Tier.SENSITIVE, "block",
+             "local-only result withheld from a cloud model", log_path)
+        return _LOCAL_ONLY_WITHHELD
+    g = _gate_text(text, provider, field, log_path)
+    return g if (g or not text) else _MESSAGE_WITHHELD
+
+
 def _gate_messages(messages: list, provider: str,
                    log_path: Path | None = None, model: str = "") -> list:
     """Gate a list of message dicts. Returns a new list; never mutates input.
 
     `model` is the model the messages go to; a replayed public query is the
-    seat's own text only for that same (provider, model) (_gate_tool_args)."""
+    seat's own text only for that same (provider, model) (_gate_tool_args).
+
+    A tool's result is recorded under the tool's name (NS-34.6-10: which connector's
+    content was held), in either wire shape: an OpenAI-compatible `role: "tool"` message
+    answering a `tool_calls` id, or an Anthropic `tool_result` block answering a
+    `tool_use` id. A result withheld whole is replaced by the tool-result marker, never
+    by the marker that speaks of the user's own message."""
+    names: dict = {}
     gated = []
     for i, msg in enumerate(messages):
+        if isinstance(msg, str):
+            # A bare string where a message dict belongs (a malformed payload,
+            # NS-34.6-8): gated like the content it is, never passed whole.
+            gated.append(_gate_loose_text(msg, provider, f"message[{i}]", log_path))
+            continue
+        # a result answers the nearest call before it with that id (ids can repeat across turns)
+        names.update(_tool_names([msg]) if isinstance(msg, dict) and msg.get("role") != "tool" else {})
         if not isinstance(msg, dict):
-            gated.append(msg)
+            if msg is None or isinstance(msg, (bool, int, float)):
+                gated.append(msg)          # carries no text
+            else:
+                # Any other shape (a list, a tuple, an object) could hold text the
+                # gate cannot read reliably: withheld, fail closed.
+                _log(provider, f"message[{i}]", Tier.SENSITIVE, "block",
+                     "malformed message (%s) withheld" % type(msg).__name__, log_path)
+                gated.append(_MESSAGE_WITHHELD)
             continue
         out = msg
         if "content" in msg:
             content = msg["content"]
+            if isinstance(content, dict):
+                # One content block where a list or a string belongs: its text is
+                # gated; a block with no text field the gate can read is withheld.
+                if isinstance(content.get("text"), str):
+                    out = {**out, "content": {**content, "text": _gate_loose_text(
+                        content["text"], provider, f"message[{i}].content.text", log_path)}}
+                else:
+                    _log(provider, f"message[{i}].content", Tier.SENSITIVE, "block",
+                         "malformed content block withheld", log_path)
+                    out = {**out, "content": _MESSAGE_WITHHELD}
             if isinstance(content, str) and LOCAL_ONLY_MARK in content:
                 # A result the local model produced on this PC (a handoff the
                 # owner approved): it never leaves the device, under any consent.
@@ -1225,13 +1626,18 @@ def _gate_messages(messages: list, provider: str,
                 gated.append({**out, "content": _LOCAL_ONLY_WITHHELD})
                 continue
             if isinstance(content, str):
-                _g = _gate_text(content, provider, f"message[{i}].content", log_path)
+                is_result = msg.get("role") == "tool"
+                field = (f"message[{i}].tool_result:{_tool_label(names.get(msg.get('tool_call_id')))}"
+                         if is_result else f"message[{i}].content")
+                _g = _gate_text(content, provider, field, log_path)
                 if content and not _g:
                     # The Anthropic API rejects empty message content ("all messages
                     # must have non-empty content"), turning a withheld turn into a
                     # hard 400 for the whole call. Substitute a marker the model can
-                    # act on — it still sees NONE of the withheld content.
-                    _g = _MESSAGE_WITHHELD
+                    # act on — it still sees NONE of the withheld content. A tool's
+                    # result gets the tool-result marker: the other one tells the
+                    # model the USER's message was sensitive, which is not what happened.
+                    _g = _TOOL_RESULT_WITHHELD if is_result else _MESSAGE_WITHHELD
                 out = {**out, "content": _g}
             elif isinstance(content, list):
                 new_parts = []
@@ -1241,6 +1647,11 @@ def _gate_messages(messages: list, provider: str,
                         _log(provider, f"message[{i}].content[{j}].text", Tier.SENSITIVE, "block",
                              "local-only result withheld from a cloud model", log_path)
                         new_parts.append({**part, "text": _LOCAL_ONLY_WITHHELD})
+                    elif isinstance(part, dict) and part.get("type") == "text" and msg.get("role") == "tool":
+                        _txt = part.get("text", "")
+                        _gp = _gate_text(_txt, provider, f"message[{i}].tool_result[{j}]:%s"
+                                         % _tool_label(names.get(msg.get("tool_call_id"))), log_path)
+                        new_parts.append({**part, "text": _gp if (_gp or not _txt) else _TOOL_RESULT_WITHHELD})
                     elif isinstance(part, dict) and part.get("type") == "text":
                         new_parts.append({
                             **part,
@@ -1251,11 +1662,24 @@ def _gate_messages(messages: list, provider: str,
                         })
                     elif isinstance(part, dict) and part.get("type") == "tool_result":
                         new_parts.append(_gate_tool_result(
-                            part, provider, f"message[{i}].content[{j}]", log_path))
+                            part, provider, f"message[{i}].content[{j}]", log_path,
+                            tool=names.get(part.get("tool_use_id"))))
                     elif isinstance(part, dict) and part.get("type") == "tool_use":
                         new_parts.append(_gate_tool_use(
                             part, provider, f"message[{i}].content[{j}]", log_path,
                             model=model))
+                    elif isinstance(part, str):
+                        # A bare string part (malformed): gated as text.
+                        new_parts.append(_gate_loose_text(part, provider, f"message[{i}].content[{j}]", log_path))
+                    elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                        # A part of a type the gate does not know that still carries
+                        # text (input_text, output_text, a typo'd "type"): its text is gated.
+                        new_parts.append({**part, "text": _gate_loose_text(
+                            part["text"], provider, f"message[{i}].content[{j}].text", log_path)})
+                    elif isinstance(part, (list, tuple)):
+                        _log(provider, f"message[{i}].content[{j}]", Tier.SENSITIVE, "block",
+                             "malformed content part withheld", log_path)
+                        new_parts.append({"type": "text", "text": _MESSAGE_WITHHELD})
                     else:
                         new_parts.append(part)
                 out = {**out, "content": new_parts}
@@ -1382,8 +1806,45 @@ def _changed_paths(old, new, prefix: str = "") -> list:
     return [prefix or "(whole result)"] if isinstance(old, str) and old != new else []
 
 
+def _tool_names(messages: list) -> dict:
+    """{tool call id: tool name} from the calls in `messages` (both wire shapes)."""
+    names = {}
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            if isinstance(tc, dict) and tc.get("id"):
+                names[tc["id"]] = (tc.get("function") or {}).get("name") or tc.get("name")
+        if isinstance(m.get("content"), list):
+            for p in m["content"]:
+                if isinstance(p, dict) and p.get("type") == "tool_use" and p.get("id"):
+                    names[p["id"]] = p.get("name")
+    return names
+
+
+def _tool_label(name) -> str:
+    """A tool's name as the egress log records it: ASCII letters, digits, _ . - only, and only a
+    tool Friday knows (a registered tool or an add-on's mcp_ tool). Any other name a model put in
+    a call is logged as "unregistered", so model-chosen text never lands in the owner's log."""
+    import re as _re
+    import sys as _sys
+    s = _re.sub(r"[^A-Za-z0-9_.-]", "", str(name or ""))[:64]
+    if not s:
+        return "unknown"
+    if s.startswith("mcp_"):
+        return s
+    agent = _sys.modules.get("agent_friday.services.agent")
+    if agent is not None:
+        # a known tool: one with a handler, or one in the ring map (voice-only tools have no
+        # text-chat handler but are Friday's own)
+        known = set(getattr(agent, "CLAUDE_TOOL_HANDLERS", {}) or {}) | set(getattr(agent, "TOOL_RINGS", {}) or {})
+        if known and s not in known:
+            return "unregistered"
+    return s
+
+
 def _gate_tool_result(part: dict, provider: str, field: str,
-                      log_path: Path | None = None) -> dict:
+                      log_path: Path | None = None, tool=None) -> dict:
     """Gate the text inside a tool_result block (file reads, command output —
     whatever a tool pulled mid-loop). Anthropic allows `content` as a plain
     string or a list of typed blocks; non-text blocks (images) pass through
@@ -1392,9 +1853,10 @@ def _gate_tool_result(part: dict, provider: str, field: str,
         out = _gate_text(text, provider, subfield, log_path)
         return _TOOL_RESULT_WITHHELD if (text and out == "") else out
 
+    label = ":" + _tool_label(tool) if tool is not None else ""
     inner = part.get("content")
     if isinstance(inner, str):
-        return {**part, "content": _gate_one(inner, f"{field}.tool_result")}
+        return {**part, "content": _gate_one(inner, f"{field}.tool_result{label}")}
     if isinstance(inner, list):
         new_inner = []
         for k, block in enumerate(inner):
@@ -1402,7 +1864,7 @@ def _gate_tool_result(part: dict, provider: str, field: str,
                 new_inner.append({
                     **block,
                     "text": _gate_one(block.get("text", ""),
-                                      f"{field}.tool_result[{k}]"),
+                                      f"{field}.tool_result[{k}]{label}"),
                 })
             else:
                 new_inner.append(block)
@@ -1468,7 +1930,13 @@ def _gate_tool_prose(text: str, provider: str, field: str,
     try:
         from agent_friday.services import judgment_gate as _jg
         _never = _jg.never_send_hits(text)
-    except Exception:
+    except Exception as _floor_err:
+        if type(_floor_err).__name__ == "NeverSendListUnreadable":
+            # Say what actually happened: the owner's list could not be read (not "your text
+            # matched it"), and nothing is sent until it can be.
+            _log(provider, field, Tier.SENSITIVE, "block",
+                 "the never-send list could not be read - payload blocked", log_path)
+            raise NeverSendBlocked(str(_floor_err))
         # The floor that cannot be checked holds the payload: a floor that
         # opens when its check breaks is not a floor.
         _never = ["the never-send check could not run"]
@@ -1809,10 +2277,20 @@ def gate_text(text: str, provider: str, field: str = "prompt",
     if not _is_cloud(provider, model):
         return text
     tok = _DEST_CLOUD.set(True)
+    call_tok = _open_call(provider, model, "gate_text:" + str(field)[:40])
     try:
-        return _gate_text(text, provider, field, log_path)
+        if len(str(text or "").encode("utf-8")) > MAX_PAYLOAD_BYTES:
+            _log(provider, field, Tier.SENSITIVE, "block",
+                 "text of over %d bytes is over the size limit" % MAX_PAYLOAD_BYTES, log_path)
+            raise RuntimeError("Egress text over the size limit; cloud send blocked.")
+        out = _gate_text(text, provider, field, log_path)
+    except BaseException:
+        _close_call(call_tok, None, result="blocked", log_path=log_path)
+        raise
     finally:
         _DEST_CLOUD.reset(tok)
+    _close_call(call_tok, out, result=_result_of(out), log_path=log_path)
+    return out
 
 
 def gate_worker_payload(
@@ -1871,10 +2349,18 @@ def gate_worker_payload(
             f"send to {base_url!r} blocked. Fix the gate or use a local model."
         )
 
-    sealed = seal_outbound(dict(payload), provider, log_path, model=model)
-    if isinstance(sealed.get("prompt"), str):
-        sealed["prompt"] = gate_text(sealed["prompt"], provider, "prompt",
-                                     log_path, model=model)
+    # One send, one ledger row: sealing the body and gating its prompt are
+    # steps of the same send.
+    call_tok = _open_call(provider, model, "gate_worker_payload", joinable=True)
+    try:
+        sealed = seal_outbound(dict(payload), provider, log_path, model=model)
+        if isinstance(sealed.get("prompt"), str):
+            sealed["prompt"] = gate_text(sealed["prompt"], provider, "prompt",
+                                         log_path, model=model)
+    except BaseException:
+        _close_call(call_tok, None, result="blocked", log_path=log_path)
+        raise
+    _close_call(call_tok, sealed, result=_result_of(sealed), log_path=log_path)
     return sealed
 
 
@@ -2049,6 +2535,31 @@ def seal_outbound(
     if not _is_cloud(provider, model):
         return payload  # stays on-device, no gating needed
 
+    _call_tok = _open_call(provider, model, "seal_outbound")
+    try:
+        _size = len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"))
+    except Exception:
+        _size = MAX_PAYLOAD_BYTES + 1     # a payload that can't be measured doesn't leave
+    if _size > MAX_PAYLOAD_BYTES:
+        # §26.7: a payload over the limit does not leave, and the refusal is
+        # recorded. Never truncated silently.
+        _log(provider, "*", Tier.SENSITIVE, "block",
+             "payload of %d bytes is over the %d-byte limit" % (_size, MAX_PAYLOAD_BYTES), log_path)
+        _close_call(_call_tok, None, result="blocked", log_path=log_path,
+                    note="payload over the size limit")
+        raise RuntimeError("Egress payload over the size limit; cloud send blocked.")
+    try:
+        _sealed = _seal_outbound_inner(payload, provider, log_path, pii_lookup, model)
+    except BaseException:
+        _close_call(_call_tok, None, result="blocked", log_path=log_path,
+                    note="the gate stopped this send")
+        raise
+    _close_call(_call_tok, _sealed, result=_result_of(_sealed), log_path=log_path)
+    return _sealed
+
+
+def _seal_outbound_inner(payload, provider, log_path, pii_lookup, model):
+    """seal_outbound's body: consent, scrub and the gate steps."""
     _unrestricted = is_unrestricted_cloud()
     if _unrestricted:
         # A14: the gate runs and records under unrestricted-cloud consent. The consent widens
@@ -2082,8 +2593,17 @@ def seal_outbound(
 
 def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     """seal_outbound's scrub and gate steps (§5.5), on its copy of the payload."""
+    _m = sealed.get("messages")
+    if isinstance(_m, tuple):
+        sealed["messages"] = list(_m)     # scrubbed and gated like a list (NS-34.6-8)
+    elif isinstance(_m, dict):
+        sealed["messages"] = [_m]         # one message where the list belongs
+    elif _m is not None and not isinstance(_m, (list, str, bytes)) and hasattr(_m, "__iter__"):
+        sealed["messages"] = list(_m)     # a generator or other iterable of messages
     try:
-        for key in ("system", "messages", "prompt", "context"):
+        # `input` (an OpenAI Responses-style payload) and `contents` (Gemini's shape): no
+        # caller builds them today; scrubbed and gated all the same, before anything does.
+        for key in ("system", "messages", "prompt", "context", "input", "contents"):
             if key in sealed and not _unrestricted:
                 sealed[key] = _scrub_all(sealed[key], _lk)
     except Exception as e:
@@ -2106,6 +2626,13 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
         _sys = sealed["system"]
         if isinstance(_sys, str):
             sealed["system"] = _gate_text(_sys, provider, "system", log_path)
+        elif isinstance(_sys, dict):
+            # One block where a string or a list belongs (NS-34.6-8).
+            if isinstance(_sys.get("text"), str):
+                sealed["system"] = {**_sys, "text": _gate_loose_text(_sys["text"], provider, "system.text", log_path)}
+            else:
+                _log(provider, "system", Tier.SENSITIVE, "block", "malformed system block withheld", log_path)
+                sealed["system"] = _MESSAGE_WITHHELD
         elif isinstance(_sys, list):
             _blocks = []
             for _k, _b in enumerate(_sys):
@@ -2113,11 +2640,23 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
                     _blocks.append({**_b, "text": _gate_text(
                         _b.get("text", ""), provider, f"system[{_k}].text",
                         log_path)})
+                elif isinstance(_b, str):
+                    _blocks.append(_gate_loose_text(_b, provider, f"system[{_k}]", log_path))
+                elif isinstance(_b, dict) and isinstance(_b.get("text"), str):
+                    _blocks.append({**_b, "text": _gate_loose_text(
+                        _b["text"], provider, f"system[{_k}].text", log_path)})
                 else:
                     _blocks.append(_b)
             sealed["system"] = _blocks
 
     # Message history (Anthropic format: list of dicts)
+    # A tuple of messages is gated like a list; a bare string where the list
+    # belongs is gated as one message (NS-34.6-8: malformed, never ungated).
+    if "messages" in sealed and isinstance(sealed["messages"], tuple):
+        sealed["messages"] = list(sealed["messages"])
+    if "messages" in sealed and isinstance(sealed["messages"], str):
+        sealed["messages"] = _gate_messages([sealed["messages"]], provider, log_path,
+                                            model=str(model or sealed.get("model") or ""))[0]
     if "messages" in sealed and isinstance(sealed["messages"], list):
         # The seat a replayed public query is checked against: the caller's
         # model, else the model named in the payload itself.
@@ -2138,6 +2677,18 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     # untouched whenever `prompt` was the payload's only content.
     if "prompt" in sealed and isinstance(sealed["prompt"], str):
         sealed["prompt"] = _gate_text(sealed["prompt"], provider, "prompt", log_path)
+    elif "prompt" in sealed and isinstance(sealed["prompt"], (list, tuple, dict)):
+        # A list of prompts (completion APIs take one), or a structured prompt: every
+        # string in it is gated, its shape kept (NS-34.6-8).
+        sealed["prompt"] = _gate_json_value(sealed["prompt"], provider, "prompt", log_path)
+
+    # Other providers' message fields (see the scrub above): every string in them is
+    # gated, the shape kept.
+    for _key in ("input", "contents"):
+        if _key in sealed and isinstance(sealed[_key], str):
+            sealed[_key] = _gate_loose_text(sealed[_key], provider, _key, log_path)
+        elif _key in sealed and isinstance(sealed[_key], (list, tuple, dict)):
+            sealed[_key] = _gate_json_value(sealed[_key], provider, _key, log_path)
 
     # Federation task context (compute_client.py — the only caller today):
     # an arbitrary structured dict of task data, gated the same way a JSON
@@ -2154,6 +2705,31 @@ _SELF_TEST_RESULT = None  # None = not yet run; dict {"ok": bool, ...} once run
 
 
 def startup_self_test() -> dict:
+    """See _startup_self_test. An unreadable never-send list is not a broken gate: it stops every
+    real send per call (until it can be read), so the probe runs without it and the result notes
+    it, instead of refusing all cloud routing until a restart (NS-34.6-7)."""
+    global _SELF_TEST_RESULT
+    try:
+        from agent_friday.services import judgment_gate as _jg
+        tok = _jg.IGNORE_UNREADABLE.set(True)
+    except Exception:
+        _jg, tok = None, None
+    try:
+        out = _startup_self_test()
+    finally:
+        if tok is not None:
+            _jg.IGNORE_UNREADABLE.reset(tok)
+    try:
+        if _jg is not None and _jg._NEVER_CACHE.get("broken") and isinstance(_SELF_TEST_RESULT, dict):
+            _SELF_TEST_RESULT["floor_unreadable"] = True
+            _SELF_TEST_RESULT["note"] = ("the never-send list could not be read; every cloud send stops "
+                                         "until it can be")
+    except Exception:
+        pass
+    return out
+
+
+def _startup_self_test() -> dict:
     """Seal a known-SENSITIVE probe once and record whether the gate withheld it.
 
     Called at server boot: if the gate cannot positively withhold a probe that

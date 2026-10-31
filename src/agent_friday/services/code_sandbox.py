@@ -905,6 +905,166 @@ def _run_posix_shell(argv, workdir: Path, env: dict, timeout_s, memory_mb, cap, 
                                  "no OS isolation on this platform."}}
 
 
+# ── Keeping Low processes out of Friday's own state ─────────────────────────
+#
+# A Low-integrity process can still READ what the owner's account can read
+# (HOST_BOUNDARY_NOTE). Friday's state folder gets a Medium mandatory label with
+# no-read-up and no-write-up, inherited by everything in it, so the sandboxed
+# Python and the no-card read-only commands cannot read it whatever spelling
+# they use. Friday herself (Medium) is unaffected. Her output folders inside it
+# get a protected label without no-read-up, so a read-only command can still
+# read what she made.
+
+_FENCE_SDDL = "S:(ML;OICI;NRNW;;;ME)"
+_OPEN_SDDL = "S:(ML;OICI;NW;;;ME)"
+
+
+def _set_label(api, path, sddl: str, protected: bool) -> None:
+    c, W = api.ctypes, api.W
+    psd = W.LPVOID()
+    if not api.a.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, c.byref(psd), None):
+        raise _err(api, "building a label")
+    try:
+        present, defaulted, sacl = W.BOOL(), W.BOOL(), W.LPVOID()
+        if not api.a.GetSecurityDescriptorSacl(psd, c.byref(present), c.byref(sacl), c.byref(defaulted)):
+            raise _err(api, "reading a label")
+        info = 0x10 | (0x40000000 if protected else 0)   # LABEL [| PROTECTED_SACL]
+        rc = api.a.SetNamedSecurityInfoW(str(path), 1, info, None, None, None, sacl)
+        if rc != 0:
+            raise SandboxError(f"labelling {Path(path).name} failed (Windows error {rc})")
+    finally:
+        api.k.LocalFree(psd)
+
+
+#: Written in the state folder once the walk has labelled what was there; files made
+#: later inherit the label, so the (slow, ~150k items) walk is not repeated each boot.
+_FENCE_MARK = ".low-fence-v1"
+
+
+def fence_from_low(state_dir, open_subdirs=()) -> bool:
+    """Windows: keep Low-integrity processes out of `state_dir` (read and write), leaving
+    `open_subdirs` readable. True when the labels are in place; False elsewhere, when
+    switched off (FRIDAY_FENCE_STATE=0, which also removes the labels), or when
+    Python itself lives inside the folder (the sandbox could not start). Raises on a
+    Windows failure; the caller logs it, and the text rules in action_gate still apply."""
+    if sys.platform != "win32":
+        return False
+    state = Path(state_dir)
+    mark = state / _FENCE_MARK
+    if os.environ.get("FRIDAY_FENCE_STATE", "1").strip() == "0":
+        if mark.exists():
+            unfence_from_low(state, open_subdirs)
+        return False
+    try:
+        rs = state.resolve(strict=False)
+        inside = [p for p in [_python_exe(), *_package_paths()]
+                  if p and str(Path(p).resolve(strict=False)).casefold().startswith(str(rs).casefold())]
+    except Exception:
+        inside = []
+    if inside:
+        return False
+    if mark.exists():
+        return True
+    api = _win_api()
+    # The open folders first (an explicit label beats the inherited one), so there is
+    # no moment when they are closed. PROTECTED_SACL needs SeSecurityPrivilege, so a
+    # plain explicit label is used.
+    for d in open_subdirs:
+        if Path(d).exists():
+            try:
+                _set_label(api, d, _OPEN_SDDL, protected=False)
+            except SandboxError:
+                pass
+    _set_label(api, state, _FENCE_SDDL, protected=False)
+    try:
+        mark.write_text("labelled\n", encoding="ascii")
+    except OSError:
+        pass
+    return True
+
+
+def unfence_from_low(state_dir, open_subdirs=()) -> None:
+    """Remove the labels fence_from_low set (an empty label on the folder and the open
+    folders). The off switch and the way back."""
+    if sys.platform != "win32":
+        return
+    api = _win_api()
+    for d in list(open_subdirs) + [state_dir]:
+        if Path(d).exists():
+            try:
+                _set_label(api, d, "S:", protected=False)
+            except SandboxError:
+                pass
+    try:
+        (Path(state_dir) / _FENCE_MARK).unlink()
+    except OSError:
+        pass
+
+
+# ── Long-running helpers (MCP stdio servers) ────────────────────────────────
+#
+# A connector's stdio server is a program Friday starts and keeps talking to. It
+# needs the network and its own caches, so it is not run at Low integrity; it is
+# put in a job object before its first instruction runs: a memory ceiling per
+# process, a cap on how many processes it may start, and everything it started
+# ends when Friday closes the job (stop, restart, or Friday exiting).
+
+HELPER_MEMORY_MB = 4096
+HELPER_PROCESSES = 32
+#: Popen creation flag: start suspended, so the job holds it before it runs.
+CREATE_SUSPENDED = 0x4
+
+
+def contain_helper(proc, *, memory_mb: int = HELPER_MEMORY_MB,
+                   max_processes: int = HELPER_PROCESSES):
+    """Put a process started with CREATE_SUSPENDED into its own job and let it run.
+    Returns the job handle (keep it; closing it ends the whole tree). Raises
+    SandboxError when the job cannot be made, after killing the process: a helper
+    is never left running unheld."""
+    api = job = None
+    try:
+        api = _win_api()
+        c = api.ctypes
+        job = api.k.CreateJobObjectW(None, None)
+        if not job:
+            raise _err(api, "creating the job object")
+        lim = api.EXTENDED_LIMIT()
+        b = lim.BasicLimitInformation
+        b.LimitFlags = 0x8 | 0x100 | 0x2000        # ACTIVE_PROCESS | PROCESS_MEMORY | KILL_ON_JOB_CLOSE
+        b.ActiveProcessLimit = int(max_processes)
+        lim.ProcessMemoryLimit = int(memory_mb) * 1024 * 1024
+        if not api.k.SetInformationJobObject(job, 9, c.byref(lim), c.sizeof(lim)):
+            raise _err(api, "setting the job limits")
+        handle = api.W.HANDLE(int(proc._handle))
+        if not api.k.AssignProcessToJobObject(job, handle):
+            raise _err(api, "placing the process in its job")
+        ntdll = c.WinDLL("ntdll")
+        ntdll.NtResumeProcess.argtypes = [api.W.HANDLE]
+        if ntdll.NtResumeProcess(handle) != 0:
+            raise SandboxError("the held process could not be resumed")
+        return job
+    except Exception:
+        # Never left behind suspended or half-held.
+        try:
+            proc.kill()
+            proc.wait(5)
+        except Exception:
+            pass
+        if api is not None and job:
+            api.k.CloseHandle(job)
+        raise
+
+
+def release_helper(job) -> None:
+    """Close a helper's job: everything in it ends."""
+    if not job:
+        return
+    try:
+        _win_api().k.CloseHandle(job)
+    except Exception:
+        pass
+
+
 def run_shell(command: str, *, read_only: bool, timeout_s=SHELL_DEFAULT_TIMEOUT_S, output_cap=SHELL_OUTPUT_CAP) -> dict:
     """Run one PowerShell command line held in as described above. Returns a dict (never raises
     for the command's own failures). `ok` is False when the sandbox itself could not be set up;
@@ -919,24 +1079,95 @@ def run_shell(command: str, *, read_only: bool, timeout_s=SHELL_DEFAULT_TIMEOUT_
     processes = SHELL_READ_ONLY_PROCESSES if read_only else SHELL_APPROVED_PROCESSES
     workdir = Path(tempfile.mkdtemp(prefix="friday-shell-"))
     t0 = time.monotonic()
+    session = None
     try:
         argv = _shell_argv(exe, command)
         env = _shell_env(workdir, read_only=read_only)
+        # Network through Friday's loopback allow-list proxy (services/egress_proxy):
+        # a read-only command gets none at all, an approved one only the allowed
+        # hosts, and every connection is recorded. Not a boundary: a tool that
+        # ignores proxy variables goes around it (stated in the result).
+        try:
+            from agent_friday.services import egress_proxy as _ep
+            if read_only:
+                session = _ep.open_session("read-only command", mode="deny")
+            else:
+                session = _ep.open_session("approved command", mode="enforce",
+                                           allow_hosts=_ep.command_hosts())
+            _ep.apply_env(env, session["env"])
+        except Exception:
+            session = None              # the dead proxy (read-only) / no proxy stays
         if sys.platform == "win32":
             res = _run_windows_host("", workdir, timeout_s, memory_mb, int(output_cap), argv=argv, exe=exe,
                                     env=env, low=read_only, max_processes=processes, prepare=False)
         else:
             res = _run_posix_shell(argv, workdir, env, timeout_s, memory_mb, int(output_cap), processes)
             res["files"] = _produced(workdir)
+        if session:
+            # pip, git and npm can echo the proxy URL in an error; its credential
+            # never reaches the result.
+            for _k in ("stdout", "stderr"):
+                if isinstance(res.get(_k), str):
+                    res[_k] = res[_k].replace(session["token"], "[proxy credential]")
         res["ok"] = True
         res["tier"] = "read_only" if read_only else "approved"
+        res["network"] = ("none (proxy: deny)" if read_only else
+                          "allow-listed hosts through Friday's proxy" if session else
+                          "not restricted") + (
+            "; a program that ignores proxy settings is not stopped" if session else "")
         res["seconds"] = round(time.monotonic() - t0, 2)
         res["workdir_name"] = workdir.name
         return res
     except SandboxError as e:
         return {"ok": False, "error": f"the sandbox could not be set up, so nothing ran: {e}"}
     finally:
+        if session:
+            try:
+                from agent_friday.services import egress_proxy as _ep
+                _ep.close_session(session["token"])
+            except Exception:
+                pass
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _isolated_eligible() -> bool:
+    """The code sandbox runs in Windows' fully isolated mode (services/appcontainer: no
+    network at all, enforced by Windows) when its Python and packages live in Friday's
+    own install, the only folder that is ever re-permissioned for it. Anywhere else (a
+    source checkout's Python) it keeps the Low-integrity box. FRIDAY_ISOLATED_SANDBOX=0
+    turns it off."""
+    if os.environ.get("FRIDAY_ISOLATED_SANDBOX", "1").strip() == "0":
+        return False
+    try:
+        from agent_friday.services import appcontainer as _ac
+        if not _ac.available():
+            return False
+        exe = Path(_python_exe())
+        return _ac.friday_owned(exe) and all(_ac.friday_owned(p) for p in _package_paths())
+    except Exception:
+        return False
+
+
+def _run_isolated(code, workdir: Path, timeout_s, memory_mb, cap) -> dict:
+    from agent_friday.services import appcontainer as _ac
+    _prepare(code, workdir)
+    exe = Path(_python_exe())
+    try:
+        _ac.ensure_readable(exe.parent)        # once: read-only, Friday's own Python only
+        res = _ac.run([str(exe)] + _argv("_friday_boot.py")[1:], cwd=workdir, env=_clean_env(workdir),
+                      write=[workdir], timeout=timeout_s, cap=cap, memory_mb=memory_mb,
+                      max_processes=1)
+    except _ac.IsolationError as e:
+        raise SandboxError(str(e))
+    return {"exit_code": res["exit_code"], "stdout": res["stdout"], "stderr": res["stderr"],
+            "timed_out": res["timed_out"], "output_capped": res["output_capped"],
+            "files": _produced(workdir),
+            "boundary": {"backend": "appcontainer", "os_boundary": True,
+                         "network": "none (Windows refuses every connection, this PC included)",
+                         "reads": ("this run's folder, Friday's own Python, and what Windows lets "
+                                   "every isolated app read (its system folders); none of your files"),
+                         "job": {"one_process": True, "memory_mb": memory_mb,
+                                 "cpu_seconds": timeout_s, "ui_restricted": True}}}
 
 
 def run(code: str, *, timeout_s=DEFAULT_TIMEOUT_S, memory_mb=DEFAULT_MEMORY_MB,
@@ -959,6 +1190,8 @@ def run(code: str, *, timeout_s=DEFAULT_TIMEOUT_S, memory_mb=DEFAULT_MEMORY_MB,
             res = _run_windows_sandbox(code, workdir, timeout_s, memory_mb, cap)
         elif backend != "host":
             return {"ok": False, "error": f"unknown sandbox backend {backend!r}"}
+        elif sys.platform == "win32" and _isolated_eligible():
+            res = _run_isolated(code, workdir, timeout_s, memory_mb, cap)
         elif sys.platform == "win32":
             res = _run_windows_host(code, workdir, timeout_s, memory_mb, cap)
         else:

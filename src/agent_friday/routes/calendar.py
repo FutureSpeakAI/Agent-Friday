@@ -24,7 +24,7 @@ from pathlib import Path
 from collections import deque as _deque
 from functools import wraps
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
-                   send_file, session, redirect, url_for, Response, stream_with_context)
+                   send_file, session, redirect, url_for, Response, stream_with_context, g)
 import agent_friday.core as core
 from agent_friday.services.calendar_engine import (
     CAL_PREP_FILE,
@@ -89,6 +89,37 @@ def _not_the_owners_click():
         return None
     return jsonify({"status": "denied", "error": "this change must come from the Calendar page",
                     "message": "this change must come from the Calendar page"}), 403
+
+
+def _held_by_the_gate(action, target, nothing_done):
+    """None when the action checkpoint lets the owner's calendar write through, else the 403 to answer.
+
+    Every write to Google from the Calendar page passes the same checkpoint a tool call does
+    (governance/action_gate.record_external): the cLaws are intact and a signed receipt of this exact
+    write exists before anything leaves the PC. `nothing_done` is the sentence that starts the answer
+    when it is held ("Nothing was added", ...), so the page never reads a hold as a success."""
+    from agent_friday.governance import action_gate as _gate
+    try:
+        g._friday_calendar_decision = _gate.record_external(
+            action, surface="calendar_workspace", target=str(target or "")[:300])
+    except _gate.Held as e:
+        print(f"  [calendar] {action} held by the action gate: {type(e).__name__}")
+        return jsonify({"status": "error", "held": True,
+                        "message": nothing_done + ": the action checkpoint held this change "
+                                                  "(its integrity check or signed receipt failed), "
+                                                  "so nothing reached Google. Try again."}), 403
+    return None
+
+
+def _close_gate(ok, detail, verified=False):
+    """The terminal outcome of the write `_held_by_the_gate` let through, from Google's answer
+    (governance/action_gate.close_external). Never raises."""
+    try:
+        from agent_friday.governance import action_gate as _gate
+        _gate.close_external(getattr(g, "_friday_calendar_decision", None), bool(ok),
+                             detail=detail, verified=bool(ok and verified))
+    except Exception:  # noqa: BLE001 - a receipt never changes the answer
+        pass
 
 
 
@@ -371,7 +402,8 @@ def api_calendar_event_delete(event_id):
                   "end": ev.get("end_time") or "", "location": ev.get("location") or "", "calendar_id": "local"}
         return jsonify({"status": "ok", "ok": True, "id": eid, "title": before["title"], "before": before})
     try:
-        _gate.record_external("calendar:delete_event", surface="calendar_workspace", target=eid)
+        g._friday_calendar_decision = _gate.record_external("calendar:delete_event",
+                                                            surface="calendar_workspace", target=eid)
     except _gate.Held as e:
         print(f"  [calendar] delete of {eid} held by the action gate: {type(e).__name__}")
         return jsonify({"status": "error", "ok": False, "id": eid,
@@ -383,6 +415,7 @@ def api_calendar_event_delete(event_id):
     res = cw.delete_event(eid, calendar_id=str(data.get("calendar_id") or "").strip() or "primary",
                           account_id=str(data.get("account_id") or "").strip() or None,
                           notify_guests=ng if isinstance(ng, bool) else None)
+    _close_gate(res.get("ok"), "deleted" if res.get("ok") else "delete_refused")
     if not res.get("ok"):
         # Friday's own sentences pass through; anything carrying a Google or library error is logged and
         # shown as an error id (exception text never reaches the browser).
@@ -391,10 +424,11 @@ def api_calendar_event_delete(event_id):
         if res.get("gone") or res.get("not_found"):
             why = "that event was already deleted or cannot be found."
         elif res.get("needs_account"):
-            why = "no connected Google account can change that calendar."
+            why = ("that Google account may not change this calendar yet: press \"Allow calendar "
+                   "changes\" for it in Settings -> Connections -> Google.")
         elif res.get("needs_reconnect"):
-            why = ("Google Calendar is not connected with event editing. Reconnect it from "
-                   "Settings -> Connections.")
+            why = ("Friday may read this calendar but has not been allowed to change it: press "
+                   "\"Allow calendar changes\" (or reconnect Google) in Settings -> Connections -> Google.")
         else:
             _eid = uuid.uuid4().hex[:8]
             print(f"  [calendar] delete of {eid} failed (error id {_eid}): {res.get('error')}")
@@ -598,9 +632,15 @@ def api_calendar_create_event():
         aid, cid = _calendar_of(data.get("calendar_key"))
         if cid is None:
             return jsonify({"status": "error", "message": "choose a calendar from the list"}), 400
+        # the signed receipt names the calendar, never the event's title (kept sealed, 2026-10-24)
+        held = _held_by_the_gate("calendar:create_event", "%s|%s" % (aid or "", cid), "Nothing was added")
+        if held:
+            return held
         out = cw.create_event(title=title, start=sdt.astimezone().isoformat(),
                               end=edt.astimezone().isoformat(), location=location,
                               description="", attendees=attendees, account_id=aid, calendar_id=cid)
+        _close_gate(not out.get("error"), "created" if not out.get("error") else "create_refused",
+                    verified=bool(out.get("id")))
         if out.get("error"):
             return jsonify({"status": "error", "message": cw.public_error(out)}), 409
         _drop_calendar_cache()
@@ -637,7 +677,12 @@ def api_calendar_rsvp(event_id):
     aid, cid = _calendar_of(data.get("calendar_key"))
     if cid is None:
         return jsonify({"status": "error", "message": "that calendar is not one Friday knows"}), 400
+    held = _held_by_the_gate("calendar:respond_to_event", "%s|%s %s" % (aid or "", cid, event_id),
+                             "No reply was sent")
+    if held:
+        return held
     out = cw.respond_to_event(event_id, str(data.get("response") or ""), account_id=aid, calendar_id=cid)
+    _close_gate(not out.get("error"), "replied" if not out.get("error") else "reply_refused")
     if out.get("error"):
         return jsonify({"status": "error", "message": cw.public_error(out)}), 409
     _drop_calendar_cache()
@@ -663,12 +708,18 @@ def api_calendar_move_event(event_id):
     aid, cid = _calendar_of(data.get("calendar_key"))
     if cid is None:
         return jsonify({"status": "error", "message": "that calendar is not one of the calendars shown here"}), 400
+    held = _held_by_the_gate("calendar:move_event", "%s|%s %s" % (aid or "", cid, event_id), "Nothing was moved")
+    if held:
+        return held
     try:
         out = item_actions.move_event_by_owner(event_id, start=str(data.get("start_time") or ""),
                                                end=str(data.get("end_time") or ""), calendar_id=cid,
                                                account=aid or "")
     except item_actions.Refused as e:
+        _close_gate(False, "move_refused")
         return jsonify({"status": "error", "message": e.user_message}), 409
+    _close_gate(out.get("status") == "complete",
+                "moved" if out.get("status") == "complete" else "move_refused")
     if out.get("status") != "complete":
         err = next((i.get("error") for i in out.get("items") or [] if i.get("error")), "")
         return jsonify({"status": "error", "message": err or "Google did not take the change",

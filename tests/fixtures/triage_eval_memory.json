@@ -1,0 +1,174 @@
+{
+ "id": "triage-eval-memory-v1",
+ "note": "Synthetic user sentences. Labels: preference, bio, decision, deadline, none. Incumbent: the regex patterns in memory_dreaming._mine_facts.",
+ "items": [
+  {
+   "text": "I would rather get a bullet list than a long paragraph",
+   "label": "preference"
+  },
+  {
+   "text": "I really enjoy reading the news in the evening",
+   "label": "preference"
+  },
+  {
+   "text": "I never want notifications while I am cooking",
+   "label": "preference"
+  },
+  {
+   "text": "I like it best when you ask before changing anything",
+   "label": "preference"
+  },
+  {
+   "text": "I tend to avoid phone calls and answer by text",
+   "label": "preference"
+  },
+  {
+   "text": "I always take my coffee black",
+   "label": "preference"
+  },
+  {
+   "text": "I prefer to schedule hard work before lunch",
+   "label": "preference"
+  },
+  {
+   "text": "I hate surprises in my calendar",
+   "label": "preference"
+  },
+  {
+   "text": "I am a high school teacher and I teach chemistry",
+   "label": "bio"
+  },
+  {
+   "text": "My sister lives two hours away from me",
+   "label": "bio"
+  },
+  {
+   "text": "I was born in the spring and I turn forty soon",
+   "label": "bio"
+  },
+  {
+   "text": "My dog is a rescue and he is three years old",
+   "label": "bio"
+  },
+  {
+   "text": "I run a small bakery with my brother",
+   "label": "bio"
+  },
+  {
+   "text": "My home office faces the garden",
+   "label": "bio"
+  },
+  {
+   "text": "My partner and I have been together nine years",
+   "label": "bio"
+  },
+  {
+   "text": "I studied biology at a state university",
+   "label": "bio"
+  },
+  {
+   "text": "We decided to hire the first designer we interviewed",
+   "label": "decision"
+  },
+  {
+   "text": "I have decided to sell the old car",
+   "label": "decision"
+  },
+  {
+   "text": "We agreed to meet halfway on the price",
+   "label": "decision"
+  },
+  {
+   "text": "I am going with the standing desk after all",
+   "label": "decision"
+  },
+  {
+   "text": "We chose the Tuesday slot for the weekly review",
+   "label": "decision"
+  },
+  {
+   "text": "I picked the red jacket instead of the green one",
+   "label": "decision"
+  },
+  {
+   "text": "We settled on a budget of two thousand",
+   "label": "decision"
+  },
+  {
+   "text": "I made up my mind to move in the fall",
+   "label": "decision"
+  },
+  {
+   "text": "The grant application has to be in by the end of the month",
+   "label": "deadline"
+  },
+  {
+   "text": "My passport expires in March so I need to renew it",
+   "label": "deadline"
+  },
+  {
+   "text": "The school forms are due back on Friday",
+   "label": "deadline"
+  },
+  {
+   "text": "I owe the final draft by the twentieth",
+   "label": "deadline"
+  },
+  {
+   "text": "Our lease ends on the thirtieth of June",
+   "label": "deadline"
+  },
+  {
+   "text": "The invoice must be paid before the first of next month",
+   "label": "deadline"
+  },
+  {
+   "text": "The conference registration closes next Wednesday",
+   "label": "deadline"
+  },
+  {
+   "text": "I have until Sunday night to send the slides",
+   "label": "deadline"
+  },
+  {
+   "text": "Could you read that last paragraph back to me",
+   "label": "none"
+  },
+  {
+   "text": "Open the folder with last week's photos",
+   "label": "none"
+  },
+  {
+   "text": "What time does the pharmacy close",
+   "label": "none"
+  },
+  {
+   "text": "That answer was helpful, thank you",
+   "label": "none"
+  },
+  {
+   "text": "Try again but make it shorter",
+   "label": "none"
+  },
+  {
+   "text": "Search for a good pasta recipe",
+   "label": "none"
+  },
+  {
+   "text": "Why did the download fail",
+   "label": "none"
+  },
+  {
+   "text": "Show me tomorrow's weather",
+   "label": "none"
+  },
+  {
+   "text": "Turn the volume down a bit",
+   "label": "none"
+  },
+  {
+   "text": "Let's see what the next step is",
+   "label": "none"
+  }
+ ]
+}

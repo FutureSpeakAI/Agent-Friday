@@ -128,9 +128,9 @@ def _sweep_stale_scratch(max_age_s: float = 86400.0) -> int:
 
 def _stop_now(watcher) -> bool:
     """Checked before every episode: an interactive turn, the PC leaving AC
-    power, or tonight's testing time used up all stop the run (resumable)."""
-    from agent_friday.services import trials
-    return (watcher.tripped.is_set() or not trials.on_ac_power()
+    power, a GPU too hot, or tonight's testing time used up all stop the run (resumable)."""
+    from agent_friday.services import thermal, trials
+    return (watcher.tripped.is_set() or not trials.on_ac_power() or thermal.too_hot()[0]
             or trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS)
 
 
@@ -151,6 +151,21 @@ def run_pending_trials() -> dict:
             trials.weekly_digest()
         except Exception:
             pass
+    # The decision heads' nightly replay (services/decision_replay, DM6): CPU only,
+    # no seat, seconds of work. Same window rules: on AC power, inside tonight's
+    # testing time (its seconds count against it), and never a reason for the
+    # trials below not to run.
+    if trials.on_ac_power() and trials.night_seconds_used() < trials.NIGHT_CAP_SECONDS:
+        t_dr = time.time()
+        try:
+            from agent_friday.services import decision_replay
+            out["decision_replay"] = decision_replay.run_nightly(should_stop=lambda: bool(_gate_blocks()))
+        except Exception as e:  # noqa: BLE001
+            out["decision_replay"] = {"skipped": "failed (%s)" % type(e).__name__}
+        try:
+            trials._spend_night(time.time() - t_dr)
+        except Exception:  # noqa: BLE001
+            pass
     pending = trials.candidates("queued") + trials.candidates("running")
     # R0, the one-off experiment that decides whether the candidate writer is
     # worth building, schedules itself once and runs here, after the queued
@@ -167,6 +182,11 @@ def run_pending_trials() -> dict:
     if not trials.on_ac_power():
         out["skipped"] = "on battery"
         return out
+    from agent_friday.services import thermal
+    hot, why = thermal.too_hot()
+    if hot:
+        out["skipped"] = why
+        return out           # (thermal stays imported for the per-candidate checks below)
     if trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
         out["skipped"] = "tonight's testing time is used up"
         return out
@@ -187,9 +207,17 @@ def run_pending_trials() -> dict:
                 continue          # cloud trials run only when the owner starts them (HD2)
             if w.tripped.is_set() or trials.night_seconds_used() >= trials.NIGHT_CAP_SECONDS:
                 break
+            hot, why = thermal.too_hot()
+            if hot:
+                out["stopped"] = why          # resumes at the next run; said where the run is shown
+                break
             res = trials.run_trial(cand["id"], run_one=run_one, endpoint=seat["endpoint"],
                                    model=seat["model"], should_yield=lambda: _stop_now(w))
             out["ran"].append({"id": cand["id"], "status": res.get("status")})
+            hot, why = thermal.too_hot()
+            if hot:
+                out["stopped"] = why
+                break
         if r0_due and not _stop_now(w):
             out["r0"] = r0_nightly.run_tonight(seat, w, run_one)
     return out

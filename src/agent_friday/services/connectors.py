@@ -400,6 +400,11 @@ def _status_for_google(defn: dict) -> dict:
                 # minute after a restart): not judged, so not "reconnect".
                 acct_state = "checking"
                 acct_summary = "Checking: could not reach Google yet"
+            elif ga.last_problem(aid) == "route_not_chosen":
+                # A16a: held, not broken. Nothing to reconnect.
+                acct_state = "checking"
+                acct_summary = ("Waiting: Google is used once you choose where "
+                                "Friday thinks (Settings > Models)")
             else:
                 acct_state = health.get("state") or "needs_reauth"
                 acct_summary = health.get("summary") or "Needs reauthorisation"
@@ -520,6 +525,12 @@ def _status_for_mcp(defn: dict) -> dict:
                 "detail": "Authorization required — click Connect to approve "
                           "in your browser",
                 "token_present": False, "tool_count": tool_count}
+    if raw == "waiting_for_route":
+        # A16a: configured, held until the owner chooses where Friday thinks.
+        return {"status": "disconnected",
+                "detail": "Waiting: add-on connectors start once you choose where "
+                          "Friday thinks (Settings > Models)",
+                "token_present": True, "tool_count": 0}
     if raw in ("starting", "", "stopped"):
         return {"status": "connecting",
                 "detail": "Starting MCP server…",
@@ -748,9 +759,14 @@ def _connect_mcp_remote(defn: dict, server_name: str, tmpl: dict, agent_svc) -> 
         except Exception:
             live = {}
         status = (live.get("status") or "").lower()
-        if status in ("ready", "needs_auth", "error"):
+        if status in ("ready", "needs_auth", "error", "needs_approval"):
             break
         _time.sleep(0.25)
+
+    if status == "needs_approval":
+        # The host is not on the owner's list yet (governance/mcp_hosts): say so, and where.
+        return {"ok": False, "status": "needs_approval",
+                "message": live.get("error") or f"{defn['name']} waits for your approval card."}
 
     if status == "ready":
         return {"ok": True, "status": "connected",
@@ -861,9 +877,20 @@ def _disconnect_mcp(key: str, defn: dict) -> dict:
 
 def connect_connector(key: str, data: dict | None = None, *, host_url: str | None = None) -> dict:
     """Initiate a connection for *key*. Returns {ok, status, message, ...}."""
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("connectors")
+    if _why:
+        return {"ok": False, "status": "error", "message": _why}
     defn = CONNECTOR_DEFS.get(key)
     if not defn:
         return {"ok": False, "status": "error", "message": f"unknown connector {key!r}"}
+    # North-star A16a: no add-on connector is connected (no sign-in, no
+    # server started) until the owner chooses where Friday thinks.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("connector", "connect " + str(key))
+    if _held:
+        return {"ok": False, "status": "route_not_chosen", "message": _held,
+                "choice": {"id": "choose_route", "workspace": "settings", "tab": "intelligence"}}
     data = data or {}
     if defn["kind"] == "oauth":
         # Prefer the one-click local loopback flow; expose the web URL too so a
@@ -951,6 +978,11 @@ def monitor_connector_health() -> dict:
     the health snapshot so a caller can log/inspect it.
     """
     snap = connectors_health(use_cache=False)
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("connector", "health tick"):
+        # A16a: held connectors are not "down"; no alerts until a route is chosen.
+        snap["edges"] = []
+        return snap
     by_key = {c["key"]: c for c in snap["connectors"]}
     edges = []
     for key, c in by_key.items():

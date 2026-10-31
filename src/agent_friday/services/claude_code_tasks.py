@@ -71,10 +71,17 @@ def request(task_id: str, task: str, cwd: str, *, requested_by: str = "owner",
     entry.update(extra or {})
     VIBE_TERMINALS[task_id] = entry
     folder = Path(cwd).name or str(cwd)
+    try:
+        from agent_friday.services import code_worktree as _cwt
+        where = _cwt.card_text(_cwt.plan(task_id, cwd))
+    except Exception:
+        where = ""
     rec = _ap.create_approval(
         kind=KIND, subject_type=SUBJECT_TYPE, subject_id=str(task_id),
         title=f"Run Claude Code in {folder} for this task",
-        description=(f"Task: {task[:600]}\n\nFolder: {cwd}\n\nApproving starts one Claude Code "
+        description=(f"Task: {task[:600]}\n\nFolder: {cwd}\n\n"
+                     + (f"{where}\n\n" if where else "")
+                     + f"Approving starts one Claude Code "
                      f"session for this task. Every action it takes (commands, file edits, "
                      f"web fetches) is checked against this approval by Friday, up to "
                      f"{GRANT_USES} actions or {GRANT_SECONDS // 3600} hours, whichever "
@@ -108,6 +115,13 @@ def _on_decision(record: dict) -> None:
             entry['status'] = 'denied' if status == "denied" else 'expired'
             entry['stopped'] = datetime.now().isoformat()
             core._persist_vibe_terminals()
+        return
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): an approval while stopped launches nothing.
+        entry['status'] = 'stopped'
+        entry['stopped'] = datetime.now().isoformat()
+        core._persist_vibe_terminals()
         return
     grant = _mint(task_id, entry.get('task') or '')
     entry['grant_id'] = grant.get('grant_id')
@@ -299,8 +313,18 @@ def gate(task_id: str, token: str, tool_name: str, tool_input: Any) -> Dict[str,
         return {"decision": "deny", "reason": "the task token does not match; nothing runs"}
     if entry.get('status') in ('stopped', 'denied', 'expired'):
         return {"decision": "deny", "reason": "this task was stopped; nothing runs"}
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        return {"decision": "deny", "reason": "everything is stopped; nothing runs until the owner presses Resume"}
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     why = _own_refusal(str(tool_name or ""), tool_input)
+    if not why:
+        try:
+            from agent_friday.services import code_worktree as _cwt
+            why = _cwt.refusal(entry, str(tool_name or ""), tool_input)
+        except Exception:
+            why = ("Friday could not check this call against the session's worktree, "
+                   "so it did not run") if entry.get('worktree') else None
     if why:
         _receipt_refusal(task_id, tool_name, why)
         return {"decision": "deny", "reason": why}

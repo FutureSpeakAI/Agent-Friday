@@ -168,8 +168,10 @@ def read_state() -> dict:
 
 def _write_state(state: dict) -> None:
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        # Whole or not at all: a start killed mid-write would otherwise leave a
+        # torn file that reads as {} and announce the same release again.
+        from agent_friday.services.whole_file import write_whole_text
+        write_whole_text(STATE_FILE, json.dumps(state, indent=2))
     except OSError as e:
         _log.info("update check: could not persist state (%s)", e)
 
@@ -210,6 +212,11 @@ def check_for_update() -> dict:
         "latest_url": None,
         "reason": "",
     }
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("update_check")
+    if _why:
+        result["reason"] = _why
+        return result
 
     # Settings are deliberately NOT consulted here, and the absence is the
     # point. `model_routing.mode` (local_only / cloud_only)

@@ -44,14 +44,46 @@ def receipt_read(rid):
     return jsonify({"status": "ok", "receipt": action_journal.public_view(rec)})
 
 
+#: Undo domains that change something outside this PC: putting them back is a
+#: write to Google like the change was, so it passes the action checkpoint.
+# Undos that change something outside Friday's own state go through the action
+# checkpoint (cLaws, signed receipt, held while everything is stopped). A
+# file goes back over whatever is on disk now, so it is one of them.
+_OUTWARD_UNDO = {"email": "gmail:undo", "calendar": "calendar:undo", "tasks": "tasks:undo",
+                 "file_write": "file:undo"}
+
+
 @actions_bp.route("/api/actions/receipts/<rid>/undo", methods=["POST"])
 @login_required
 def receipt_undo(rid):
     if not _RID.match(rid or ""):
         return jsonify({"status": "error", "error": "not a receipt id"}), 400
-    from agent_friday.services import item_actions
+    from agent_friday.services import item_actions, owner_press
+    # This route acts as the owner (by_owner): mail and calendar go back at
+    # once, a file goes back over whatever is there now. Only the owner's own
+    # press in Friday's page is that; a program on this PC that can reach the
+    # API is not.
+    refused = owner_press.refusal(request, "Nothing was put back: undo from Friday's page on this PC, "
+                                           "or ask Friday to undo it.")
+    if refused is not None:
+        return refused
+    rec = action_journal.get(rid)
+    outward = _OUTWARD_UNDO.get((rec or {}).get("domain"))
+    from agent_friday.governance import action_gate as _gate
+    decision = None
+    if outward:
+        try:
+            decision = _gate.record_external(outward, surface="receipts_undo", target=rid)
+        except _gate.Held:
+            return jsonify({"status": "error", "error": "Nothing was put back: the action checkpoint held "
+                                                        "this undo (integrity check or signed receipt failed)."}), 403
     try:
         out = item_actions.undo(rid, by_owner=True, requested_by="owner:ui")
     except item_actions.Refused as e:
+        _gate.close_external(decision, False, detail="undo_refused", outcome=_gate.DENIED)
         return jsonify({"status": "error", "error": e.user_message}), 409
+    except Exception:
+        _gate.close_external(decision, False, detail="undo_failed")
+        raise
+    _gate.close_external(decision, True, detail="undone")
     return jsonify({"status": "ok", "result": out})

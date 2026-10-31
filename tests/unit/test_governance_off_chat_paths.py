@@ -270,8 +270,7 @@ def test_record_external_signs_a_receipt(tmp_path, monkeypatch):
     from agent_friday import paths
     monkeypatch.setattr(action_gate, "friday_home", lambda: str(tmp_path))
     action_gate.record_external("gmail:send", surface="mail", approval_id="a1", target="1 recipient")
-    lines = (tmp_path / "decision-bom.jsonl").read_text(encoding="utf-8").splitlines()
-    entry = json.loads(lines[-1])
+    entry = action_gate.receipts()[-1]         # the action ledger's decisions
     assert entry["tool"] == "gmail:send" and entry["hmac"] and entry["approval"] == "a1"
 
 
@@ -429,6 +428,11 @@ REVIEWED_BUILTINS = {
                          "local timeline, and raises local notifications only",
     "calendar_reminders": "reads the owner's calendar events and raises local reminder "
                           "notifications at the minutes Google holds; writes nothing to Google, runs no model",
+    "tasks_inbox": "does nothing until the owner turns it on with a press on screen; then posts the "
+                   "waiting cards' code-built words to the owner's own Google Tasks list, each through "
+                   "the egress gate and action_gate.record_external, and reads back ticks and deletes. "
+                   "A tick approves nothing (approvals refuses its label); a delete declines only "
+                   "don't-do-it kinds",
     "laya_personal_refit": "refits Laya's personal phrasings and calibration from the owner's "
                            "own sealed corrections on this PC; only tightens, reaches no one",
     "avatar_growth_check": "asks the owner's chosen model for a look change (numbers "
