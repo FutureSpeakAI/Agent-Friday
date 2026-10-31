@@ -14,6 +14,9 @@ import os
 import sys
 import threading
 import logging
+import time as _diag_time
+
+_DIAG_T0 = _diag_time.monotonic()        # a diagnostic start's timeline counts from here
 
 # A Friday Bundle restore cut off by a crash or a power cut is finished (its
 # folders were swapped) or rolled back (they were not) before anything else
@@ -35,6 +38,53 @@ if __name__ == '__main__':
         if _rr.get("stop"):
             print("  Restore: Friday is not starting on this data folder yet.")
             sys.exit(3)
+
+# A diagnostic start (`friday diagnose`, or chosen on the Doctor page for the
+# next start; services/diagnostic_start.py): safe mode for this start, a start
+# timeline counted from the top of this file, and a Doctor report. Decided here,
+# before the migration check and before safe mode is first asked about.
+_diag = None
+if __name__ == '__main__':
+    try:
+        from agent_friday.services import diagnostic_start as _diag
+        if _diag.claim_next_start():
+            _diag.set_origin(_DIAG_T0)
+            _diag.start_watch()
+            print("  DIAGNOSTIC START: safe mode for this start; a Doctor report follows "
+                  "once the page is serving.")
+        else:
+            _diag = None
+    except Exception:
+        _diag = None
+
+# The data folder is brought to this Friday's schema (services/migrations.py),
+# after any interrupted restore is settled and before anything else uses it. A
+# migration that fails puts its files back and this start is safe mode: Friday
+# never runs on a half-migrated folder.
+if __name__ == '__main__':
+    try:
+        from agent_friday.services import migrations as _mig_boot
+        _mr = _mig_boot.run_pending()
+    except Exception as _mr_err:
+        _mr = {"ok": False, "safe_mode": True,
+               "why": "the migration check failed (%s)" % type(_mr_err).__name__}
+        try:                             # a check that cannot run is a failed upgrade too
+            from agent_friday.services import safe_mode as _sm_mig
+            _sm_mig.set_next_start(True, reason=_sm_mig.MIGRATION_FAILED)
+        except Exception:
+            pass
+    if _mr:
+        print("  Migrations: %s" % (("schema %s -> %s" % (_mr.get("from"), _mr.get("to")))
+                                   if _mr.get("ok") else _mr.get("why")))
+        if _mr.get("stop"):
+            print("  Migrations: Friday is not starting on this data folder yet.")
+            raise SystemExit(3)
+        if _mr.get("safe_mode"):
+            os.environ["FRIDAY_SAFE_START"] = "1"           # this start only
+            print("  Migrations: starting in safe mode.")
+    if _diag is not None:
+        _diag.note_migrations(_mr)
+        _diag.mark("migrations", ran=bool(_mr))
 
 # Native thread pools are sized when their library first loads, so the caps
 # go in before anything heavy is imported (services/thread_caps.py).
@@ -528,6 +578,9 @@ def _residency_boot():
             "could not audit local dispatch: %s", e)
 
 
+if _diag is not None:
+    _diag.mark("imports")
+
 # ── Background daemons (skipped under FRIDAY_TESTING=1) ───────────
 if not _TESTING:
     # Stop everything (services/global_stop) survives a restart: read it FIRST, before
@@ -551,9 +604,11 @@ if not _TESTING:
             # leaves it, so one good safe start does not slip back out
             _safe.set_next_start(True)
         print("  SAFE MODE (%s): extensions and the cloud are off, schedules are "
-              "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. "
-              "Leave it there or with `friday safe-mode off`, then restart."
-              % _safe.state().get("why"))
+              "paused, outward actions are held. Doctor: http://localhost:<port>/doctor. %s"
+              % (_safe.state().get("why"),
+                 "Leave it there with a press, then restart."
+                 if _safe.marker_reason() == _safe.MIGRATION_FAILED
+                 else "Leave it there or with `friday safe-mode off`, then restart."))
 
 
     # Plaintext .env / secrets.yaml an older release left beside the app: their
@@ -588,6 +643,8 @@ if not _TESTING:
             print(f"  [sandbox] could not label Friday's state folder: {_fe}")
     threading.Thread(target=_fence_state_folder, name="fence-state", daemon=True).start()
 
+    if _diag is not None:
+        _diag.mark("safe_mode", active=bool(_safe.active()))
     # Decrypt any onboarding-stored provider API keys into the environment so
     # provider availability + the SDK clients see them (no plaintext in settings).
     try:
@@ -1168,6 +1225,8 @@ if __name__ == '__main__':
 
     # Single-instance guard — FIRST, before anything else can hang or race.
     _instance_lock_fh = _acquire_single_instance_lock()
+    if _diag is not None:
+        _diag.mark("instance_lock")
     if _instance_lock_fh is None:
         _lock_path = FRIDAY_DIR / "friday_server.lock"
         _pid_path = FRIDAY_DIR / "friday_server.pid"
@@ -1567,6 +1626,30 @@ if __name__ == '__main__':
         _ir.check_after_boot()
     except Exception as _ir_err:
         print(f"  Data integrity: check unavailable ({_ir_err})")
+    # Friday's own safeguards, re-checked a little after start and every few
+    # hours (services/self_verify); a problem is said the same way.
+    try:
+        from agent_friday.services import self_verify as _sv
+        _sv.start_periodic()
+    except Exception as _sv_err:
+        print(f"  Safeguard checks: not started ({_sv_err})")
+    if _diag is not None:
+        _diag.mark("boot_checks")
+    # Migration receipts were written to the data folder at the top of start;
+    # they go into the action ledger now, off the start path.
+    try:
+        import threading as _mig_th
+        from agent_friday.services import migrations as _mig_rc
+        _mig_th.Thread(target=_mig_rc.flush_receipts, name="migration-receipts", daemon=True).start()
+    except Exception as _mig_rc_err:
+        print(f"  Migration receipts: not ledgered yet ({_mig_rc_err})")
+    # Indexes an upgrade or a restore asked to be rebuilt (services/derived_rebuild):
+    # a little after the start, one at a time, never in safe mode.
+    try:
+        from agent_friday.services import derived_rebuild as _drb
+        _drb.start_after_boot()
+    except Exception as _drb_err:
+        print(f"  Index rebuilds: not started ({_drb_err})")
     # Deliberately after the boot-guard thread and before app.run(): the warm
     # waits on its own, so this only registers the intention.
     try:
@@ -1590,8 +1673,11 @@ if __name__ == '__main__':
         print(f"  Accept probe: skipped ({_probe_err})")
     try:
         from agent_friday.services import pooled_server as _pooled
-        _pooled.serve(bind_host, _port, app, ssl_context=_ssl_context)
+        _pooled.serve(bind_host, _port, app, ssl_context=_ssl_context,
+                      on_bound=(lambda: _diag.mark("serving")) if _diag is not None else None)
     except OSError as _bind_err:
+        if _diag is not None:
+            _diag.run_report(_mr)          # the port was not bound: report now, before exiting
         # The single-instance lock above catches almost all of this now, but
         # stays as a backstop for a race the lock can't see — e.g. something
         # else entirely holding the TCP port. Diagnose the occupant, log

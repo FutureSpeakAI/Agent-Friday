@@ -551,6 +551,36 @@ def _c_boot():
     return ("degraded", "failed_starts:%d" % n) if n else ("healthy", "ok")
 
 
+def _c_migrations():
+    """The data folder's schema (services/migrations): current, from a newer
+    Friday, held in safe mode after a failed upgrade, or mid-step."""
+    from agent_friday.services import migrations, safe_mode
+    home = _home()
+    have, want = migrations.current(home), migrations.latest()
+    if have > want:
+        return "misconfigured", "newer_folder:%d>%d" % (have, want)
+    if safe_mode.marker_reason() == safe_mode.MIGRATION_FAILED:
+        return "broken", "upgrade_failed_safe_mode_held"
+    if migrations._journal_path(home).exists():
+        return "repairing", "migration_journal_beside_folder"
+    if have < want:                      # runs at the next start (server.py), nothing is running now
+        return "unverified", "migration_pending_next_start:%d<%d" % (have, want)
+    return "healthy", "schema_%d" % have
+
+
+def _c_after_upgrade():
+    """What an upgrade or restore left open, and rebuilds still waiting
+    (services/upgrade_review, services/derived_rebuild). Counts only."""
+    from agent_friday.services import derived_rebuild, upgrade_review
+    n = upgrade_review.counts(_home()).get("open", 0)
+    waiting = derived_rebuild.state(_home()).get("waiting") or []
+    if n:
+        return "degraded", "open_items:%d" % n
+    if waiting:
+        return "repairing", "rebuilds_waiting:%d" % len(waiting)
+    return "healthy", "nothing_open"
+
+
 CHECKS = (
     ("app_files", "application files", _c_versions),
     ("settings", "settings schema", _c_settings),
@@ -584,6 +614,8 @@ CHECKS = (
     ("crashes", "application files", _c_crashes),
     ("boot", "update status", _c_boot),
     ("update_signature", "update status", _c_update_signature),
+    ("migrations", "update status", _c_migrations),
+    ("after_upgrade", "update status", _c_after_upgrade),
 )
 
 
@@ -741,6 +773,26 @@ def _known_issues() -> dict:
         return {"available": False, "error": type(e).__name__}
 
 
+def _after_upgrade() -> dict:
+    """Counts only (§37.3-9, §37.3-10): open items the owner should look at,
+    by code, and the index rebuilds still waiting. No sentences, no names."""
+    out: dict = {}
+    try:
+        from agent_friday.services import upgrade_review
+        out["unresolved"] = upgrade_review.counts()
+    except Exception as e:  # noqa: BLE001
+        out["unresolved"] = {"error": type(e).__name__}
+    try:
+        from agent_friday.services import derived_rebuild
+        st = derived_rebuild.state()
+        out["rebuilds_waiting"] = [w["index"] for w in st["waiting"]]
+        out["restore_rebuild_waiting"] = bool(st.get("restore_waiting"))
+        out["rebuilds_failed_last"] = sorted({r["index"] for r in st["results"] if not r.get("ok")})
+    except Exception as e:  # noqa: BLE001
+        out["rebuilds_waiting"] = {"error": type(e).__name__}
+    return out
+
+
 def _stores() -> dict:
     """Every store with its version, size and place in the data folder
     (services/store_inventory.py, §37.3-1). Store names and locations are
@@ -781,6 +833,13 @@ def build() -> dict:
     # so the general filter above, which could blank a store whose name holds
     # a short user name, is not needed for it
     report["stores"] = _stores()
+    report["after_upgrade"] = _after_upgrade()
+    # Friday's own fixed words, so added after the general filter above
+    try:                                 # deterministic repairs only (services/doctor_repairs)
+        from agent_friday.services import doctor_repairs
+        report["repairs"] = doctor_repairs.offered(report["checks"])
+    except Exception as e:  # noqa: BLE001
+        report["repairs"] = {"error": type(e).__name__}
     return report
 
 
@@ -825,6 +884,26 @@ def render_text(report: dict) -> str:
         lines += [""] + store_inventory.render_text(inv)
     elif isinstance(inv, dict) and inv.get("error"):
         lines += ["", "Stores: %s" % inv["error"]]
+    rep = report.get("repairs")
+    if isinstance(rep, dict) and rep and "error" not in rep:
+        lines += ["", "Repairs offered (none needs a model):"]
+        for cid, rs in sorted(rep.items()):
+            for r in rs if isinstance(rs, list) else []:
+                lines.append("  %-16s %s%s" % (cid, r.get("label"),
+                                               (" (this page: %s)" % r["where"]) if r.get("where") else ""))
+                fl = r.get("flow") if isinstance(r.get("flow"), dict) else {}
+                for st in ("preview", "backup", "verify", "rollback", "receipt"):
+                    if fl.get(st):
+                        lines.append("  %-16s   %s: %s" % ("", st, fl[st]))
+    au = report.get("after_upgrade")
+    if isinstance(au, dict):
+        un = au.get("unresolved") if isinstance(au.get("unresolved"), dict) else {}
+        wait = au.get("rebuilds_waiting") if isinstance(au.get("rebuilds_waiting"), list) else []
+        lines += ["", "After upgrades and restores: %s open item(s)%s; rebuilds waiting: %s" % (
+            un.get("open", "unknown"),
+            (" (" + ", ".join("%s %s" % (k, v) for k, v in sorted((un.get("by_code") or {}).items())) + ")")
+            if un.get("by_code") else "",
+            ", ".join(wait) or "none")]
     return "\n".join(lines) + "\n"
 
 

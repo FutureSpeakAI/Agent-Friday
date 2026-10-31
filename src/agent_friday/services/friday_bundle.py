@@ -9,13 +9,18 @@ What it holds, by category (each can be left out):
 * vault: the sealed vault folder, the keystore, Friday's own signing key for
   file grants and traces, and the vault passphrase (so the vault opens on the
   new machine);
-* settings: settings and privacy-shield settings, the MCP server list;
+* settings: settings and privacy-shield settings, the MCP server list, and the
+  data folder's schema number (schema.json), which is carried and restored
+  with whatever is chosen, so a restored folder never looks older than its
+  stores (services/migrations.py);
 * skills: the owner's and learned skills with their signed ledgers;
 * workspaces: built workspaces, codebases, Workspace Studio;
 * receipts: the action ledger, task journals, setup record, reasoning
   traces, provenance, governance records, approvals, the organize-undo store,
-  learning records, costs; and the governance key that signs them, so every
-  signature still checks on the new machine;
+  learning records, costs, the upgrade records (migrations/: receipts, the
+  index rebuild queue, the owner's list of what an upgrade left open); and the
+  governance key that signs them, so every signature still checks on the new
+  machine;
 * conversations;
 * other: anything else in the data folder that is not excluded below.
 
@@ -28,7 +33,8 @@ connectors are re-connected after a restore, §27.2), files only this machine
 can open (DPAPI blobs), this device's identity and grants (attestation key, TLS
 and local-address keys, the web session secret, desktop-control grants),
 downloads and caches (models, runtime, voice environments: fetched again),
-logs, and process files.
+logs, this PC's Doctor and diagnostic reports (a diagnostic start chosen here
+must not start one on the restored PC), and process files.
 
 A restore with --replace moves the WHOLE current folder aside (never deleted),
 including the categories a restore with --only leaves out.
@@ -97,6 +103,7 @@ _TOP_CATEGORY = {
     "provenance": "receipts", "governance": "receipts", "actions": "receipts",
     "trash": "receipts", "trust": "receipts", "inbox_cleanup": "receipts",
     "conversations": "conversations",
+    "migrations": "receipts",            # upgrade receipts, the rebuild queue, the owner's list
 }
 _FILE_CATEGORY = {
     "user_model.db": "memory", "user_model.json": "memory", "wiki-pending.json": "memory",
@@ -104,7 +111,7 @@ _FILE_CATEGORY = {
     "personality.json": "memory", "SOUL.md": "memory", "agent-personality.txt": "memory",
     "trajectories.jsonl": "memory",
     "settings.json": "settings", "privacy_shield.json": "settings",
-    "mcp_servers.json": "settings",
+    "mcp_servers.json": "settings", "schema.json": "settings",
     "approvals.json": "receipts", "decisions.jsonl": "receipts", "gate_events.jsonl": "receipts",
     "costs.db": "receipts", "work_log.db": "receipts", "sent_mail.jsonl": "receipts",
     "chat_history.json": "conversations",
@@ -115,7 +122,7 @@ _FILE_CATEGORY = {
 #: (Windows folders are not case-sensitive).
 _EXCLUDED_TOPS = {"runtime", "local_voice", "models", "cache", "backups", "logs", "tmp",
                   "audio-cache", "vibe-code-logs", "tool-output", "browser-profile",
-                  "doctor", "safe_mode", "boot_guard", "restore", "tls", "local-address",
+                  "doctor", "diagnostics", "safe_mode", "boot_guard", "restore", "tls", "local-address",
                   "providers", "google_accounts", "mcp_oauth", "platforms", "signing",
                   "browser-sessions"}
 #: Exact paths (and folders) never carried, relative, POSIX, lower case.
@@ -147,6 +154,22 @@ _KEY_FILES = {"privacy/ledger_signing.key": "vault"}
 
 
 _FILE_CATEGORY_LOWER = {k.lower(): v for k, v in _FILE_CATEGORY.items()}
+#: Carried and restored whatever categories are chosen (see the docstring).
+SCHEMA_FILE = "schema.json"
+
+#: How the folder on this PC and a bundle are protected, and how they differ
+#: (north star §8.5-3). Said on the Doctor page's backup section and after
+#: `friday bundle`; the page carries the same sentences (a test holds them).
+PROTECTION_LINES = (
+    "On this PC, Friday's data folder is protected by your Windows account: anyone who can sign in as you "
+    "can read all of it, including the vault and Friday's sign-ins, because Friday keeps the keys that open "
+    "them under your account so she can start on her own. An administrator of this PC can read it too.",
+    "A Friday Bundle is protected by its passphrase instead: wherever the file goes (a USB drive, a cloud "
+    "folder, another PC), no one can open it without the passphrase, not even someone signed in as you. "
+    "Without it, only the bundle's date, the Friday version and which kinds of data it holds can be seen.",
+    "Scheduled bundles keep their passphrase in this Windows account's credential store so they can be made "
+    "while you are away: anyone who can sign in as you can open those.",
+)
 
 
 def documents_dir() -> Path:
@@ -167,6 +190,15 @@ def documents_dir() -> Path:
 class BundleError(RuntimeError):
     """The bundle could not be made, read, verified or restored. The message
     is for the owner."""
+
+
+class NotReestablished(BundleError):
+    """Resume after a restore waits: `blockers` (services/restore_reestablish)
+    says what this PC still needs (§27.6-2)."""
+
+    def __init__(self, blockers: list):
+        self.blockers = list(blockers)
+        super().__init__("Not resumed yet: " + " ".join(b["said"] for b in self.blockers))
 
 
 # ── Choosing the files ──────────────────────────────────────────────────────
@@ -212,7 +244,7 @@ def plan(home: Path, categories: Iterable[str] = CATEGORIES) -> dict:
             top = rel.parts[0]
             excluded[top] = excluded.get(top, 0) + 1
             continue
-        if cat not in want:
+        if cat not in want and str(rel).lower() != SCHEMA_FILE:
             left_out[cat] = left_out.get(cat, 0) + 1
             continue
         files.append((rel, cat))
@@ -1002,10 +1034,17 @@ def restore_hold() -> Optional[str]:
 
 
 def resume_after_restore(by: str = "owner:ui") -> bool:
-    """The owner's re-attestation on this device: outward actions may go."""
+    """The owner's re-attestation on this device: outward actions may go, once
+    this PC's governance key checks the restored receipts and every remote
+    channel that is switched on has its sign-in here again (or is switched
+    off). Raises NotReestablished while anything is missing."""
     p = hold_path()
     if not p.exists():
         return False
+    from agent_friday.services import restore_reestablish
+    left = restore_reestablish.blockers(deep=True)
+    if left:
+        raise NotReestablished(left)
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -1107,7 +1146,7 @@ def _restore_locked(path: Path, passphrase: str, *, home: Path, only, replace: b
 
     def sink(rel: str):
         cat = category_of(PurePosixPath(rel))
-        if cat is None or (chosen is not None and cat not in chosen):
+        if cat is None or (chosen is not None and cat not in chosen and rel.lower() != SCHEMA_FILE):
             return None
         dst = stage.joinpath(*PurePosixPath(rel).parts)
         try:
@@ -1784,7 +1823,7 @@ def _mark_reindex(home: Path) -> None:
     d = home / "restore"
     d.mkdir(parents=True, exist_ok=True)
     (d / "needs_reindex.json").write_text(json.dumps({
-        "at": time.time(), "indexes": ["knowledge_graph", "conversation_memory", "library"]}),
+        "at": time.time(), "indexes": ["knowledge_graph", "conversation_search", "library"]}),
         encoding="utf-8")
 
 

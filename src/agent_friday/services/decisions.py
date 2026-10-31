@@ -287,6 +287,44 @@ def record_gate_event(event: str, **fields) -> None:
             fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
     except Exception as e:
         _log.warning("could not record a gate event: %s", e)
+    _to_ledger(event, fields)
+
+
+#: The words a gate setting takes (a mode, a backend name, on/off), never text.
+_GATE_WORD = re.compile(r"^[A-Za-z0-9_.:-]{0,40}$")
+#: The route a change came by ("POST /api/settings") or "python".
+_SOURCE = re.compile(r"^(python|[A-Z]{3,7} /[A-Za-z0-9_./-]{0,80})$")
+
+
+def _to_ledger(event: str, fields: dict) -> None:
+    """The one record of what Friday did (services/action_ledger): which gate
+    setting moved from what to what, by which route. A reason is kept only
+    when Friday wrote it (the reads policy); the boot event stays in its own
+    file, so nothing is written to the ledger before its start-up check."""
+    if event == "boot":
+        return
+    rec = {"event": str(event)[:40]}
+    for side in ("from", "to"):
+        vals = fields.get(side)
+        if isinstance(vals, dict):
+            for k in _GATE_KEYS:
+                v = vals.get(k)
+                if isinstance(v, str) and _GATE_WORD.fullmatch(v):
+                    rec["%s_%s" % (side, k)] = v
+    for k in ("from_mode", "to_mode"):
+        v = fields.get(k)
+        if isinstance(v, str) and _GATE_WORD.fullmatch(v):
+            rec[k] = v
+    src = fields.get("source")
+    if isinstance(src, str) and _SOURCE.fullmatch(src):
+        rec["source"] = src
+    if event == "policy" and isinstance(fields.get("reason"), str):
+        rec["reason"] = fields["reason"][:400]
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("gate_event", rec)
+    except Exception:
+        pass
 
 
 #: Why connector reads became observe by default. Recorded on the boot that

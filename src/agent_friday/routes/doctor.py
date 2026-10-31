@@ -15,6 +15,17 @@
   GET  /api/doctor/known-issues       this release's known issues (KNOWN_ISSUES.md)
   GET  /api/doctor/stores             every store Friday keeps: version, size,
                                       location (read-only, this PC only)
+  GET  /api/doctor/diagnostic         is this a diagnostic start, is the next one,
+                                      and the newest diagnostic report (this PC only)
+  POST /api/doctor/diagnostic         {"next_start": true|false}: make the next
+                                      start a diagnostic start (one start only).
+                                      A press on Friday's own page only.
+  GET  /api/doctor/after-upgrade      what an upgrade or restore could not sort
+                                      out, and the index rebuilds waiting or done
+  POST /api/doctor/after-upgrade/<id>/sorted
+                                      the owner marks one item sorted (a press)
+  POST /api/doctor/rebuild            {"index": name}: rebuild one derived index
+                                      now (a press; runs in the background)
   GET  /api/safe-mode                 is this run in safe mode, and the next?
   POST /api/safe-mode                 {"next_start": true|false}: start in safe
                                       mode next time, or leave it. A press on
@@ -183,11 +194,127 @@ def doctor_stores():
     try:
         from agent_friday.services import store_inventory
         inv = store_inventory.public(store_inventory.cached(doctor._home()))
+        try:                             # what each store declares (services/store_policy, §11.7-3)
+            from agent_friday.services import store_policy
+            pol = store_policy.all_policies()
+            inv["policies"] = {r["store"]: pol[r["store"]] for r in inv.get("stores") or [] if r["store"] in pol}
+        except Exception:  # noqa: BLE001 - the list never fails for its declarations
+            inv["policies"] = {}
         resp = jsonify({"status": "ok", **inv})
         resp.headers["Cache-Control"] = "no-store"
         return resp
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The list of stores could not be made.")
+
+
+@doctor_bp.route("/api/doctor/diagnostic", methods=["GET"])
+@login_required
+def doctor_diagnostic():
+    """A diagnostic start's report (§33.5-6). Read-only; this PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    try:
+        from agent_friday.services import diagnostic_start
+        rep = diagnostic_start.latest()
+        resp = jsonify({"status": "ok", "active": diagnostic_start.active(),
+                        "next_start": diagnostic_start.next_marker().exists(), "report": rep,
+                        "this_run": bool(rep) and rep.get("id") == diagnostic_start.this_run_id(),
+                        "text": diagnostic_start.render_text(rep) if rep else None})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The diagnostic report could not be read.")
+
+
+@doctor_bp.route("/api/doctor/diagnostic", methods=["POST"])
+@login_required
+def doctor_diagnostic_next():
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Choose this on Friday's own page, on this PC."}), 403
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body.get("next_start"), bool):
+        return jsonify({"status": "error", "error": "next_start must be true or false."}), 400
+    try:
+        from agent_friday.services import diagnostic_start
+        on = diagnostic_start.set_next_start(body["next_start"])
+        try:
+            from agent_friday.services import action_ledger
+            action_ledger.try_append("decision", {
+                "tool": "diagnostic_start:next_start", "class": "owner", "decision": "allow",
+                "surface": "doctor", "reason": "on" if on else "off"})
+        except Exception:
+            pass
+        return jsonify({"status": "ok", "next_start": on})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The next start could not be set to a diagnostic start.")
+
+
+@doctor_bp.route("/api/doctor/after-upgrade", methods=["GET"])
+@login_required
+def doctor_after_upgrade():
+    """§37.3-9, §37.3-10. Read-only; this PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "The Doctor runs on this PC only."}), 403
+    try:
+        from agent_friday.services import derived_rebuild, upgrade_review
+        resp = jsonify({"status": "ok", "items": upgrade_review.listing(),
+                        "rebuild": derived_rebuild.state()})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The list could not be read.")
+
+
+@doctor_bp.route("/api/doctor/after-upgrade/<iid>/sorted", methods=["POST"])
+@login_required
+def doctor_after_upgrade_sorted(iid):
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Choose this on Friday's own page, on this PC."}), 403
+    from agent_friday.services import upgrade_review
+    it = upgrade_review.resolve(str(iid)[:40])
+    if it is None:
+        return jsonify({"status": "error", "error": "No such open item."}), 404
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("decision", {
+            "tool": "upgrade_review:sorted", "class": "owner", "decision": "allow",
+            "surface": "doctor", "reason": it["code"]})
+    except Exception:
+        pass
+    return jsonify({"status": "ok", "item": it})
+
+
+@doctor_bp.route("/api/doctor/rebuild", methods=["POST"])
+@login_required
+def doctor_rebuild():
+    if not _press_here():
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Choose this on Friday's own page, on this PC."}), 403
+    from agent_friday.services import derived_rebuild
+    body = request.get_json(silent=True) or {}
+    ix = body.get("index")
+    if not isinstance(ix, str) or ix not in derived_rebuild.INDEXES:
+        return jsonify({"status": "error", "error": "Unknown index."}), 400
+    if safe_mode.active():
+        return jsonify({"status": "error", "code": "safe_mode",
+                        "error": "Rebuilds wait for a normal start; leave safe mode first."}), 409
+    if derived_rebuild.busy():
+        return jsonify({"status": "busy", "error": "A rebuild is running; try again when it is done."}), 409
+    derived_rebuild.request([ix], "asked on the Doctor page")
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("decision", {
+            "tool": "derived_rebuild:" + ix, "class": "owner", "decision": "allow",
+            "surface": "doctor", "reason": "rebuild now"})
+    except Exception:
+        pass
+    _threading.Thread(target=derived_rebuild.run_pending, kwargs={"only": ix},
+                      name="derived-rebuild-now", daemon=True).start()
+    return jsonify({"status": "ok", "started": ix})
 
 
 @doctor_bp.route("/api/safe-mode", methods=["GET"])
@@ -210,7 +337,16 @@ def safe_mode_set():
     if not isinstance(body.get("next_start"), bool):
         return jsonify({"status": "error", "error": "next_start must be true or false."}), 400
     try:
+        after_upgrade = safe_mode.marker_reason() == safe_mode.MIGRATION_FAILED
         plan = safe_mode.set_next_start(body["next_start"])
+        if after_upgrade and not body["next_start"]:
+            try:                         # the owner has seen it and left safe mode: sorted
+                from agent_friday.services import upgrade_review
+                for it in upgrade_review.listing():
+                    if it["code"] in ("migration_failed", "migration_cut_off", "migration_link"):
+                        upgrade_review.resolve(it["id"])
+            except Exception:  # noqa: BLE001
+                pass
         try:
             from agent_friday.services import action_ledger, policy_version
             # a receipt names its action (BD-11a): the ledger refuses one without
@@ -218,7 +354,8 @@ def safe_mode_set():
                 "action_id": policy_version.new_action_id(),
                 "policy_version": policy_version.current_id(),
                 "tool": "safe_mode:next_start", "class": "owner", "decision": "allow",
-                "surface": "doctor", "reason": "on" if body["next_start"] else "off"})
+                "surface": "doctor", "reason": ("on" if body["next_start"] else "off")
+                + (" (after a failed upgrade)" if after_upgrade else "")})
         except Exception:
             pass
         return jsonify({"status": "ok", **plan,
@@ -268,7 +405,15 @@ def repair_search_index():
 def restore_state():
     from agent_friday.services import friday_bundle
     why = friday_bundle.restore_hold()
-    return jsonify({"status": "ok", "held": bool(why), "why": why})
+    left = []
+    if why:
+        try:
+            from agent_friday.services import restore_reestablish
+            left = restore_reestablish.blockers()
+        except Exception as e:  # noqa: BLE001
+            left = [{"code": "check_failed", "what": "restore",
+                     "said": "Friday could not check what is still needed (%s)." % type(e).__name__}]
+    return jsonify({"status": "ok", "held": bool(why), "why": why, "blockers": left})
 
 
 @doctor_bp.route("/api/restore/resume", methods=["POST"])
@@ -281,6 +426,9 @@ def restore_resume():
     try:
         done = friday_bundle.resume_after_restore("owner:ui")
         return jsonify({"status": "ok", "resumed": done})
+    except friday_bundle.NotReestablished as e:
+        return jsonify({"status": "error", "code": "not_reestablished", "error": str(e),
+                        "blockers": e.blockers}), 409
     except Exception as e:  # noqa: BLE001
         return api_error(e, "Outward actions could not be resumed.")
 
@@ -320,13 +468,35 @@ def bundle_create():
         from agent_friday.paths import friday_home
         dest_dir = fb.documents_dir() / "Friday Bundles"
         dest = dest_dir / ("friday-%s%s" % (_t.strftime("%Y%m%d-%H%M%S"), fb.SUFFIX))
+        made = False
         try:
             m = fb.create(dest, pw, categories=cats)
+            made = True
             v = fb.verify(dest, pw)
             fb._remember(_P(friday_home()), dest, m["bundle_id"], verified=v["ok"])
+            try:                         # a bundle made here is a receipt too (doctor_repairs.FLOW)
+                from agent_friday.services import action_ledger
+                action_ledger.try_append("backup", {"event": "bundle_made", "surface": "doctor",
+                                                    "bundle_id": m["bundle_id"], "file": dest.name,
+                                                    "files": len(m["files"]), "verified": bool(v["ok"]),
+                                                    "categories": sorted(cats)})
+            except Exception:  # noqa: BLE001 - backups/last_bundle.json keeps it either way
+                pass
             _BUNDLE_JOB.update(state="done", bundle_id=m["bundle_id"], file=dest.name,
                                files=len(m["files"]), verified=v["ok"])
         except Exception as e:  # noqa: BLE001
+            if made:                     # made but it does not check: deleted, as a scheduled one is
+                try:
+                    dest.unlink()
+                except OSError:
+                    pass
+            try:
+                from agent_friday.services import action_ledger
+                action_ledger.try_append("backup", {"event": "bundle_failed", "surface": "doctor",
+                                                    "stage": "verify" if made else "make",
+                                                    "error": type(e).__name__})
+            except Exception:  # noqa: BLE001
+                pass
             _BUNDLE_JOB.update(state="failed", error=str(e) if isinstance(e, fb.BundleError)
                                else "The bundle could not be made (%s)." % type(e).__name__)
     _threading.Thread(target=_run, name="friday-bundle", daemon=True).start()

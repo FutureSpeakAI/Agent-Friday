@@ -22,11 +22,16 @@ In safe mode Friday starts a minimal local interface:
 
 How it is entered, in order of precedence:
 
+* ``FRIDAY_DIAGNOSTIC_START=1`` (``friday diagnose``, or the Doctor page's
+  one-shot "make the next start a diagnostic start"): safe mode for that start
+  plus a start timeline and a Doctor report (services/diagnostic_start.py);
 * ``FRIDAY_SAFE_START=1`` in the environment of the process (``friday safe``
-  and the tray's "Restart in safe mode" set it);
+  sets it);
 * ``<home>/safe_mode/ON``, written by "Start in safe mode next time" (CLI
-  ``friday safe-mode on`` or the Doctor page); it stays until the owner leaves
-  safe mode, so a start that keeps failing cannot slip out of it;
+  ``friday safe-mode on``, the Doctor page or the tray's "Restart in safe
+  mode"); it stays until the owner leaves safe mode, so a start that keeps
+  failing cannot slip out of it. A failed upgrade writes it too (reason
+  "migration_failed"); that one is left only with a press on the Doctor page;
 * automatically, when the last three starts failed (services/boot_guard keeps
   the count): safe mode must stay reachable after a failed migration or a
   runtime that will not load (§28.5-2).
@@ -57,6 +62,7 @@ DISABLED = (
 )
 
 FAILED_STARTS = 3
+MIGRATION_FAILED = "migration_failed"   # services/migrations: kept until the owner's press
 _LOCK = threading.Lock()
 _DECIDED: dict = {}
 
@@ -75,6 +81,17 @@ def _failed_starts() -> int:
 
 
 def _decide() -> dict:
+    # a diagnostic start (services/diagnostic_start.py) is a safe start too
+    if os.environ.get("FRIDAY_DIAGNOSTIC_START", "").strip().lower() in ("1", "true", "yes", "on"):
+        return {"active": True, "why": "started in diagnostic mode", "how": "diagnostic"}
+    try:
+        upgrade = marker_path().exists() and marker_reason() == MIGRATION_FAILED
+    except OSError:
+        upgrade = False
+    if upgrade:
+        return {"active": True, "how": "marker",
+                "why": "an upgrade step failed; Friday stays in safe mode until you leave it "
+                       "on the Doctor page"}
     if os.environ.get("FRIDAY_SAFE_START", "").strip().lower() in ("1", "true", "yes", "on"):
         return {"active": True, "why": "started in safe mode", "how": "start"}
     try:
@@ -114,13 +131,34 @@ def refusal(part: str) -> Optional[str]:
             "you leave safe mode and restart." % state().get("why"))
 
 
-def set_next_start(on: bool) -> dict:
+def marker_reason() -> Optional[str]:
+    """Why the marker was written (None when chosen by the owner, or absent).
+    A marker that is there but cannot be read counts as written for a failed
+    upgrade: the stricter reading, so it is never lifted without the press."""
+    p = marker_path()
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return MIGRATION_FAILED if p.exists() else None
+    r = d.get("reason") if isinstance(d, dict) else None
+    return r if isinstance(r, str) else None
+
+
+def set_next_start(on: bool, reason: Optional[str] = None) -> dict:
     """Write or remove the marker for the next start. Returns the new plan.
-    The running process keeps its mode until it restarts."""
+    The running process keeps its mode until it restarts. A marker written
+    for a failed upgrade (reason MIGRATION_FAILED) is kept when the owner asks
+    for safe mode again, and is left only by the owner's press on the Doctor
+    page (routes/doctor.py); the CLI does not remove it."""
     p = marker_path()
     if on:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"chosen_at": time.time()}), encoding="utf-8")
+        keep = reason or (MIGRATION_FAILED if marker_reason() == MIGRATION_FAILED else None)
+        tmp = p.with_name(p.name + ".partial-%d" % os.getpid())
+        tmp.write_text(json.dumps({"chosen_at": time.time(), "reason": keep}), encoding="utf-8")
+        os.replace(tmp, p)                # whole or not at all: its reason is never torn off
     else:
         try:
             p.unlink()
@@ -137,7 +175,8 @@ def plan() -> dict:
     except OSError:
         nxt = False
     return {"active": now["active"], "why": now.get("why"), "how": now.get("how"),
-            "next_start_safe": bool(nxt), "disabled": list(DISABLED) if now["active"] else []}
+            "next_start_safe": bool(nxt), "reason": marker_reason(),
+            "disabled": list(DISABLED) if now["active"] else []}
 
 
 _GUARD = {"installed": False}
