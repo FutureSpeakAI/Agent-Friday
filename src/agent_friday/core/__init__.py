@@ -2826,6 +2826,7 @@ DEFAULT_SETTINGS = {
     "library_kg_learn": "",
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     "render_3d": True,                    # False: no 3D anywhere, no WebGL context (Settings > Appearance; NS-21.22-3)
+    "text_scale": 100,                    # text size in windows and the chat, percent: 100|125|150|175|200 (NS-33.1-8)
     # `decision_backend` (which scorer answers Friday's typed judgments) is
     # declared once, with the approval-gate block further down.
     # The owner's own dock arrangement: {"order": [ws_id, ...], "hidden": [ws_id, ...]}.
