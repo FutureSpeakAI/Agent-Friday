@@ -1148,7 +1148,7 @@ Raise the screen-only card that starts the held list fresh (**Start the list fre
 Both notes, Friday's recent changes (last 20) and the "Waiting for your review" queue.
 
 ### `POST /api/core-memory/add` · `/edit` · `/delete`
-`{target, text}` · `{target, index, text}` · `{target, index}`.
+`{target, text}` · `{target, index, text, expect?}` · `{target, index, expect?}`. With `expect` (the line's text as shown), a line at `index` that no longer reads `expect` is refused with 409 ("that line changed since you last looked; reload and try again"). The card's read, edit, delete and review answer the owner's own principal only (403 otherwise).
 
 ### `POST /api/core-memory/undo`
 `{change_id}`: undo one of Friday's changes ("What Friday changed").
@@ -1161,6 +1161,15 @@ Both notes, Friday's recent changes (last 20) and the "Waiting for your review" 
 
 ### `GET /api/core-memory/suppressed` · `POST /api/core-memory/suppressed/remove`
 The suppression rules (`{rules, dropped, dropped_total}`) · `{id}`: remove one rule, so similar suggestions can come through again.
+
+### `GET /api/memory/corrections?n=`
+The owner's corrections (`services/corrections`), newest first, at most 100: store, action, the old claim and the correction (shortened), reason, what was repaired, and `undo_ids` where the card can put the retired messages back (`POST /api/core-memory/restore-messages`). Owner principal only (403 otherwise).
+
+### `POST /api/memory/corrections/<id>/test`
+`{on: bool, question?, expected?}`: keep a correction as a regression test with the owner's own question and expected answer. Owner principal only. 503 `{locked: true}` when the keystore that seals the answer is locked.
+
+### `POST /api/memory/corrections/<id>/delete`
+The owner deletes one correction record: its rows are removed from the log (an atomic rewrite, not a tombstone), the card's change journal stops citing it and the messages it retired stop pointing at it (they stay retired). Owner principal only; 400 for a malformed id, 404 when it is not there.
 
 ---
 

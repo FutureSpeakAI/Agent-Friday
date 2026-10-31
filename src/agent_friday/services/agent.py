@@ -1161,7 +1161,8 @@ def _tool_search_web(inp):
                 + _ws.status_note(out))
     header = (f"Search results for '{q}' (backend: {out.get('backend')}, "
               f"{len(results)} results). URLs below are real and fetchable — "
-              f"pass one verbatim to browse_web:")
+              f"pass one verbatim to browse_web. Snippets are UNVERIFIABLE "
+              f"(what the pages say; not checked):")
     # Each row is its OWN paragraph (a blank line between rows), and that exact
     # rendered paragraph is registered as published text: the egress gate's
     # span pass splits a replayed result on blank lines and lets a paragraph
@@ -1200,7 +1201,21 @@ def _tool_search_web(inp):
             pass
     if out.get('detail'):
         paras.append(f"[note: {out['detail']}]")
+    # Every result's site, not only those the reply cites: the model read each
+    # snippet (services/web_provenance says why, and what it costs).
+    _note_web_read(r.get('url') for r in results)
     return '\n\n'.join(paras)[:100_000]
+
+
+def _note_web_read(urls):
+    """The sites this turn read, as registered domains only, for its reply's
+    provenance (services/web_provenance: a stopped site is then fully
+    stopped). Nothing is noted off the record. Never fails the tool."""
+    try:
+        from agent_friday.services import web_provenance as _wp
+        _wp.note(list(urls or []), _CURRENT_CONVERSATION.get())
+    except Exception:
+        pass
 
 
 def _tool_browse_web(inp):
@@ -1232,9 +1247,20 @@ def _tool_browse_web(inp):
         return f"Browse error ({url}): {rec.get('error')}"
 
     text = _wf.load_extraction(rec['id']) or ''
+    try:
+        # A page line shaped like one of Friday's kind labels ("KNOWN (...)")
+        # is the page's text, not a label: prefix it so it cannot pass for one.
+        from agent_friday.services.knowledge_kinds import neutralise_labels as _nl
+        text = _nl(text)
+    except Exception:
+        pass
     _log_context("browse_web", {"url": url, "chars": len(text),
                                 "cached": rec.get('from_cache')})
+    _note_web_read([rec.get('final_url') or url])
     header = f"[{rec.get('final_url') or url}]"
+    # A web page is UNVERIFIABLE (services/knowledge_kinds, NS-3.4-1): Friday
+    # read it and cannot check it. The first line stays the address.
+    header += "\n[UNVERIFIABLE: a web page; read, cannot be checked]"
     if rec.get('redirect_chain'):
         header += f"\n[followed {len(rec['redirect_chain'])} redirect(s), each safety-checked]"
     tail = (f"\n...[truncated — {rec.get('chars')} chars extracted]"
@@ -3129,6 +3155,7 @@ def _tool_search_news(inp):
                                         "story as if it were new."
                                         % (" matching %r" % query if query else "", len(matched)))})
         return f"No current news stories matched {query!r}." if query else "No news stories available right now."
+    _note_web_read(h.get('url') for h in hits)
     return json.dumps({'query': query, 'hits': hits}, default=str)[:100_000]
 
 

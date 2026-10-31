@@ -56,7 +56,8 @@ still carried a line about Dana. This module registers those stores:
                          them; the one-time move of those facts onto the card
                          runs before the card is purged, so it cannot bring a
                          line back.
-``dreams``               the nightly dreaming log (dreams.db and dreams/<day>.md):
+``dreams``               the nightly dreaming log (dreams.db, dreams/<day>.md and
+                         the <day>.json sidecar with its source message ids):
                          consolidated facts and topics naming them leave each
                          day; the day's summary line is written again.
 ``action_receipts``      nothing is removed: listed as retained.
@@ -95,11 +96,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 _log = logging.getLogger(__name__)
+
+#: The id ConversationMemory.index gives a turn stored without a message id
+#: (uuid4().hex). Transcript message ids are shorter (secrets.token_hex(8)).
+_LEGACY_ID = re.compile(r"^[0-9a-f]{32}$")
 
 _TRANSCRIPT_REASON = ("your own conversation history, in your words: Friday does not rewrite it (you can "
                       "delete any message from History). Those messages are no longer recalled, searched, "
@@ -253,10 +259,40 @@ def recall_purge(names, emails) -> Dict[str, Any]:
     """The recall indexes, then the graph and the day summaries made from them
     (in that order: the summaries are written again from the cleaned index)."""
     m = _matcher(names, emails)
-    not_removable = m.notes()
+    return purge_turns(m, _transcript_hits(m) if m else [])
+
+
+def purge_turns(m, transcript, index_match=None, retained_reason: str = "",
+                retained_what: str = "", by_id: bool = False) -> Dict[str, Any]:
+    """The recall-index purge forget-person runs, for any set of turns
+    (services/forget_kinds reuses it for a fact and a conversation): `m` is a
+    predicate on a turn's text (with ``notes()`` for what it cannot match and
+    a truth value for whether it can match at all), `transcript` the
+    (conversation id, message) pairs it covers. `index_match` is the predicate
+    run over conversation search's own rows (default `m`): a conversation's
+    forget passes one that matches nothing, so only its own message ids go.
+    `by_id` is a conversation's forget: each transcript message id is deleted
+    from the vector memory whatever its text, and a vector row `m` accepts by
+    its text is taken only when it is one of those ids, or a legacy row (stored
+    under a random id before turns carried their message id) dated on a day of
+    this conversation's own turns. A row under any other message id belongs to
+    another conversation and is never taken, nor added to the forgotten list;
+    the count is of this conversation's turns only. The receipt row has the
+    same shape as forget-person's."""
+    not_removable = list(m.notes()) if hasattr(m, "notes") else []
     removed_ids, texts, days = set(), [], set()
-    transcript = _transcript_hits(m) if m else []
     t_ids = [str(msg.get("id")) for _c, msg in transcript if msg.get("id")]
+    own_ids = set(t_ids)
+    own_days = {_day_of(msg.get("ts")) for _c, msg in transcript} - {""} if by_id else set()
+
+    def _ours(h) -> bool:
+        """With `by_id`: is this vector row one of this conversation's turns?"""
+        if not by_id:
+            return True
+        hid = str(h.get("id") or "")
+        if hid in own_ids:
+            return True
+        return bool(_LEGACY_ID.match(hid)) and str(h.get("date") or "")[:10] in own_days
     # Turns an earlier forget already took out: their days and graph turns
     # were handled then, so running forget again queues nothing twice.
     try:
@@ -275,6 +311,8 @@ def recall_purge(names, emails) -> Dict[str, Any]:
             not_removable.append({"what": "conversation memory (vector recall)", "reason": why})
         if mem is not None:
             hits = mem.matching(m)
+            if hits is not None:
+                hits = [h for h in hits if _ours(h)]
             if hits is None:
                 not_removable.append({"what": "conversation memory (vector recall)",
                                       "reason": "it could not be read, so it was not checked"})
@@ -285,7 +323,7 @@ def recall_purge(names, emails) -> Dict[str, Any]:
                 gone = set(want)
                 if int(n or 0) < len(want):
                     after = mem.matching(m)
-                    left = {str(r["id"]) for r in after} if after is not None else set(want)
+                    left = ({str(r["id"]) for r in after if _ours(r)} & set(want)) if after is not None else set(want)
                     gone -= left
                     if left:
                         not_removable.append({
@@ -295,13 +333,26 @@ def recall_purge(names, emails) -> Dict[str, Any]:
                 removed_ids |= gone
                 texts += [h["text"] for h in hits if str(h["id"]) in gone]
                 days |= {str(h.get("date") or "")[:10] for h in hits if str(h["id"]) in gone}
+            if by_id:
+                # The transcript's own ids (the vector memory stores a turn
+                # under its message id): each one, whatever its text.
+                for mid in t_ids:
+                    if mid in removed_ids or mid in left:
+                        continue
+                    try:
+                        if int(mem.delete(ids=[mid]) or 0):
+                            removed_ids.add(mid)
+                    except Exception as e:
+                        not_removable.append({"what": "conversation memory (vector recall)",
+                                              "reason": _scrubbed(e, "a turn could not be deleted")})
+                        break
 
     # 2. Conversation search; the transcript ids (and the vector memory's,
     #    which are the same message ids) are kept out of any rebuild.
     if m:
         try:
             from agent_friday.services import conversation_fts as fts
-            got = fts.forget_turns(m, mids=t_ids + vector_ids)
+            got = fts.forget_turns(m if index_match is None else index_match, mids=t_ids + vector_ids)
             # Counted once per turn across both indexes, and not at all while
             # the vector memory still holds it (listed as not removable above).
             removed_ids |= set(got["mids"]) - left
@@ -314,6 +365,15 @@ def recall_purge(names, emails) -> Dict[str, Any]:
         except Exception as e:
             not_removable.append({"what": "conversation search",
                                   "reason": _scrubbed(e, "it could not be updated")})
+
+    # The record of which replies recalled which turns (services/memory_influence,
+    # ids only) keeps no id of a forgotten turn, as after any other delete.
+    if m and removed_ids:
+        try:
+            from agent_friday.services import memory_influence
+            memory_influence.forget_refs(sorted(removed_ids))
+        except Exception:
+            pass
 
     # The in-memory review buffer (what the next periodic review would read):
     # every buffered exchange naming them, including a turn still in flight.
@@ -368,9 +428,16 @@ def recall_purge(names, emails) -> Dict[str, Any]:
 
     retained = []
     if transcript:
-        retained.append({"what": "messages in your conversation history", "count": len(transcript),
-                         "reason": _TRANSCRIPT_REASON})
-    return {"removed": len(removed_ids), "kind": "conversation turns removed from recall and search",
+        retained.append({"what": retained_what or "messages in your conversation history",
+                         "count": len(transcript), "reason": retained_reason or _TRANSCRIPT_REASON})
+    count = len(removed_ids)
+    if by_id:
+        # This conversation's turns only: by id, or (a legacy vector row) by its text.
+        legacy = {" ".join(str(t).split()) for t in texts}
+        count = sum(1 for _c, msg in transcript
+                    if str(msg.get("id") or "") in removed_ids
+                    or " ".join(str(msg.get("text") or "").split()) in legacy)
+    return {"removed": count, "kind": "conversation turns removed from recall and search",
             "not_removable": not_removable, "retained": retained, "also": [graph, summaries]}
 
 

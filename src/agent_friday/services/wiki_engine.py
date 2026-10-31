@@ -313,10 +313,15 @@ def _save_pending_wiki(items):
         raise
 
 
-def wiki_replace_in_page(path, old_text, new_text):
+def wiki_replace_in_page(path, old_text, new_text, detail=None):
     """Replace ``old_text`` with ``new_text`` in one wiki page, read and
     written under ``_PENDING_LOCK`` so no other wiki write lands in between.
-    Returns the page's wiki-relative path when it changed, else ``None``."""
+    Returns the page's wiki-relative path when it changed, else ``None``.
+
+    ``detail``, when a dict, receives what the correction record needs: the
+    heading the first occurrence sat under (``section``), how many
+    occurrences were replaced (``count``) and the whole lines that held them
+    before the change (``before_lines``, at most five)."""
     with _PENDING_LOCK:
         text = wiki_read_text(path)
         if not old_text or old_text not in text or text == VAULT_LOCKED_PLACEHOLDER:
@@ -325,6 +330,15 @@ def wiki_replace_in_page(path, old_text, new_text):
             rel = str(Path(path).relative_to(WIKI_DIR)).replace('\\', '/')
         except ValueError:
             rel = _wiki_rel(path)
+        if isinstance(detail, dict):
+            try:
+                head = text[:text.index(old_text)]
+                heads = [ln.lstrip("#").strip() for ln in head.splitlines() if ln.startswith("#")]
+                detail["section"] = heads[-1] if heads else ""
+                detail["count"] = text.count(old_text)
+                detail["before_lines"] = [ln for ln in text.splitlines() if old_text in ln][:5]
+            except Exception:  # noqa: BLE001 - the record is best-effort; the correction is not
+                pass
         _mirror_wiki_file(rel, text.replace(old_text, new_text))
         return rel
 

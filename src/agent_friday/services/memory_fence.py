@@ -41,12 +41,16 @@ _LOCK = threading.Lock()
 _RECALLED: "OrderedDict[str, tuple]" = OrderedDict()
 
 
-def fence(source: str, body: str) -> str:
+def fence(source: str, body: str, kind_label: str = "") -> str:
+    """`body` fenced as recalled memory. `kind_label` (services/knowledge_kinds,
+    e.g. "KNOWN (your memory card):") goes on the line after the note, so the
+    model reads what kind of information the block is before the block."""
     body = (body or "").strip("\n")
     if not body.strip():
         return ""
     src = re.sub(r"[^a-z0-9_\-]", "", str(source or "memory").lower()) or "memory"
-    return f'<{TAG} source="{src}">\n{NOTE}\n{body}\n</{TAG}>'
+    kl = " ".join(str(kind_label or "").split())
+    return f'<{TAG} source="{src}">\n{NOTE}\n' + (kl + "\n" if kl else "") + f'{body}\n</{TAG}>'
 
 
 def strip(text):

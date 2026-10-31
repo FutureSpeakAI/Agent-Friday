@@ -22778,7 +22778,11 @@ function KnowledgeGraphWS(props) {
           if (msg.type === 'reindexed') loadGraph(S.focus, {
             instant: true,
             keepLayout: S.layout
-          });else if (msg.type === 'wiki_changed') {
+          });else if (msg.type === 'node_removed') loadGraph(S.focus, {
+            instant: true,
+            keepLayout: S.layout
+          }); // the owner deleted an entity
+          else if (msg.type === 'wiki_changed') {
             // A page was saved, created, deleted or approved. Knowledge's page
             // list refreshes, and the graph reloads unless it just did so
             // itself. A burst (a research pass writing many pages) settles into
@@ -23585,7 +23589,24 @@ function KnowledgeGraphWS(props) {
       whiteSpace: 'nowrap'
     },
     onClick: () => openWikiPage(selected)
-  }, "\uD83D\uDCD6 Open page"), /*#__PURE__*/React.createElement("button", {
+  }, "\uD83D\uDCD6 Open page"), selected.id && selected.type !== 'soul' && /*#__PURE__*/React.createElement("button", {
+    "data-kg-delete": "1",
+    "aria-label": 'Delete this entity',
+    title: 'Delete this entity from the knowledge graph (you can restore it)',
+    className: "btn",
+    style: {
+      fontSize: 11,
+      padding: '4px 10px',
+      color: '#ff8a8a',
+      borderColor: 'rgba(255,138,138,0.4)',
+      whiteSpace: 'nowrap'
+    },
+    onClick: () => fridayKgDeleteEntity(selected, () => {
+      setSelected(null);
+      const S = kgRef.current;
+      S.setHighlight && S.setHighlight(null);
+    })
+  }, "Delete"), /*#__PURE__*/React.createElement("button", {
     "aria-label": 'Clear the selection',
     title: 'Clear the selection',
     className: "btn",
@@ -24096,7 +24117,12 @@ function KnowledgeWS() {
   }, '🌌 Show in graph'), !page && selPath && h('button', {
     className: 'kw-btn kw-go',
     onClick: () => openPage(selPath)
-  }, '📖 Open page'), (page || sel || section) && h('button', {
+  }, '📖 Open page'), sel && sel.id && sel.type !== 'soul' && h('button', {
+    className: 'kw-btn',
+    'data-kg-delete': '1',
+    onClick: () => fridayKgDeleteEntity(sel, clearFocus),
+    title: 'Delete this entity from the knowledge graph (you can restore it)'
+  }, 'Delete'), (page || sel || section) && h('button', {
     className: 'kw-btn',
     onClick: clearFocus,
     title: 'Clear',
@@ -54256,13 +54282,15 @@ function StToggle({
   value,
   onChange,
   desc,
-  disabled
+  disabled,
+  walkSkip
 }) {
   return /*#__PURE__*/React.createElement("button", {
     type: "button",
     role: "switch",
     "aria-checked": !!value,
     disabled: !!disabled,
+    "data-walk-skip": walkSkip || undefined,
     className: "st-switch",
     onClick: onChange,
     style: {
@@ -61174,6 +61202,8 @@ function SettingsTabPrivacy({
   }, /*#__PURE__*/React.createElement(MemoryCardPanel, {s:s, save:save})), /*#__PURE__*/React.createElement(StSection, {
     title: "Search your conversations"
   }, /*#__PURE__*/React.createElement(ConversationSearchPanel, null)), /*#__PURE__*/React.createElement(StSection, {
+    title: "Search what " + fridayName() + " remembers"
+  }, /*#__PURE__*/React.createElement(MemorySearchPanel, null)), /*#__PURE__*/React.createElement(StSection, {
     title: "What needs your sign-off"
   }, /*#__PURE__*/React.createElement(ApprovalScannerPanel, {
     s: s,
@@ -62347,6 +62377,153 @@ function LayaLearningPanel({s, save}) {
 }
 // End Laya learning panel
 
+// Forget a fact, a conversation or a source, and look first (services/forget_kinds,
+// NS-15.7-1; routes/memory_forget). Shared by the memory card, the saved facts,
+// conversation search and the knowledge graph; identical in index.html and
+// ui_parts/app.html. Receipts are shown as counts and kinds, never content.
+function fridayMemoryJSON(path, opts) {
+  return apiFetch(path, opts).then(r => r.json().catch(() => ({})).then(d => {
+    d = d || {};
+    if (!r.ok && d.message) d.error = d.message;   // a coded refusal (a press in Friday's page) says why in words
+    if (!r.ok && !d.error) d.error = 'That did not work.';
+    return d;
+  }));
+}
+function fridayMemoryPost(path, body) {
+  return fridayMemoryJSON(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+}
+function fridayForgetSummary(d) {
+  // The deletion receipt in words: removed, could not be removed, kept on purpose.
+  const rows = (d && d.stores) || [];
+  const removed = rows.filter(r => r.removed > 0).map(r => r.removed + ' ' + r.kind);
+  const nr = rows.reduce((n, r) => n + (r.not_removable || []).length, 0);
+  const kept = rows.reduce((a, r) => a.concat((r.retained || []).map(x => (x.count ? x.count + ' ' : '') + x.what)), []);
+  return (removed.length ? 'Removed: ' + removed.join('; ') + '.' : 'Nothing needed removing.')
+    + (kept.length ? ' Kept: ' + kept.join('; ') + '.' : '')
+    + (nr ? ' ' + nr + ' item' + (nr === 1 ? '' : 's') + ' could not be removed or ' + (nr === 1 ? 'is' : 'are') + ' not supported yet.' : '');
+}
+function fridayEverywhereSummary(d) {
+  // What Show everywhere found (read-only): counts and short locations.
+  if (!d || !d.ok) return (d && d.error) || 'Could not look that up.';
+  const where = l => l.title || (l.file ? l.file + ' line ' + l.line : '') || l.day || l.status || '';
+  const parts = (d.stores || []).filter(r => r.count > 0 && r.store !== 'tombstones' && r.store !== 'stopped_sources')
+    .map(r => r.count + ' ' + r.kind + ((r.locations || []).length ? ' (' + r.locations.map(where).filter(Boolean).slice(0, 4).join(', ') + ')' : ''));
+  return (parts.length ? 'Found: ' + parts.join('; ') + '.' : 'Not found anywhere.')
+    + (d.person ? ' This is also a person ' + fridayName() + ' holds records about; forget the person from People.' : '');
+}
+function fridayKgDeleteEntity(node, after) {
+  // The owner deletes one graph entity (POST /api/knowledge-graph/entity/delete, tombstoned so
+  // no rebuild makes it again); the receipt gives the count and offers Restore.
+  if (!node || !node.id) return Promise.resolve(null);
+  if (!window.confirm('Delete “' + (node.title || node.id) + '” from the knowledge graph? It and its links go, and no rebuild makes it again. The pages and conversations it came from are not changed.')) return Promise.resolve(null);
+  return fridayMemoryPost('/api/knowledge-graph/entity/delete', {id: node.id}).then(d => {
+    if (!d.ok && !d.tombstoned) { window.alert(d.error || d.warning || 'It was not deleted.'); return d; }
+    const n = d.entities || 0, l = d.relationships || 0;
+    const first = (d.deleted || [])[0] || {id: node.id, title: node.title, type: node.type};
+    if (after) after(d);
+    const undo = window.confirm('Deleted ' + n + ' entit' + (n === 1 ? 'y' : 'ies') + ' and ' + l + ' link' + (l === 1 ? '' : 's') + (d.error ? ' (' + d.error + ')' : '') + '.\n\nRestore it? OK restores it (the next rebuild may make it again); Cancel keeps it deleted.');
+    if (!undo) return d;
+    const body = String(first.id || '').indexOf('fact_') === 0 ? {id: first.id} : {title: first.title, type: first.type};
+    return fridayMemoryPost('/api/knowledge-graph/entity/restore', body).then(r => {
+      window.alert(r.ok ? 'Restored: the next rebuild may make it again.' : (r.error || 'It was not restored.'));
+      return d;
+    });
+  }).catch(e => { window.alert((e && e.message) || 'It was not deleted.'); return null; });
+}
+function ForgetThisControls({text, factId, onDone, disabled}) {
+  // "Show everywhere" (read-only) and "Forget this" for one statement. Forget this first shows
+  // what Show everywhere found, with the owner's own messages that may have said it as a list
+  // to tick (close matches ticked); only the ticked messages leave recall and search.
+  const E = React.createElement;
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [ask, setAsk] = useState(null);
+  const q = String(text || '').slice(0, 400);
+  const where = () => fridayMemoryJSON('/api/memory/show-everywhere?q=' + encodeURIComponent(q));
+  const look = () => { setBusy(true); where().then(d => setNote(fridayEverywhereSummary(d))).catch(e => setNote(e.message || 'Could not look that up.')).finally(() => setBusy(false)); };
+  const candidatesOf = w => ((((w && w.stores) || []).find(r => r.store === 'conversation_turns') || {}).candidates || []);
+  const forget = () => {
+    setBusy(true); setNote('');
+    where().then(w => {
+      if (!w || !w.ok) { setNote(fridayEverywhereSummary(w)); return; }
+      const cands = candidatesOf(w);
+      const picked = {};
+      cands.forEach(c => { if (c.close) picked[c.message_id] = true; });
+      setAsk({summary: fridayEverywhereSummary(w), candidates: cands, picked: picked});
+    }).catch(e => setNote(e.message || 'Could not look that up.')).finally(() => setBusy(false));
+  };
+  const confirmForget = () => {
+    const ids = ask ? ask.candidates.filter(c => ask.picked[c.message_id]).map(c => c.message_id) : [];
+    setBusy(true); setNote('');
+    fridayMemoryPost('/api/memory/forget-fact', factId ? {fact_id: factId, text: q, turn_ids: ids, confirm: true} : {text: q, turn_ids: ids, confirm: true})
+      .then(d => {
+        if (!d.ok) { setNote(d.error || 'That did not work.'); return; }
+        setAsk(null);
+        if (onDone) onDone(d); else setNote(fridayForgetSummary(d));
+      }).catch(e => setNote(e.message || 'That did not work.')).finally(() => setBusy(false));
+  };
+  const toggle = id => setAsk(a => a && Object.assign({}, a, {picked: Object.assign({}, a.picked, {[id]: !a.picked[id]})}));
+  const b = (label, fn, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: busy || !!disabled, onClick: fn, key: key}, label);
+  const dim = {fontSize:11, lineHeight:1.5, color:'rgba(255,255,255,0.65)'};
+  const dialog = ask && E('div', {role:'dialog', 'aria-label':'Forget this everywhere?', 'data-forget-confirm':'1', key:'ask',
+      style:{flexBasis:'100%', marginTop:4, padding:8, borderRadius:6, background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)'}},
+    E('div', {style: dim}, 'Forget this everywhere? ' + ask.summary + ' ' + fridayName() + ' will not save or suggest it again unless you say it yourself.'),
+    ask.candidates.length > 0
+      ? E('div', {style:{marginTop:6}},
+          E('div', {style: dim}, 'Your messages that may have said it. Ticked ones stay in your history but are no longer recalled or searched; unticked ones are not changed.'),
+          ask.candidates.map(c => E('label', {key: c.message_id, 'data-forget-turn': c.message_id, style: Object.assign({}, dim, {display:'flex', gap:6, alignItems:'flex-start', marginTop:4, cursor:'pointer'})},
+            E('input', {type:'checkbox', checked: !!ask.picked[c.message_id], onChange: () => toggle(c.message_id), 'aria-label': 'Also stop recalling this message'}),
+            E('span', {style:{wordBreak:'break-word'}}, (c.title ? c.title + ': ' : '') + '“' + c.snippet + '”'))))
+      : E('div', {style: Object.assign({}, dim, {marginTop:6})}, 'None of your messages look like they said it, so no message is changed.'),
+    E('div', {style:{display:'flex', gap:6, marginTop:8}}, b('Forget', confirmForget, 'yes'), b('Cancel', () => setAsk(null), 'no')));
+  return E('span', {'data-forget-this': '1', style:{display:'inline-flex', gap:6, flexWrap:'wrap', alignItems:'center'}},
+    b('Show everywhere', look, 'where'),
+    b('Forget this', forget, 'forget'),
+    dialog,
+    note && E('span', {role:'status', key:'note', style:{fontSize:11, lineHeight:1.5, color:'rgba(255,255,255,0.55)', flexBasis:'100%'}}, note));
+}
+function StoppedSourcesPanel() {
+  // The sites and meetings the owner stopped (GET /api/memory/stopped-sources: their names are
+  // sealed at rest and opened for the owner here), each with Use again
+  // (POST /api/memory/stopped-sources/<id>/unstop, a press in Friday's page). Using one again
+  // lets Friday learn from it from now on; it does not bring back what was removed.
+  const E = React.createElement;
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [ask, setAsk] = useState('');
+  const load = useCallback(() => {
+    fridayMemoryJSON('/api/memory/stopped-sources')
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the stopped sources.'); setList(d.sources || []); })
+      .catch(e => { setList([]); setMsg(e.message || 'Could not read the stopped sources.'); });
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const again = s => {
+    setBusy(s.id); setMsg('');
+    fridayMemoryPost('/api/memory/stopped-sources/' + encodeURIComponent(s.id) + '/unstop', {confirm: true})
+      .then(d => { if (!d.ok) throw new Error(d.error || 'That did not work.'); setMsg(d.note || 'It can be used again.'); setAsk(''); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'12px 0 4px'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)', display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'};
+  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key}, label);
+  if (!list || (list.length === 0 && !msg)) return null;
+  return E('div', {'data-stopped-sources': '1'},
+    E('div', {style: head}, 'Stopped sources'),
+    E('div', {style: dim}, 'Sites and meetings you told ' + fridayName() + ' to stop using. She may still open a stopped site when you ask, but nothing read there is remembered or suggested. Use again lets her learn from it from now on; what was removed when you stopped it does not come back.'),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'var(--st-warn)', marginTop:6}}, msg),
+    list.map(s => E('div', {key: s.id, 'data-stopped-source': s.id, style: row},
+      E('div', {style:{flex:'1 1 200px', fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}},
+        s.label + (s.named && s.day ? ' · stopped ' + s.day : '')),
+      ask === s.id
+        ? [E('span', {key:'q', style: dim}, 'Use it again? What was removed does not come back.'),
+           btn('Yes, use it again', () => again(s), 'yes'), btn('Cancel', () => setAsk(''), 'no')]
+        : btn('Use again', () => setAsk(s.id), 'again'))));
+}
+// End forget controls
+
 function MemoryCardPanel({s, save}) {
   // The core memory card (services/core_memory): the two short notes Friday reads at
   // the top of every conversation. Every line is shown and can be edited or deleted
@@ -62358,9 +62535,15 @@ function MemoryCardPanel({s, save}) {
   const [msg, setMsg] = useState('');
   const [edit, setEdit] = useState(null);
   const [draft, setDraft] = useState({user: '', friday: ''});
+  const [facts, setFacts] = useState(null);
+  const [disc, setDisc] = useState(null);
   // Messages a correction stopped using as evidence (north star 34.9-4), so
   // the owner sees it happened and can put them back.
   const [retired, setRetired] = useState(null);
+  // The owner's corrections (services/corrections, north star 29.9-1 and 15.6-1):
+  // the old version stays in history, with what was repaired and an Undo where one exists.
+  const [corr, setCorr] = useState([]);
+  const [testFor, setTestFor] = useState(null);
   const [sedit, setSedit] = useState(null);
   const [sup, setSup] = useState({rules: [], dropped_total: 0});
   const load = useCallback(() => {
@@ -62368,17 +62551,52 @@ function MemoryCardPanel({s, save}) {
       .then(r => r.json())
       .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory card.'); setRep(d); })
       .catch(e => setMsg(e.message || 'Could not read the memory card.'));
+    // What the owner discarded stays blocked; listed here (owner only) so it can be allowed again.
+    apiFetch('/api/memory/discarded')
+      .then(r => r.json())
+      .then(d => setDisc(d && d.ok ? (d.discarded || []) : null))
+      .catch(() => setDisc(null));
+    apiFetch('/api/memory/corrections?n=30')
+      .then(r => r.json())
+      .then(d => { if (d && d.ok) setCorr(d.corrections || []); })
+      .catch(() => {});
     apiFetch('/api/core-memory/suppressed')
       .then(r => r.json())
       .then(d => { if (d.ok) setSup(d); })
       .catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
+  // The saved facts (the older user model, services/user_model): each can be deleted
+  // (POST /api/user-model/fact/delete, tombstoned) or forgotten everywhere.
+  const loadFacts = useCallback(() => {
+    fridayMemoryJSON('/api/user-model')
+      .then(d => setFacts(((d && d.profile) || {}).facts || []))
+      .catch(() => setFacts([]));
+  }, []);
+  useEffect(() => { loadFacts(); }, [loadFacts]);
+  const forgotten = d => { setMsg(fridayForgetSummary(d)); load(); loadFacts(); };
+  const delFact = f => {
+    if (!window.confirm('Delete this saved fact? ' + fridayName() + ' will not save it again unless you say it yourself.')) return;
+    setBusy('f' + f.fact_id); setMsg('');
+    fridayMemoryPost('/api/user-model/fact/delete', {fact_id: f.fact_id})
+      .then(d => setMsg(d.ok ? 'Deleted.' + (d.warning ? ' ' + d.warning : '') : (d.error || 'That did not work.')))
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => { setBusy(''); loadFacts(); load(); });
+  };
   const post = (path, body, key, after) => {
     setBusy(key || path); setMsg(''); setRetired(null);
     apiFetch('/api/core-memory/' + path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})})
       .then(r => r.json())
       .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else { if (d.suppressed && d.note) setMsg(d.note); if (after) after(d); } load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const allow = id => {
+    // Lifts the block only: nothing goes back in the queue; a later pass may suggest it again.
+    setBusy('ag' + id); setMsg('');
+    apiFetch('/api/memory/discarded/' + encodeURIComponent(id) + '/undo', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
+      .then(r => r.json())
+      .then(d => { setMsg(d.ok ? 'Allowed again. ' + fridayName() + ' may suggest it again later; it was not put back in the queue.' : (d.reason || 'That did not work.')); load(); })
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
@@ -62389,6 +62607,35 @@ function MemoryCardPanel({s, save}) {
   const btn = (label, onClick, key, extra) => E('button', Object.assign({className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, extra || {}), label);
   const from = src => (String(src || '').indexOf('dream') === 0 ? 'nightly dreaming'
     : src === 'review' ? 'the background review' : src === 'friday' ? fridayName() : 'an older note');
+  const STORE = {card: 'Memory card', conversation: 'Conversations', wiki: 'Wiki', fact: 'Facts', kg: 'Knowledge graph'};
+  const fixed = c => c.action === 'restored' ? 'Put back the messages a correction had retired'
+    : (c.repair && c.repair.suggestion_edited) ? 'Edited ' + fridayName() + '’s suggestion before keeping it → “' + (c.correction || '') + '”'
+    : '“' + (c.claim || '') + '” → ' + ((c.action === 'marked_wrong' || c.correction === 'removed') ? 'removed as wrong' : '“' + (c.correction || '') + '”');
+  const repaired = r => {
+    const p = []; r = r || {};
+    if (r.superseded_turns) p.push(r.superseded_turns + (r.superseded_turns === 1 ? ' earlier message' : ' earlier messages') + ' no longer used as evidence');
+    if (r.restored_turns) p.push(r.restored_turns + (r.restored_turns === 1 ? ' message' : ' messages') + ' used again');
+    if (r.pages_changed) p.push(r.pages_changed + (r.pages_changed === 1 ? ' page' : ' pages') + ' changed');
+    if (r.graph_reindex_queued) p.push('knowledge graph re-index queued');
+    return p.join('; ');
+  };
+  const setTest = (id, on, q, x) => {
+    setBusy('t' + id); setMsg('');
+    apiFetch('/api/memory/corrections/' + encodeURIComponent(id) + '/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({on: on, question: q || '', expected: x || ''})})
+      .then(r => r.json())
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); else setTestFor(null); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const delCorr = id => {
+    if (!window.confirm('Delete this record of your correction? The correction itself stays as you made it; only this record of it goes.')) return;
+    setBusy('x' + id); setMsg('');
+    apiFetch('/api/memory/corrections/' + encodeURIComponent(id) + '/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
+      .then(r => r.json())
+      .then(d => { if (!d.ok) setMsg(d.error || 'That did not work.'); if (testFor && testFor.id === id) setTestFor(null); load(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
   const noteRetired = d => {
     const n = (d && d.superseded_turns) || 0;
     setRetired(n > 0 ? {n: n, ids: d.superseded_ids || []} : null);
@@ -62409,13 +62656,14 @@ function MemoryCardPanel({s, save}) {
               onChange: e => setEdit({t: t, i: i, text: e.target.value})}),
             btn('Save', () => post('edit', {target: t, index: i, text: edit.text}, 'e' + t + i, d => { setEdit(null); noteRetired(d); }), 'save'),
             btn('Cancel', () => setEdit(null), 'cancel'))
-        : E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
-            E('div', {style:{flex:1, fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, line),
+        : E('div', {key: t + i, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'})},
+            E('div', {style:{flex:'1 1 200px', fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, line),
             btn('Edit', () => setEdit({t: t, i: i, text: line}), 'edit'),
             btn('Delete', () => post('delete', {target: t, index: i}, 'd' + t + i), 'delete',
               {title: 'Remove the line. What you said before still counts.'}),
             btn('Wrong: delete', () => post('delete', {target: t, index: i, wrong: true}, 'w' + t + i, noteRetired), 'wrong',
-              {title: 'Remove the line because it was never true: your earlier messages that said it stop being used as evidence.'}))),
+              {title: 'Remove the line because it was never true: your earlier messages that said it stop being used as evidence.'}),
+            E(ForgetThisControls, {key: 'forget', text: line, onDone: forgotten, disabled: !!busy}))),
       E('div', {style:{display:'flex', gap:6, marginTop:4}},
         E('input', {className:'input', 'aria-label':'Add a line to ' + f.title, placeholder:'Add a line', style:{flex:1, fontSize:12}, value: draft[t],
           onChange: e => setDraft(Object.assign({}, draft, {[t]: e.target.value}))}),
@@ -62446,6 +62694,13 @@ function MemoryCardPanel({s, save}) {
     !rep && !msg && E('div', {style: dim}, 'Loading…'),
     rep && E('div', null,
       file('user'), file('friday'),
+      (facts || []).length > 0 && E('div', {style: head, 'data-user-facts': '1'}, 'Saved facts'),
+      (facts || []).length > 0 && E('div', {style: dim}, 'The older list of facts ' + fridayName() + ' kept about you. Delete removes one fact; Forget this removes the statement from every store, and the messages you tick from recall.'),
+      (facts || []).slice(0, 50).map(f => E('div', {key: 'f' + f.fact_id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'})},
+        E('div', {style:{flex:'1 1 200px', fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, f.text),
+        btn('Delete', () => delFact(f), 'fdel'),
+        E(ForgetThisControls, {key: 'forget', text: f.text, factId: f.fact_id, onDone: forgotten, disabled: !!busy}))),
+      E(StoppedSourcesPanel, null),
       (rep.pending || []).length > 0 && E('div', {style: head}, 'Waiting for your review'),
       (rep.pending || []).length > 0 && E('div', {style: dim}, 'Suggestions nothing has used yet. Keep puts them on the card. Edit and keep puts your own wording on the card instead. Discard drops them. Don’t suggest things like this drops them and holds back similar suggestions.'),
       (rep.pending || []).slice(0, 30).map(p => E('div', {key: p.id, style: row},
@@ -62476,9 +62731,80 @@ function MemoryCardPanel({s, save}) {
         E('div', {style:{flex:1}},
           E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, chg(c)),
           E('div', {style: dim}, (c.target === 'friday' ? 'Working with you' : 'About you') + ' · ' + when(c.ts) + (c.undone ? ' · undone' : ''))),
-        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo')))));
+        !c.undone && btn('Undo', () => post('undo', {change_id: c.id}, 'u' + c.id), 'undo'))),
+      corr.length > 0 && E('div', {style: head, 'data-memory-corrections': corr.length}, 'Corrections'),
+      corr.length > 0 && E('div', {style: dim}, 'What you corrected, newest first. The old version stays here in your history; ' + fridayName() + ' no longer uses it as true.'),
+      corr.slice(0, 30).map(c => E('div', {key: c.id, style: row, 'data-memory-correction': c.id},
+        E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, fixed(c)),
+        E('div', {style: dim}, when(c.at) + ' · ' + (STORE[c.store] || c.store) + (c.reason ? ' · ' + c.reason : '')
+          + (repaired(c.repair) ? ' · ' + repaired(c.repair) : '') + ((c.restored_by || []).length ? ' · undone' : '')),
+        (testFor && testFor.id === c.id)
+          ? E('div', {style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap'}},
+              E('input', {className:'input', 'aria-label':'A question to ask', placeholder:'A question to ask (optional)', style:{flex:'1 1 200px', fontSize:12}, value: testFor.q,
+                onChange: e => setTestFor(Object.assign({}, testFor, {q: e.target.value}))}),
+              E('input', {className:'input', 'aria-label':'The right answer', placeholder:'The right answer (optional)', style:{flex:'1 1 200px', fontSize:12}, value: testFor.x,
+                onChange: e => setTestFor(Object.assign({}, testFor, {x: e.target.value}))}),
+              btn('Keep as a test', () => setTest(c.id, true, testFor.q, testFor.x), 'save-test'),
+              btn('Cancel', () => setTestFor(null), 'cancel-test'))
+          : E('div', {style:{display:'flex', gap:6, marginTop:4}},
+              (c.undo_ids || []).length > 0 && btn('Undo', () => post('restore-messages', {ids: c.undo_ids}, 'r' + c.id), 'undo-corr',
+                {title: 'Use the earlier messages this correction retired again. The line stays as you left it.'}),
+              c.action !== 'restored' && (c.regression_test
+                ? btn('Kept as a test', () => setTest(c.id, false), 'test-off', {'aria-pressed': true, title: 'Stop keeping this as a test'})
+                : btn('Keep as a test', () => setTestFor({id: c.id, q: '', x: ''}), 'test-on',
+                    {'aria-pressed': false, title: 'Remember this as a test: ' + fridayName() + ' can be checked later against your own question and answer.'})),
+              btn('Delete this record', () => delCorr(c.id), 'delete-corr',
+                {'data-memory-correction-delete': c.id, title: 'Remove this record, with the old text it keeps, from your history. It does not undo the correction.'})))),
+      (disc || []).length > 0 && E('div', {style: head}, 'Discarded suggestions'),
+      (disc || []).length > 0 && E('div', {style: dim}, 'What you discarded or rejected stays blocked: ' + fridayName() + ' will not suggest it again. Allow again lets her suggest it again later; it does not put it back in the queue.'),
+      (disc || []).slice(0, 50).map(x => E('div', {key: 'dx' + x.id, 'data-discarded': x.id, style: Object.assign({}, row, {display:'flex', gap:6, alignItems:'center'})},
+        E('div', {style:{flex:1}},
+          E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, x.label),
+          E('div', {style: dim}, (x.kind === 'proposal' ? 'A rejected suggestion' : 'A discarded card suggestion') + (x.day ? ' · ' + x.day : ''))),
+        btn('Allow again', () => allow(x.id), 'allow')))),
+    E(MemoryMeasures, null));
 }
 // End memory card panel
+
+function MemoryMeasures() {
+  // How memory is doing (services/memory_metrics, GET /api/memory/metrics): counts and
+  // rates kept on this PC over the last 30 days. Read-only; no memory text is stored or shown.
+  const E = React.createElement;
+  const [m, setM] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    apiFetch('/api/memory/metrics?days=30')
+      .then(r => r.json())
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Could not read the memory measures.'); setM(d); })
+      .catch(e => setErr(e.message || 'Could not read the memory measures.'));
+  }, []);
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const head = {fontSize:11.5, color:'rgba(255,255,255,0.7)', margin:'14px 0 4px'};
+  const pct = v => (v === null || v === undefined) ? 'not enough yet' : Math.round(v * 100) + '%';
+  const num = v => Number(v || 0).toLocaleString();
+  const line = (label, value, key) => E('div', {key: key || label, style:{display:'flex', justifyContent:'space-between', fontSize:11.5, color:'rgba(255,255,255,0.75)', padding:'2px 0'}},
+    E('span', null, label), E('span', {style:{color:'rgba(255,255,255,0.9)'}}, value));
+  if (err) return E('div', {'data-memory-measures': 'error'}, E('div', {style: head}, 'How memory is doing'), E('div', {style: dim}, err));
+  if (!m) return null;
+  const c = m.counts || {}, r = m.rates || {};
+  return E('div', {'data-memory-measures': 'ok'},
+    E('div', {style: head}, 'How memory is doing (last ' + (m.days || 30) + ' days)'),
+    E('div', {style: dim}, 'Counts kept on this PC. No memory text is stored here, only numbers.'),
+    line('Times past conversations were recalled', num(c.recalls), 'recalls'),
+    line('Recalled items shown / cited in replies', num(c.shown) + ' / ' + num(c.cited), 'shown'),
+    line('Citation coverage', pct(r.citation_coverage), 'cov'),
+    line('Corrections (card edits and corrected turns)', num(c.corrections) + ' (' + pct(r.correction_rate) + ' of items shown)', 'corr'),
+    line('Precision estimate (recalled items not later corrected)', pct(r.precision_proxy), 'prec'),
+    line('Stale / live-state errors', (r.stale_error_rate === null || r.stale_error_rate === undefined) ? 'not enough yet' : num(c.stale_errors) + ' / ' + num(c.live_state_errors), 'stale'),
+    line('Suggestions made, kept, discarded', num(c.inference_queued) + ', ' + num(c.inference_kept) + ', ' + num(c.inference_discarded), 'inf'),
+    line('Suggestions kept', pct(r.inference_acceptance_rate), 'acc'),
+    line('Duplicates left out', num(c.duplicates_suppressed), 'dup'),
+    line('Sensitive-category guesses dropped', num(c.special_category_dropped), 'spec'),
+    line('Fields containing recalled memory withheld from a cloud model', num(c.leakage_blocked), 'leak'),
+    line('Turns forgotten', num(c.forgets), 'forget'),
+    E('div', {style: dim}, 'The precision figure is an estimate: real precision needs someone to mark each recalled item right or wrong. It and the stale figures read ‘not enough yet’ until a recalled conversation turn is itself corrected; memory card edits do not say which recalled turn they correct.'));
+}
+// End memory measures
 
 function ConversationSearchPanel() {
   // Full-text search over every conversation (services/conversation_fts), with a Delete
@@ -62507,6 +62833,19 @@ function ConversationSearchPanel() {
       .catch(e => setMsg(e.message || 'That did not work.'))
       .finally(() => setBusy(''));
   };
+  const [wipe, setWipe] = useState(false);
+  const forgetConv = (h, transcript) => {
+    // Stop using the whole conversation in memory (POST /api/memory/forget-conversation):
+    // it stays in History; Friday no longer recalls, searches or summarises it. With the
+    // separate "Also delete the transcript" box and its own confirm, the transcript is deleted too.
+    setBusy('c' + h.conversation_id); setMsg('');
+    fridayMemoryPost('/api/memory/forget-conversation', transcript
+        ? {conversation_id: h.conversation_id, confirm: true, delete_transcript: true, confirm_transcript: true}
+        : {conversation_id: h.conversation_id, confirm: true})
+      .then(d => { if (!d.ok) throw new Error(d.error || 'That did not work.'); setMsg(fridayForgetSummary(d)); setAsk(''); setWipe(false); run(); })
+      .catch(e => setMsg(e.message || 'That did not work.'))
+      .finally(() => setBusy(''));
+  };
   const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
   const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
   const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label}, label);
@@ -62525,9 +62864,217 @@ function ConversationSearchPanel() {
         ask === h.message_id
           ? [E('span', {key:'q', style: dim}, 'Delete this message everywhere? It cannot be undone.'),
              btn('Yes, delete it', () => del(h), 'yes'), btn('Keep it', () => setAsk(''), 'no')]
-          : btn('Delete…', () => setAsk(h.message_id), 'del')))));
+          : ask === 'c' + h.message_id
+          ? [E('span', {key:'q', style: dim}, 'Stop using this whole conversation in memory? It stays in History; ' + fridayName() + ' no longer recalls, searches or summarises it.'),
+             E('label', {key:'wipe', 'data-forget-transcript': '1', style: Object.assign({}, dim, {display:'flex', gap:6, alignItems:'center', flexBasis:'100%', cursor:'pointer'})},
+               E('input', {type:'checkbox', checked: wipe, onChange: () => setWipe(!wipe), 'aria-label': "Also delete the transcript (can't be undone)"}),
+               "Also delete the transcript (can't be undone)"),
+             btn(wipe ? 'Next…' : 'Yes, forget it', () => (wipe ? setAsk('t' + h.message_id) : forgetConv(h, false)), 'cyes'),
+             btn('Keep using it', () => { setAsk(''); setWipe(false); }, 'cno')]
+          : ask === 't' + h.message_id
+          ? [E('span', {key:'q', role:'alert', 'data-forget-transcript-confirm': '1', style: Object.assign({}, dim, {color:'var(--st-warn)'})}, 'Delete this conversation’s transcript too? Every message in it is removed from History and from every index, and this cannot be undone. Signed receipts of what ' + fridayName() + ' did in it are kept.'),
+             btn('Yes, delete the transcript too', () => forgetConv(h, true), 'tyes'),
+             btn('Go back', () => setAsk('c' + h.message_id), 'tno')]
+          : [btn('Delete…', () => setAsk(h.message_id), 'del'),
+             btn('Forget this conversation…', () => { setWipe(false); setAsk('c' + h.message_id); }, 'conv')]))));
 }
 // End conversation search panel
+
+function MemorySearchPanel() {
+  // The owner's search over everything Friday keeps (services/memory_search): past
+  // conversations, the memory card, suggestions waiting for review, facts, suggested
+  // facts and Library titles. Each result says where it came from and whether it still
+  // counts; "Why do you know this?" shows the original words, what corrected them and
+  // which replies recalled them lately. Corrected things stay hidden unless asked for.
+  // Each result can be corrected or deleted from here through the owner's existing
+  // routes only (the memory card's edit/delete/review, the conversation delete, the
+  // setup About you delete, the Memory keeper's approve/reject), and the results (or,
+  // with no search, everything) export as a JSON or Markdown file (/api/memory/export).
+  const E = React.createElement;
+  const KINDS = [['conversation', 'Conversations'], ['card', 'Memory card'], ['suggestion', 'Waiting for review'],
+    ['fact', 'Facts'], ['proposal', 'Suggested facts'], ['document', 'Library']];
+  const NAMES = {conversation:'Conversation', card:'Memory card', card_change:'Memory card', suggestion:'Waiting for review',
+    fact:'Fact', proposal:'Suggested fact', document:'Library'};
+  const [q, setQ] = useState('');
+  const [kinds, setKinds] = useState(KINDS.map(k => k[0]));
+  const [corrected, setCorrected] = useState(false);
+  const [rep, setRep] = useState(null);
+  const [why, setWhy] = useState({});
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [done, setDone] = useState('');
+  const [ask, setAsk] = useState('');
+  const [edit, setEdit] = useState(null);
+  const run = over => {
+    const o = Object.assign({q: q, kinds: kinds, corrected: corrected}, over || {});
+    const text = String(o.q || '').trim().slice(0, 200);
+    if (!text) { setRep(null); return; }
+    if (!o.kinds.length) { setMsg('Pick at least one kind of memory.'); return; }
+    setBusy('search'); setMsg(''); setWhy({});
+    apiFetch('/api/memory/search?q=' + encodeURIComponent(text) + '&kinds=' + encodeURIComponent(o.kinds.join(','))
+      + (o.corrected ? '&superseded=1' : '') + '&limit=30')
+      .then(r => r.json())
+      .then(d => { if (!d.ok) throw new Error(d.error || 'Memory search is not available right now.'); setRep(Object.assign({}, d, {asked: {q: text, kinds: o.kinds, corrected: o.corrected}})); })
+      .catch(e => setMsg(e.message || 'Memory search is not available right now.'))
+      .finally(() => setBusy(''));
+  };
+  const again = () => run(rep && rep.asked ? rep.asked : null);
+  const explain = h => {
+    const key = h.kind + ':' + h.id;
+    if (why[key]) { const next = Object.assign({}, why); delete next[key]; setWhy(next); return; }
+    setBusy('w' + key);
+    apiFetch('/api/memory/why?kind=' + encodeURIComponent(h.kind) + '&id=' + encodeURIComponent(h.id))
+      .then(r => r.json())
+      .then(d => setWhy(Object.assign({}, why, {[key]: d})))
+      .catch(e => setWhy(Object.assign({}, why, {[key]: {ok: false, error: e.message || 'Could not look that up.'}})))
+      .finally(() => setBusy(''));
+  };
+  const flip = k => {
+    const next = kinds.indexOf(k) >= 0 ? kinds.filter(x => x !== k) : kinds.concat([k]);
+    setKinds(next);
+    if (rep) run({kinds: next});
+  };
+  // One action on one result, through a route the app already has; then the results refresh.
+  const json = body => ({method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})});
+  const act = (key, request, okOf, said) => {
+    setBusy(key); setMsg(''); setDone('');
+    request()
+      .then(r => r.json().catch(() => ({})).then(d => ({r: r, d: d})))
+      .then(x => {
+        if (!x.r.ok || !okOf(x.d)) throw new Error(x.d.error || x.d.reason || x.d.message || 'That did not work.');
+        setBusy(''); setAsk(''); setEdit(null); setDone(said); again();
+      })
+      .catch(e => { setBusy(''); setMsg(e.message || 'That did not work.'); });
+  };
+  const okTrue = d => !!d.ok;
+  // A card line is changed by its place on the card, read fresh, so the line changed is the line shown;
+  // its text goes too (expect), and the server refuses (409) if that place now holds another line.
+  const cardLine = h => apiFetch('/api/core-memory').then(r => r.json()).then(d => {
+    const t = (h.source && h.source.card) || 'user';
+    const i = ((((d.card || {})[t] || {}).entries) || []).indexOf(h.text);
+    if (i < 0) throw new Error('That line is no longer on the memory card.');
+    return {target: t, index: i};
+  });
+  const editCard = (h, text) => act('e' + h.id, () => cardLine(h).then(at =>
+    apiFetch('/api/core-memory/edit', json({target: at.target, index: at.index, text: text, expect: h.text}))), okTrue, 'Changed on the memory card.');
+  const deleteCard = h => act('d' + h.id, () => cardLine(h).then(at =>
+    apiFetch('/api/core-memory/delete', json({target: at.target, index: at.index, wrong: true, expect: h.text}))), okTrue, 'Deleted from the memory card.');
+  const review = (h, keep) => act('r' + h.id, () => apiFetch('/api/core-memory/review', json({id: h.id, keep: keep})), okTrue,
+    keep ? 'Kept. It is on the memory card now.' : 'Discarded.');
+  const deleteTurn = h => act('d' + h.id, () => apiFetch('/api/conversations/' + encodeURIComponent(h.source.conversation_id)
+    + '/messages/' + encodeURIComponent(h.id), {method:'DELETE'}), d => d.status === 'ok', 'Deleted from the conversation and from every index.');
+  const deleteSetupFact = h => act('d' + h.id, () => apiFetch('/api/setup-chat/about/' + encodeURIComponent(h.id), {method:'DELETE'}), okTrue,
+    'Deleted from what ' + fridayName() + ' knows about you.');
+  const decide = (h, keep) => act('p' + h.id, () => apiFetch(keep ? '/api/memory/proposals/approve' : '/api/memory/proposals/reject',
+    json({fact_ids: [h.id]})), okTrue, keep ? 'Approved. ' + fridayName() + ' keeps it as a fact now.' : 'Discarded.');
+  const exportAs = fmt => {
+    // These results when there is a search; everything (bounded on the server) when there is none.
+    const a = rep && rep.asked ? rep.asked : {q: '', kinds: kinds, corrected: corrected};
+    if (!a.kinds.length) { setMsg('Pick at least one kind of memory.'); return; }
+    setBusy('x' + fmt); setMsg(''); setDone('');
+    apiFetch('/api/memory/export?format=' + fmt + (a.q ? '&q=' + encodeURIComponent(a.q) : '')
+      + '&kinds=' + encodeURIComponent(a.kinds.join(',')) + (a.corrected ? '&superseded=1' : ''))
+      .then(r => r.ok ? r.blob() : r.json().catch(() => ({})).then(d => Promise.reject(new Error(d.error || 'The export did not work.'))))
+      .then(b => {
+        const url = URL.createObjectURL(b);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'friday-memory-' + new Date().toISOString().slice(0, 10) + (fmt === 'md' ? '.md' : '.json');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setDone('Exported. The file is in your downloads.');
+      })
+      .catch(e => setMsg(e.message || 'The export did not work.'))
+      .finally(() => setBusy(''));
+  };
+  const dim = {fontSize:11, lineHeight:1.6, color:'rgba(255,255,255,0.42)'};
+  const row = {padding:'6px 8px', marginBottom:6, borderRadius:6, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.06)'};
+  // Every control here filters, explains or acts on a search result; none is a setting. The settings walk
+  // (tests/app/specs/settings_walk.spec.ts) lists a control marked data-walk-skip and leaves it.
+  const SKIP = 'search filter, not a setting';
+  const btn = (label, onClick, key) => E('button', {className:'settings-btn', style:{fontSize:11}, disabled: !!busy, onClick: onClick, key: key || label, 'data-walk-skip': SKIP}, label);
+  const sure = (h, question, yes) => [E('span', {key:'q', style: dim}, question),
+    btn('Yes, delete it', yes, 'yes'), btn('Keep it', () => setAsk(''), 'no')];
+  const actions = h => {
+    const key = h.kind + ':' + h.id;
+    if (ask === key) {
+      if (h.kind === 'card') return sure(h, 'Delete this line from the memory card?', () => deleteCard(h));
+      if (h.kind === 'conversation') return sure(h, 'Delete this message everywhere? It cannot be undone.', () => deleteTurn(h));
+      if (h.kind === 'fact') return sure(h, 'Delete this fact? It cannot be undone.', () => deleteSetupFact(h));
+    }
+    if (h.kind === 'card' && h.status === 'current') {
+      return [btn('Edit', () => setEdit({key: key, text: h.text}), 'edit'), btn('Wrong: delete…', () => setAsk(key), 'del')];
+    }
+    if (h.kind === 'suggestion') {
+      return [btn('Keep', () => review(h, true), 'keep'), btn('Discard', () => review(h, false), 'discard')];
+    }
+    if (h.kind === 'conversation' && h.source && h.source.conversation_id) {
+      return [btn('Delete this message…', () => setAsk(key), 'del')];
+    }
+    if (h.kind === 'fact') {
+      return h.source && h.source.origin === 'setup'
+        ? [btn('Delete…', () => setAsk(key), 'del')]
+        : [E('span', {key:'n', style: dim}, 'This fact cannot be deleted one at a time from here.')];
+    }
+    if (h.kind === 'proposal' && h.status === 'pending') {
+      return [btn('Approve', () => decide(h, true), 'approve'), btn('Discard', () => decide(h, false), 'reject')];
+    }
+    return [];
+  };
+  const status = h => h.status === 'superseded' ? 'Corrected' + (h.status_reason ? ': ' + h.status_reason : '')
+    : h.status === 'pending' ? 'Waiting for your review'
+    : h.status === 'inferred' ? 'Inferred by ' + fridayName() + ', not confirmed by you' : 'Current';
+  const whyView = w => !w.ok
+    ? E('div', {style: Object.assign({}, dim, {marginTop:4})}, w.error || 'Could not look that up.')
+    : E('div', {'data-memory-why': w.kind, style:{marginTop:6, padding:'4px 8px', borderLeft:'2px solid var(--st-accent)'}},
+        E('div', {style:{fontSize:12, color:'rgba(255,255,255,0.8)', wordBreak:'break-word'}}, w.summary),
+        w.kind === 'conversation' && w.text ? E('div', {style: dim}, 'The original words: “' + w.text + '”') : null,
+        w.source && w.source.evidence ? E('div', {style: dim}, 'It rests on these words: “' + w.source.evidence + '”') : null,
+        (w.history || []).length > 0 ? E('div', {style: Object.assign({}, dim, {marginTop:4, color:'rgba(255,255,255,0.6)'})}, 'History') : null,
+        (w.history || []).map((ev, i) => E('div', {key: 'h' + i, style: dim}, (ev.when ? ev.when + ' · ' : '') + ev.text)),
+        w.influence ? E('div', {style: Object.assign({}, dim, {marginTop:4, color:'rgba(255,255,255,0.6)'})}, 'How it is used') : null,
+        w.influence ? E('div', {style: dim}, w.influence.summary) : null,
+        w.influence ? (w.influence.recent || []).map((u, i) => E('div', {key: 'u' + i, style: dim},
+          u.when + (u.conversation_title ? ' · ' + u.conversation_title : ''))) : null);
+  return E('div', null,
+    E('div', {style: dim}, 'Search everything ' + fridayName() + ' keeps about you: past conversations, the memory card, suggestions waiting for your review, facts and Library titles. Each result says where it came from. Why do you know this? shows the original words, what corrected them, and which replies used them lately. Nothing here leaves this PC.'),
+    E('div', {style:{display:'flex', gap:6, marginTop:6}},
+      E('input', {className:'input', 'data-walk-skip': SKIP, 'aria-label':'Search what ' + fridayName() + ' remembers', placeholder:'Search what ' + fridayName() + ' remembers', maxLength: 200,
+        style:{flex:1, fontSize:12}, value: q, onChange: e => setQ(e.target.value), onKeyDown: e => { if (e.key === 'Enter') run(); }}),
+      btn('Search', () => run(), 'go')),
+    E('div', {role:'group', 'aria-label':'Kinds of memory', style:{display:'flex', gap:10, flexWrap:'wrap', marginTop:6}},
+      KINDS.map(k => E('label', {key: k[0], style:{fontSize:11, color:'rgba(255,255,255,0.7)', display:'flex', gap:4, alignItems:'center'}},
+        E('input', {type:'checkbox', 'data-walk-skip': SKIP, checked: kinds.indexOf(k[0]) >= 0, disabled: !!busy, onChange: () => flip(k[0])}), k[1]))),
+    E(StToggle, {label:'Show corrected', value: corrected, disabled: !!busy, walkSkip: SKIP,
+      onChange: () => { const v = !corrected; setCorrected(v); if (rep) run({corrected: v}); },
+      desc:'Off, things that were corrected stay hidden. On, they show, with what corrected them.'}),
+    E('div', {'data-memory-export': '1', style:{display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginTop:6}},
+      E('span', {style: dim}, rep ? 'Export these results' : 'Export everything ' + fridayName() + ' keeps about you'),
+      btn('JSON', () => exportAs('json'), 'xjson'), btn('Markdown', () => exportAs('md'), 'xmd'),
+      E('span', {style: dim}, 'The file is made on this PC and saved to your downloads. Keys and passwords are left out, and so is anyone you asked ' + fridayName() + ' to forget.')),
+    msg && E('div', {role:'status', style:{fontSize:11, color:'var(--st-warn)', marginTop:6}}, msg),
+    done && E('div', {role:'status', style:{fontSize:11, color:'rgba(255,255,255,0.7)', marginTop:6}}, done),
+    rep && (rep.notes || []).map((n, i) => E('div', {key: 'n' + i, style: dim}, n)),
+    rep && rep.results.length === 0 && E('div', {style: Object.assign({}, dim, {marginTop:6})}, 'Nothing matches.'),
+    rep && rep.results.map(h => E('div', {key: h.kind + h.id, 'data-memory-result': h.kind, style: Object.assign({}, row, {marginTop:6})},
+      (edit && edit.key === h.kind + ':' + h.id)
+        ? E('div', {style:{display:'flex', gap:6, alignItems:'center', flexWrap:'wrap'}},
+            E('input', {className:'input', 'data-walk-skip': SKIP, 'aria-label':'Edit this line', style:{flex:'1 1 240px', fontSize:12}, value: edit.text,
+              onChange: e => setEdit({key: edit.key, text: e.target.value})}),
+            btn('Save', () => editCard(h, edit.text), 'save'),
+            btn('Cancel', () => setEdit(null), 'cancel'))
+        : E('div', {style:{fontSize:12, color: h.status === 'superseded' ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.8)',
+            textDecoration: h.status === 'superseded' ? 'line-through' : 'none', wordBreak:'break-word'}}, h.text),
+      E('div', {style: dim}, (NAMES[h.kind] || h.kind) + ' · ' + ((h.source && h.source.label) || '') + (h.when ? ' · ' + h.when : '')),
+      E('div', {style: dim}, status(h)),
+      E('div', {'data-memory-actions': h.kind, style:{display:'flex', gap:6, marginTop:4, flexWrap:'wrap', alignItems:'center'}},
+        btn(why[h.kind + ':' + h.id] ? 'Hide' : 'Why do you know this?', () => explain(h), 'why'),
+        actions(h)),
+      why[h.kind + ':' + h.id] ? whyView(why[h.kind + ':' + h.id]) : null)));
+}
+// End memory search panel
 
 
 

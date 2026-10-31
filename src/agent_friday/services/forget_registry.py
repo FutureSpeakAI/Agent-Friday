@@ -108,6 +108,7 @@ KINDS = {
     "laya_personal": "items Laya learned from",
     "meetings": "meeting records",
     "memory_proposals": "memory suggestions",
+    "tombstone_labels": "labels of discarded suggestions",
 }
 
 
@@ -403,6 +404,10 @@ def _ensure_defaults() -> None:
     from agent_friday.services import meeting_capture as _meeting_capture
     register_store("meetings", _meeting_capture.people_find, _meeting_capture.people_purge)
     register_store("memory_proposals", _memory_proposals.people_find, _memory_proposals.people_purge)
+    # A discarded suggestion is listed for the owner by a sealed label (services/tombstones): a label that
+    # names the person goes; its keyed hash, which names nobody, stays and keeps the suggestion blocked.
+    from agent_friday.services import tombstones as _tombstones
+    register_store("tombstone_labels", _tombstones.labels_find, _tombstones.labels_purge)
     # Imported items waiting for the owner's answer (services/import_staging) name people too.
     from agent_friday.services import import_staging as _import_staging
     register_store("import_staging", _import_staging.forget_find, _import_staging.forget_purge)
@@ -422,6 +427,9 @@ def _ensure_defaults() -> None:
     # people too: those entries go, and that change can then no longer be undone.
     from agent_friday.services import undo_store as _undo_store
     register_store("undo_data", _undo_store.forget_find, _undo_store.forget_purge)
+    # The owner's corrections keep the old claim (sealed) in their own log (services/corrections).
+    from agent_friday.services import corrections as _corrections
+    register_store("corrections", _corrections.people_find, _corrections.people_purge)
 
 
 def _norm(s: str) -> str:

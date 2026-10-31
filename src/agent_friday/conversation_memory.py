@@ -318,7 +318,7 @@ class ConversationMemory:
 
     # ── writes ───────────────────────────────────────────────────────
     def index(self, text, role, session_id="default", timestamp=None,
-              topic_keywords=None, msg_id=None, rebuild=False):
+              topic_keywords=None, msg_id=None, rebuild=False, web_sources=None):
         """Index a single chat message. Returns the stored id, or None on no-op.
 
         text           the message body
@@ -329,6 +329,9 @@ class ConversationMemory:
         msg_id         stable id for idempotent upserts; uuid when omitted
         rebuild        True from a bulk rebuild from the transcripts: the
                        forgotten-turn check is strict (see below)
+        web_sources    the registered domains of the web pages a reply read
+                       (services/web_provenance), stored as a comma string
+                       so a stopped site's turns can be found
         """
         text = (text or "").strip()
         # A key is withheld before it is embedded, stored as a document,
@@ -354,8 +357,12 @@ class ConversationMemory:
             if rebuild or _fts.rebuild_state() is not None:
                 if _fts.skip_on_rebuild(msg_id):
                     return None
-            elif msg_id and _fts.is_forgotten(msg_id):
-                return None
+            elif msg_id:
+                # One question, one place (services/tombstones): the facade
+                # answers from the same durable list, failing open.
+                from agent_friday.services import tombstones as _tomb
+                if _tomb.is_tombstoned("conversation_turn", msg_id):
+                    return None
         except Exception as e:
             if rebuild:
                 print(f"  [MEMORY] forgotten-turn check failed during a rebuild (turn skipped): {type(e).__name__}")
@@ -390,6 +397,11 @@ class ConversationMemory:
                 "topic_keywords": kw_str,
                 "char_len": len(text),
             }
+            if web_sources:
+                from agent_friday.services import web_provenance as _wp
+                _web = _wp.clean(web_sources)
+                if _web:
+                    metadata["web_sources"] = ",".join(_web)
             # The user's turn was embedded once for the turn (services/
             # turn_vector); store that vector rather than embedding the same
             # words again. Only for a message that fits in 256 tokens (where it
@@ -417,7 +429,7 @@ class ConversationMemory:
             return None
 
     def index_exchange(self, user_text, assistant_text, session_id="default",
-                       user_msg_id=None, assistant_msg_id=None):
+                       user_msg_id=None, assistant_msg_id=None, assistant_web_sources=None):
         """Convenience: index a user turn and the assistant reply together.
 
         Shared topic keywords (extracted from the combined text) are attached to
@@ -438,7 +450,8 @@ class ConversationMemory:
         if uid:
             ids.append(uid)
         aid = self.index(assistant_text, "friday", session_id=session_id,
-                         topic_keywords=shared_kw, msg_id=assistant_msg_id)
+                         topic_keywords=shared_kw, msg_id=assistant_msg_id,
+                         web_sources=assistant_web_sources)
         if aid:
             ids.append(aid)
         return ids
@@ -538,6 +551,7 @@ class ConversationMemory:
                     "relevance": rel,
                     "superseded": is_superseded,
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                 })
                 if len(out) >= want:
                     break
@@ -585,24 +599,45 @@ class ConversationMemory:
     # comes back wearing their authority.
     # See docs/DECISIONS.md, "Recall can be poisoned by a broken display".
 
-    def supersede(self, ids, reason, superseded_by=""):
+    def supersede(self, ids, reason, superseded_by="", count=True):
         """Strip evidential authority from stored turns. Reversible.
 
         ids            iterable of document ids (see find_ids / get_session)
         reason         why -- shown in the history paths, required
         superseded_by  optional pointer to what is now authoritative
                        (e.g. "services.google_accounts.accounts_summary")
+        count          False when turns that are already retired are only
+                       re-pointed (a deleted correction record unlinking them,
+                       services/core_memory._unlink_turns): not a new
+                       correction, so services/memory_metrics does not count it.
 
         Returns {"superseded": [ids...], "missing": [ids...]}.
         """
         reason = (reason or "").strip()
         if not reason:
             raise ValueError("supersede() requires a reason")
-        return self._set_supersession(ids, "1", reason, superseded_by)
+        out = self._set_supersession(ids, "1", reason, superseded_by)
+        if count:
+            self._note_supersession(out, True, superseded_by)
+        return out
 
     def unsupersede(self, ids):
         """Restore evidential authority. The exact reverse of supersede()."""
-        return self._set_supersession(ids, "", "", "")
+        out = self._set_supersession(ids, "", "", "")
+        self._note_supersession(out, False, "")
+        return out
+
+    @staticmethod
+    def _note_supersession(out, on, superseded_by):
+        # Counts and one-way hashes only (services/memory_metrics), of the ids
+        # this store actually held. Recorded here rather than in
+        # _set_supersession so a rebuild re-applying an existing correction
+        # (rebuild_from_transcripts) is not counted as a new one.
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_supersession((out or {}).get("superseded") or [], bool(on), superseded_by)
+        except Exception:
+            pass
 
     def _set_supersession(self, ids, flag, reason, superseded_by):
         ids = [str(i) for i in (ids or []) if str(i).strip()]
@@ -815,6 +850,7 @@ class ConversationMemory:
                         "timestamp": meta.get("timestamp"),
                         "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                         "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                        "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                     })
                     if len(hits) >= limit:
                         break
@@ -823,11 +859,44 @@ class ConversationMemory:
             print(f"  [MEMORY] find_ids failed (non-fatal): {e}")
             return []
 
-    def delete(self, ids=(), exact_text=None):
+    def get(self, ids):
+        """Stored turns by id, with their supersession record (when, why, what
+        replaced them). A HISTORY path: superseded turns come back, flagged.
+        For the owner's "why do you know this" (services/memory_search)."""
+        ids = [str(i) for i in (ids or []) if str(i).strip()]
+        if not ids or not self._ensure():
+            return []
+        try:
+            with self._lock:
+                res = self._collection.get(ids=ids, include=["documents", "metadatas"])
+            out = []
+            for did, doc, meta in zip(res.get("ids") or [], res.get("documents") or [],
+                                      res.get("metadatas") or []):
+                meta = meta or {}
+                out.append({
+                    "id": did,
+                    "text": doc,
+                    "role": meta.get("role"),
+                    "timestamp": meta.get("timestamp"),
+                    "date": meta.get("date") or (meta.get("timestamp") or "")[:10],
+                    "session_id": meta.get("session_id"),
+                    "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
+                    "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_at": meta.get(_SUPERSEDED_AT) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
+                })
+            return out
+        except Exception as e:
+            print(f"  [MEMORY] get failed (non-fatal): {type(e).__name__}")
+            return []
+
+    def delete(self, ids=(), exact_text=None, deleted=None):
         """Remove stored turns for good: the given document ids, and any turn
         whose text is exactly `exact_text` (older turns were stored under a
         random id). Returns how many were removed. For deleting one message
-        from every index at once (services/conversation_fts.delete_message)."""
+        from every index at once (services/conversation_fts.delete_message).
+        A list passed as `deleted` gets the ids that were removed, so the
+        caller can drop them from records that name turns by id."""
         ids = [str(i) for i in (ids or []) if str(i).strip()]
         if not self._ensure():
             return 0
@@ -840,6 +909,8 @@ class ConversationMemory:
                     if found:
                         self._collection.delete(ids=found)
                         removed += len(found)
+                        if isinstance(deleted, list):
+                            deleted.extend(str(i) for i in found)
                 if exact_text and str(exact_text).strip():
                     want = " ".join(str(exact_text).split())
                     res = self._collection.get(include=["documents"])
@@ -848,8 +919,15 @@ class ConversationMemory:
                     if same:
                         self._collection.delete(ids=same)
                         removed += len(same)
+                        if isinstance(deleted, list):
+                            deleted.extend(str(i) for i in same)
         except Exception as e:
             print(f"  [MEMORY] delete failed (non-fatal): {e}")
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_count("forget", removed, store="conversation")
+        except Exception:
+            pass
         return removed
 
     def matching(self, predicate):
@@ -874,6 +952,29 @@ class ConversationMemory:
                             or meta.get("session_id")})
         return out
 
+    def with_web_sources(self, predicate):
+        """Every stored turn whose recorded sites (metadata ``web_sources``,
+        registered domains) `predicate` accepts, as [{id, text, date}]; None
+        when the store cannot be read. For stopping a site
+        (services/forget_kinds), which then takes them out."""
+        if not self._ensure():
+            return None
+        try:
+            with self._lock:
+                res = self._collection.get(include=["documents", "metadatas"])
+        except Exception as e:
+            print(f"  [MEMORY] web-source lookup failed (non-fatal): {e}")
+            return None
+        out = []
+        for did, doc, meta in zip(res.get("ids") or [], res.get("documents") or [],
+                                  res.get("metadatas") or []):
+            meta = meta or {}
+            web = [d for d in str(meta.get("web_sources") or "").split(",") if d]
+            if web and predicate(web):
+                out.append({"id": did, "text": doc or "",
+                            "date": meta.get("date") or str(meta.get("timestamp") or "")[:10]})
+        return out
+
     def get_session(self, session_id, limit=500):
         """Return every stored turn for one conversation, oldest-first.
 
@@ -890,10 +991,14 @@ class ConversationMemory:
                 )
             docs = res.get("documents") or []
             metas = res.get("metadatas") or []
+            # The stored turn's id (the message id when indexed from chat): a
+            # summary of the session points back at the turns it came from.
+            ids = list(res.get("ids") or []) or [None] * len(docs)
             rows = []
-            for doc, meta in zip(docs, metas):
+            for doc_id, doc, meta in zip(ids, docs, metas):
                 meta = meta or {}
                 rows.append({
+                    "id": doc_id,
                     "text": doc,
                     "role": meta.get("role"),
                     "timestamp": meta.get("timestamp"),
@@ -907,6 +1012,7 @@ class ConversationMemory:
                     # of what was said survives; only its authority is gone.
                     "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "")
             return rows
@@ -935,14 +1041,17 @@ class ConversationMemory:
                 res = self._collection.get(include=["documents", "metadatas"])
             docs = res.get("documents") or []
             metas = res.get("metadatas") or []
+            # Turn ids: what consolidation cites as its source (NS-15.9-1).
+            ids = list(res.get("ids") or []) or [None] * len(docs)
             role_set = set(roles) if roles else None
             rows = []
-            for doc, meta in zip(docs, metas):
+            for doc_id, doc, meta in zip(ids, docs, metas):
                 meta = meta or {}
                 role = meta.get("role")
                 if role_set is not None and role not in role_set:
                     continue
                 rows.append({
+                    "id": doc_id,
                     "text": doc,
                     "role": role,
                     "timestamp": meta.get("timestamp"),
@@ -956,6 +1065,10 @@ class ConversationMemory:
                     # of what was said survives; only its authority is gone.
                     "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    "superseded_by": meta.get(_SUPERSEDED_BY) or "",
+                    # The sites a reply read (registered domains), for the
+                    # graph and the proposals that learn from it.
+                    "web_sources": [d for d in str(meta.get("web_sources") or "").split(",") if d],
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
             return rows[:max(0, int(n))]

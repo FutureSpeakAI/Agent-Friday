@@ -175,8 +175,10 @@ def live_state_block(message: str) -> str:
     if not answer:
         answer = (f"Friday could not determine {probe.subject} just now. Say "
                   f"you cannot tell right now.")
+    from agent_friday.services import knowledge_kinds as _kk
     return (
         "\n== LIVE STATE (authoritative, read just now) ==\n"
+        + _kk.header(_kk.KNOWN, "read just now") + "\n"
         f"The user is asking about {probe.subject}. This is a question about "
         "the world RIGHT NOW.\n"
         f"{answer}\n"
