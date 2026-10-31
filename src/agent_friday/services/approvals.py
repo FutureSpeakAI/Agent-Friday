@@ -675,7 +675,12 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
         "decision_note": "",
         "policy_version": _policy_version_id(),
     }
-
+    if status != "pending":
+        # raised already decided (by the policy table or Law 1): decided under it too
+        record["decided_policy_version"] = record["policy_version"]
+    record["action_fingerprint"] = _action_fp(record)
+    if record["decided_source"]:
+        record["decided_device"] = decided_device(record["decided_source"])
     try:
         from agent_friday.services import off_record as _off
         if _off.skip("approvals"):
@@ -729,7 +734,10 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
         "pre_approved": str(grant_id),
         "policy_version": _policy_version_id(),
     }
-
+    record["decided_policy_version"] = record["policy_version"]
+    record["action_fingerprint"] = _action_fp(record)
+    if not law1_blocked:
+        record["decided_device"] = decided_device("standing_grant")
     _upsert(record)
     return record
 
@@ -1007,7 +1015,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
         rec["decided_source"] = source
-
+        rec["decided_policy_version"] = _policy_version_id()
+        rec["decided_device"] = ("another_device" if source == "voice" and voice_off_this_desk()
+                                 else decided_device(source))
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
