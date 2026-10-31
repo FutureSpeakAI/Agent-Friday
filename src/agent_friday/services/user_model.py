@@ -527,6 +527,21 @@ def facts_from_source(category: str, source: str, limit: int = 100) -> List[Dict
         return []
 
 
+def all_facts(limit: int = 2000) -> List[Dict[str, Any]]:
+    """Every durable fact with its id, source and confidence, newest first:
+    what the owner's memory search reads (services/memory_search)."""
+    try:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT fact_id, ts, category, text, confidence, source FROM facts "
+            "ORDER BY ts DESC LIMIT ?", (max(1, min(10000, int(limit))),)).fetchall()
+        conn.close()
+        return [{"fact_id": f, "ts": ts, "category": c, "text": t, "confidence": cf, "source": s}
+                for f, ts, c, t, cf, s in rows]
+    except Exception:
+        return []
+
+
 def forget_fact(fact_id: str, *, source: Optional[str] = None) -> Dict[str, Any]:
     """Delete one fact by id; with `source`, only a fact from that source."""
     with _LOCK:

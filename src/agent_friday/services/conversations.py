@@ -498,16 +498,35 @@ def clear(cid: str, include_pinned: bool = False) -> int:
         conv = load(cid)
         if conv is None:
             return 0
+        before = messages(cid)
         keep = [] if include_pinned else [
-            m for m in messages(cid) if m.get("pinned")]
-        removed = len(messages(cid)) - len(keep)
+            m for m in before if m.get("pinned")]
+        removed = len(before) - len(keep)
         body = "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in keep)
         _atomic_write(_dir(cid) / "messages.jsonl", body)
         conv.setdefault("totals", {})["turns"] = sum(
             1 for m in keep if m.get("role") == "user")
         save(conv)
         _fts("resync", cid)
-        return max(0, removed)
+    kept_ids = {str(m.get("id")) for m in keep if m.get("id")}
+    _forget_influence([str(m.get("id")) for m in before
+                       if m.get("id") and str(m.get("id")) not in kept_ids],
+                      session=cid if not keep else None)
+    return max(0, removed)
+
+
+def _forget_influence(ids, session=None) -> None:
+    """A cleared message leaves no id in the record of which replies recalled
+    what (services/memory_influence); a conversation cleared to nothing leaves
+    no row of its own replies there either. Never fails the store."""
+    try:
+        from agent_friday.services import memory_influence
+        if ids:
+            memory_influence.forget_refs(ids)
+        if session:
+            memory_influence.forget_session(session)
+    except Exception:
+        pass
 
 
 def prune(cid: str, keep: int = _PRUNE_KEEP) -> int:

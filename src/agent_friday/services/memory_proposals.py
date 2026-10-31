@@ -621,6 +621,56 @@ def pending(day: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]
     return out
 
 
+def rows(statuses=("pending", "approved"), limit: int = 200,
+         fact_id: Optional[str] = None, match=None) -> List[Dict[str, Any]]:
+    """Proposals in these states (or the one `fact_id`), newest first, opened,
+    for the owner's memory search. A row whose text is gone (a decided meeting
+    suggestion keeps none) or cannot be opened is left out. Each row's text is
+    unsealed once; with `match` (a predicate over the opened text), a row it
+    refuses is dropped before its evidence is unsealed at all. An ``edited``
+    row (kept in the owner's own words, ``approve(edits=...)``) holds the
+    suggested wording, not what was kept; it is returned only when asked for."""
+    sts = [s for s in (statuses or ()) if s in ("pending", "approved", "edited", "rejected")]
+    if not sts and not fact_id:
+        return []
+    conn = _connect()
+    try:
+        sql = ("SELECT fact_id, ts, day, category, text, evidence, confidence, model, "
+               "status, decided_ts, provenance FROM proposed_facts WHERE ")
+        if fact_id:
+            sql += "fact_id=?"
+            args: List[Any] = [str(fact_id)]
+        else:
+            sql += "status IN (%s)" % ",".join("?" * len(sts))
+            args = list(sts)
+        sql += " ORDER BY ts DESC LIMIT ?"
+        args.append(max(1, min(2000, int(limit))))
+        got = conn.execute(sql, args).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in got:
+        text = _open(r[4])
+        if not (text or "").strip():
+            continue
+        if match is not None:
+            try:
+                if not match(text):
+                    continue
+            except Exception:
+                continue
+        d = {"fact_id": r[0], "ts": r[1], "day": r[2], "category": r[3], "text": text,
+             "evidence": _open(r[5]), "confidence": r[6], "model": r[7], "status": r[8],
+             "decided_ts": r[9]}
+        if r[10]:
+            try:
+                d["provenance"] = json.loads(r[10])
+            except ValueError:
+                pass
+        out.append(d)
+    return out
+
+
 def approve(fact_ids: List[str], edits: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Promote reviewed facts into durable memory.
 
@@ -685,7 +735,8 @@ def approve(fact_ids: List[str], edits: Optional[Dict[str, str]] = None) -> Dict
             try:
                 from agent_friday.services import core_memory
                 _cm = core_memory.add("user", text, actor="owner", dedupe=True,
-                                      via="edited_suggestion" if edited else "")
+                                      via="edited_suggestion" if edited else "",
+                                      origin={"proposal": fact_id, "source": origin})
                 if not _cm.get("ok") and _cm.get("full"):
                     core_memory.queue("user", "add", text=text, source=origin,
                                       reason="You kept this, but the memory card was full.")

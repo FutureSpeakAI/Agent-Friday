@@ -301,6 +301,142 @@ def _journal_path() -> Path:
     return _dir() / "changes.jsonl"
 
 
+_REF_KEYS: Dict[str, bytes] = {}
+_REF_KEY_LOCK = threading.Lock()
+
+
+def _ref_key_path() -> Path:
+    # Kept with the other local keys under ~/.friday/security (left out of
+    # exports as a secret), not in the card directory: everything in
+    # core_memory/ is the owner's card and its text journal, and a sealed
+    # key there is a binary file among them. Placed beside the card's own
+    # home (``_dir().parent`` is ``friday_home()``), so it follows the card.
+    return _dir().parent / "security" / "core-memory-line-ref.key"
+
+
+def _old_ref_key_path() -> Path:
+    """Where an earlier build of this slice kept the key, next to the card."""
+    return _dir() / "line-ref.key"
+
+
+def _ref_key() -> Optional[bytes]:
+    """The local key line refs are made with: minted once, kept under
+    ~/.friday/security through credential_store (sealed under the vault key
+    or DPAPI when either is there), never sent anywhere. A key file that
+    exists but cannot be read is not replaced (that would orphan every ref):
+    None, no ref. A key left in the card directory by an earlier build is
+    moved to the new place (read, written, read back, then removed); if it
+    cannot be read it is left where it is and no new key is minted."""
+    path = _ref_key_path()
+    k = str(path)
+    if k in _REF_KEYS:
+        return _REF_KEYS[k]
+    with _REF_KEY_LOCK:
+        if k in _REF_KEYS:
+            return _REF_KEYS[k]
+        try:
+            from agent_friday.services import credential_store as _cs
+        except Exception:
+            return None
+        key = None
+        old = _old_ref_key_path()
+        if path.exists():
+            try:
+                key = _cs.read_secret(path)
+            except Exception:
+                return None
+        elif old.exists():
+            try:
+                key = _cs.read_secret(old)
+            except Exception:
+                return None
+            if not key:
+                return None
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _cs.write_secret(path, key)
+                if _cs.read_secret(path) != key:
+                    return None
+            except Exception:
+                return None
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        if not key:
+            import secrets as _secrets
+            key = _secrets.token_bytes(32)
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _cs.write_secret(path, key)
+            except Exception:
+                return None
+        _REF_KEYS[k] = key
+        return key
+
+
+def line_ref(text: Any) -> str:
+    """A short keyed hash of one line (cleaned, lower case): how a change
+    record names the line it wrote without keeping a copy of the owner's own
+    words. Keyed (HMAC-SHA256 under a local key, ``_ref_key``), so a short or
+    guessable line cannot be confirmed from the journal by hashing guesses.
+    "" when there is no text or no key."""
+    import hashlib
+    import hmac
+    t = _clean(text).lower()
+    if not t:
+        return ""
+    key = _ref_key()
+    if not key:
+        return ""
+    return hmac.new(key, t.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+
+
+def _origin(origin: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Where an owner-approved line came from (a queued suggestion or a kept
+    proposal), bounded, for the change record's "origin" (its "via" is the
+    short marker of how it was kept, e.g. "edited_suggestion")."""
+    if not isinstance(origin, dict):
+        return None
+    out = {}
+    for k in ("suggestion", "proposal"):
+        if origin.get(k):
+            out[k] = str(origin[k])[:40]
+    if origin.get("source"):
+        out["source"] = str(origin["source"])[:80]
+    if origin.get("reason"):
+        out["reason"] = str(origin["reason"])[:300]
+    try:
+        if origin.get("queued_ts"):
+            out["queued_ts"] = float(origin["queued_ts"])
+    except (TypeError, ValueError):
+        pass
+    return out or None
+
+
+def journal_for(text: str, target: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Every change record that wrote this exact line, oldest first: the owner's
+    own (matched by its keyed hash) and Friday's (matched by the text she
+    wrote). With `target`, only that card's records: the same words on the
+    other card are another line."""
+    ref, low = line_ref(text), _clean(text).lower()
+    if not low:
+        return []
+    return [r for r in _read_jsonl(_journal_path())
+            if r.get("op") in ("add", "replace")
+            and (target is None or r.get("target") == target)
+            and ((ref and r.get("line_ref") == ref) or _clean(r.get("after") or "").lower() == low)]
+
+
+def journal_row(change_id: str) -> Optional[Dict[str, Any]]:
+    return next((r for r in _read_jsonl(_journal_path()) if r.get("id") == change_id), None)
+
+
+def journal_rows() -> List[Dict[str, Any]]:
+    """Every change record, oldest first (owner rows carry no text)."""
+    return _read_jsonl(_journal_path())
+
+
 def _journal(row: Dict[str, Any]) -> str:
     cid = "chg-" + uuid.uuid4().hex[:10]
     row = {"id": cid, "ts": time.time(), **row}
@@ -347,16 +483,27 @@ def _purge_text(text: str) -> None:
     low = (text or "").lower()
     if not low:
         return
+    ref = line_ref(text)
 
     def _about_it(r) -> bool:
         old = _clean(r.get("old") or "").lower()
         return bool(old) and old in low
+
+    def _in_origin(r) -> bool:
+        # The parsed fields of where a kept line came from (its suggestion's reason, its source), each
+        # compared as text: not a JSON dump, whose escaping (a quote, a newline) would hide the line.
+        origin = r.get("origin")
+        if not isinstance(origin, dict):
+            return False
+        return any(isinstance(v, str) and low in v.lower() for v in origin.values())
     for p in (_journal_path(), _pending_path()):
         rows = _read_jsonl(p)
         keep = [r for r in rows
                 if low not in str(r.get("before") or "").lower()
                 and low not in str(r.get("after") or "").lower()
                 and low not in str(r.get("text") or "").lower()
+                and not _in_origin(r)
+                and not (ref and r.get("line_ref") == ref)
                 and not _about_it(r)]
         if len(keep) != len(rows):
             try:
@@ -499,13 +646,19 @@ def _confirmed_source(source: str) -> bool:
 
 
 def add(target: str, text: str, *, actor: str = "friday",
-        dedupe: Optional[bool] = None, owner_ok: bool = False, via: str = "") -> Dict[str, Any]:
+        dedupe: Optional[bool] = None, owner_ok: bool = False, via: str = "",
+        origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
     typing it themselves (`dedupe` overrides, e.g. an approved suggestion).
 
     A line any writer but the owner adds is refused when it touches a special
     category (NS-15.4-3), unless `owner_ok`: the owner approved exactly this
-    call (core_memory_tools, the gate's owner decision)."""
+    call (core_memory_tools, the gate's owner decision).
+
+    `via` marks how the owner kept it (e.g. "edited_suggestion"); `origin`
+    names the suggestion or proposal an owner-approved line came from, so
+    "why do you know this" can say (services/memory_search)."""
+
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -531,15 +684,20 @@ def add(target: str, text: str, *, actor: str = "friday",
         if used(new) > CAPS[target]:
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
         _write(target, new)
-        cid = _journal({"actor": actor, "op": "add", "target": target,
-                        "before": None, "after": None if actor == "owner" else text,
-                        **({"via": via} if via else {})})
+        row = {"actor": actor, "op": "add", "target": target, "line_ref": line_ref(text),
+               "before": None, "after": None if actor == "owner" else text}
+        if via:
+            row["via"] = via
+        if _origin(origin):
+            row["origin"] = _origin(origin)
+        cid = _journal(row)
     _changed(actor, "core memory line added by the owner")
     return {"ok": True, "change_id": cid, "usage": usage(target)}
 
 
 def replace(target: str, old: str, text: str, *, actor: str = "friday",
-            supersede: bool = True, owner_ok: bool = False, via: str = "") -> Dict[str, Any]:
+            supersede: bool = True, owner_ok: bool = False, via: str = "",
+            origin: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -560,10 +718,14 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
         if used(new) > CAPS[target]:
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
         _write(target, new)
-        cid = _journal({"actor": actor, "op": "replace", "target": target,
-                        "before": None if actor == "owner" else before,
-                        "after": None if actor == "owner" else text,
-                        **({"via": via} if via else {})})
+        row = {"actor": actor, "op": "replace", "target": target, "line_ref": line_ref(text),
+               "before": None if actor == "owner" else before,
+               "after": None if actor == "owner" else text}
+        if via:
+            row["via"] = via
+        if _origin(origin):
+            row["origin"] = _origin(origin)
+        cid = _journal(row)
         if actor == "owner":
             _purge_text(before)
     out = {"ok": True, "change_id": cid, "usage": usage(target)}
@@ -600,27 +762,44 @@ def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = Fa
     return out
 
 
-def owner_set(target: str, index: int, text: str) -> Dict[str, Any]:
-    """The owner's edit of line `index` (0-based) from the panel."""
+#: What an owner edit or delete answers when the line at `index` is no longer the line the owner saw.
+LINE_CHANGED = "that line changed since you last looked; reload and try again"
+
+
+def _owner_line(target: str, index: Any, expect: Optional[str]):
+    """(items, index, None) for the owner's line, or (None, None, error result). With `expect` (the
+    line's text as the owner saw it), a line that is not that text is refused (`changed`), so a card
+    that moved between reading and writing never has the wrong line changed. Call under _LOCK."""
     items = entries(target) if target in TARGETS else []
     try:
         index = int(index)
     except (TypeError, ValueError):
-        return _err("index must be a number")
+        return None, None, _err("index must be a number")
     if not 0 <= index < len(items):
-        return _err("that line is no longer there; reload the panel")
-    return replace(target, items[index], text, actor="owner")
+        return None, None, _err("that line is no longer there; reload the panel")
+    if expect is not None and _clean(expect) != items[index]:
+        return None, None, {**_err(LINE_CHANGED), "changed": True}
+    return items, index, None
 
 
-def owner_delete(target: str, index: int, wrong: bool = False) -> Dict[str, Any]:
-    items = entries(target) if target in TARGETS else []
-    try:
-        index = int(index)
-    except (TypeError, ValueError):
-        return _err("index must be a number")
-    if not 0 <= index < len(items):
-        return _err("that line is no longer there; reload the panel")
-    return remove(target, items[index], actor="owner", supersede=bool(wrong))
+def owner_set(target: str, index: int, text: str, expect: Optional[str] = None) -> Dict[str, Any]:
+    """The owner's edit of line `index` (0-based) from the panel; with `expect`, only if that line still
+    reads `expect`."""
+    with _LOCK:
+        items, index, bad = _owner_line(target, index, expect)
+        if bad:
+            return bad
+        return replace(target, items[index], text, actor="owner")
+
+
+def owner_delete(target: str, index: int, wrong: bool = False, expect: Optional[str] = None) -> Dict[str, Any]:
+    """The owner's delete of line `index`; with `expect`, only if that line still reads `expect`. With
+    `wrong`, the messages that said it are retired too (live's supersede)."""
+    with _LOCK:
+        items, index, bad = _owner_line(target, index, expect)
+        if bad:
+            return bad
+        return remove(target, items[index], actor="owner", supersede=bool(wrong))
 
 
 # ── what Friday changed, and undoing it ───────────────────────────────────────
@@ -794,12 +973,15 @@ def decide(pending_id: str, approve: bool, text: Optional[str] = None) -> Dict[s
                 return _err("NOT CHANGED: the line this suggestion changes is no longer on the "
                             "card as it was; discard it")
             via = "edited_suggestion" if edited is not None else ""
+            # The kept line's change record names the suggestion it came from.
+            origin = {"suggestion": row.get("id"), "source": row.get("source"),
+                      "reason": row.get("reason"), "queued_ts": row.get("ts")}
             keep_text = edited if edited is not None else (row.get("text") or "")
             if op == "add":
-                res = add(t, keep_text, actor="owner", dedupe=True, via=via)
+                res = add(t, keep_text, actor="owner", dedupe=True, via=via, origin=origin)
             elif op == "replace":
                 res = replace(t, row.get("old") or "", keep_text, actor="owner", supersede=False,
-                              via=via)
+                              via=via, origin=origin)
             else:
                 res = remove(t, row.get("old") or "", actor="owner")
             if not res.get("ok") and not res.get("unchanged"):
@@ -890,7 +1072,11 @@ def forget_matching(match, apply: bool = True) -> Dict[str, Any]:
     out: Dict[str, Any] = {"lines": 0, "pending": 0, "journal": 0, "not_removable": []}
 
     def _names(r) -> bool:
-        return any(match(str(r.get(k) or "")) for k in ("text", "old", "before", "after", "reason"))
+        if any(match(str(r.get(k) or "")) for k in ("text", "old", "before", "after", "reason")):
+            return True
+        # Where an owner-kept line came from (its suggestion's reason and source; see _origin).
+        origin = r.get("origin")
+        return isinstance(origin, dict) and any(isinstance(v, str) and match(v) for v in origin.values())
     changed = False
     with _LOCK:
         for key, p in (("pending", _pending_path()), ("journal", _journal_path())):

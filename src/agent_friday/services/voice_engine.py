@@ -1936,6 +1936,15 @@ def _tool_search_past_conversations(inp, session=None):
                       provider=_rc.prov.GEMINI)
     direct, rest = _rc.split_by_provenance(hits)
     parts = []
+    handed = list(direct[:6])         # what a model reads: Gemini directly, the local model for the rest
+    if rest and not _voice_local_only():
+        handed += rest[:8]
+    try:
+        from agent_friday.services import memory_influence as _mi
+        _mi.record_tool_hits(handed, session_id=(session.get("conversation_id") or "")
+                             if isinstance(session, dict) else "")
+    except Exception:
+        pass
     if direct:
         parts.append("From earlier calls with you (newest and best first):\n"
                      + _rc.format_hits(direct[:6]))

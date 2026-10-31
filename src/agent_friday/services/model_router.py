@@ -3062,6 +3062,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         kept.sort(key=lambda h: str(h.get("timestamp") or h.get("date") or ""), reverse=True)
         used = 0
         recalled = []
+        recalled_ids = []
         for h in kept:
             date = h.get("date") or (h.get("timestamp") or "")[:10]
             role = "You" if h.get("role") == "friday" else "User"
@@ -3076,12 +3077,22 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 break
             lines.append(entry)
             recalled.append(" ".join((h.get("text") or "").split()))
+            if h.get("id"):
+                recalled_ids.append(str(h.get("id")))
             used += len(entry)
         # Labelled as recalled (services/memory_fence), and remembered for this
         # session so the end-of-turn index does not store a reply's repeat of it
         # as a new exchange.
         from agent_friday.services import memory_fence as _mf
         _mf.remember(session_id, recalled)
+        # Which stored turns this reply recalled, by id only (services/
+        # memory_influence): the owner's "why do you know this" reads it.
+        try:
+            from agent_friday.services import memory_influence as _mi
+            _mi.record("conversation", recalled_ids, session_id=session_id,
+                       settings=_load_settings())
+        except Exception:
+            pass
         try:
             # Shadow only (services/evidence_heads, DM4): read, after the block is
             # decided, whether these passages answer the message. It queues work on

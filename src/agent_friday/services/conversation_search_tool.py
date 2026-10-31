@@ -52,6 +52,16 @@ def _format(hits) -> str:
                      f"{', ' + h['title'] if h.get('title') else ''}): {h['text']}" for h in hits)
 
 
+def _record(hits) -> None:
+    """The turns handed to the model, by id only (services/memory_influence): "why do you know this"
+    counts a tool's recall as it counts one in the prompt."""
+    try:
+        from agent_friday.services import memory_influence
+        memory_influence.record_tool_hits(hits)
+    except Exception:
+        pass
+
+
 def _tool_search_conversations_typed(inp=None) -> str:
     inp = inp if isinstance(inp, dict) else {}
     query = str(inp.get("query") or "").strip()
@@ -76,11 +86,13 @@ def _tool_search_conversations_typed(inp=None) -> str:
     if not hits:
         return f'Nothing in earlier conversations matches "{query}".'
     if local:
+        _record(hits[:10])
         return "From earlier conversations (best match first):\n" + _format(hits[:10])
     direct = [h for h in hits if prov in (h.get("sent_to") or [])]
     rest = len(hits) - len(direct)
     parts = []
     if direct:
+        _record(direct[:8])
         parts.append("From earlier conversations this model already saw (best match first):\n"
                      + _format(direct[:8]))
     if rest:

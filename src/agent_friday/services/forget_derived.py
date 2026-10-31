@@ -315,6 +315,15 @@ def recall_purge(names, emails) -> Dict[str, Any]:
             not_removable.append({"what": "conversation search",
                                   "reason": _scrubbed(e, "it could not be updated")})
 
+    # The record of which replies recalled which turns (services/memory_influence,
+    # ids only) keeps no id of a forgotten turn, as after any other delete.
+    if m and removed_ids:
+        try:
+            from agent_friday.services import memory_influence
+            memory_influence.forget_refs(sorted(removed_ids))
+        except Exception:
+            pass
+
     # The in-memory review buffer (what the next periodic review would read):
     # every buffered exchange naming them, including a turn still in flight.
     if m:
