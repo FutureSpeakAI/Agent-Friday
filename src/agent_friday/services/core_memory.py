@@ -33,6 +33,21 @@ second file. The files are plain text the owner can open and edit by hand.
 Text that reads as instructions to the assistant, or as a credential, is
 refused whoever writes it.
 
+A line Friday or a background pass would add or rewrite that states or
+implies a special category about anyone (health, sexuality, politics,
+religion, ethnicity, union membership, genetic or biometric data, criminal
+record, immigration, finances, a home address: services/sensitive_categories)
+is dropped, neither
+written nor queued (NS-15.4-3). The owner's own edits are not filtered; a line
+resting on the owner's own words in the conversation waits for their Keep.
+
+A queued suggestion is a proposal, not a fact (NS-15.5-1). The owner keeps it,
+edits it and keeps their own words in one step (``decide(id, True, text=...)``:
+the kept line is the owner's, journaled as the owner's change), discards it,
+or says "Don't suggest things like this" (``suppress``): it is discarded and a
+rule in services/memory_suppress stops similar suggestions being queued again.
+The owner's own adds are never suppressed.
+
 Leaf module: no Flask, never raises to a caller (returns envelopes).
 """
 from __future__ import annotations
@@ -108,7 +123,20 @@ def entries(target: str) -> List[str]:
         return []
     try:
         raw = _path(target).read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_ok("memory_card")
+        except Exception:
+            pass
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        # The card exists but cannot be read: not an empty card (services/recall_health).
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_failure("memory_card", e)
+        except Exception:
+            pass
         return []
     out = []
     for line in raw.splitlines():
@@ -344,6 +372,82 @@ def _purge_text(text: str) -> None:
         pass
 
 
+#: A conversation turn counts as having stated a corrected card line only
+#: when it holds every content word of that line, and the line has at least
+#: this many: strict, so a passing mention of one word is never taken for it.
+MIN_CONTENT_WORDS = 3
+
+
+def _content_words(text: str) -> set:
+    import re as _re
+    try:
+        from agent_friday.conversation_memory import _STOPWORDS
+    except Exception:
+        _STOPWORDS = set()
+    # A plain "s" is taken off ("lives"/"live", "peanuts"/"peanut") so the
+    # card's wording and the message's need not match letter for letter.
+    out = set()
+    for w in _re.findall(r"[a-z0-9][a-z0-9'-]+", (text or "").lower()):
+        if len(w) < 3 or w in _STOPWORDS:
+            continue
+        s = w[:-1] if w.endswith("s") and len(w) > 3 else w
+        if s not in _STOPWORDS:
+            out.add(s)
+    return out
+
+
+#: The reasons a card correction gives the messages it retires; only those
+#: can be put back from the card (restore_superseded).
+CARD_CORRECTED = "the owner corrected this on the memory card"
+CARD_WRONG = "the owner marked this wrong and deleted it from the memory card"
+
+
+def _supersede_turns(old_line: str, why: str) -> list:
+    """North star §34.9-3/-4: when the owner corrects or deletes a card line,
+    the owner's own earlier messages that stated it stop being recalled as
+    evidence (conversation memory and conversation search). The messages stay
+    in the transcript, flagged; nothing is deleted. Returns how many. Never
+    raises."""
+    want = _content_words(old_line)
+    if len(want) < MIN_CONTENT_WORDS:
+        return []
+    try:
+        from agent_friday.services import model_router
+        mem = model_router._get_conversation_memory()
+        if not mem.available():
+            return []
+        hits = mem.search(old_line, n=20, roles=["user"])
+        ids = [h["id"] for h in hits
+               if h.get("id") and want <= _content_words(h.get("text") or "")]
+        if not ids:
+            return []
+        return list(mem.supersede(ids, why).get("superseded") or [])
+    except Exception:
+        return []
+
+
+def restore_superseded(ids) -> int:
+    """The owner puts messages a card correction retired back into recall
+    (the ids a correction returned). Returns how many. Never raises."""
+    try:
+        from agent_friday.services import model_router
+        mem = model_router._get_conversation_memory()
+        if not mem.available():
+            return 0
+        ids = [str(i) for i in (ids or [])]
+        with mem._lock:
+            got = mem._collection.get(ids=ids, include=["metadatas"])
+        # Only what a card correction retired: other corrections are not the
+        # card's to undo.
+        mine = [i for i, m in zip(got.get("ids") or [], got.get("metadatas") or [])
+                if (m or {}).get("superseded_reason") in (CARD_CORRECTED, CARD_WRONG)]
+        if not mine:
+            return 0
+        return len(mem.unsupersede(mine).get("superseded") or [])
+    except Exception:
+        return 0
+
+
 def _changed(actor: str, reason: str) -> None:
     if actor == "owner":
         try:
@@ -424,20 +528,68 @@ _TOMBSTONED = ("the owner deleted this line from the memory card; Friday does no
                "it again (only the owner can put it back)")
 
 
+#: Why an inferred line touching a special category is not kept (NS-15.4-3).
+SPECIAL_REFUSAL = ("it would record {cat} about a person, which Friday never infers or keeps "
+                   "on her own; only the owner's own words, kept by the owner, can put it on the card")
+
+
+def _special(text: str, where: str, prefix: str = "NOT SAVED: ") -> Optional[Dict[str, Any]]:
+    """The refusal for an INFERRED line that states or implies a special
+    category (health, sexuality, politics, religion, ethnicity, union
+    membership, genetic or biometric data, criminal record, immigration,
+    finances, a home address; services/sensitive_categories), counted with no
+    text kept; else None.
+    A check that cannot run refuses (fail closed, like dreaming and proposals)."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        cat = _sc.special_category(text)
+    except Exception:
+        cat = "special_category"
+    if not cat:
+        return None
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+        _sc.note_dropped(where, cat)
+    except Exception:
+        pass
+    return {**_err(prefix + SPECIAL_REFUSAL.format(cat=cat.replace("_", " "))),
+            "sensitive": cat}
+
+
+def _confirmed_source(source: str) -> bool:
+    """A queued row whose source means the owner entered or approved it."""
+    try:
+        from agent_friday.services.user_model import is_confirmed_source
+        return is_confirmed_source(source)
+    except Exception:
+        return False
+
+
 def add(target: str, text: str, *, actor: str = "friday",
-        dedupe: Optional[bool] = None) -> Dict[str, Any]:
+        dedupe: Optional[bool] = None, owner_ok: bool = False, via: str = "") -> Dict[str, Any]:
     """Add one line. Near duplicates are skipped for every writer but the owner
-    typing it themselves (`dedupe` overrides, e.g. an approved suggestion)."""
+    typing it themselves (`dedupe` overrides, e.g. an approved suggestion).
+
+    A line any writer but the owner adds is refused when it touches a special
+    category (NS-15.4-3), unless `owner_ok`: the owner approved exactly this
+    call (core_memory_tools, the gate's owner decision)."""
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    # A tombstoned line (services/tombstones) is not written back by Friday or
+    # a background pass, `owner_ok` (the gate's approval of her call) included;
+    # only the owner adding it themselves lifts the tombstone.
     if actor != "owner" and _tombstoned(target, text):
         return {**_err("NOT SAVED: " + _TOMBSTONED), "tombstoned": True}
     if actor == "owner":
         _affirmed(text)
+    if actor != "owner" and not owner_ok:
+        hit = _special(text, f"core_memory.{actor}.add")
+        if hit:
+            return hit
     with _LOCK:
         items = entries(target)
         if any(e.lower() == text.lower() for e in items):
@@ -454,12 +606,14 @@ def add(target: str, text: str, *, actor: str = "friday",
             return {**_err(_full_message(target, items, used(new) - CAPS[target])), "full": True}
         _write(target, new)
         cid = _journal({"actor": actor, "op": "add", "target": target,
-                        "before": None, "after": None if actor == "owner" else text})
+                        "before": None, "after": None if actor == "owner" else text,
+                        **({"via": via} if via else {})})
     _changed(actor, "core memory line added by the owner")
     return {"ok": True, "change_id": cid, "usage": usage(target)}
 
 
-def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[str, Any]:
+def replace(target: str, old: str, text: str, *, actor: str = "friday",
+            supersede: bool = True, owner_ok: bool = False, via: str = "") -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     text = _clean(text)
@@ -468,6 +622,10 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[
         return _err("NOT SAVED: " + why)
     if actor != "owner" and _tombstoned(target, text):
         return {**_err("NOT SAVED: " + _TOMBSTONED), "tombstoned": True}
+    if actor != "owner" and not owner_ok:
+        hit = _special(text, f"core_memory.{actor}.replace")
+        if hit:
+            return hit
     with _LOCK:
         items = entries(target)
         i, miss = _match(items, old)
@@ -480,7 +638,8 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[
         _write(target, new)
         cid = _journal({"actor": actor, "op": "replace", "target": target,
                         "before": None if actor == "owner" else before,
-                        "after": None if actor == "owner" else text})
+                        "after": None if actor == "owner" else text,
+                        **({"via": via} if via else {})})
         if actor == "owner":
             _purge_text(before)
     marked = True
@@ -490,12 +649,18 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday") -> Dict[
         # punctuation lifts the tombstone it just made).
         marked = _tombstone(before)
         _affirmed(text)
+    out ={"ok": True, "change_id": cid, "usage": usage(target),
+           **({} if marked else _NOT_TOMBSTONED)}
+    # Only a correction retires what was said: a re-save, a typo fix or a line
+    # that keeps every word and adds detail still states the old fact.
+    if actor == "owner" and supersede and not (_content_words(before) <= _content_words(text)):
+        ids = _supersede_turns(before, CARD_CORRECTED)
+        out["superseded_turns"], out["superseded_ids"] = len(ids), ids
     _changed(actor, "core memory line edited by the owner")
-    return {"ok": True, "change_id": cid, "usage": usage(target),
-            **({} if marked else _NOT_TOMBSTONED)}
+    return out
 
 
-def remove(target: str, old: str, *, actor: str = "friday") -> Dict[str, Any]:
+def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = False) -> Dict[str, Any]:
     if target not in TARGETS:
         return _err("target is 'user' or 'friday'")
     with _LOCK:
@@ -510,9 +675,15 @@ def remove(target: str, old: str, *, actor: str = "friday") -> Dict[str, Any]:
         if actor == "owner":
             _purge_text(before)
     marked = _tombstone(before) if actor == "owner" else True
+    out = {"ok": True, "change_id": cid, "usage": usage(target),
+           **({} if marked else _NOT_TOMBSTONED)}
+    # A delete makes room or keeps something private; only a delete the owner
+    # marks as wrong retires the messages that said it.
+    if actor == "owner" and supersede:
+        ids = _supersede_turns(before, CARD_WRONG)
+        out["superseded_turns"], out["superseded_ids"] = len(ids), ids
     _changed(actor, "core memory line deleted by the owner")
-    return {"ok": True, "change_id": cid, "usage": usage(target),
-            **({} if marked else _NOT_TOMBSTONED)}
+    return out
 
 
 def owner_set(target: str, index: int, text: str) -> Dict[str, Any]:
@@ -527,7 +698,7 @@ def owner_set(target: str, index: int, text: str) -> Dict[str, Any]:
     return replace(target, items[index], text, actor="owner")
 
 
-def owner_delete(target: str, index: int) -> Dict[str, Any]:
+def owner_delete(target: str, index: int, wrong: bool = False) -> Dict[str, Any]:
     items = entries(target) if target in TARGETS else []
     try:
         index = int(index)
@@ -535,7 +706,7 @@ def owner_delete(target: str, index: int) -> Dict[str, Any]:
         return _err("index must be a number")
     if not 0 <= index < len(items):
         return _err("that line is no longer there; reload the panel")
-    return remove(target, items[index], actor="owner")
+    return remove(target, items[index], actor="owner", supersede=bool(wrong))
 
 
 # ── what Friday changed, and undoing it ───────────────────────────────────────
@@ -556,12 +727,12 @@ def undo(change_id: str) -> Dict[str, Any]:
     t, op = row.get("target"), row.get("op")
     before, after = row.get("before"), row.get("after")
     if op == "add":
-        res = remove(t, after or "", actor="owner") if after in entries(t) else _err(
+        res = remove(t, after or "", actor="owner", supersede=False) if after in entries(t) else _err(
             "the line Friday added is no longer there")
     elif op == "remove":
         res = add(t, before or "", actor="owner")
     elif op == "replace":
-        res = (replace(t, after or "", before or "", actor="owner") if after in entries(t)
+        res = (replace(t, after or "", before or "", actor="owner", supersede=False) if after in entries(t)
                else _err("the line Friday wrote is no longer there"))
     else:
         res = _err("unknown change")
@@ -596,7 +767,7 @@ def resolve_line(target: str, old: str):
 
 def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
           reason: str = "", owner: bool = False, restated: bool = False,
-          web_sources: Iterable[str] = ()) -> Dict[str, Any]:
+          owner_stated: bool = False, web_sources: Iterable[str] = ()) -> Dict[str, Any]:
     """File a change for the owner to approve. Duplicates are not queued twice.
 
     A replace or remove stores the WHOLE line it changes, resolved now, so the
@@ -611,16 +782,29 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
     typed it again, in their words): a tombstone does not silence the owner,
     so it is queued for their OK, flagged ``deleted_before`` with "You deleted
     this before." in front of the reason. A rejected proposal still blocks the
-    same text as a proposal; it never blocks the owner saying it."""
+    same text as a proposal; it never blocks the owner saying it. A change that
+    rests on the owner's own words in the conversation (`owner_stated`) is
+    their statement too, so it counts as `restated`.
+
+    An inferred add or replace (a dream, a review, a model's guess) that
+    touches a special category is dropped, not queued (NS-15.4-3). It is
+    queued only when it rests on the owner's own words (`owner_stated`, set by
+    core_memory_tools after its own-words check) or its source says the owner
+    entered or approved it (user_model.CONFIRMED_SOURCES)."""
     if target not in TARGETS or op not in ("add", "replace", "remove"):
         return _err("bad target or op")
     text, old = _clean(text), _clean(old)
     deleted_before = False
     if op in ("add", "replace") and not owner and _tombstoned(target, text):
-        if not restated:
+        if not (restated or owner_stated):
             return {**_err("NOT QUEUED: " + _TOMBSTONED), "tombstoned": True}
         deleted_before = True
         reason = "You deleted this before. " + str(reason or "")
+    if op in ("add", "replace") and not owner_stated and not _confirmed_source(source):
+        hit = _special(text, "queue." + (str(source).split(":", 1)[0] or "unknown")[:20],
+                       prefix="NOT QUEUED: ")
+        if hit:
+            return hit
     if op in ("replace", "remove"):
         line, miss = resolve_line(target, old)
         if miss:
@@ -644,6 +828,18 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
             if dup:
                 hit = next(r for r in rows if r.get("op") == "add" and r.get("text") == dup)
                 return {"ok": True, "unchanged": True, "id": hit.get("id")}
+        if op != "replace" and not owner_stated and not _confirmed_source(source):
+            # "Don't suggest things like this" (NS-15.5-1): a suggestion similar to
+            # one the owner suppressed is not queued; the drop is counted (after
+            # the duplicate checks above, so a repeat of a waiting row is not a
+            # drop), no text. A row the owner entered or approved (a confirmed
+            # source) or that rests on their own words (owner_stated) is theirs;
+            # a suggested correction of a line on the card (a replace) is not
+            # held back by a rule about a new line.
+            rule = _suppressed(text if op != "remove" else old, op, source)
+            if rule:
+                return {"ok": True, "unchanged": True, "suppressed": True, "rule": rule,
+                        "note": "the owner asked not to be offered suggestions like this one"}
         row = {"id": "pend-" + uuid.uuid4().hex[:10], "ts": time.time(), "target": target,
                "op": op, "text": text, "old": old, "source": str(source)[:80],
                "reason": str(reason or "")[:300]}
@@ -662,6 +858,17 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
     return {"ok": True, "id": row["id"], **({"deleted_before": True} if deleted_before else {})}
 
 
+def _suppressed(text: str, op: str, source: str) -> Optional[str]:
+    """The id of the owner's suppression rule this suggestion matches, or None
+    (services/memory_suppress; counted there by place, with no text)."""
+    try:
+        from agent_friday.services import memory_suppress as _ms
+        where = "queue." + (str(source).split(":", 1)[0] or "unknown")[:20]
+        return _ms.check(text, where, kind="remove" if op == "remove" else "change")
+    except Exception:
+        return None
+
+
 def pending() -> List[Dict[str, Any]]:
     return list(reversed(_read_jsonl(_pending_path())))
 
@@ -678,13 +885,30 @@ def drop_pending(pred, apply: bool = True) -> List[Dict[str, Any]]:
     return gone
 
 
-def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
-    """The owner keeps or discards one queued change."""
+def decide(pending_id: str, approve: bool, text: Optional[str] = None) -> Dict[str, Any]:
+    """The owner keeps or discards one queued change.
+
+    `text`, with a Keep of an add or a replace, is the owner's edit of the
+    suggestion: exactly that text is kept, as the owner's own line (actor
+    owner, journaled as the owner's change), under the card's normal checks
+    (length, instructions, secrets, the cap, near duplicates). It is the
+    owner's own words, so the special-category filter for what Friday infers
+    does not apply to it. The suggested wording is not kept anywhere."""
+    edited = None
+    if text is not None and approve:
+        edited = _clean(text)
+        why = refusal(edited)
+        if why:
+            return _err("NOT SAVED: " + why)
     with _LOCK:
         rows = _read_jsonl(_pending_path())
         row = next((r for r in rows if r.get("id") == pending_id), None)
         if not row:
             return _err("that suggestion is gone")
+        if edited is not None and row.get("op") == "remove":
+            return _err("a suggestion to remove a line has no text to edit; keep or discard it")
+        if edited is not None and edited == (row.get("text") or ""):
+            edited = None                               # unchanged: a plain Keep
         res: Dict[str, Any] = {"ok": True}
         if approve:
             t, op = row["target"], row["op"]
@@ -693,10 +917,13 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
                 # pick a different line than the one the card showed.
                 return _err("NOT CHANGED: the line this suggestion changes is no longer on the "
                             "card as it was; discard it")
+            via = "edited_suggestion" if edited is not None else ""
+            keep_text = edited if edited is not None else (row.get("text") or "")
             if op == "add":
-                res = add(t, row.get("text") or "", actor="owner", dedupe=True)
+                res = add(t, keep_text, actor="owner", dedupe=True, via=via)
             elif op == "replace":
-                res = replace(t, row.get("old") or "", row.get("text") or "", actor="owner")
+                res = replace(t, row.get("old") or "", keep_text, actor="owner", supersede=False,
+                              via=via)
             else:
                 res = remove(t, row.get("old") or "", actor="owner")
             if not res.get("ok") and not res.get("unchanged"):
@@ -715,17 +942,65 @@ def decide(pending_id: str, approve: bool) -> Dict[str, Any]:
                                "suggesting it again could not be saved")}
     if row.get("target") == "friday" and row.get("op") in ("add", "replace"):
         # The proposed lesson's learning record: active once kept; a discarded
-        # one leaves no record behind.
+        # one leaves no record behind. An edited one is the owner's own line:
+        # the record of the suggested wording goes.
         try:
             from agent_friday.services import lesson_records as _lr
             ref = _lr.lesson_ref(row.get("text") or "")
-            if approve:
+            if approve and edited is None:
                 _lr.note_status("lesson", ref, "active")
             else:
                 _lr.purge("lesson", ref)
         except Exception:
             pass
-    return {**res, "ok": True, "decided": "approved" if approve else "discarded"}
+    out = {**res, "ok": True, "decided": "approved" if approve else "discarded"}
+    if edited is not None:
+        out["edited"] = True
+    return out
+
+
+def suppress(pending_id: str) -> Dict[str, Any]:
+    """"Don't suggest things like this": the owner discards one queued
+    suggestion AND records a rule (services/memory_suppress: its normalised
+    content words, not its text) so a similar suggestion is not queued again."""
+    rows = _read_jsonl(_pending_path())
+    row = next((r for r in rows if r.get("id") == pending_id), None)
+    if not row:
+        return _err("that suggestion is gone")
+    op = row.get("op")
+    basis = (row.get("old") if op == "remove" else row.get("text")) or ""
+    try:
+        from agent_friday.services import memory_suppress as _ms
+        rule = _ms.add_rule(basis, kind="remove" if op == "remove" else "change",
+                            origin="card." + (str(row.get("source") or "").split(":", 1)[0] or "unknown"))
+    except Exception as e:
+        return _err(f"the rule could not be saved: {e}")
+    if not rule.get("ok"):
+        return rule
+    res = decide(pending_id, False)
+    if not res.get("ok"):
+        return res
+    out = {**res, "suppressed": True, "rule": rule.get("rule")}
+    if rule.get("note"):
+        out["note"] = rule["note"]
+    return out
+
+
+def suppression_rules() -> Dict[str, Any]:
+    """The owner's suppression rules and the suppressed-drop counts (no text)."""
+    try:
+        from agent_friday.services import memory_suppress as _ms
+        return {"ok": True, **_ms.summary()}
+    except Exception as e:
+        return _err(str(e))
+
+
+def remove_suppression(rule_id: str) -> Dict[str, Any]:
+    try:
+        from agent_friday.services import memory_suppress as _ms
+        return _ms.remove_rule(str(rule_id or ""))
+    except Exception as e:
+        return _err(str(e))
 
 
 # ── forget-person (services/forget_derived, NS-15.7-2) ───────────────────────
@@ -814,18 +1089,31 @@ def migrate_user_model_facts() -> Dict[str, Any]:
         facts = user_model._recent_facts(200)
     except Exception:
         facts = []
+
+    def _owner_source(src: str) -> bool:
+        # Exactly the confirmed sources (user_model.is_confirmed_source: "manual"
+        # itself, not "manual_x"), less "setup" and "user_stated": this move
+        # never put those on the card and does not start now, so it only
+        # tightens. They go to the review queue as before.
+        try:
+            from agent_friday.services import user_model as _um
+            return _um.is_confirmed_source(src) and src not in ("setup", "user_stated")
+        except Exception:
+            return False
+
     for f in facts:
         text, src = _clean(f.get("text")), str(f.get("source") or "")
         if not text:
             continue
-        if src.startswith(("manual", "proposed:", "meeting:")):
+        owner = _owner_source(src)
+        if owner:
             r = add("user", text, actor="owner", dedupe=True)
             if r.get("ok") and not r.get("unchanged"):
                 moved += 1
                 continue
         r = queue("user", "add", text=text, source=src or "older note",
                   reason="Saved before the memory card existed; never reviewed by you."
-                  if not src.startswith(("manual", "proposed:", "meeting:")) else
+                  if not owner else
                   "You saved this earlier, but the card was full.")
         if r.get("ok") and not r.get("unchanged"):
             queued += 1

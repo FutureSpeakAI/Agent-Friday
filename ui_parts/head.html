@@ -26,6 +26,29 @@ window.addEventListener('error',function(e){
   }
 },true);
 </script>
+<script id="friday-render-3d">
+// 3D rendering can be switched off entirely (north star 21.22-3; Settings >
+// Appearance > 3D rendering). Read before anything draws: with it off no WebGL
+// context is ever made, and every 3D view shows its flat form instead.
+// The answer is fixed for this page: the WebGL switch below is installed once,
+// so a change made in Settings takes effect when Friday next opens.
+(function(){
+  var off=false;try{off=localStorage.getItem('friday.render3d')==='off';}catch(_){}
+  window.fridayRender3dOff=function(){return off;};
+  window.fridaySyncRender3d=function(on){try{if(on===false)localStorage.setItem('friday.render3d','off');else if(on===true)localStorage.removeItem('friday.render3d');}catch(_){}};
+  if(!off)return;
+  document.documentElement.setAttribute('data-render3d','off');
+  var get=HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext=function(kind){
+    if(/^(webgl2?|experimental-webgl)$/i.test(String(kind||'')))return null;
+    return get.apply(this,arguments);
+  };
+})();
+</script>
+<style id="friday-render-3d-style">
+:root[data-render3d="off"] #friday-scene-canvas{display:none!important}
+:root[data-render3d="off"] body{background:#070b14}
+</style>
 <!-- UI libraries are vendored (static/vendor/, SRI-verified against the same
      pinned versions the old CDN tags carried) so the shell loads offline.
      Babel below is the sole remaining CDN script and only for fallback builds:
@@ -52,6 +75,13 @@ window.addEventListener('error',function(e){
 <!-- The top-bar plugin slot's registry (documented in the file). Not deferred:
      add-ons may register before the desktop mounts. -->
 <script src="/static/js/friday_topbar_slot.js"></script>
+<!-- Stop everything: the top-bar Stop control and the stopped banner with Resume. -->
+<script src="/static/js/friday_stop_everything.js" defer></script>
+<!-- Settings > Privacy > When a cloud provider fails (A6). -->
+<script src="/static/js/friday_cloud_fallback_order.js" defer></script>
+<script src="/static/js/friday_route_why.js" defer></script>
+<!-- Settings > Privacy > Folders Friday may use (BD-26). -->
+<script src="/static/js/friday_folder_grants.js" defer></script>
 <script>
 // Hard fail-fast if any critical UI library didn't load — show a visible banner.
 window.addEventListener('DOMContentLoaded',function(){
@@ -279,6 +309,11 @@ window.addEventListener('DOMContentLoaded',function(){
             position: fixed; bottom: 20px; right: 20px; width: 6px; height: 6px;
             border-radius: 50%; background: #666; z-index: 200; transition: background 0.3s, box-shadow 0.3s;
         }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: #1f6f7f; }
+        /* The camera light by shape too: off a ring, on a half-filled circle, following a face a filled circle. */
+        #camera-indicator { width: 8px; height: 8px; box-sizing: border-box; }
+        #camera-indicator:not(.holo-active):not([data-status="live"]) { background: transparent; border: 1.5px solid #666; }
+        #camera-indicator[data-status="live"]:not(.holo-active) { background: linear-gradient(90deg, #1f6f7f 50%, transparent 50%); border: 1.5px solid #1f6f7f; }
 
         /* --- REACT UI LAYER STYLES --- */
 
@@ -467,7 +502,8 @@ window.addEventListener('DOMContentLoaded',function(){
         /* A card Friday raised inside this workspace is waiting: one quiet
            dot under the label, no count and no pulse. It clears when the
            workspace is opened or the card is dismissed. */
-        .dock-btn.has-notice .dot { background: #00d4ff; }
+        /* A notice is a ring, an open window a filled dot: told apart by shape, not only by being cyan. */
+        .dock-btn.has-notice .dot { background: transparent; border: 1px solid #00d4ff; width: 5px; height: 5px; box-sizing: border-box; }
 
         /* Floating windows — frosted glass over the luminous holographic scene */
         .fwin {
@@ -853,7 +889,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .lk-sub { margin: 4px 0 0; padding-left: 18px; font-size: 11.5px; color: var(--st-dim); }
         .lk-line.lk-off .lk-title, .lk-line.lk-changed .lk-title { color: var(--st-warn); }
         .lk-line.lk-not_built .lk-title { color: var(--st-dim); }
-        .lk-limit { font-size: 12px; line-height: 1.6; color: var(--st-label); margin: 12px 0 0;
+        .lk-limit, .pm-limit { font-size: 12px; line-height: 1.6; color: var(--st-label); margin: 12px 0 0;
             padding: 10px 12px; border: 1px solid var(--st-line); border-radius: 8px; }
         .sc-option.off { opacity: .6; cursor: default; }
         .sc-option .sc-why { color: var(--st-warn); }
@@ -1676,6 +1712,10 @@ window.addEventListener('DOMContentLoaded',function(){
         .thread-dot.in-progress { background: #f59e0b; color: #f59e0b; animation: pulse 1.2s infinite; }
         .thread-dot.pending { background: #3b82f6; color: #3b82f6; opacity: 0.6; }
         .thread-dot.error { background: #ff0080; color: #ff0080; }
+        /* A step's state by shape too: done a circle, in progress half filled, pending a ring, error a square. */
+        .thread-dot.in-progress { background: linear-gradient(90deg, #f59e0b 50%, transparent 50%); border: 2px solid #f59e0b; box-sizing: border-box; }
+        .thread-dot.pending { background: transparent; border: 2px solid #3b82f6; box-sizing: border-box; }
+        .thread-dot.error { border-radius: 2px; }
         .thread-step-content { flex: 1; min-width: 0; }
         .thread-step-text {
             font-family: 'Inter', sans-serif; font-size: 12px;
@@ -2054,10 +2094,27 @@ window.addEventListener('DOMContentLoaded',function(){
             padding:2px 8px; border-radius:12px; background:rgba(255,255,255,0.04);
             border:1px solid rgba(255,255,255,0.07);
         }
+        /* State is never shown by colour alone (WCAG 1.4.1; north star 33.1-11). One shape per kind of
+           state: ok a filled circle, busy a half-filled circle, warn a diamond, bad a square, off a hollow
+           ring. The colour stays; the shape says the same thing to someone who cannot tell the colours apart. */
+        .fr-state { display:inline-block; width:8px; height:8px; flex-shrink:0; vertical-align:middle; box-sizing:border-box;
+            border-radius:50%; background:currentColor; }
+        .fr-state[data-state="ok"] { color:#00ff80; }
+        .fr-state[data-state="busy"] { color:#f59e0b; border:1.5px solid currentColor; background:linear-gradient(90deg, currentColor 50%, transparent 50%); }
+        .fr-state[data-state="warn"] { color:#f59e0b; border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .fr-state[data-state="bad"] { color:#ff5470; border-radius:1px; }
+        .fr-state[data-state="off"] { color:rgba(255,255,255,0.4); border:1.5px solid currentColor; background:transparent; }
+        .fr-state[data-kind="cloud"] { border-radius:1px; }
+        /* Read by a screen reader, not drawn (the page's one top-level heading, say). */
+        .fr-sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+            clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
         .trust-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
         .trust-dot.green { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .trust-dot.yellow { background:#f59e0b; box-shadow:0 0 5px rgba(245,158,11,0.5); }
         .trust-dot.red { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Trust by shape too: high a circle, medium a diamond, low a square. */
+        .trust-dot.yellow, .trust-obs-dot.yellow { border-radius:1px; transform:rotate(45deg) scale(.85); }
+        .trust-dot.red, .trust-obs-dot.red { border-radius:1px; }
 
         /* ── Source-trust badge + hover tooltip (article cards) ── */
         .trust-badge { position:relative; display:inline-flex; align-items:center; gap:4px; cursor:help; outline:none; }
@@ -2152,6 +2209,9 @@ window.addEventListener('DOMContentLoaded',function(){
         .sentiment-dot.positive { background:#00ff80; box-shadow:0 0 5px rgba(0,255,128,0.6); }
         .sentiment-dot.neutral { background:#7a8190; box-shadow:0 0 4px rgba(122,129,144,0.4); }
         .sentiment-dot.negative { background:#ff3c5a; box-shadow:0 0 5px rgba(255,60,90,0.6); }
+        /* Tone by shape too: positive a circle, neutral a ring, negative a square. */
+        .sentiment-dot.neutral { background:transparent; border:1.5px solid #7a8190; box-sizing:border-box; }
+        .sentiment-dot.negative { border-radius:1px; }
         /* "In your wiki" connection link */
         .wiki-connect { font-size:10px; color:#9fb0c4; margin-top:7px; }
         .wiki-link { color:#00d4ff; cursor:pointer; text-decoration:none; border-bottom:1px dotted rgba(0,212,255,0.4); }
@@ -2468,6 +2528,23 @@ window.addEventListener('DOMContentLoaded',function(){
             animation:slidein 0.22s ease;
         }
         @keyframes slidein { from{transform:translateX(28px);opacity:0;} to{transform:translateX(0);opacity:1;} }
+        /* Reduced motion, animation by animation (north star NS-33.1-9). Decorative
+           and attention-seeking loops stop and the element stays as it is (a privacy
+           light stays lit; a status dot stays visible). Activity indicators keep
+           moving, slowly, so "still working" is still shown. Inline React pulses are
+           matched by what the browser writes back ("1.6s infinite pulse"). Transitions and the
+           window open/close animations are not touched here: they have their own
+           reduced-motion handling, and a blanket rule broke them. */
+        @media (prefers-reduced-motion: reduce) {
+            .kill-switch, .cc-indicator, .cc-indicator .cc-dot, .task-card-edge,
+            .camera-pip .cam-active .pulse, .camera-privacy-banner .pulse,
+            .thread-dot.in-progress, .fp-anchor-dot, .breaking-badge,
+            .dock, .dock-btn, .dock-btn.active .dot, .dock-btn.active .ico img, .dock-btn:active,
+            .task-card-spinner,
+            [style*="infinite"][style*="pulse" i] { animation: none !important; }
+            .gen-spinner, .liq-indet,
+            .typing-indicator .dot, .ws-typing-dot { animation-duration: 3s !important; }
+        }
         .news-side h3 { font-family:'Orbitron', sans-serif; font-size:12px; color:#00d4ff; letter-spacing:0.08em; margin:0 0 12px; }
         .manage-row {
             display:flex; align-items:center; justify-content:space-between; gap:8px;

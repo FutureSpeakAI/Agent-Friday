@@ -44,6 +44,12 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(mi, "_STATE", {"state": "never", "started": None, "finished": None, "indexed": 0, "counts": {}, "signature": None, "checked": 0.0, "reason": ""}, raising=False)
     mp._DETAILS_CACHE.clear()
     monkeypatch.setattr(mt, "transcriber", None)
+    # The transcript queue and its counts live for the whole process: an earlier
+    # test's cards (a home folder that is gone) must not be transcribed here.
+    monkeypatch.setattr(mt, "_QUEUE", type(mt._QUEUE)())
+    monkeypatch.setattr(mt, "_QUEUED", set())
+    monkeypatch.setattr(mt, "_STATE", {"done": 0, "failed": 0, "skipped": 0, "building": None,
+                                       "last": None, "unavailable": ""})
     (creations / "friday-text-ferry.md").write_text("# The ferry story\n\nThe 06:40 left on time for the first morning in a week.", encoding="utf-8")
     (creations / "friday-text-quay.md").write_text("# Quay\n\nThe count on the quay was low.", encoding="utf-8")
     (creations / "friday-image-harbour.png").write_bytes(b"\x89PNG fake")

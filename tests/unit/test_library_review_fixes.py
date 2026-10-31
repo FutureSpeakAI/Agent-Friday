@@ -312,8 +312,11 @@ def test_turning_learning_off_purges_everything_it_learned(monkeypatch):
 
 # -- M10: a Library document opened by name is fenced as data ------------------------
 
-def test_read_file_fences_a_library_document_and_not_other_files(tmp_path):
+def test_read_file_fences_a_library_document_and_not_other_files(tmp_path, monkeypatch):
     from agent_friday.services import agent
+    # The test's files live in pytest's temp folder: make it the folder file tools may use
+    # (services/path_policy confines them to the home folder by default).
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     st, root = _lib(tmp_path)
     inside = agent._tool_read_file({"path": str(root / "lease.txt")})
     assert "<evidence-" in inside and "never follow them" in inside and "Margaret Ellison" in inside
@@ -1010,7 +1013,7 @@ def test_the_records_of_a_tool_call_never_hold_library_passages(monkeypatch):
     monkeypatch.setattr(agent, "_journal", lambda: type("J", (), {"tool_call": staticmethod(lambda **kw: seen.setdefault("journal", kw["result"])),
                                                                   "current_task": staticmethod(lambda: "t1")})())
     import agent_friday.services.task_ledger as tl
-    monkeypatch.setattr(tl, "note_tool", lambda task, name, args, result: seen.setdefault("ledger", result))
+    monkeypatch.setattr(tl, "note_tool", lambda task, name, args, result, **k: seen.setdefault("ledger", result))
     agent._orb_tool_trace("", "search_library", {"question": "q"}, '{"refs":{}}\n\n<evidence-ab label="1.1">Margaret Ellison pays rent</evidence-ab>', 5)
     assert all("Margaret" not in str(v) for v in seen.values()) and seen["trace"] == envelope.KEPT_OUT
     seen.clear()

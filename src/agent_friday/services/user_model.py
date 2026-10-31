@@ -149,6 +149,12 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
                     "UPDATE traits SET value=?, confidence=?, updated_ts=?, evidence=? "
                     "WHERE key=?",
                     (str(value), float(confidence), time.time(), new_ev, key))
+            if key.startswith(_STYLE_PREFIXES):
+                # Set, not inferred (§34.9-8): rows from before inferred style
+                # became session-only carry no such mark.
+                conn.execute(
+                    "INSERT OR REPLACE INTO traits(key,value,confidence,updated_ts,evidence) "
+                    "VALUES(?,?,?,?,?)", (_OWNER_MARK + key, "1", 1.0, time.time(), 0))
             conn.commit()
             conn.close()
             return {"ok": True, "key": key, "value": value}
@@ -156,19 +162,34 @@ def set_trait(key: str, value, confidence: float = 0.6, evidence: int = 1) -> Di
             return {"ok": False, "error": exception_text(e)}
 
 
+_STYLE_PREFIXES = ("comm.", "expertise.")
+_OWNER_MARK = "owner_set."
+
+
+def owner_set(key: str) -> bool:
+    """True when the owner set this style or expertise trait. A stored one
+    without the mark is an old inference (written before inferred style
+    became session-only) and counts as inferred."""
+    return _durable_trait(_OWNER_MARK + str(key)) is not None
+
+
 def _nudge_trait(key: str, target: float, weight: float = 0.15) -> None:
     """Move a 0..1 session trait toward `target` by an EMA step.
 
-    Session-only: the step starts from this session's value, else from the
-    owner's durable value, else 0.5, and is never written to the store. The
-    read-compute-write runs under _LOCK so two concurrent observers (chat and
-    a channel poll thread) cannot lose an update.
+    Session-only: never written to the store. A trait the owner set is never
+    nudged (what Friday infers does not out-rank it, §34.9-8); otherwise the
+    step starts from this session's value, else from an older stored
+    inference, else 0.5. The read-compute-write runs under _LOCK so two
+    concurrent observers (chat and a channel poll thread) cannot lose an
+    update.
     """
     try:
         with _LOCK:
             if key in _SESSION_TRAITS:
                 cur, ev = _SESSION_TRAITS[key]
             else:
+                if owner_set(key):
+                    return
                 durable = _durable_trait(key)
                 cur, ev = (float(durable) if _isfloat(durable) else 0.5), 0
             new = round(cur + (target - cur) * weight, 4)
@@ -204,11 +225,31 @@ def _durable_trait(key: str):
 
 
 # ── Observation ───────────────────────────────────────────────────────────────
+def _off_record(off_record: Optional[bool], learner: str) -> bool:
+    """True when this turn is off the record (NS-15.8-2): nothing is learned.
+
+    `off_record` is the turn's own state when the caller knows it (voice
+    passes the settings snapshot it persisted the turn under); None reads the
+    current settings, so a caller that passes nothing is still covered.
+    Cannot tell: treat as off-record and learn nothing."""
+    try:
+        from agent_friday.services import off_record as _off
+        return _off.skip_learning(learner, off_record=off_record)
+    except Exception:
+        return True
+
+
 def observe_message(text: str, *, role: str = "user", workspace: str = "",
-                    ts: Optional[float] = None) -> Dict[str, Any]:
-    """Update communication + expertise signals from one user message."""
+                    ts: Optional[float] = None,
+                    off_record: Optional[bool] = None) -> Dict[str, Any]:
+    """Update communication + expertise signals from one user message.
+
+    An off-record turn changes nothing: no session trait, no signal, no
+    workflow counter (NS-15.8-2). Checked here, not at each caller."""
     if not _enabled() or role != "user" or not isinstance(text, str) or not text.strip():
         return {"ok": True, "skipped": True}
+    if _off_record(off_record, "user_model"):
+        return {"ok": True, "skipped": True, "off_record": True}
     # Bound the scan window — a megabyte paste must not cost a megabyte of
     # substring scans per lexicon. Style/expertise signals are ample in 8 KB.
     low = text[:8000].lower()
@@ -231,17 +272,21 @@ def observe_message(text: str, *, role: str = "user", workspace: str = "",
                 target = 0.2 if novice else min(1.0, 0.55 + 0.1 * hits)
                 _nudge_trait(f"expertise.{dom}", target, weight=0.12)
         if workspace:
-            observe_event("workspace", workspace)
+            observe_event("workspace", workspace, off_record=False)
         _record_signal("message", f"{workspace}:{len(text.split())}w")
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": exception_text(e)}
 
 
-def observe_event(kind: str, value: str) -> Dict[str, Any]:
-    """Record a workflow event (tool use, workspace switch, session hour)."""
+def observe_event(kind: str, value: str, *,
+                  off_record: Optional[bool] = None) -> Dict[str, Any]:
+    """Record a workflow event (tool use, workspace switch, session hour).
+    Nothing is recorded while off the record (NS-15.8-2)."""
     if not _enabled():
         return {"ok": True, "skipped": True}
+    if _off_record(off_record, "user_model_event"):
+        return {"ok": True, "skipped": True, "off_record": True}
     try:
         _record_signal(kind, str(value))
         # Active-hour histogram lives in a trait keyed by hour.
@@ -257,15 +302,37 @@ def observe_event(kind: str, value: str) -> Dict[str, Any]:
         return {"ok": False, "error": exception_text(e)}
 
 
-#: Sources that are the owner's own word: typed in Settings ("manual"), the
-#: setup chat's "About you" ("setup"), or a proposal the owner approved
-#: ("proposed:<day>", "meeting:<id>"). Every other source is derived.
-OWNER_SOURCES = ("manual", "setup", "proposed:", "meeting:")
+#: Sources that mean the owner entered or approved the fact (as
+#: core_memory.migrate_user_model_facts reads them); every other source is
+#: something Friday inferred.
+#: "manual" (routes/user_model), "setup" (setup_steps.FACT_SOURCE) and
+#: "user_stated" (interest_model.record_constraint) match exactly; only
+#: "proposed:<day>" and "meeting:<id>" (memory_proposals, an approved
+#: proposal) are prefixes, colon included. A prefix match on the bare names
+#: would let an inferred source such as "setup_research" or "manual_guess"
+#: pass as the owner's.
+CONFIRMED_SOURCES = ("manual", "proposed:", "meeting:", "setup", "user_stated")
+_CONFIRMED_EXACT = frozenset(s for s in CONFIRMED_SOURCES if not s.endswith(":"))
+_CONFIRMED_PREFIXES = tuple(s for s in CONFIRMED_SOURCES if s.endswith(":"))
+
+
+def is_confirmed_source(source) -> bool:
+    s = str(source or "")
+    return s in _CONFIRMED_EXACT or s.startswith(_CONFIRMED_PREFIXES)
+
+
+#: Sources that are the owner's own word for the tombstones
+#: (services/tombstones): typed in Settings ("manual"), the setup chat's
+#: "About you" ("setup"), or a proposal the owner approved ("proposed:<day>",
+#: "meeting:<id>"). Only these lift a tombstone; "user_stated"
+#: (interest_model.record_constraint, a programmatic writer) is confirmed for
+#: the card but does not bring back a line the owner deleted.
+OWNER_SOURCES = tuple(s for s in CONFIRMED_SOURCES if s != "user_stated")
 
 
 def is_owner_source(source: Optional[str]) -> bool:
     s = str(source or "")
-    return any(s == o or (o.endswith(":") and s.startswith(o)) for o in OWNER_SOURCES)
+    return is_confirmed_source(s) and s != "user_stated"
 
 
 def note_fact(category: str, text: str, *, confidence: float = 0.6,
@@ -282,6 +349,8 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
     source = str(source or "")[:80]
     try:
         from agent_friday.services import tombstones as _tomb
+        # The owner's own word (is_owner_source, above) lifts the tombstone;
+        # anything else is refused while it stands.
         if is_owner_source(source):
             _tomb.owner_affirmed(text)
         elif _tomb.is_tombstoned(_tomb.STATEMENT_KINDS, text):
@@ -310,9 +379,18 @@ def note_fact(category: str, text: str, *, confidence: float = 0.6,
                 # confidence toward the cap purely from re-processing the same
                 # turns; a different day mentioning the same fact legitimately does.
                 if source and source != (dup[2] or ""):
+                    # An inference repeating what the owner confirmed keeps
+                    # the owner's mark; the owner's confirmation of what was
+                    # inferred replaces it and lifts it at least to the
+                    # confidence given (§34.9-8).
+                    keep = dup[2] if is_confirmed_source(dup[2]) and not is_confirmed_source(source) \
+                        else source
+                    lifted = float(dup[1]) + 0.1
+                    if is_confirmed_source(source):
+                        lifted = max(float(confidence), lifted)
                     conn.execute(
                         "UPDATE facts SET confidence=?, source=?, ts=? WHERE fact_id=?",
-                        (min(0.98, float(dup[1]) + 0.1), source, time.time(), fid))
+                        (min(0.98, lifted), keep, time.time(), fid))
                 else:
                     conn.execute("UPDATE facts SET ts=? WHERE fact_id=?",
                                  (time.time(), fid))
@@ -347,18 +425,26 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
         lines: List[str] = []
         formality = get_trait("comm.formality")
         verbosity = get_trait("comm.verbosity")
+        formality = float(formality) if _isfloat(formality) else None
+        verbosity = float(verbosity) if _isfloat(verbosity) else None
+
+        def _inferred(key):
+            # Said apart from what the owner set (§34.9-8).
+            return not owner_set(key)
+        mark = " (inferred from how they write, not stated by them)"
         if formality is not None:
-            lines.append(
-                "Communication style: "
-                + ("formal/professional" if formality > 0.6 else
-                   "casual/relaxed" if formality < 0.4 else "balanced")
-                + (", prefers detail" if (verbosity or 0.5) > 0.6 else
-                   ", prefers terse answers" if (verbosity or 0.5) < 0.4 else ""))
+            parts = [("formal/professional" if formality > 0.6 else
+                      "casual/relaxed" if formality < 0.4 else "balanced")
+                     + (mark if _inferred("comm.formality") else "")]
+            if verbosity is not None and not 0.4 <= verbosity <= 0.6:
+                parts.append(("prefers detail" if verbosity > 0.6 else "prefers terse answers")
+                             + (mark if _inferred("comm.verbosity") else ""))
+            lines.append("Communication style: " + ", ".join(parts))
         experts = []
         novices = []
         for key, val in _all_traits().items():
             if key.startswith("expertise.") and _isfloat(val):
-                dom = key.split(".", 1)[1]
+                dom = key.split(".", 1)[1] + ("" if owner_set(key) else " (inferred)")
                 fv = float(val)
                 if fv >= 0.7:
                     experts.append(dom)
@@ -374,10 +460,20 @@ def render_user_model_prompt(max_facts: int = 8) -> str:
         facts = _recent_facts(max_facts)
         for f in facts:
             lines.append(f"• {f['text']}")
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_ok("user_facts")
+        except Exception:
+            pass
         if not lines:
             return ""
         return "\n".join(lines)
-    except Exception:
+    except Exception as e:
+        try:
+            from agent_friday.services import recall_health
+            recall_health.note_failure("user_facts", e)
+        except Exception:
+            pass
         return ""
 
 

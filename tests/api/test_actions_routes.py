@@ -40,16 +40,79 @@ def test_receipts_are_listed_without_their_undo_data(client, moved):
     assert one["summary"].startswith("Done")
 
 
+def _press():
+    """What Friday's page sends on a press: same-origin browser metadata, its session token and,
+    where this tree has one, this launch's desk key."""
+    import agent_friday.core as core
+    h = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": core._current_api_token()}
+    try:
+        from agent_friday.services import desk_press
+        h["X-Friday-Desk"] = desk_press._KEY
+    except ImportError:
+        pass
+    return h
+
+
 def test_the_owners_undo_puts_it_back_at_once(client, moved):
     docs, rid = moved
     assert (docs / "Taxes" / "w2.pdf").exists()
-    r = client.post("/api/actions/receipts/%s/undo" % rid)
+    r = client.post("/api/actions/receipts/%s/undo" % rid, headers=_press())
     assert r.status_code == 200 and r.get_json()["result"]["status"] == "complete"
     assert (docs / "w2.pdf").exists() and not (docs / "Taxes" / "w2.pdf").exists()
-    again = client.post("/api/actions/receipts/%s/undo" % rid)
+    again = client.post("/api/actions/receipts/%s/undo" % rid, headers=_press())
     assert again.get_json()["result"]["status"] == "nothing"
 
 
 def test_a_bad_receipt_id_is_refused(client):
     assert client.post("/api/actions/receipts/..%2F..%2Fx/undo").status_code in (400, 404)
     assert client.get("/api/actions/receipts/rcpt_zz").status_code == 400
+
+
+def test_an_undo_without_the_owners_press_puts_nothing_back(client, moved):
+    """The route acts as the owner. A program on this PC that can reach the API, with or without
+    some of the page's headers, is not the owner's press: nothing moves."""
+    docs, rid = moved
+    import agent_friday.core as core
+    for headers in ({}, {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost"},
+                    {"X-Friday-Token": core._current_api_token()}):
+        r = client.post("/api/actions/receipts/%s/undo" % rid, headers=headers)
+        assert r.status_code == 403, headers
+    assert (docs / "Taxes" / "w2.pdf").exists() and not (docs / "w2.pdf").exists()
+
+
+def test_a_file_undo_is_held_while_everything_is_stopped(client, tmp_path, monkeypatch):
+    """Putting a file back writes over whatever is on disk now: while everything is
+    stopped (services/global_stop) the owner's press puts nothing back, and after
+    Resume the same press does."""
+    from agent_friday.services import item_actions  # noqa: F401  (registers the domains)
+    from agent_friday.services.agent import _tool_write_file
+    import agent_friday.core as core
+    import re
+    monkeypatch.setattr(journal, "_path", lambda: tmp_path / "receipts.jsonl")
+    try:
+        from agent_friday.services import file_write_receipts as fwr
+        monkeypatch.setattr(fwr, "backups_root", lambda: tmp_path / "backups")
+    except ImportError:
+        pass
+    monkeypatch.setattr(journal, "home_trash", lambda rid: tmp_path / "trash" / rid, raising=False)
+    # The document stands for one in the owner's folders: write_file reaches only those
+    # (services/path_policy, BD-26), so this test's folder is the sandbox root.
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
+    journal.reset()
+    doc = tmp_path / "work" / "report.txt"
+    doc.parent.mkdir()
+    doc.write_text("the owner's original", encoding="utf-8")
+    out = _tool_write_file({"path": str(doc), "content": "Friday's new text", "mode": "write"})
+    rid = re.search(r"receipt_id (rcpt_[0-9a-f]+)", out).group(1)
+
+    core.GLOBAL_STOP.set()
+    try:
+        r = client.post("/api/actions/receipts/%s/undo" % rid, headers=_press())
+        assert r.status_code == 403
+        assert doc.read_text(encoding="utf-8") == "Friday's new text"
+    finally:
+        core.GLOBAL_STOP.clear()
+    r = client.post("/api/actions/receipts/%s/undo" % rid, headers=_press())
+    assert r.status_code == 200
+    assert doc.read_text(encoding="utf-8") == "the owner's original"
+    journal.reset()

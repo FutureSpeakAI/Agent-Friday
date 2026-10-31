@@ -165,6 +165,7 @@ def _seal_or_block(payload, provider, model=""):
         raise _sc.PrivacyCheckStarting(_sc.HOLD_NOTICE)
     if not operational:
         _log.error("egress gate failed its startup self-test — BLOCKING cloud send")
+        _eg.record_blocked(provider, "the privacy gate failed its startup self-test", model=model or "")
         raise RuntimeError(
             "Egress gate is non-functional (startup self-test failed); cloud "
             "send blocked. Fix the gate (see boot log) or use a local model."
@@ -569,6 +570,9 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
 
     Returns the response text.
     """
+    # Stop everything: no model call starts while stopped (services/global_stop).
+    from agent_friday.services import global_stop as _global_stop
+    _global_stop.raise_if_stopped("a model call")
     # Callers pass either a structured message list or a bare prompt string.
     # Normalize here — a string used to crash the router consult ('str' object
     # has no attribute 'get'), silently pinning those calls to the cloud
@@ -701,7 +705,15 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
     # but healthy providers get the request first.
     # The mode the user chose outranks the resilience ladder.
     attempts = _mode_filtered_attempts(attempts, routing_cfg, vault_access=vault_access)
+    # A6: no silent move from one cloud provider to another. Applied before the
+    # health ordering, so a provider marked down cannot be skipped for another
+    # cloud provider the owner did not allow either (services/provider_fallback).
+    from agent_friday.services import provider_fallback as _pf
+    attempts, _pf_withheld = _pf.filter_ladder(attempts, routing_cfg)
+    _pf_watch = _pf.LadderWatch(_pf_withheld, routing_cfg)
+    _pf_before = list(attempts)
     attempts = _health_order(attempts, routed_provider_name)
+    _pf_watch.reordered(_pf_before, attempts)
 
     errors = []
     for name, fn, use_model in attempts:
@@ -729,8 +741,10 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
                     except Exception:
                         pass
                 _vj.note_done(name, use_model)
+                _pf_watch.leg_succeeded(name)
                 return text
             errors.append(f"{_leg}: empty response")
+            _pf_watch.leg_failed(name, "empty response")
         except Exception as e:
             if type(e).__name__ == "JobCancelled":
                 # A job stopped from its card or the Local AI queue stops; it
@@ -739,11 +753,15 @@ def _generate_text_untraced(messages, system=None, model=None, max_tokens=16384,
             from agent_friday.user_errors import ExceptionText
             errors.append(ExceptionText(f"{_leg}: {e}"))
             _vj.note_failed_leg(name, use_model, e)
+            _pf_watch.leg_failed(name, e)
         try:
             from agent_friday.services import attribution
             attribution.note_fallback(errors[-1])
         except Exception:
             pass
+    # A cloud provider failed and the move to another one was withheld: say so
+    # with the offer (ProviderSwitchWithheld), not as a generic failure.
+    _pf_watch.exhausted()
     _exhausted = (
         "No model provider could generate text (tried "
         + "; ".join(errors[-3:]) + "). Add one cloud key, Anthropic or "
@@ -1299,9 +1317,35 @@ TURN_CANCEL = _contextvars.ContextVar("friday_turn_cancel", default=None)
 
 
 def turn_cancelled() -> bool:
-    """Has the caller cancelled the turn running in this context?"""
+    """Has the caller cancelled the turn running in this context? Always True
+    while everything is stopped (core.GLOBAL_STOP, services/global_stop)."""
+    if core.GLOBAL_STOP.is_set():
+        return True
     ev = TURN_CANCEL.get()
     return bool(ev is not None and ev.is_set())
+
+
+class _AnyCancel:
+    """The turn's own cancel Event, or the global stop: whichever is set first.
+    Quacks like the part of threading.Event the stream reader uses."""
+
+    __slots__ = ("_events",)
+
+    def __init__(self, *events):
+        self._events = tuple(e for e in events if e is not None)
+
+    def is_set(self) -> bool:
+        return any(e.is_set() for e in self._events)
+
+    def wait(self, timeout: float) -> bool:
+        end = _time.monotonic() + max(0.0, float(timeout))
+        while True:
+            if self.is_set():
+                return True
+            left = end - _time.monotonic()
+            if left <= 0:
+                return False
+            _time.sleep(min(0.02, left))
 
 
 # How long a local call waits for a seat that answers 503 "Loading model"
@@ -1459,7 +1503,9 @@ def _consume_sse_completion(resp, on_delta=None, reasoning_source=None,
             getattr(resp, "encoding", "")).lower() in ("iso-8859-1", "latin-1", "latin_1"):
         resp.encoding = "utf-8"
 
-    _cancel = TURN_CANCEL.get()
+    # The turn's own cancel, or Stop everything (core.GLOBAL_STOP): either cuts
+    # the stream, so a reply that is still generating stops at once.
+    _cancel = _AnyCancel(TURN_CANCEL.get(), core.GLOBAL_STOP)
     cancelled = False
     # A cancel must close the stream even while the seat is still prefilling
     # and has sent nothing yet: the per-line check below never runs until a
@@ -2482,7 +2528,8 @@ def _compress_trajectory(messages, model=None):
 
     compressed_block = [
         {"role": "user",
-         "content": f"[COMPRESSED MEMORY — earlier conversation summary]\n{summary}\n[END COMPRESSED MEMORY]"},
+         "content": "[COMPRESSED MEMORY — earlier conversation summary]\n"
+                    + _summary_as_data(summary) + "\n[END COMPRESSED MEMORY]"},
         {"role": "assistant",
          "content": "Got it — I have that context from our earlier conversation."},
     ]
@@ -2490,6 +2537,13 @@ def _compress_trajectory(messages, model=None):
     print(f"  [TRAJ] Compressed {len(old_turns)} turns → 2 synthetic turns. "
           f"Chars: {_estimate_chars(old_turns)} → {_estimate_chars(compressed_block)}")
     return result
+
+
+def _summary_as_data(summary: str) -> str:
+    """A summary of earlier turns keeps what tools found there, so it is replayed as
+    data, never as the owner's words (services/untrusted_input)."""
+    from agent_friday.services.untrusted_input import wrap
+    return wrap(summary)
 
 
 # ── Semantic context pruner (lazy singleton) ──────────────────────
@@ -2613,8 +2667,14 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
         from agent_friday.services import off_record
         if off_record.skip("conversation_index"):
             return
+        # NS-15.8-2: everything below LEARNS from the turn (the memory review,
+        # the emotional arc, and the index that recall, the day's summary and
+        # dreaming read), so it keys on the learning check, not on storage: an
+        # owner who keeps off-record transcripts still teaches Friday nothing.
+        if off_record.skip_learning("conversation_index"):
+            return
     except Exception:
-        pass
+        return                                   # cannot tell: learn nothing
     if library:
         try:
             from agent_friday.services.library import cite as _library_cite
@@ -2998,6 +3058,13 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             return live_block
         mem = _get_conversation_memory()
         if not mem.available():
+            if (getattr(mem, "_init_error", None) is not None
+                    and not isinstance(mem._init_error, ImportError)):
+                # (An ImportError is recall not installed, by choice: not a failure.)
+                # The store is there but would not open: recall is degraded, not empty
+                # (services/recall_health; the turn's context says so).
+                from agent_friday.services import recall_health as _rh
+                _rh.note_failure("past_conversations", mem._init_error)
             return live_block
         # The turn's one embedding of this message (services/turn_vector), when
         # there is one; the store checks it is the same model and width.
@@ -3006,8 +3073,14 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             _qvec = _tv.compute(message)
         except Exception:
             _qvec = None
-        hits = (mem.search(message, n=n, query_embedding=_qvec)
-                if _qvec is not None else mem.search(message, n=n))
+        # Near-duplicates must not crowd out distinct evidence (NS-14.6-2,
+        # services/recall_dedupe): fetch a few more than the slots, then keep
+        # one line per near-duplicate group (the newest), so the freed slots
+        # go to things that say something else.
+        from agent_friday.services import recall_dedupe as _rd
+        _want = _rd.overfetch(n)
+        hits = (mem.search(message, n=_want, query_embedding=_qvec)
+                if _qvec is not None else mem.search(message, n=_want))
         kept = []
         for h in hits:
             rel = h.get("relevance")
@@ -3017,6 +3090,7 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             if not text:
                 continue
             kept.append(h)
+        kept = _rd.select(kept, n, path="conversation_memory")
         if not kept:
             return live_block
         # The guidance sits OUTSIDE the fence below: inside it, everything is
@@ -3052,11 +3126,24 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         # as a new exchange.
         from agent_friday.services import memory_fence as _mf
         _mf.remember(session_id, recalled)
+        try:
+            # Shadow only (services/evidence_heads, DM4): read, after the block is
+            # decided, whether these passages answer the message. It queues work on
+            # its own thread and changes nothing here; off the record it does nothing.
+            from agent_friday.services import evidence_heads as _ev
+            _ev.shadow_memory(message, recalled, surface="memory")
+        except Exception:
+            pass
         if not lines:
             return live_block
         return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
                 + guide + "\n" + _mf.fence("past_conversations", "\n".join(lines)) + "\n")
     except Exception as _e:
+        try:
+            from agent_friday.services import recall_health as _rh
+            _rh.note_failure("past_conversations", _e)
+        except Exception:
+            pass
         return ""
 
 
@@ -3904,8 +3991,18 @@ def _get_career_context():
 
 
 def _get_wiki_context(topic):
-    """Search wiki for content matching a topic."""
-    results = []
+    """Search wiki for content matching a topic.
+
+    Up to three excerpts. A page that repeats one already chosen (the same
+    note in both wiki folders, a copied page) does not take a slot: a few more
+    are read and near-duplicates collapsed to the first (NS-14.6-2,
+    services/recall_dedupe). Pages are compared on their body (YAML
+    frontmatter stripped), and pages with a different H1 title or a different
+    file name are never treated as copies of each other."""
+    from agent_friday.services import recall_dedupe as _rd
+    slots = 3
+    want = _rd.overfetch(slots, factor=2)
+    found = []                      # (result, body for comparing, h1, stem)
     for wiki_dir in [HOME / "wiki", WIKI_DIR_FRIDAY]:
         if not wiki_dir.exists():
             continue
@@ -3913,15 +4010,35 @@ def _get_wiki_context(topic):
             try:
                 content = wiki_read_text(md_file)
                 if topic.lower() in content.lower() or topic.lower() in md_file.stem.lower():
-                    results.append({
+                    body = _wiki_body(content)
+                    found.append(({
                         'file': str(md_file.relative_to(wiki_dir)),
                         'excerpt': content[:500],
-                    })
-                    if len(results) >= 3:
-                        return results
+                    }, body[:500], _wiki_h1(body), md_file.stem.lower()))
+                    if len(found) >= want:
+                        break
             except Exception:
                 continue
-    return results
+        if len(found) >= want:
+            break
+    picked = _rd.select(found, slots, text=lambda f: f[1], ident=lambda f: None,
+                        partition=lambda f: (f[2], f[3]), keep="first", path="wiki")
+    return [f[0] for f in picked]
+
+
+_WIKI_FRONTMATTER = re.compile(r"\A﻿?---[ \t]*\r?\n.*?^(?:---|\.\.\.)[ \t]*(?:\r?\n|\Z)",
+                               re.S | re.M)
+_WIKI_H1 = re.compile(r"^#[ \t]+(.+?)[ \t#]*$", re.M)
+
+
+def _wiki_body(content):
+    """A wiki page without its YAML frontmatter."""
+    return _WIKI_FRONTMATTER.sub("", str(content or ""), count=1)
+
+
+def _wiki_h1(body):
+    m = _WIKI_H1.search(body or "")
+    return " ".join(m.group(1).lower().split()) if m else None
 
 
 def _detect_context_needs(message, workspace):
@@ -4375,9 +4492,12 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
     # Layer 3: Vision context (from Gemini screen capture) — the screen could
     # show anything private, so treat it as private by default.
     if vision_description:
+        # What a screen shows (a page, a mail, a dialog) is the source's words: the
+        # one data envelope (services/untrusted_input), never part of the instructions.
+        from agent_friday.services.untrusted_input import wrap as _data_envelope
         add(
             f"\n== SCREEN VISION (what the user's screen shows) ==\n"
-            f"{vision_description[:1500]}",
+            f"{_data_envelope(vision_description[:1500])}",
             classify(vision_description, _T2),
         )
         sources_consulted.append('vision')

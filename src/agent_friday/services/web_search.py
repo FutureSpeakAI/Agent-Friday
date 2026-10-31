@@ -54,6 +54,26 @@ _canary_cache: dict[str, Any] = {"ts": 0.0, "ok": None, "detail": ""}
 _BRAVE_USD_PER_QUERY = 0.005
 
 
+#: Where each backend sends the query. wigolo runs on this PC.
+_SEARCH_HOSTS = {"brave": "api.search.brave.com", "duckduckgo-scrape": "html.duckduckgo.com",
+                 "firecrawl": "api.firecrawl.dev"}
+
+
+def _record_query(backend: str, q: str, out: dict) -> None:
+    """The query in the egress ledger (§26.7), for each backend it actually
+    went to (a backend that is not set up, or runs on this PC, sent nothing)."""
+    try:
+        host = _SEARCH_HOSTS.get(backend)
+        if not host or (out or {}).get("status") == SearchStatus.NO_BACKEND:
+            return
+        from agent_friday.services import egress_gate as _eg
+        ok = (out or {}).get("status") in (SearchStatus.OK, SearchStatus.EMPTY)
+        _eg.record_service_send("web_search", ("search:" + backend)[:80], destination=host,
+                                content={"query": q}, result="sent" if ok else "failed", part="query")
+    except Exception:
+        pass
+
+
 class SearchStatus:
     OK = "ok"                      # results returned
     EMPTY = "empty"                # backend answered, genuinely nothing
@@ -180,11 +200,17 @@ def verify_key(key: str | None = None) -> dict:
     Returns which endpoints answered, the error code for those that did not,
     and any rate-limit/quota headers the API volunteered.
     """
+    # egress: not recorded: the owner's key check sends only the fixed word "test", no data of theirs
     import requests
     k = (key or brave_key() or "").strip()
     if not k:
         return {"configured": False, "valid": None,
                 "summary": "No Brave key is configured."}
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "brave key check")
+    if _held:
+        return {"configured": True, "valid": None, "endpoints": {}, "limits": {},
+                "summary": _held, "route_not_chosen": True}
 
     endpoints = {
         "web": "https://api.search.brave.com/res/v1/web/search",
@@ -251,7 +277,7 @@ def key_status() -> dict:
     }
     try:
         from agent_friday.services import credential_store
-        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave"))
+        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave", use=False))  # a status check
     except Exception:
         pass
     try:
@@ -411,6 +437,7 @@ def _firecrawl_search(query: str, count: int) -> dict:
 
 
 def _brave(query: str, count: int) -> dict:
+    # egress: recorded by search() via _record_query, for each backend tried
     import requests
     key = brave_key()
     r = requests.get(
@@ -621,9 +648,21 @@ def search(query: str, count: int = 10) -> dict:
     `_normalise_rows` for the day that cost.
     """
     q = (query or "").strip()
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("web")
+    if _why:
+        return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
+                "backend": "none", "detail": _why}
     if not q:
         return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
                 "backend": "none", "detail": "empty query"}
+    # North-star A16a: no web search (any backend, wigolo included: it
+    # searches the internet) until the owner chooses where Friday thinks.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_search", "search")
+    if _held:
+        return {"status": SearchStatus.NO_BACKEND, "results": [], "query": q,
+                "backend": "none", "detail": _held, "route_not_chosen": True}
     # The chain, in order, skipping backends that are not configured. Each
     # attempt records what it learned, so health cannot drift from reality and
     # the caller is always told which backend ACTUALLY answered — a result
@@ -653,6 +692,7 @@ def search(query: str, count: int = 10) -> dict:
             out = {"status": SearchStatus.BACKEND_BROKEN,
                    "detail": ExceptionText(f"{type(e).__name__}: {e}")}
         _note_backend_health(name, out)
+        _record_query(name, q, out)
         if out.get("status") == SearchStatus.OK:
             out["results"] = _normalise_rows(out.get("results"))
             out["query"] = q
@@ -747,6 +787,10 @@ def canary(force: bool = False) -> dict:
     ok = out.get("status") == SearchStatus.OK and bool(out.get("results"))
     detail = out.get("detail") or ("search is answering normally" if ok else
                                    f"status={out.get('status')}")
+    if out.get("route_not_chosen"):
+        # A16a: held, not broken; never cached, so a pick takes effect at once.
+        return {"ok": False, "detail": detail, "backend": "none", "cached": False,
+                "route_not_chosen": True}
     _canary_cache.update({"ts": now, "ok": ok, "detail": detail})
     return {"ok": ok, "detail": detail, "backend": out.get("backend"),
             "cached": False}

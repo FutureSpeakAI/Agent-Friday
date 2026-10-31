@@ -65,7 +65,7 @@ CONTRACT = (
     "1. I'm a program on this PC. Nothing about you goes to the people who made me. Ever.\n"
     "2. You decide where I think: only here, or the cloud for some things. I'll ask in a minute.\n"
     "3. I ask before I send or delete anything, unless you've pre-approved it. "
-    "Cloud models cost money as I use them; you can set a monthly ceiling.\n"
+    "Cloud models cost money as I use them; a daily spending cap limits that, and you set it.\n"
     "4. You can see everything I remember, and change or delete it.\n"
     "5. You can stop setup any time; I'll remember where we were.\n"
     "6. I'm not a lawyer or a financial adviser. When I help with your rights "
@@ -666,15 +666,22 @@ SCHEDULED_CLOUD_SKIPPED = (
 
 MONEY_ASK = (
     "Some things I can do cost money when they use a cloud model, billed to "
-    "your own account with the provider. Right now nothing is capped. Do you "
-    "want a monthly ceiling? When it's reached, cloud work stops and I tell "
-    "you once; models on this PC keep working.{estimate}")
+    "your own account with the provider. {now} Keep it, pick another amount, "
+    "or have no daily cap.{estimate}")
+MONEY_NOW = ("Right now I stop spending on cloud AI after ${usd:.2f} a day. "
+             "Work that reaches it pauses and asks you; models on this PC keep working.")
+MONEY_NOW_NONE = "Right now there is no daily cap on what I spend on cloud AI."
 MONEY_ESTIMATE = ("\n\nWith what you've chosen so far, my scheduled jobs would "
                   "cost about {usd} a month. That's an estimate, and it errs high.")
-MONEY_OTHER_HINT = "Or type an amount"
-MONEY_SET = "Set: a ceiling of ${usd:.2f} a month. You can change it in Settings > Spending."
-MONEY_NONE = "No cap, then. You can add one any time in Settings > Spending."
-MONEY_SKIPPED = "Skipping it: nothing is capped. It's in Settings > Spending whenever you want it."
+MONEY_ESTIMATE_OVER_CAP = (" That is more than ${cap:.2f} a day allows, so on a busy day "
+                           "they would pause at the cap.")
+MONEY_OTHER_HINT = "Or type an amount a day"
+MONEY_SET = ("Set: I stop spending on cloud AI after ${usd:.2f} a day. "
+             "You can change it in Settings > Spending.")
+MONEY_NONE = "No daily cap, then. You can add one any time in Settings > Spending."
+MONEY_SKIPPED = ("Skipping it: the daily cap stays at ${usd:.2f}. "
+                 "It's in Settings > Spending whenever you want to change it.")
+MONEY_SKIPPED_NONE = "Skipping it: there is no daily cap. It's in Settings > Spending whenever you want one."
 MONEY_NOT_ASKED = "Nothing I do on this PC costs money, so there's nothing to cap."
 
 
@@ -710,7 +717,7 @@ MEMORY_SAVE_WITHOUT_ASKING = (
 )
 MEMORY_ALWAYS_ASK = (
     "Anything I'd send: emails, messages, posts, requests, forms (unless you pre-approve a recipient)",
-    "Anything that spends money, beyond the cloud models you chose (they stay under your monthly ceiling)",
+    "Anything that spends money, beyond the cloud models you chose (they stay under your daily spending cap)",
     "Anything that deletes or overwrites your files or data",
     "Any memory change after I've read outside content, like an email or a web page",
     "Changing a setting, a permission or a rule",
@@ -757,15 +764,21 @@ FINISH_BUTTON = "Open my desktop"
 #: Google scopes in plain words. The checklist shows each one before connect.
 GOOGLE_SCOPE_WORDS = {
     "https://www.googleapis.com/auth/gmail.readonly": "Read your email",
-    "https://www.googleapis.com/auth/calendar": "See and edit your calendar events",
+    "https://www.googleapis.com/auth/calendar.readonly": "See your calendar",
+    "https://www.googleapis.com/auth/tasks.readonly": "See your Google Tasks",
+    "https://www.googleapis.com/auth/calendar":
+        "See, edit, share and delete your calendars and their events",
     "https://www.googleapis.com/auth/drive.readonly": "Read your Drive files",
     "https://www.googleapis.com/auth/documents.readonly": "Read your Google Docs",
     "https://www.googleapis.com/auth/spreadsheets.readonly": "Read your Google Sheets",
-    "https://www.googleapis.com/auth/tasks": "See and edit your Google Tasks",
+    "https://www.googleapis.com/auth/tasks":
+        "Add, change and complete your Google Tasks (only after you press Allow task changes)",
     "https://www.googleapis.com/auth/contacts.readonly": "Read your contacts",
     "https://www.googleapis.com/auth/userinfo.email": "See your email address",
     "https://www.googleapis.com/auth/gmail.send":
         "Send email as you. Every message still waits for your approval card.",
+    "https://www.googleapis.com/auth/contacts":
+        "Create and edit your contacts. Each save still waits for your approval card.",
     "https://www.googleapis.com/auth/gmail.modify":
         "Change your mailbox: labels, archive, star, read/unread and drafts. "
         "Never permanent delete.",

@@ -514,6 +514,10 @@ def tick(now=None) -> Dict[str, Any]:
     """One publisher pass: expire stale holds, recover crashed claims, claim
     due targets, dispatch each through the gate chain. Returns a summary
     envelope; never raises. Re-entrant calls coalesce (one tick at a time)."""
+    import agent_friday.core as _core_gs
+    if _core_gs.GLOBAL_STOP.is_set():
+        # Stop everything (services/global_stop): nothing is published while stopped.
+        return {"ok": True, "skipped": "everything is stopped"}
     if not _TICK_LOCK.acquire(blocking=False):
         return {"ok": True, "skipped": "tick already running"}
     try:
@@ -551,6 +555,9 @@ def tick(now=None) -> Dict[str, Any]:
         counts: Dict[str, int] = {}
         confirmed_posts: List[str] = []
         for t in targets:
+            if _core_gs.GLOBAL_STOP.is_set():
+                # Stopped mid-pass: what is not sent yet waits for Resume (claims recover).
+                break
             outcome = _dispatch_target(t)
             counts[outcome] = counts.get(outcome, 0) + 1
             if outcome == "confirmed":
@@ -597,6 +604,7 @@ def _dispatch_target(target: Dict[str, Any]) -> str:
             pass
         outcome = "failed"
     try:
+        _close_decision(tid, outcome)       # the publish's own result closes its decision
         if outcome == "failed":
             _spend_authorization(tid)       # a re-arm asks again
         return outcome
@@ -1159,8 +1167,8 @@ def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
             via = f"series:{parent_tid}"
     if via:
         try:
-            action_gate.record_external(PUBLISH_ACTION, surface="publisher",
-                                        approval_id=via, target=platform)
+            _link_decision(tid, action_gate.record_external(PUBLISH_ACTION, surface="publisher",
+                                                            approval_id=via, target=platform))
         except action_gate.Held:
             return "deny"
         if rec.get("via") != via:
@@ -1184,9 +1192,55 @@ def _authorize_publish(target: Dict[str, Any], post: Dict[str, Any],
             _ask_again_overdue(target, post, due)
     v, card_id = _ask(target, post, texts, rewritten)
     if v.action == "allow":
+        _link_decision(tid, (v.detail or {}).get("decision_ref"))
         _auth_update(tid, sha=sha, media_sha=media_sha, via=card_id, series=_series(post),
                      post_id=str(target.get("post_id")), platform=platform)
     return v.action
+
+
+#: The checkpoint's decision for each target being published now, by target id: the
+#: publish's own result closes it (_close_decision), however long after the request
+#: that armed or approved it (BD-11a). A request's settlement leaves it alone.
+_DECISIONS: Dict[str, dict] = {}
+_DECISIONS_LOCK = threading.Lock()
+
+#: What a dispatch's result says became of the publish.
+_RESULT_OUTCOME = {"confirmed": "completed_verified", "failed": "failed", "held": "forbidden",
+                   "deferred": "failed", "retrying": "unconfirmed"}
+
+
+def _link_decision(tid: str, ref: Optional[dict]) -> None:
+    if not isinstance(ref, dict):
+        return
+    from agent_friday.governance import action_gate
+    action_gate.defer_external(ref)
+    with _DECISIONS_LOCK:
+        old = _DECISIONS.pop(tid, None)
+        _DECISIONS[tid] = ref
+    if old is not None and old is not ref:
+        # a decision for this target that was never carried out: a newer one replaced it
+        action_gate.close_external(old, False, detail="superseded")
+
+
+def _close_decision(tid: str, result: str) -> None:
+    """The publish's terminal outcome for the decision that let it go, from the
+    dispatch's result: confirmed -> completed_verified; failed, or deferred with
+    nothing sent -> failed; held -> forbidden; retrying -> unconfirmed (it may
+    have reached the platform). Never raises."""
+    word = _RESULT_OUTCOME.get(str(result or ""))
+    if not word:
+        return
+    try:
+        from agent_friday.governance import action_gate
+        with _DECISIONS_LOCK:
+            ref = _DECISIONS.pop(tid, None)
+        if ref is None:
+            return
+        action_gate.close_external(ref, word in ("completed_verified", "unconfirmed"),
+                                   detail="publish_" + str(result), outcome=word,
+                                   verified=word == "completed_verified")
+    except Exception:  # noqa: BLE001 - a receipt never changes a publish
+        pass
 
 
 def request_publish_approval(post_id: str) -> Dict[str, Any]:
@@ -1236,10 +1290,15 @@ def request_publish_approval(post_id: str) -> Dict[str, Any]:
                 if latest is None or latest.get("consumed") or latest.get("status") == "expired":
                     _ensure_decision_hook()
                     _note_card_due(target, post)
-                    action_gate.authorize_external(
+                    v = action_gate.authorize_external(
                         PUBLISH_ACTION, detail, requested_by="publisher",
                         **_card_words(target, post, texts, False))
                     latest = _latest_card(action_gate.external_subject(PUBLISH_ACTION, detail))
+                    # Raising cards publishes nothing. Should the check have found and used an
+                    # approved card for exactly this target, that decision was not carried out
+                    # here: its outcome says so (dispatch decides again, _authorize_publish).
+                    action_gate.close_external(action_gate.decision_ref_of(v), False,
+                                               detail="not_sent_when_armed")
                 stale = bool(latest and fresh_after is not None
                              and latest.get("status") == "approved"
                              and not latest.get("consumed")
@@ -1469,6 +1528,22 @@ def _run_target(target: Dict[str, Any]) -> str:
     store.set_target_status(tid, "SENT")
     pub = adapter.publish(prepared)
     pub = pub if isinstance(pub, dict) else {"ok": False, "error": "publish_failed"}
+    # §26.7: the post in the egress ledger and on the privacy map (what went
+    # to which platform; the text fingerprinted and kept encrypted, A20).
+    try:
+        from agent_friday.services import egress_gate as _eg
+        platform = str(target.get("platform") or "")
+        _eg.record_service_send("publishing", ("publish:" + platform)[:80], destination=_destination(platform),
+                                content={"platform": platform, "post": {
+                                    k: prepared.get(k) for k in ("title", "body", "text", "texts", "segments",
+                                                                 "hashtags", "mentions", "caption", "link")
+                                    if prepared.get(k) is not None},
+                                    "assets": [{k: a.get(k) for k in ("id", "filename", "content_hash", "sha256",
+                                                                      "kind", "alt_text", "bytes") if k in a}
+                                               for a in (prepared.get("assets") or []) if isinstance(a, dict)]},
+                                result="sent" if pub.get("ok") else "failed", part="post")
+    except Exception:
+        pass
     if pub.get("ok"):
         # The adapter's word beats the arm-time flag: a publish the platform
         # did NOT schedule must never be recorded or announced as native.

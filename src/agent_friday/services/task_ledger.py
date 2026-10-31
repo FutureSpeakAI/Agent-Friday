@@ -55,10 +55,90 @@ def _journal():
     return _tj
 
 
+def _book() -> Dict[str, Any]:
+    """The §17.11 bookkeeping half of the ledger: what Friday's own code
+    decided, which cards the task raised, what stopped it, what it cost,
+    which models it ran on, and whether its result was checked."""
+    return {"decisions": [], "approvals": [], "blockers": [],
+            "cost": {"calls": 0, "tokens_in": 0, "tokens_out": 0, "usd": 0.0},
+            "routes": [], "verification": None}
+
+
+#: How many entries of each list the ledger keeps (newest), so it stays compact.
+_BOOK_KEEP = 40
+
+
 def new(goal: str) -> Dict[str, Any]:
     return {"version": VERSION, "goal": (goal or "").strip()[:4000], "plan": [],
             "done": [], "facts": [], "files": [], "next": "", "rounds": 0,
-            "compactions": 0, "updated": time.time()}
+            "compactions": 0, "updated": time.time(), **_book()}
+
+
+def _fill(led: Dict[str, Any]) -> Dict[str, Any]:
+    """A ledger written before the bookkeeping fields gets them, empty."""
+    for k, v in _book().items():
+        led.setdefault(k, v)
+    return led
+
+
+def note_decision(task_id: Optional[str], *, point: str, chosen: Any, reason: Any = None) -> None:
+    """A decision the task's code made; approvals, route choices and stops
+    are filed where §17.11 lists them."""
+    led = load(task_id)
+    if led is None:
+        return
+    entry = {"point": str(point)[:40], "chosen": _one_line(chosen, 200), "at": time.time()}
+    if reason:
+        entry["reason"] = _one_line(reason, 300)
+    # In memory, under the lock the save serialises under: written with the
+    # task's next step (note_tool) or its end, not on every model call.
+    with _LOCK:
+        _fill(led)
+        if point == "approval":
+            led["approvals"] = (led["approvals"] + [entry])[-_BOOK_KEEP:]
+        elif point in ("seat_select", "ladder_fallback"):
+            led["routes"] = (led["routes"] + [{"route": entry["chosen"], "why": point, "at": entry["at"]}])[-_BOOK_KEEP:]
+        elif point in ("spend_cap", "gate", "stop", "blocked"):
+            led["blockers"] = (led["blockers"] + [entry])[-_BOOK_KEEP:]
+        led["decisions"] = (led["decisions"] + [entry])[-_BOOK_KEEP:]
+    if point in ("approval", "spend_cap", "gate", "stop", "blocked"):
+        # A card raised or a stop: on disk at once (the task may end here).
+        save(task_id, led)
+
+
+def note_model_call(task_id: Optional[str], *, model: Any = None, provider: Any = None, seat: Any = None,
+                    tokens_in: Any = None, tokens_out: Any = None, cost_usd: Any = None) -> None:
+    led = load(task_id)
+    if led is None:
+        return
+    with _LOCK:
+        _fill(led)
+        c = led["cost"]
+        c["calls"] = int(c.get("calls") or 0) + 1
+        for key, val in (("tokens_in", tokens_in), ("tokens_out", tokens_out)):
+            try:
+                c[key] = int(c.get(key) or 0) + int(val or 0)
+            except (TypeError, ValueError):
+                pass
+        try:
+            c["usd"] = round(float(c.get("usd") or 0) + float(cost_usd or 0), 6)
+        except (TypeError, ValueError):
+            pass
+        route = "/".join(str(x) for x in (provider, model) if x)
+        if route and (not led["routes"] or led["routes"][-1].get("route") != route):
+            led["routes"] = (led["routes"] + [{"route": route, "why": "ran", "seat": seat,
+                                               "at": time.time()}])[-_BOOK_KEEP:]
+
+
+def note_verification(task_id: Optional[str], *, verified: bool, evidence: Any = None) -> None:
+    led = load(task_id)
+    if led is None:
+        return
+    with _LOCK:
+        _fill(led)
+        led["verification"] = {"verified": bool(verified),
+                               "evidence": _one_line(evidence, 300) if evidence else None, "at": time.time()}
+    save(task_id, led)                    # the task's end: everything it kept goes to disk
 
 
 # One live object per task, so the loop (compaction absorbing summaries) and
@@ -86,7 +166,7 @@ def load(task_id: Optional[str]) -> Optional[Dict[str, Any]]:
         led = None
     if isinstance(led, dict) and led.get("version") == VERSION:
         with _LOCK:
-            _LIVE.setdefault(task_id, led)
+            _LIVE.setdefault(task_id, _fill(led))
             return _LIVE[task_id]
     return None
 
@@ -127,18 +207,36 @@ def note_pending(task_id: Optional[str], name: str, args: Any) -> None:
     led = load(task_id)
     if led is None:
         return
-    led["pending"] = {"name": str(name), "args": _one_line(tier_safe(_one_line(args, 600)), 300),
-                      "at": time.time()}
+    pending = {"name": str(name), "args": _one_line(tier_safe(_one_line(args, 600)), 300), "at": time.time()}
+    with _LOCK:                           # save() serialises under the same lock
+        led["pending"] = pending
     save(task_id, led)
 
 
-def note_tool(task_id: Optional[str], name: str, args: Any, result: Any) -> None:
-    """A tool finished (or was denied): record the step and clear pending."""
+#: Tools that write a file, and the argument naming the file they write. Only
+#: these, when the call went through, add to files_written (goal checks count
+#: a file as the run's work only from here, never from a path merely read).
+WRITTEN_PATH_ARGS = {"write_file": ("path",)}
+
+
+def note_tool(task_id: Optional[str], name: str, args: Any, result: Any, *, wrote: bool = False) -> None:
+    """A tool finished (or was denied): record the step and clear pending.
+    `wrote`: it was a local-write tool that went through, so the paths in its
+    arguments are files the task really wrote (goal checks count only these;
+    `files` also holds paths a task merely read or mentioned)."""
     led = load(task_id)
     if led is None:
         return
-    record_step(led, name, args, result)
-    led["pending"] = None
+    with _LOCK:                           # save() serialises under the same lock
+        record_step(led, name, args, result)
+        if wrote and isinstance(args, dict):
+            fw = led.setdefault("files_written", [])
+            for key in WRITTEN_PATH_ARGS.get(name, ()):
+                p = args.get(key)
+                if isinstance(p, str) and p and p not in fw:
+                    fw.append(p)
+            del fw[:-200]
+        led["pending"] = None
     save(task_id, led)
 
 

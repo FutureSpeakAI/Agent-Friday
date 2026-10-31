@@ -191,6 +191,34 @@ def _fetch_via_firecrawl(url, key, root, meta_path, text_path,
 
 def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
           register_provenance: bool = True) -> FetchResult:
+    """Fetch one URL safely, and record the request in the egress ledger
+    (§26.7): the address Friday chose went to that website. A page served
+    from the cache, or an address refused before anything was sent, records
+    nothing."""
+    rec = _fetch(url, timeout=timeout, use_cache=use_cache, register_provenance=register_provenance)
+    try:
+        if not rec.get("from_cache") and not (not rec.get("ok") and rec.get("error_kind") == "refused_unsafe"
+                                                and "redirect" not in str(rec.get("error") or "")):
+            from urllib.parse import urlparse
+            from agent_friday.services import egress_gate as _eg
+            host = urlparse(str(url or "")).hostname or "a website"
+            via = rec.get("via")
+            # A network error may be before or after the address left.
+            result = "sent_unconfirmed" if rec.get("error_kind") == "network" else "sent"
+            hops = [h for h in (urlparse(str(u)).hostname for u in (rec.get("redirect_chain") or [])) if h]
+            _eg.record_service_send("web_fetch", ("web:" + host)[:80],
+                                    destination=(("Firecrawl, for " + host) if via == "firecrawl" else host)
+                                    + (" (then " + ", ".join(dict.fromkeys(hops[1:])) + ")" if len(hops) > 1 else ""),
+                                    content={"url": url, "redirects": rec.get("redirect_chain") or []},
+                                    result=result, part="address",
+                                    note="" if rec.get("ok") else str(rec.get("error_kind") or "")[:40])
+    except Exception:
+        pass
+    return rec
+
+
+def _fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
+           register_provenance: bool = True) -> FetchResult:
     """Fetch one URL safely. Returns a FetchResult / SourceRecord.
 
     Never raises for an unsafe or unreachable URL — the refusal is data, so a
@@ -200,6 +228,15 @@ def fetch(url: str, *, timeout: int = 20, use_cache: bool = True,
     import requests
 
     url = (url or "").strip()
+    from agent_friday.services import safe_mode as _sm
+    _why = _sm.refusal("web")
+    if _why:
+        return _fail(url, _why, "safe_mode")
+    # North-star A16a: no web page is read until a route is chosen.
+    from agent_friday.services.cloud_intent import outbound_held
+    _held = outbound_held("web_fetch", "fetch")
+    if _held:
+        return _fail(url, _held, "route_not_chosen")
     key = _url_key(url)
     root = _store_root()
     meta_path = root / f"{key}.json"

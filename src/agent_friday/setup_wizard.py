@@ -253,6 +253,12 @@ def _save_config(config: dict):
     # written no wider than settings.json holds it now.
     from agent_friday.services import guarded_settings
     config = guarded_settings.clamp_for_write(config, SETTINGS_FILE)
+    # The person's spending caps survive this rewrite (north-star A17).
+    try:
+        from agent_friday.services import spending_caps as _caps
+        config = _caps.keep_caps_on_rewrite(config, SETTINGS_FILE)
+    except Exception:
+        pass
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     try:
         import yaml
@@ -480,8 +486,24 @@ def _routing_block_for(provider_id: str, existing: dict,
 
 # ── Key Validation ────────────────────────────────────────────────
 
+def _not_checked_unpicked():
+    """North-star A16a: before a route is picked a key check sends nothing to
+    the cloud. Returns the (None, message) answer, or None to go ahead."""
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return None, ("Not checked yet: nothing goes to the cloud until you "
+                          "choose where Friday thinks")
+    except Exception:
+        pass
+    return None
+
+
 def _validate_anthropic(key: str):
     """Returns (True/False/None, message)."""
+    held = _not_checked_unpicked()
+    if held is not None:
+        return held
     try:
         from anthropic import Anthropic
         c = Anthropic(api_key=key)
@@ -496,6 +518,9 @@ def _validate_anthropic(key: str):
 
 def _validate_gemini(key: str):
     """Returns (True/False/None, message)."""
+    held = _not_checked_unpicked()
+    if held is not None:
+        return held
     try:
         from google import genai
         c = genai.Client(api_key=key)
@@ -588,6 +613,13 @@ def _record_onboarding(**kv) -> None:
         os.replace(tmp, ONBOARDING_FILE)
     except Exception:
         pass
+    if kv.get("vault_skipped") is True:
+        # A21: setup asked; with no passphrase the saved keys stay unlocked, by the owner's choice.
+        try:
+            from agent_friday.services import keystore_offer as _ko
+            _ko.record_skip_during_setup("setup")
+        except Exception:
+            pass
 
 
 def _unanswered(existing: dict) -> list:
@@ -807,14 +839,22 @@ def step_routing(total: int, step: int, existing_mode: str) -> str:
         console.print(f"       [dim]{c['detail']}[/dim]")
         console.print()
 
-    default = "1" if not capable else "3"
+    # North-star A16: nothing is pre-selected. The recommendation above is a
+    # label; Enter alone picks nothing and the question is asked again. Only an
+    # install that already has a route the owner chose keeps it as the answer
+    # Enter gives (`existing_mode`; a new install passes "").
+    default = ""
     if existing_mode:
         for i, c in enumerate(choices):
             if c["mode"] == existing_mode:
                 default = str(i + 1)
     while True:
         pick = Prompt.ask(f"  [cyan]Where should Friday think (1-{len(choices)})[/cyan]",
-                          default=default)
+                          default=default, show_default=bool(default))
+        if not str(pick or "").strip():
+            console.print(f"  [yellow]Nothing is picked for you. Enter a number from 1 to "
+                          f"{len(choices)}.[/yellow]")
+            continue
         try:
             idx = int(pick) - 1
             if 0 <= idx < len(choices):
@@ -1184,6 +1224,36 @@ def _vault_keep_existing(total: int, existing: str, source: str,
     return existing
 
 
+def _offer_to_lock_saved_keys(pw: str) -> None:
+    """A21: the same passphrase locks the saved keys, by default; the owner can say no.
+    Never stops the wizard: the passphrase is already stored when this runs."""
+    try:
+        _ask_to_lock_saved_keys(pw)
+    except (KeyboardInterrupt, EOFError):
+        raise
+    except Exception as e:
+        console.print(f"  [yellow]Your saved keys were not locked ({type(e).__name__}). You can "
+                      "lock them later in Settings > Privacy & Data.[/yellow]\n")
+
+
+def _ask_to_lock_saved_keys(pw: str) -> None:
+    from agent_friday.services import keystore_offer as _ko
+    from agent_friday.services.onboarding_copy import VAULT_KEYS
+    console.print("  " + VAULT_KEYS.replace("\n", "\n  ") + "\n")
+    answer = Prompt.ask("  [cyan]Also lock my saved keys with this passphrase?[/cyan]",
+                        choices=["y", "n"], default="y")
+    if answer == "n":
+        _record_onboarding(keys_unprotected=True)
+        _ko.record("skipped", "setup")
+        console.print("  [dim]Your saved keys stay protected by this account's file permissions.\n"
+                      "  You can lock them later in Settings > Privacy & Data.[/dim]\n")
+        return
+    ok, why = _ko.protect_keystore(pw)
+    _ko.record("protected" if ok else "failed", "setup", why)
+    console.print("  [green]Saved keys locked with your passphrase.[/green]\n" if ok
+                  else "  [yellow]Not locked: " + why + ".[/yellow]\n")
+
+
 def _store_passphrase_and_say(pw: str) -> list:
     """Store the vault passphrase in its durable homes and say which took."""
     try:
@@ -1362,6 +1432,7 @@ def step_vault_password(total: int, existing: str, step: int = 2) -> str:
         console.print("  [green]Vault encryption enabled.[/green]  "
                       f"[dim]Passphrase stored in: {', '.join(written)}.[/dim]\n")
         _record_onboarding(vault_skipped=False)
+        _offer_to_lock_saved_keys(pw)
     elif getattr(_vp, "LAST_STORE_REFUSAL", ""):
         console.print("  [red]Not stored:[/red] [dim]" + _vp.LAST_STORE_REFUSAL + ".[/dim]\n")
     else:
@@ -1702,6 +1773,15 @@ def main():
     args = parser.parse_args()
     quick = args.quick
 
+    # North-star A16/A17: decide whether this is a new install BEFORE this
+    # wizard writes settings.json itself (the installer runs it before the app
+    # has ever started), so a new install keeps the new-install choices.
+    try:
+        from agent_friday import core as _core
+        _core.install_origin()
+    except Exception:
+        pass
+
     # Seed the bundled skills (career pipeline, etc.) into ~/.friday/skills on
     # first run. A no-op the moment that directory exists at all, so this is
     # safe to call unconditionally on every wizard invocation, including
@@ -1781,12 +1861,19 @@ def main():
 
     # ── Screen 3: where your words go ──
     _routing_existing = (existing.get("model_routing") or {}).get("mode", "")
+    # A16: a new install's stored mode is not a choice, so it is never offered
+    # as the answer Enter gives on the routing screen.
+    try:
+        from agent_friday import core as _core
+        _routing_offered = "" if _core.route_pick_pending(existing) else _routing_existing
+    except Exception:
+        _routing_offered = ""
     # Only an answer to the routing screen is a setup choice that counts as consent for cloud
     # only; quick mode and a skipped screen keep the mode and record it as "unverified" (the
     # mode_chosen record itself is unchanged, for the background routes that read it).
     config["_routing_answered"] = False
     if not quick and _ask("routing"):
-        config["routing_mode"] = step_routing(total_steps, 3, _routing_existing)
+        config["routing_mode"] = step_routing(total_steps, 3, _routing_offered)
         config["_routing_answered"] = True
     else:
         config["routing_mode"] = _routing_existing or "cloud_only"
@@ -1900,7 +1987,8 @@ def main():
         # Answered at the terminal by the owner: a setup choice, and choosing cloud only
         # there is consent (privacy/cloud_consent.ROUTING_CONSENT_VIAS). Quick mode or a
         # skipped routing screen kept the mode without asking: not consent.
-        block["mode_chosen_via"] = "setup" if answered else "unverified"
+        # A16: a kept route is recorded as such ("kept"), never as a pick.
+        block["mode_chosen_via"] = "setup" if answered else "kept"
         config["model_routing"] = block
 
     # Defaults that server expects

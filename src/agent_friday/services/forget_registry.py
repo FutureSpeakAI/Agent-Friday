@@ -408,11 +408,25 @@ def _ensure_defaults() -> None:
     # names the person goes; its keyed hash, which names nobody, stays and keeps the suggestion blocked.
     from agent_friday.services import tombstones as _tombstones
     register_store("tombstone_labels", _tombstones.labels_find, _tombstones.labels_purge)
+    # Imported items waiting for the owner's answer (services/import_staging) name people too.
+    from agent_friday.services import import_staging as _import_staging
+    register_store("import_staging", _import_staging.forget_find, _import_staging.forget_purge)
+    # The last "What I see so far" shown (services/first_synthesis) can name a person.
+    from agent_friday.services import first_synthesis as _first_synthesis
+    register_store("first_synthesis", _first_synthesis.forget_find, _first_synthesis.forget_purge)
     # What was derived from the owner's conversations (NS-15.7-2): the recall indexes (vector memory and
     # conversation search), the day summaries and the graph's conversation-sourced nodes made from them,
     # the memory card and its review queue; the transcript and action receipts are listed as kept.
     from agent_friday.services import forget_derived as _forget_derived
     _forget_derived.register()
+    # "Don't suggest things like this" rules keep a suggestion's words (or keyed hashes of a meeting's): a rule
+    # carrying a token of the person's name goes.
+    from agent_friday.services import memory_suppress as _memory_suppress
+    register_store("memory_suppressions", _memory_suppress.people_find, _memory_suppress.people_purge)
+    # What Undo keeps of a changed or deleted event or task (sealed; services/undo_store) can name
+    # people too: those entries go, and that change can then no longer be undone.
+    from agent_friday.services import undo_store as _undo_store
+    register_store("undo_data", _undo_store.forget_find, _undo_store.forget_purge)
 
 
 def _norm(s: str) -> str:

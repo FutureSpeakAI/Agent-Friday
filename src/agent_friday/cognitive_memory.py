@@ -151,14 +151,17 @@ class CognitiveMemory:
         """Write (or overwrite) a memory entry.  Returns the ledger record.
 
         Off the record nothing is written, not even the ledger line: its key
-        and content hash would still describe the conversation.
+        and content hash would still describe the conversation. A memory
+        entry is something Friday LEARNS, so it keys on the learning check
+        (NS-15.8-2), not only on storage: an owner who keeps off-record
+        transcripts still gets no memory written from the conversation.
         """
         try:
             from agent_friday.services import off_record
-            if off_record.skip("cognitive_memory"):
+            if off_record.skip("cognitive_memory") or off_record.skip_learning("cognitive_memory"):
                 return {"op": "write", "key": None, "written": False, "off_record": True}
         except Exception:
-            pass
+            return {"op": "write", "key": None, "written": False, "off_record": True}
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         ts = time.time()
 

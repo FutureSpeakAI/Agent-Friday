@@ -211,20 +211,11 @@ function Install-Pip {
     param(
         [Parameter(Mandatory)][string] $InstallRoot,
         [Parameter(Mandatory)][string] $GetPipPath,
-        [string] $ExpectedSha256 = ''
+        [AllowEmptyString()][string] $ExpectedSha256 = ''
     )
-    if ($ExpectedSha256) {
-        Assert-FileHash -Path $GetPipPath -ExpectedSha256 $ExpectedSha256 -What 'the pip bootstrap'
-    } else {
-        # No pin available (get-pip.py is a moving target upstream). Say so
-        # loudly in the log rather than implying it was checked.
-        #
-        # -Informational: this belongs in the maintainer's report and nowhere near
-        # her screen. Before the split, this single note made a completely
-        # clean install end by telling her "a couple of optional parts did not
-        # install" - nothing had failed at all.
-        Add-InstallWarning -Informational -Text "get-pip.py was used WITHOUT a SHA-256 pin. It is fetched over TLS from bootstrap.pypa.io but its contents were not verified against a known hash."
-    }
+    # get-pip.py is pinned to one commit of pypa/get-pip and its SHA-256
+    # (sources.json). No pin, or a different file, stops setup: it runs as code.
+    Assert-FileHash -Path $GetPipPath -ExpectedSha256 $ExpectedSha256 -What 'the pip bootstrap'
     $exe = Get-PythonExe $InstallRoot
     $r = Invoke-Native -FilePath $exe -Arguments @($GetPipPath, '--no-warn-script-location', '--no-cache-dir') -TimeoutSeconds 900
     return $r

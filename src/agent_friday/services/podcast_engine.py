@@ -659,7 +659,8 @@ _ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}-[0-9a-f]{6}")
 def _dir(eid: str) -> Path:
     if not _ID_RE.fullmatch(str(eid or "")):
         raise PodcastRefused("not an episode id")
-    return root() / eid
+    from agent_friday.paths import contained
+    return contained(root(), eid)
 
 
 _IO_LOCK = threading.RLock()

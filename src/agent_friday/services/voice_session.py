@@ -265,6 +265,9 @@ class VoiceSession:
         self.state = "idle"
         self.done = threading.Event()
         self.turn_log: list = []
+        # What she last said aloud, as heard (after a barge, only the heard
+        # part): "say that again" speaks it again with no model call.
+        self.last_spoken: str = ""
         self.conversation_id = None
         self.delivery_session = delivery_session if delivery_session is not None else {}
         from agent_friday.services.voice_delivery import initialize_session_preferences
@@ -828,6 +831,13 @@ class VoiceSession:
                 try:
                     if self.done.is_set() or turn["mind_cancel"].is_set():
                         return
+                    from agent_friday.services import voice_repeat
+                    if not injected and voice_repeat.is_repeat_request(user_text):
+                        # "Say that again": her last words again, word for
+                        # word, with no model call (NS-33.3-2).
+                        mind["reply"] = voice_repeat.repeat_reply(self.last_spoken)
+                        turn["repeat"] = True
+                        return
                     with voice_delivery.using_preferences(turn["delivery"]):
                         mind["reply"] = self.generate(user_text, on_delta,
                                                       turn["mind_cancel"]) or ""
@@ -891,6 +901,11 @@ class VoiceSession:
                 # Barged (or the call closed): the turn is what she actually
                 # said; the unheard rest of the reply never reached the user.
                 reply = " ".join(turn["spoken"])
+            heard = (" ".join(c for c in turn["spoken"] if c != FILLER_LINE)
+                     if turn["cancel"].is_set() else reply)
+            # A repeat cut short leaves the whole reply to be asked for again.
+            if (heard or "").strip() and not turn.get("repeat"):
+                self.last_spoken = heard.strip()
             prefill = None
             try:
                 tf = self.hooks.get("timings")
@@ -937,10 +952,15 @@ class VoiceSession:
                 _unsaved = _off.active()
             except Exception:
                 _unsaved = False
-            if not _unsaved:
+            # A repeat ("say that again") adds nothing to keep: the words are
+            # already in the conversation in the form it keeps them (a card
+            # read aloud as its neutral line, off-record words not at all), so
+            # it is neither summarised nor stored again.
+            _repeat = bool(turn.get("repeat"))
+            if not _unsaved and not _repeat:
                 self.turn_log.append((said, reply))
             try:
-                p = self.hooks.get("persist")
+                p = None if _repeat else self.hooks.get("persist")
                 if p:
                     got = p(said, reply, turn["conversation_id"])
                     if (isinstance(got, str) and got and not _unsaved and self.turn_log

@@ -532,6 +532,20 @@ def _conv_context(cid, limit=None, exclude_id=None):
                 _library_cite.remember_library_reply(text)
             if role == 'assistant':
                 text = _with_receipts(text, (m.get('meta') or {}).get('receipts'))
+            if role == 'assistant' and _posted_result(m.get('meta') or {}):
+                # Work that ran outside this chat (an approved card, a task, a workflow) posted
+                # its outcome here. It is stored as the owner saw it and replayed as data, never
+                # as something Friday or the owner said (services/untrusted_input).
+                from agent_friday.services.untrusted_input import wrap as _data_envelope
+                text = _data_envelope(text)
+            if m.get('imported_from'):
+                # A turn brought in from another assistant's history (services/ai_history_import)
+                # is a record of what was said there: replayed as data, never as Friday's own
+                # words nor as the owner asking anything now.
+                from agent_friday.services.untrusted_input import wrap as _data_envelope
+                who = 'the owner' if role == 'user' else 'that assistant'
+                text = _data_envelope('From the owner\'s %s, %s said: %s'
+                                      % (m.get('via') or 'imported AI history', who, text))
             if (m.get('meta') or {}).get('local_only'):
                 # A result the local model produced on this PC: replayed with
                 # the mark the egress gate withholds from every cloud model.
@@ -545,6 +559,15 @@ def _conv_context(cid, limit=None, exclude_id=None):
                     and (nxt is None or nxt.get('role') == 'user')):
                 out.append({"role": "assistant", "content": _NO_REPLY_NOTE})
     return out
+
+
+#: Transcript rows written by work that ran outside the chat turn (approval
+#: executors, background tasks, workflows), not by the turn's own model.
+_POSTED_RESULT_KINDS = frozenset({"approval_result", "task_result", "crew_result", "crew_dialogue"})
+
+
+def _posted_result(meta) -> bool:
+    return meta.get("kind") in _POSTED_RESULT_KINDS or bool(meta.get("workflow_run_id"))
 
 
 def _with_receipts(text, receipts):
@@ -1027,6 +1050,12 @@ def _cloud_turn_decision(route_mode, mode, confirmed, vault_access):
         return ""
     if vault_access:
         return "vault"
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked as _unpicked
+        if _unpicked():
+            return "confirm"          # A16a: no route picked, no cloud turn, even confirmed
+    except Exception:
+        pass
     if str(mode or "").strip().lower() == "local_only" and not confirmed:
         return "confirm"
     return "allow"
@@ -1103,6 +1132,73 @@ def _privacy_hold_turn(fn):
 #: thread under a copied request context, which shares the request (and its
 #: environ) but not the app context that holds g.
 _PASTED_KEYS_ENV = "friday.pasted_key_kinds"
+
+
+def _stop_everything_gate(fn):
+    """Stop everything (services/global_stop) for typed chat.
+
+    "Stop everything" typed into chat stops everything at once, before any model
+    or Laya rule sees the words, so it works while a model call is wedged. While
+    everything is stopped no chat turn runs: the reply says so and names Resume.
+    """
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import global_stop as _gs
+        data = request.get_json(silent=True)
+        message = data.get("message") if isinstance(data, dict) else None
+        if _gs.is_stop_everything(message):
+            st = _gs.stop(by="owner", source="typed")
+            return jsonify({"status": "ok", "response": _gs.SPOKEN_STOPPED,
+                            "everything_stopped": True, "stop": public_result(
+                                {k: st.get(k) for k in ("since", "source", "halted", "receipt")},
+                                "Couldn't stop everything")})
+        if _gs.active():
+            text = ("Everything is stopped, so I did not read or answer that. "
+                    "Press Resume on the screen when you want me back.")
+            return jsonify({"status": "everything_stopped", "code": "everything_stopped",
+                            "response": text, "error": text, "everything_stopped": True}), 423
+        return fn(*args, **kwargs)
+    return _inner
+
+
+def _guest_turn(sess_ctx) -> bool:
+    """A codebase turn on a guest's key never moves to the owner's key (salon spec 4.7)."""
+    try:
+        from agent_friday.services import codebases as _cb
+        return bool(_cb.guest_key_for_turn(sess_ctx))
+    except Exception:
+        return False
+
+
+def _provider_offer_for(exc, provider, routed_local, sess_ctx=None):
+    """The offer for a turn whose Anthropic call failed, or None. Only for a provider
+    failure (not Friday's own bug), only when OpenRouter can serve, and never when the
+    owner already chose OpenRouter for this turn. Announced like a ladder's withheld move."""
+    try:
+        from agent_friday.services import provider_fallback as _pf, one_key as _ok
+        if routed_local or provider != 'cloud' or _pf.CHOSEN.get() or _guest_turn(sess_ctx):
+            return None
+        if not _pf.looks_like_provider_failure(exc) or not _ok.openrouter_ready():
+            return None
+        err = _pf.short_error(exc)
+        _pf.announce("withheld", "anthropic", "openai", err)
+        return _pf.ProviderSwitchWithheld("anthropic", "openai", err).offer()
+    except Exception:
+        return None
+
+
+def _cloud_fallback_choice(fn):
+    """A6: the owner's answer to a provider offer ("Use OpenRouter for this") rides the
+    resend as `cloud_fallback_choice` and allows that one move for this turn only
+    (services/provider_fallback.chosen). Anything but a known provider name is ignored."""
+    @wraps(fn)
+    def _inner(*args, **kwargs):
+        from agent_friday.services import provider_fallback as _pf
+        data = request.get_json(silent=True)
+        choice = data.get("cloud_fallback_choice") if isinstance(data, dict) else None
+        with _pf.chosen(choice if isinstance(choice, str) else None):
+            return fn(*args, **kwargs)
+    return _inner
 
 
 def _withhold_pasted_keys(fn):
@@ -1187,7 +1283,9 @@ def _traced_turn(fn):
                     rv = fn(*args, **kwargs)
             finally:
                 _crew_runtime.HOST_ORIGIN.reset(_crew_token)
-            status = "complete"
+            # A turn that raised an approval card nobody has decided is waiting for the
+            # owner, never complete (NS-17.7-2), whatever else it did.
+            status = _turn_outcome(tid) if tid else "complete"
             if tid:
                 rv, reply_text = _attach_trace(rv, tid)
                 # chat() reports a crashed turn as a reply rather than raising.
@@ -1202,8 +1300,27 @@ def _traced_turn(fn):
     return _inner
 
 
+#: What a tool call that raised an approval card and stopped returns (services/agent).
+_CARD_RAISED = "[APPROVAL CARD RAISED]"
+
+
+def _turn_outcome(tid) -> str:
+    """'waiting_approval' when a tool call in this turn raised an approval card (the
+    action has not run; it waits for the owner), else 'complete'."""
+    from agent_friday.services import reasoning_trace as _rt
+    try:
+        live = _rt.live_trace(tid) or {}
+        for ev in live.get("events") or []:
+            if ev.get("type") == "tool_result" and str(ev.get("summary") or "").lstrip().startswith(_CARD_RAISED):
+                return "waiting_approval"
+    except Exception:  # noqa: BLE001 - an unreadable trace says nothing about a card
+        pass
+    return "complete"
+
+
 def _attach_trace(rv, tid):
-    """Add trace_id + reasoning_sources to a JSON turn response."""
+    """Add trace_id + reasoning_sources to a JSON turn response, and `outcome`:
+    'waiting_approval' when the turn raised a card that waits for the owner."""
     from agent_friday.services import reasoning_trace as _rt
     try:
         body, code = (rv[0], rv[1]) if isinstance(rv, tuple) else (rv, None)
@@ -1213,6 +1330,7 @@ def _attach_trace(rv, tid):
         live = _rt.live_trace(tid) or {}
         payload["trace_id"] = tid
         payload["reasoning_sources"] = [_rt.LABELS.get(s, s) for s in live.get("sources") or []]
+        payload["outcome"] = _turn_outcome(tid)
         reply = payload.get("response")
         if reply is None and isinstance(payload.get("friday_msg"), dict):
             reply = payload["friday_msg"].get("text")
@@ -1291,8 +1409,15 @@ def chat_stream():
     except Exception:
         _pilot_off_record = True
 
+    # The turn runs on its own thread; it carries this request's correlation id with it, so
+    # its log lines and decision receipts name the request (services/correlation).
+    from agent_friday.services import correlation as _correlation
+    _corr_id = _correlation.current()
+
     @copy_current_request_context
     def _run_turn():
+        _corr_cm = _correlation.bind(_corr_id)
+        _corr_cm.__enter__()
         _PRESET_TRACE_ID.set(_tid)
         _pilot_privacy_token = _PILOT_OFF_RECORD.set(_pilot_off_record)
         token = _mr.DELTA_SINK.set(lambda piece: q.put(("delta", piece)))
@@ -1329,6 +1454,10 @@ def chat_stream():
                     _mr.TOOL_SINK.reset(tool_token)
                 except Exception:
                     pass
+            try:
+                _corr_cm.__exit__(None, None, None)
+            except Exception:
+                pass
             q.put(("done", None))
 
     threading.Thread(target=_run_turn, daemon=True).start()
@@ -1408,6 +1537,22 @@ def _note_recall_turn(session_id, conversation_id):
         pass
 
 
+def _turn_learning_off():
+    """This turn's off-record state for everything that LEARNS from it
+    (services/off_record.excludes_learning, NS-15.8-2), read once at the
+    start of the turn. Cannot tell: off the record, nothing is learned.
+    /api/chat/stream runs chat() on a worker thread and takes its snapshot
+    at request time (_PILOT_OFF_RECORD): an off-record request stays off the
+    record even if the toggle changes before the worker reads settings."""
+    if _PILOT_OFF_RECORD.get():
+        return True
+    try:
+        from agent_friday.services import off_record as _off
+        return bool(_off.excludes_learning(_load_settings() or {}))
+    except Exception:
+        return True
+
+
 def _end_grant_turn(sess_ctx, session_id, conversation_id):
     """The turn is over, however it ended (an instant reply returns before
     the turn's context exists): a skill read in it stops counting as in use
@@ -1425,6 +1570,8 @@ def _end_grant_turn(sess_ctx, session_id, conversation_id):
 
 
 @chat_bp.route('/api/chat', methods=['POST'])
+@_stop_everything_gate
+@_cloud_fallback_choice
 @_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
@@ -1464,11 +1611,18 @@ def chat():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
+        # Off-record is read ONCE, here, and this snapshot decides every
+        # learning step of the turn (the user model, the household capture,
+        # epistemic scoring, skill capture, recall indexing): a toggle mid-turn
+        # cannot let half a turn be learned (NS-15.8-2).
+        _turn_off_record = _turn_learning_off()
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
+        # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
-            _um.observe_message(message, role='user', workspace=workspace)
+            _um.observe_message(message, role='user', workspace=workspace,
+                                off_record=_turn_off_record)
         except Exception:
             pass
         # An empty message with no image is unanswerable — refuse it cleanly
@@ -1493,6 +1647,14 @@ def chat():
         # Source Production Mode — when true, Friday cites every factual claim
         # inline. Falls back to the persisted settings toggle so the preference
         # survives across turns even if the client omits the flag.
+        # Off the record and the private-memory generation at the turn's very start,
+        # for the shadow decision heads: a reading of this turn is written only if
+        # the turn began on the record and the generation has not moved since.
+        try:
+            from agent_friday.services import citation_heads as _cite_head_start
+            _cite_start = _cite_head_start.turn_start()
+        except Exception:
+            _cite_start = (True, None)
         settings_early = _load_settings()
         _pilot = _start_pilot(message, settings_early)
         cite_sources = bool(data.get('cite_sources',
@@ -2110,6 +2272,10 @@ def chat():
                 "Please install Ollama or switch to local routing mode."
             )
             _offer_cloud_switch = bool(_route_info.get('offer_cloud_switch'))
+            if _cloud_intent.route_unpicked():
+                # A16a: the prompt is "choose where Friday thinks", not a
+                # one-button switch to the cloud.
+                _offer_cloud_switch = False
             _refuse_offer = None
             if _route_info.get('local_unavailable'):
                 _refuse_offer = _local_offer.build(
@@ -2193,6 +2359,17 @@ def chat():
             _route_info['override'] = 'computer_control'
             _route_info['overridden_local_model'] = _route_info.get('model')
             _route_info['model'] = settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT
+
+        # The route record for this turn, after the per-turn overrides above (the
+        # router's own record predates them). services/route_record.
+        try:
+            from agent_friday.services import route_record as _route_rec
+            if _attr is not None:
+                _route_info['record'] = _route_rec.build(
+                    _route_info, messages=messages, routing_cfg=_routing_cfg, source="chat")
+                _attr.note_route(_route_info['record'])
+        except Exception:
+            pass
 
         # ── SAY WHEN THE SEAT THAT ANSWERS IS NOT THE SEAT THAT WAS CHOSEN ──
         #
@@ -2371,6 +2548,14 @@ def chat():
                 pass
             if _household_note["text"]:
                 tail = tail + "\n\n" + _household_note["text"] + "\n"
+            # Long-term memory that could not be read this turn (services/recall_health): the
+            # turn says so, and nothing is presented as remembered from it (NS-32.5-1). In the
+            # tail, after the memory blocks were built, so it covers this turn's own reads.
+            try:
+                from agent_friday.services import recall_health as _recall_health
+                tail = tail + _recall_health.context_note()
+            except Exception:
+                pass
             if voice_mode:
                 # Constant while voice mode is on, so it belongs to the head;
                 # at its end, not its start, so it never moves the prefix.
@@ -2468,6 +2653,9 @@ def chat():
             # outcome back into this chat when the owner approves the card
             # later -- possibly from the System workspace with no turn running.
             "conversation_id": _conv_id_from(data) or "",
+            # The turn's off-record snapshot, for the household capture in
+            # prepare_confirmation_ctx (NS-15.8-2).
+            "off_record_turn": _turn_off_record,
         }
         # Every metered call in a codebase chat is that codebase's spend, under
         # whose key it runs (salon spec §4.7): the meter reads both from here.
@@ -2549,6 +2737,19 @@ def chat():
             from agent_friday.services import one_key as _one_key
             _route_info = _one_key.substitute_route(_route_info)
             if _route_info.get('provider') == 'openai':
+                _provider = 'openai'
+                system_prompt, sources, pii_lookup = _prep_for('openai')
+        # A6: the owner pressed "Use OpenRouter for this" on a provider offer. This
+        # one turn goes there, named in the route; nothing else changes.
+        from agent_friday.services import provider_fallback as _pf_turn
+        if ((not _routed_local) and _provider == 'cloud' and _pf_turn.CHOSEN.get() == 'openai'
+                and not _guest_turn(_sess_ctx)):
+            from agent_friday.services import one_key as _ok_choice
+            if _ok_choice.openrouter_ready():
+                _route_info = dict(
+                    _route_info, provider='openai', provider_name=_ok_choice.OPENROUTER,
+                    model=_ok_choice.openrouter_id_for(str(_route_info.get('model') or '')),
+                    reason=(_route_info.get('reason') or '') + ' (you chose OpenRouter for this turn)')
                 _provider = 'openai'
                 system_prompt, sources, pii_lookup = _prep_for('openai')
         _outage_local = _outage_receipt = None
@@ -2646,7 +2847,9 @@ def chat():
                 _laya_tr = _ctr.decide(
                     message, data, settings=settings, local=_routed_local,
                     held=[str(t.get('name')) for t in _ag_tools_for_turn(workspace, _conversation_id)],
-                    off_record=bool(_off_laya.active()),
+                    # Not logged or learned from when the turn is off the
+                    # record for learning (its snapshot) or for storage.
+                    off_record=bool(_turn_off_record or _off_laya.active()),
                     conversation_id=_conversation_id)
             if _laya_tr is not None and _laya_tr.action == 'ask':
                 _ctr.record(_turn_id, _laya_tr, ran=None, outcome='asked')
@@ -3120,6 +3323,16 @@ def chat():
         # returned the block, and gone if its source was forgotten meanwhile.
         reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
 
+        # Decision models, evidence.supports (shadow): does each footnote's passage
+        # support its sentence? Read afterwards on the head's own worker; nothing
+        # here waits for it or changes. Not for a turn that began off the record.
+        if not _turn_off_record:
+            try:
+                from agent_friday.services import citation_heads as _cite_head
+                _cite_head.shadow_reply(reply, tool_trace, surface="chat", start=_cite_start)
+            except Exception:
+                pass
+
         # ── Fact-check: flag low-trust news citations. ──
         # When Friday cites a news outlet, consult its Source Trust Graph score
         # and append a verify-independently warning for anything below 0.5.
@@ -3147,11 +3360,22 @@ def chat():
         # primitive recorded (it always records on success). ──
         _gen = None
         _fallback_chain = []
+        _route_rec_out = None
         try:
             if _attr is not None:
                 _gen = _attr.last_generation()
                 _fallback_chain = public_result(_attr.fallback_chain(),
                                                 "A model in the fallback chain failed")
+                # Rebuilt from the FINAL decision: _route_info can change after the
+                # first record (the one-key OpenRouter swap, "use OpenRouter for
+                # this", the no-key and cloud-outage local fallbacks).
+                try:
+                    from agent_friday.services import route_record as _route_rec2
+                    _attr.note_route(_route_rec2.build(
+                        _route_info, messages=messages, routing_cfg=_routing_cfg, source="chat"))
+                except Exception:
+                    pass
+                _route_rec_out = _attr.route_record()
         except Exception:
             pass
         if _gen and _gen.get('model'):
@@ -3185,6 +3409,8 @@ def chat():
             friday_msg['seat_notice'] = _seat_notice
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
+        if _route_rec_out:
+            friday_msg['route'] = _route_rec_out
         try:
             from agent_friday.services import unfinished_requests as _unfinished
             _note_saved = _unfinished.wrote_note(tool_trace)
@@ -3203,7 +3429,8 @@ def chat():
                           _route_info, locals().get('_conv_seat'))
 
         # ── Context log: append both turns unless off-record. ──
-        if not settings.get('off_record'):
+        # (The turn's snapshot from its start, like the learning steps below.)
+        if not _turn_off_record:
             _log_context("chat_user", {
                 "message": message,
                 "workspace": workspace,
@@ -3215,32 +3442,38 @@ def chat():
                 "tool_count": len(tool_trace or []),
             })
 
-        # Epistemic scoring — score this turn in background
-        try:
-            from agent_friday.epistemic_engine import get_epistemic_engine
-            threading.Thread(
-                target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
+        # Epistemic scoring — score this turn in background. It is Friday's
+        # introspection on the turn: an off-record turn is not scored (NS-15.8-2).
+        if not _turn_off_record:
+            try:
+                from agent_friday.epistemic_engine import get_epistemic_engine
+                threading.Thread(
+                    target=lambda m=message, r=reply: get_epistemic_engine().score_turn(m, r),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
 
         # Closed-loop learning — capture the turn trajectory + accumulate skill
         # metrics in the background. Feeds the nightly SkillOpt optimizer.
-        try:
-            import agent_friday.skill_capture as _skcap
-            threading.Thread(
-                target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
-                    _skcap.capture(m, r, tool_trace=tt, workspace=ws),
-                daemon=True,
-            ).start()
-        except Exception:
-            pass
+        # Off the record nothing is learned from the turn (NS-15.8-2), even
+        # when the owner lets the transcript be stored.
+        if not _turn_off_record:
+            try:
+                import agent_friday.skill_capture as _skcap
+                threading.Thread(
+                    target=lambda m=message, r=reply, tt=tool_trace, ws=workspace:
+                        _skcap.capture(m, r, tool_trace=tt, workspace=ws),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
 
         # Persistent conversation memory — index both turns into ChromaDB in the
         # background so future sessions can recall and cite this exchange. Skip
-        # when the user is off-record. Best-effort; never blocks the response.
-        if not settings.get('off_record'):
+        # when the user is off-record (the turn's snapshot from its start).
+        # Best-effort; never blocks the response.
+        if not _turn_off_record:
             try:
                 threading.Thread(
                     target=_index_chat_turn,
@@ -3366,6 +3599,8 @@ def chat():
             # fires constantly is wallpaper (KNOWN_ISSUES.md §1).
             "vision_events": _vision_events,
             "fallback_chain": _fallback_chain,
+            # Why this reply was answered where it was (services/route_record).
+            "route": _route_rec_out,
             # Present only when the user's chosen local seat could not answer and the
             # cloud did instead. The client renders it as a system line so the
             # substitution is visible in the transcript, not just in a log.
@@ -3384,6 +3619,14 @@ def chat():
         _pilot_error = True
         traceback.print_exc()  # console launches; a no-op loss under pythonw
         _LOG.exception("chat turn failed")
+        # A6: Anthropic failed and OpenRouter is set up. Friday does not switch on her
+        # own: the reply says what failed and offers the other provider as a button.
+        _offer = _provider_offer_for(e, locals().get('_provider'), locals().get('_routed_local'),
+                                     locals().get('_sess_ctx'))
+        if _offer is not None:
+            return jsonify({"status": "ok", "response": _offer["text"], "local_fallback": _offer,
+                            "model": "", "seat": "cloud",
+                            "served_by": {"provider": "anthropic", "answered": False}})
         return jsonify({"response": "[Friday offline] " + error_text(e, "Couldn't answer that message")})
     finally:
         _settle_accepted_turn()
@@ -3523,6 +3766,8 @@ def _screen_block_for(provider_name, conversation_id):
 
 
 @chat_bp.route('/api/chat/send', methods=['POST'])
+@_stop_everything_gate
+@_cloud_fallback_choice
 @_withhold_pasted_keys
 @_traced_turn
 @_privacy_hold_turn
@@ -3552,11 +3797,15 @@ def chat_send():
         core.turn_begin(_turn_id, _conversation_id)
         message = data.get('message', '')
         workspace = data.get('workspace', '')
+        # Off-record read ONCE for the turn's learning steps (as /api/chat).
+        _turn_off_record = _turn_learning_off()
         # v5: feed the LOCAL user model from each user turn (best-effort — never
         # blocks or fails the chat turn). Personalizes future system prompts.
+        # Off the record it learns nothing (NS-15.8-2; user_model checks too).
         try:
             from agent_friday.services import user_model as _um
-            _um.observe_message(message, role='user', workspace=workspace)
+            _um.observe_message(message, role='user', workspace=workspace,
+                                off_record=_turn_off_record)
         except Exception:
             pass
         include_vision = data.get('includeVision', False)
@@ -3565,6 +3814,14 @@ def chat_send():
         if not message.strip():
             return jsonify({"status": "error", "message": "Empty message"}), 400
 
+        # Off the record and the private-memory generation at the turn's very start,
+        # for the shadow decision heads: a reading of this turn is written only if
+        # the turn began on the record and the generation has not moved since.
+        try:
+            from agent_friday.services import citation_heads as _cite_head_start
+            _cite_start = _cite_head_start.turn_start()
+        except Exception:
+            _cite_start = (True, None)
         _pilot = _start_pilot(message, _load_settings())
 
         # Vision capture (Gemini, designer role). Accept either `screenshot`
@@ -3744,6 +4001,12 @@ def chat_send():
                 prompt = prompt + _plans.context_block(_conversation_id)
             except Exception:
                 pass
+            try:
+                # As in /api/chat: memory that could not be read is named (services/recall_health).
+                from agent_friday.services import recall_health as _recall_health
+                prompt = prompt + _recall_health.context_note()
+            except Exception:
+                pass
             # Assembled here, not by `_get_friday_system_prompt`: the policy
             # and the override strip are applied here, last.
             return seal_system_prompt(prompt, "/api/chat/send prompt")
@@ -3834,6 +4097,7 @@ def chat_send():
             "_laya_pilot": _pilot,
             "authenticated": bool(session.get("authenticated")) or not bool(FRIDAY_PASSWORD),
             "conversation_id": _conversation_id,
+            "off_record_turn": _turn_off_record,        # household capture (NS-15.8-2)
         }
         # Every metered call in a codebase chat is that codebase's spend, under
         # whose key it runs (salon spec §4.7): the meter reads both from here.
@@ -3915,11 +4179,13 @@ def chat_send():
         # Badge truth: prefer the ACTUAL generator over the configured seat.
         _fallback_chain = []
         _gen = None
+        _route_rec_out = None
         try:
             if _attr2 is not None:
                 _gen = _attr2.last_generation()
                 _fallback_chain = public_result(_attr2.fallback_chain(),
                                                 "A model in the fallback chain failed")
+                _route_rec_out = _attr2.route_record()
                 if _gen and _gen.get('model'):
                     _seat_model = _gen['model']
                     _seat_class = _gen.get('seat') or _seat_class
@@ -3959,6 +4225,16 @@ def chat_send():
             'workspace': workspace,
         }
         reply, _lib_flagged = _library_cite.finish(reply, tool_trace, conversation_id=_conversation_id)
+
+        # Decision models, evidence.supports (shadow): does each footnote's passage
+        # support its sentence? Read afterwards on the head's own worker; nothing
+        # here waits for it or changes. Not for a turn that began off the record.
+        if not _turn_off_record:
+            try:
+                from agent_friday.services import citation_heads as _cite_head
+                _cite_head.shadow_reply(reply, tool_trace, surface="chat_send", start=_cite_start)
+            except Exception:
+                pass
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
         _web_sources = _turn_web_sources(tool_trace, _conversation_id, settings)
         friday_msg = {
@@ -3979,6 +4255,8 @@ def chat_send():
             _library_cite.remember_library_reply(reply)
         if _fallback_chain:
             friday_msg['fallback_chain'] = _fallback_chain
+        if _route_rec_out:
+            friday_msg['route'] = _route_rec_out
         if _send_seat_notice:
             friday_msg['seat_notice'] = _send_seat_notice
         try:
@@ -4003,8 +4281,9 @@ def chat_send():
         _save_chat_history(CHAT_HISTORY)
 
         # Persistent conversation memory + emotional arc — index this exchange in
-        # the background (skip when off-record). Best-effort; never blocks.
-        if not settings.get('off_record'):
+        # the background (skip when off-record: the turn's snapshot from its
+        # start, NS-15.8-2). Best-effort; never blocks.
+        if not _turn_off_record:
             try:
                 threading.Thread(
                     target=_index_chat_turn,
@@ -4020,9 +4299,16 @@ def chat_send():
                         "model": _seat_model, "seat": _seat_class,
                         "seat_events": _seat_events,
                         "seat_notice": _send_seat_notice,
-                        "fallback_chain": _fallback_chain}, "Couldn't send the message"))
+                        "fallback_chain": _fallback_chain,
+                        "route": _route_rec_out}, "Couldn't send the message"))
     except Exception as e:
         _pilot_error = True
+        from agent_friday.services import provider_fallback as _pf_send
+        if isinstance(e, _pf_send.ProviderSwitchWithheld):
+            # A6: the cloud provider failed and Friday did not switch on her own.
+            # The reply is the offer: what failed, the alternative, two buttons.
+            return jsonify({"status": "provider_offer", "error": e.text(),
+                            "provider_offer": e.offer()}), 503
         traceback.print_exc()
         return api_error(e, "Couldn't send the message")
     finally:

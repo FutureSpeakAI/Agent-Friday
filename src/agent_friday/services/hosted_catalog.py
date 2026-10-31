@@ -228,6 +228,13 @@ def refresh(provider: str) -> dict:
         return {"status": "error", "provider": name, "count": 0,
                 "error": f"unsupported provider {name!r} — "
                          f"one of: {', '.join(HOSTED_PROVIDERS)}"}
+    # North-star A16a: before a route is picked nothing goes to the cloud,
+    # a model-list fetch with the person's key included.
+    from agent_friday.services.cloud_intent import route_unpicked
+    if route_unpicked():
+        return {"status": "error", "provider": name, "count": 0,
+                "error": "not fetched: nothing goes to the cloud until you "
+                         "choose where Friday thinks (Settings > Models)"}
     api_key = _resolve_api_key(name)  # pragma: allowlist secret
     if name == "anthropic" and not api_key:
         # OpenRouter's /models is public; Anthropic's is not.

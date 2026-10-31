@@ -59,6 +59,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import unquote_plus, urlsplit
 
+from agent_friday.services.untrusted_input import wrap as _data_envelope
+
 _log = logging.getLogger("friday.web_tasks")
 
 # ── Fixed vocabulary ──────────────────────────────────────────────────────────
@@ -938,11 +940,22 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
         if m:
             run_state.page_url = m.group(1)
 
+    def _waiting_on(what):
+        """The task record says what it waits for while it waits (NS-17.7-1)."""
+        import sys as _sys
+        _ag = _sys.modules.get("agent_friday.services.agent")
+        if _ag is not None:
+            try:
+                _ag._task_set(task_id, waiting_on=what)
+            except Exception:
+                pass
+
     def wait_card(approval_id: str, *, title: str, outward: bool) -> str:
         """Block until the owner answers. Returns approved/denied/expired."""
         nonlocal waited
         journal.append("card", approval_id=approval_id, title=title, outward=outward)
         ports.log(f"Waiting for your answer: {title}")
+        _waiting_on({"kind": "approval" if outward else "input", "approval_id": approval_id})
         t0 = clk.now()
         try:
             while True:
@@ -966,6 +979,7 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
                 clk.sleep(1.0)
         finally:
             waited += clk.now() - t0
+            _waiting_on(None)
         cards_log.append({"approval_id": approval_id, "title": title, "outward": outward,
                           "decision": decision})
         journal.append("card_settled", approval_id=approval_id, decision=decision)
@@ -1007,8 +1021,11 @@ def run(task_id: str, plan: WebTaskPlan, ports: Ports, *, resume: bool = False,
             page = first
             while True:
                 check_limits()
+                # The page is the website's words: the one data envelope
+                # (services/untrusted_input), closed after the cut, so a page
+                # cut short can never leave the envelope open.
                 user = (_header(plan, state) + ("\nNOTES:\n- " + "\n- ".join(notes) + "\n" if notes else "")
-                        + "\nCURRENT PAGE:\n" + page[:PAGE_CHARS_TO_MODEL])
+                        + "\nCURRENT PAGE:\n" + _data_envelope(page[:PAGE_CHARS_TO_MODEL]))
                 notes = []
                 answer, usage = ports.model.decide(SYSTEM, user)
                 state["steps"] += 1

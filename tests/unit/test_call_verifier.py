@@ -75,10 +75,7 @@ def run(name, args, ctx=None):
 
 
 def receipts():
-    p = action_gate.receipts_path()
-    if not p.exists():
-        return []
-    return [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return action_gate.receipts()              # the action ledger's decisions
 
 
 # ── 1. schema ────────────────────────────────────────────────────────────────
@@ -135,7 +132,10 @@ def test_end_before_start_and_an_implausible_year_are_caught():
     assert any("outside" in x for x in f)
 
 
-def test_a_placeholder_path_and_a_path_outside_the_granted_folders(spy, tmp_path):
+def test_a_placeholder_path_and_a_path_outside_the_granted_folders(spy, tmp_path, monkeypatch):
+    # The files live in pytest's tmp_path; the file tools' own confinement
+    # (services/path_policy) is pointed there so this tests the verifier.
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     spy.tool(FILE_READ)
     assert run(FILE_READ, {"path": "<path to the file>"}).startswith("[VERIFIER FIX]")
     assert run(FILE_READ, {"path": "path/to/notes.md"}).startswith("[VERIFIER FIX]")
