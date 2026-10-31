@@ -905,6 +905,32 @@ def _describe_episode(d: Path) -> str:
 
 
 @pytest.fixture(autouse=True)
+def _no_tombstone_outlives_its_test():
+    """No tombstone (services/tombstones) outlives its test in the shared test
+    home. An owner delete or a rejected proposal in one test would otherwise
+    hold the same text back from every later test in the process (a proposal
+    test that rejects a fact, then one that proposes it again). Torn down after
+    monkeypatch, so friday_home() is the shared test home here; a test that
+    pointed FRIDAY_HOME at its own tmp_path is untouched."""
+    yield
+    try:
+        from agent_friday.paths import friday_home
+        p = friday_home() / "tombstones.json"
+        if p.exists():
+            p.unlink()
+    except Exception:
+        pass
+    # A background thread a test started (a chat send's post-turn work) may be
+    # importing services/tombstones at this moment: sys.modules then holds a
+    # partially initialised module with no _reset_for_tests yet. Nothing of it
+    # is cached then, so there is nothing to reset.
+    tb = sys.modules.get("agent_friday.services.tombstones")
+    reset = getattr(tb, "_reset_for_tests", None) if tb is not None else None
+    if reset is not None:
+        reset()
+
+
+@pytest.fixture(autouse=True)
 def _no_podcast_episode_outlives_its_test(request):
     """No podcast episode outlives its test in the shared test home. The
     scheduler lists every pending episode on disk as a "podcast" job, so one

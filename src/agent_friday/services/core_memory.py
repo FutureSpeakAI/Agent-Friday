@@ -61,7 +61,7 @@ import unicodedata
 import uuid
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from agent_friday.paths import friday_home
 
@@ -608,6 +608,73 @@ def _err(msg: str) -> Dict[str, Any]:
     return {"ok": False, "error": msg}
 
 
+# ── tombstones (services/tombstones, NS-30.20-1) ─────────────────────────────
+# A line the owner deleted (or edited away, or undid after Friday wrote it) is
+# tombstoned as a keyed hash, never as text. Friday, the review pass and
+# nightly dreaming do not add it or suggest it again; the owner adding it
+# themselves lifts the tombstone. A line about the user is also held back when
+# the owner deleted it as a fact or rejected it as a proposal (the same
+# statement, refused in another place).
+def _tomb_kinds(target: str):
+    return ("card_line", "user_fact", "proposal") if target == "user" else ("card_line",)
+
+
+def _tombstoned(target: str, text: str) -> bool:
+    try:
+        from agent_friday.services import tombstones
+        return tombstones.is_tombstoned(_tomb_kinds(target), text)
+    except Exception as e:
+        _tomb_warn("check", e)
+        return False
+
+
+def _tomb_warn(what: str, e: BaseException) -> None:
+    """A tombstone call that raised (an ImportError included) is said, never
+    silently treated as 'not tombstoned'."""
+    import logging
+    logging.getLogger("friday.tombstones").warning(
+        "core_memory: the tombstone %s failed (fail open): %s: %s", what, type(e).__name__, e)
+
+
+def _tombstone(text: str) -> bool:
+    """Tombstone a card line; False when it could not be recorded."""
+    try:
+        from agent_friday.services import tombstones
+        return bool(tombstones.add("card_line", text).get("ok"))
+    except Exception as e:
+        _tomb_warn("write", e)
+        return False
+
+
+def _tombstone_discard(text: str) -> bool:
+    """Tombstone a discarded suggestion and list it for the owner (a sealed
+    label); False when the tombstone could not be recorded."""
+    try:
+        from agent_friday.services import tombstones
+        return bool(tombstones.add_discard("card_line", text).get("ok"))
+    except Exception as e:
+        _tomb_warn("write", e)
+        return False
+
+
+#: Said in the result when the owner's delete ran but its tombstone did not.
+_NOT_TOMBSTONED = {"tombstoned": False,
+                   "warning": ("the line is gone, but the record that stops Friday writing it again "
+                               "could not be saved; a later pass may suggest it again")}
+
+
+def _affirmed(text: str) -> None:
+    try:
+        from agent_friday.services import tombstones
+        tombstones.owner_affirmed(text)
+    except Exception as e:
+        _tomb_warn("lift", e)
+
+
+_TOMBSTONED = ("the owner deleted this line from the memory card; Friday does not add or suggest "
+               "it again (only the owner can put it back)")
+
+
 #: Why an inferred line touching a special category is not kept (NS-15.4-3).
 SPECIAL_REFUSAL = ("it would record {cat} about a person, which Friday never infers or keeps "
                    "on her own; only the owner's own words, kept by the owner, can put it on the card")
@@ -665,6 +732,13 @@ def add(target: str, text: str, *, actor: str = "friday",
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    # A tombstoned line (services/tombstones) is not written back by Friday or
+    # a background pass, `owner_ok` (the gate's approval of her call) included;
+    # only the owner adding it themselves lifts the tombstone.
+    if actor != "owner" and _tombstoned(target, text):
+        return {**_err("NOT SAVED: " + _TOMBSTONED), "tombstoned": True}
+    if actor == "owner":
+        _affirmed(text)
     if actor != "owner" and not owner_ok:
         hit = _special(text, f"core_memory.{actor}.add")
         if hit:
@@ -704,6 +778,8 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
     why = refusal(text)
     if why:
         return _err("NOT SAVED: " + why)
+    if actor != "owner" and _tombstoned(target, text):
+        return {**_err("NOT SAVED: " + _TOMBSTONED), "tombstoned": True}
     if actor != "owner" and not owner_ok:
         hit = _special(text, f"core_memory.{actor}.replace")
         if hit:
@@ -728,7 +804,15 @@ def replace(target: str, old: str, text: str, *, actor: str = "friday",
         cid = _journal(row)
         if actor == "owner":
             _purge_text(before)
-    out = {"ok": True, "change_id": cid, "usage": usage(target)}
+    marked = True
+    if actor == "owner":
+        # The line the owner edited away is not written back by Friday; the
+        # wording they chose is theirs (an edit that only changes case or
+        # punctuation lifts the tombstone it just made).
+        marked = _tombstone(before)
+        _affirmed(text)
+    out ={"ok": True, "change_id": cid, "usage": usage(target),
+           **({} if marked else _NOT_TOMBSTONED)}
     # Only a correction retires what was said: a re-save, a typo fix or a line
     # that keeps every word and adds detail still states the old fact.
     if actor == "owner" and supersede and not (_content_words(before) <= _content_words(text)):
@@ -752,7 +836,9 @@ def remove(target: str, old: str, *, actor: str = "friday", supersede: bool = Fa
                         "before": None if actor == "owner" else before, "after": None})
         if actor == "owner":
             _purge_text(before)
-    out = {"ok": True, "change_id": cid, "usage": usage(target)}
+    marked = _tombstone(before) if actor == "owner" else True
+    out = {"ok": True, "change_id": cid, "usage": usage(target),
+           **({} if marked else _NOT_TOMBSTONED)}
     # A delete makes room or keeps something private; only a delete the owner
     # marks as wrong retires the messages that said it.
     if actor == "owner" and supersede:
@@ -859,12 +945,25 @@ def resolve_line(target: str, old: str):
 
 
 def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
-          reason: str = "", owner_stated: bool = False) -> Dict[str, Any]:
+          reason: str = "", owner: bool = False, restated: bool = False,
+          owner_stated: bool = False, web_sources: Iterable[str] = ()) -> Dict[str, Any]:
     """File a change for the owner to approve. Duplicates are not queued twice.
 
     A replace or remove stores the WHOLE line it changes, resolved now, so the
     card shows the owner exactly which line it is and Keep changes that line
     and no other (`decide` matches it exactly).
+
+    A line the owner deleted (services/tombstones) is not suggested again by
+    any background writer; `owner` is True only for a change the owner already
+    made themselves (a kept proposal that did not fit on a full card).
+
+    `restated` is True when the text is the owner's own new statement (they
+    typed it again, in their words): a tombstone does not silence the owner,
+    so it is queued for their OK, flagged ``deleted_before`` with "You deleted
+    this before." in front of the reason. A rejected proposal still blocks the
+    same text as a proposal; it never blocks the owner saying it. A change that
+    rests on the owner's own words in the conversation (`owner_stated`) is
+    their statement too, so it counts as `restated`.
 
     An inferred add or replace (a dream, a review, a model's guess) that
     touches a special category is dropped, not queued (NS-15.4-3). It is
@@ -874,6 +973,12 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
     if target not in TARGETS or op not in ("add", "replace", "remove"):
         return _err("bad target or op")
     text, old = _clean(text), _clean(old)
+    deleted_before = False
+    if op in ("add", "replace") and not owner and _tombstoned(target, text):
+        if not (restated or owner_stated):
+            return {**_err("NOT QUEUED: " + _TOMBSTONED), "tombstoned": True}
+        deleted_before = True
+        reason = "You deleted this before. " + str(reason or "")
     if op in ("add", "replace") and not owner_stated and not _confirmed_source(source):
         hit = _special(text, "queue." + (str(source).split(":", 1)[0] or "unknown")[:20],
                        prefix="NOT QUEUED: ")
@@ -917,12 +1022,19 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
         row = {"id": "pend-" + uuid.uuid4().hex[:10], "ts": time.time(), "target": target,
                "op": op, "text": text, "old": old, "source": str(source)[:80],
                "reason": str(reason or "")[:300]}
+        if deleted_before:
+            row["deleted_before"] = True
+        # The sites the suggestion was read from (registered domains only,
+        # services/web_provenance), so stopping a site removes it.
+        web = [str(d)[:253] for d in (web_sources or ()) if str(d or "").strip()][:12]
+        if web:
+            row["web_sources"] = web
         rows = (rows + [row])[-PENDING_KEEP:]
         try:
             _write_jsonl(_pending_path(), rows)
         except Exception as e:
             return _err(str(e))
-    return {"ok": True, "id": row["id"]}
+    return {"ok": True, "id": row["id"], **({"deleted_before": True} if deleted_before else {})}
 
 
 def _suppressed(text: str, op: str, source: str) -> Optional[str]:
@@ -938,6 +1050,18 @@ def _suppressed(text: str, op: str, source: str) -> Optional[str]:
 
 def pending() -> List[Dict[str, Any]]:
     return list(reversed(_read_jsonl(_pending_path())))
+
+
+def drop_pending(pred, apply: bool = True) -> List[Dict[str, Any]]:
+    """Queued suggestions `pred(row)` accepts leave the review queue (a
+    stopped site's, services/forget_kinds). Returns the rows dropped (or that
+    would be, with ``apply=False``); the caller tombstones their text first."""
+    with _LOCK:
+        rows = _read_jsonl(_pending_path())
+        gone = [r for r in rows if pred(r)]
+        if apply and gone:
+            _write_jsonl(_pending_path(), [r for r in rows if not pred(r)])
+    return gone
 
 
 def decide(pending_id: str, approve: bool, text: Optional[str] = None) -> Dict[str, Any]:
@@ -988,6 +1112,16 @@ def decide(pending_id: str, approve: bool, text: Optional[str] = None) -> Dict[s
                 return res
         rows = [r for r in _read_jsonl(_pending_path()) if r.get("id") != pending_id]
         _write_jsonl(_pending_path(), rows)
+    if not approve and row.get("op") in ("add", "replace") and (row.get("text") or "").strip():
+        # Discarding a suggested line is the owner's no, as rejecting a
+        # proposal is: the line is tombstoned so the nightly pass (or the
+        # review pass) does not suggest it again. The owner can still type it,
+        # and it is listed (sealed label) under "Discarded suggestions", where
+        # "Allow again" lifts it (services/tombstones.add_discard).
+        if not _tombstone_discard(row.get("text") or ""):
+            res = {**res, "tombstoned": False,
+                   "warning": ("the suggestion is discarded, but the record that stops Friday "
+                               "suggesting it again could not be saved")}
     if row.get("target") == "friday" and row.get("op") in ("add", "replace"):
         # The proposed lesson's learning record: active once kept; a discarded
         # one leaves no record behind. An edited one is the owner's own line:

@@ -50,6 +50,16 @@ _LOCK = threading.RLock()
 _SEAT_CHANGES: dict[str, str] = {}
 _PRUNE_KEEP = 500          # per conversation, matching the old global prune
 
+# Conversations the owner deleted in this process, and their message ids. A
+# reply that finishes after the delete must not write the conversation back
+# (append would recreate it) nor index its turn (model_router's indexing
+# thread asks ``message_deleted``). Main is emptied, not removed, so it is
+# held by the time of its delete instead: a message stamped before that is
+# refused, a new one is not.
+_DELETED: set[str] = set()
+_DELETED_MIDS: set[str] = set()
+_MAIN_DELETED_AT = 0.0
+
 
 def _root() -> Path:
     return Path(FRIDAY_DIR) / "conversations"
@@ -145,6 +155,7 @@ def create(title: str = "New chat", seat: dict | None = None,
            cid: str | None = None) -> dict:
     with _LOCK:
         conv = _blank(cid or new_id(), title)
+        _DELETED.discard(conv["id"])      # made again on purpose: usable again
         if seat:
             conv["seat"] = seat
         _dir(conv["id"]).mkdir(parents=True, exist_ok=True)
@@ -308,6 +319,12 @@ def append(cid: str, message: dict, *, settings: dict | None = None, before_writ
     unsaved = (_off.skip("conversations") if settings is None
                else _off.skip("conversations", settings))
     with _LOCK:
+        if _refused_after_delete(cid, message):
+            # Deleted while this reply was being written: nothing is written
+            # back, and its id is remembered so its indexing is refused too.
+            if message.get("id"):
+                _DELETED_MIDS.add(str(message["id"]))
+            return message
         conv = load(cid) if not unsaved else None
         # Scoped asynchronous callers can revalidate after settings resolution
         # and while project changes are excluded by the canonical store lock.
@@ -340,6 +357,43 @@ def append(cid: str, message: dict, *, settings: dict | None = None, before_writ
                     conv["title"] = t
         save(conv)
         return message
+
+
+def _stamp(message: dict) -> float | None:
+    """A message's own time (``ts`` seconds, else its ISO ``timestamp``)."""
+    ts = message.get("ts")
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        return float(ts)
+    iso = message.get("timestamp")
+    if isinstance(iso, str) and iso:
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(iso).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def _refused_after_delete(cid: str, message: dict) -> bool:
+    if message.get("id") and str(message["id"]) in _DELETED_MIDS:
+        return True
+    if cid == MAIN_ID:
+        if not _MAIN_DELETED_AT:
+            return False
+        at = _stamp(message)
+        return at is not None and at < _MAIN_DELETED_AT
+    return str(cid) in _DELETED
+
+
+def was_deleted(cid: str) -> bool:
+    """The owner deleted this conversation in this process (Main never is)."""
+    return str(cid or "") in _DELETED
+
+
+def message_deleted(mid) -> bool:
+    """This message belongs to a conversation the owner deleted (or was
+    refused because it finished after the delete): it is never indexed."""
+    return bool(mid) and str(mid) in _DELETED_MIDS
 
 
 def messages(cid: str, limit: int | None = None) -> list[dict]:
@@ -527,6 +581,182 @@ def _forget_influence(ids, session=None) -> None:
             memory_influence.forget_session(session)
     except Exception:
         pass
+
+
+def delete(cid: str) -> dict:
+    """Delete one conversation: its transcript, its record and the files kept
+    beside it (its artifacts), and every one of its messages from every index
+    through the paths a single message's delete takes
+    (conversation_fts.drop_conversation: the search index, the vector memory,
+    the chat mirror, the review buffers). The owner's own action; nothing
+    here can be undone.
+
+    Main is the conversation everything unaddressed reports into, so it is
+    emptied rather than removed (its record stays, marked as already
+    migrated, so the old chat_history.json is never imported into it again).
+
+    Only the conversation's exact id is accepted: Windows folds case and
+    trailing dots and spaces in a folder name, so "CONV-MAIN" or "conv-main."
+    would open Main's folder; a record whose own id differs, or a folder that
+    is Main's under another spelling, is refused.
+
+    Retryable: the indexes go first (while every message id is still on
+    disk), then the files, and the record (conversation.json) last, so a
+    delete that stops part way (a file held open) leaves the conversation
+    loadable and running it again finishes. Files that could not be deleted
+    are counted in the result ({"ok": False, "leftovers": n}).
+    Returns counts only: {"ok", "messages", "vector_rows", "files",
+    "index_errors", "leftovers"}."""
+    global _MAIN_DELETED_AT
+    from agent_friday.services import off_record as _off
+    cid = str(cid or "")
+    with _LOCK:
+        conv = load(cid)
+        if conv is None or conv.get("id") != cid:
+            return {"ok": False, "error": "no such conversation"}
+        main = cid == MAIN_ID
+        try:
+            d = _dir(cid)
+            same_as_main = os.path.normcase(str(d)) == os.path.normcase(str(_dir(MAIN_ID)))
+        except ValueError:
+            return {"ok": False, "error": "no such conversation"}
+        if not main and (same_as_main or cid.rstrip(". ").lower() == MAIN_ID):
+            return {"ok": False, "error": "no such conversation"}
+        msgs = _stored_messages(cid)
+        # Marked first: a reply that finishes from now on writes nothing back
+        # and indexes nothing (append and model_router refuse it).
+        _DELETED_MIDS.update(str(m["id"]) for m in msgs if isinstance(m, dict) and m.get("id"))
+        if main:
+            _MAIN_DELETED_AT = time.time()
+        else:
+            _DELETED.add(cid)
+        # 1. Every index, while the message ids are still known.
+        try:
+            from agent_friday.services import conversation_fts
+            out = conversation_fts.drop_conversation(cid, msgs, main=main)
+        except Exception as e:
+            print(f"  [conversations] indexes of {cid} not cleaned: {type(e).__name__}")
+            out = {"vector_rows": 0, "errors": 1}
+        # The record of which replies recalled what keeps no row of this
+        # conversation's own replies (drop_conversation took its message ids).
+        _forget_influence([], session=cid)
+        try:
+            _off.drop(cid)           # this session's off-record rows for it (memory only)
+        except Exception:
+            pass
+        files = left = 0
+        # 2. The files kept beside it (its artifacts).
+        try:
+            from agent_friday.services import artifacts as _art
+            ad = contained(_art._root(), safe_name(cid, what="conversation id"))
+            if ad.exists():
+                n, bad = _clear_tree(ad)
+                files += n
+                left += bad
+                if not bad and not _rmdir(ad):
+                    left += 1
+        except Exception as e:
+            print(f"  [conversations] artifacts of {cid} not removed: {type(e).__name__}")
+            left += 1
+        # 3. The transcript and its folder, the record last.
+        if main:
+            try:
+                _atomic_write(d / "messages.jsonl", "")
+                conv.update({"title": "Main", "pinned": [], "_migrated_legacy": True,
+                             "totals": {"turns": 0, "cost_usd": 0.0, "tokens": 0}})
+                save(conv)
+            except OSError as e:
+                print(f"  [conversations] Main not emptied: {type(e).__name__}")
+                left += 1
+        else:
+            record = d / "conversation.json"
+            n, bad = _clear_tree(d, keep=record)
+            files += n
+            left += bad
+            if not bad:
+                if _unlink(record):
+                    files += 1
+                    if not _rmdir(d):
+                        left += 1
+                else:
+                    left += 1
+    res = {"ok": not left, "messages": len(msgs), "vector_rows": int(out.get("vector_rows") or 0),
+           "files": files, "index_errors": int(out.get("errors") or 0), "leftovers": left}
+    if left:
+        res["error"] = "%d of its files could not be deleted; running it again retries" % left
+    return res
+
+
+def _unlink(p: Path) -> bool:
+    """Delete one file, retrying a moment for a file briefly held open (and
+    clearing a read-only bit). True when it is gone."""
+    import stat
+    for attempt in range(3):
+        try:
+            p.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            try:
+                os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            except OSError:
+                pass
+            time.sleep(0.05 * (attempt + 1))
+    return not p.exists()
+
+
+def _rmdir(p: Path) -> bool:
+    try:
+        p.rmdir()
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
+def _clear_tree(root: Path, keep: Path | None = None) -> tuple[int, int]:
+    """Delete every file under `root` (not `keep`) and the emptied folders
+    below it. A link or junction is removed itself, never followed (as
+    shutil.rmtree does not follow one). Returns (files deleted, files left)."""
+    removed = left = 0
+    try:
+        entries = list(os.scandir(root))
+    except FileNotFoundError:
+        return 0, 0
+    except OSError:
+        return 0, 1
+    for e in entries:
+        p = Path(e.path)
+        if keep is not None and p == keep:
+            continue
+        junction = getattr(os.path, "isjunction", lambda _p: False)(e.path)
+        if e.is_symlink() or junction:
+            try:
+                (os.rmdir if junction or e.is_dir() else os.unlink)(e.path)
+                removed += 1
+            except OSError:
+                left += 1
+        elif e.is_dir(follow_symlinks=False):
+            n, bad = _clear_tree(p)
+            removed += n
+            left += bad
+            if not bad and not _rmdir(p):
+                left += 1
+        elif _unlink(p):
+            removed += 1
+        else:
+            left += 1
+    return removed, left
+
+
+def _reset_for_tests() -> None:
+    global _MAIN_DELETED_AT
+    with _LOCK:
+        _DELETED.clear()
+        _DELETED_MIDS.clear()
+        _MAIN_DELETED_AT = 0.0
 
 
 def prune(cid: str, keep: int = _PRUNE_KEEP) -> int:

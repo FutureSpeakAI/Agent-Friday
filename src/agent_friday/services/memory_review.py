@@ -120,11 +120,14 @@ def every_turns(settings: Optional[dict] = None) -> int:
 
 
 def note_turn(message: str, reply: str, session_key: str, *, start: bool = True,
-              owner: bool = True) -> bool:
+              owner: bool = True, web_sources=()) -> bool:
     """Record one finished exchange; start a review when one is due.
 
     Called at the end of every chat and voice turn (after the reply). Returns
-    True when a review was started."""
+    True when a review was started. `web_sources`: the registered domains of
+    the pages the reply read (services/web_provenance); a suggestion queued
+    from a window that read them carries them, so stopping the site removes
+    it."""
     if not isinstance(message, str) or not message.strip():
         return False
     s = _settings()
@@ -140,8 +143,11 @@ def note_turn(message: str, reply: str, session_key: str, *, start: bool = True,
         while len(_BUFFERS) > MAX_SESSIONS:
             old, _ = _BUFFERS.popitem(last=False)
             _COUNTS.pop(old, None)
-        buf.append({"user": message[:TURN_CHARS], "friday": str(reply or "")[:TURN_CHARS],
-                    "owner": bool(owner)})
+        ex = {"user": message[:TURN_CHARS], "friday": str(reply or "")[:TURN_CHARS], "owner": bool(owner)}
+        web = [str(d) for d in (web_sources or []) if str(d or "").strip()][:12]
+        if web:
+            ex["web_sources"] = web
+        buf.append(ex)
         _COUNTS[key] = _COUNTS.get(key, 0) + 1
         due = _COUNTS[key] % every_turns(s) == 0 and key not in _RUNNING
         if not due:
@@ -239,6 +245,16 @@ def _rests_on_the_user(evidence: str, text: str, window: List[Dict[str, str]]) -
 def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
     """Run one review over `window`. `ask` replaces the model call (tests)."""
     from agent_friday.services import core_memory
+    # An exchange whose reply read a site the owner has since stopped is not
+    # reviewed (services/web_provenance: nothing read there is suggested).
+    # Fails closed: while that cannot be told, no exchange that read the web is.
+    try:
+        from agent_friday.services import web_provenance as _wp
+        window = [ex for ex in window if not _wp.stopped(ex.get("web_sources") or [], fail_closed=True)]
+        web = sorted({d for ex in window for d in _wp.clean(ex.get("web_sources") or [])})
+    except Exception:
+        window = [ex for ex in window if not ex.get("web_sources")]
+        web = []
     if not window:
         return {"ok": True, "added": 0, "queued": 0}
     prompt = _PROMPT.format(card=_render_card(), turns=_render_turns(window))
@@ -281,13 +297,14 @@ def review(window: List[Dict[str, str]], *, ask=None) -> Dict[str, Any]:
                                   reason="The background review suggested this, but it does not "
                                          "rest on your own words in the conversation."
                                   if not on_user else
-                                  "The background review suggested this; the card was full.")
+                                  "The background review suggested this; the card was full.",
+                                  web_sources=() if on_user else web)
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
             dropped += int(bool(r.get("sensitive")))
         for c in plan["change"]:
             target = c.get("target") if c.get("target") in core_memory.TARGETS else "user"
             r = core_memory.queue(target, "replace", old=c.get("old") or "", text=c.get("text") or "",
-                                  source="review", reason=str(c.get("why") or ""))
+                                  source="review", reason=str(c.get("why") or ""), web_sources=web)
             queued += int(bool(r.get("ok") and not r.get("unchanged")))
             dropped += int(bool(r.get("sensitive")))
         for c in plan["remove"]:
@@ -331,6 +348,20 @@ def forget_matching(match) -> int:
         for key, buf in list(_BUFFERS.items()):
             keep = [ex for ex in buf if not (match(str(ex.get("user") or ""))
                                              or match(str(ex.get("friday") or "")))]
+            dropped += len(buf) - len(keep)
+            if len(keep) != len(buf):
+                _BUFFERS[key] = deque(keep, maxlen=WINDOW)
+    return dropped
+
+
+def forget_web_source(on_site) -> int:
+    """Stopping a site (services/forget_kinds): every buffered exchange whose
+    reply read it (``on_site(web_sources)``) leaves the review buffers.
+    Returns how many were dropped."""
+    dropped = 0
+    with _LOCK:
+        for key, buf in list(_BUFFERS.items()):
+            keep = [ex for ex in buf if not (ex.get("web_sources") and on_site(ex.get("web_sources")))]
             dropped += len(buf) - len(keep)
             if len(keep) != len(buf):
                 _BUFFERS[key] = deque(keep, maxlen=WINDOW)

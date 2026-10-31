@@ -152,7 +152,7 @@ ROUTE_MODULES = [
     'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_memory', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'doctor', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'import_staging', 'inbox_cleanup', 'insights',
-    'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
+    'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_forget', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'privacy_map', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
     'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'tasks_inbox', 'todos', 'traces',

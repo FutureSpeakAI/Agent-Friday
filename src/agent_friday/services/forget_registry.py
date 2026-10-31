@@ -108,6 +108,7 @@ KINDS = {
     "laya_personal": "items Laya learned from",
     "meetings": "meeting records",
     "memory_proposals": "memory suggestions",
+    "tombstone_labels": "labels of discarded suggestions",
 }
 
 
@@ -403,6 +404,10 @@ def _ensure_defaults() -> None:
     from agent_friday.services import meeting_capture as _meeting_capture
     register_store("meetings", _meeting_capture.people_find, _meeting_capture.people_purge)
     register_store("memory_proposals", _memory_proposals.people_find, _memory_proposals.people_purge)
+    # A discarded suggestion is listed for the owner by a sealed label (services/tombstones): a label that
+    # names the person goes; its keyed hash, which names nobody, stays and keeps the suggestion blocked.
+    from agent_friday.services import tombstones as _tombstones
+    register_store("tombstone_labels", _tombstones.labels_find, _tombstones.labels_purge)
     # Imported items waiting for the owner's answer (services/import_staging) name people too.
     from agent_friday.services import import_staging as _import_staging
     register_store("import_staging", _import_staging.forget_find, _import_staging.forget_purge)

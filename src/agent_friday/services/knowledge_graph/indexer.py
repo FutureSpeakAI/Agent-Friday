@@ -526,12 +526,24 @@ def _conversation_chunks(limit: int = 400) -> Iterable[dict]:
             continue
         if _quotes_library(content):       # an answer drawn from the Library enters the graph only through the Library source
             continue
+        # A reply that read web pages carries their sites (registered domains,
+        # services/web_provenance); its facts carry them too, so stopping the
+        # site removes them, and a reply from a stopped site is not learned.
+        web = []
+        if t.get("web_sources"):
+            from agent_friday.services import web_provenance as _wp
+            web = _wp.clean(t.get("web_sources"))
+            if _wp.stopped(web, fail_closed=True):       # an unreadable record holds it back
+                continue
         sens = _classify_free_text(content)
         tid = t.get("turn_id") or hashlib.sha1(content.encode()).hexdigest()[:10]
+        prov = {"conversations": [str(tid)], "sensitivity": sens}
+        if web:
+            prov["web_sources"] = web
         out.append({
             "id": f"conv:{tid}", "text": content[:CHUNK_SIZE],
             "sensitivity": sens, "source_path": f"conversation:{tid}",
-            "provenance": {"conversations": [str(tid)], "sensitivity": sens},
+            "provenance": prov,
         })
     return out
 
@@ -1129,6 +1141,20 @@ def reindex_tier_b(store: Optional[KnowledgeGraphStore] = None,
         # Never let this fail an index run -- but say so, because silently
         # re-deriving a deleted person is the failure that matters.
         say(f"forget-list check failed, people may be re-derived: {_fe}")
+
+    # ── entities the owner deleted (services/tombstones, NS-30.20-1) ──
+    # Same place and reason as the forgotten people above: a delta or full
+    # rebuild re-reads the same sources and would write the entity back. Its
+    # edges go in the dangling sweep below. Never fails the run.
+    try:
+        from agent_friday.services import tombstones as _tomb
+        _kept, _dropped = _tomb.filter_entities(entities.values())
+        if _dropped:
+            _ids = {e["id"] for e in _kept}
+            entities = {eid: e for eid, e in entities.items() if eid in _ids}
+            say(f"excluded {_dropped} deleted entit{'y' if _dropped == 1 else 'ies'}")
+    except Exception as _te:
+        say(f"deleted-entity check failed: {type(_te).__name__}")
 
     # drop dangling relationships
     relationships = {rid: r for rid, r in relationships.items()

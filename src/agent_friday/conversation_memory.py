@@ -318,7 +318,7 @@ class ConversationMemory:
 
     # ── writes ───────────────────────────────────────────────────────
     def index(self, text, role, session_id="default", timestamp=None,
-              topic_keywords=None, msg_id=None, rebuild=False):
+              topic_keywords=None, msg_id=None, rebuild=False, web_sources=None):
         """Index a single chat message. Returns the stored id, or None on no-op.
 
         text           the message body
@@ -329,6 +329,9 @@ class ConversationMemory:
         msg_id         stable id for idempotent upserts; uuid when omitted
         rebuild        True from a bulk rebuild from the transcripts: the
                        forgotten-turn check is strict (see below)
+        web_sources    the registered domains of the web pages a reply read
+                       (services/web_provenance), stored as a comma string
+                       so a stopped site's turns can be found
         """
         text = (text or "").strip()
         # A key is withheld before it is embedded, stored as a document,
@@ -354,8 +357,12 @@ class ConversationMemory:
             if rebuild or _fts.rebuild_state() is not None:
                 if _fts.skip_on_rebuild(msg_id):
                     return None
-            elif msg_id and _fts.is_forgotten(msg_id):
-                return None
+            elif msg_id:
+                # One question, one place (services/tombstones): the facade
+                # answers from the same durable list, failing open.
+                from agent_friday.services import tombstones as _tomb
+                if _tomb.is_tombstoned("conversation_turn", msg_id):
+                    return None
         except Exception as e:
             if rebuild:
                 print(f"  [MEMORY] forgotten-turn check failed during a rebuild (turn skipped): {type(e).__name__}")
@@ -390,6 +397,11 @@ class ConversationMemory:
                 "topic_keywords": kw_str,
                 "char_len": len(text),
             }
+            if web_sources:
+                from agent_friday.services import web_provenance as _wp
+                _web = _wp.clean(web_sources)
+                if _web:
+                    metadata["web_sources"] = ",".join(_web)
             # The user's turn was embedded once for the turn (services/
             # turn_vector); store that vector rather than embedding the same
             # words again. Only for a message that fits in 256 tokens (where it
@@ -417,7 +429,7 @@ class ConversationMemory:
             return None
 
     def index_exchange(self, user_text, assistant_text, session_id="default",
-                       user_msg_id=None, assistant_msg_id=None):
+                       user_msg_id=None, assistant_msg_id=None, assistant_web_sources=None):
         """Convenience: index a user turn and the assistant reply together.
 
         Shared topic keywords (extracted from the combined text) are attached to
@@ -438,7 +450,8 @@ class ConversationMemory:
         if uid:
             ids.append(uid)
         aid = self.index(assistant_text, "friday", session_id=session_id,
-                         topic_keywords=shared_kw, msg_id=assistant_msg_id)
+                         topic_keywords=shared_kw, msg_id=assistant_msg_id,
+                         web_sources=assistant_web_sources)
         if aid:
             ids.append(aid)
         return ids
@@ -911,6 +924,29 @@ class ConversationMemory:
                             or meta.get("session_id")})
         return out
 
+    def with_web_sources(self, predicate):
+        """Every stored turn whose recorded sites (metadata ``web_sources``,
+        registered domains) `predicate` accepts, as [{id, text, date}]; None
+        when the store cannot be read. For stopping a site
+        (services/forget_kinds), which then takes them out."""
+        if not self._ensure():
+            return None
+        try:
+            with self._lock:
+                res = self._collection.get(include=["documents", "metadatas"])
+        except Exception as e:
+            print(f"  [MEMORY] web-source lookup failed (non-fatal): {e}")
+            return None
+        out = []
+        for did, doc, meta in zip(res.get("ids") or [], res.get("documents") or [],
+                                  res.get("metadatas") or []):
+            meta = meta or {}
+            web = [d for d in str(meta.get("web_sources") or "").split(",") if d]
+            if web and predicate(web):
+                out.append({"id": did, "text": doc or "",
+                            "date": meta.get("date") or str(meta.get("timestamp") or "")[:10]})
+        return out
+
     def get_session(self, session_id, limit=500):
         """Return every stored turn for one conversation, oldest-first.
 
@@ -993,6 +1029,9 @@ class ConversationMemory:
                     # of what was said survives; only its authority is gone.
                     "superseded": str(meta.get(_SUPERSEDED_KEY) or "") == "1",
                     "superseded_reason": meta.get(_SUPERSEDED_REASON) or "",
+                    # The sites a reply read (registered domains), for the
+                    # graph and the proposals that learn from it.
+                    "web_sources": [d for d in str(meta.get("web_sources") or "").split(",") if d],
                 })
             rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
             return rows[:max(0, int(n))]

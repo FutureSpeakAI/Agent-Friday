@@ -2627,11 +2627,12 @@ def _current_session_id():
 
 
 def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
-                     owner=True):
+                     owner=True, web_sources=None):
     """The end of a chat or voice turn: index it, then let the turn's one
     embedding of the message go (services/turn_vector)."""
     try:
-        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner)
+        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner,
+                              web_sources=web_sources)
     finally:
         try:
             from agent_friday.services import turn_vector as _tv
@@ -2640,8 +2641,18 @@ def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id
             pass
 
 
+def _turn_deleted(user_msg_id, friday_msg_id) -> bool:
+    """Either message of the turn belongs to a conversation the owner deleted
+    (services/conversations keeps their ids for this process)."""
+    try:
+        from agent_friday.services import conversations as _cv
+        return _cv.message_deleted(user_msg_id) or _cv.message_deleted(friday_msg_id)
+    except Exception:
+        return False
+
+
 def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
-                          owner=True):
+                          owner=True, web_sources=None):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
@@ -2672,6 +2683,36 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
             # Never index (or review) a Library answer's words un-elided.
             print(f"  [MEMORY] turn indexing skipped: {_le}")
             return
+    # The sites the reply read (services/web_provenance: registered domains
+    # only). A reply that read a site the owner stopped is not remembered:
+    # it enters the index as a stand-in line (the question is kept, the
+    # reply's words are not), the review sees the stand-in, and its message
+    # id joins the durable forgotten list, so conversation search and every
+    # later rebuild leave it out. The transcript keeps the reply.
+    # A conversation the owner deleted while this reply was being written:
+    # nothing of the turn is indexed or reviewed (services/conversations).
+    if _turn_deleted(user_msg_id, friday_msg_id):
+        return
+    # The check fails closed: while the stopped-sites record cannot be read,
+    # a reply that read the web is remembered only as the stand-in.
+    web_sources = list(web_sources or [])
+    try:
+        from agent_friday.services import web_provenance as _wp
+        web_sources = _wp.clean(web_sources)
+        if _wp.stopped(web_sources, fail_closed=True):
+            reply, web_sources = _wp.STOPPED_STANDIN, []
+            if friday_msg_id:
+                from agent_friday.services import conversation_fts as _fts
+                _fts.forget_turns(lambda _t: False, mids=[str(friday_msg_id)])
+    except Exception as _we:
+        print(f"  [MEMORY] the stopped-site check failed (reply not remembered): {type(_we).__name__}")
+        if web_sources:
+            try:
+                from agent_friday.services import web_provenance as _wp
+                reply = _wp.STOPPED_STANDIN
+            except Exception:
+                return
+            web_sources = []
     # What Friday recalled this turn is not new: fenced spans go, and so do the
     # reply's sentences that only repeat a recalled excerpt (services/
     # memory_fence), before the index or the review sees the exchange.
@@ -2687,14 +2728,17 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
     try:
         from agent_friday.services import memory_review as _mreview
         # `owner`: the user side is the owner's own words (False for voice).
-        _mreview.note_turn(message, reply, session_id, owner=owner)
+        _mreview.note_turn(message, reply, session_id, owner=owner, web_sources=web_sources)
     except Exception:
         pass
     try:
+        if _turn_deleted(user_msg_id, friday_msg_id):      # deleted meanwhile
+            return
         mem = _get_conversation_memory()
         mem.index_exchange(
             message, reply, session_id=session_id,
             user_msg_id=user_msg_id, assistant_msg_id=friday_msg_id,
+            assistant_web_sources=web_sources,
         )
     except Exception as _me:
         print(f"  [MEMORY] turn indexing skipped: {_me}")

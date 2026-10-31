@@ -747,6 +747,18 @@ def _settle_accepted_turn():
             break
 
 
+def _turn_web_sources(tool_trace, cid, settings):
+    """The registered domains of the web pages this turn read (its tool trace
+    and what the web tools noted for this conversation), for the reply's
+    provenance (services/web_provenance). None off the record."""
+    try:
+        from agent_friday.services import web_provenance as _wp
+        out = _wp.turn_sources(tool_trace, cid)
+        return [] if (settings or {}).get('off_record') else out
+    except Exception:
+        return []
+
+
 def _persist_turn(cid, user_msg, friday_msg, meta=None):
     """Write a completed exchange to its conversation (and the legacy mirror).
 
@@ -3376,6 +3388,7 @@ def chat():
             _seat_model = (_route_info.get('model')
                            or settings.get('orchestrator_model') or '')
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
+        _web_sources = _turn_web_sources(tool_trace, _conversation_id, settings)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -3388,6 +3401,8 @@ def chat():
             'seat': _seat_class,
             'library': _lib_turn,
         }
+        if _web_sources:
+            friday_msg['web_sources'] = _web_sources
         if _lib_turn:
             _library_cite.remember_library_reply(reply)
         if _seat_notice:
@@ -3408,7 +3423,8 @@ def chat():
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class,
                             'note_saved': _note_saved,
-                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
+                            **({'receipts': _receipts_kept} if _receipts_kept else {}),
+                            **({'web_sources': _web_sources} if _web_sources else {})})
         _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
                           _route_info, locals().get('_conv_seat'))
 
@@ -3462,6 +3478,7 @@ def chat():
                 threading.Thread(
                     target=_index_chat_turn,
                     args=(message, reply, session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
+                    kwargs={'web_sources': _web_sources},
                     daemon=True,
                 ).start()
             except Exception:
@@ -4219,6 +4236,7 @@ def chat_send():
             except Exception:
                 pass
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
+        _web_sources = _turn_web_sources(tool_trace, _conversation_id, settings)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -4231,6 +4249,8 @@ def chat_send():
             'seat': _seat_class,
             'library': _lib_turn,
         }
+        if _web_sources:
+            friday_msg['web_sources'] = _web_sources
         if _lib_turn:
             _library_cite.remember_library_reply(reply)
         if _fallback_chain:
@@ -4250,7 +4270,8 @@ def chat_send():
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class,
                             'note_saved': _note_saved,
-                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
+                            **({'receipts': _receipts_kept} if _receipts_kept else {}),
+                            **({'web_sources': _web_sources} if _web_sources else {})})
         _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
                           None, {'model': _conv_seat_model} if (_conv_seat_model or '').strip() else None)
 
@@ -4267,6 +4288,7 @@ def chat_send():
                 threading.Thread(
                     target=_index_chat_turn,
                     args=(message, reply, _session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
+                    kwargs={'web_sources': _web_sources},
                     daemon=True,
                 ).start()
             except Exception:

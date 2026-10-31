@@ -186,6 +186,13 @@ def recalled(cid: str) -> list:
         return list(_MEMORY.get(str(cid), []))
 
 
+def drop(cid: str) -> int:
+    """A conversation the owner deleted: this session's off-record rows for it
+    go too. Returns how many."""
+    with _LOCK:
+        return len(_MEMORY.pop(str(cid), []) or [])
+
+
 def on_end(fn) -> None:
     """Register a store's own "forget everything" for `end()`."""
     if fn not in _END_HOOKS:
