@@ -134,6 +134,13 @@ def reconcile_at_boot(started_at: Optional[float] = None, *, announce: bool = Tr
         for c in found:
             # consumed stays True: a card whose action may have happened can
             # never authorise it a second time.
+            # BD-16 / NS-32.11-1: the signed recovery receipt first (one per interruption,
+            # never a second if Friday stops before the card below is marked).
+            try:
+                from agent_friday.services import recovery_receipts
+                recovery_receipts.card_interrupted(c)
+            except Exception as _rr:
+                _log.warning("recovery receipt failed: %s", type(_rr).__name__)
             rec = approvals._patch(c["approval_id"], outcome="unknown", outcome_note=NOTE,
                                    outcome_found_at=time.time(), consumed=True)
             if rec is not None:
