@@ -10,8 +10,12 @@ from agent_friday.paths import friday_home
 
 
 def _press():
+    """A press from Friday's own page on this PC: with this launch's desk key
+    (services/desk_press), as the page sends it."""
     from agent_friday.core import _current_api_token
-    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": _current_api_token()}
+    from agent_friday.services import desk_press
+    return {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost", "X-Friday-Token": _current_api_token(),
+            "X-Friday-Desk": desk_press._KEY}
 
 
 def test_resume_waits_for_what_is_missing_and_says_what(client, monkeypatch):
