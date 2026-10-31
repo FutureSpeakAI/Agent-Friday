@@ -2006,8 +2006,26 @@ def _summarize_multi_account_errors(result):
         aid = e.get("account_id")
         entry = by_id.setdefault(aid, {"label": e.get("label"), "email": None,
                                        "status": "connected", "error": None})
+        if e.get("partial"):
+            # Read, but not all of it (more than one page held, a few items unreadable):
+            # what it returned is real, and the answer must say it is not everything.
+            if entry["status"] != "error":
+                entry["status"] = "partial"
+                entry["error"] = "; ".join(x for x in (entry.get("error"), e.get("error")) if x)
+                if e.get("estimate"):
+                    entry["estimate"] = e.get("estimate")
+            continue
         entry["status"] = "error"
         entry["error"] = e.get("error")
+    for e in (result.get("incomplete") or []):
+        # Read in part: more than was fetched. What it returned is real; it is not everything.
+        entry = by_id.setdefault(e.get("account_id"), {"label": e.get("label"), "email": None,
+                                                       "status": "connected", "error": None})
+        if entry["status"] not in ("error", "needs_reauth"):
+            entry["status"] = "partial"
+            entry["error"] = "; ".join(x for x in (entry.get("error"), e.get("why")) if x)
+            if e.get("estimated_total"):
+                entry["estimated_total"] = e.get("estimated_total")
     return list(by_id.values())
 
 
@@ -2036,6 +2054,34 @@ def _with_receipt(res, receipt):
         if receipt.get("undo"):
             head["undo"] = "Say \u201cundo that\u201d to put it back (it asks first)."
     return dict(head, **{k: v for k, v in res.items() if k not in ("undo_before", "receipt_id", "undo")})
+
+
+def _mark_partial(payload, accounts_status, what):
+    """A multi-account answer that is not everything says so (NS-34.11-1): accounts that
+    could not be read beside ones that could, and accounts read only in part (more than
+    was fetched, some items unreadable). An answer with either is never a complete total."""
+    errored = [a for a in accounts_status if a["status"] in ("error", "needs_reauth")]
+    partly = [a for a in accounts_status if a["status"] == "partial"]
+    read = [a for a in accounts_status if a["status"] not in ("error", "needs_reauth")]
+    if errored and read:
+        # Some accounts failed: an error the owner hears about (as before).
+        payload["partial"] = True
+        payload["not_searched"] = [{"account": a.get("label"), "reason": a.get("error")} for a in errored]
+        payload["error"] = ("This %s answer covers only %d of %d accounts (%s could not be read). "
+                            "Do not present it as a complete answer."
+                            % (what, len(read), len(accounts_status),
+                               ", ".join(str(a.get("label")) for a in errored)))
+    if partly:
+        # Read in part (more than was fetched): not a failure, but never a total.
+        payload["incomplete"] = [{"account": a.get("label"), "reason": a.get("error"),
+                                  **({"estimated_total": a["estimated_total"]}
+                                     if a.get("estimated_total") else {})} for a in partly]
+        payload["incomplete_note"] = (
+            "Not everything was read for %s (%s). Say there may be more; do not present this as "
+            "all of them or the count as a total." % (
+                ", ".join(str(a.get("label")) for a in partly),
+                "; ".join(str(a.get("error")) for a in partly)))
+    return payload
 
 
 def _calendar_write_summary(res, what, change=True):
@@ -2429,7 +2475,8 @@ def _tool_query_calendar(_inp):
     if day is not None:
         events = [ev for ev in events if _event_on(ev, day)]
     out = []
-    for ev in events[:20]:
+    shown = 20
+    for ev in events[:shown]:
         out.append({
             "title": ev.get("title"),
             "start": ev.get("start_time"),
@@ -2444,6 +2491,14 @@ def _tool_query_calendar(_inp):
         "count": len(out),
         "events": out,
     }
+    if len(events) > shown:
+        # Never a silent cut: the rest of the day is not "free".
+        payload["truncated"] = True
+        payload["total"] = len(events)
+        payload["truncated_note"] = ("Showing the first %d of %d events. Do not say a later time "
+                                     "is free; ask about one day or a narrower time to see the rest."
+                                     % (shown, len(events)))
+    _mark_partial(payload, accounts_status, "calendar")
     # needs_reauth accounts are seeded into accounts_status by
     # _summarize_multi_account_errors but carry that status, not "error",
     # so filtering on "error" alone silently drops exactly the broken ones.
@@ -2684,16 +2739,7 @@ def _tool_search_email(inp):
         # A PARTIAL RESULT IS NOT A COMPLETE ONE. `_google_note` only speaks
         # up when there are no items at all, so one dead account beside one
         # working account used to report a confident total for both.
-        if errored:
-            payload["partial"] = True
-            payload["not_searched"] = [
-                {"account": a.get("label"), "reason": a.get("error")}
-                for a in errored]
-            payload["error"] = (
-                "This count covers only %d of %d accounts - %s could not be "
-                "searched. Do not present it as a complete answer."
-                % (len(searched), len(accounts_status),
-                   ", ".join(str(a.get("label")) for a in errored)))
+        _mark_partial(payload, accounts_status, "Gmail")
         note = _google_note(summary, "Gmail", errored, not cards)
         if note:
             payload["note"] = note
@@ -2774,6 +2820,7 @@ def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, 
         "count": len(items),
         item_key: items,
     }
+    _mark_partial(payload, accounts_status, has_accounts_note_what)
     # needs_reauth accounts are seeded into accounts_status by
     # _summarize_multi_account_errors but carry that status, not "error",
     # so filtering on "error" alone silently drops exactly the broken ones.
@@ -16354,6 +16401,25 @@ def _save_mcp_servers(cfg: dict) -> dict:
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
     if "servers" not in cfg:
         cfg = {"servers": cfg}
+    # A25: a connector server new in this save runs in Windows' isolated mode unless
+    # it says otherwise. Every writer of this file comes through here.
+    old_unreadable = False
+    try:
+        old = json.loads(MCP_SERVERS_FILE.read_text(encoding="utf-8-sig")) \
+            if MCP_SERVERS_FILE.exists() else {"servers": {}}
+    except Exception:
+        # Unreadable on disk: the servers running now are the ones that existed.
+        old_unreadable = True
+        mgr = _MCP_MANAGER
+        old = {"servers": {n: {} for n in (getattr(mgr, "servers", None) or {})}} if mgr else None
+    from agent_friday.services import connector_isolation as _ci
+    if old is not None:
+        cfg = _ci.apply_default(cfg, old)
+    # Owner ruling 4: a save that takes a connector out of isolation writes a signed
+    # connector_run_unisolated entry first; if it cannot be written, nothing is saved.
+    # With the old file unreadable, every connector that would run un-isolated is
+    # written (nothing is known about before).
+    _ci.record_turned_off(cfg, old, old_unreadable=old_unreadable)
     try:
         from agent_friday.services import connector_secrets as _cse
         cfg = _cse.encrypt_config(cfg)
@@ -16364,7 +16430,11 @@ def _save_mcp_servers(cfg: dict) -> dict:
         raise RuntimeError(
             "refusing to save connector config: credentials could not be "
             f"encrypted ({_e})") from _e
-    MCP_SERVERS_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    # Written whole and then moved into place: a save reading it meanwhile never sees
+    # half a file (which it would take for unreadable).
+    _tmp = MCP_SERVERS_FILE.with_name(MCP_SERVERS_FILE.name + ".tmp")
+    _tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    os.replace(_tmp, MCP_SERVERS_FILE)
     try:
         from agent_friday.services import credential_store as _cs
         _cs.harden_permissions(MCP_SERVERS_FILE)
@@ -16772,6 +16842,13 @@ def _mcp_boot() -> None:
         mgr = _MCPManager(log=lambda m: print(f"  {m}"))
         mgr.load_config(cfg)
         _MCP_MANAGER = mgr
+        # A25: connectors added before isolation became the default are offered it
+        # once, by a card; nothing is switched without the owner's answer.
+        try:
+            from agent_friday.services import connector_isolation as _ci
+            _ci.offer_existing((cfg or {}).get("servers") or {})
+        except Exception as _ci_err:  # noqa: BLE001
+            print(f"  [mcp] isolation offer skipped: {_ci_err}")
         # Non-blocking: each server starts in its own thread; tools register via
         # the on_ready callback as each handshake completes.
         mgr.start_all(on_ready=_mcp_register_server_tools)
