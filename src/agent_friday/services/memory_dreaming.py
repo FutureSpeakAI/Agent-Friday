@@ -141,7 +141,19 @@ def dream(day: Optional[str] = None, *, memory=None) -> Dict[str, Any]:
 
         topics = _extract_topics(turns)
         facts = _mine_facts(turns)
+        try:
+            # The encoder sentence reader: shadow log, or pending proposals the
+            # owner reviews. It never feeds `facts`, so nothing below changes.
+            from agent_friday.services import triage_heads
+            triage_heads.memory_pass(turns, day, facts)
+        except Exception:
+            pass
         pruned = _count_noise(turns)
+        # NS-15.4-3: a regex is inferring. A sentence or topic that touches a
+        # special category (health, sexuality, politics, religion, ...) is
+        # dropped here, so it is neither queued nor written to dreams.db or
+        # the day's markdown; only a count by category is kept.
+        facts, topics = _drop_special(facts, topics)
 
         # A regex over yesterday's turns is not a review. Nothing it finds is
         # written into what Friday knows (the user model, the knowledge graph):
@@ -293,6 +305,30 @@ def _mine_facts(turns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return facts[:20]
 
 
+def _drop_special(facts: List[Dict[str, Any]], topics: List[Dict[str, Any]]):
+    """Facts and topics less those that touch a special category
+    (services/sensitive_categories). Dropped items are counted, not kept."""
+    try:
+        from agent_friday.services import sensitive_categories as _sc
+    except Exception:
+        return [], []                       # cannot check: keep nothing inferred
+    kept_facts = []
+    for f in facts:
+        cat = _sc.special_category(f.get("text"))
+        if cat:
+            _sc.note_dropped("dreaming.fact", cat)
+            continue
+        kept_facts.append(f)
+    kept_topics = []
+    for t in topics:
+        cat = _sc.special_category(t.get("topic"))
+        if cat:
+            _sc.note_dropped("dreaming.topic", cat)
+            continue
+        kept_topics.append(t)
+    return kept_facts, kept_topics
+
+
 def _count_noise(turns: List[Dict[str, Any]]) -> int:
     n = 0
     for t in turns:
@@ -357,7 +393,8 @@ def _write_atomic(path: Path, text: str) -> None:
 
 def _write_markdown(day, n_turns, topics, consolidated, pruned, summary) -> None:
     try:
-        _write_atomic(DREAMS_DIR / f"{day}.md",
+        from agent_friday.paths import contained
+        _write_atomic(contained(DREAMS_DIR, f"{day}.md"),
                       _render_markdown(day, n_turns, topics, consolidated, pruned, summary))
     except Exception:
         pass
@@ -430,7 +467,9 @@ def forget_matching(match, keyword=None, apply: bool = True) -> Dict[str, Any]:
                 conn.close()
         for day, tr, keep_t, keep_f, pr, summary in redo:
             try:
-                _write_atomic(DREAMS_DIR / f"{day}.md", _render_markdown(day, tr, keep_t, keep_f, pr, summary))
+                from agent_friday.paths import contained
+                _write_atomic(contained(DREAMS_DIR, f"{day}.md"),
+                              _render_markdown(day, tr, keep_t, keep_f, pr, summary))
             except Exception as e:
                 out["not_removable"].append(failed(day, e))
     if DREAMS_DIR.exists():

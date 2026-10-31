@@ -147,6 +147,73 @@ LOCAL_MODES = frozenset({"local_preferred", "local_only", "smart"})
 _LOCAL_ONLY_OK = frozenset({"user_explicit", "scheduled_cloud"})
 
 
+#: The mode a NoCloudIntent names when no route is picked yet (A16a).
+ROUTE_NOT_CHOSEN = "route_not_chosen"
+
+#: What Friday says when no route is picked yet: nothing goes to the cloud, and
+#: the person is asked to choose (north-star A16a).
+ROUTE_NOT_CHOSEN_TEXT = (
+    "You haven't chosen where I think yet, so I work only on this computer and "
+    "nothing goes to the cloud, even with a key entered. Choose where I think: on "
+    "this computer, in the cloud, or both (Settings > Models).")
+
+
+def route_unpicked() -> bool:
+    """True on a new install whose owner has not picked a route (A16a): no
+    cloud call at all until they do. core.route_pick_pending keeps a new
+    install local-only when its own check faults; an existing install is
+    never changed by a fault."""
+    try:
+        from agent_friday import core
+        return bool(core.route_pick_pending())
+    except Exception:
+        return False
+
+
+#: What Friday says when web search, reading a web page or an add-on connector
+#: is held because no route is picked yet (A16a, owner ruling 2026-10-21).
+ROUTE_NOT_CHOSEN_WEB_TEXT = (
+    "You haven't chosen where I think yet, so I stay on this computer: no cloud AI, "
+    "no web search or web pages, and no add-on connectors. Choose where I think: on "
+    "this computer, in the cloud, or both (Settings > Models).")
+
+#: The kinds of outbound use A16a holds besides cloud AI.
+HELD_KINDS = ("web_search", "web_fetch", "connector")
+
+
+class RouteNotChosen(RuntimeError):
+    """Web search, a web page or an add-on connector was asked for before the
+    owner chose where Friday thinks (A16a). ``str()`` is the sentence to show."""
+
+    def __init__(self, kind: str = "", what: str = ""):
+        self.kind = str(kind or "")
+        self.what = str(what or "")
+        super().__init__(ROUTE_NOT_CHOSEN_WEB_TEXT)
+
+
+def outbound_held(kind: str, what: str = "") -> str:
+    """The refusal sentence when `kind` (one of HELD_KINDS) must not go out
+    because no route is picked yet, else "". Never raises."""
+    try:
+        if route_unpicked():
+            try:
+                import logging
+                logging.getLogger("friday.cloud_intent").debug(
+                    "A16a: %s held before a route was chosen (%s)", kind, str(what)[:80])
+            except Exception:
+                pass
+            return ROUTE_NOT_CHOSEN_WEB_TEXT
+    except Exception:
+        pass
+    return ""
+
+
+def hold_outbound(kind: str, what: str = "") -> None:
+    """Raise RouteNotChosen when `kind` must not go out yet (A16a)."""
+    if outbound_held(kind, what):
+        raise RouteNotChosen(kind, what)
+
+
 class NoCloudIntent(RuntimeError):
     """A cloud transport was called in a local mode with no recorded intent."""
 
@@ -155,6 +222,10 @@ class NoCloudIntent(RuntimeError):
         self.purpose = str(purpose or "")
         self.model = str(model or "")
         self.mode = str(mode or "")
+        if self.mode == ROUTE_NOT_CHOSEN:
+            super().__init__(ROUTE_NOT_CHOSEN_TEXT + " Nothing was sent to %s." % (
+                self.provider or "a cloud model"))
+            return
         super().__init__(
             "Friday is in %s mode, so nothing goes to %s%s (%s) unless you ask "
             "for it. Nothing was sent." % (
@@ -413,12 +484,25 @@ def _chosen_mode():
     return str((mr or {}).get(MODE_CHOSEN_KEY) or "") if isinstance(mr, dict) else ""
 
 
+def _chosen_via() -> str:
+    from agent_friday import core
+    raw = core._load_settings_raw() or {}
+    mr = raw.get("model_routing")
+    return str((mr or {}).get("mode_chosen_via") or "") if isinstance(mr, dict) else ""
+
+
 def mode_was_chosen(mode=None) -> bool:
     """True when the owner chose ``mode`` (default: the stored mode) through an
-    owner routing change. A blank mode is never chosen; any fault is "no"."""
+    owner routing change. A blank mode is never chosen; any fault is "no".
+
+    A route the terminal setup kept without asking (``mode_chosen_via``
+    "kept", core.ROUTE_KEPT_VIA) is not a choice (north-star A16): Settings
+    says "not chosen yet", so routine jobs are not released by it either."""
     try:
         stored = _stored_mode() if mode is None else mode
         if not str(stored or "").strip():
+            return False
+        if _chosen_via() == "kept":
             return False
         chosen = str(_chosen_mode() or "").strip()
         return bool(chosen) and normalize_mode(chosen) == normalize_mode(stored)
@@ -485,6 +569,8 @@ def allows(mode: str, intent: Intent | None) -> bool:
     """Does ``intent`` open the cloud in ``mode``?"""
     if intent is None:
         return False
+    if route_unpicked():
+        return False                      # A16a: not even a confirmed one-turn ask
     mode = str(mode or "").lower()
     if mode == "local_only":
         if intent.intent not in _LOCAL_ONLY_OK:
@@ -602,6 +688,9 @@ def background_route(job, *, local_serving=None, mode=None) -> BackgroundRoute:
     if serving:
         return BackgroundRoute("local", "a local model is serving", m,
                                local_model=serving if isinstance(serving, str) else "")
+    if covered and route_unpicked():
+        # A16a: no route chosen yet, so an allowed job is held, not sent.
+        covered = False
     if covered and cfg.get("allow"):
         if not model:
             return BackgroundRoute(
@@ -677,6 +766,10 @@ def pinned_job_route(model, *, local_serving=None, cloud_ready=None) -> Backgrou
         return BackgroundRoute(
             "held", "its pinned local model %s is not serving on this computer. It was not "
             "moved to another model" % model, m)
+    if route_unpicked():
+        return BackgroundRoute(
+            "held", "it is pinned to the cloud model %s and you have not chosen where Friday "
+            "thinks yet, so nothing goes to the cloud (Settings > Models)" % model, m)
     ready, why = (cloud_ready(model) if cloud_ready is not None else _cloud_model_ready(model))
     if ready:
         return BackgroundRoute("cloud", "pinned by you to the cloud model %s" % model, m, model)
@@ -688,6 +781,8 @@ def pinned_job_route(model, *, local_serving=None, cloud_ready=None) -> Backgrou
 def opens_cloud(mode: str | None = None) -> bool:
     """True when this context may call the cloud in ``mode``: it carries an intent
     that opens that mode, or the run is a job the owner pinned to a cloud model."""
+    if route_unpicked():
+        return False
     m = mode if mode is not None else routing_mode()
     return bool(_pin()) or allows(m, current())
 
@@ -783,6 +878,19 @@ def require(provider, purpose: str, model: str = "", *, base_url=None) -> CloudT
     purpose = str(purpose or "model call")
     if _is_local(provider, model, base_url):
         return CloudToken("local", name, purpose, model, "", "")
+    # Safe mode (services/safe_mode.py): no cloud at all, whatever the mode or
+    # the turn's intent.
+    from agent_friday.services import safe_mode as _sm
+    if not _sm.allows("cloud"):
+        _log.warning("refused a cloud call in safe mode: %s -> %s (%s)", purpose, name, model)
+        raise NoCloudIntent(name, purpose, model, "safe_mode")
+    if route_unpicked():
+        # A16a: no route picked yet, so nothing reaches the cloud: not a pinned
+        # job, not an intent, not a confirmed one-turn ask.
+        # Fixed text only: the caller's arguments can carry key-check
+        # material, and this line must never log it.
+        _log.warning("refused a cloud call before a route was chosen (A16a)")
+        raise NoCloudIntent(name, purpose, model, ROUTE_NOT_CHOSEN)
     mode = routing_mode()
     cur = current()
     if _pin():

@@ -1,0 +1,253 @@
+{
+ "id": "triage-eval-mail-v1",
+ "note": "Synthetic. rules is the ruleset the incumbent runs with; rule_hit items must keep the rule's lane.",
+ "rules": {
+  "lanes": [
+   {
+    "id": "finance",
+    "keywords": [
+     "invoice",
+     "statement"
+    ]
+   },
+   {
+    "id": "career",
+    "keywords": [
+     "interview"
+    ]
+   },
+   {
+    "id": "family",
+    "keywords": [
+     "grandma"
+    ]
+   }
+  ]
+ },
+ "items": [
+  {
+   "sender": "x@example.com",
+   "subject": "Can we talk about the opening on your team",
+   "snippet": "A friend referred me and I would love a short call about the role",
+   "label": "career",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Next steps after your onsite",
+   "snippet": "We enjoyed meeting you and the panel will decide this week on the position",
+   "label": "career",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "New roles that fit your background",
+   "snippet": "Three companies are hiring people with your experience right now",
+   "label": "career",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Reference request for a candidate",
+   "snippet": "Could you vouch for her work when the hiring committee calls",
+   "label": "career",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Your card was charged twice",
+   "snippet": "We noticed two identical charges on your account yesterday",
+   "label": "finance",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Quarterly estimated payment reminder",
+   "snippet": "Your estimated tax payment is coming due soon, here is the amount",
+   "label": "finance",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Loan application update",
+   "snippet": "The lender needs one more pay document before approving the loan",
+   "label": "finance",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Refund issued to your account",
+   "snippet": "We returned the money for the cancelled order to your original payment method",
+   "label": "finance",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Sprint demo moved to Wednesday",
+   "snippet": "The team will walk through the new feature and collect client comments",
+   "label": "futurespeak",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Blocker on the deployment",
+   "snippet": "The staging pipeline is broken and the release is waiting on a fix",
+   "label": "futurespeak",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Feedback needed on the mockups",
+   "snippet": "Please look over the three layouts and pick a direction before the review",
+   "label": "futurespeak",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Scope change request from the client",
+   "snippet": "They want two extra reports added to the deliverable, can you approve",
+   "label": "futurespeak",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Are you free for lunch on Saturday",
+   "snippet": "We are thinking of the park near the lake, bring the kids",
+   "label": "family",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Your cousin's wedding details",
+   "snippet": "The ceremony is at four and the family dinner follows, here is the address",
+   "label": "family",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Thanks for the lovely visit",
+   "snippet": "It was so good to see everyone over the weekend, safe travels home",
+   "label": "family",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Soccer practice cancelled tonight",
+   "snippet": "The coach says the field is flooded so no practice for the kids",
+   "label": "family",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Fresh picks from our editors this week",
+   "snippet": "Seven articles we think you will enjoy, plus a puzzle",
+   "label": "subscriptions",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Your plan renews on the first",
+   "snippet": "No action needed, your membership will continue at the same price",
+   "label": "subscriptions",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Exclusive early access to the spring collection",
+   "snippet": "Members get first look and free shipping on every order",
+   "label": "subscriptions",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "The monthly digest is ready",
+   "snippet": "Highlights from the community and the most read stories",
+   "label": "subscriptions",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Confirm your new password",
+   "snippet": "Click the button to finish resetting the password on your account",
+   "label": "noise",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Your ride receipt",
+   "snippet": "Thanks for riding, the trip took eleven minutes",
+   "label": "noise",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "We saw you left something in your cart",
+   "snippet": "The items are still waiting for you if you change your mind",
+   "label": "noise",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Tell us what you thought",
+   "snippet": "Take our two minute survey about your last visit",
+   "label": "noise",
+   "rule_hit": false
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Invoice 3302 attached",
+   "snippet": "Please find the invoice for last month",
+   "label": "finance",
+   "rule_hit": true
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Your statement is ready",
+   "snippet": "Download the statement from the portal",
+   "label": "finance",
+   "rule_hit": true
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Interview schedule for Tuesday",
+   "snippet": "We have set aside an hour with the team",
+   "label": "career",
+   "rule_hit": true
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Interview feedback",
+   "snippet": "The panel liked your answers",
+   "label": "career",
+   "rule_hit": true
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Grandma's recipe",
+   "snippet": "I found the card she wrote out for us",
+   "label": "family",
+   "rule_hit": true
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Grandma is feeling better",
+   "snippet": "She was home from the hospital this morning",
+   "label": "family",
+   "rule_hit": true
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Invoice for the conference table",
+   "snippet": "The projects team ordered it last week",
+   "label": "futurespeak",
+   "rule_hit": true
+  },
+  {
+   "sender": "x@example.com",
+   "subject": "Grandma's photos are in the shared album",
+   "snippet": "Newsletter edition with family photos",
+   "label": "subscriptions",
+   "rule_hit": true
+  }
+ ]
+}

@@ -373,10 +373,12 @@ def relationships_follow_up_done(fid):
 
 @contacts_bp.route('/api/contacts/import/linkedin', methods=['POST'])
 def contacts_import_linkedin():
-    """Import LinkedIn's Connections.csv. The file is data, read as text only."""
+    """Import LinkedIn's Connections.csv into staging for review (nothing is saved until the
+    owner accepts it: services/import_staging). {preview: true} only counts what the file holds.
+    The file is data, read as text only."""
     from agent_friday.services import relationship_memory as rm
     data = request.get_json(silent=True) or {}
-    res = rm.import_linkedin_csv(data.get('csv'))
+    res = rm.import_linkedin_csv(data.get('csv'), preview=bool(data.get('preview')))
     if not res.get("ok"):
         return jsonify({"status": "error", "message": res.get("error")}), 400
     return jsonify({"status": "ok", "result": res})

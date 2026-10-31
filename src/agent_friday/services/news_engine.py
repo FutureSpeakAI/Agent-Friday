@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import json
 import glob
@@ -565,6 +565,19 @@ def _normalize_entry(entry):
     return {"title": title, "snippet": snippet, "url": link, "source": domain, "ts": ts}
 
 
+def _record_feed(url, result):
+    """A feed request in the egress ledger and on the privacy map (§26.7): the
+    address (which can carry your area, for Google News) went to that site."""
+    try:
+        from urllib.parse import urlparse
+        from agent_friday.services import egress_gate as _eg
+        host = urlparse(str(url or "")).hostname or "a news site"
+        _eg.record_service_send("news_feed", ("feed:" + host)[:80], destination=host,
+                                content={"url": url}, result=result, part="address")
+    except Exception:
+        pass
+
+
 def _parse_feed(url, limit=12, timeout=None):
     """Fetch+parse one RSS feed into normalized entries, with TTL caching.
 
@@ -584,6 +597,10 @@ def _parse_feed(url, limit=12, timeout=None):
         hit = _RSS_CACHE.get(url)
         if hit and (now - hit[0]) < _RSS_CACHE_TTL:
             return hit[1][:limit]
+    recorded = attempted = False
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_fetch", "news feed"):         # A16a
+        return []
     try:
         import urllib.request
         import feedparser
@@ -597,6 +614,7 @@ def _parse_feed(url, limit=12, timeout=None):
             if modified:
                 headers["If-Modified-Since"] = modified
         req = urllib.request.Request(url, headers=headers)
+        attempted = True                     # from here the address may have left
         try:
             with urllib.request.urlopen(
                     req, timeout=timeout or _RSS_FETCH_TIMEOUT_S) as resp:
@@ -604,12 +622,16 @@ def _parse_feed(url, limit=12, timeout=None):
                 etag = resp.headers.get("ETag") or ""
                 modified = resp.headers.get("Last-Modified") or ""
         except urllib.error.HTTPError as e:
+            _record_feed(url, "sent")         # the address reached the site either way
+            recorded = True
             if e.code != 304 or before is None:
                 raise
             # Not modified since the last full answer: the same entries.
             with _RSS_CACHE_LOCK:
                 _RSS_CACHE[url] = (now, before)
             return before[:limit]
+        _record_feed(url, "sent")
+        recorded = True
         d = feedparser.parse(raw)
         out = []
         for e in d.entries[: max(limit * 2, limit)]:
@@ -623,7 +645,11 @@ def _parse_feed(url, limit=12, timeout=None):
             else:
                 _FEED_VALIDATORS.pop(url, None)
         return out[:limit]
+    except urllib.error.HTTPError:
+        return []
     except Exception:
+        if attempted and not recorded:       # once per request, never for a local error
+            _record_feed(url, "sent_unconfirmed")
         return []
 
 
@@ -691,12 +717,25 @@ def _brave_results(query, limit=8):
     if not (query or "").strip():
         # An empty beat (Local with nothing set) has nothing to search for.
         return []
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_search", "news search"):      # A16a
+        return []
     try:
         from agent_friday.services.web_search import brave_key as _bk
         key = _bk()
     except Exception:
         key = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
     if not key:
+        return []
+    # The query is gated like a web search's (NS-34.6-14): a beat can carry the owner's own words.
+    try:
+        from agent_friday.services.web_search import _gate_search_query
+        query, refusal = _gate_search_query(query, "brave-news")
+    except Exception as e:
+        _log.warning("news search not sent: the privacy gate could not run (%s)", type(e).__name__)
+        return []
+    if refusal or not (query or "").strip():
+        _log.info("news search not sent: the query held content that stays on this device")
         return []
     try:
         import requests as _req
@@ -707,6 +746,14 @@ def _brave_results(query, limit=8):
                      "X-Subscription-Token": key},
             timeout=12,
         )
+        # §26.7: the news query in the egress ledger and on the privacy map.
+        try:
+            from agent_friday.services import egress_gate as _eg
+            _eg.record_service_send("news_search", "search:brave-news", destination="api.search.brave.com",
+                                    content={"query": query}, part="query",
+                                    result="sent" if resp.status_code == 200 else "failed")
+        except Exception:
+            pass
         if resp.status_code != 200:
             return []
         data = resp.json()
@@ -1575,12 +1622,18 @@ def _fetch_brutalist_links(limit=200):
     except Exception as e:
         print(f"  [brutalist] missing dependency: {e}")
         return []
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("web_fetch", "news scrape"):       # A16a
+        return []
     try:
         resp = requests.get(_BRUTALIST_URL, timeout=15,
                              headers={"User-Agent": "Mozilla/5.0 (FridayNewsBot)"})
+        _record_feed(_BRUTALIST_URL, "sent")
         resp.raise_for_status()
     except Exception as e:
         print(f"  [brutalist] fetch failed: {e}")
+        if "resp" not in locals():
+            _record_feed(_BRUTALIST_URL, "sent_unconfirmed")
         return []
     try:
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -2406,6 +2459,13 @@ def _generate_front_page(slot="morning"):
         p["news_value"] = news_seen.news_value(p)
         p["opinion"] = news_seen.is_opinion(p)
     pool = news_seen.rank(pool)
+    try:
+        # Shadow only: logs how the encoder head's blended order would differ.
+        # It reads the ranked pool and changes nothing in it.
+        from agent_friday.services import triage_heads
+        triage_heads.news_shadow(list(pool), [p["news_value"] for p in pool])
+    except Exception:
+        pass
     editorial = _editorialize_front_page(
         pool, slot=slot, prev_stories=prev_titles,
         calendar_events=calendar_events)
@@ -3136,7 +3196,11 @@ def _read_editorial(week_id):
     safe = re.sub(r"[^0-9A-Za-z\-]", "", week_id or "")
     if not safe:
         return None
-    path = EDITORIALS_DIR / f"{safe}.md"
+    from agent_friday.paths import contained
+    try:
+        path = contained(EDITORIALS_DIR, f"{safe}.md")
+    except ValueError:
+        return None
     if not path.exists():
         return None
     try:
@@ -3579,7 +3643,13 @@ def _extract_article_text(url):
     that points at this machine or its network: the URL comes from a feed,
     the page, or the voice model, none of which may steer a fetch inward."""
     from agent_friday.services import page_reader
-    page = page_reader.fetch(url, timeout=15)
+    try:
+        page = page_reader.fetch(url, timeout=15)
+    except Exception as e:
+        if type(e).__name__ != "UnsafeURLError":     # refused before anything was sent
+            _record_feed(url, "sent_unconfirmed")
+        raise
+    _record_feed(url, "sent")
     return page.title, page.text
 
 

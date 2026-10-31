@@ -273,6 +273,28 @@ def invalidate_cache(provider_name: str) -> bool:
 
 # ── Fetch ────────────────────────────────────────────────────────────────────
 
+NOT_FETCHED_UNPICKED = ("not fetched: nothing goes to the cloud until you "
+                        "choose where Friday thinks (Settings > Models)")
+
+
+def _unpicked_and_cloud(prov: dict) -> bool:
+    """North-star A16a: True when no route is picked yet and `prov` is not on
+    this machine, so listing its models would send a request (with the
+    person's key) to the cloud. Fails closed: an unreadable locality counts as
+    cloud while the route is unpicked."""
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if not route_unpicked():
+            return False
+    except Exception:
+        return False
+    try:
+        from agent_friday.services.seat_policy import is_local_descriptor
+        return not is_local_descriptor(prov)
+    except Exception:
+        return True
+
+
 def refresh_models(provider, timeout: float = 20.0) -> dict:
     """Fetch a provider's live model list and write the cache.
 
@@ -292,6 +314,11 @@ def refresh_models(provider, timeout: float = 20.0) -> dict:
                 "error": "no such provider"}
     name = prov.get("name", "")
     disc = prov.get("discovery") or {}
+    # North-star A16a: before a route is picked, a cloud provider's model list
+    # is not fetched (the request carries the person's key). Local servers
+    # (Ollama, LM Studio) stay reachable.
+    if _unpicked_and_cloud(prov):
+        return {"ok": False, "provider": name, "count": 0, "error": NOT_FETCHED_UNPICKED}
     if disc.get("mode") != "api":
         return {"ok": False, "provider": name, "count": 0,
                 "error": "provider has no API discovery (static model list)"}
@@ -357,6 +384,10 @@ def refresh_all_stale(force: bool = False) -> list:
             if not force and not cache_is_stale(read_cache(name)):
                 continue
             if mode == "mcp":
+                if _unpicked_and_cloud(prov):
+                    results.append({"status": "error", "provider": name,
+                                    "error": NOT_FETCHED_UNPICKED})
+                    continue
                 results.append(_refresh_via_module(prov))
             else:
                 results.append(refresh_models(prov))

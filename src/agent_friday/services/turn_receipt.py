@@ -103,10 +103,23 @@ def _sections(turn_id: str) -> List[dict]:
     return out
 
 
+def _ledger_rows(kind: str, turn_id: str, scan: int = 5000) -> List[dict]:
+    """This turn's records of one kind from the action ledger, oldest first,
+    looking back through at most `scan` of its newest entries of that kind."""
+    if not turn_id:
+        return []
+    try:
+        from agent_friday.services import action_ledger
+        rows = action_ledger.entries([kind], newest_first=True, limit=scan)
+    except Exception:
+        return []
+    return [e["rec"] for e in reversed(rows)
+            if isinstance(e.get("rec"), dict) and e["rec"].get("turn_id") == turn_id]
+
+
 def _models(turn_id: str) -> List[dict]:
-    from agent_friday.services import activity_ledger as _al
     out = []
-    for r in _tail_rows(_al.LEDGER_FILE, turn_id):
+    for r in _ledger_rows("activity", turn_id):
         if r.get("kind") != "model_invocation":
             continue
         out.append({k: r.get(k) for k in
@@ -119,15 +132,17 @@ def _egress(turn_id: str) -> Dict[str, int]:
     from agent_friday.services import egress_gate as _eg
     counts: Dict[str, int] = {}
     for r in _tail_rows(_eg._DEFAULT_LOG, turn_id):
+        if r.get("kind") == "call":
+            counts["calls"] = counts.get("calls", 0) + 1   # one per send (the §29.6 row)
+            continue
         action = str(r.get("action") or "unknown")
         counts[action] = counts.get(action, 0) + 1
     return counts
 
 
 def _decisions(turn_id: str) -> List[dict]:
-    from agent_friday.governance import action_gate as _ag
     out = []
-    for r in _tail_rows(_ag.receipts_path(), turn_id):
+    for r in _ledger_rows("decision", turn_id):
         out.append({k: r.get(k) for k in
                     ("tool", "class", "decision", "chosen_by", "plan_version",
                      "surface") if r.get(k) is not None})
@@ -175,6 +190,15 @@ def build(turn_id: str) -> Dict[str, Any]:
         receipt["egress"] = _egress(turn_id)
     except Exception:
         receipt["egress"] = {}
+    # The context manifest of each send this turn made (§12.5, §14.3): what
+    # went into it by name, size and class, opened at its own link.
+    try:
+        from agent_friday.services import context_manifest as _cm
+        manifests = _cm.for_turn(turn_id)
+        if manifests:
+            receipt["manifests"] = manifests
+    except Exception:
+        pass
     # Work orders (cloud specifies, this PC executes): the handles a cloud model
     # was shown in this turn and every slice returned to it, as kind, size and
     # class. Absent when the turn touched no work order.
@@ -192,6 +216,6 @@ def build(turn_id: str) -> Dict[str, Any]:
     except Exception:
         pass
     receipt["found"] = bool(receipt["plan"] or receipt["sections"] or receipt["models"]
-                            or receipt["decisions"] or receipt["egress"]
+                            or receipt["decisions"] or receipt["egress"] or receipt.get("manifests")
                             or receipt.get("work_orders") or receipt.get("card_free_changes"))
     return receipt

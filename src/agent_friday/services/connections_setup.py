@@ -337,6 +337,72 @@ def _test_mcp(name: str) -> dict:
                 "Check the address or command, then test again.")
 
 
+def _route_unpicked() -> bool:
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        return bool(route_unpicked())
+    except Exception:
+        return False
+
+
+def _unpicked_cloud_endpoint(name: str) -> bool:
+    """A custom endpoint on the internet, while no route is picked (A16a)."""
+    if not _route_unpicked():
+        return False
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.routing.provider_descriptors import is_private_host
+        prov = get_provider_registry().get_provider(name) or {}
+        return not is_private_host(prov.get("base_url") or "")
+    except Exception:
+        return True
+
+
+def _unpicked_cloud_provider(name: str) -> bool:
+    """A provider that is not on this machine, while no route is picked (A16a).
+    Brave, Firecrawl and ElevenLabs have no local form. Unknown counts as cloud."""
+    if not _route_unpicked():
+        return False
+    try:
+        from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.services.seat_policy import is_local_descriptor
+        prov = get_provider_registry().get_provider(name)
+        return not (prov and is_local_descriptor(prov))
+    except Exception:
+        return True
+
+
+def _key_present(name: str) -> bool:
+    """Whether a key is saved for this provider (no network). Unknown counts
+    as present, so a check that cannot tell is held rather than sent."""
+    try:
+        if name == "brave":
+            from agent_friday.services import web_search
+            return bool(web_search.brave_key())
+        if name == "firecrawl":
+            from agent_friday.services import firecrawl
+            return bool(firecrawl.configured())
+        if name == "elevenlabs":
+            from agent_friday.services import cloud_voice
+            return bool(cloud_voice._api_key("elevenlabs"))  # pragma: allowlist secret
+        from agent_friday.services import credential_store as cs
+        if cs.provider_key_status(name) == "present_but_unreadable":
+            return False            # its own test says so, sending nothing
+        from agent_friday.services.provider_registry import get_provider_registry
+        from agent_friday.routing.provider_descriptors import provider_api_key
+        prov = get_provider_registry().get_provider(name)
+        return bool(prov and provider_api_key(prov))  # pragma: allowlist secret
+    except Exception:
+        return True
+
+
+def _not_checked_unpicked() -> dict:
+    return _out(UNKNOWN, "Not checked yet: nothing goes to the cloud until you "
+                         "choose where Friday thinks.",
+                "Choose where Friday thinks in Settings > Models; the key stays saved "
+                "and is checked then.")
+
+
 def test(item_id: str) -> dict:
     """Test one checklist item. Never raises; never returns a key."""
     try:
@@ -348,7 +414,18 @@ def test(item_id: str) -> dict:
             return _test_openai_endpoint(LMSTUDIO_PROVIDER, "LM Studio")
         if item_id.startswith("custom:"):
             name = item_id.split(":", 1)[1]
+            if _unpicked_cloud_endpoint(name):
+                return _not_checked_unpicked()
             return _test_openai_endpoint(name, name)
+        # North-star A16a: before a route is picked a key check sends nothing
+        # to the cloud. The key stays saved and is checked once a route is chosen.
+        # (Google's test reads only what is stored; it sends nothing.)
+        # A missing key still says "No key is saved yet": only a check that
+        # would send a saved key is held.
+        if (item_id.startswith("provider:")
+                and _unpicked_cloud_provider(item_id.split(":", 1)[1])
+                and _key_present(item_id.split(":", 1)[1])):
+            return _not_checked_unpicked()
         if item_id == "provider:brave":
             return _test_brave()
         if item_id == "provider:firecrawl":
@@ -444,10 +521,11 @@ def save_ollama(url: str) -> dict:
     from agent_friday.services.provider_registry import get_provider_registry
     get_provider_registry().update_provider("ollama-local", {"base_url": url, "enabled": True})
     try:
-        from agent_friday.core import _load_settings, _save_settings
-        block = dict((_load_settings() or {}).get("model_routing") or {})
-        block["ollama_url"] = url
-        _save_settings({"model_routing": block})
+        from agent_friday.core import _save_settings
+        # Only the delta. _load_settings() carries the never-persist routing
+        # overlay (offline, or North-star A16a's route-not-chosen), and saving
+        # its whole block would pin local_only / no-fallback to disk.
+        _save_settings({"model_routing": {"ollama_url": url}})
     except Exception as e:  # noqa: BLE001
         _log.debug("ollama_url not saved to settings: %s", type(e).__name__)
     return {"saved": True, "base_url": url}

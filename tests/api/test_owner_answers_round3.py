@@ -368,10 +368,14 @@ def _money_card():
 
 def _say(words, card_id, decision="approve", surface="voice"):
     from agent_friday.services import agent
-    toks = [agent._CURRENT_SURFACE.set(surface), agent._CURRENT_OWNER_TEXT.set(words)]
+    toks = [agent._CURRENT_SURFACE.set(surface), agent._CURRENT_OWNER_TEXT.set(words),
+            # a spoken answer is made inside the owner's call from this PC's own page
+            agent._CURRENT_TOOL_CONTEXT.set({"surface": surface, "owner_local": True}
+                                            if surface.startswith("voice") else None)]
     try:
         return agent._tool_answer_card({"card_id": card_id, "decision": decision})
     finally:
+        agent._CURRENT_TOOL_CONTEXT.reset(toks[2])
         agent._CURRENT_OWNER_TEXT.reset(toks[1])
         agent._CURRENT_SURFACE.reset(toks[0])
 

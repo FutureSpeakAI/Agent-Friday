@@ -19,6 +19,12 @@ def isolated_presentation(tmp_path, monkeypatch):
     monkeypatch.setattr(off_record, "generation", lambda: 0)
     monkeypatch.setattr(boot_guard, "safe_mode", lambda: False)
     monkeypatch.setattr(desktop_bus, "broadcast", lambda *_args, **_kwargs: None)
+    # These tests post as the owner's page does (the press check and the checkpoint are
+    # tested in test_workspace_changes_need_the_owners_press.py).
+    from agent_friday.governance import action_gate as ag
+    from agent_friday.services import screen_click
+    monkeypatch.setattr(screen_click, "screen_session", lambda request: True)
+    monkeypatch.setattr(ag, "verify_claws", lambda: (True, "ok"))
 
 
 def test_preview_apply_and_existing_revert_roundtrip(client):

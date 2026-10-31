@@ -18,6 +18,23 @@ it is a separate process: it does not die when the web server is stopped or
 restarted. A restart keeps the seats running; only **Quit** asks the server to
 release them first (`/api/residency/release-for-quit`).
 
+## Getting ready to stop
+
+Stopping the server from the tray terminates it, and on Windows a terminated
+process runs no exit handler. So before every Quit, Restart and stop signal the
+tray asks the server to get ready (`POST /api/server/prepare-for-exit`): it
+records a clean exit (`~/.friday/tasks/last_exit.json`), flushes Laya's queued
+writes, and stops add-on servers and the browser sessions Friday opened, side by
+side, within 8 seconds. Only a server the tray started is asked; one started
+outside the tray keeps running and is not told anything.
+
+At the next start the record is read once. A task that was running is marked
+interrupted either way, and its record and the notice say how the previous
+process ended: "Friday was closed", "Friday was restarted", or "Friday stopped
+without being closed" (a crash, a forced stop such as killing it from a shell,
+or a power loss). A record written while work went on afterwards is not
+believed.
+
 ## Do not stop llama-server by hand
 
 `residency_arbiter.adopt_or_reap` runs before anything is loaded. An orphaned

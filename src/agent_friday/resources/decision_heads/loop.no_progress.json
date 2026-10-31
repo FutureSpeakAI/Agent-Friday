@@ -1,0 +1,14 @@
+{
+  "id": "loop.no_progress",
+  "version": 1,
+  "preset": "loop.no_progress",
+  "question_type": "choice",
+  "labels": ["progressing", "stalled", "unsure"],
+  "direction": "stop_only",
+  "scorer": "rules",
+  "thresholds": {"act": 0.50, "abstain": 0.20},
+  "budget_ms": 1000,
+  "rules": {"window": 4, "same_error_class": 3, "benched_as": "ftv/decision_eval E2 b_rules"},
+  "mode_default": "shadow",
+  "about": "Replays a finished agent turn's tool trace: no new information and no write across the last 4 steps, or the same error class 3 times, would have been a stall. Stop-only: it may end a loop with a typed blocker in act mode, never declare work done. Shadow: one receipt per turn beside LoopGuard's answer. The thresholds are unused by the rules scorer."
+}

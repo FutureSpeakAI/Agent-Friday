@@ -155,7 +155,8 @@ def merge_intervals(intervals) -> list:
 
 def _calendar_client(creds):
     from googleapiclient.discovery import build
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    from agent_friday.services import egress_record as _er
+    return _er.calendar(build("calendar", "v3", credentials=creds, cache_discovery=False))
 
 
 def _sources() -> tuple:
@@ -415,7 +416,19 @@ def _series_events(svc, series_id) -> list:
             return items
 
 
-def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
+def _co_series(idempotency_key: str) -> str:
+    """Twelve characters naming a hold series, derived from the request's idempotency key (F3):
+    a digest of it, so no part of the key itself is used."""
+    from agent_friday.services import connector_outcome as _co
+    return _co.event_id(idempotency_key, "hold-series")[2:14]
+
+
+class _Unconfirmed(Exception):
+    """Google answered a create without naming the event it made."""
+
+
+def hold_slots(*, title: str, slots, account_id=None, series_id=None,
+               idempotency_key: str | None = None) -> dict:
     """Place tentative "Hold: <title>" events on the owner's own calendar.
 
     No attendees, no notifications, private visibility, and the hold marker.
@@ -437,7 +450,10 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
             if e <= s:
                 raise SchedulingError("a slot ends before it starts")
             pairs.append((s, e))
-        series = _check_series(series_id) if series_id else "hs" + uuid.uuid4().hex[:12]
+        # With an idempotency key (F3) the series is the key's, so a repeated call names the same
+        # series and the same holds (each hold's event id comes from the key and its times).
+        series = (_check_series(series_id) if series_id else
+                  ("hs" + _co_series(idempotency_key)) if idempotency_key else "hs" + uuid.uuid4().hex[:12])
         gated, gerr = cw._gate_calendar_field(str(title or "meeting").strip(), "title")
         if gerr or not gated:
             raise SchedulingError("the hold title was refused: %s"
@@ -460,12 +476,39 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
             "extendedProperties": {"private": {HOLD_MARK: HOLD_ACTIVE,
                                                HOLD_SERIES: series}},
         }
+        from agent_friday.services import connector_outcome as _co
+        if idempotency_key:
+            body["id"] = _co.event_id(idempotency_key, s.isoformat(), e.isoformat())
         try:
             ev = svc.events().insert(calendarId="primary", body=body,
                                      sendUpdates="none").execute()
+            if not _co.confirmed(ev):
+                raise _Unconfirmed()
         except Exception as ex:
+            again = None
+            if body.get("id") and (isinstance(ex, _Unconfirmed) or _co._status(ex) == 409
+                                   or _co.classify(ex) == "unconfirmed"):
+                again = cw._made_already(svc, "primary", body)    # placed already: never twice
+            if again is not None:
+                holds.append({"id": again.get("id"), "start": body["start"]["dateTime"],
+                              "end": body["end"]["dateTime"]})
+                continue
             cw._drop_calendar_cache()
-            return {"error": "placing a hold failed: %s" % ex, "partial": True,
+            if holds:
+                # some holds were placed: the call changed something. It is done for those, with
+                # the series kept (book or release it later) and the slots not held named.
+                with _co.per_item():     # the call did change something; still mark a revoked account
+                    why = (_co.not_done("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
+                           else _co.failed(ex, "Google Calendar", account_id=aid))
+                return {"ok": True, "partial": True, "series_id": series, "account_id": aid,
+                        "holds": holds,
+                        "not_held": [{"start": a.isoformat(), "end": b.isoformat()}
+                                     for a, b in pairs[len(holds):]],
+                        "warning": "Only %d of %d holds were placed. %s"
+                                   % (len(holds), len(pairs), why)}
+            why = (_co.not_done("unconfirmed", "Google Calendar") if isinstance(ex, _Unconfirmed)
+                   else _co.failed(ex, "Google Calendar", account_id=aid))
+            return {"error": "placing a hold failed. " + why, "partial": False,
                     "series_id": series, "account_id": aid, "holds": holds}
         holds.append({"id": ev.get("id"), "start": body["start"]["dateTime"],
                       "end": body["end"]["dateTime"]})
@@ -474,6 +517,7 @@ def hold_slots(*, title: str, slots, account_id=None, series_id=None) -> dict:
 
 
 def _release(svc, series_id, keep_event_id=None) -> dict:
+    # egress: recorded by the client it is given (_write_setup -> calendar_write._service, egress_record)
     released, left = [], []
     for item in _series_events(svc, series_id):
         eid = item.get("id")
@@ -482,7 +526,9 @@ def _release(svc, series_id, keep_event_id=None) -> dict:
         try:
             fresh = svc.events().get(calendarId="primary", eventId=eid).execute()
         except Exception as e:
-            left.append({"id": eid, "why": "could not be re-read (%s)" % e})
+            from agent_friday.services import connector_outcome as _co
+            left.append({"id": eid, "why": "could not be re-read. " + _co.sentence(_co.classify(e)),
+                         "failed": _co.classify(e)})
             continue
         if not is_friday_hold(fresh, series_id):
             left.append({"id": eid, "why": "not an active Friday hold of this "
@@ -492,7 +538,9 @@ def _release(svc, series_id, keep_event_id=None) -> dict:
             svc.events().delete(calendarId="primary", eventId=eid,
                                 sendUpdates="none").execute()
         except Exception as e:
-            left.append({"id": eid, "why": "delete failed (%s)" % e})
+            from agent_friday.services import connector_outcome as _co
+            left.append({"id": eid, "why": "delete failed. " + _co.sentence(_co.classify(e)),
+                         "failed": _co.classify(e)})
             continue
         released.append({"id": eid, "start": ((fresh.get("start") or {})
                                               .get("dateTime") or "")})
@@ -509,8 +557,15 @@ def release_holds(*, series_id, account_id=None) -> dict:
     except SchedulingError as e:
         return {"error": str(e)}
     except Exception as e:
-        return {"error": "releasing holds failed: %s" % e}
+        from agent_friday.services import connector_outcome as _co
+        return {"error": "releasing holds failed. " + _co.failed(e, "Google Calendar", account_id=account_id)}
     cw._drop_calendar_cache()
+    failed = [x["failed"] for x in res.get("left_alone") or [] if x.get("failed")]
+    if failed and not res.get("released"):
+        # every hold Friday tried to release is still there: nothing was released
+        from agent_friday.services import connector_outcome as _co
+        return dict(res, ok=False, series_id=series, account_id=aid,
+                    error=_co.not_done(failed[0], "Google Calendar", account_id=aid))
     return dict(res, ok=True, series_id=series, account_id=aid)
 
 
@@ -568,7 +623,9 @@ def book_slot(*, series_id, title: str, hold_event_id=None, start=None,
     except SchedulingError as e:
         return {"error": str(e)}
     except Exception as e:
-        return {"error": "booking failed before anything changed: %s" % e}
+        from agent_friday.services import connector_outcome as _co
+        return {"error": "booking failed before anything changed. "
+                         + _co.failed(e, "Google Calendar", account_id=account_id)}
 
     patch = {"summary": gt, "status": "confirmed", "transparency": "opaque",
              "visibility": "default", "description": gd or "",
@@ -578,17 +635,24 @@ def book_slot(*, series_id, title: str, hold_event_id=None, start=None,
         patch["location"] = gl
     if emails:
         patch["attendees"] = [{"email": a} for a in emails]
+    from agent_friday.services import connector_outcome as _co
     try:
         booked = svc.events().patch(
             calendarId="primary", eventId=hold_event_id, body=patch,
             sendUpdates="all" if emails else "none").execute()
     except Exception as e:
-        return {"error": "booking failed: %s" % e}
+        return {"error": "booking failed. " + _co.failed(e, "Google Calendar", account_id=aid)}
+    if not _co.confirmed(booked):
+        # no confirmation: the holds are left in place and nothing is reported as booked
+        return {"error": "booking was not confirmed. " + _co.not_done("unconfirmed", "Google Calendar"),
+                "unconfirmed": True, "series_id": series, "account_id": aid}
     try:
         rel = _release(svc, series, keep_event_id=hold_event_id)
     except Exception as e:
+        from agent_friday.services import connector_outcome as _co
         rel = {"released": [], "left_alone": [],
-               "error": "the other holds could not be released (%s)" % e}
+               "error": "the other holds could not be released. " + _co.sentence(_co.classify(e),
+                                                                                  "Google Calendar")}
     cw._drop_calendar_cache()
     return {"ok": True, "account_id": aid, "series_id": series,
             "event": {"id": booked.get("id") or hold_event_id,

@@ -220,7 +220,18 @@ def _connect() -> sqlite3.Connection:
     p = _path()
     p.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(p), timeout=10)
+    try:
+        return _prepare(conn)
+    except BaseException:
+        # A damaged file must not stay open (on Windows an open file cannot be moved aside).
+        conn.close()
+        raise
+
+
+def _prepare(conn: sqlite3.Connection) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
+    # A deleted message's text is overwritten in the file, not just unlinked (see _scrub).
+    conn.execute("PRAGMA secure_delete=ON")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
@@ -292,6 +303,20 @@ def _delete_mid(conn, mid: str) -> int:
     return 1
 
 
+def _scrub(conn) -> None:
+    """After a deletion the owner asked for: merge the full-text indexes so the deleted words
+    leave the index segments, and fold the WAL back so no copy waits there. With secure_delete
+    the freed pages are zeroed. Caller holds _LOCK and has committed. Best-effort."""
+    try:
+        conn.execute("INSERT INTO msgs_fts(msgs_fts) VALUES('optimize')")
+        if _has_trigram(conn):
+            conn.execute("INSERT INTO msgs_tri(msgs_tri) VALUES('optimize')")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error as e:
+        _log.warning("conversation search: the deleted text could not be scrubbed from the index: %s", e)
+
+
 def _delete_cid(conn, cid: str) -> None:
     ids = [r[0] for r in conn.execute("SELECT id FROM msgs WHERE cid=?", (cid,))]
     for i in ids:
@@ -318,6 +343,8 @@ def add(cid: str, message: dict) -> bool:
         return ok
     except Exception as e:
         _log.warning("conversation search: could not index a message: %s", e)
+        if _damaged(e):
+            _auto_repair(e)               # the rebuild reads this message from its transcript too
         return False
 
 
@@ -353,6 +380,7 @@ def forget_conversation(cid: str) -> None:
         try:
             _delete_cid(conn, cid)
             conn.commit()
+            _scrub(conn)
         finally:
             conn.close()
 
@@ -411,6 +439,127 @@ def _build_quietly() -> None:
     except Exception as e:
         _BUILT.pop(str(_path()), None)
         _log.warning("conversation search: build failed: %s", e)
+        if _damaged(e):
+            _auto_repair(e)
+
+
+# ── a damaged index (North Star 32.6) ─────────────────────────────────────────
+#: "The human-readable wiki and source documents remain available. Derived graphs and indexes are
+#: rebuilt. Corruption does not result in deletion of source data." This index is derived from the
+#: transcripts: a damaged one is discarded and rebuilt from them; the transcripts are only read.
+#: No copy of the old index is kept: it holds message text, and a copy would keep text the owner
+#: later deletes or forgets (and travel in backups).
+#: At most one automatic rebuild in this many seconds (a disk that keeps damaging it must not loop).
+AUTO_REPAIR_EVERY_S = 600.0
+_LAST_AUTO: Dict[str, float] = {}
+_REPAIRING = threading.Event()
+
+
+def _damaged(exc: BaseException) -> bool:
+    try:
+        from agent_friday.services import failure_state
+        return failure_state.classify(exc) == failure_state.INDEX_CORRUPTION
+    except Exception:
+        return False
+
+
+def _discard() -> bool:
+    """Remove the index file and its WAL/SHM. Caller holds _LOCK. Any part that cannot be removed
+    raises: a stale WAL beside a fresh file could be applied to it and damage it again."""
+    p = _path()
+    found = False
+    for suffix in ("-wal", "-shm", ""):
+        f = Path(str(p) + suffix)
+        if f.exists():
+            found = True
+            f.unlink()
+    # Copies an earlier build of this module kept (index.sqlite.damaged-*): the same text, gone too.
+    for old in p.parent.glob(p.name + ".damaged-*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    _BUILT.pop(str(p), None)
+    return found
+
+
+def repair_running() -> bool:
+    return _REPAIRING.is_set()
+
+
+def repair(reason: str = "owner") -> Dict[str, Any]:
+    """Rebuild the index from the transcripts: the current file is discarded first, so a damaged
+    one cannot block the rebuild. The transcripts are only read. One rebuild at a time."""
+    if _REPAIRING.is_set():
+        return {"ok": False, "busy": True, "error": "the search index is already being rebuilt"}
+    _REPAIRING.set()
+    try:
+        with _LOCK:
+            try:
+                had = _discard()
+            except OSError as e:
+                return {"ok": False, "error": "the old index could not be removed: %s" % type(e).__name__}
+            out = build(force=True)
+            _BUILT[str(_path())] = True
+    finally:
+        _REPAIRING.clear()
+    _log.warning("conversation search: index rebuilt from the transcripts (%s; old index %s)",
+                 reason, "discarded" if had else "absent")
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_ok("conversation_search")
+    except Exception:
+        pass
+    return dict(out, reason=reason)
+
+
+def _auto_repair(exc: BaseException) -> None:
+    """A damaged index found while reading or writing: rebuilt in the background, at most once
+    in AUTO_REPAIR_EVERY_S. Never raises."""
+    try:
+        from agent_friday.services import recall_health
+        recall_health.note_failure("conversation_search", exc)
+    except Exception:
+        pass
+    key = str(_path())
+    now = time.time()
+    if now - _LAST_AUTO.get(key, 0.0) < AUTO_REPAIR_EVERY_S:
+        return
+    _LAST_AUTO[key] = now
+
+    def run():
+        try:
+            repair("damaged index found")
+        except Exception as e:
+            _log.warning("conversation search: automatic rebuild failed: %s", e)
+    if BACKGROUND_BUILD:
+        threading.Thread(target=run, name="conversation-fts-repair", daemon=True).start()
+    else:
+        run()
+
+
+def health() -> Dict[str, Any]:
+    """The Doctor's reading: 'ok', 'damaged', 'missing' (not built yet) or 'unreadable'."""
+    p = _path()
+    if not p.exists():
+        return {"state": "missing"}
+    if _REPAIRING.is_set():
+        return {"state": "repairing"}
+    try:
+        # Read-only, immutable and outside _LOCK: the check never holds up a chat turn's index
+        # write, and it creates no WAL/SHM files (a plain read-only open of a WAL database does,
+        # and the Doctor's report must change nothing in the data folder). It reads the main file,
+        # which is where damage lives.
+        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro&immutable=1", uri=True, timeout=5)
+        try:
+            row = conn.execute("PRAGMA quick_check").fetchone()
+        finally:
+            conn.close()
+        return {"state": "ok" if row and str(row[0]).lower() == "ok" else "damaged"}
+    except sqlite3.DatabaseError as e:
+        return {"state": "damaged" if _damaged(e) else "unreadable"}
+    except Exception:
+        return {"state": "unreadable"}
 
 
 # ── deleting one message everywhere ───────────────────────────────────────────
@@ -431,13 +580,21 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
     changed = cv.delete_lines(cid, lambda m: str(m.get("id")) == mid, on_match=_drop)
     if not changed:
         return {"ok": False, "error": "that message is not in this conversation"}
-    with _LOCK:
-        conn = _connect()
-        try:
-            _delete_mid(conn, mid)
-            conn.commit()
-        finally:
-            conn.close()
+    try:
+        with _LOCK:
+            conn = _connect()
+            try:
+                _delete_mid(conn, mid)
+                conn.commit()
+                _scrub(conn)
+            finally:
+                conn.close()
+    except sqlite3.DatabaseError as e:
+        # A damaged index: rebuilt from the transcripts, where the message is already gone; the
+        # other copies below are still removed now.
+        if not _damaged(e):
+            raise
+        _auto_repair(e)
     removed_vec = 0
     try:
         from agent_friday.services.model_router import _get_conversation_memory
@@ -488,7 +645,17 @@ def _day(value) -> Optional[float]:
 
 
 def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
-    """Matching turns, best first (BM25), with snippets and dates."""
+    """Matching turns, best first (BM25), with snippets and dates. A damaged index raises (the
+    caller says it could not search) and is rebuilt from the transcripts in the background."""
+    try:
+        return _search(query, since=since, until=until, limit=limit)
+    except sqlite3.DatabaseError as e:
+        if _damaged(e):
+            _auto_repair(e)
+        raise
+
+
+def _search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
     terms = _terms(query)
     if not terms:
         return []
@@ -543,6 +710,16 @@ def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str,
                      "sent_to": json.loads(sent or "[]"), "score": -float(rank)})
     hits.sort(key=lambda h: (-h["score"], -h["ts"]))
     return hits[:max(1, int(limit))]
+
+
+def superseded_ids() -> set:
+    """Every message id recorded as superseded (survives rebuilds)."""
+    with _LOCK:
+        conn = _connect()
+        try:
+            return {r[0] for r in conn.execute("SELECT mid FROM superseded")}
+        finally:
+            conn.close()
 
 
 def mark_superseded(mids, on: bool = True) -> int:

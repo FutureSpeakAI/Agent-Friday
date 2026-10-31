@@ -27,6 +27,7 @@ def _discord_available() -> bool:
 
 class DiscordBridge(ChannelAdapter):
     name = "discord"
+    max_chars = 2000
 
     def __init__(self) -> None:
         super().__init__()
@@ -79,7 +80,24 @@ class DiscordBridge(ChannelAdapter):
             reply = self._handler(self.name, chat_id, message.content or "") \
                 if self._handler else None
             if reply:
-                await message.channel.send(reply[:2000])
+                # the same door as every other send: the egress gate and the
+                # action checkpoint's receipt (base.prepare_outbound), then the
+                # send record (base.record_channel_send); the gateway's answer
+                # closes the checkpoint's decision (base.report_outbound)
+                gated, decision = self.prepare_outbound_ref(chat_id, reply)
+                if gated:
+                    from agent_friday.services.channels.base import record_channel_send, send_unsure
+                    gated = gated[:2000]
+                    try:
+                        sent = await message.channel.send(gated)
+                    except Exception as e:
+                        unsure = send_unsure(e)
+                        self.report_outbound(decision, False, unsure)
+                        record_channel_send(self.name, chat_id, gated, False, unsure)
+                        raise
+                    # Discord's id for the posted message is its confirmation
+                    self.report_outbound(decision, True, verified=bool(getattr(sent, "id", None)))
+                    record_channel_send(self.name, chat_id, gated, True)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -110,8 +128,10 @@ class DiscordBridge(ChannelAdapter):
             req = urllib.request.Request(url, data=data, method="POST")
             req.add_header("Authorization", f"Bot {token}")
             req.add_header("Content-Type", "application/json")
+            # egress: recorded by ChannelAdapter.send, the only caller
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return {"ok": resp.status in (200, 201)}
         except Exception as e:
             self._last_error = exception_text(e)
-            return {"ok": False, "error": exception_text(e)}
+            from agent_friday.services.channels.base import send_unsure
+            return {"ok": False, "error": exception_text(e), "unsure": send_unsure(e)}
