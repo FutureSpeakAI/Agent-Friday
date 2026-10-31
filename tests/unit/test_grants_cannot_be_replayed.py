@@ -88,16 +88,18 @@ def test_a_grant_expires(grants_file):
 
 def test_a_use_that_cannot_be_recorded_does_not_happen(grants_file, monkeypatch):
     from agent_friday.services import action_ledger
+    # This test is about the ledger, not the holds: a hold another test left in this
+    # worker must not refuse the second use. The real append comes back on its own,
+    # so every other isolation patch stays in place (undo() would drop them all).
+    monkeypatch.setattr(gate, "outward_hold", lambda: None)
     g = _grant(uses=1)
+    real_append = action_ledger.append
 
     def broken(*a, **k):
         raise OSError("disk full")
-    # Only the broken append is put back afterwards: monkeypatch.undo() would
-    # also undo the root conftest's per-test action ledger (FRIDAY_LEDGER_DIR),
-    # and the second use would then read whatever the shared home's ledger holds.
-    with monkeypatch.context() as m:
-        m.setattr(action_ledger, "append", broken)
-        assert _use(g) is None, "a use ran with no record of it"
+    monkeypatch.setattr(action_ledger, "append", broken)
+    assert _use(g) is None, "a use ran with no record of it"
+    monkeypatch.setattr(action_ledger, "append", real_append)
     assert _use(g), "the unrecorded attempt spent the grant"
 
 

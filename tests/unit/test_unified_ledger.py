@@ -425,7 +425,12 @@ def test_encrypted_task_journals_are_read_within_a_line_cap_and_from_their_end(m
     monkeypatch.setattr(U, "PER_TASK_BYTES", path.stat().st_size // 4)
     out = U.unified(family="journal", limit=U.PAGE_MAX)
     refs = {r["ref"] for r in out["rows"]}
-    assert "%s#41" % tid in refs and "%s#2" % tid not in refs, sorted(refs)
+
+    def ref(seq):
+        # a row's ref is "<task>#<seq>" only in its making: "#" is not an id
+        # character, so the row carries that ref's digest (see _row)
+        return U._journal_row({"kind": "blocker", "task_id": tid, "seq": seq, "ts": 1.0})["ref"]
+    assert ref(41) in refs and ref(2) not in refs, sorted(refs)
     assert decoded[0] < 20 and "task_journal" in out["truncated"]
     # and the time is checked per line: a clock that runs out stops the read
     U.reset_cache()
