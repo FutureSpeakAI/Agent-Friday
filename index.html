@@ -16204,6 +16204,39 @@ function FridayChatShell(props) {
   if (Host && !props.panelOff) return /*#__PURE__*/React.createElement(Host, { convId: props.convId, mode: props.mode, traySide: props.traySide, trayFrac: props.trayFrac, onTrayPlace: props.onTrayPlace, onCodebaseAsk: props.onCodebaseAsk, chatBusy: props.chatBusy }, props.children);
   return /*#__PURE__*/React.createElement(React.Fragment, null, props.children);
 }
+// Words heard in a voice call (north star 22.2-6 and 22.4-3): how sure the ear was, shown under them, and a way to
+// put a mishearing right. The correction goes to the call (or the chat) as what you meant; the misheard words stay,
+// marked as corrected.
+const FRIDAY_HEARD_UNSURE = 0.6;
+function HeardFix({ m, onFix }) {
+  const h = React.createElement;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(m.text || '');
+  const idRef = useRef('heard-' + Math.random().toString(36).slice(2, 9));
+  const conf = typeof m.confidence === 'number' ? m.confidence : null;
+  const unsure = conf != null && conf < FRIDAY_HEARD_UNSURE;
+  const box = { marginTop: 4, fontSize: 10, color: '#9fb4c8', display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' };
+  const btn = { fontSize: 10, minHeight: 24, minWidth: 24 };
+  if (m.corrected) return h('div', { className: 'heard-fix', 'data-heard': 'corrected', style: box }, 'You corrected this to: \u201C' + m.corrected + '\u201D');
+  if (editing) {
+    const send = () => { onFix(draft); setEditing(false); };
+    return h('form', { className: 'heard-fix', 'data-heard': 'editing', style: { ...box, justifyContent: 'stretch' }, onSubmit: e => { e.preventDefault(); send(); } },
+      h('label', { htmlFor: idRef.current, style: { width: '100%' } }, 'What you said'),
+      h('textarea', { id: idRef.current, value: draft, rows: 2, autoFocus: true, style: { width: '100%', fontSize: 12 },
+        onChange: e => setDraft(e.target.value),
+        onKeyDown: e => {
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+          else if (e.key === 'Enter' && !e.shiftKey && !fridayIsComposing(e)) { e.preventDefault(); send(); }
+        } }),
+      h('button', { type: 'submit', className: 'btn', style: btn }, 'Send the correction'),
+      h('button', { type: 'button', className: 'btn', style: btn, onClick: () => setEditing(false) }, 'Cancel'));
+  }
+  return h('div', { className: 'heard-fix', 'data-heard': unsure ? 'unsure' : conf != null ? 'sure' : 'unknown', style: box },
+    unsure ? h('span', { style: { color: '#f59e0b' } }, '\u26A0 ' + fridayName() + ' may have misheard this (' + Math.round(conf * 100) + '% sure)')
+      : conf != null ? h('span', null, 'Heard ' + Math.round(conf * 100) + '% sure') : null,
+    h('button', { type: 'button', className: 'btn', style: btn, 'aria-label': 'Correct what ' + fridayName() + ' heard',
+      onClick: () => { setDraft(m.text || ''); setEditing(true); } }, unsure ? 'Correct it' : 'Correct'));
+}
 function ChatSurface(props) {
   const {
     mode,
@@ -16294,6 +16327,14 @@ function ChatSurface(props) {
     if (!msg || !msg.text) return;
     setChatMsgs(p => p.map(x => x === msg ? { ...x, send_failed: null } : x));
     sendChat(msg.text, { skipForecast: true, alreadyShown: true, turnId: msg.turn_id });
+  };
+  // A mishearing put right: the misheard words are marked corrected, and what was meant goes to the live call
+  // (or, with no call, to the chat) as the next thing said.
+  const fixHeard = (msg, text) => {
+    const t = String(text || '').trim();
+    if (!msg || !t || t === msg.text) return;
+    setChatMsgs(p => p.map(x => x === msg ? { ...x, corrected: t } : x));
+    if (!(window.fridayVoice && window.fridayVoice.sendText && window.fridayVoice.sendText(t))) sendChat(t, { skipForecast: true });
   };
   const newChatRequest = React.useRef(null);
   const newChatOwner = React.useRef({alive:true, id:convId, revision:0});
@@ -16710,7 +16751,10 @@ function ChatSurface(props) {
       fontSize: 10
     },
     onClick: () => resendFailed(m)
-  }, m.send_failed === 'not_received' ? 'Resend' : 'Retry'))), /*#__PURE__*/React.createElement("div", {
+  }, m.send_failed === 'not_received' ? 'Resend' : 'Retry'))), m.role === 'user' && m.via === 'voice' && /*#__PURE__*/React.createElement(HeardFix, {
+    m: m,
+    onFix: t => fixHeard(m, t)
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#888',
@@ -71324,7 +71368,8 @@ function App() {
             role: 'user',
             text: m.user_text,
             time: stamp,
-            via: 'voice'
+            via: 'voice',
+            confidence: typeof m.confidence === 'number' ? m.confidence : null
           });
           // Strip personality/mood/reasoning scaffolding — only the spoken words
           // belong in the transcript. Skip the bubble entirely if nothing remains.

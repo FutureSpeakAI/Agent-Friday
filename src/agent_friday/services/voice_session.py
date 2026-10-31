@@ -268,6 +268,8 @@ class VoiceSession:
         # What she last said aloud, as heard (after a barge, only the heard
         # part): "say that again" speaks it again with no model call.
         self.last_spoken: str = ""
+        self._heard_confs: list = []
+        self.last_heard_confidence = None
         self.conversation_id = None
         self.delivery_session = delivery_session if delivery_session is not None else {}
         from agent_friday.services.voice_delivery import initialize_session_preferences
@@ -442,7 +444,7 @@ class VoiceSession:
             if utt:
                 text, ms = self._final_transcript(utt)
                 if text:
-                    self.run_turn(text, audio_ms=ms)
+                    self.run_turn(text, audio_ms=ms, confidence=self.last_heard_confidence)
             self.done.set()
 
     # ── ear ──────────────────────────────────────────────────────────────
@@ -454,8 +456,14 @@ class VoiceSession:
             d.wait()
             if d.error:
                 raise d.error
-            return d.result or ""
-        return self.ear.transcribe(pcm)
+            out = d.result or ""
+        else:
+            out = self.ear.transcribe(pcm)
+        # How sure the ear was, when it says (NS-22.2-6): kept per utterance, partials included.
+        if (out or "").strip():
+            conf = getattr(self.ear, "last_confidence", None)
+            self._heard_confs.append(conf if isinstance(conf, (int, float)) else None)
+        return out
 
     # ── talk-over ────────────────────────────────────────────────────────
 
@@ -541,7 +549,7 @@ class VoiceSession:
             text, ms = self._final_transcript(utterance)
             self._hearing = False
             if text:
-                self.spawn_turn(text, audio_ms=ms)
+                self.spawn_turn(text, audio_ms=ms, confidence=self.last_heard_confidence)
             else:
                 r = self._new_receipt()
                 if r is not None:
@@ -589,6 +597,7 @@ class VoiceSession:
         as it was spoken); the whisper ear re-hears it only if that is empty."""
         ms = (len(utterance) / 2) / ASR_RATE * 1000.0
         t0 = self._clock()
+        self.last_heard_confidence = None
         if self.stream_ear is not None:
             try:
                 text = self.stream_ear.finish()
@@ -598,10 +607,12 @@ class VoiceSession:
             if text:
                 self._chunk_pos = 0
                 self._partials = []
+                self._heard_confs = []
                 self.last_ear_ms = (self._clock() - t0) * 1000.0
                 return text.strip(), ms
         try:
             if ms <= self.rejoin_s * 1000.0 or not self._partials:
+                self._heard_confs = []
                 text = self._transcribe(utterance)
             else:
                 tail = utterance[self._chunk_pos:]
@@ -616,6 +627,11 @@ class VoiceSession:
             text = ""
         self._chunk_pos = 0
         self._partials = []
+        # The words are as sure as their least sure part (a joined utterance: its partials and its tail).
+        known = [c for c in self._heard_confs if c is not None]
+        self.last_heard_confidence = (round(min(known), 2) if known and len(known) == len(self._heard_confs)
+                                      else None)
+        self._heard_confs = []
         self.last_ear_ms = (self._clock() - t0) * 1000.0
         return (text or "").strip(), ms
 
@@ -630,9 +646,10 @@ class VoiceSession:
         except Exception:
             return None
 
-    def spawn_turn(self, user_text: str, audio_ms: float | None = None) -> None:
+    def spawn_turn(self, user_text: str, audio_ms: float | None = None,
+                   confidence: float | None = None) -> None:
         threading.Thread(target=self.run_turn, args=(user_text, audio_ms),
-                         daemon=True).start()
+                         kwargs={"confidence": confidence}, daemon=True).start()
 
     def deliver(self, text: str, kind: str = "result") -> None:
         """Queue a late result (already introduced as not from the user) to
@@ -735,13 +752,13 @@ class VoiceSession:
             turn["cv"].notify_all()
 
     def run_turn(self, user_text: str, audio_ms: float | None = None,
-                 injected: bool = False) -> None:
+                 injected: bool = False, confidence: float | None = None) -> None:
         """One turn, registered as an interactive voice turn for its whole
         length (the mind's answer, its tool calls and the spoken reply): the
         Local AI queue starts no background job during it, and a running one
         pauses before its next model call (services/background_gate)."""
         if not (user_text or "").strip() or self.done.is_set():
-            return self._run_turn(user_text, audio_ms, injected)
+            return self._run_turn(user_text, audio_ms, injected, confidence)
         tag = "voice-turn:%s:%s" % (self.session_id, uuid.uuid4().hex[:8])
         try:
             from agent_friday.services import background_gate as _bg
@@ -749,13 +766,13 @@ class VoiceSession:
         except Exception:
             _bg = None
         try:
-            return self._run_turn(user_text, audio_ms, injected)
+            return self._run_turn(user_text, audio_ms, injected, confidence)
         finally:
             if _bg is not None:
                 _bg.interactive_end(tag)
 
     def _run_turn(self, user_text: str, audio_ms: float | None = None,
-                  injected: bool = False) -> None:
+                  injected: bool = False, confidence: float | None = None) -> None:
         """One turn. ``injected`` marks a late result handed to the mind
         between turns: it is not the owner's words, so it is never shown or
         stored as something they said."""
@@ -801,8 +818,12 @@ class VoiceSession:
                 receipt.mark("vad_open")
                 receipt.mark("vad_close")
                 receipt.mark("input_complete", audio_ms=audio_ms)
+            # How sure the ear was of these words (None when it does not say, or they were typed):
+            # the chat shows it, and offers to put a mishearing right (NS-22.2-6, NS-22.4-3).
+            # (Not `heard`: AX6's "say that again" below uses that name for the words she said.)
+            heard_conf = confidence if isinstance(confidence, (int, float)) else None
             if not injected:
-                self.send({"type": "input_transcript", "text": user_text})
+                self.send({"type": "input_transcript", "text": user_text, "confidence": heard_conf})
             self._status("thinking")
             self._set_state("thinking")
             self.stage("mind", "busy", "thinking")
@@ -944,7 +965,7 @@ class VoiceSession:
             self.send({"type": "turn_end"})
             said = "" if injected else user_text
             self.send({"type": "voice_turn_done", "user_text": said,
-                       "agent_text": reply})
+                       "agent_text": reply, "confidence": None if injected else heard_conf})
             # A turn spoken off the record never reaches the call's summary,
             # even if off-record ends before the call does.
             try:
