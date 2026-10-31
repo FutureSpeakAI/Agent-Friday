@@ -73,7 +73,12 @@ def test_a_poll_just_after_a_build_reuses_it(client, slow_card):
 
 def test_a_settings_save_drops_the_card(client, slow_card):
     assert client.get("/api/intelligence").status_code == 200
-    r = client.post("/api/settings", json={"settings": {"capability_routing": {"subagent": {"model": "claude-opus-5-5"}}}})
+    # A real change: the shared test home may already hold the model an earlier
+    # test on this worker saved, and saving the same value changes nothing.
+    from agent_friday.core import _load_settings_raw
+    current = ((_load_settings_raw().get("capability_routing") or {}).get("subagent") or {}).get("model")
+    pick = "claude-sonnet-5" if current == "claude-opus-5-5" else "claude-opus-5-5"
+    r = client.post("/api/settings", json={"settings": {"capability_routing": {"subagent": {"model": pick}}}})
     assert r.status_code == 200
     client.get("/api/intelligence")
     assert len(slow_card) == 2, "a settings save must not be hidden behind a cached card"

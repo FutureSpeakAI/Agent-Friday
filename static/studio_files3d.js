@@ -325,6 +325,7 @@
   // compete with the one being looked at.
   function prewarm() {
     if (parked || warming || live > 0 || typeof THREE === 'undefined') return;
+    if (window.fridayRender3dOff && window.fridayRender3dOff()) return;   // 3D switched off: no engine
     try {
       const box = document.createElement('div');
       box.style.cssText = 'position:fixed;left:-4000px;top:0;width:96px;height:64px;pointer-events:none;visibility:hidden';
@@ -2907,7 +2908,7 @@
       // stage
       h('div', { ref: stageRef, style: { position: 'relative', height: full || fill ? 'auto' : stageH ? stageH : 'calc(100vh - 300px)', flex: full || fill ? '1 1 auto' : undefined, minHeight: 340, borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(80,140,220,0.25)', background: '#03060d' } },
         h('div', { ref: mountRef, style: { position: 'absolute', inset: 0 } }),
-        noGL && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ab' } }, '3D is unavailable in this browser.'),
+        noGL && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ab' } }, (window.fridayRender3dOff && window.fridayRender3dOff()) ? '3D is turned off (Settings > Appearance > 3D rendering).' : '3D is unavailable in this browser.'),
         (loading || err) && h('div', { style: { position: 'absolute', top: 12, left: 12, padding: '6px 10px', borderRadius: 6, background: PANEL_BG, color: err ? '#ff8a8a' : '#9fd0ff', fontSize: 12 } }, err || 'Scanning…'),
         !loading && !err && items.length === 0 && root && h('div', { style: { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7f93ad', fontSize: 13 } }, 'This folder is empty.'),
         hover && hover.it && (!selIt || hover.it !== selIt) && h('div', { style: { position: 'fixed', left: hover.x + 14, top: hover.y + 12, pointerEvents: 'none', padding: '5px 8px', borderRadius: 6, background: PANEL_BG, border: '1px solid ' + hex(CATS[hover.it.cat].color), color: '#e6f0ff', fontSize: 11, zIndex: 50, maxWidth: 280 } },

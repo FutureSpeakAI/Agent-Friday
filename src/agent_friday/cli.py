@@ -170,6 +170,13 @@ def _load_config() -> dict:
 
 def _save_config(config: dict):
     """Write config to both config.yaml and settings.json."""
+    # North-star A16/A17: decide whether this is a new install before this
+    # command writes settings.json itself.
+    try:
+        from agent_friday import core as _core
+        _core.install_origin()
+    except Exception:
+        pass
     # The command line is not the owner's click on the Settings page: a guarded setting
     # (Laya's safe writes) is written no wider than settings.json holds it now.
     from agent_friday.services import guarded_settings
@@ -183,6 +190,12 @@ def _save_config(config: dict):
                       "this command cannot turn it on. Turn it back on in Friday's Settings (Laya, "
                       "Safe writes).[/yellow]")
     FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+    # The person's spending caps survive this rewrite (north-star A17).
+    try:
+        from agent_friday.services import spending_caps as _caps
+        config = _caps.keep_caps_on_rewrite(config, SETTINGS_FILE)
+    except Exception:
+        pass
     # YAML (primary, human-editable)
     try:
         import yaml
@@ -1055,8 +1068,24 @@ def cmd_status():
     console.print()
 
 
+def _not_checked_unpicked():
+    """North-star A16a: before a route is picked a key check sends nothing to
+    the cloud. Returns the (None, message) answer, or None to go ahead."""
+    try:
+        from agent_friday.services.cloud_intent import route_unpicked
+        if route_unpicked():
+            return None, ("Not checked yet: nothing goes to the cloud until you "
+                          "choose where Friday thinks")
+    except Exception:
+        pass
+    return None
+
+
 def _validate_anthropic_key(key: str):
     """Returns (True/False/None, message)."""
+    held = _not_checked_unpicked()
+    if held is not None:
+        return held
     try:
         from anthropic import Anthropic, AuthenticationError
         c = Anthropic(api_key=key)
@@ -1071,6 +1100,9 @@ def _validate_anthropic_key(key: str):
 
 def _validate_gemini_key(key: str):
     """Returns (True/False/None, message)."""
+    held = _not_checked_unpicked()
+    if held is not None:
+        return held
     try:
         from google import genai
         c = genai.Client(api_key=key)
@@ -1470,8 +1502,64 @@ examples:
     p_cfg.add_argument("value", nargs="*")
 
     # status / doctor / check
-    for alias in ("status", "doctor", "check"):
+    for alias in ("status", "check"):
         sub.add_parser(alias, help="System health check")
+    p_doc = sub.add_parser("doctor", help="System health check; --report writes the "
+                                          "local Doctor report (no content, never sent)")
+    p_doc.add_argument("--report", action="store_true",
+                       help="Write the Doctor report (versions, checks, errors, drift, "
+                            "performance) under ~/.friday/doctor/reports and print it")
+    p_doc.add_argument("--out", metavar="PATH",
+                       help="Also copy the report (.txt) to this file, to attach by hand; "
+                            "with --support, the folder for the zip")
+    p_doc.add_argument("--support", action="store_true",
+                       help="Make a support bundle (the report, the store list and redacted "
+                            "log excerpts) as a zip in Documents\\Friday Support; never sent")
+    p_doc.add_argument("--cloud-ok", action="store_true",
+                       help="With --support: make it even when the folder is synced to the cloud")
+
+    # Revoke all action authority (services/authority.py, north star §18.12)
+    p_auth = sub.add_parser("authority", help="Revoke all action authority, or restore it")
+    p_auth.add_argument("authority_cmd", choices=["revoke-all", "restore", "status"])
+
+    # Friday Bundle (services/friday_bundle.py): encrypted backup and restore
+    p_bundle = sub.add_parser("bundle", help="Make or check a Friday Bundle (encrypted backup)")
+    p_bundle.add_argument("bundle_cmd", choices=["create", "verify", "schedule"])
+    p_bundle.add_argument("file", nargs="?", help="The bundle (verify), where to write it (create), "
+                          "or for schedule: on, off, status, run, rehearse")
+    p_bundle.add_argument("--every", choices=["daily", "weekly"], default=None,
+                          help="schedule on: how often (default: as now, else weekly)")
+    p_bundle.add_argument("--keep", type=int, default=None,
+                          help="schedule on: how many to keep (default: as now, else 7)")
+    p_bundle.add_argument("--out", metavar="PATH", help="Folder or file to write (create)")
+    p_bundle.add_argument("--only", metavar="CATS",
+                          help="Comma-separated categories to include (default: all)")
+    p_bundle.add_argument("--exclude", metavar="CATS", help="Comma-separated categories to leave out")
+    p_restore = sub.add_parser("restore", help="Restore a Friday Bundle onto this machine")
+    p_restore.add_argument("file", help="The .fridaybundle file")
+    p_restore.add_argument("--home", metavar="PATH", help="Data folder to restore into "
+                                                           "(default: Friday's own)")
+    p_restore.add_argument("--only", metavar="CATS", help="Comma-separated categories to restore")
+    p_restore.add_argument("--replace", action="store_true",
+                           help="Move an existing data folder aside (never deleted) and restore")
+    p_restore.add_argument("--dry-run", action="store_true", dest="dry_run",
+                           help="Check the bundle and say what would happen; write nothing")
+    p_restore.add_argument("--allow-newer", action="store_true", dest="allow_newer",
+                           help="Restore a bundle made by a newer Friday")
+
+    p_resume = sub.add_parser("resume", help="After a restore: let outward actions go again "
+                                             "(review your connections first)")
+    p_resume.add_argument("--status", action="store_true",
+                          help="Say whether outward actions wait on a restore; change nothing")
+    p_resume.add_argument("--home", metavar="PATH",
+                          help="The data folder a restore went into (default: Friday's own)")
+    p_resume.add_argument("--yes", action="store_true",
+                          help="Do not ask for confirmation (you have reviewed your connections)")
+
+    # safe mode (services/safe_mode.py)
+    sub.add_parser("safe", help="Start Friday in safe mode: extensions and the cloud off")
+    p_safe = sub.add_parser("safe-mode", help="Start in safe mode next time, or leave it")
+    p_safe.add_argument("state", choices=["on", "off", "status"])
 
     # health (post-install subsystem check, no server required)
     p_health = sub.add_parser("health", help="Post-install subsystem health check")
@@ -1502,6 +1590,11 @@ examples:
     p_export.add_argument("--full", action="store_true",
                           help="Include keys and credentials, encrypted with a "
                                "passphrase you type")
+    p_export.add_argument("--readable", action="store_true",
+                          help="Write your data as plain files instead (Markdown, CSV, JSON): "
+                               "wiki, memories, conversations, goals, receipts, contacts, settings")
+    p_export.add_argument("--only", metavar="CATS",
+                          help="With --readable: comma-separated categories to include")
     p_decrypt = sub.add_parser(
         "decrypt-backup", help="Turn a `friday export --full` backup back into a zip")
     p_decrypt.add_argument("file", help="The .fbak file")
@@ -1639,6 +1732,30 @@ def _ask_backup_passphrase() -> str:
     return ""
 
 
+def cmd_export_readable(out: str | None = None, only: str | None = None) -> int:
+    """The human-readable export (services/readable_export.py): plain files
+    the owner can open without Friday, in a new folder under --out (default:
+    Documents/Friday Exports)."""
+    from agent_friday.services import friday_bundle, readable_export
+    parent = Path(out).expanduser() if out else friday_bundle.documents_dir() / "Friday Exports"
+    cats = [c.strip() for c in only.split(",") if c.strip()] if only else None
+    if readable_export.cloud_synced(parent):
+        print("Note: %s looks like a folder a sync service copies off this PC; the export is "
+              "not encrypted. Use --out to choose another folder." % parent)
+    try:
+        r = readable_export.export(parent, only=cats, by="owner:cli")
+    except readable_export.ExportError as e:
+        print("Not exported: %s" % e)
+        return 1
+    print("Exported %d files to %s" % (r["files"], r["folder"]))
+    for c, n in r["counts"].items():
+        print("  %-14s %d" % (c, n))
+    for n in r["notes"]:
+        print("  note: %s" % n)
+    print("It is your data, unencrypted: keep the folder somewhere safe.")
+    return 0
+
+
 def cmd_export(full: bool = False, out: str | None = None,
                passphrase: str | None = None):
     """Right of access: package the owner's Friday data into one archive.
@@ -1662,9 +1779,14 @@ def cmd_export(full: bool = False, out: str | None = None,
     if dest is None:
         return 1
 
+    from agent_friday.services import whole_file
+    # A run killed half-way leaves no torn archive under the real name, and its
+    # hidden partial file is cleared by the next export to this folder.
+    whole_file.sweep_partials(dest.parent, r"^friday-(backup|data-export)-")
     if not full:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        counts = _write_export_zip(dest, full=False)
+        counts = {}
+        whole_file.write_whole(dest, writer=lambda f: counts.update(
+            _write_export_zip(f, full=False)))
     else:
         if passphrase is None:
             console.print("  A full backup includes the keys that decrypt your stored API\n"
@@ -1681,8 +1803,7 @@ def cmd_export(full: bool = False, out: str | None = None,
         counts = _write_export_zip(buf, full=True)
         salt = os.urandom(_BACKUP_SALT_LEN)
         key = vc.derive_key(passphrase, salt, _backup_profile())
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(_BACKUP_MAGIC + salt + vc.encrypt(buf.getvalue(), key))
+        whole_file.write_whole(dest, _BACKUP_MAGIC + salt + vc.encrypt(buf.getvalue(), key))
 
     size_mb = dest.stat().st_size / (1024 * 1024)
     console.print(f"[green]Exported {counts['files']} files[/green] ({size_mb:.1f} MB) → [bold]{dest}[/bold]")
@@ -1724,7 +1845,12 @@ def cmd_decrypt_backup(src: str, out: str | None = None,
     dest = _export_destination(out or str(p.parent), p.with_suffix(".zip").name)
     if dest is None:
         return 1
-    dest.write_bytes(data)
+    from agent_friday.services import whole_file
+    # A decrypt killed half-way left readable keys in a hidden partial file:
+    # clear any before writing (and this one never takes the name torn).
+    import re as _re
+    whole_file.sweep_partials(dest.parent, r"^friday-backup-|^%s$" % _re.escape(dest.name))
+    whole_file.write_whole(dest, data)
     console.print(f"[green]Decrypted[/green] → [bold]{dest}[/bold]  [dim]It holds your "
                   "keys in readable form; delete it once restored.[/dim]")
     return 0
@@ -1964,6 +2090,258 @@ def _exit_code(rv) -> int:
         return 0
 
 
+def cmd_doctor_report(out=None):
+    """Write the Doctor report and print it. Local only; nothing is sent."""
+    from agent_friday.services import doctor
+    rep = doctor.save()
+    txt = doctor.render_text(rep)
+    print(txt)
+    print("Kept as %s (.json and .txt) in Friday's doctor/reports folder." % rep["id"])
+    if out:
+        dest = Path(out).expanduser()
+        if dest.is_dir():
+            dest = dest / (rep["id"] + ".txt")
+        dest.write_text(txt, encoding="utf-8")
+        print("Copied to %s. Attach it yourself if you want to share it." % dest)
+    bad = [c for c in rep.get("checks", []) if c.get("state") in ("broken", "misconfigured")]
+    return 1 if bad else 0
+
+
+def cmd_doctor_support(out=None, cloud_ok: bool = False) -> int:
+    """Make the support bundle (services/support_bundle.py). Local only;
+    nothing is sent."""
+    from agent_friday.services import support_bundle
+    try:
+        r = support_bundle.make(Path(out).expanduser().absolute() if out else None, by="owner:cli",
+                                cloud_ok=cloud_ok)
+    except support_bundle.CloudFolder as e:
+        print("No support bundle was made: %s Run it again with --cloud-ok, or --out a folder "
+              "that is not synced." % e)
+        return 1
+    except support_bundle.SupportError as e:
+        print("No support bundle was made: %s" % e)
+        return 1
+    print("Made %s (%d files: %s)." % (r["file"], len(r["members"]), ", ".join(r["members"])))
+    for n in r["notes"]:
+        print(n)
+    print("Read it before you share it. Friday never sends it; attach it yourself.")
+    return 0
+
+
+def _bundle_passphrase(confirm: bool) -> str:
+    """The bundle passphrase: FRIDAY_BUNDLE_PASSPHRASE (unattended runs) or typed.
+    A new one (`confirm`) must be strong enough (services/passphrase_strength):
+    typed, it is asked again with the reason; from the environment, refused."""
+    import getpass
+
+    from agent_friday.services import passphrase_strength as ps
+    env = os.environ.get("FRIDAY_BUNDLE_PASSPHRASE", "")
+    if env:
+        if confirm:
+            why = ps.refusal(env)
+            if why:
+                print("No bundle was made. %s" % why)
+                return ""
+        return env
+    for _ in range(3):
+        pw = getpass.getpass("Bundle passphrase (four or five unrelated words work well): ")
+        if confirm:
+            a = ps.assess(pw)
+            print("Strength: %s." % a["label"])
+            if not a["ok"]:
+                print(" ".join(a["feedback"]) or "It is too easy to guess.")
+                continue
+            if getpass.getpass("Type it again: ") != pw:
+                print("The two passphrases differ. Nothing was written.")
+                return ""
+        return pw
+    print("No bundle was made.")
+    return ""
+
+
+def _cats(raw):
+    from agent_friday.services import friday_bundle as fb
+    if not raw:
+        return None
+    got = [c.strip() for c in raw.split(",") if c.strip()]
+    bad = [c for c in got if c not in fb.CATEGORIES]
+    if bad:
+        raise SystemExit("Unknown categories: %s (known: %s)" % (", ".join(bad), ", ".join(fb.CATEGORIES)))
+    return got
+
+
+def _cmd_bundle_schedule(args):
+    from agent_friday.services import backup_schedule as bs
+    what = (args.file or "status").lower()
+    try:
+        if what == "status":
+            st = bs.public_state()
+        elif what == "off":
+            st = bs.set_schedule(enabled=False)
+        elif what == "on":
+            now_st = bs.state()
+            folder = args.out or now_st.get("folder") or str(__import__(
+                "agent_friday.services.friday_bundle", fromlist=["x"]).documents_dir() / "Friday Bundles")
+            args.every = args.every or (now_st.get("every") if now_st.get("enabled") else None) or "weekly"
+            args.keep = args.keep or (now_st.get("keep") if now_st.get("enabled") else None) or bs.DEFAULT_KEEP
+            pw = None if bs.public_state().get("passphrase_kept") and \
+                not os.environ.get("FRIDAY_BUNDLE_PASSPHRASE") else _bundle_passphrase(True)
+            if pw == "":
+                return 1
+            st = bs.set_schedule(enabled=True, every=args.every, folder=folder, keep=args.keep,
+                                 rehearse_days=bs.state().get("rehearse_days", bs.DEFAULT_REHEARSE_DAYS),
+                                 passphrase=pw)
+        elif what == "run":
+            r = bs.run_now()
+            print("Made and verified %s (%s)." % (r["bundle_id"], r["file"]))
+            st = bs.public_state()
+        elif what == "rehearse":
+            r = bs.rehearse()
+            print("Restore rehearsal: %s." % ("passed" if r["ok"] else "FAILED: %s" % r["why"]))
+            if not r["ok"]:
+                return 1
+            st = bs.public_state()
+        else:
+            print("Say on, off, status, run or rehearse.")
+            return 2
+    except bs.ScheduleError as e:
+        print("Not done: %s" % e)
+        return 1
+    print("Scheduled bundles: %s" % ("on, %s, into %s, keeping %d" % (st["every"], st["folder"], st["keep"])
+                                     if st["enabled"] else "off"))
+    return 0
+
+
+def cmd_bundle(args):
+    from agent_friday.services import friday_bundle as fb
+    if args.bundle_cmd == "schedule":
+        return _cmd_bundle_schedule(args)
+    if args.bundle_cmd == "verify":
+        if not args.file:
+            print("Name the bundle to check.")
+            return 2
+        try:
+            r = fb.verify(Path(args.file), _bundle_passphrase(False))
+        except fb.BundleError as e:
+            print("NOT VERIFIED: %s" % e)
+            return 1
+        print("Verified %s: %d files, made %s. Every file matches its manifest."
+              % (r["bundle_id"], r["files"], r["created_at"]))
+        for k, v in sorted(r["by_category"].items()):
+            print("  %-14s %d" % (k, v))
+        return 0
+    cats = _cats(args.only) or list(fb.CATEGORIES)
+    for c in _cats(args.exclude) or []:
+        if c in cats:
+            cats.remove(c)
+    if args.out or args.file:
+        dest = Path(args.out or args.file).expanduser()
+    else:
+        dest = fb.documents_dir() / "Friday Bundles"
+    if dest.suffix != fb.SUFFIX:
+        dest = dest / ("friday-%s%s" % (time.strftime("%Y%m%d-%H%M%S"), fb.SUFFIX))
+    pw = _bundle_passphrase(True)
+    if not pw:
+        return 1
+    try:
+        m = fb.create(dest, pw, categories=cats)
+        v = fb.verify(dest, pw)
+        from agent_friday.paths import friday_home
+        fb._remember(Path(friday_home()), dest, m["bundle_id"], verified=v["ok"])
+    except fb.BundleError as e:
+        print("No bundle was made: %s" % e)
+        return 1
+    print("Made and verified %s (%d files) at %s." % (m["bundle_id"], len(m["files"]), dest))
+    print("Keep the passphrase: without it the bundle cannot be opened.")
+    return 0
+
+
+def cmd_restore(args):
+    from agent_friday.services import friday_bundle as fb
+    if args.home:
+        os.environ["FRIDAY_HOME"] = str(Path(args.home).expanduser())
+    try:
+        r = fb.restore(Path(args.file), _bundle_passphrase(False),
+                       home=Path(args.home).expanduser() if args.home else None,
+                       only=_cats(args.only), replace=args.replace, dry_run=args.dry_run,
+                       allow_newer=args.allow_newer)
+    except fb.BundleError as e:
+        print("NOT RESTORED: %s" % e)
+        return 1
+    print(json.dumps(r, indent=1, sort_keys=True, default=str))
+    if r.get("dry_run"):
+        return 0
+    ok = (r.get("checked_in_place") or {}).get("files_match") and \
+        ((r.get("checked_in_place") or {}).get("ledger") or {}).get("ok", True)
+    print("Restored. Outward actions are held until you press Resume on the Doctor page "
+          "(or run: friday resume).")
+    return 0 if ok else 1
+
+
+def cmd_resume(args) -> int:
+    """The owner's re-attestation after a restore, from a terminal on this PC:
+    the same act as Resume on the Doctor page. It lifts the restore hold only;
+    safe mode, a revocation of authority or a ledger break still hold, and are
+    named. From inside Friday it cannot run: a command is an outward action,
+    and outward actions are held while the restore hold stands."""
+    if getattr(args, "home", None):
+        os.environ["FRIDAY_HOME"] = str(Path(args.home).expanduser())
+    from agent_friday.services import friday_bundle
+    why = friday_bundle.restore_hold()
+    if not why:
+        print("Outward actions are not waiting on a restore.")
+        return 0
+    print(why + ".")
+    if getattr(args, "status", False):
+        return 0
+    if not getattr(args, "yes", False):
+        if not sys.stdin or not sys.stdin.isatty():
+            print("Not resumed: confirm with --yes, or run this in a terminal.")
+            return 1
+        try:
+            answer = input("Have you reviewed your connections and want outward actions to go "
+                           "again? Type yes: ")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() != "yes":
+            print("Not resumed.")
+            return 1
+    try:
+        done = friday_bundle.resume_after_restore("owner:cli")
+    except friday_bundle.BundleError as e:
+        print(str(e))
+        return 1
+    except Exception as e:  # noqa: BLE001 - said plainly; the hold stays
+        print("Not resumed: the record of this could not be written (%s)." % type(e).__name__)
+        return 1
+    if not done:
+        print("Outward actions are not waiting on a restore.")
+        return 0
+    print("Resumed: outward actions may go again.")
+    try:
+        from agent_friday.governance import action_gate
+        still = action_gate.outward_hold()
+    except Exception as e:  # noqa: BLE001
+        still = "the remaining holds could not be checked (%s)" % type(e).__name__
+    if still:
+        print("Still held: %s." % still)
+    return 0
+
+
+def cmd_safe_mode(state):
+    from agent_friday.services import safe_mode
+    if state == "status":
+        p = safe_mode.plan()
+    else:
+        p = safe_mode.set_next_start(state == "on")
+    print("This process: %s. Next start: %s." % (
+        "safe mode" if p["active"] else "normal",
+        "safe mode" if p["next_start_safe"] else "normal"))
+    if state != "status":
+        print("Restart Friday for it to take effect.")
+    return 0
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -1989,8 +2367,48 @@ def main():
         rv = cmd_tools()
     elif cmd == "config":
         rv = cmd_config(args)
+    elif cmd == "doctor" and getattr(args, "support", False):
+        rv = cmd_doctor_support(out=getattr(args, "out", None),
+                                cloud_ok=getattr(args, "cloud_ok", False))
+    elif cmd == "doctor" and getattr(args, "report", False):
+        rv = cmd_doctor_report(out=getattr(args, "out", None))
     elif cmd in ("status", "doctor", "check"):
         rv = cmd_status()
+    elif cmd == "safe":
+        os.environ["FRIDAY_SAFE_START"] = "1"
+        rv = cmd_start()
+    elif cmd == "safe-mode":
+        rv = cmd_safe_mode(args.state)
+    elif cmd == "authority":
+        from agent_friday.services import authority as _auth
+        try:
+            if args.authority_cmd == "revoke-all":
+                out = _auth.revoke_all("owner:cli")
+                print("All action authority revoked. Outward actions are held until you restore it. %s"
+                      % ", ".join("%s: %s" % (k, len(v) if isinstance(v, list) else v)
+                                  for k, v in out.items() if k != "errors"))
+            elif args.authority_cmd == "restore":
+                out = _auth.restore("owner:cli")
+                print(("Restored." + (" " + out["note"] if out.get("note") else ""))
+                      if out.get("restored") else "Action authority was not revoked.")
+            else:
+                st = _auth.status()
+                if st.get("unreadable"):
+                    print("Action authority: HELD (the action ledger could not be read: %s; "
+                          "look at the Ledger, then restore)" % st.get("error"))
+                else:
+                    print("Action authority: %s" % ("REVOKED since %s" % (st["at"] or "earlier")
+                                                     if st["revoked"] else "in force"))
+            rv = 0
+        except _auth.AuthorityError as e:
+            print(str(e))
+            rv = 1
+    elif cmd == "bundle":
+        rv = cmd_bundle(args)
+    elif cmd == "restore":
+        rv = cmd_restore(args)
+    elif cmd == "resume":
+        rv = cmd_resume(args)
     elif cmd == "health":
         rv = cmd_health(exit_code=getattr(args, "exit_code", False))
     elif cmd == "update":
@@ -1999,6 +2417,8 @@ def main():
         rv = cmd_skills(delete_name=getattr(args, "delete", None))
     elif cmd == "vault-setup":
         rv = cmd_vault_setup()
+    elif cmd == "export" and getattr(args, "readable", False):
+        rv = cmd_export_readable(out=getattr(args, "out", None), only=getattr(args, "only", None))
     elif cmd == "export":
         rv = cmd_export(full=getattr(args, "full", False),
                         out=getattr(args, "out", None))

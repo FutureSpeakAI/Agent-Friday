@@ -150,16 +150,48 @@ def connect_google_account():
     # Saving to Google Contacts: only from the Contacts workspace's explicit
     # button, never inherited by a reconnect.
     include_contacts_write = bool(body.get("include_contacts_write"))
+    # Read first (BD-06): changing the calendar or Google Tasks is asked for only from
+    # its own "Allow calendar changes" / "Allow task changes" button, never on an
+    # ordinary connect and never inherited by a reconnect.
+    include_calendar_write = bool(body.get("include_calendar_write"))
+    include_tasks_write = bool(body.get("include_tasks_write"))
     existing = None
     if account_id:
         existing = ga.get_account(account_id)
         if existing:
             login_hint = login_hint or (existing.get("email") or "")
             label = label or (existing.get("label") or "")
+    # A new write permission for an account Friday already has is asked for only after its
+    # permission difference was shown (BD-06, NS-23.2-2): the caller sends back the diff_id
+    # of GET /api/google/accounts/<id>/permission-diff for exactly these capabilities.
+    caps = [c for c, on in (("send", include_send or include_modify), ("calendar", include_calendar_write),
+                            ("tasks", include_tasks_write), ("contacts", include_contacts_write)) if on]
+    if not existing and login_hint:
+        # Named by its address rather than its id: still the same account (the callback files a
+        # grant under the address's id), so still its difference first.
+        existing = ga.get_account(ga._account_id(login_hint))
+        if existing:
+            account_id = existing.get("id") or account_id
+    if not existing and set(caps) - {"send"}:
+        # Calendar, task and contact changes are turned on from an account's own button only.
+        # (A new account's "let Friday send mail" box explains itself on the add form.)
+        return jsonify({"status": "error",
+                        "message": "Turn this on from the account's own button in Settings > "
+                                   "Google accounts, which shows what it adds first."}), 409
+    if existing and caps:
+        diff = ga.permission_diff(account_id, caps)
+        if str(body.get("diff_id") or "") != diff["diff_id"]:
+            return jsonify({"status": "needs_review", "diff": diff,
+                            "message": "Show what this adds first (the permission difference), "
+                                       "then ask Google."}), 409
     try:
-        flow, redirect_uri, client_type = ga.build_auth_flow(
-            include_send=include_send, include_modify=include_modify,
-            include_contacts_write=include_contacts_write)
+        _flow_kw = dict(include_send=include_send, include_modify=include_modify,
+                        include_contacts_write=include_contacts_write)
+        if include_calendar_write:
+            _flow_kw["include_calendar_write"] = True
+        if include_tasks_write:
+            _flow_kw["include_tasks_write"] = True
+        flow, redirect_uri, client_type = ga.build_auth_flow(**_flow_kw)
         auth_kwargs = {
             "access_type": "offline",
             "include_granted_scopes": "true",
@@ -184,7 +216,9 @@ def connect_google_account():
                                # one the person just approved.
                                "include_send": include_send,
                                "include_modify": include_modify,
-                               "include_contacts_write": include_contacts_write}
+                               "include_contacts_write": include_contacts_write,
+                               "include_calendar_write": include_calendar_write,
+                               "include_tasks_write": include_tasks_write}
             # prune stale (>15 min) pending entries
             for s in [k for k, v in _PENDING.items() if _time.time() - v["ts"] > 900]:
                 _PENDING.pop(s, None)
@@ -203,10 +237,20 @@ def connect_google_account():
                 "requesting_send": include_send,
                 "requesting_modify": include_modify,
                 "requesting_contacts_write": include_contacts_write,
+                "requesting_calendar_write": include_calendar_write,
+                "requesting_tasks_write": include_tasks_write,
                 "requested_scopes": [x for x in ga.mailbox_scopes(
                                         (existing or {}).get("scopes") if existing else None)
                                      if (x["scope"] != ga.GMAIL_SEND or include_send)
-                                     and (x["scope"] != ga.GMAIL_MODIFY or include_modify)],
+                                     and (x["scope"] != ga.GMAIL_MODIFY or include_modify)]
+                                    + [{"scope": sc, "what": ga._SCOPE_PLAIN.get(sc, sc), "new": True}
+                                       for sc, on in ((ga.CALENDAR_RW, include_calendar_write),
+                                                      (ga.TASKS_RW, include_tasks_write)) if on]
+                                  # The preview lists contacts-write too when it is asked
+                                  # for, so it matches Google's screen (§34.4-7).
+                                  + ([{"scope": ga.CONTACTS_RW, "what": ga._SCOPE_PLAIN[ga.CONTACTS_RW],
+                                       "new": ga.CONTACTS_RW not in set((existing or {}).get("scopes") or [])}]
+                                     if include_contacts_write else []),
                 "prebrief": _goc.consent_prebrief(_kind)}
         if client_type == "web":
             resp["warning"] = (
@@ -260,10 +304,14 @@ def google_account_callback():
         ), 400
     label = pending.get("label") or session.get("ga_oauth_label") or ""
     try:
-        flow, _, _ = ga.build_auth_flow(
-            state=state, include_send=bool(pending.get("include_send")),
-            include_modify=bool(pending.get("include_modify")),
-            include_contacts_write=bool(pending.get("include_contacts_write")))
+        _flow_kw = dict(state=state, include_send=bool(pending.get("include_send")),
+                        include_modify=bool(pending.get("include_modify")),
+                        include_contacts_write=bool(pending.get("include_contacts_write")))
+        if pending.get("include_calendar_write"):
+            _flow_kw["include_calendar_write"] = True
+        if pending.get("include_tasks_write"):
+            _flow_kw["include_tasks_write"] = True
+        flow, _, _ = ga.build_auth_flow(**_flow_kw)
         # Replay the verifier the START leg generated — the freshly rebuilt
         # flow above has none of its own (it never called authorization_url()).
         flow.code_verifier = pending["verifier"]
@@ -294,14 +342,48 @@ def google_account_callback():
                 "still waits for your approval.</p>"
                 if ga.CONTACTS_RW in (rec.get("scopes") or []) else
                 "<p>Saving contacts was <b>not</b> granted; contacts stay read-only.</p>")
+        _changes = ga.change_permissions(rec)
+        if pending.get("include_calendar_write"):
+            send_line += (
+                "<p>Friday <b>can change this calendar</b>; each change still follows "
+                "your approval rules.</p>" if _changes["calendar"] else
+                "<p>Calendar changes were <b>not</b> granted; the calendar stays read-only.</p>")
+        if pending.get("include_tasks_write"):
+            send_line += (
+                "<p>Friday <b>can change this account's Google Tasks</b>.</p>"
+                if _changes["tasks"] else
+                "<p>Task changes were <b>not</b> granted; Google Tasks stay read-only.</p>")
         return (
             "<h2>✅ Google account connected</h2>"
             f"<p><b>{rec.get('email','')}</b> ({rec.get('label','')}) is now linked "
-            "to Friday — Gmail, Calendar, and Drive. You can close this tab.</p>"
+            "to Friday to read Gmail, Calendar, Drive and Tasks. You can close this tab.</p>"
             + send_line
         )
     except Exception as e:
         return html_error(e, "Token exchange failed")
+
+
+@google_accounts_bp.route("/api/google/accounts/contract")
+def google_connector_contract():
+    """What the Google connection lets Friday do (services/connector_contracts, NS-23.1-2): each
+    operation, read or change, the permission it needs and whether it waits for a card.
+    Read-only; holds no account data."""
+    from agent_friday.services import connector_contracts as cc
+    return jsonify({"status": "ok", "contract": cc.google_contract()})
+
+
+@google_accounts_bp.route("/api/google/accounts/<account_id>/permission-diff")
+def google_permission_diff(account_id):
+    """What turning on new write capabilities (?capability=calendar, repeatable or comma
+    separated: send, calendar, tasks, contacts) would add for this account, in plain words.
+    Read-only; starts nothing."""
+    if not ga.get_account(account_id):
+        return jsonify({"status": "error", "message": "account not found"}), 404
+    caps = [c.strip() for v in request.args.getlist("capability") for c in v.split(",") if c.strip()]
+    try:
+        return jsonify({"status": "ok", "diff": ga.permission_diff(account_id, caps)})
+    except ValueError as e:
+        return api_error(e, "Not a capability Friday can ask for", 400)
 
 
 @google_accounts_bp.route("/api/google/accounts/mailbox-scopes")
@@ -367,10 +449,23 @@ def toggle_google_account_services(account_id):
 @google_accounts_bp.route("/api/google/accounts/<account_id>/remove", methods=["POST"])
 @rate_limited(max_calls=10, window_s=300, bucket="remove")
 def remove_google_account(account_id):
-    ok = ga.remove_account(account_id)
-    if not ok:
+    out = ga.remove_account_detail(account_id)
+    if not out:
         return jsonify({"status": "error", "message": "account not found"}), 404
-    return jsonify({"status": "ok", "removed": account_id})
+    if not out.get("removed"):
+        return jsonify({"status": "error", "revoked_at_google": out["revoked_at_google"],
+                        "message": ("The sign-in file for this account could not be deleted (it may "
+                                    "be in use), so the account is still listed. Try Remove again.")}), 500
+    # The contract (services/connector_contracts.GOOGLE_REVOCATION) promises the owner is told
+    # when Google could not be asked to revoke: the token is gone from this PC either way.
+    message = ("Removed. Google confirmed access is revoked." if out["revoked_at_google"] else
+               "Removed from this PC, but Google did not confirm the revoke. To be sure, remove "
+               "Friday at myaccount.google.com > Security > Third-party access.")
+    if not out.get("legacy_deleted", True):
+        message += (" The older sign-in file google_token.json could not be deleted (it may be in "
+                    "use): delete it by hand from Friday's data folder.")
+    return jsonify({"status": "ok", "removed": account_id,
+                    "revoked_at_google": out["revoked_at_google"], "message": message})
 
 
 @google_accounts_bp.route("/api/google/accounts/gmail")

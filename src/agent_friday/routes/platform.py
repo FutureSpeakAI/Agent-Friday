@@ -1,4 +1,4 @@
-﻿"""Platform endpoints — the Goose-inspired extensibility layer.
+"""Platform endpoints — the Goose-inspired extensibility layer.
 
 Exposes the seven extensibility services over the web API:
   * recipes            — YAML workflows (list / save / dry-run / run)
@@ -302,6 +302,16 @@ def api_provider_test(name):
                           detail=None if ok else "Ollama daemon not reachable")
         except Exception as e:
             result["detail"] = exception_text(e)
+        return jsonify(public_result(result, "Couldn't test the provider"))
+
+    # North-star A16a: before a route is picked a key check sends nothing to
+    # the cloud. Local providers are still tested.
+    from agent_friday.services.cloud_intent import route_unpicked
+    from agent_friday.services.seat_policy import is_local_descriptor
+    if route_unpicked() and not is_local_descriptor(prov):
+        result.update(status="not_checked",
+                      detail="Not checked yet: nothing goes to the cloud until you "
+                             "choose where Friday thinks (Settings > Models).")
         return jsonify(public_result(result, "Couldn't test the provider"))
 
     if ptype in ("local-voice", "nemo-local", "higgsfield", "kie"):
@@ -858,6 +868,17 @@ def api_subagent_scopes():
 @platform_bp.route("/api/subagents/scopes", methods=["POST"])
 def api_subagent_scope_save():
     data = request.get_json(silent=True) or {}
+    # §17.14-3: letting a scope start subagents, or changing a scope that
+    # exists, is the owner's click in Friday's window, never a request.
+    try:
+        existing = {s.get("name") for s in subagents.list_scopes()}
+    except Exception:
+        existing = None                   # can't tell: treat it as a change
+    if data.get("allow_subagents") or existing is None or (data.get("name") or "").strip() in existing:
+        from agent_friday.services import screen_click as _screen_click
+        if not _screen_click.screen_session(request):
+            return jsonify({"ok": False, "error": "needs_screen_click",
+                            "message": "Change this scope from Friday's window."}), 403
     try:
         return jsonify({"ok": True, "scope": subagents.save_custom_scope(data)})
     except ValueError as e:

@@ -41,8 +41,16 @@ silently rewriting them would be a different and much worse product, and it
 would corrupt the record of the user's own life to satisfy a request about
 someone else's.
 
+What WAS derived from the conversations is removed (services/forget_derived,
+NS-15.7-2): the turns that name the person leave the recall indexes (vector
+memory and conversation search) so they are never recalled again, the day
+summaries made from them are written again without them, the graph drops
+what those turns supported, and memory-card lines and suggestions naming them
+go. The transcript stays, and the receipt lists it as retained.
+
 So ``find()`` reports which source documents still mention the person, the
-receipt from ``forget()`` carries that list, and the UI shows it. The user is
+receipt from ``forget()`` carries that list and a per-store row (``stores``:
+removed / not removable / retained for integrity), and the UI shows it. The user is
 told exactly what was removed and exactly what remains, and can decide about
 their own notes themselves. A receipt that implied more than that would make a
 liar of whoever showed it to the person who asked.
@@ -176,9 +184,15 @@ def redact_forgotten_names(text: str, replacement: str = "[removed]") -> str:
     gone = forgotten_names()
     if not gone:
         return text
+    try:
+        from agent_friday.services.forget_registry import COMMON_WORDS as _common
+    except Exception:
+        _common = frozenset()
     out = text
     for name in sorted(gone, key=len, reverse=True):
-        if not name:
+        # The tombstone keeps a common-word alias ("Will") for exact title
+        # matches (filter_entities); in prose it would take every "will".
+        if not name or (" " not in name and name in _common):
             continue
         words = [re.escape(w) for w in name.split(" ") if w]
         if not words:
@@ -237,6 +251,14 @@ def _matching_names(name: str) -> list:
     if person:
         names.append(person.get("name", ""))
         names.extend(person.get("aliases") or [])
+    # Forgetting again: the record is gone, the tombstone still has the
+    # aliases, so a second run reaches what the first did.
+    target = _norm(name)
+    for entry in _load_tombstones()["forgotten"]:
+        if isinstance(entry, dict) and target in {
+                _norm(n) for n in [entry.get("name", "")] + list(entry.get("aliases") or [])}:
+            names.append(entry.get("name", ""))
+            names.extend(entry.get("aliases") or [])
     return [n for n in {_norm(n) for n in names} if n]
 
 
@@ -326,18 +348,23 @@ def _scrub_name_from_text(obj, names: list, replacement: str = "[removed]"):
     Community reports are LLM-written paragraphs: the name is in the sentence,
     not in a field, so dropping a record would throw away the other people in
     the same cluster. Substitution keeps the cluster and removes the person.
+
+    The free-text rule every forget store shares (forget_registry.
+    subject_matcher): whole words; a multi-word name in any case; a one-word
+    name case-sensitively ("Dana", never "dana.txt"); the owner's and
+    Friday's names and an ordinary word on its own ("Will": never "we will")
+    are not matched. `names` may also be a matcher already built.
     """
+    from agent_friday.services import forget_registry as _fr
+    m = names if isinstance(names, _fr._Matcher) else _fr.subject_matcher([n for n in names if n])
+    if not m:
+        return obj
     if isinstance(obj, str):
-        out = obj
-        for n in names:
-            if not n:
-                continue
-            out = re.sub(re.escape(n), replacement, out, flags=re.IGNORECASE)
-        return out
+        return m.sub(obj, replacement)
     if isinstance(obj, list):
-        return [_scrub_name_from_text(v, names, replacement) for v in obj]
+        return [_scrub_name_from_text(v, m, replacement) for v in obj]
     if isinstance(obj, dict):
-        return {k: _scrub_name_from_text(v, names, replacement) for k, v in obj.items()}
+        return {k: _scrub_name_from_text(v, m, replacement) for k, v in obj.items()}
     return obj
 
 
@@ -349,9 +376,36 @@ def forget(name: str) -> dict:
     remaining records are removed on the next pass -- whereas purging first and
     dying before the tombstone lands would silently rebuild everything.
     """
+    from agent_friday.services import forget_registry as _fr
     with _LOCK:
-        names = _matching_names(name)
+        # 0. Names that would take far more than this person are refused
+        #    (forget_registry.name_guard). The person's record is resolved
+        #    FIRST: the forget is refused only when the resolved full name is
+        #    the owner's own or Friday's (or, with no record, the name typed
+        #    is one of them, or a word of the owner's name: nothing fuller to
+        #    forget). Typing a bare word of the owner's name ("Sam") that the
+        #    people graph resolves to someone else ("Sam Patel") forgets Sam
+        #    Patel under the full name; the bare word is not used anywhere.
+        typed = _norm(name)
         _, person = _people_graph_entry(name)
+        primary = (person or {}).get("name") or name
+        resolved = _fr._lower(primary)
+        asked = _fr.name_guard([primary]).get(resolved)
+        if asked and asked != _fr._REASON_COMMON:
+            return _refused_receipt(name, asked)
+        all_names = _matching_names(name)
+        guard = _fr.name_guard(all_names)
+        # Record-level exact-match stores (the people graph, graph entity
+        # titles, the tombstone) keep every alias, a common word included;
+        # only the owner's and Friday's names are refused there.
+        exact_refused = _fr.exact_match_refused(guard)
+        exact = [n for n in all_names if _fr._lower(n) not in exact_refused]
+        # Free text (step 4's community summaries, the timeline, every
+        # registered store) leaves out every refused name; the name typed is
+        # kept unless it is the owner's or Friday's (subject_matcher refuses
+        # a common word again for the stores that use it).
+        names = [n for n in all_names if _fr._lower(n) not in guard
+                 or (n == typed and _fr._lower(n) not in exact_refused)]
         # Read before the people-graph record is removed: it may be the only
         # place an address for this person is written down.
         emails = _person_emails(names, person)
@@ -359,17 +413,18 @@ def forget(name: str) -> dict:
         # 1. Tombstone first, with the addresses, so a timeline sync that
         #    runs mid-purge already skips them.
         data = _load_tombstones()
-        if not is_forgotten(name):
+        if not is_forgotten(primary):
             from datetime import datetime, timezone
             data["forgotten"].append({
-                "name": (person or {}).get("name") or name,
-                "aliases": list((person or {}).get("aliases") or []),
+                "name": primary,
+                "aliases": [a for a in ((person or {}).get("aliases") or [])
+                            if _fr._lower(a) not in exact_refused],
                 "emails": sorted(emails),
                 "forgotten_at": datetime.now(timezone.utc).isoformat(),
             })
             _save_tombstones(data)
         elif emails:
-            target = set(names)
+            target = set(exact)
             for entry in data["forgotten"]:
                 if isinstance(entry, dict) and (
                         _norm(entry.get("name", "")) in target
@@ -395,8 +450,8 @@ def forget(name: str) -> dict:
                 continue
             doomed = [k for k, p in people.items()
                       if isinstance(p, dict)
-                      and (_norm(p.get("name", "")) in names or _norm(k) in names
-                           or any(_norm(a) in names for a in (p.get("aliases") or [])))]
+                      and (_norm(p.get("name", "")) in exact or _norm(k) in exact
+                           or any(_norm(a) in exact for a in (p.get("aliases") or [])))]
             if not doomed:
                 continue
             for k in doomed:
@@ -410,7 +465,7 @@ def forget(name: str) -> dict:
         #    a dangling edge still carries her name in its description.
         entities = _read_kg("entities")
         doomed_ids = {e.get("id") for e in entities
-                      if _norm(e.get("title", "")) in names}
+                      if _norm(e.get("title", "")) in exact}
         if doomed_ids:
             kept = [e for e in entities if e.get("id") not in doomed_ids]
             _write_kg("entities", kept)
@@ -446,23 +501,120 @@ def forget(name: str) -> dict:
         # 6. Every other store that names a person registers with the forget
         #    registry (research notes, learned sender signals, the trust
         #    evidence log); a store missing from it is a bug, not a survivor.
+        #    Since NS-15.7-2 that includes what was derived from conversations
+        #    (services/forget_derived): the recall indexes, day summaries, the
+        #    graph's conversation-sourced nodes and the memory card.
+        registry_rows = []
         try:
-            from agent_friday.services import forget_registry as _fr
-            for store, count in _fr.purge_all(names, emails).items():
+            registry_rows = _fr.purge_all_detailed(names, emails)
+            for store, count in _fr.counts(registry_rows).items():
                 removed[store] = count
         except Exception as e:
             removed["registry_error"] = ExceptionText(str(e)[:200])
 
+        remaining = _sources_mentioning(names)
+        try:
+            forms = _fr.subject_matcher(names, emails).forms
+        except Exception:
+            forms = []
+        # The names refused (step 0); a common word that was itself asked for
+        # is listed by the stores that match free text. A common word is
+        # refused in free text only: records carrying exactly that name were
+        # still matched (step 2, step 3, the tombstone).
+        refused = []
+        for n, r in sorted(guard.items()):
+            if r == _fr._REASON_COMMON:
+                if n == _fr._lower(name):
+                    continue
+                r = r + ("; it was still used for contact records and graph entries named exactly this "
+                         "(any such were removed), and Friday will not build records under it again")
+            refused.append({"what": "the name %r on its own" % n, "reason": r})
+        rows = _receipt_rows(removed, registry_rows, remaining)
+        if refused:
+            rows.insert(0, {"store": "names", "removed": 0, "kind": "names matched",
+                            "not_removable": refused, "retained": []})
+        notes = []
+        if not _fr.owner_full_name():
+            notes.append("Your own name is not set up in Friday, so she could not check that none of these "
+                         "names is yours; if one is, what you said about yourself under it may have been "
+                         "removed too. Once your name is set up, it is never matched.")
         return {
             "name": name,
             "removed": removed,
             # Named plainly. The user is going to repeat this to the person who
             # asked, and it must not imply a completeness we do not have.
-            "remaining_sources": _sources_mentioning(names),
+            "remaining_sources": remaining,
+            # The deletion receipt (NS-15.7-3): every store, with what was
+            # removed, what could not be, and what is kept on purpose and why.
+            "stores": rows,
+            # The forms of the name matched in free text (the owner typed
+            # them), and the names refused because they would take more.
+            "matched_forms": forms,
+            "refused_names": [r["what"] for r in refused],
+            # The person forgotten, when the name typed resolved to a fuller
+            # record (typing "Sam" forgets "Sam Patel").
+            "forgotten_as": primary,
+            "owner_name_unknown": bool(notes),
+            "notes": notes,
             "note": ("Your own wiki pages and conversation history were not "
-                     "changed. Those are your notes, in your words. Friday will "
-                     "not build records about this person again."),
+                     "changed. Those are your notes, in your words. The messages "
+                     "that name this person are no longer recalled, searched, "
+                     "summarised or sent to a model as conversation context; "
+                     "logs kept for audit are listed below. Friday will not "
+                     "build records about this person again."
+                     + "".join(" " + n for n in notes)),
         }
+
+
+def _refused_receipt(name: str, reason: str) -> dict:
+    """Nothing removed: the name asked for is the owner's own or Friday's."""
+    return {
+        "name": name,
+        "removed": {},
+        "remaining_sources": [],
+        "refused": reason,
+        "stores": [{"store": "names", "removed": 0, "kind": "names matched",
+                    "not_removable": [{"what": "the name %r" % name, "reason": reason}],
+                    "retained": []}],
+        "matched_forms": [],
+        "refused_names": ["the name %r" % name],
+        "note": "Nothing was removed: " + reason + ".",
+    }
+
+
+def _receipt_rows(removed: dict, registry_rows: list, remaining: list) -> list:
+    """One row per store: removed (count and kind), not removable (why),
+    retained for integrity (why). Counts only, never the content."""
+    def row(store, n, kind, not_removable=(), retained=()):
+        return {"store": store, "removed": int(n or 0), "kind": kind,
+                "not_removable": list(not_removable), "retained": list(retained)}
+    timeline_err = removed.get("timeline_error")
+    rows = [
+        row("people_graph", removed.get("people_graph"), "contact records"),
+        row("kg_entities", removed.get("kg_entities"), "knowledge-graph entities"),
+        row("kg_relationships", removed.get("kg_relationships"), "knowledge-graph links"),
+        row("kg_reports_scrubbed", removed.get("kg_reports_scrubbed"),
+            "community summaries with the name taken out"),
+        row("relationship_timeline",
+            int(removed.get("timeline_removed") or 0) + int(removed.get("timeline_edited") or 0)
+            + int(removed.get("follow_ups_removed") or 0),
+            "timeline entries and follow-ups",
+            # The marked exception text itself (not str() of it, which would
+            # drop the mark): public_result swaps it at the HTTP boundary.
+            [{"what": "relationship timeline", "reason": timeline_err}] if timeline_err else ()),
+    ]
+    rows += [dict(r) for r in registry_rows]
+    if removed.get("registry_error"):
+        rows.append(row("other_stores", 0, "records",
+                        [{"what": "the stores registered for forgetting",
+                          "reason": removed["registry_error"]}]))
+    rows.append(row("wiki_notes", 0, "notes", (),
+                    [{"what": "your own wiki pages that mention them", "count": len(remaining),
+                      "reason": "your notes, in your words: Friday does not rewrite them"}]
+                    if remaining else ()))
+    for r in rows:
+        r.pop("error", None)
+    return rows
 
 
 def unforget(name: str) -> dict:

@@ -1154,7 +1154,13 @@ Both notes, Friday's recent changes (last 20) and the "Waiting for your review" 
 `{change_id}`: undo one of Friday's changes ("What Friday changed").
 
 ### `POST /api/core-memory/review`
-`{id, keep: bool}`: Keep or Discard a queued suggestion.
+`{id, keep: bool, text?}`: Keep or Discard a queued suggestion. With `text` and `keep: true`, "Edit and keep": exactly that text is kept as the owner's own line (journaled as the owner's change; the card's limits and duplicate check apply; it is the owner's words, so the special-category filter for inferred lines does not). `/api/core-memory/decide` is the same route.
+
+### `POST /api/core-memory/suppress`
+`{id}`: "Don't suggest things like this". Discards the suggestion and records a rule (`services/memory_suppress`: its normalised content words, not its text) so a similar suggestion from dreaming, the background review, Friday's tool or memory proposals is not queued again. Drops are counted by place, without text. The owner's own adds are never suppressed.
+
+### `GET /api/core-memory/suppressed` · `POST /api/core-memory/suppressed/remove`
+The suppression rules (`{rules, dropped, dropped_total}`) · `{id}`: remove one rule, so similar suggestions can come through again.
 
 ### `GET /api/memory/corrections?n=`
 The owner's corrections (`services/corrections`), newest first, at most 100: store, action, the old claim and the correction (shortened), reason, what was repaired, and `undo_ids` where the card can put the retired messages back (`POST /api/core-memory/restore-messages`). Owner principal only (403 otherwise).
@@ -1224,7 +1230,7 @@ The owner's confirmed drag. `{calendar_key, start_time, end_time, confirmed: tru
 Which connected accounts may send (scopes Google actually granted); the accounts drafts can be saved to.
 
 ### `POST /api/mail/draft`
-Save a draft in Gmail Drafts. Sends nothing.
+Save a draft in Gmail Drafts. Sends nothing. The owner's press in Friday's page only, through the action checkpoint (else 403, nothing saved).
 
 ### `POST /api/mail/request` · `POST /api/mail/send`
 Queue a message for the owner's approval (sends nothing); send a message the owner already approved.
@@ -1233,7 +1239,7 @@ Queue a message for the owner's approval (sends nothing); send a message the own
 Recent send attempts (successes and failures); sends waiting in the unattended Undo window; cancel one.
 
 ### `GET|POST /api/mail/unsubscribe` · `POST /api/mail/modify` · `POST /api/mail/modify/undo` · `GET|POST /api/mail/labels`
-Inbox clean-up and label actions.
+Inbox clean-up and label actions. A change (POST) is the owner's press in Friday's page, never a body that says `requested_by: "ui:..."`; one that reaches Gmail or a mailing list passes the action checkpoint (`record_external`) first, and a hold answers 403 with nothing changed. A request from Friday to unsubscribe raises an approval card (202). The same applies to `POST /api/messages/action` (Friday may ask for archive, Trash, spam and mute with a card), `POST /api/messages/restore` and `POST /api/inbox-cleanup/*` (`services/mail_owner.py`).
 
 ---
 

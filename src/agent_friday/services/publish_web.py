@@ -452,7 +452,9 @@ def scan(bundle: Bundle) -> dict:
         if ns:
             refusals.append("never-send material is in the bundle (%d item%s)" % (len(ns), "" if len(ns) == 1 else "s"))
     except Exception as e:
-        warnings.append("the egress floor could not run (%s)" % e)
+        # A public page is never published past a floor that could not be checked (NS-34.6-7).
+        refusals.append("the never-send check could not run (%s), so nothing is published until it can"
+                        % type(e).__name__)
     ids += len(_SSN_RE.findall(text))
     if ids:
         refusals.append("hard identifier(s) found: %d (a national id, card or account number)" % ids)
@@ -737,7 +739,22 @@ def unpublish(slug: str) -> bool:
             try:
                 from agent_friday.services import publish_hosting as _ph
                 _ph.unpublish_remote(entry)
+                try:
+                    from agent_friday.services import egress_gate as _eg
+                    _eg.record_service_send("web_publish", ("publish-web:" + str(entry.get("adapter")))[:80],
+                                            destination=str(entry.get("url") or entry.get("adapter") or ""),
+                                            content={"take_down": slug}, part="take down")
+                except Exception:
+                    pass
             except Exception:
+                try:
+                    from agent_friday.services import egress_gate as _eg
+                    _eg.record_service_send("web_publish", ("publish-web:" + str(entry.get("adapter")))[:80],
+                                            destination=str(entry.get("url") or entry.get("adapter") or ""),
+                                            content={"take_down": slug}, part="take down",
+                                            result="sent_unconfirmed")
+                except Exception:
+                    pass
                 # Remote timeouts can be ambiguous. Keep the local receipt and
                 # mirror so a failed request cannot be presented as taken down.
                 raise UserFacingValueError("Remote take-down was not confirmed. The saved publication remains listed; check the host before retrying.") from None
@@ -776,6 +793,24 @@ def _post_back(record: dict, text: str) -> None:
         pass
 
 
+def _record_egress(adapter: str, label: str, bundle: "Bundle", result: str, url: str = "") -> None:
+    """The page in the egress ledger and on the privacy map (§26.7): where it
+    went and what it held (text files as text; other files by size and hash),
+    fingerprinted and kept encrypted by default (A20)."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        files = {}
+        for path, data in sorted(bundle.files.items()):
+            try:
+                files[path] = data.decode("utf-8")
+            except Exception:
+                files[path] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+        _eg.record_service_send("web_publish", ("publish-web:" + adapter)[:80], destination=label + (f" ({url})" if url else ""),
+                                content={"slug": bundle.slug, "files": files}, result=result, part="page")
+    except Exception:
+        pass
+
+
 def _on_decision(record: dict) -> None:
     if not isinstance(record, dict) or record.get("kind") != KIND:
         return
@@ -802,7 +837,8 @@ def _on_decision(record: dict) -> None:
     url = _this_pc_url(bundle.slug) if adapter == "this_pc" else ""
     from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external(KIND, surface="approval_card", approval_id=aid, target=url or bundle.slug)
+        decision = _gate.record_external(KIND, surface="approval_card", approval_id=aid,
+                                         target=url or bundle.slug)
     except Exception as e:
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": "held: %s" % e})
         _post_back(record, 'I could not publish "%s": %s. Nothing was published.' % (title, e))
@@ -814,9 +850,13 @@ def _on_decision(record: dict) -> None:
             from agent_friday.services import publish_hosting as _ph
             url = _ph.publish_remote(adapter, bundle)
     except Exception as e:
+        _gate.close_external(decision, False, detail="publish_failed")
         _ap.mark_used(aid, "publish_web", detail={"ok": False, "error": str(e)})
+        _record_egress(adapter, label, bundle, "failed")
         _post_back(record, 'Publishing "%s" via %s failed: %s. Nothing is up.' % (title, label, e))
         return
+    _record_egress(adapter, label, bundle, "sent", url)
+    _gate.close_external(decision, True, detail="published")
     with _LOCK:
         items = [i for i in _read_index() if i.get("slug") != bundle.slug]
         items.append({"slug": bundle.slug, "title": bundle.title, "kind": bundle.kind,
@@ -827,6 +867,18 @@ def _on_decision(record: dict) -> None:
         _write_index(items)
         shutil.rmtree(_staging_root() / str(payload.get("staging") or ""), ignore_errors=True)
     _ap.mark_used(aid, "publish_web", detail={"ok": True, "url": url})
+    # A published file that Friday made (a picture, a page) gets this
+    # publication's receipt in the artifact manifest, found by its bytes.
+    try:
+        publish_receipt = (decision or {}).get("receipt")
+        if publish_receipt:
+            import hashlib as _hl
+            from agent_friday.services import artifact_manifest as _am
+            for _data in bundle.files.values():
+                _am.record_delivery(publish_receipt, channel="publish_web:%s" % adapter,
+                                    sha256=_hl.sha256(_data).hexdigest(), ref=bundle.slug, approval_id=aid)
+    except Exception:
+        pass
     note = (" It is reachable only while this PC is on and its tunnel is up." if adapter == "this_pc" else "")
     _post_back(record, 'Published "%s" (v%d) via %s: %s%s Say "take it down" to unpublish.'
                % (title, bundle.version, label, url, note))

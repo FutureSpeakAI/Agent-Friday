@@ -375,3 +375,69 @@ def test_a_failed_record_leaves_nothing_pointing_at_a_missing_event(world, monke
     meta = mem._collection.rows[old][1]
     assert meta["superseded"] == "1" and meta["superseded_by"] == "", "still retired, no dangling link"
     assert co.events() == []
+
+
+# ── edit and keep (live's NS-15.5-1) is a correction too ──────────────────────
+def test_edit_and_keep_of_a_card_suggestion_is_a_correction_event(world, tmp_path):
+    mem = world
+    cid = cv.create("Office")["id"]
+    said = _said(mem, cid, "I work from the Leeds office most weeks of the year.")
+    fts.ensure_built()
+    q = cm.queue("user", "add", text="Prefers long detailed answers.", source="dream:2026-10-01")
+    res = cm.decide(q["id"], True, text="Prefers short answers, bullet points first.")
+    assert res["ok"] and res.get("edited") and res.get("correction_id"), res
+    evs = co.events()
+    assert [e["id"] for e in evs] == [res["correction_id"]]
+    ev = evs[0]
+    assert ev["store"] == "card" and ev["action"] == "corrected" and ev["by"] == "owner"
+    assert ev["correction"] == "Prefers short answers, bullet points first."
+    assert ev["claim"] == "", "the suggested wording is kept nowhere, not even sealed"
+    assert ev["repair"].get("suggestion_edited") == 1 and ev["repair"].get("superseded_turns") == 0
+    assert "card:user#0" in ev["affected"] and ("suggestion:" + q["id"]) in ev["sources"]
+    assert "long detailed" not in _raw(tmp_path) and "Prefers short" not in _raw(tmp_path)
+    # Approving a suggestion never retires what was said.
+    assert mem._collection.rows[said][1].get("superseded") != "1"
+    journal = [json.loads(ln) for ln in cm._journal_path().read_text(encoding="utf-8").splitlines()]
+    assert journal[-1].get("via") == "edited_suggestion"
+    assert journal[-1].get("correction_id") == res["correction_id"] and journal[-1].get("line_ref")
+    assert re.search(r"- Prefers short answers, bullet points first\. \[correction:\d{4}-\d{2}-\d{2}\]",
+                     cm.render_prompt())
+
+
+def test_edit_and_keep_of_a_replace_suggestion_is_a_correction_event(world):
+    cm.add("user", "Works from the Leeds office.", actor="owner")
+    q = cm.queue("user", "replace", old="Leeds", text="Works from the York office.", source="review")
+    res = cm.decide(q["id"], True, text="Works from home on Fridays, York office otherwise.")
+    assert res["ok"] and res.get("correction_id"), res
+    ev = co.get(res["correction_id"])
+    assert ev["correction"] == "Works from home on Fridays, York office otherwise." and ev["claim"] == ""
+    assert ev["repair"].get("suggestion_edited") == 1
+    # A plain Keep, or an "edit" that leaves the wording as suggested, records nothing.
+    q2 = cm.queue("user", "add", text="Plays chess on Sundays.", source="review")
+    assert "correction_id" not in cm.decide(q2["id"], True, text="Plays chess on Sundays.")
+    assert [e["id"] for e in co.events()] == [res["correction_id"]]
+
+
+def test_a_proposal_edited_then_kept_names_the_proposal(world):
+    # memory_proposals.approve passes the fact id when the owner edited it.
+    res = cm.add("user", "Likes a one-page summary first.", actor="owner", dedupe=True,
+                 via="edited_suggestion", suggestion_edit=["fact:f-123"])
+    assert res["ok"] and res.get("correction_id")
+    ev = co.get(res["correction_id"])
+    assert "fact:f-123" in ev["sources"] and ev["claim"] == ""
+    # Without an edit the owner's add is no correction.
+    assert "correction_id" not in cm.add("user", "Keeps bees.", actor="owner")
+    assert len(co.events()) == 1
+
+
+def test_an_edit_and_keep_whose_record_fails_leaves_no_dangling_link(world, monkeypatch):
+    def _boom(_row):
+        raise OSError("disk full")
+    monkeypatch.setattr(co, "_append", _boom)
+    q = cm.queue("user", "add", text="Prefers tea.", source="review")
+    res = cm.decide(q["id"], True, text="Prefers green tea, no sugar.")
+    assert res["ok"] and "correction_id" not in res
+    assert cm.entries("user") == ["Prefers green tea, no sugar."]
+    journal = [json.loads(ln) for ln in cm._journal_path().read_text(encoding="utf-8").splitlines()]
+    assert not any(r.get("correction_id") or r.get("line_ref") for r in journal)
+    assert co.events() == []

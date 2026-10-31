@@ -111,7 +111,7 @@ class TestImmediatePass:
         goals.set_executor(_executor_recording_hints())
         monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdict_sequence(True))
         goals.run_milestone(g["goal_id"], mid)
-        assert goals.get_goal(g["goal_id"])["status"] == "completed"
+        assert goals.get_goal(g["goal_id"])["status"] == "met_verified"
 
     def test_multi_milestone_goal_stays_active_until_all_done(self, monkeypatch):
         g = _make_goal(milestones=[{"name": "One"}, {"name": "Two"}])
@@ -121,7 +121,7 @@ class TestImmediatePass:
         goals.run_milestone(g["goal_id"], m1)
         assert goals.get_goal(g["goal_id"])["status"] == "active"
         goals.run_milestone(g["goal_id"], m2)
-        assert goals.get_goal(g["goal_id"])["status"] == "completed"
+        assert goals.get_goal(g["goal_id"])["status"] == "met_verified"
 
     def test_second_call_on_already_done_milestone_is_a_noop(self, monkeypatch):
         # Two milestones so the GOAL stays "active" after the first completes
@@ -292,7 +292,8 @@ class TestEscalation:
         goals.set_executor(_executor_recording_hints())
         monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdict_sequence(False))
         goals.run_milestone(g["goal_id"], mid)
-        assert goals.get_goal(g["goal_id"])["status"] == "active"
+        # Not failed: it needs the owner (§17.3), who decides on the card.
+        assert goals.get_goal(g["goal_id"])["status"] == "needs_owner"
 
     def test_human_approval_of_escalation_marks_done_with_override_flag(self, monkeypatch):
         """The ONLY path that can mark an escalated milestone done: an
@@ -315,14 +316,21 @@ class TestEscalation:
         kinds = [r["kind"] for r in updated["receipts"]]
         assert "milestone_human_approved_override" in kinds
 
-    def test_denying_an_escalation_marks_milestone_failed(self, monkeypatch):
+    def test_denying_an_escalation_stops_the_milestone_for_the_owner(self, monkeypatch):
+        """A refused result stops the milestone on a typed reason the owner can
+        start again from (it is never stuck), and the next attempt asks on a new card."""
         g = _make_goal()
         mid = g["milestones"][0]["milestone_id"]
         goals.set_executor(_executor_recording_hints())
         monkeypatch.setattr(goals.qa_gates, "evaluate_text", _verdict_sequence(False))
         result = goals.run_milestone(g["goal_id"], mid)
         goals.approvals.decide(result["approval_id"], "deny")
-        assert goals.get_goal(g["goal_id"])["milestones"][0]["status"] == "failed"
+        ms = goals.get_goal(g["goal_id"])["milestones"][0]
+        assert ms["status"] == "blocked" and ms["blocker"]["type"] == "result_refused"
+        out = goals.restart_milestone(g["goal_id"], mid, confirm_unknown_outcome=True)
+        assert out["ok"] is True
+        again = out["run"]
+        assert again.get("approval_id") and again["approval_id"] != result["approval_id"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -362,10 +370,12 @@ class TestManualVerificationMode:
         assert ms["status"] == "done"
         assert ms["verification"]["passed"] is True
 
-    def test_manual_mode_denial_marks_failed(self, monkeypatch):
+    def test_manual_mode_denial_stops_for_the_owner(self, monkeypatch):
         goals.set_executor(_executor_recording_hints())
         g = _make_goal(verification_mode="manual")
         mid = g["milestones"][0]["milestone_id"]
         result = goals.run_milestone(g["goal_id"], mid)
         goals.approvals.decide(result["approval_id"], "deny")
-        assert goals.get_goal(g["goal_id"])["milestones"][0]["status"] == "failed"
+        ms = goals.get_goal(g["goal_id"])["milestones"][0]
+        assert ms["status"] == "blocked" and ms["blocker"]["type"] == "result_refused"
+        assert ms["blocker"]["needs_confirmation"] is True

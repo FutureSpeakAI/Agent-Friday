@@ -233,7 +233,12 @@ def _google_credentials():
     working against encrypted-at-rest credentials. The plaintext
     ~/.friday/google_token.json is migrated into that store on first use and then
     removed. Lazy import avoids a calendar_engine <-> google_accounts cycle.
+
+    North-star A16a: None (not connected) until a route is chosen.
     """
+    from agent_friday.services.cloud_intent import outbound_held
+    if outbound_held("connector", "google"):
+        return None
     try:
         from agent_friday.services.google_accounts import has_accounts, primary_credentials
         if has_accounts():

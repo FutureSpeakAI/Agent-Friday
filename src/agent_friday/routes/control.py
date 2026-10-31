@@ -150,6 +150,119 @@ def cc_kill():
     return jsonify({"killed": True, "message": "Computer control terminated. All permissions revoked."})
 
 
+# ── Stop everything (services/global_stop) ──────────────────────────────────
+#
+# Stop is open to every channel the owner uses (it only ends work). Resume is a
+# press on Friday's own page (screen_click.screen_session): no word, tool call or
+# program can resume. Each writes a signed receipt (decision-bom.jsonl).
+
+@control_bp.route('/api/stop-everything', methods=['GET'])
+@login_required
+def stop_everything_state():
+    from agent_friday.services import global_stop as _gs
+    st = _gs.state()
+    return jsonify({"status": "ok", "stopped": bool(st.get("stopped")),
+                    "since": st.get("since"), "source": st.get("source"),
+                    "resume_needs": "a press on Friday's own screen"})
+
+
+@control_bp.route('/api/stop-everything', methods=['POST'])
+@login_required
+def stop_everything():
+    from agent_friday.services import global_stop as _gs
+    data = request.get_json(silent=True) or {}
+    source = str(data.get("source") or "button").strip().lower()
+    if source not in ("button", "keyboard", "tray"):
+        source = "button"
+    st = _gs.stop(by="owner", source=source, reason=str(data.get("reason") or "")[:200])
+    return jsonify({"status": "ok", "stopped": True, "since": st.get("since"),
+                    "halted": st.get("halted"), "receipt": st.get("receipt"),
+                    "message": _gs.SPOKEN_STOPPED})
+
+
+@control_bp.route('/api/stop-everything/resume', methods=['POST'])
+@login_required
+def stop_everything_resume():
+    from agent_friday.services import global_stop as _gs, screen_click
+    # The owner's page on THIS PC: a page reached through a tunnel, a forward or the LAN
+    # carries the same token, so the press must also arrive over loopback with no
+    # forwarding evidence (core._is_local_request).
+    if not (screen_click.screen_session(request) and core._is_local_request()):
+        return jsonify({"status": "refused", "code": "resume_needs_press",
+                        "error": "Resume is a press of the Resume button on Friday's own screen."}), 403
+    try:
+        st = _gs.resume(by="owner", source="button")
+    except _gs.ResumeHeld:
+        return jsonify({"status": "held", "code": "resume_receipt_failed",
+                        "error": "Nothing resumed: the resume receipt could not be written. "
+                                 "Everything is still stopped; try again."}), 503
+    return jsonify({"status": "ok", "stopped": False, "message": _gs.RESUMED_TEXT,
+                    "saved": not st.get("save_error")})
+
+
+# ── Folders Friday may use (services/path_policy, BD-26) ─────────────────────
+#
+# A grant widens where the file tools may read or write, so it is a press on
+# Friday's own page on this PC (screen_session AND _is_local_request). Revoking
+# only narrows, so any page request may do it.
+
+@control_bp.route('/api/network/egress-record', methods=['GET'])
+@login_required
+def egress_proxy_record():
+    """What commands and connector servers reached through Friday's allow-list proxy
+    (services/egress_proxy): when, which run or server, host, port, allowed or not.
+    No content. Local only: host names are the owner's business."""
+    import agent_friday.core as core
+    if not core._is_local_request():
+        return jsonify({"error": "local only"}), 403
+    from agent_friday.services import egress_proxy as _ep
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 2000))
+    except ValueError:
+        limit = 200
+    return jsonify({"rows": _ep.record(limit),
+                    "note": "Commands and connectors are sent through this proxy; a program that "
+                            "ignores proxy settings is not stopped by it."})
+
+
+@control_bp.route('/api/files/folder-grants', methods=['GET'])
+@login_required
+def folder_grants_list():
+    from agent_friday.services import path_policy as _pp
+    if not core._is_local_request():   # folder names are the owner's; not for a tunnel or the LAN
+        return jsonify({"status": "refused", "code": "local_only",
+                        "error": "Folder grants are listed on this PC only."}), 403
+    rows = [{k: g.get(k) for k in ("id", "root", "ops", "purpose", "granted_at", "expires_at")}
+            for g in _pp.grants()]
+    return jsonify({"status": "ok", "grants": rows, "max_days": _pp.MAX_GRANT_DAYS})
+
+
+@control_bp.route('/api/files/folder-grants', methods=['POST'])
+@login_required
+def folder_grants_add():
+    from agent_friday.services import path_policy as _pp, screen_click
+    refusal = screen_click.press_refusal(request, "Allow a folder with the control on Friday's own screen.")
+    if refusal is not None:
+        return refusal       # its code lets Friday's page fetch this launch's desk key and press again
+    if not core._is_local_request():
+        return jsonify({"status": "refused", "code": "needs_press",
+                        "error": "Allow a folder with the control on Friday's own screen."}), 403
+    data = request.get_json(silent=True) or {}
+    g, why = _pp.add_grant(str(data.get("path") or ""), list(data.get("ops") or []),
+                           days=data.get("days") or _pp.DEFAULT_GRANT_DAYS,
+                           purpose=str(data.get("purpose") or ""))
+    if g is None:
+        return jsonify({"status": "error", "error": why}), 400
+    return jsonify({"status": "ok", "grant": {k: g.get(k) for k in ("id", "root", "ops", "purpose", "expires_at")}})
+
+
+@control_bp.route('/api/files/folder-grants/<grant_id>', methods=['DELETE'])
+@login_required
+def folder_grants_revoke(grant_id):
+    from agent_friday.services import path_policy as _pp
+    return jsonify({"status": "ok", "revoked": _pp.revoke(str(grant_id))})
+
+
 # ── File permissions (WO-17) ────────────────────────────────────────────────
 #
 # Authenticated HTTP endpoints only — there is no grant tool in CLAUDE_TOOLS,

@@ -543,6 +543,11 @@ def claude_summarizer(client, model, *, session_ctx=None, on_cost=None):
 
 # ── trimming what summarising cannot reach ───────────────────────────────────
 
+def _reclose(text):
+    from agent_friday.services.untrusted_input import reclose
+    return reclose(text)
+
+
 def _trim_tail_results(messages, budget, keep_chars=4000, factor=1.0):
     """Cut oversized tool results in the tail (newest untouched last) until
     the transcript fits. Summarising cannot shrink the tail, and one large
@@ -560,7 +565,8 @@ def _trim_tail_results(messages, budget, keep_chars=4000, factor=1.0):
         c = m.get("content")
         if m.get("role") == "tool" and isinstance(c, str) and len(c) > keep_chars:
             cut = len(c) - keep_chars
-            m["content"] = c[:keep_chars] + "\n" + _TRIM_MARKER.format(n=cut)
+            # A cut result keeps its data envelope closed (services/untrusted_input).
+            m["content"] = _reclose(c[:keep_chars] + "\n" + _TRIM_MARKER.format(n=cut))
             trimmed += 1
         elif isinstance(c, list):
             changed = False
@@ -569,7 +575,7 @@ def _trim_tail_results(messages, budget, keep_chars=4000, factor=1.0):
                 if (isinstance(b, dict) and b.get("type") == "tool_result"
                         and isinstance(b.get("content"), str) and len(b["content"]) > keep_chars):
                     cut = len(b["content"]) - keep_chars
-                    b = dict(b, content=b["content"][:keep_chars] + "\n" + _TRIM_MARKER.format(n=cut))
+                    b = dict(b, content=_reclose(b["content"][:keep_chars] + "\n" + _TRIM_MARKER.format(n=cut)))
                     changed = True
                 new.append(b)
             if changed:
@@ -739,10 +745,13 @@ def maybe_compact(messages, model=None, summarizer=None, *, window=None,
                         _taint.note_carried(_key, "summary", summary)
                 except Exception as e:
                     print(f"  [compaction] could not record the summary's provenance: {e}")
+            # A summary keeps what tools found, so it is data, never the owner's
+            # voice: the one envelope (services/untrusted_input).
+            from agent_friday.services.untrusted_input import wrap as _data_envelope
             summary_msg = {
                 "role": "user",
                 "content": f"{_SUMMARY_PREFIX} Earlier in this session ("
-                           f"{len(middle)} messages condensed): {body}",
+                           f"{len(middle)} messages condensed):\n\n{_data_envelope(body)}",
             }
             compacted = _merge_adjacent(list(head) + [summary_msg] + list(tail))
         else:

@@ -126,8 +126,45 @@ def _describe(tool: str, args: Dict[str, Any]) -> str:
         return tool
 
 
+def _settle(record: dict) -> None:
+    """A background task that raised this card waits for it (status waiting_approval);
+    once its last card is decided, the task's status says what the decisions did."""
+    task_id = str(((record or {}).get("payload") or {}).get("task_id") or "")
+    if not task_id:
+        return
+    try:
+        from agent_friday.services import agent as _agent
+        _agent.settle_waiting_task(task_id)
+    except Exception as e:  # noqa: BLE001 - the card already holds the outcome
+        _log.warning("could not settle task %s after card %s: %s",
+                     task_id, record.get("approval_id"), type(e).__name__)
+
+
+#: Tools whose `title` argument is an event's or a task's title (kept sealed, never in the ledger).
+def _title_tools():
+    from agent_friday.services import change_receipts as _cr
+    return _cr.TITLE_TOOLS
+
+
+_TITLE_SEALED_TOOLS = _title_tools()     # one list (services/change_receipts.TITLE_TOOLS)
+
+
 def _on_decision(record: dict) -> None:
-    """Run an approved card's action once, and report what happened."""
+    """Run an approved card's action once, report what happened, and settle the
+    task that was waiting for it."""
+    try:
+        _decide(record)
+    finally:
+        if isinstance(record, dict) and record.get("status") != "pending":
+            _settle(record)
+            if ((record.get("payload") or {}).get("tool") in _TITLE_SEALED_TOOLS
+                    and record.get("approval_id")):
+                # decided: the stored card keeps no title (the live card was the one on screen)
+                from agent_friday.services import change_receipts as _cr
+                _cr.scrub_card(record["approval_id"])
+
+
+def _decide(record: dict) -> None:
     if not isinstance(record, dict):
         return
     if record.get("kind") == "tool_confirm":
@@ -159,22 +196,39 @@ def _on_decision(record: dict) -> None:
     search_card = _pq.is_public_query_card(record)
     if search_card and not _pq.approved_texts(record):
         # A search card whose input is not exactly what it showed: not run.
-        if _ap.claim_for_execution(aid):
+        if _ap.claim_for_execution(aid, by="approval_executor"):
             _ap.mark_used(aid, "approval_executor",
                           detail={"ok": False, "error": "card text does not match its input"})
             _post_back(record, "The search card you approved did not match what it "
                                "would send, so nothing was sent.")
         return
-    if not _ap.claim_for_execution(aid):
+    if not _ap.claim_for_execution(aid, by="approval_executor"):
         return                                  # someone else already has it
+    # (the run's own call, agent._run_card_prior, mints the grant when it wins)
+
+    if payload.get("run_grant"):
+        # A24: this card also approved the rest of its run's Google Tasks changes. Minted only
+        # once this executor holds the card, so the card's own change runs once.
+        try:
+            from agent_friday.services import run_grants as _rg
+            _rg.mint_on_approval(record)
+        except Exception as _rg_err:
+            _log.warning("run grant not minted for %s: %s", aid, type(_rg_err).__name__)
 
     # The two steps every outward action gets, for an executor acting outside a
     # tool call: the cLaws are intact, and a signed receipt exists. If either
     # fails the action does NOT run.
-    from agent_friday.governance import action_gate as _gate
     try:
-        _gate.record_external(tool, surface="approval_card", approval_id=aid,
-                              target=str(args.get("path") or args.get("title") or ""))
+        from agent_friday.governance import action_gate as _gate
+        # A calendar event's or a task's title is not kept readable in the ledger:
+        # those name the item by id. The task that raised the card, when one did:
+        # its decision names it (outward_audit false_done).
+        task_id = str(payload.get("task_id") or "")
+        decision_ref = _gate.record_external(tool, surface="approval_card", approval_id=aid,
+                                             target=str(args.get("path") or (
+                                                 (args.get("event_id") or args.get("task_id") or "")
+                                                 if tool in _TITLE_SEALED_TOOLS else args.get("title")) or ""),
+                                             once=True, **({"task_id": task_id} if task_id else {}))
     except Exception as e:
         _ap.mark_used(aid, "approval_executor",
                       detail={"ok": False, "error": "held: %s" % e})
@@ -183,9 +237,13 @@ def _on_decision(record: dict) -> None:
         _log.error("approval %s held at the checkpoint: %s", aid, e)
         return
 
+    # The call's outcome receipt closes the decision just written (the governance
+    # hook links it when the card checks out); anything that stops the call before
+    # that hook is closed below.
     ctx = {"authenticated": True, "approved_card": aid,
            "surface": "approval_card", "confirm_bypass": True,
-           "conversation_id": payload.get("conversation_id") or ""}
+           "conversation_id": payload.get("conversation_id") or "",
+           "approved_card_decision": decision_ref}
     started = time.time()
     try:
         # An approved search card (privacy/public_query): exactly the strings
@@ -202,13 +260,22 @@ def _on_decision(record: dict) -> None:
             workspace = str(result).split(":", 1)[1].split()[0]
             shown = open_on_desktop("workspace", workspace=workspace)
             result, ok = shown["text"], shown.get("status") == "opened"
-    except Exception as e:
+    except BaseException as e:
+        # Even an exit raised inside the tool records the card's end first:
+        # a claimed card with no end is what a crash looks like (card_recovery).
         result, ok = "%s: %s" % (type(e).__name__, e), False
+        _reraise = None if isinstance(e, Exception) else e
+    else:
+        _reraise = None
 
     took = int((time.time() - started) * 1000)
+    # a no-op when the call's own outcome closed it
+    _gate.close_external(decision_ref, ok, detail="approval_executor")
     _ap.mark_used(aid, "approval_executor",
                   detail={"ok": ok, "took_ms": took,
                           "result": str(result)[:800]})
+    if _reraise is not None:
+        raise _reraise
 
     if search_card:
         # A search card's report names the card, not the query, and its result

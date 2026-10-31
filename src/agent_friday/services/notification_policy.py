@@ -67,9 +67,17 @@ def _safety_critical(kind: str, source: str = "") -> bool:
         return False
 
 
-def tier_for(kind: str, source: str, priority: str, tier: str | None = None) -> str:
+def _named_kinds() -> set:
+    """Kinds this policy decides by name; the encoder head never second-guesses them."""
+    return set(APPROVAL_KINDS) | set(NEEDS_YOU_KINDS) | {k for k, _ in LOG_ONLY_PAIRS}
+
+
+def tier_for(kind: str, source: str, priority: str, tier: str | None = None,
+             text: str | None = None) -> str:
     """The tier of a notification. An emitter may name one; an approval is
-    always NEEDS_YOU whatever it names."""
+    always NEEDS_YOU whatever it names. `text` (title and body) lets the local
+    encoder head raise an FYI of an unnamed kind to NEEDS_YOU; it is the only
+    thing it can do (services/triage_heads)."""
     kind, source = str(kind or ""), str(source or "")
     if is_approval(kind):
         return NEEDS_YOU
@@ -83,6 +91,14 @@ def tier_for(kind: str, source: str, priority: str, tier: str | None = None) -> 
         return NEEDS_YOU
     if priority == "high" and kind in ("warning", "error"):
         return NEEDS_YOU
+    if tier is None and text:
+        try:
+            from agent_friday.services import triage_heads
+            return triage_heads.notification_tier(
+                FYI, kind, source, priority, text,
+                needs_you=NEEDS_YOU, known_kinds=_named_kinds())
+        except Exception:
+            return FYI
     return FYI
 
 

@@ -28,6 +28,8 @@ def home(tmp_path, monkeypatch):
     creations.mkdir()
     monkeypatch.setattr(core, "FRIDAY_DIR", fd)
     monkeypatch.setattr(core, "CREATIONS_DIR", creations)
+    # Files here sit in tmp_path; the file tools' folder confinement is pointed there.
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     monkeypatch.setattr(provenance, "PROVENANCE_DIR", fd / "provenance", raising=False)
     return tmp_path
 
