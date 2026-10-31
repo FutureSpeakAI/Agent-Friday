@@ -190,6 +190,11 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
             return {"ok": False, "unconfirmed": True,
                     "error": "This same contact is being saved right now; it was not saved twice."}
         if prior.get("resource_name"):
+            from agent_friday.services import connector_outcome as _co_r
+            _co_r.reread("contact", prior["resource_name"],
+                         lambda: svc.people().get(resourceName=prior["resource_name"],
+                                                  personFields="names,emailAddresses").execute(),
+                         lambda r: isinstance(r, dict) and r.get("resourceName") == prior["resource_name"])
             return {"ok": True, "action": "already_saved", "account": rec.get("email"),
                     "resource_name": prior["resource_name"],
                     "note": ("This contact was already saved earlier in this turn or task; no second copy "
@@ -231,5 +236,10 @@ def save_contact(*, account_id: str = "", resource_name: str = "", **fields) -> 
                 "error": _co.not_done("unconfirmed", "Google Contacts")}
     if action == "created":
         _remember(key, out.get("resourceName"))
+    # Read it back from Google (NS-4.6-1).
+    _co.reread("contact", out.get("resourceName"),
+               lambda: svc.people().get(resourceName=out["resourceName"],
+                                        personFields="names,emailAddresses").execute(),
+               lambda r: isinstance(r, dict) and r.get("resourceName") == out.get("resourceName"))
     return {"ok": True, "action": action, "account": rec.get("email"),
             "resource_name": out.get("resourceName")}
