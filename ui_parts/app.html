@@ -31073,14 +31073,14 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
             custom arrangement exists. A switch that flips and changes nothing is
             worse than one that says why it is off, so it says why. */}
         {dockShape.configured
-          ? <div className="settings-toggle" style={{opacity:0.5,cursor:'default'}} title="Your own dock arrangement is in use, so this no longer applies." onClick={()=>{window.__fridaySettingsTab='appearance';setSettingsOpen(false);toggle('settings');try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'appearance'}}))}catch(e){}}}>
+          ? <div className="settings-toggle" role="button" tabIndex={0} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click()}}} style={{opacity:0.5,cursor:'default'}} title="Your own dock arrangement is in use, so this no longer applies." onClick={()=>{window.__fridaySettingsTab='appearance';setSettingsOpen(false);toggle('settings');try{window.dispatchEvent(new CustomEvent('friday:settings-tab',{detail:{tab:'appearance'}}))}catch(e){}}}>
               <span className="settings-toggle-label">Show all workspaces — set in Settings → Appearance</span>
             </div>
-          : <div className="settings-toggle" onClick={()=>saveAgentSettings({show_all_workspaces:!showAllWorkspaces})}>
+          : <div className="settings-toggle" role="switch" aria-checked={!!showAllWorkspaces} tabIndex={0} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click()}}} onClick={()=>saveAgentSettings({show_all_workspaces:!showAllWorkspaces})}>
               <span className="settings-toggle-label">Show all workspaces</span>
               <div className={`settings-toggle-switch ${showAllWorkspaces?'on':''}`}/>
             </div>}
-        <div className="settings-toggle" onClick={()=>fridayToggleOffRecord(!!agentSettings.off_record,saveAgentSettings)}>
+        <div className="settings-toggle" role="switch" aria-checked={!!agentSettings.off_record} tabIndex={0} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.currentTarget.click()}}} onClick={()=>fridayToggleOffRecord(!!agentSettings.off_record,saveAgentSettings)}>
           <span className="settings-toggle-label" style={{color:agentSettings.off_record?'#ff0080':undefined}}>{agentSettings.off_record&&agentSettings.off_record_stops_storage!==false?FRIDAY_OFF_RECORD_TEXT:'Go off the record'}</span>
           <div className={`settings-toggle-switch ${agentSettings.off_record?'on':''}`}/>
         </div>
@@ -31304,7 +31304,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">
           <div className="dock-group-btns">
-            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(noticeWs.has(w.id)&&!openWins.has(w.id))?'has-notice':''}`} data-ws={w.id} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(noticeWs.has(w.id)&&!openWins.has(w.id))?(fridayName() + ' left you something here'):undefined} style={{position:'relative'}}>
+            {g.items.map(w=><button key={w.id} className={`dock-btn ${openWins.has(w.id)?'active':''} ${(noticeWs.has(w.id)&&!openWins.has(w.id))?'has-notice':''}`} data-ws={w.id} aria-pressed={openWins.has(w.id)} onClick={e=>{if((e.ctrlKey||e.metaKey)&&w.id!=='settings'){e.preventDefault();if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.');return}toggle(w.id)}} onAuxClick={e=>{if(e.button===1&&w.id!=='settings'){e.preventDefault();/* a BACKGROUND tab, the way a link's middle-click is */if(!fridayOpenWorkspaceTab(w.id,null,{background:true}))fridayToast('The browser blocked that tab. Allow pop-ups for '+window.location.host+' and try again.')}}} onMouseDown={e=>{if(e.button===1)e.preventDefault()}} title={(noticeWs.has(w.id)&&!openWins.has(w.id))?(fridayName() + ' left you something here'):undefined} aria-label={w.label+((noticeWs.has(w.id)&&!openWins.has(w.id))?', something waiting':'')} style={{position:'relative'}}>
               <span className="ico"><img src={`assets/icons/${w.id}.svg`} alt={w.label} ref={el=>{if(el&&el.complete&&el.naturalWidth===0){el.style.display='none';if(el.nextSibling)el.nextSibling.style.display='inline'}}} onError={e=>{e.target.style.display='none';if(e.target.nextSibling)e.target.nextSibling.style.display='inline'}}/><span style={{display:'none'}}>{w.ico}</span></span><span>{w.label}</span><span className="dot"/>
             </button>)}
           </div>
