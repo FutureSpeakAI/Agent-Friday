@@ -78,6 +78,9 @@ ALLOWLIST = {
         "called only through `(POSTER or _post_one_click)` in inbox_cleanup.unsubscribe, which runs "
         "after mail_owner.held (record_external) on the owner's press or authorize_external on an "
         "approved card; the scan cannot follow the `or` indirection",
+    ("services/key_verdict.py", "ping_detail"):
+        "a one-token key check against the owner's model provider (an inference request, nothing "
+        "published; not sent until a route is picked, cloud_intent.route_unpicked)",
     ("services/local_call.py", "_openai_style"):
         "a local model server on this computer (chat completion)",
     ("services/model_router.py", "_post_current"):

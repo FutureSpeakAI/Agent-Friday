@@ -158,6 +158,9 @@ def world(tmp_path, monkeypatch, friday_dir):
     monkeypatch.setattr(sp, "_store", lambda: tmp_path / "setting_changes.json")
     monkeypatch.setattr(cm, "_dir", lambda: tmp_path / "core_memory")
     monkeypatch.setattr(cm, "_MIGRATION_CHECKED", {str(tmp_path / "core_memory"): True})
+    # The PDF and the README are written to pytest's temp folder: make it the folder
+    # file tools may use (services/path_policy confines them to the home folder by default).
+    monkeypatch.setenv("FRIDAY_SANDBOX_ROOT", str(tmp_path))
     monkeypatch.setattr(ne, "push", lambda **kw: None)
     desktop_bus.reset()
     agent._PENDING_CONFIRMATIONS.clear()

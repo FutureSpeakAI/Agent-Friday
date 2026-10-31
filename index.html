@@ -50509,11 +50509,11 @@ const JOURNAL_LINKED_KINDS = ['approval', 'verification', 'artifact', 'blocker',
 function journalLinkedLine(ev) {
   const k = ev.kind;
   const words = s => String(s || '').replace(/_/g, ' ');
-  if (k === 'approval') return ev.phase === 'raised' ? 'approval card raised' : 'approval ' + words(ev.outcome || 'decided') + (ev.by === 'system' ? ' by Friday' : ev.by === 'grant' ? ' by your standing approval' : ev.by ? ' by you' : '');
+  if (k === 'approval') return ev.phase === 'raised' ? 'approval card raised' : 'approval ' + words(ev.outcome || 'decided') + (ev.by === 'system' ? ' by ' + fridayName() : ev.by === 'grant' ? ' by your standing approval' : ev.by ? ' by you' : '');
   if (k === 'verification') return 'check ' + words(ev.result || 'unknown');
   if (k === 'artifact') return 'file made' + (ev.tool ? ' by ' + words(ev.tool) : '') + (ev.qa_ok === false ? ' \xB7 its check found problems' : '');
   if (k === 'blocker') return 'blocked: ' + words(ev.code || ev.category || 'unknown');
-  if (k === 'paused' || k === 'resumed' || k === 'stopped') return k + ' by ' + (ev.who === 'owner' ? 'you' : 'Friday') + (ev.reason_code ? ' \xB7 ' + words(ev.reason_code) : '');
+  if (k === 'paused' || k === 'resumed' || k === 'stopped') return k + ' by ' + (ev.who === 'owner' ? 'you' : fridayName()) + (ev.reason_code ? ' \xB7 ' + words(ev.reason_code) : '');
   if (k === 'receipt') return 'receipt: ' + words(ev.outcome || 'recorded');
   return words(k);
 }
@@ -61803,7 +61803,7 @@ function GovernanceGrantsPanel() {
     msg && /*#__PURE__*/React.createElement("div", { role: "status", style: Object.assign({}, muted, { marginTop: 6, color: '#9fd' }) }, msg),
     /*#__PURE__*/React.createElement("details", { "data-testid": "grant-records", style: { marginTop: 12 } },
       /*#__PURE__*/React.createElement("summary", { style: { fontSize: 12, color: '#ccc', cursor: 'pointer' } }, 'Every grant, in full (' + records.length + ')'),
-      /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginTop: 6 }) }, "Every standing permission Friday holds, of every kind. Read-only. A grant that does not fit an action never blocks it: the action asks you instead."),
+      /*#__PURE__*/React.createElement("div", { style: Object.assign({}, muted, { marginTop: 6 }) }, "Every standing permission ", fridayName(), " holds, of every kind. Read-only. A grant that does not fit an action never blocks it: the action asks you instead."),
       records.map(r => /*#__PURE__*/React.createElement("div", { key: r.kind + ':' + r.id, className: "card", style: { padding: 8, marginTop: 6, fontSize: 11, color: '#bbb', lineHeight: 1.5 } },
         grantRecordWords(r).map((w, i) => /*#__PURE__*/React.createElement("div", { key: i }, w))))));
 }

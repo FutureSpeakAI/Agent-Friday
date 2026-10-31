@@ -92,11 +92,12 @@ def test_a_use_that_cannot_be_recorded_does_not_happen(grants_file, monkeypatch)
 
     def broken(*a, **k):
         raise OSError("disk full")
-    monkeypatch.setattr(action_ledger, "append", broken)
-    assert _use(g) is None, "a use ran with no record of it"
-    monkeypatch.undo()
-    monkeypatch.setattr(gate, "_grants_file", lambda: grants_file)
-    monkeypatch.setattr(gate, "_gov_dir", lambda: grants_file.parent)
+    # Only the broken append is put back afterwards: monkeypatch.undo() would
+    # also undo the root conftest's per-test action ledger (FRIDAY_LEDGER_DIR),
+    # and the second use would then read whatever the shared home's ledger holds.
+    with monkeypatch.context() as m:
+        m.setattr(action_ledger, "append", broken)
+        assert _use(g) is None, "a use ran with no record of it"
     assert _use(g), "the unrecorded attempt spent the grant"
 
 

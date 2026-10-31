@@ -330,8 +330,11 @@ def test_a_retry_that_rereads_the_same_files_but_produces_something_new_is_not_s
 def test_attempts_that_repeat_an_earlier_attempt_key_stop_the_run(monkeypatch):
     _verdicts(monkeypatch)
     # The same work failing the same way every time: the same attempt key.
+    # The failure says nothing about its cause ("execution failed"): one
+    # that does is stopped on its first repeat by the same-failure check
+    # (goals._run_milestone_locked, §17.10) before the attempt keys count.
     work = _Work(lambda attempt, i: f"the same synthetic file {i}",
-                 text=lambda attempt: "synthetic failure: the service did not answer", ok=False)
+                 text=lambda attempt: "execution failed", ok=False)
     goals.set_executor(work)
     gid, mid = _goal(retries=6)
     out = goals.run_milestone(gid, mid)

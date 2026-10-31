@@ -349,6 +349,8 @@ def read(task_id: str, since: int = 0, limit: Optional[int] = None, *,
                     fh.seek(start - 1)
                     if fh.read(1) != b"\n":
                         fh.readline()        # the first line is cut: not a line
+                else:
+                    fh.seek(0)               # the whole file fits: read it from its start
             except Exception:
                 fh.close()
                 raise

@@ -1525,6 +1525,30 @@ def _note_recall_turn(session_id, conversation_id, why=_RECALL_WHY):
         pass
 
 
+#: Why a turn whose prompt carried remembered past outcomes counts as a recall
+#: turn (no pre-approved send in it; governance/outside_content).
+_OUTCOME_RECALL_WHY = "this turn's prompt carried remembered past outcomes"
+
+
+def _outcome_block_for(provider_name, message, slicer, *, scrub=True):
+    """(block, recalled) for the past outcomes this message is about
+    (services/outcome_memory): the item lines inside the data envelope, PII
+    scrubbed for a guarded cloud turn when `scrub` (as the ON SCREEN block is;
+    /api/chat scrubs its whole tail itself and passes False), then gated like
+    the other memory blocks, so it is a row in the turn's context manifest and
+    is sliced for a cloud seat. `recalled` is True when any record was found."""
+    from agent_friday.services import outcome_memory as _om
+    block = _om.context_block(message)
+    if not block:
+        return "", False
+    if scrub and provider_name != 'local':
+        from agent_friday.services.egress_gate import is_unrestricted_cloud
+        if not is_unrestricted_cloud():
+            block, _sub = _scrub_pii(block)
+    return slicer.gate_block("memory", block, name="past_outcomes",
+                             marker=_om.RECALL_HEADER), True
+
+
 def _turn_learning_off():
     """This turn's off-record state for everything that LEARNS from it
     (services/off_record.excludes_learning, NS-15.8-2), read once at the
@@ -3765,30 +3789,6 @@ def _screen_block_for(provider_name, conversation_id):
         if not is_unrestricted_cloud():
             block, _sub = _scrub_pii(block)
     return block
-
-
-#: Why a turn whose prompt carried remembered past outcomes counts as a recall
-#: turn (no pre-approved send in it; governance/outside_content).
-_OUTCOME_RECALL_WHY = "this turn's prompt carried remembered past outcomes"
-
-
-def _outcome_block_for(provider_name, message, slicer, *, scrub=True):
-    """(block, recalled) for the past outcomes this message is about
-    (services/outcome_memory): the item lines inside the data envelope, PII
-    scrubbed for a guarded cloud turn when `scrub` (as the ON SCREEN block is;
-    /api/chat scrubs its whole tail itself and passes False), then gated like
-    the other memory blocks, so it is a row in the turn's context manifest and
-    is sliced for a cloud seat. `recalled` is True when any record was found."""
-    from agent_friday.services import outcome_memory as _om
-    block = _om.context_block(message)
-    if not block:
-        return "", False
-    if scrub and provider_name != 'local':
-        from agent_friday.services.egress_gate import is_unrestricted_cloud
-        if not is_unrestricted_cloud():
-            block, _sub = _scrub_pii(block)
-    return slicer.gate_block("memory", block, name="past_outcomes",
-                             marker=_om.RECALL_HEADER), True
 
 
 @chat_bp.route('/api/chat/send', methods=['POST'])

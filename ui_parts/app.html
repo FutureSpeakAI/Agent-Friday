@@ -17249,11 +17249,11 @@ function fmtElapsed(sec){if(sec==null)return'0s';const s=Math.floor(sec);if(s<60
    plain words. Ids and codes only reach here; nothing the task handled. */
 const JOURNAL_LINKED_KINDS=['approval','verification','artifact','blocker','paused','resumed','stopped','receipt'];
 function journalLinkedLine(ev){const k=ev.kind;const words=s=>String(s||'').replace(/_/g,' ');
-  if(k==='approval')return ev.phase==='raised'?'approval card raised':'approval '+words(ev.outcome||'decided')+(ev.by==='system'?' by Friday':ev.by==='grant'?' by your standing approval':ev.by?' by you':'');
+  if(k==='approval')return ev.phase==='raised'?'approval card raised':'approval '+words(ev.outcome||'decided')+(ev.by==='system'?' by '+fridayName():ev.by==='grant'?' by your standing approval':ev.by?' by you':'');
   if(k==='verification')return 'check '+words(ev.result||'unknown');
   if(k==='artifact')return 'file made'+(ev.tool?' by '+words(ev.tool):'')+(ev.qa_ok===false?' · its check found problems':'');
   if(k==='blocker')return 'blocked: '+words(ev.code||ev.category||'unknown');
-  if(k==='paused'||k==='resumed'||k==='stopped')return k+' by '+(ev.who==='owner'?'you':'Friday')+(ev.reason_code?' · '+words(ev.reason_code):'');
+  if(k==='paused'||k==='resumed'||k==='stopped')return k+' by '+(ev.who==='owner'?'you':fridayName())+(ev.reason_code?' · '+words(ev.reason_code):'');
   if(k==='receipt')return 'receipt: '+words(ev.outcome||'recorded');
   return words(k);}
 // The drawer under a task card reads the task's own journal — the same record
@@ -21987,7 +21987,7 @@ function GovernanceGrantsPanel(){
     {msg&&<div role="status" style={{...muted,marginTop:6,color:'#9fd'}}>{msg}</div>}
     <details data-testid="grant-records" style={{marginTop:12}}>
       <summary style={{fontSize:12,color:'#ccc',cursor:'pointer'}}>{'Every grant, in full ('+records.length+')'}</summary>
-      <div style={{...muted,marginTop:6}}>Every standing permission Friday holds, of every kind. Read-only. A grant that does not fit an action never blocks it: the action asks you instead.</div>
+      <div style={{...muted,marginTop:6}}>Every standing permission {fridayName()} holds, of every kind. Read-only. A grant that does not fit an action never blocks it: the action asks you instead.</div>
       {records.map(r=><div key={r.kind+':'+r.id} className="card" style={{padding:8,marginTop:6,fontSize:11,color:'#bbb',lineHeight:1.5}}>
         {grantRecordWords(r).map((w,i)=><div key={i}>{w}</div>)}
       </div>)}

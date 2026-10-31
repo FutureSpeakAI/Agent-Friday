@@ -102,9 +102,12 @@ def _representative_run(monkeypatch):
         payload={"tool": "create_calendar_event", "input": {"title": "Review"}},
         requested_by="taint_gate")
     approvals.decide(rec["approval_id"], "approve", decided_by="owner")
+    # A calendar event's title is not kept readable in the ledger (the
+    # executor's target for a title-sealed tool is the item's id, here none):
+    # the same card again is the same key.
     with pytest.raises(G.AlreadyDone):
         G.record_external("create_calendar_event", surface="approval_card",
-                          approval_id=rec["approval_id"], target="Review", once=True)
+                          approval_id=rec["approval_id"], target="", once=True)
     # the tasks inbox (the provider refused it)
     assert ti._checkpoint("tasks_inbox_post", None) is True
     ti._settle(False, "provider_refused")
