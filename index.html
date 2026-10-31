@@ -76200,7 +76200,7 @@ function App() {
         apiFetch: apiFetch,
       })
     : null,
-  shellChatPanel, threadOrb && React.createElement(ProcessOrbThread,{orb:threadOrb,meta:taskMeta,log:taskLog,steps:threadSteps,readState:threadReadState,position:threadPos,bodyRef:threadBodyRef,onDrag:startThreadDrag,onClose:closeThread}), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
+  shellChatPanel, threadOrb && React.createElement(ProcessOrbThread,{orb:threadOrb,meta:taskMeta,log:taskLog,steps:threadSteps,readState:threadReadState,position:threadPos,bodyRef:threadBodyRef,onDrag:startThreadDrag,onClose:closeThread,onMove:()=>setThreadPos(p=>fridayNextCorner(p,400,320))}), shellTrace, shellActivity, shellNotifs, shellSettings, shellQuickDraft, /*#__PURE__*/React.createElement("div", {
     className: `dock ${dockHidden ? 'hidden' : ''}`,
     role: "navigation",
     "aria-label": "Workspaces"

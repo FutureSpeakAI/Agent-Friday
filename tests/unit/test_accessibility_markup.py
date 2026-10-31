@@ -36,9 +36,9 @@ def test_the_cloud_consent_choices_are_radios_in_a_named_group():
 
 def test_the_quick_toggles_are_switches_a_keyboard_can_flip():
     for anchor, state in (("show_all_workspaces: !showAllWorkspaces", "!!showAllWorkspaces"),
-                          ("off_record: !agentSettings.off_record\n    })\n  }, /*#__PURE__*/React.createElement(\"span\"",
+                          ("onClick: () => fridayToggleOffRecord(!!agentSettings.off_record, saveAgentSettings)",
                            "!!agentSettings.off_record")):
-        setting = anchor.split(":")[0]
+        setting = state.lstrip("!")
         i = INDEX.index(anchor)
         block = INDEX[i - 600:i]
         assert 'role: "switch"' in block and ('"aria-checked": %s' % state) in block, setting
