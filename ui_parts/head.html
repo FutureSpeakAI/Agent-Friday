@@ -329,6 +329,40 @@ window.addEventListener('DOMContentLoaded',function(){
             border-radius: 4px;
         }
 
+        /* Accessibility (north star §33.1, BD-21 AX1). Every control that can
+           take keyboard focus shows it: the roles the rule above missed, and
+           over the few rules that hid the ring (the hand cursor's highlight,
+           the chat edge pill, the snap zones, the keys sheet). */
+        [role="radio"]:focus-visible, [role="switch"]:focus-visible,
+        [role="checkbox"]:focus-visible, [role="menuitem"]:focus-visible,
+        [role="option"]:focus-visible, summary:focus-visible,
+        .fr-snap:focus-visible, .chat-edge-pill:focus-visible,
+        .snap-zone:focus-visible, .keys-sheet-close:focus-visible {
+            outline: 2px solid #00d4ff !important;
+            outline-offset: 2px;
+        }
+        /* The first Tab stop: straight to the app, past the scene. */
+        .skip-link {
+            position: fixed; left: 12px; top: -60px; z-index: 2147483647;
+            padding: 10px 16px; border-radius: 8px; background: #00141c;
+            color: #fff; font: 600 14px Inter, sans-serif; text-decoration: none;
+            border: 2px solid #00d4ff;
+        }
+        .skip-link:focus, .skip-link:focus-visible { top: 12px; }
+        /* Windows high contrast (forced colours): the focus ring uses the
+           system's own highlight so it is never drawn in a colour the theme
+           replaced. */
+        @media (forced-colors: active) {
+            :focus-visible { outline: 3px solid Highlight !important; outline-offset: 2px; }
+            .dock-btn, .btn, .settings-toggle, [role="radio"], [role="switch"] { border: 1px solid ButtonText; }
+        }
+        /* "More contrast" asked for by the system: dim text and hairlines get
+           stronger, so nothing sits below a readable contrast. */
+        @media (prefers-contrast: more) {
+            :root { --st-dim: rgba(255,255,255,0.86); --fr-dim: rgba(255,255,255,0.86); }
+            :focus-visible { outline-width: 3px !important; }
+        }
+
         /* Base button (used by React UI) */
         .btn {
             background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.14); color: rgba(255, 255, 255, 0.78);
@@ -379,7 +413,7 @@ window.addEventListener('DOMContentLoaded',function(){
         .fr-lockup { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; white-space: nowrap; }
         .fr-lockup-name { font-family: var(--fr-font-display); font-weight: 900; letter-spacing: var(--fr-track-display);
             color: var(--fr-cyan); text-decoration: none; text-shadow: 0 0 14px rgba(0,212,255,0.45); cursor: pointer;
-            user-select: none; background: none; border: 0; padding: 0; transition: text-shadow .2s; }
+            user-select: none; background: none; border: 0; padding: 0; min-height: 24px; transition: text-shadow .2s; }
         .fr-lockup-name:hover { text-shadow: 0 0 18px rgba(0,212,255,0.75); }
         .fr-lockup-name.fr-lockup-static { cursor: default; }
         .fr-lockup-tm { font-size: 0.5em; vertical-align: super; line-height: 0; margin-left: 1px; }
@@ -548,6 +582,11 @@ window.addEventListener('DOMContentLoaded',function(){
         }
         .fwin-btns button:hover { color: #fff; }
         .fwin-body { flex: 1; overflow-y: auto; padding: 12px; }
+        /* Text size (Settings > Appearance; north star 33.1-8, WCAG 1.4.4): what you read grows and reflows
+           inside its window; frames, the dock and the scene keep their size. */
+        .fwin-body, .ws-tab-body, .fx-chat-transcript, [data-chat-input] { zoom: var(--fr-text-zoom, 1); }
+        /* Zoom multiplies: a chat drawn inside a window (Code, News) takes the window's size once, not twice. */
+        :is(.fwin-body, .ws-tab-body) :is(.fx-chat-transcript, [data-chat-input]) { zoom: 1; }
         .ws-typing-dot { width: 6px; height: 6px; border-radius: 50%; background: #00d4ff; display: inline-block; animation: wsTyping 1s infinite ease-in-out; }
         @keyframes wsTyping { 0%,80%,100% { transform: scale(0.5); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
         /* Indeterminate progress sweep — used by the Music/Timeline export panels
@@ -635,7 +674,7 @@ window.addEventListener('DOMContentLoaded',function(){
            until the pointer comes to it. A click brings the tray back. */
         .chat-edge-pill {
             position: fixed; top: 50%; right: 0; z-index: 66;
-            width: 14px; height: 76px; margin-top: -38px; padding: 0;
+            width: 24px; height: 76px; margin-top: -38px; padding: 0;
             display: flex; align-items: center; justify-content: center;
             background: rgba(10,14,26,0.82); color: var(--fr-cyan);
             border: 1px solid rgba(0,212,255,0.28); border-right: none;
@@ -644,7 +683,7 @@ window.addEventListener('DOMContentLoaded',function(){
             font-size: 13px; line-height: 1; opacity: 0.45;
             transition: opacity 0.2s ease, width 0.2s ease;
         }
-        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 22px; outline: none; }
+        .chat-edge-pill:hover, .chat-edge-pill:focus-visible { opacity: 1; width: 30px; outline: none; }
         .chat-edge-pill.left { right: auto; left: 0; border-left: none;
             border-right: 1px solid rgba(0,212,255,0.28); border-radius: 0 10px 10px 0; }
         /* Snap layouts (unified-shell.md §11): the outline a release would

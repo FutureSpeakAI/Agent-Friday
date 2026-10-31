@@ -1510,6 +1510,13 @@ function SnapMenu({
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r3", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('chat_left', f, 'Chat on the left, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('left', f), traySide === 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat'), zone('rest', 1 - f, 'The workspace in the rest', () => onTray('left', f), false)))));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "t4", className: "snap-menu-title" }, "Chat on the right"));
     rows.push( /*#__PURE__*/React.createElement("div", { key: "r4", className: "snap-menu-row" }, FRIDAY_CHAT_LAYOUTS.slice().reverse().map(f => /*#__PURE__*/React.createElement("div", { key: f, className: "snap-tile" }, zone('rest', 1 - f, 'The workspace in the rest', () => onTray('right', f), false), zone('chat_right', f, 'Chat on the right, ' + (Math.abs(f - 0.5) < 0.01 ? 'a half' : f < 0.5 ? 'a third' : 'two thirds'), () => onTray('right', f), traySide !== 'left' && Math.abs((trayFrac || 0) - f) < 0.02, ' chat')))));
+    // The tray's height without dragging its top edge (WCAG 2.5.7; north star 33.1-14).
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "t5", className: "snap-menu-title" }, "Height"));
+    rows.push( /*#__PURE__*/React.createElement("div", { key: "r5", className: "snap-menu-row" }, [['full', 'Full height'], ['half', 'Half height']].map(([v, label]) => /*#__PURE__*/React.createElement("button", { key: v, type: "button", role: "menuitem", className: "btn", "data-chat-height": v, onClick: e => {
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent('friday:chat-height', { detail: v }));
+        onClose(false);
+      } }, label))));
     if (onHide) rows.push( /*#__PURE__*/React.createElement("button", { key: "hide", type: "button", className: "btn snap-menu-hide", onClick: e => {
         e.stopPropagation();
         onHide();
@@ -1730,6 +1737,21 @@ function FridayLockup({size=15,onClick,href,title}){
 // served, authoritative UI); this mirror calls through to it. Raw browser
 // fridayToast() is not used anywhere: it is a modal the app cannot style, queue or
 // dismiss, and it blocks the tab until clicked.
+// Said to a screen reader, not drawn (north star 33.3-6: what matters is heard as well as seen). The page keeps two
+// live regions; a message is set into one after clearing it, so the same words twice are said twice.
+function fridayAnnounce(msg, opts) {
+  try {
+    var text = fridayTM(msg == null ? '' : String(msg)).trim();
+    if (!text || typeof document === 'undefined') return;
+    var el = document.getElementById(opts && opts.assertive ? 'fr-announce-assertive' : 'fr-announce-polite');
+    if (!el) return;
+    el.textContent = '';
+    // The latest words win: a message set within the pause replaces one still waiting to be set.
+    clearTimeout(el._frAnnounce);
+    el._frAnnounce = setTimeout(function () { el.textContent = text; }, 60);
+  } catch (e) { /* never in the way */ }
+}
+if (typeof window !== 'undefined') window.fridayAnnounce = fridayAnnounce;
 function fridayToast(msg, opts) {
   try {
     var text = fridayTM(msg == null ? '' : String(msg));
@@ -2586,7 +2608,7 @@ function ChatSurface({mode,convId,chatEpoch,openConversation,refreshConvs,traySi
       </div>
       {newChatState.error&&newChatState.revision===newChatOwner.current.revision&&<div role="alert" style={{color:'#ffab9f',fontSize:11,padding:'8px 14px',overflowWrap:'anywhere'}}>{newChatState.error}</div>}
       <div style={{flex:1,overflowY:'auto',overflowX:'hidden',padding:12}}>
-        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to {fridayName()}. Type, speak, or drop a file.</div>}
+        {chatMsgs.length===0&&!pausePending&&<div style={{textAlign:'center',color:'#888',fontSize:12,marginTop:30}}>Talk to {fridayName()}. Type, speak, or attach a file.</div>}
         {pausePending&&pausePending.kind==='privacy_hold'&&<PrivacyHoldCard hold={pausePending.hold} msg={pausePending.message}
           onChoose={(id)=>pausePending.onVoiceChoice?pausePending.onVoiceChoice(id)
             :sendChat(pausePending.message,{skipForecast:true,alreadyShown:true,privacyOverride:id==='send_anyway'})}
@@ -9052,7 +9074,9 @@ function TimelinePanel({onCreated}){
           style={{flexShrink:0,width:88,borderRadius:6,overflow:'hidden',cursor:'grab',border:'1px solid '+(drag===i?'#00d4ff':'rgba(127,182,201,0.25)'),background:'#0a0e1a',position:'relative'}}>
           <video src={u} muted style={{width:88,height:50,objectFit:'cover',display:'block',pointerEvents:'none'}}/>
           <div style={{position:'absolute',top:2,left:3,fontSize:9,fontFamily:'Orbitron, sans-serif',color:'#00d4ff',background:'rgba(0,0,0,0.6)',borderRadius:3,padding:'0 4px'}}>{i+1}</div>
-          <div onClick={()=>removeClip(n)} title="remove" style={{position:'absolute',top:2,right:3,fontSize:11,color:'#ff7ab8',background:'rgba(0,0,0,0.6)',borderRadius:3,cursor:'pointer',width:14,textAlign:'center',lineHeight:'14px'}}>×</div>
+          {i>0&&<button type="button" aria-label={'Move clip '+(i+1)+' earlier'} title="Move earlier" onClick={()=>reorder(i,i-1)} style={{position:'absolute',bottom:2,left:3,minWidth:24,minHeight:24,padding:0,fontSize:11,color:'#7fb6c9',background:'rgba(0,0,0,0.6)',border:'none',borderRadius:3,cursor:'pointer'}}>◀</button>}
+          {i<clips.length-1&&<button type="button" aria-label={'Move clip '+(i+1)+' later'} title="Move later" onClick={()=>reorder(i,i+1)} style={{position:'absolute',bottom:2,right:3,minWidth:24,minHeight:24,padding:0,fontSize:11,color:'#7fb6c9',background:'rgba(0,0,0,0.6)',border:'none',borderRadius:3,cursor:'pointer'}}>▶</button>}
+          <button type="button" aria-label={'Remove clip '+(i+1)} onClick={()=>removeClip(n)} title="remove" style={{border:'none',padding:0,minWidth:24,minHeight:24,position:'absolute',top:2,right:3,fontSize:11,color:'#ff7ab8',background:'rgba(0,0,0,0.6)',borderRadius:3,cursor:'pointer',width:14,textAlign:'center',lineHeight:'14px'}}>×</button>
           {i<clips.length-1&&<div style={{position:'absolute',right:-1,top:'50%',transform:'translateY(-50%)',fontSize:9,color:'#7fb6c9'}}>›</div>}
         </div>);})}
     </div>
@@ -10916,7 +10940,7 @@ function TaskRecordsCard(){
     <div style={{fontSize:11,color:'#888',padding:'4px 2px'}}>Every background task writes a journal (what it did, decided, called and spent) that survives restarts. Records are kept until you delete them, or for the number of days you set here. 0 keeps everything.</div>
     <div style={{display:'flex',alignItems:'center',gap:8,marginTop:6}}>
       <span style={{fontSize:11,color:'#ccc'}}>Keep records for</span>
-      <input type="number" min="0" step="1" value={ret?ret.retention_days:0} disabled={!ret||saving}
+      <input aria-label="Keep records for (days)" type="number" min="0" step="1" value={ret?ret.retention_days:0} disabled={!ret||saving}
         onChange={e=>setRet({...ret,retention_days:parseInt(e.target.value||'0',10)||0})}
         onBlur={e=>save(parseInt(e.target.value||'0',10)||0)}
         style={{width:70,fontSize:11,padding:'2px 6px',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',color:'#fff',borderRadius:4}}/>
@@ -11142,9 +11166,9 @@ function SystemWS(){
     <div className="card" style={{marginBottom:8,padding:8}}>
       <div style={{display:'flex',gap:6,marginBottom:6,flexWrap:'wrap'}}>
         <input value={ctxQuery} onChange={e=>setCtxQuery(e.target.value)} placeholder="Search query..." style={{flex:1,minWidth:140,background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:12,outline:'none'}}/>
-        <input type="date" value={ctxFrom} onChange={e=>setCtxFrom(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
-        <input type="date" value={ctxTo} onChange={e=>setCtxTo(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
-        <select value={ctxType} onChange={e=>setCtxType(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}>
+        <input type="date" aria-label="From date" value={ctxFrom} onChange={e=>setCtxFrom(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
+        <input type="date" aria-label="To date" value={ctxTo} onChange={e=>setCtxTo(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}/>
+        <select aria-label="Type of entry" value={ctxType} onChange={e=>setCtxType(e.target.value)} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(0,212,255,0.18)',borderRadius:5,padding:'5px 8px',color:'#ddd',fontSize:11}}>
           <option value="">All types</option>
           <option value="chat_user">chat_user</option>
           <option value="chat_agent">chat_agent</option>
@@ -13004,7 +13028,7 @@ function CalendarWS(){
             {e.countdown&&<span className="cal-countdown">⏳ {e.title.split(' ')[0]} in {e.countdown}</span>}
             {window.CalendarViews&&window.CalendarViews.reminderText(e)&&<span className="cal-ev-remind">{window.CalendarViews.reminderText(e)}</span>}
             {window.CalendarViews&&<window.CalendarViews.RsvpButtons ev={e}/>}
-            {window.CalendarViews&&<window.CalendarViews.DeleteButton ev={e}/>}
+            {window.CalendarViews&&<window.CalendarViews.DeleteButton ev={e}/>}{window.CalendarViews&&window.CalendarViews.MoveButtons&&<window.CalendarViews.MoveButtons ev={e}/>}
             {e.prep_available&&<span className="cal-prep-badge">Prep available</span>}
             {e.related_emails&&e.related_emails.length>0&&<span style={{color:'#00d4ff'}}>✉ {e.related_emails.length} related</span>}
           </div>
@@ -19005,6 +19029,17 @@ function StToggle({
     }
   })));
 }
+// Text size (Settings > Appearance; north star 33.1-8): the percentages offered, and the one place the page
+// applies one. The size is a CSS variable that window contents and the chat read (see .fwin-body).
+const FRIDAY_TEXT_SCALES = [100, 125, 150, 175, 200];
+function fridayTextScale(v) {
+  const n = Math.round(Number(v));
+  return FRIDAY_TEXT_SCALES.includes(n) ? n : 100;
+}
+function fridayApplyTextScale(v) {
+  try { document.documentElement.style.setProperty('--fr-text-zoom', String(fridayTextScale(v) / 100)); } catch (_) {}
+}
+window.fridayApplyTextScale = fridayApplyTextScale;
 function StSection({
   title,
   desc,
@@ -26038,6 +26073,37 @@ function SettingsTabAppearance({
       }));
     }
   }, FRIDAY_LANDING_MODE_NAMES[v]))))), /*#__PURE__*/React.createElement(StSection, {
+    title: "Text size"
+  }, /*#__PURE__*/React.createElement(StRow, {
+    label: "Text size",
+    desc: "Makes what you read bigger: the text in every workspace window and in the chat. Windows keep their size and the text wraps inside them. Your browser's own zoom (Ctrl and +) still works too."
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "radiogroup",
+    "aria-label": "Text size",
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap'
+    }
+  }, FRIDAY_TEXT_SCALES.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v,
+    type: "button",
+    role: "radio",
+    "data-text-scale": v,
+    "aria-checked": fridayTextScale(s.text_scale) === v,
+    className: 'settings-btn' + (fridayTextScale(s.text_scale) === v ? ' active' : ''),
+    style: {
+      fontSize: 12,
+      padding: '6px 14px',
+      fontFamily: 'var(--st-font)'
+    },
+    onClick: () => {
+      save({
+        text_scale: v
+      });
+      fridayApplyTextScale(v);
+    }
+  }, v + '%'))))), /*#__PURE__*/React.createElement(StSection, {
     title: "3D effects"
   }, /*#__PURE__*/React.createElement(StRow, {
     label: "3D dazzle",
@@ -27192,9 +27258,14 @@ function ApprovalPopups() {
   const [busy, setBusy] = useState('');
   const seen = useRef(new Set());
   useEffect(() => {
-    const fresh = items.some(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const freshItems = items.filter(a => !seen.current.has(a.approval_id) && !fridayApprovalQuiet(a.approval_id));
+    const fresh = freshItems.length > 0;
     seen.current = new Set(items.filter(a => !fridayApprovalQuiet(a.approval_id)).map(a => a.approval_id));
     if (fresh) setLater(false);
+    // Heard as well as seen: a screen reader says what has just started waiting for you (north star 33.3-6).
+    if (fresh) fridayAnnounce(freshItems.length === 1
+      ? fridayName() + ' is waiting for your approval: ' + (freshItems[0].title || 'a request') + '.'
+      : freshItems.length + ' requests are waiting for your approval: ' + freshItems.slice(0, 3).map(a => a.title || 'a request').join('; ') + (freshItems.length > 3 ? '; and more' : '') + '.');
   }, [items]);
   // A helper's orb that needs the owner's OK, clicked (FridayOrbHands):
   // unfold to the card it is waiting on, the same card, and outline it.
@@ -27618,6 +27689,18 @@ function App(){
     return()=>{removeEventListener('mousemove',mv);removeEventListener('mouseup',up)}},[chatResize]);
   useEffect(()=>{try{localStorage.setItem('friday_chat_w',String(Math.round(chatW)))}catch(_){}},[chatW]);
   useEffect(()=>{try{if(chatH)localStorage.setItem('friday_chat_h',String(Math.round(chatH)))}catch(_){}},[chatH]);
+  // "Where the chat goes" > Height: the tray's height without dragging its edge (WCAG 2.5.7).
+  useEffect(() => {
+    const on = e => {
+      const v = e && e.detail;
+      if (v === 'full') {
+        try { localStorage.removeItem('friday_chat_h'); } catch (_) {}
+        setChatH(0);
+      } else if (v === 'half') setChatH(clampChatH(Math.round(vh() * 0.5)));
+    };
+    window.addEventListener('friday:chat-height', on);
+    return () => window.removeEventListener('friday:chat-height', on);
+  }, []);
   // Keep within viewport when the window is resized.
   useEffect(()=>{const on=()=>{let f=0;try{f=parseFloat(localStorage.getItem('friday_chat_frac'))||0}catch(_){}setChatW(w=>clampChatW(f>0.1&&f<0.9?Math.round(vw()*f):w));setChatH(h=>h?clampChatH(h):0)};addEventListener('resize',on);return()=>removeEventListener('resize',on)},[]);
   const[clock,setClock]=useState(new Date());const[structureName,setStructureName]=useState('Genesis Lattice');const[notifs,setNotifs]=useState([]);
@@ -27739,6 +27822,8 @@ function App(){
   // only in theirs); until then the name this browser last saw stands.
   if (agentSettings.workspace_layouts) fridaySetName(agentSettings.agent_name, ((agentSettings.identity || {}).name_in_lockup));
   useEffect(()=>{fridaySetOffRecord(fridayOffRecordFrom(agentSettings))},[agentSettings.off_record,agentSettings.off_record_stops_storage]);
+  // The saved text size, applied once settings have come from the server (Settings > Appearance).
+  useEffect(() => { fridayApplyTextScale(agentSettings.text_scale); }, [agentSettings.text_scale]);
   const[agentPersonality,setAgentPersonality]=useState('');
   const[personalityDraft,setPersonalityDraft]=useState('');
   const[lawsOpen,setLawsOpen]=useState(false);
@@ -30777,7 +30862,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
           <span style={{fontSize:13}}>&#x1F4AC;</span>
         </button>)}
         {!shellChat&&(<button onClick={()=>layoutRef.current.toggleLayout()}
-          style={{background:'none',border:'none',color:fsOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14}}
+          style={{background:'none',border:'none',color:fsOn?'#00d4ff':'#bbb',cursor:'pointer',fontSize:14,minWidth:24,minHeight:24}}
           title={fsOn?'Back to the normal layout (Ctrl+Shift+F)':'Fullscreen with the chat beside it (Ctrl+Shift+F)'}
           aria-label={fsOn?'Leave fullscreen with chat':'Fullscreen with chat'} aria-pressed={!!fsOn} data-testid="fs-chat-toggle">⤢</button>)}
         {!shellTab&&!shellChat&&(<button onClick={()=>{if(cameraOn){setCameraControlsOpen(o=>!o)}else{toggleCamera()}}}
@@ -31214,7 +31299,7 @@ const fridayBundleBody=id=>(window.FridayBundleFrame&&WS_BY_ID[id]&&WS_BY_ID[id]
     {shellQuickDraft}
 
     {/* Dock — grouped (Life / Work / System) */}
-    <div className={`dock ${dockHidden?'hidden':''}`}>
+    <div className={`dock ${dockHidden?'hidden':''}`} role="navigation" aria-label="Workspaces">
       {dockShape.groups.map((g,gi)=>(<React.Fragment key={g.name+':'+gi}>
         {gi>0&&<div className="dock-sep"/>}
         <div className="dock-group">

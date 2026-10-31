@@ -62,9 +62,10 @@ def test_the_owners_permission_runs_only_moves_of_events_drawn_on_the_page():
 
 def test_a_slipped_drag_proposes_nothing_and_ctrl_click_still_ticks():
     drag = JS[JS.index("function dragProps("):JS.index("function MoveLayer(")]
-    assert "const stepPx = o.hourPx * STEP_MIN / 60;" in drag and "Math.abs(dy) < stepPx" in drag, \
+    assert "const stepPx = o.hourPx * STEP_MIN / 60;" in drag and "Math.abs(dy / z) < stepPx" in drag, \
         "a drag starts only after one whole step, so a twitch never becomes a 15-minute move"
-    assert "Math.trunc(dy / stepPx) * STEP_MIN" in drag
+    # dy is in screen pixels; z is the text-size zoom of the window the grid is in (AX9).
+    assert "Math.trunc(dy / z / stepPx) * STEP_MIN" in drag
     assert "e.ctrlKey || e.metaKey" in drag
 
 

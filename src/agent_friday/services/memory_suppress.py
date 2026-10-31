@@ -67,6 +67,8 @@ import hmac
 import json
 import os
 import re
+
+from agent_friday.user_errors import exception_text
 import secrets
 import threading
 import time
@@ -338,7 +340,7 @@ def add_rule(text: str, *, kind: str = "change", origin: str = "",
             data["rules"] = (data["rules"] + [rule])[-RULES_KEEP:]
             _save(data)
     except Exception as e:                                   # noqa: BLE001
-        return {"ok": False, "error": f"the rule could not be saved: {e}"}
+        return {"ok": False, "error": exception_text(e, "the rule could not be saved: %s")}
     return {"ok": True, "rule": _public(rule)}
 
 
@@ -365,7 +367,7 @@ def remove_rule(rule_id: str) -> Dict[str, Any]:
             data["rules"] = keep
             _save(data)
     except Exception as e:                                   # noqa: BLE001
-        return {"ok": False, "error": f"the rule could not be removed: {e}"}
+        return {"ok": False, "error": exception_text(e, "the rule could not be removed: %s")}
     return {"ok": True, "removed": rule_id}
 
 
