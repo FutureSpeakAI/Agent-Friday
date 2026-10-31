@@ -367,7 +367,18 @@ def delete_task(task_id):
     existed_on_disk = _tj.delete(task_id)
     if not (existed_in_cache or existed_on_disk):
         return jsonify({"error": "Task not found"}), 404
-    return jsonify({"status": "deleted", "journal": "deleted"})
+    # The owner deleted the task's record: the outcome records it was the source
+    # of go too, with their deletion receipt (services/outcome_memory, §4.7).
+    # Retention-based deletion does not do this: an outcome outlives its journal.
+    forgot = None
+    try:
+        from agent_friday.services import outcome_memory as _om
+        forgot = _om.forget_subject("task", task_id)
+    except Exception:
+        pass
+    return jsonify({"status": "deleted", "journal": "deleted",
+                    **({"outcomes_forgotten": {k: forgot.get(k) for k in ("receipt_id", "removed")}}
+                       if forgot and forgot.get("removed") else {})})
 
 
 # ── Reading the record (task-visibility.md §4.5, TV6, TV11) ──────────────────
@@ -439,8 +450,43 @@ def task_journal_events(task_id):
     payload = {"task_id": task_id, "events": res["events"], "state": state,
                "last_seq": res["last_seq"], "journal_last_seq": res["journal_last_seq"],
                "gaps": res["gaps"], "cursor_ahead": res["cursor_ahead"], "complete": res["complete"]}
+    # NS-29.4-2: the journal's action ids checked against the action ledger
+    # (counts only). Read on the first page, not on every poll of the tail.
+    if not since:
+        try:
+            payload["links"] = _tj.ledger_links(task_id)
+        except Exception:
+            payload["links"] = {"checked": None, "found": None, "missing": None, "unreadable": True}
     return jsonify(_serve_sealed(payload, task_id, "journal", events=len(res["events"]),
                                  reasoning=any(e.get("kind") == "reasoning" for e in res["events"])))
+
+
+@tasks_bp.route('/api/tasks/<task_id>/steps')
+def task_steps(task_id):
+    """The task's step records (north star §30.9): kind, state, input and
+    output refs (ids only), distinct_progress_key and timing, oldest first,
+    the newest `limit` of them (at most task_journal.STEPS_SERVED_MAX).
+    `progress` reports whether the steps stopped finding anything new
+    (goal_state.stalled_steps: reported only) and whether the goal attempts
+    among them did (goal_state.stalled_attempts: the check that stops a
+    goal's run). Read-only, and only for the owner: an observer gets 403, not
+    a sealed copy."""
+    if _principal() != "user":
+        return jsonify({"error": "step records are only served to the owner"}), 403
+    from agent_friday.services import task_journal as _tj
+    from agent_friday.services import goal_state as _gs
+    limit = max(1, min(_int_arg('limit', 200), _tj.STEPS_SERVED_MAX))
+    every = _tj.steps(task_id)
+    if not every and _tj.read_state(task_id) is None and not _tj.read(task_id, limit=1):
+        return jsonify({"error": "Task not found"}), 404
+    why = _gs.stalled_steps(every)
+    attempts_why = _gs.stalled_attempts(every)
+    shown = every[-limit:]
+    return jsonify({"task_id": task_id, "steps": shown, "count": len(every),
+                    "truncated": len(shown) < len(every),
+                    "progress": {"stalled": bool(why), "why": why,
+                                 "attempts_stalled": bool(attempts_why), "attempts_why": attempts_why,
+                                 "limit": _gs.NO_NEW_PROGRESS_LIMIT}})
 
 
 @tasks_bp.route('/api/tasks/<task_id>/digest')

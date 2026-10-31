@@ -44,18 +44,20 @@ def _gate_channel_text(text: str, channel: str) -> str:
 _CHANNEL_HOSTS = {"telegram": "api.telegram.org", "discord": "discord.com"}
 
 
-def record_channel_send(channel: str, chat_id: str, text: str, ok: bool, unsure: bool = False) -> None:
+def record_channel_send(channel: str, chat_id: str, text: str, ok: bool, unsure: bool = False,
+                        decision=None) -> None:
     """A message to a chat channel in the egress ledger and on the privacy map
     (§26.7): which platform, the gated words fingerprinted and, by default
     (A20), kept encrypted. A send that may have arrived (a timeout) is
-    sent_unconfirmed and keeps its words. Never raises."""
+    sent_unconfirmed and keeps its words. `decision`: the checkpoint's
+    decision for the send; the row names its action id (A10). Never raises."""
     try:
         from agent_friday.services import egress_gate as _eg
         _eg.record_service_send("chat_channel", f"channel:{channel}"[:80],
                                 destination=_CHANNEL_HOSTS.get(channel, channel),
                                 content={"chat": str(chat_id)[:80], "text": text},
                                 result="sent" if ok else ("sent_unconfirmed" if unsure else "failed"),
-                                recipients=1, part="message")
+                                recipients=1, part="message", action_id=_eg.action_id_of(decision))
     except Exception:
         pass
 
@@ -195,7 +197,7 @@ class ChannelAdapter:
         verified = ok and bool(isinstance(res, dict) and (res.get("message_id") or res.get("id")))
         self.report_outbound(decision, ok, unsure, verified=verified)
         record_channel_send(self.name, chat_id, gated[:self.max_chars] if self.max_chars else gated,
-                            ok, unsure)
+                            ok, unsure, decision=decision)
         return res
 
     @staticmethod

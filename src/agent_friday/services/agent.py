@@ -72,6 +72,7 @@ from collections import deque as _deque
 
 _log = logging.getLogger("friday.agent")
 from functools import wraps
+from contextlib import contextmanager as _ctxlib_contextmanager
 from flask import (Flask, Blueprint, jsonify, request, send_from_directory,
                    send_file, session, redirect, url_for, Response, stream_with_context)
 from agent_friday.core.os_mode import is_os_mode
@@ -5571,6 +5572,7 @@ def _task_set(task_id, **fields):
         tj = _journal()
         if new_state and new_state != prev_state:
             tj.append(task_id, "state", state=new_state, was=prev_state)
+        _journal_lifecycle(tj, task_id, prev_state, new_state, prev_status, new_status, snap)
         if new_status != prev_status or first_start:
             if new_status == 'running':
                 tj.append(task_id, "started", model=snap.get('model'),
@@ -5590,10 +5592,82 @@ def _task_set(task_id, **fields):
         tj.write_state(task_id, snap)
     except Exception:
         pass
+    if new_status != prev_status and _is_terminal_status(new_status) and snap.get('subagent_step'):
+        _close_subagent_step(snap, new_state)
     with TASKS_LOCK:
         t = TASKS.get(task_id)
         if t is not None:
             t.update(fields)
+
+
+#: The cancelled statuses only the owner's own stop sets (a cancel, stop after
+#: this step, stop everything). Any other status that ends a task cancelled
+#: (services/task_states) is Friday's, except 'declined' (the owner's no).
+_OWNER_STOP_STATUSES = frozenset({'cancelled', 'canceled'})
+
+
+def _journal_lifecycle(tj, task_id, prev_state, new_state, prev_status, new_status, snap):
+    """The journal's paused / resumed / stopped events (NS-29.4-1, slice G10),
+    with who did it and a reason code, from the state change `_task_set` is
+    recording. Never raises."""
+    try:
+        result = str(snap.get('result') or '')
+        if new_state == 'paused' and prev_state != 'paused':
+            tj.lifecycle(task_id, "paused", who="owner", reason_code="owner_pause")
+        elif (prev_state == 'paused' and new_state and new_state != 'paused'
+              and new_state not in ('cancel_requested', 'cancelled', 'failed')):
+            tj.lifecycle(task_id, "resumed", who="owner", reason_code="owner_resume")
+        if new_status == prev_status:
+            return
+        if new_status == 'failed' and result.startswith(SPEND_CAP_PAUSE_MARK):
+            # the owner's spending cap paused it at its next paid call (north-star A17)
+            tj.lifecycle(task_id, "paused", who="system", reason_code="spend_cap")
+        elif new_state == 'cancelled' and prev_state != 'cancelled':
+            if str(new_status) == 'declined':
+                who, why = "owner", "declined"        # the owner said no on the task's card
+            elif str(new_status) not in _OWNER_STOP_STATUSES:
+                # superseded / stopped / skipped / deleted: set by Friday's own
+                # paths (a new run replaced it, a sweep closed it), not the owner
+                who, why = "system", (str(new_status) or "stopped")
+            else:
+                try:
+                    import agent_friday.core as _core_gs
+                    everything = _core_gs.GLOBAL_STOP.is_set()
+                except Exception:
+                    everything = False
+                who = "owner"
+                why = ("stop_everything" if everything else
+                       "stop_after_step" if prev_state == 'cancel_requested' else "owner_cancel")
+            tj.lifecycle(task_id, "stopped", who=who, reason_code=why)
+        elif str(new_status) == 'timeout' or str(new_status).startswith('failed:'):
+            # Friday stopped it: its time ran out, or the watchdog ended it
+            why = "timeout" if str(new_status) == 'timeout' else str(new_status).split(':', 1)[1]
+            tj.lifecycle(task_id, "stopped", who="system", reason_code=why)
+    except Exception:
+        pass
+
+
+#: A child's North Star end state as its parent's subagent step state (§30.9).
+_SUBAGENT_STEP_STATE = {"completed_verified": "done", "completed_unverified": "done",
+                        "failed": "failed", "cancelled": "cancelled",
+                        "waiting_for_approval": "waiting"}
+
+
+def _close_subagent_step(snap, end_state):
+    """The subagent step its parent recorded at spawn, closed with how the
+    child ended and its result's fingerprint (ids only). Never raises."""
+    try:
+        from agent_friday.services import step_records as _sr
+        opened = snap.get('subagent_step') or {}
+        _journal().step("subagent", _SUBAGENT_STEP_STATE.get(end_state or "", "unknown"),
+                        name=opened.get('name'), step_id=opened.get('step_id'),
+                        output_refs=list(opened.get('output_refs') or [])
+                        + [_sr.result_ref(snap.get('result'))],
+                        started_at=opened.get('started_at'),
+                        ended_at=snap.get('ended') or _time.time(),
+                        task_id=snap.get('parent_task_id'))
+    except Exception:
+        pass
 
 
 def _task_state_sync(task_id):
@@ -7835,6 +7909,25 @@ def _spawn_task(name, prompt, description='', on_complete=None,
             with TASKS_LOCK:
                 TASKS.pop(task_id, None)
             raise
+    # §30.9: a subagent is a step of the task that started it. Ids only: the
+    # child's task id, and the delegated instruction's fingerprint (the same
+    # work delegated again is not new progress; the child's id is not counted).
+    if parent_task_id and not _continuation:
+        try:
+            from agent_friday.services import step_records as _sr
+            _opened = _journal().step(
+                "subagent", "running", name=scope or "subagent",
+                output_refs=[_sr.make_ref("task", task_id),
+                             _sr.make_ref("delegation", _sr.fingerprint(_sr.normalize_outcome(_sr.capped_outcome(prompt or ""))))],
+                started_at=TASKS[task_id]['created'], task_id=parent_task_id)
+            if _opened:
+                # Closed with the child's end state by _task_set (_close_subagent_step).
+                with TASKS_LOCK:
+                    if task_id in TASKS:
+                        TASKS[task_id]['subagent_step'] = {
+                            k: _opened.get(k) for k in ("step_id", "name", "output_refs", "started_at")}
+        except Exception:
+            pass
     # A task spawned by a tool call in a conversation or task that has read
     # outside content, or that continues such a task (a chain step, a retry,
     # a follow-up), starts flagged: its goal may paraphrase what was read, so
@@ -14357,6 +14450,63 @@ def _web_task_scope(fn):
     return dispatch
 
 
+def _note_gate_action(name, decision):
+    """Tell the task journal which action id the gate gave the call running on
+    this thread (or none), so its tool_call and card events name it. Never raises."""
+    try:
+        aid = decision.get("action_id") if isinstance(decision, dict) else None
+        _journal().note_action(name, aid)
+    except Exception:
+        pass
+
+
+def _clear_gate_action():
+    """Forget the gate's action id noted on this thread. Never raises."""
+    try:
+        _journal().clear_action()
+    except Exception:
+        pass
+
+
+#: True only while an agent loop (the Claude loop, the OpenAI-shape loop) runs
+#: one of its own tool calls through _execute_tool: that call's tool_call event
+#: is written by the loop just after (_orb_tool_trace), so its note is kept.
+_LOOP_TOOL_CALL: ContextVar = ContextVar("friday_loop_tool_call", default=False)
+
+
+@_ctxlib_contextmanager
+def _loop_tool_call():
+    """Mark the _execute_tool call made inside this block as the agent loop's
+    own (its gate note is left for the loop's tool_call event)."""
+    tok = _LOOP_TOOL_CALL.set(True)
+    try:
+        yield
+    finally:
+        _LOOP_TOOL_CALL.reset(tok)
+
+
+def _forgets_gate_note(fn):
+    """_execute_tool's exit: a call that was not the agent loop's own (the
+    approval executor's run on a request thread, a helper calling a tool), or
+    that ran with no current task, leaves no note behind for a later event on
+    this thread. A call nested inside a tool is never the loop's own."""
+    @wraps(fn)
+    def run(*a, **kw):
+        in_loop = _LOOP_TOOL_CALL.get()
+        tok = _LOOP_TOOL_CALL.set(False)
+        try:
+            return fn(*a, **kw)
+        finally:
+            _LOOP_TOOL_CALL.reset(tok)
+            try:
+                keep = in_loop and bool(_journal().current_task())
+            except Exception:
+                keep = False
+            if not keep:
+                _clear_gate_action()
+    return run
+
+
 def _outcome_recorder(name, decision, ctx):
     """The outcome receipt for one call: written once, only for a call whose
     checkpoint decided an outward or reading action (or that runs on the
@@ -14434,9 +14584,46 @@ def _handler_outcome(name, result):
         return None
 
 
+#: A handler's dict result whose "status" says the action did not run (yet),
+#: as (outcome status, outcome word): it is never recorded as executed, so a
+#: retry is never refused as already done. Not "queued": a send that was
+#: queued at the other end has gone, and is never retried as if it had not.
+_DICT_STATUS_WAITING = frozenset({"waiting", "pending", "pending_approval", "awaiting_approval",
+                                  "needs_approval", "approval_required"})
+_DICT_STATUS_DENIED = frozenset({"refused", "denied", "rejected", "declined", "blocked"})
+_DICT_STATUS_FAILED = frozenset({"error", "failed"})
+
+
+def _dict_outcome(name, result):
+    """(status, outcome word) for a handler's dict result that says it is
+    waiting (ok, waiting), was refused (refused, denied) or failed (error,
+    failed); else None. Friday's own handlers only (a connector's reply is the
+    service's words, as for `_handler_outcome`), and never a one-shot tool
+    (action_gate.is_one_shot): a one-shot send's own dict answer is never
+    downgraded, so a retry of it is refused rather than sent twice. Never
+    raises."""
+    try:
+        from agent_friday.governance import action_gate as _g
+        if not isinstance(result, dict) or str(name or "").strip().lower().startswith("mcp_"):
+            return None
+        if _g.is_one_shot(name):
+            return None
+        s = str(result.get("status") or "").strip().lower()
+        if s in _DICT_STATUS_WAITING:
+            return "ok", _g.WAITING
+        if s in _DICT_STATUS_DENIED:
+            return "refused", _g.DENIED
+        if s in _DICT_STATUS_FAILED:
+            return "error", _g.FAILED
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 @_web_task_scope
 @_bind_browser_dispatch
 @_live_laya.idempotent_tool     # the same Gemini Live call twice in a few seconds runs once
+@_forgets_gate_note
 def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=None):
     """Run a Claude tool through the lifecycle-hook chain.
 
@@ -14456,6 +14643,10 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # refusal, a fix-it, a hold), not a tool's output: marked so the loops hand it
     # to the model as Friday's words, outside the data envelope (services/untrusted_input).
     _own = _untrusted.FridaysWords
+    # The task journal's tool_call event names the gate decision's action id
+    # (G10, NS-29.4-2): forget the last call's, under the name the loop knows.
+    _asked_name = name
+    _note_gate_action(_asked_name, None)
     # Stop everything (services/global_stop): while stopped no tool runs, from any
     # surface. Only another stop may pass, so "stop everything" said twice still works.
     from agent_friday.services import global_stop as _global_stop
@@ -14579,6 +14770,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
     # call's outcome receipt names it (governance/action_gate.record_outcome).
     verdict = _hooks.run_pre_hooks(ctx)
     _outcome = _outcome_recorder(name, ctx.meta.get("decision_receipt"), ctx)
+    _note_gate_action(_asked_name, ctx.meta.get("decision_receipt"))
     # Trusted hooks can restore a deferred Crew task's identity. Handlers and
     # subsequent checks use that scope, while the original host origin stays fixed.
     if _host_scoped:
@@ -14696,6 +14888,9 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         if _crew_denial:
             _outcome("ok", "ran; the crew host withheld the result")
             return _crew_denial
+        # a handler's dict that says it is waiting, was refused or failed is
+        # that outcome, never executed (read before it becomes text)
+        _dict_word = _dict_outcome(name, result)
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
     except Exception as e:
@@ -14721,6 +14916,16 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _receipts.record(name, ok=False, detail=_nd)
         _outcome("error", _nd)
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
+    elif _dict_word is not None:
+        _status, _word = _dict_word
+        if _status == "ok":
+            _receipts.record(name, ok=True)
+        else:
+            _receipts.record(name, ok=False, denied=_status == "refused", detail="handler: %s" % _word)
+        try:
+            _outcome(_status, "handler_status", _word)
+        except Exception:  # noqa: BLE001
+            pass
     else:
         _receipts.record(name, ok=True)
         # the handler returned; a line of Friday's own saying it was not done
@@ -15462,11 +15667,14 @@ def _hook_governance(ctx):
     try:
         v = _gate.authorize(ctx.tool_name, ctx.input, ctx.session_ctx,
                             tainted=(d.action == "ask"), clean=_clean,
-                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call")
+                            grant_tainted=(d.action == "ask" and not _clean), via="tool_call",
+                            provenance=getattr(d, "origins", None))
         # this call's own decision, for its outcome receipt (_outcome_recorder)
         ctx.meta["decision_receipt"] = _gate.LAST_RECEIPT.get()
     finally:
         _gate.LAST_RECEIPT.reset(_lr)
+    # known before a card is raised for it, so the card's journal event names it (G10)
+    _note_gate_action(ctx.tool_name, ctx.meta.get("decision_receipt"))
     ctx.meta["governance"] = v
     if v.action == "allow" and _waiting_cards:
         _prior = _run_card_supersede(ctx, _waiting_cards, v.grant)
@@ -17008,21 +17216,6 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
         result = _lib_env.keep_out_of_records(name, result)
     except Exception:
         pass
-    # The artifact manifest (§34.12-2): a file a creating tool made is linked
-    # to its task, its turn and the receipt that allowed the call, with its
-    # hash and structural check. Only a call that went through counts.
-    try:
-        from agent_friday.services import artifact_manifest as _am
-        if name in _am.CREATING_TOOLS:
-            from agent_friday.services import completion_receipts as _cr
-            _went = (_tool_call_status(result) == "ok" and isinstance(result, str)
-                     and not result.lstrip().startswith(_cr.FAILURE_SENTINELS))
-            # Recorded on a background thread: a long video's hash or a big
-            # PDF's check never holds up the conversation.
-            _am.submit(name, args, result, task_id=_journal().current_task(), ok=_went,
-                       started_at=_time.time() - float(duration_ms or 0) / 1000.0)
-    except Exception:
-        pass
     _rtrace.tool_finished(name, args, result, ok=(_tool_call_status(result) == "ok"),
                           duration_ms=int(duration_ms or 0))
     try:
@@ -17049,10 +17242,46 @@ def _orb_tool_trace(orb_id, name, args, result, duration_ms):
                       wrote=bool(_ok and name in _tl.WRITTEN_PATH_ARGS))
     except Exception:
         pass
+    # The step record beside it (§30.9) holds ids only: the keyed fingerprint
+    # of the arguments (hashed as the gate hashes them), the full result's
+    # and those of the files this call wrote. Worked out on its own: a ref
+    # that cannot be made never keeps the tool_call event from being written.
+    _step_in, _step_out, _step_hashes = [], [], {}
+    try:
+        _step_task = _journal().current_task()
+        if _step_task:
+            from agent_friday.services import artifact_manifest as _am_ref
+            from agent_friday.services import step_records as _sr
+            _fk = _sr.fp_key()
+            _ah = _am_ref.args_hash(args) if _fk else None
+            _args_ref = _sr.make_ref("args", _sr.fingerprint(_ah, _fk)) if _ah else None
+            _step_in = [_args_ref] if _args_ref else []
+            _step_out = (_sr.artifact_refs(name, args, result, task_id=_step_task, key=_fk,
+                                           hashes=_step_hashes) if (_ok and _fk) else [])
+    except Exception:
+        _step_in, _step_out, _step_hashes = [], [], {}
+    # The artifact manifest (§34.12-2): a file a creating tool made is linked
+    # to its task, its turn and the receipt that allowed the call, with its
+    # hash and structural check. Only a call that went through counts. The
+    # hashes the step just took are handed over, not taken again.
+    try:
+        from agent_friday.services import artifact_manifest as _am
+        if name in _am.CREATING_TOOLS:
+            from agent_friday.services import completion_receipts as _cr
+            _went = (_tool_call_status(result) == "ok" and isinstance(result, str)
+                     and not result.lstrip().startswith(_cr.FAILURE_SENTINELS))
+            # Recorded on a background thread: a long video's hash or a big
+            # PDF's check never holds up the conversation.
+            _am.submit(name, args, result, task_id=_journal().current_task(), ok=_went,
+                       started_at=_time.time() - float(duration_ms or 0) / 1000.0,
+                       known_sha256=_step_hashes)
+    except Exception:
+        pass
     try:
         _journal().tool_call(name=name, args=_tier_safe_summary(args, limit=1000, kind="args"),
                              result=_tier_safe_summary(result, limit=400, kind="result"),
-                             ok=_ok, duration_ms=int(duration_ms or 0))
+                             ok=_ok, duration_ms=int(duration_ms or 0),
+                             outcome=result, input_refs=_step_in, output_refs=_step_out)
     except Exception:
         pass
     if not orb_id:
@@ -17914,6 +18143,10 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
             tool_results = []
             _tools_grew = False
             for tu in tool_uses:
+                # No gate note from anything before this call (an earlier call, a
+                # helper's tool run on this thread) reaches this call's tool_call
+                # event, including on the paths below that never run the tool (G10).
+                _clear_gate_action()
                 _crew_denial = _host_action_denial(tu.name, session_ctx)
                 if _crew_denial:
                     return _crew_denial, tool_trace
@@ -18039,7 +18272,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     from agent_friday.privacy.public_query import for_tool_call as _pq_call
                     with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
                                   str(kwargs.get("model") or model or ""), _pq_name, tu.input):
-                        result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
+                        # the loop's own call: its gate note waits for its tool_call event (G10)
+                        with _loop_tool_call():
+                            result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
                 finally:
                     _CURRENT_MODEL.reset(_mtok)
                 # Marked FINISHED on the success path only, deliberately not in a
@@ -18718,6 +18953,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
             pass
 
         for tc in tool_calls:
+            # No gate note from before this call reaches its tool_call event,
+            # including on the paths below that never run the tool (G10).
+            _clear_gate_action()
             fn = tc.get("function") or {}
             tname = fn.get("name") or ""
             tcid = tc.get("id") or ""
@@ -18962,8 +19200,10 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                       else _ctxlib.nullcontext()), \
                         _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
                                  model or "", _pq_name, targs):
-                    result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
-                                           session_ctx=_zt_ctx)
+                    # the loop's own call: its gate note waits for its tool_call event (G10)
+                    with _loop_tool_call():
+                        result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
+                                               session_ctx=_zt_ctx)
             finally:
                 _CURRENT_MODEL.reset(_mtok)
             _crew_denial = _host_action_denial(tname, session_ctx)

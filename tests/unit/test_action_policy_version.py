@@ -117,7 +117,8 @@ def test_decision_and_outcome_receipts_carry_the_envelope(home):
     env = rec["envelope"]
     assert set(env) == set(ag.ENVELOPE_FIELDS) == {
         "action_id", "principal", "tool", "args_hash", "idempotency_key", "verification_plan",
-        "policy_version", "claws_state", "created_at"}
+        "policy_version", "claws_state", "created_at", "origin", "risk_class", "provenance_summary"}
+    assert env["origin"] == "task" and env["risk_class"] == rec["class"]
     assert env["action_id"] == rec["action_id"] and env["policy_version"] == rec["policy_version"]
     assert env["principal"] == L.PRINCIPAL and env["tool"] == "create_calendar_event"
     assert env["args_hash"] == rec["args_hash"]

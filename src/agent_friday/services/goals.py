@@ -406,6 +406,7 @@ def _mutate_goal(goal_id: str, fn: Callable[[Dict[str, Any]], Optional[Dict[str,
         goal = _read_goal_file(goal_id, current=False)
         if goal is None:
             return None
+        before = goal_state.normalize(goal)
         result = fn(goal)
         goal = result if isinstance(result, dict) else goal
         old = goal_state.refresh(goal)
@@ -417,7 +418,15 @@ def _mutate_goal(goal_id: str, fn: Callable[[Dict[str, Any]], Optional[Dict[str,
             goal["history"] = goal["history"][-_HISTORY_KEPT:]
         goal["updated_at"] = _now_iso()
         _write_goal_file(goal)
-        return goal
+    # §4.7 (G9): a goal that has just ended (met, failed, ended by the owner)
+    # gets its outcome record, outside the goal lock.
+    try:
+        from agent_friday.services import outcome_memory as _om
+        if goal.get("status") in _om.GOAL_END_STATES and before != goal.get("status"):
+            _om.on_goal_end(goal)
+    except Exception as e:
+        _log.warning("outcome memory for a goal failed: %s", e)
+    return goal
 
 
 #: History lines kept per goal (the oldest go first); receipts are kept whole.
@@ -632,9 +641,18 @@ def add_milestone(goal_id: str, milestone: dict) -> Optional[Dict[str, Any]]:
 
 
 def _update_milestone(goal_id: str, milestone_id: str, **fields) -> Optional[Dict[str, Any]]:
+    stopped_task: List[str] = []
+
     def _fn(goal):
         m = _find_milestone(goal, milestone_id)
         if m is not None:
+            if isinstance(fields.get("blocker"), dict):
+                # the attempt task this blocker stopped, for its journal (G10)
+                b = fields["blocker"]
+                tid = (b.get("task_id") or (fields.get("last_run") or {}).get("task_id")
+                       or (m.get("run") or {}).get("task_id"))
+                if tid:
+                    stopped_task[:] = [str(tid)]
             last = fields.get("last_run")
             run = m.get("run")
             if last and run and run.get("started_at") == last.get("started_at"):
@@ -647,7 +665,21 @@ def _update_milestone(goal_id: str, milestone_id: str, **fields) -> Optional[Dic
                 goal["spent_runtime_s"] = round(float(goal.get("spent_runtime_s") or 0) + took, 1)
             m.update(fields)
         return goal
-    return _mutate_goal(goal_id, _fn)
+    out = _mutate_goal(goal_id, _fn)
+    if stopped_task:
+        _journal_blocker(stopped_task[0], fields["blocker"])
+    return out
+
+
+def _journal_blocker(task_id: str, blocker: Dict[str, Any]) -> None:
+    """The typed blocker (goal_state) that stopped a milestone's attempt, in
+    that task's journal (NS-29.4-1): its type and category codes, never its
+    words. Never raises."""
+    try:
+        from agent_friday.services import task_journal as tj
+        tj.blocker(task_id, blocker.get("type"), category=blocker.get("category"))
+    except Exception:
+        pass
 
 
 def transition_goal(goal_id: str, new_status: str, *, reason: str = "",
@@ -996,6 +1028,13 @@ def _append_receipt(goal_id: str, receipt: Dict[str, Any]) -> Optional[Dict[str,
             action_ledger.append("goal", receipt)
     except Exception as e:
         _log.error("receipt log append FAILED: %s", e)
+    # §4.7 (G9): a receipt that ends a milestone is also its outcome record
+    # (services/outcome_memory; nothing off the record; never raises).
+    try:
+        from agent_friday.services import outcome_memory as _om
+        _om.on_milestone_receipt(goal, receipt)
+    except Exception as e:
+        _log.warning("outcome memory for a milestone failed: %s", e)
     return goal
 
 
@@ -1470,6 +1509,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
 
     marks = list(milestone.get("progress_marks") or [])
     no_progress_why = ""
+    # §30.9: every step this run took (its attempts' tool calls and subagents,
+    # then each attempt itself). Only the attempts' own keys can stop the run
+    # (goal_state.stalled_attempts); the steps inside them are kept for the record.
+    run_steps: List[Dict[str, Any]] = []
 
     while attempt <= max_retries:
         if attempt > 0:
@@ -1533,6 +1576,9 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
             _reconcile_milestone(goal_id, milestone_id, background=True, force=True)
             return {"ok": False, "status": "interrupted", "task_id": work.get("task_id")}
 
+        run_steps.extend(_attempt_steps(goal_id, milestone_id, work.get("task_id") or attempt_task_id,
+                                        work, _attempt_began))
+
         if not work.get("ok"):
             last_text = ""
             err = str(work.get("error") or "execution failed")
@@ -1551,6 +1597,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
                     break
             critique_hint = (f"The previous attempt failed to even run: "
                             f"{work.get('error')}. Try a different, more robust approach.")
+            why = goal_state.stalled_attempts(run_steps)
+            if why:
+                no_progress_why = why
+                break
             continue
 
         last_text = work.get("text") or ""
@@ -1615,6 +1665,10 @@ def _run_milestone_locked(goal_id: str, milestone_id: str) -> Dict[str, Any]:
         if not verdict.get("passed"):
             why = goal_state.repeated(marks[:-1], critique=str(verdict.get("critique") or ""))
             marks[-1]["critique"] = goal_state.fingerprint(verdict.get("critique") or "")
+            if why:
+                no_progress_why = why
+                break
+            why = goal_state.stalled_attempts(run_steps)
             if why:
                 no_progress_why = why
                 break
@@ -1869,8 +1923,36 @@ def _verify(goal: Dict[str, Any], milestone: Dict[str, Any], text: str, criteria
     (services/goal_evidence, §17.12)."""
     from agent_friday.services import goal_evidence
     gid = goal.get("goal_id")
-    return goal_evidence.verify(goal, milestone, text, criteria, task_id=task_id, since=since,
-                                grade=lambda t, c: qa_gates.evaluate_text(t, c, workspace=f"goal:{gid}"))
+    verdict = goal_evidence.verify(goal, milestone, text, criteria, task_id=task_id, since=since,
+                                   grade=lambda t, c: qa_gates.evaluate_text(t, c, workspace=f"goal:{gid}"))
+    _journal_check(task_id, gid, milestone, verdict)
+    return verdict
+
+
+def _check_result(verdict: Dict[str, Any]) -> str:
+    """passed / failed / unknown for one milestone check: unknown when it
+    could not run or only the owner can judge what it found."""
+    v = verdict if isinstance(verdict, dict) else {}
+    if v.get("status") not in (None, "ok") or v.get("needs_owner_confirm"):
+        return "unknown"
+    if v.get("passed") is True:
+        return "passed"
+    return "failed" if v.get("passed") is False else "unknown"
+
+
+def _journal_check(task_id: Optional[str], goal_id: Optional[str], milestone: Dict[str, Any],
+                   verdict: Dict[str, Any]) -> None:
+    """The attempt task's journal records that its check ran (NS-29.4-1): the
+    check's id (goal and milestone ids) and passed / failed / unknown. Never
+    the words it judged. Never raises."""
+    if not task_id:
+        return
+    try:
+        from agent_friday.services import task_journal as tj
+        tj.verification(task_id, f"goal:{goal_id}:{(milestone or {}).get('milestone_id')}",
+                        _check_result(verdict), basis=(verdict or {}).get("basis"))
+    except Exception:
+        pass
 
 
 def _card_subject(goal_id: str, milestone_id: str, suffix: str, milestone: Dict[str, Any]) -> str:
@@ -1907,6 +1989,75 @@ def _note_run(goal_id: Optional[str], milestone_id: Optional[str], **fields) -> 
         _mutate_goal(goal_id, _fn)
     except Exception as e:
         _log.warning("goal %s: could not record its run: %s", goal_id, e)
+
+
+#: Attempt steps kept on a milestone's run record when the attempt's task has
+#: no record of its own to hold them.
+_RUN_STEPS_KEPT = 10
+
+
+def _keep_on_run(goal_id: str, milestone_id: str, step: Dict[str, Any]) -> None:
+    """Keep an attempt's milestone_run step (ids only) on the milestone's
+    current run record, only if that record exists and nothing is being
+    kept off the record. Never raises."""
+    try:
+        from agent_friday.services import off_record
+        if off_record.active() or off_record.skip("task_journal"):
+            return
+    except Exception:
+        return
+
+    def _fn(goal):
+        m = _find_milestone(goal, milestone_id)
+        if m is not None and m.get("run"):
+            run = dict(m["run"])
+            run["attempt_steps"] = (list(run.get("attempt_steps") or []) + [step])[-_RUN_STEPS_KEPT:]
+            m["run"] = run
+        return goal
+    try:
+        _mutate_goal(goal_id, _fn)
+    except Exception as e:
+        _log.warning("goal %s: could not keep the attempt's step: %s", goal_id, type(e).__name__)
+
+
+def _attempt_steps(goal_id: str, milestone_id: str, task_id: str, work: Dict[str, Any],
+                   began: float) -> List[Dict[str, Any]]:
+    """One attempt's step records (§30.9): the steps its task recorded, then
+    the attempt itself as a milestone_run step. The attempt's outcome refs
+    are its result's keyed fingerprint (or its error's) and one fingerprint
+    of the set of progress keys its steps reached. Ids only.
+
+    The milestone_run step is written to the attempt task's journal only when
+    that task exists (it has a state record); otherwise it is kept on the
+    milestone's own current run record if there is one, or not written at
+    all: a step is never the thing that creates a task's record. Either way
+    it is returned, so the run's no-progress check sees every attempt.
+    Never raises; an unreadable record gives no steps (the attempt-level
+    fingerprints still apply)."""
+    try:
+        from agent_friday.services import step_records as _sr
+        from agent_friday.services import task_journal as tj
+        own = tj.steps(task_id)
+        keys = sorted({s.get("distinct_progress_key") for s in own if s.get("distinct_progress_key")})
+        ok = bool(work.get("ok"))
+        fk = _sr.fp_key()
+        fields = dict(name=milestone_id,
+                      input_refs=[_sr.make_ref("goal", goal_id), _sr.make_ref("milestone", milestone_id)],
+                      output_refs=[_sr.make_ref("task", task_id),
+                                   _sr.result_ref(work.get("text") if ok else work.get("error"), fk),
+                                   _sr.make_ref("progress", _sr.fingerprint(keys, fk))],
+                      started_at=began, ended_at=time.time())
+        state = "done" if ok else "failed"
+        rec = None
+        if tj.read_state(task_id) is not None:
+            rec = tj.step("milestone_run", state, task_id=task_id, **fields)
+        if rec is None:
+            rec = dict(_sr.record("milestone_run", state, **fields), task_id=task_id)
+            _keep_on_run(goal_id, milestone_id, _sr.public(rec))
+        return own + [_sr.public(rec)]
+    except Exception as e:
+        _log.warning("goal %s: could not record the attempt's steps: %s", goal_id, type(e).__name__)
+        return []
 
 
 def _closed_run(goal_id: str, milestone_id: str) -> Dict[str, Any]:

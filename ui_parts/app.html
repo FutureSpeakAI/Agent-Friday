@@ -10798,8 +10798,10 @@ function GoalsCard() {
   const [def, setDefRaw] = useState(null);
   const [preview, setPreview] = useState(null);
   const [drafts, setDrafts] = useState([]);
+  const [outs, setOuts] = useState([]);
   const load = useCallback(() => {
     apiFetch('/api/goals/drafts').then(r => r.json()).then(x => setDrafts((x && x.drafts) || [])).catch(() => {});
+    apiFetch('/api/outcomes?limit=20').then(r => r.ok ? r.json() : null).then(x => setOuts((x && x.outcomes) || [])).catch(() => {});
     apiFetch('/api/goals/summary' + (finished ? '?finished=1' : '')).then(r => r.json()).then(x => { setD(x); })
       .catch(() => setMsg('Could not read your goals.'));
   }, [finished]);
@@ -10809,6 +10811,21 @@ function GoalsCard() {
     .then(r => r.json().then(j => ({ ok: r.ok, status: r.status, j }), () => ({ ok: r.ok, status: r.status, j: {} })));
   const done = (x, words) => { setMsg(x.ok ? words : ((x.j && (x.j.message || x.j.error)) || 'That did not work.')); load(); };
   const fail = () => setMsg('Could not reach the server.');
+  // §4.7: how finished work turned out. Memory as of a date, never the current state.
+  const OUTCOME_WORDS = ['succeeded', 'failed', 'partial', 'unknown'];
+  const outSummary = o => (o.decision && o.decision.summary) || o.id;
+  const correctOutcome = o => {
+    const v = window.prompt('How did “' + outSummary(o) + '” actually turn out? (' + OUTCOME_WORDS.join(', ') + ')', o.effective ? o.effective.result : '');
+    if (v == null) return;
+    const w = v.trim().toLowerCase();
+    if (OUTCOME_WORDS.indexOf(w) < 0) { setMsg('Say one of: ' + OUTCOME_WORDS.join(', ') + '.'); return; }
+    send('/api/outcomes/' + enc(o.id) + '/correct', 'POST', { outcome: w }).then(x => done(x, 'Correction kept.')).catch(fail);
+  };
+  const resolveOutcome = o => send('/api/outcomes/' + enc(o.id) + '/resolve', 'POST', {}).then(x => done(x, 'Marked resolved.')).catch(fail);
+  const forgetOutcome = o => {
+    if (!window.confirm('Forget the outcome of “' + outSummary(o) + '”? It cannot be brought back.')) return;
+    send('/api/outcomes/' + enc(o.id), 'DELETE').then(x => done(x, 'Forgotten.')).catch(fail);
+  };
   const move = (g, mv) => {
     if (mv.to === 'abandoned' && !window.confirm('End “' + g.title + '”? Nothing more runs for it; you can reopen it later.')) return;
     if (mv.to === 'met_unverified' && !window.confirm('Mark “' + g.title + '” met? It is recorded as your judgment, not as checked.')) return;
@@ -10896,6 +10913,19 @@ function GoalsCard() {
               patch(g, { allowed_routes: r.value }, 'This goal now runs ' + r.label + '.');
             }, { key: r.label, 'aria-pressed': routeRank(g.allowed_routes) === routeRank(r.value) }))),
           btn('Pre-approved sends', () => window.fridayOpenWorkspace && window.fridayOpenWorkspace({ workspace: 'settings', tab: 'privacy', section: 'Pre-approved sends' }), { title: 'Revoke a standing permission' }))))),
+    outs.length > 0 && E('div', { role: 'region', 'aria-label': 'Outcomes', 'data-goal-outcomes': 'true', style: { marginTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 6 } },
+      E('div', { className: 'card-title', style: { fontSize: 12 } }, 'Outcomes'),
+      E('div', { style: { fontSize: 10, color: '#888' } }, 'How finished work turned out, as of the date shown. This is memory, not the current state.'),
+      outs.map(o => E('div', { key: o.id, 'data-outcome-status': o.status, style: { fontSize: 11, color: '#cdd', marginTop: 4 } },
+        outSummary(o) + ': ' + ((o.effective && o.effective.result) || 'unknown')
+          + (o.effective && o.effective.verified ? ' (checked)' : o.effective && o.effective.source === 'owner' ? ' (your correction)' : ' (not checked)')
+          + ' · as of ' + (o.as_of || 'unknown') + (o.stale ? ' · may be out of date' : '')
+          + (o.revisit_due ? ' · due for another look' : '') + (o.recorded_status === 'resolved' ? ' · resolved' : ''),
+        (o.unresolved || []).length > 0 && E('ul', { 'aria-label': 'Still open for ' + outSummary(o), style: { fontSize: 10, color: '#9ab', margin: '2px 0', paddingLeft: 14 } }, o.unresolved.map((u, i) => E('li', { key: i }, u))),
+        E('div', null,
+          btn('Correct', () => correctOutcome(o), { 'aria-label': 'Correct the outcome of ' + outSummary(o) }),
+          o.recorded_status !== 'resolved' && btn('Resolved', () => resolveOutcome(o), { 'aria-label': 'Mark resolved: ' + outSummary(o) }),
+          btn('Forget', () => forgetOutcome(o), { 'aria-label': 'Forget the outcome of ' + outSummary(o) }))))),
     E('div', { style: { marginTop: 6 } }, btn(finished ? 'Hide archived goals' : 'Show archived goals', () => setFinished(!finished))),
     drafts.map(dr => E('div', { key: dr.draft_id, role: 'region', 'aria-label': 'Goal draft: ' + dr.title, 'data-goal-draft': dr.draft_id, style: { marginTop: 8, padding: 6, border: '1px solid rgba(0,212,255,0.25)' } },
       E('div', { className: 'card-title', style: { fontSize: 12 } }, 'Draft from your conversation: ' + dr.title),
@@ -17239,6 +17269,17 @@ function TracesViewer() {
 // ═══ TASK TRAY (background task runner UI) ═══
 function fmtElapsed(sec){if(sec==null)return'0s';const s=Math.floor(sec);if(s<60)return s+'s';const m=Math.floor(s/60);const r=s%60;if(m<60)return m+'m '+r+'s';const h=Math.floor(m/60);return h+'h '+(m%60)+'m'}
 // ═══ TASK TIMELINE + CONTROLS (docs/design/active/task-visibility.md §4.4) ═══
+/* The task journal's linked events (approval, check, file, blocker, pause/resume/stop, receipt) as
+   plain words. Ids and codes only reach here; nothing the task handled. */
+const JOURNAL_LINKED_KINDS=['approval','verification','artifact','blocker','paused','resumed','stopped','receipt'];
+function journalLinkedLine(ev){const k=ev.kind;const words=s=>String(s||'').replace(/_/g,' ');
+  if(k==='approval')return ev.phase==='raised'?'approval card raised':'approval '+words(ev.outcome||'decided')+(ev.by==='system'?' by '+fridayName():ev.by==='grant'?' by your standing approval':ev.by?' by you':'');
+  if(k==='verification')return 'check '+words(ev.result||'unknown');
+  if(k==='artifact')return 'file made'+(ev.tool?' by '+words(ev.tool):'')+(ev.qa_ok===false?' · its check found problems':'');
+  if(k==='blocker')return 'blocked: '+words(ev.code||ev.category||'unknown');
+  if(k==='paused'||k==='resumed'||k==='stopped')return k+' by '+(ev.who==='owner'?'you':fridayName())+(ev.reason_code?' · '+words(ev.reason_code):'');
+  if(k==='receipt')return 'receipt: '+words(ev.outcome||'recorded');
+  return words(k);}
 // The drawer under a task card reads the task's own journal — the same record
 // the orchestrator's query surface reads — and tails it by seq cursor while
 // the task runs. A gap in the sequence is shown, never hidden.
@@ -17248,7 +17289,8 @@ function TaskTimeline({taskId,live,fallback}){
   useEffect(()=>{let alive=true;cursor.current=0;setEvents([]);setGaps([]);
     const tick=()=>fetch('/api/tasks/'+encodeURIComponent(taskId)+'/journal?since='+cursor.current).then(r=>r.ok?r.json():null).then(d=>{
       if(!alive||!d)return;
-      if(Array.isArray(d.events)&&d.events.length){setEvents(prev=>prev.concat(d.events).slice(-400));cursor.current=d.last_seq||cursor.current;}
+      /* A tool call's step record (§30.9) is never drawn (its tool_call row is): leave it out before keeping the last 400. */
+      if(Array.isArray(d.events)&&d.events.length){const shown=d.events.filter(e=>!(e&&e.kind==='step'&&e.step_kind==='tool_call'));setEvents(prev=>prev.concat(shown).slice(-400));cursor.current=d.last_seq||cursor.current;}
       if(Array.isArray(d.gaps)&&d.gaps.length)setGaps(prev=>prev.concat(d.gaps));
       if(d.cursor_ahead)setGaps(prev=>prev.concat([{cursor_ahead:true}]));
     }).catch(()=>{});
@@ -17264,7 +17306,11 @@ function TaskTimeline({taskId,live,fallback}){
     if(k==='reasoning')return showReasoning?<div {...base} style={{color:'#bbb',fontStyle:'italic',whiteSpace:'pre-wrap'}}>💭 {ev.text||''}{ev.thinking?<div style={{color:'#777'}}>(thinking) {ev.thinking}</div>:null}</div>:null;
     if(k==='halt')return <div {...base} style={{color:'#ff0080'}}>■ {ev.cause}: {ev.detail}{ev.resume_hint?' · '+ev.resume_hint:''}</div>;
     if(k==='steer')return <div {...base} style={{color:'#f59e0b'}}>→ steer ({ev.source}): {ev.message}</div>;
+    /* Step records (§30.9): a tool call's step already shows as its tool_call row. */
+    if(k==='step'&&ev.step_kind!=='tool_call')return <div {...base} style={{color:'#888'}}>◦ {ev.step_kind==='subagent'?'subagent':ev.step_kind==='milestone_run'?'goal attempt':String(ev.step_kind||'step')} · {String(ev.state||'')}{ev.duration_ms!=null?' · '+ev.duration_ms+'ms':''}</div>;
     if(k==='started'||k==='ended'||k==='created')return <div {...base} style={{color:'#888'}}>• {k}{ev.status?' · '+ev.status:''}{ev.model?' · '+ev.model:''}</div>;
+    /* Linked events (NS-29.4-1): one plain line each, from ids and codes only. */
+    if(JOURNAL_LINKED_KINDS.includes(k))return <div {...base} style={{color:'#888'}}>• {journalLinkedLine(ev)}</div>;
     return null;};
   /* An orb-backed row has no journal but DOES carry its own log and step
      thread. Prefer the journal; fall back to what the row already has rather
@@ -21903,10 +21949,35 @@ function PreApprovedSendsList() {
 // an approval card. Email is covered only by Pre-approved sends (SendGrantsPanel).
 // Enforced in governance/action_gate.py; this screen only lists, creates and
 // revokes grants through /api/governance/grants.
+// One grant record (governance/grant_record.py), every kind, in plain words.
+// Read-only: the owner's view of who a grant is for, what it may do, where,
+// how often, until when, and what it does in quiet hours and from a remote channel.
+function grantRecordWords(r){
+  const t=s=>new Date(s*1000).toLocaleString();
+  const kinds={scoped:'Scheduled job or task',run:'One run',send:'Pre-approved send',file:'File access',library:'Library',desktop:'Computer Control app',crew:'Crew agent folder'};
+  const subj=r.subject||{};
+  const list=(a,none)=>(a||[]).length?a.join(', '):none;
+  const rules=Object.keys(r.arg_constraints||{});
+  const out=[
+    (kinds[r.kind]||r.kind)+' \xB7 '+({active:'in force',revoked:'revoked',expired:'expired',spent:'used up'}[r.status]||r.status),
+    'For: '+(r.principal==='owner'?'you':r.principal)+(subj.kind&&subj.kind!=='owner'?' \xB7 '+subj.kind+' '+subj.id:''),
+    'May use: '+list(r.tools,'no named tools'),
+    'Argument rules: '+(rules.length?rules.map(k=>k+' '+JSON.stringify(r.arg_constraints[k])).join('; '):'none'),
+    'Data: '+list(r.data_scope,'no limit'),
+    'Where to: '+list(r.destination_scope,'no limit'),
+    'Uses: '+(r.used_count||0)+(r.max_uses==null?' (no limit)':' of '+r.max_uses),
+    'From '+(r.starts_at?t(r.starts_at):'when it was made')+(r.expires_at==null?', no end date':' until '+t(r.expires_at)),
+    'Money cap: '+(r.money_cap==null?'none':r.money_cap+' (spent '+(r.money_spent||0)+')'),
+    'Time cap: '+(r.time_cap_s==null?'none':Math.round(r.time_cap_s/60)+' min'),
+    'Quiet hours: '+({allow:'works in quiet hours',respect:'waits for you in quiet hours',deny:'never in quiet hours'}[r.quiet_hours]||r.quiet_hours),
+    'From a remote channel: '+(r.remote_allowed?'allowed':'not allowed')];
+  if(r.revoked_at)out.push('Revoked '+t(r.revoked_at));
+  return out;
+}
 function GovernanceGrantsPanel(){
-  const[grants,setGrants]=useState([]);const[jobs,setJobs]=useState([]);const[tools,setTools]=useState([]);
+  const[grants,setGrants]=useState([]);const[jobs,setJobs]=useState([]);const[tools,setTools]=useState([]);const[records,setRecords]=useState([]);
   const[job,setJob]=useState('');const[picked,setPicked]=useState([]);const[days,setDays]=useState(7);const[uses,setUses]=useState(10);const[msg,setMsg]=useState('');
-  const load=()=>apiFetch('/api/governance/grants').then(r=>r.json()).then(d=>setGrants(Array.isArray(d&&d.grants)?d.grants:[])).catch(()=>{});
+  const load=()=>apiFetch('/api/governance/grants').then(r=>r.json()).then(d=>{setGrants(Array.isArray(d&&d.grants)?d.grants:[]);setRecords(Array.isArray(d&&d.records)?d.records:[]);}).catch(()=>{});
   useEffect(()=>{
     load();
     apiFetch('/api/schedules').then(r=>r.json()).then(d=>setJobs(Array.isArray(d&&d.schedules)?d.schedules:[])).catch(()=>{});
@@ -21949,6 +22020,13 @@ function GovernanceGrantsPanel(){
       <button className="settings-btn" style={{fontSize:11}} onClick={create}>Grant</button>
     </div>
     {msg&&<div role="status" style={{...muted,marginTop:6,color:'#9fd'}}>{msg}</div>}
+    <details data-testid="grant-records" style={{marginTop:12}}>
+      <summary style={{fontSize:12,color:'#ccc',cursor:'pointer'}}>{'Every grant, in full ('+records.length+')'}</summary>
+      <div style={{...muted,marginTop:6}}>Every standing permission {fridayName()} holds, of every kind. Read-only. A grant that does not fit an action never blocks it: the action asks you instead.</div>
+      {records.map(r=><div key={r.kind+':'+r.id} className="card" style={{padding:8,marginTop:6,fontSize:11,color:'#bbb',lineHeight:1.5}}>
+        {grantRecordWords(r).map((w,i)=><div key={i}>{w}</div>)}
+      </div>)}
+    </details>
   </div>;
 }
 function LayaPilotPanel({s, save}) {

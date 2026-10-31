@@ -15,6 +15,30 @@
                                  actions (services/outward_audit): counts and
                                  action ids; ?days= window (1 to 365, default 30).
                                  Read-only.
+  GET  /api/ledger/integrity     one view of the record (services/ledger_integrity):
+                                 signature health, chain breaks and gaps,
+                                 unsigned lines, open/unconfirmed/duplicate
+                                 outward actions, the policy version id, and
+                                 the activity record (A9: its rows in the
+                                 chain, rows from before chaining, breaks with
+                                 the first location, archive notes); A10:
+                                 edited lines, decisions with no final
+                                 outcome, artifact fingerprints rechecked,
+                                 outward effects with no decision receipt.
+                                 Counts only; ?days= as for audit. Read-only.
+  GET  /api/ledger/unified       every receipt family together (A12,
+                                 services/unified_ledger): ?family=, ?id= to
+                                 trace one action or goal across families,
+                                 ?limit=, ?cursor=. Ids and fixed words only.
+                                 Read-only. One read at a time (429 "busy"
+                                 when another holds it); the plain first page
+                                 is kept 15 s.
+  GET  /api/ledger/explain       why Friday did it (A13, services/explain):
+                                 ?action_id= or ?task_id=; what, why, which
+                                 model, what information, egress, authority,
+                                 cost, what changed and linked records, each
+                                 "not recorded" when missing. Ids, names and
+                                 counts only. Read-only; one at a time (429).
   GET  /api/ledger/retention     the retention period and the archive (A22)
   POST /api/ledger/retention     {"days": n}: change it (0 = off, at least 30);
                                  on this PC only. Archives at once; never deletes.
@@ -339,6 +363,98 @@ def api_ledger_audit():
         return jsonify({"status": "ok", "audit": outward_audit.audit(days * 86400.0)})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The outward actions could not be checked.")
+
+
+@ledger_bp.route("/api/ledger/integrity", methods=["GET"])
+@login_required
+def api_ledger_integrity():
+    """One view of the record (services/ledger_integrity): signature health,
+    chain breaks and gaps, unsigned lines, open, unconfirmed and duplicated
+    outward actions, the policy version id, the activity record's chain
+    (activity_ledger.verify_chain), edited lines, decisions with no final
+    outcome, artifact fingerprints and outward effects with no decision
+    receipt (A10, services/verify_everything). Counts and short references
+    only; nothing here comes from the request but the window. Owner only, as
+    /api/ledger/audit (the session; not on the observer's list). Reads;
+    writes nothing."""
+    try:
+        from agent_friday.services import ledger_integrity
+        try:
+            days = max(1.0, min(float(request.args.get("days") or 30), 365.0))
+        except (TypeError, ValueError):
+            days = 30.0
+        return jsonify({"status": "ok", "integrity": ledger_integrity.integrity(days * 86400.0)})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The record could not be checked.")
+
+
+@ledger_bp.route("/api/ledger/unified", methods=["GET"])
+@login_required
+def api_ledger_unified():
+    """Every receipt family in one list (services/unified_ledger, A12): the
+    action ledger's kinds, the task journal's linked events, the egress
+    ledger's sends, the artifact manifest, the provenance ledger, the publish
+    log, the setup record and the memory and skill ledgers, newest first, in
+    one row shape: ids, times, signed/chained and fixed words only, never a
+    record's content, a path or a recipient. ?family= (one or a comma list),
+    ?id= (trace one action, goal, task, approval, receipt or call id across
+    every family), ?limit= (max 200), ?cursor= (the page before's
+    next_cursor). Owner only, as the rest of the ledger (the session; not on
+    the observer's list). Reads; writes nothing; a store that cannot be read
+    is named in `sources` and the others are still listed."""
+    try:
+        from agent_friday.services import unified_ledger
+        try:
+            limit = int(request.args.get("limit") or 50)
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            out = unified_ledger.unified(family=request.args.get("family") or None,
+                                         id=(request.args.get("id") or "").strip()[:128] or None,
+                                         limit=limit, cursor=request.args.get("cursor") or None)
+        except unified_ledger.BadCursor:
+            return jsonify({"status": "error", "code": "bad_cursor",
+                            "error": "That page link is not one this list gave out. Start from the newest."}), 400
+        except unified_ledger.Busy:
+            # one read at a time: every store is opened for it
+            resp = jsonify({"status": "error", "code": "busy",
+                            "error": "The records are being read for another view. Try again in a moment."})
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "2"
+            return resp
+        return jsonify({"status": "ok", **out})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The records could not be read together.")
+
+
+@ledger_bp.route("/api/ledger/explain", methods=["GET"])
+@login_required
+def api_ledger_explain():
+    """Why did Friday do that (services/explain, A13, NS-29.1-1): for one
+    ?action_id= or one ?task_id=, what it was, why, which model, what
+    information, what left this PC, on whose authority, what it cost and what
+    changed, each section saying "not recorded" when nothing is kept for it.
+    Ids, names of models and tools, counts and fixed codes only: never
+    content, a path, a recipient or a destination. Owner only, as the rest of
+    the ledger (the session; not on the observer's list). Reads; writes
+    nothing. The id is only compared with what the stores hold."""
+    try:
+        from agent_friday.services import explain as _explain
+        try:
+            out = _explain.explain(action_id=request.args.get("action_id") or None,
+                                   task_id=request.args.get("task_id") or None)
+        except _explain.BadId:
+            return jsonify({"status": "error", "code": "bad_id",
+                            "error": "Name one action id or one task id."}), 400
+        except _explain.Busy:
+            resp = jsonify({"status": "error", "code": "busy",
+                            "error": "Another explanation is being read. Try again in a moment."})
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "2"
+            return resp
+        return jsonify({"status": "ok", **out})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "This could not be explained right now.")
 
 
 @ledger_bp.route("/api/ledger/acknowledge", methods=["POST"])

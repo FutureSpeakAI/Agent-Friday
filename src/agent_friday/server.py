@@ -821,6 +821,16 @@ if not _TESTING:
     threading.Thread(target=_warm_sensitivity_embedder, daemon=True,
                      name="warm-embedder").start()
 
+    # Which requests were already carried out (services/idempotency_index):
+    # read once in the background, so the first outward action after boot
+    # does not pay for reading the ledger. Best-effort; a lookup builds it
+    # otherwise, and one that cannot run refuses nothing.
+    try:
+        from agent_friday.services import idempotency_index as _idem_index
+        _idem_index.warm_in_background()
+    except Exception as _ii_e:
+        print(f"  Idempotency index: not warmed ({_ii_e})")
+
     # Persistent news archive: grow the per-day article store on the RSS cadence.
     if _safe.allows("news"):
         threading.Thread(target=_news_archiver_loop, daemon=True).start()

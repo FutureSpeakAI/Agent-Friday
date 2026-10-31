@@ -303,6 +303,17 @@ def _pre_approval(recipients):
         return None
 
 
+def _reserve_pre_approval(grant, recipients):
+    """Take one use of the pre-approval for this message (send_grants.reserve_use),
+    or None when it has none left or may not be used now. Never raises."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return _sg.reserve_use(grant.get("grant_id"), "send_email", recipients)
+    except Exception as e:
+        _log.warning("pre-approval use could not be counted, so the send asks: %s", e)
+        return None
+
+
 #: The line on a send card for a message a cloud model wrote that has private details in it.
 CLOUD_SENSITIVE_NOTE = ("Written on a cloud model, and it has private details in it: this is exactly "
                         "what would be sent. Send, or Don't send.")
@@ -419,6 +430,9 @@ def _repeat_outcome(rec: dict) -> str | None:
         return "you took back an identical message"
     if used == "gmail_send_grant_revoked":
         return "an identical message was taken back when the pre-approval was revoked"
+    if used == "gmail_send_grant_refused":
+        return ("an identical message was not sent (its pre-approval did not allow it "
+                "when it was due)")
     if used == "gmail_send_missed":
         return "an identical message was not sent (Friday was off when it was due)"
     row = _outbox_row(rec.get("approval_id") or "")
@@ -620,12 +634,17 @@ def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
     # window, burn-once send, outbox and a logged use.
     grant = None if (sensitive or repeat is not None or maybe_sent) else _pre_approval(tos + ccs + _addresses(bcc or []))
     if grant is not None:
+        # The use is checked and counted in one step under the grant store's
+        # lock (use limit, time cap, quiet hours) before the message is queued:
+        # two sends at once cannot both take the last use. Refused: the card.
+        grant = _reserve_pre_approval(grant, tos + ccs + _addresses(bcc or []))
+    if grant is not None:
         appr = _ap.record_pre_approved(grant_id=grant["grant_id"], **card)
         if appr.get("status") == "approved" and not appr.get("consumed"):
             from agent_friday.governance import send_grants as _sg
             ctx = _tool_context()
             _sg.record_use(grant, "send_email", tos + ccs + _addresses(bcc or []),
-                           approval_id=appr.get("approval_id"), ctx=ctx)
+                           approval_id=appr.get("approval_id"), ctx=ctx, reserved=True)
             unattended = bool(ctx.get("schedule_id") or ctx.get("is_background_task"))
             # Nobody is watching an unattended send: it waits the owner's own Undo window
             # (Settings: unattended_send_undo_s, 2 minutes unless they chose otherwise).
@@ -652,10 +671,11 @@ def _request_send(*, to, subject: str, body: str, cc=None, bcc=None,
             **({"pre_approval_withheld": withheld} if withheld else {})}
 
 
-def _record_egress(payload: dict, raw: str, result: str) -> None:
+def _record_egress(payload: dict, raw: str, result: str, decision=None) -> None:
     """The send in the egress ledger and on the privacy map (§26.7): to Gmail,
     how many recipients (Bcc included), and the message itself fingerprinted
-    and, by default (A20), kept encrypted with the receipt."""
+    and, by default (A20), kept encrypted with the receipt. `decision`: the
+    checkpoint's decision for the send; the row names its action id (A10)."""
     try:
         from agent_friday.services import egress_gate as _eg
         from email.utils import getaddresses
@@ -668,7 +688,8 @@ def _record_egress(payload: dict, raw: str, result: str) -> None:
             else:
                 n += len([a for _name, a in getaddresses([str(v)]) if "@" in a])
         _eg.record_service_send("mail", "gmail", destination="gmail.googleapis.com", content=raw,
-                                result=result, recipients=n, part="message")
+                                result=result, recipients=n, part="message",
+                                action_id=_eg.action_id_of(decision))
     except Exception:
         pass
 
@@ -707,20 +728,24 @@ def send(approval_id: str) -> dict:
     # A message approved by the owner's standing pre-approval, not by a card:
     # the pre-approval must still hold NOW, for every recipient. It may have
     # been revoked during the undo window or before a scheduled time days
-    # away; then this message does not go, and its approval is burned.
+    # away; then this message does not go, and its approval is burned. Its
+    # time cap and quiet hours are checked again too (send_time_refusal): a
+    # message due in quiet hours, or after the cap ran out, does not go.
     if appr.get("pre_approved"):
         from agent_friday.governance import send_grants as _sg
         rcpts = [a for k in ("to", "cc", "bcc") for a in (payload.get(k) or [])]
-        if _sg.verify(appr["pre_approved"], "send_email", rcpts) is None:
-            _burn(approval_id, "gmail_send_grant_revoked", {"reason": _sg.REVOKED_WHY})
+        why = _sg.send_time_refusal(appr["pre_approved"], "send_email", rcpts)
+        if why:
+            _burn(approval_id, ("gmail_send_grant_revoked" if why == _sg.REVOKED_WHY
+                                else "gmail_send_grant_refused"), {"reason": why})
             try:
                 _sg._log("refused", grant_id=appr["pre_approved"], by="friday",
-                         approval_id=approval_id, reason=_sg.REVOKED_WHY)
+                         approval_id=approval_id, reason=why)
             except Exception:
                 pass
             _log.info("refused %s: its pre-approval %s no longer holds",
                       approval_id, appr["pre_approved"])
-            raise SendRefused(_sg.REVOKED_WHY[:1].upper() + _sg.REVOKED_WHY[1:] + ".")
+            raise SendRefused(why[:1].upper() + why[1:] + ".")
 
     expected = payload.get("fingerprint")
     extras = payload.get("extras") or {}
@@ -842,7 +867,7 @@ def send(approval_id: str) -> dict:
                 pass
         unconfirmed = outcome != "failed"
         _outbox_record(appr, ok=False, error=str(e)[:500], unconfirmed=unconfirmed)
-        _record_egress(payload, raw, outcome)
+        _record_egress(payload, raw, outcome, decision_ref)
         code = log_failure(e, "Gmail send failed")
         if unconfirmed:
             err = SendRefused(
@@ -855,7 +880,7 @@ def send(approval_id: str) -> dict:
         raise SendRefused("Gmail refused the message (error %s)." % code,
                           detail="Gmail refused the message: %s" % str(e)[:300])
 
-    _record_egress(payload, raw, "sent")
+    _record_egress(payload, raw, "sent", decision_ref)
     # Gmail's message id is the service's confirmation that it was sent
     _gate.close_external(decision_ref, True, detail="sent", verified=bool((sent or {}).get("id")))
     _ap.mark_used(approval_id, "gmail_send", {"message_id": sent.get("id"),

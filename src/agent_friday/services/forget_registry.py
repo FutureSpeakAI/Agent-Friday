@@ -422,6 +422,9 @@ def _ensure_defaults() -> None:
     # people too: those entries go, and that change can then no longer be undone.
     from agent_friday.services import undo_store as _undo_store
     register_store("undo_data", _undo_store.forget_find, _undo_store.forget_purge)
+    # Outcome records (services/outcome_memory): a goal's or a step's name can name a person.
+    from agent_friday.services import outcome_memory as _outcome_memory
+    register_store("outcome_memory", _outcome_memory.people_find, _outcome_memory.people_purge)
 
 
 def _norm(s: str) -> str:
