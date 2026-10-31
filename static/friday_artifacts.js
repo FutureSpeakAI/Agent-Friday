@@ -1007,7 +1007,7 @@
     // The divider drag.
     useEffect(() => {
       if (!dragging) return;
-      const mv = e => { const st = dragStart.current; if (!st) return; const w = Math.min(hostW - CHAT_MIN_W - 6, Math.max(PANEL_MIN_W, st.w + (st.x - e.clientX))); setWidth(w); };
+      const mv = e => { const st = dragStart.current; if (!st) return; if (Math.abs(st.x - e.clientX) > 3) st.moved = true; const w = Math.min(hostW - CHAT_MIN_W - 6, Math.max(PANEL_MIN_W, st.w + (st.x - e.clientX))); setWidth(w); };
       const up = () => setDragging(false);
       window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
       return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
@@ -1056,7 +1056,27 @@
           onClick: () => { onTrayPlace(traySide || 'right', 2 / 3); setOpen(true); } }, '\u21E4 Beside the chat') : null) : null,
       h('div', { className: 'fa-chat', style: has && !side && open ? { display: 'none' } : undefined }, buildBar, children),
       has && open && unbuild && side ? h('div', { className: 'fa-unbuild' }, unbuild) : null,
-      has && side && open ? h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), title: 'Drag to resize', onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW }; setDragging(true); } }) : null,
+      // The divider, without dragging too (WCAG 2.5.7; north star 33.1-14): a click steps through three
+      // widths, and with focus the arrow keys widen and narrow the panel (Home and End: narrowest, widest).
+      has && side && open ? (() => {
+        const maxW = Math.max(PANEL_MIN_W, hostW - CHAT_MIN_W - 6);
+        const fit = w => Math.min(maxW, Math.max(PANEL_MIN_W, Math.round(w)));
+        const presets = [1 / 3, 1 / 2, 2 / 3].map(f => fit(hostW * f));
+        const next = () => setWidth(presets.find(p => p > panelW + 8) || presets[0]);
+        return h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), role: 'separator', tabIndex: 0,
+          'aria-orientation': 'vertical', 'aria-label': 'Panel width', 'aria-valuenow': Math.round(panelW),
+          'aria-valuemin': PANEL_MIN_W, 'aria-valuemax': Math.round(maxW),
+          title: 'Drag to resize, click for the next width, or use the arrow keys',
+          onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW, moved: false }; setDragging(true); },
+          onClick: () => { if (dragStart.current && dragStart.current.moved) return; next(); },
+          onKeyDown: e => {
+            const step = e.shiftKey ? 120 : 40;
+            const to = { ArrowLeft: panelW + step, ArrowRight: panelW - step, Home: PANEL_MIN_W, End: maxW }[e.key];
+            if (to === undefined) return;
+            e.preventDefault(); e.stopPropagation();
+            setWidth(fit(to));
+          } });
+      })() : null,
       has && open ? panel : null,
       has && side && !open ? h('div', { className: 'fa-rail', role: 'button', title: 'Open the panel', 'aria-label': 'Open the panel', onClick: () => setOpen(true) },
         h('span', { style: { color: ACCENT, fontSize: 13 } }, '⟨'),

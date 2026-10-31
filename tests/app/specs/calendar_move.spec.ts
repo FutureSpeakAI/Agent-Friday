@@ -142,3 +142,17 @@ test('quick add shows the event and its calendar first; only Add writes it, wher
   expect(add.body).toMatchObject({ title: 'Lunch with Dana', calendar_key: 'home|fam', confirmed: true });
   await expect(preview).toHaveCount(0);
 });
+
+test('moving without dragging: the move buttons ask the same question, and only an event she can edit has them', async ({ page }) => {
+  // WCAG 2.5.7 (north star 33.1-14): everything a drag does can be done with single clicks.
+  const writes = await openWeek(page, 'day');
+  const dentist = page.locator('.cal-timeline [data-fr-ref="event:e1"]');
+  await expect(page.locator('.cal-timeline [data-fr-ref="event:e2"] .calv-move')).toHaveCount(0);
+  await dentist.getByRole('button', { name: '15 minutes later: “Dentist”' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Move “Dentist”?');
+  await page.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect.poll(() => moves(writes).length).toBe(1);
+  const sent = moves(writes)[0];
+  expect(new Date(sent.body.start_time).getHours() * 60 + new Date(sent.body.start_time).getMinutes()).toBe(9 * 60 + 15);
+});
