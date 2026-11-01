@@ -856,19 +856,18 @@ def _laya_personal_work_finishes_inside_its_test(request):
 
     A routed chat turn kicks the one-time "Laya learns from your corrections"
     notice on a thread (laya-personal-notice), and a correction is written by
-    the row writer inside a visible job. Neither waited for its test: the
-    notice was pushed after the test file had put notifications.json back,
-    and a push reads every card, adds one and writes them all, so a push that
-    read before the put-back and wrote after it wrote the whole file's cards
-    back. On Windows CI the clean-top-bar probe and the job-card guard then
+    the row writer inside a visible job. Nothing waited for either, so the
+    notice could be pushed after its test file had put notifications.json
+    back. A push reads every card, adds one and writes them all, so one that
+    read before the put-back and wrote after it also wrote back every card
+    the file had raised (the put-back now holds the engine's lock for that).
+    That is the shape of the Windows CI flake where the clean-top-bar probe
     found "29 updates (info x27, warning x1, laya_learning x1)": the
-    pre-approved-send files' notices, brought back with Laya's card
-    (tests/unit/test_late_notice_writers_do_not_outlive_their_file.py). The
-    writer's visible job, registered after the test, was the "1 task(s) in
-    Activity; 1 local-queue job(s)" variant on Ubuntu.
+    pre-approved-send notices with Laya's card
+    (tests/unit/test_late_notice_writers_do_not_outlive_their_file.py).
 
     Defined after the task, queue and turn resets above, so it is torn down
-    before them: whatever the threads register is cleared with the test.
+    before them: anything the threads register is cleared with the test.
     """
     yield
     late = _settle_laya_personal()
