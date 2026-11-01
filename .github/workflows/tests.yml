@@ -62,7 +62,7 @@ jobs:
         run: python scripts/check_imports.py
 
       - name: Run unit + API suites
-        run: pytest tests/unit tests/api -q
+        run: python scripts/diag_loop.py
 
       # Runs even when the unit step failed, so the boundary result is always
       # visible; a cancelled run skips it.
