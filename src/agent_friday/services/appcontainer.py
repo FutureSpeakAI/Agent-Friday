@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 ALL_APP_PACKAGES = "S-1-15-2-1"
+INTERNET_CLIENT = "S-1-15-3-1"       # the internetClient capability
 _MARK = ".friday-isolated-read"
 
 
@@ -91,14 +92,224 @@ def _profile(api, name: str):
     return sid, text
 
 
-def grant(path, sid_text: str, write: bool = False) -> None:
-    """Give `sid_text` read (or modify) access to `path` and what is under it."""
-    rights = "(OI)(CI)M" if write else "(OI)(CI)RX"
-    r = subprocess.run(["icacls", str(path), "/grant", "*%s:%s" % (sid_text, rights), "/T", "/Q"],
-                       capture_output=True, text=True, timeout=600,
+def readable_by_containers(path, sid_text: Optional[str] = None) -> Optional[bool]:
+    """Can an isolated app run/read `path`? True when its DACL allows ALL APPLICATION
+    PACKAGES (or `sid_text`), False when it does not, None when it cannot be read.
+    (Some installers, Node.js's among them, set a DACL without app containers; only an
+    administrator can change one under Program Files.)"""
+    if not available():
+        return None
+    import ctypes
+    from ctypes import wintypes as W
+    try:
+        adv = ctypes.WinDLL("advapi32", use_last_error=True)
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        dacl, sd = W.LPVOID(), W.LPVOID()
+        adv.GetNamedSecurityInfoW.argtypes = [W.LPCWSTR, ctypes.c_int, W.DWORD, W.LPVOID, W.LPVOID,
+                                              ctypes.POINTER(W.LPVOID), W.LPVOID, ctypes.POINTER(W.LPVOID)]
+        adv.GetNamedSecurityInfoW.restype = W.DWORD
+        if adv.GetNamedSecurityInfoW(str(path), 1, 4, None, None, ctypes.byref(dacl), None,
+                                     ctypes.byref(sd)) != 0:
+            return None
+        try:
+            if not dacl.value:
+                return True            # no DACL: everyone
+            class ACL_SIZE(ctypes.Structure):
+                _fields_ = [("AceCount", W.DWORD), ("AclBytesInUse", W.DWORD), ("AclBytesFree", W.DWORD)]
+            info = ACL_SIZE()
+            adv.GetAclInformation.argtypes = [W.LPVOID, W.LPVOID, W.DWORD, ctypes.c_int]
+            if not adv.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):
+                return None
+            adv.GetAce.argtypes = [W.LPVOID, W.DWORD, ctypes.POINTER(W.LPVOID)]
+            adv.ConvertSidToStringSidW.argtypes = [W.LPVOID, ctypes.POINTER(W.LPWSTR)]
+            want = {ALL_APP_PACKAGES} | ({sid_text} if sid_text else set())
+            for i in range(info.AceCount):
+                ace = W.LPVOID()
+                if not adv.GetAce(dacl, i, ctypes.byref(ace)):
+                    continue
+                ace_type = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))[0]
+                ace_flags = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))[1]
+                if ace_type != 0 or ace_flags & 0x08:      # an allow entry that applies here
+                    continue
+                mask = ctypes.cast(ace.value + 4, ctypes.POINTER(W.DWORD))[0]
+                s = W.LPWSTR()
+                if adv.ConvertSidToStringSidW(ctypes.c_void_p(ace.value + 8), ctypes.byref(s)):
+                    text = s.value
+                    k32.LocalFree(s)
+                    # FILE_EXECUTE, or GENERIC_EXECUTE / GENERIC_ALL
+                    if text in want and mask & (0x20 | 0x20000000 | 0x10000000):
+                        return True
+            return False
+        finally:
+            k32.LocalFree(sd)
+    except Exception:
+        return None
+
+
+def _icacls(args: List[str], what: str) -> None:
+    r = subprocess.run(["icacls", *args, "/Q"], capture_output=True, text=True, timeout=120,
                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if r.returncode != 0:
-        raise IsolationError("access for isolated work could not be granted on %s" % Path(path).name)
+        raise IsolationError(what)
+
+
+def grant(path, sid_text: str, write: bool = False) -> None:
+    """Give `sid_text` read (or modify) access to `path` and what is under it.
+
+    One inheritable entry on the folder itself (no /T): Windows carries it down to
+    what inherits, and it does not follow junctions or links to somewhere else."""
+    rights = "(OI)(CI)M" if write else "(OI)(CI)RX"
+    _icacls([str(path), "/grant", "*%s:%s" % (sid_text, rights)],
+            "access for isolated work could not be granted on %s" % Path(path).name)
+
+
+
+def revoke(path, sid_text: str) -> bool:
+    """Take back every entry `sid_text` has on `path` (grants and denials). False when
+    the folder is not there (moved or deleted): its record is kept for next time."""
+    if not Path(path).exists():
+        return False
+    _icacls([str(path), "/remove", "*%s" % sid_text],
+            "access for isolated work could not be taken back on %s" % Path(path).name)
+    return True
+
+
+def _pkey(p) -> str:
+    s = os.path.normpath(os.path.abspath(str(p))).replace("\\", "/")
+    return s.lower() if os.name == "nt" else s
+
+
+def _path_within(p, root) -> bool:
+    a, b = _pkey(p), _pkey(root)
+    return a == b or a.startswith(b.rstrip("/") + "/")
+
+
+#: One writer at a time for the record of what was given (servers start in parallel).
+import threading as _threading  # noqa: E402
+_GIVEN_LOCK = _threading.RLock()
+
+
+# ── a connector server's identity and what it was given ──────────────────────
+
+def _state_dir() -> Path:
+    import agent_friday.core as core
+    d = Path(core.FRIDAY_DIR) / "mcp-isolation"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _salt() -> str:
+    """Unique to this install: a server of the same name elsewhere, or after the
+    install is replaced, is a different identity and inherits nothing."""
+    f = _state_dir() / "salt"
+    try:
+        s = f.read_text(encoding="ascii").strip()
+        if len(s) >= 32:
+            return s
+    except OSError:
+        pass
+    s = uuid.uuid4().hex + uuid.uuid4().hex
+    f.write_text(s, encoding="ascii")
+    return s
+
+
+def _given_file() -> Path:
+    return _state_dir() / "given.json"
+
+
+def _given() -> dict:
+    import json
+    try:
+        data = json.loads(_given_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_given(data: dict) -> None:
+    import json
+    f = _given_file()
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    os.replace(tmp, f)
+
+
+def _sid_text(name: str) -> str:
+    api = _api()
+    sid, text = _profile(api, name)
+    api.a.FreeSid(sid)
+    return text
+
+
+def set_server_access(profile: str, read: Iterable = (), write: Iterable = ()) -> None:
+    """Make what `profile` may reach exactly this: take back anything given before
+    that is not in the new set (or is now read-only), then grant. Recorded in
+    Friday's state so a later change or removal can take it back.
+
+    Only allow entries: Windows does not apply a deny entry to an isolated app's
+    identity (checked on Windows 11), so nothing here relies on one."""
+    with _GIVEN_LOCK:
+        _set_server_access(profile, read, write)
+
+
+def _set_server_access(profile, read, write) -> None:
+    sid_text = _sid_text(profile)
+    want = ([{"path": str(p), "kind": "read"} for p in read]
+            + [{"path": str(p), "kind": "write"} for p in write])
+    data = _given()
+    before = data.get(profile, {}).get("entries", [])
+    keys = {(e["path"].lower() if os.name == "nt" else e["path"], e["kind"]) for e in want}
+    # Record first (so a crash part-way leaves a list that covers what was given).
+    data[profile] = {"sid": sid_text, "entries": before + [e for e in want if e not in before]}
+    _save_given(data)
+    missing = []
+    for e in before:
+        k = (e["path"].lower() if os.name == "nt" else e["path"], e["kind"])
+        if k not in keys and not revoke(e["path"], sid_text):
+            missing.append(e)          # moved or deleted: kept, taken back if it returns
+    for e in want:
+        if e["kind"] == "read":
+            grant(e["path"], sid_text, write=False)
+        elif e["kind"] == "write":
+            grant(e["path"], sid_text, write=True)
+    data = _given()
+    data[profile] = {"sid": sid_text, "entries": want + missing}
+    _save_given(data)
+
+
+def forget_servers(keep_profiles: Iterable[str]) -> List[str]:
+    """Take back everything given to server identities not in `keep_profiles` and
+    delete those identities. Returns the profiles forgotten."""
+    with _GIVEN_LOCK:
+        return _forget_servers(set(keep_profiles))
+
+
+def _forget_servers(keep: set) -> List[str]:
+    data = _given()
+    gone = []
+    for profile in [p for p in data if p not in keep]:
+        sid_text = data[profile].get("sid") or ""
+        ok = True
+        left = []
+        for e in data[profile].get("entries", []):
+            try:
+                if sid_text and not revoke(e["path"], sid_text):
+                    left.append(e)        # moved or deleted: kept for next time
+            except Exception:
+                ok = False
+                left.append(e)
+        if left:
+            data[profile]["entries"] = left
+            ok = False
+        if ok:
+            try:
+                _api().ue.DeleteAppContainerProfile(profile)
+            except Exception:
+                pass
+            data.pop(profile, None)
+            gone.append(profile)
+    _save_given(data)
+    return gone
 
 
 def ensure_readable(folder) -> None:
@@ -167,7 +378,8 @@ class _Proc:
 
 def start(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterable = (),
           profile: Optional[str] = None, text: bool = True, memory_mb: int = 2048,
-          max_processes: int = 8, timeout_s: int = 0, contain: bool = False):
+          max_processes: int = 8, timeout_s: int = 0, contain: bool = False,
+          network: bool = False):
     """Start `argv` in an AppContainer with stdio pipes. `profile` names a lasting
     identity (an MCP server); None makes a one-run identity deleted on close(). `read`
     and `write` are folders granted to THIS identity only. Raises IsolationError when
@@ -209,7 +421,27 @@ def start(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterab
     err_parent, err_child = _sbx._pipe(api, child_reads=False)
     child_ends = [in_child, out_child, err_child]
     pi = api.PROCESS_INFORMATION()
-    caps = api.SECURITY_CAPABILITIES(sid, None, 0, 0)
+    # `network`: the internetClient capability (outbound internet; this PC's own
+    # loopback stays closed to app containers). Without it there is no network at all.
+    cap_sid = W.LPVOID()
+    cap_arr = None
+    if network:
+        api.a.ConvertStringSidToSidW.argtypes = [W.LPCWSTR, c.POINTER(W.LPVOID)]
+        api.a.ConvertStringSidToSidW.restype = W.BOOL
+        if not api.a.ConvertStringSidToSidW(INTERNET_CLIENT, c.byref(cap_sid)):
+            for h in child_ends + [in_parent, out_parent, err_parent, job]:
+                api.k.CloseHandle(h)
+            api.a.FreeSid(sid)
+            if temporary:
+                api.ue.DeleteAppContainerProfile(name)
+            raise IsolationError("the internet capability could not be prepared")
+
+        class SID_AND_ATTRIBUTES(c.Structure):
+            _fields_ = [("Sid", W.LPVOID), ("Attributes", W.DWORD)]
+        cap_arr = (SID_AND_ATTRIBUTES * 1)(SID_AND_ATTRIBUTES(cap_sid, 0x4))   # SE_GROUP_ENABLED
+        caps = api.SECURITY_CAPABILITIES(sid, c.cast(cap_arr, W.LPVOID), 1, 0)
+    else:
+        caps = api.SECURITY_CAPABILITIES(sid, None, 0, 0)
     size = c.c_size_t(0)
     api.k.InitializeProcThreadAttributeList(None, 2, 0, c.byref(size))
     attr = c.create_string_buffer(size.value)
@@ -259,6 +491,8 @@ def start(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterab
         raise
     finally:
         api.k.DeleteProcThreadAttributeList(attr)
+        if cap_sid:
+            api.k.LocalFree(cap_sid)
     for h in child_ends:
         api.k.CloseHandle(h)
     if not api.k.AssignProcessToJobObject(job, pi.hProcess):
@@ -342,7 +576,7 @@ def run(argv: List[str], *, cwd, env: dict, read: Iterable = (), write: Iterable
 
 
 def server_profile(server_name: str) -> str:
-    return "AgentFriday.MCP." + hashlib.sha256(str(server_name).encode("utf-8")).hexdigest()[:16]
+    return "AgentFriday.MCP." + hashlib.sha256((_salt() + "\0" + str(server_name)).encode("utf-8")).hexdigest()[:16]
 
 
 def friday_owned(path) -> bool:

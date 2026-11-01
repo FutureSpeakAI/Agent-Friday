@@ -117,14 +117,20 @@ def test_a_pending_meeting_suggestion_is_sealed_in_the_table_and_blanked_once_de
     assert raw and all("Priya" not in t and "Jensens" not in t for t, _e, _s in raw), "no meeting words in the plain table"
     shown = proposals_db.pending()
     assert {p["text"] for p in shown} == {CAND["text"], "Sell the house to the Jensens."}
-    a, b = shown[0]["fact_id"], shown[1]["fact_id"]
-    assert proposals_db.approve([a])["facts"][0]["text"] in {CAND["text"], "Sell the house to the Jensens."}
+    # Picked by text, not by row order: pending() sorts by ts, which ties or not depending on the clock.
+    by_text = {p["text"]: p["fact_id"] for p in shown}
+    a, b = by_text[CAND["text"]], by_text["Sell the house to the Jensens."]
+    assert proposals_db.approve([a])["facts"][0]["text"] == CAND["text"]
     proposals_db.reject([b])
     assert all(t == "" and e == "" for t, e, _s in _raw(proposals_db)), "a decided suggestion keeps no text"
     # the same suggestion is not made twice while it waits
     proposals_db.propose_from_meeting([CAND], B["id"], "2026-10-09", "m")
     proposals_db.propose_from_meeting([CAND], B["id"], "2026-10-09", "m")
     assert len([p for p in proposals_db.pending() if p["provenance"]["meeting_id"] == B["id"]]) == 1
+    # and a suggestion the owner rejected is not proposed again (services/tombstones, NS-30.20-1)
+    proposals_db.propose_from_meeting([dict(CAND, text="Sell the house to the Jensens.", category="project")],
+                                      B["id"], "2026-10-09", "m")
+    assert "Sell the house to the Jensens." not in {p["text"] for p in proposals_db.pending()}
 
 
 def test_forgetting_tom_does_not_delete_a_suggestion_about_tomorrow(env, proposals_db):

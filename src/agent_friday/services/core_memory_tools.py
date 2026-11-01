@@ -490,11 +490,19 @@ def capture_household(message: str, ctx: dict) -> dict:
         r = core_memory.add("user", text, actor="friday")
         if r.get("ok") and r.get("unchanged"):
             return {**out, "status": "unchanged", "text": text}
-        if not r.get("ok"):
+        if not r.get("ok") and r.get("tombstoned"):
+            # The owner deleted this before (services/tombstones). Friday does
+            # not write it back on her own, but the owner saying it again in
+            # their own words is not silenced: it waits for their OK, flagged.
+            why = "The owner deleted this from the card before, so it was not saved without their OK."
+        elif not r.get("ok"):
             why = "The card could not take it as it is: " + str(r.get("error") or "")[:160]
     if why:
+        # `restated`: the owner's own new statement reaches the review queue
+        # even when its text was deleted or rejected before (flagged "You
+        # deleted this before."); words read from a page or a mail do not.
         q = core_memory.queue("user", "replace" if old else "add", text=text, old=old,
-                              source="friday",
+                              source="friday", restated=own_words,
                               reason=(("The user stated their household in their own words. "
                                        if own_words else "A household statement in a chat turn. ") + why))
         if not q.get("ok"):

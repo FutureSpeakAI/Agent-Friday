@@ -747,6 +747,18 @@ def _settle_accepted_turn():
             break
 
 
+def _turn_web_sources(tool_trace, cid, settings):
+    """The registered domains of the web pages this turn read (its tool trace
+    and what the web tools noted for this conversation), for the reply's
+    provenance (services/web_provenance). None off the record."""
+    try:
+        from agent_friday.services import web_provenance as _wp
+        out = _wp.turn_sources(tool_trace, cid)
+        return [] if (settings or {}).get('off_record') else out
+    except Exception:
+        return []
+
+
 def _persist_turn(cid, user_msg, friday_msg, meta=None):
     """Write a completed exchange to its conversation (and the legacy mirror).
 
@@ -1515,14 +1527,38 @@ _RECALL_MARKER = "== RELEVANT PAST CONVERSATIONS"
 _RECALL_WHY = "this turn's prompt carried recalled past conversations"
 
 
-def _note_recall_turn(session_id, conversation_id):
+def _note_recall_turn(session_id, conversation_id, why=_RECALL_WHY):
     try:
         from agent_friday.governance import outside_content as _oc
         key = f"conversation:{conversation_id}" if conversation_id else session_id
         _oc.note_turn({"taint_key": key, "session_id": session_id,
-                       "conversation_id": conversation_id}, _RECALL_WHY)
+                       "conversation_id": conversation_id}, why)
     except Exception:
         pass
+
+
+#: Why a turn whose prompt carried remembered past outcomes counts as a recall
+#: turn (no pre-approved send in it; governance/outside_content).
+_OUTCOME_RECALL_WHY = "this turn's prompt carried remembered past outcomes"
+
+
+def _outcome_block_for(provider_name, message, slicer, *, scrub=True):
+    """(block, recalled) for the past outcomes this message is about
+    (services/outcome_memory): the item lines inside the data envelope, PII
+    scrubbed for a guarded cloud turn when `scrub` (as the ON SCREEN block is;
+    /api/chat scrubs its whole tail itself and passes False), then gated like
+    the other memory blocks, so it is a row in the turn's context manifest and
+    is sliced for a cloud seat. `recalled` is True when any record was found."""
+    from agent_friday.services import outcome_memory as _om
+    block = _om.context_block(message)
+    if not block:
+        return "", False
+    if scrub and provider_name != 'local':
+        from agent_friday.services.egress_gate import is_unrestricted_cloud
+        if not is_unrestricted_cloud():
+            block, _sub = _scrub_pii(block)
+    return slicer.gate_block("memory", block, name="past_outcomes",
+                             marker=_om.RECALL_HEADER), True
 
 
 def _turn_learning_off():
@@ -2398,7 +2434,7 @@ def chat():
         # gives Friday cross-session continuity (RAG over past conversations);
         # the citation block (only in cite_sources mode) tells Friday to
         # attribute every factual claim. Both are PII-scrubbed for cloud below.
-        _mem_part = _build_memory_context_block(message, session_id)
+        _mem_part = _build_memory_context_block(message, session_id, turn_key=_turn_id)
         # Continuity from the most recent end-of-day session summary + tone
         # adaptation from the accumulated emotional arc. Both are content-free /
         # already-summarised, provider-independent, and PII-scrubbed for cloud
@@ -2428,6 +2464,9 @@ def chat():
         # What the household capture did with this message (set once the turn's
         # context exists, below); its note rides in this turn's tail.
         _household_note = {"text": ""}
+        # Set when a preparation of this turn's prompt carried past outcomes
+        # (services/outcome_memory): a recall turn, read below.
+        _outcome_recall = {"hit": False}
 
         def _prep_for(provider, model=None):
             """The system prompt for `provider`, in two parts.
@@ -2535,6 +2574,18 @@ def chat():
                 from agent_friday.services import unfinished_requests as _unfinished
                 tail = tail + _unfinished.context_block(
                     _conversation_id, exclude_id=_accepted_id)
+            except Exception:
+                pass
+            # Past outcomes this message is about (services/outcome_memory):
+            # ids, summary, "as of" and stale, never as the current state;
+            # wrapped as data and gated as memory. The PII scrub of the whole
+            # tail below covers it for a guarded cloud turn.
+            try:
+                _oc_block, _oc_recalled = _outcome_block_for(
+                    provider, message, _slicer, scrub=False)
+                if _oc_recalled:
+                    _outcome_recall["hit"] = True
+                tail = tail + _oc_block
             except Exception:
                 pass
             if _household_note["text"]:
@@ -2667,6 +2718,10 @@ def chat():
             # this turn and cannot vouch for: no pre-approved send this turn
             # (governance/outside_content).
             _sess_ctx["outside_in_prompt"] = _RECALL_WHY
+        elif _outcome_recall["hit"]:
+            # Remembered past outcomes carry the owner's names for the work,
+            # read back from a store: the same rule as recalled conversations.
+            _sess_ctx["outside_in_prompt"] = _OUTCOME_RECALL_WHY
         _confirmed_response = _confirmed_action_response(message, _sess_ctx)
         if _confirmed_response is not None:
             return _confirmed_response
@@ -3379,6 +3434,7 @@ def chat():
             _seat_model = (_route_info.get('model')
                            or settings.get('orchestrator_model') or '')
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
+        _web_sources = _turn_web_sources(tool_trace, _conversation_id, settings)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -3391,6 +3447,8 @@ def chat():
             'seat': _seat_class,
             'library': _lib_turn,
         }
+        if _web_sources:
+            friday_msg['web_sources'] = _web_sources
         if _lib_turn:
             _library_cite.remember_library_reply(reply)
         if _seat_notice:
@@ -3411,7 +3469,8 @@ def chat():
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class,
                             'note_saved': _note_saved,
-                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
+                            **({'receipts': _receipts_kept} if _receipts_kept else {}),
+                            **({'web_sources': _web_sources} if _web_sources else {})})
         _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
                           _route_info, locals().get('_conv_seat'))
 
@@ -3465,6 +3524,7 @@ def chat():
                 threading.Thread(
                     target=_index_chat_turn,
                     args=(message, reply, session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
+                    kwargs={'web_sources': _web_sources, 'turn_key': _turn_id},
                     daemon=True,
                 ).start()
             except Exception:
@@ -3938,7 +3998,7 @@ def chat_send():
             # else above, so a local seat's memory recall isn't scrubbed as
             # if it were headed to the cloud either.
             try:
-                _recall = _build_memory_context_block(message, _session_id)
+                _recall = _build_memory_context_block(message, _session_id, turn_key=_turn_id)
                 if _RECALL_MARKER in (_recall or ""):
                     # As in /api/chat: no pre-approved send in a turn whose
                     # prompt carried recalled conversations. The prompt is
@@ -3988,6 +4048,16 @@ def chat_send():
             try:
                 from agent_friday.services import plans as _plans
                 prompt = prompt + _plans.context_block(_conversation_id)
+            except Exception:
+                pass
+            # Past outcomes this message is about (services/outcome_memory):
+            # wrapped as data, scrubbed for a guarded cloud seat, gated as
+            # memory; a turn that carried them is a recall turn.
+            try:
+                _oc_block, _oc_recalled = _outcome_block_for(provider_name, message, _slicer)
+                if _oc_recalled:
+                    _note_recall_turn(_session_id, _conversation_id, _OUTCOME_RECALL_WHY)
+                prompt = prompt + _oc_block
             except Exception:
                 pass
             try:
@@ -4225,6 +4295,7 @@ def chat_send():
             except Exception:
                 pass
         _lib_turn = _library_cite.turn_used_library(tool_trace, _conversation_id)
+        _web_sources = _turn_web_sources(tool_trace, _conversation_id, settings)
         friday_msg = {
             'id': str(uuid.uuid4()),
             'timestamp': datetime.now().isoformat(),
@@ -4237,6 +4308,8 @@ def chat_send():
             'seat': _seat_class,
             'library': _lib_turn,
         }
+        if _web_sources:
+            friday_msg['web_sources'] = _web_sources
         if _lib_turn:
             _library_cite.remember_library_reply(reply)
         if _fallback_chain:
@@ -4256,7 +4329,8 @@ def chat_send():
         _persist_turn(_conversation_id, user_msg, friday_msg,
                       meta={'model': _seat_model, 'seat': _seat_class,
                             'note_saved': _note_saved,
-                            **({'receipts': _receipts_kept} if _receipts_kept else {})})
+                            **({'receipts': _receipts_kept} if _receipts_kept else {}),
+                            **({'web_sources': _web_sources} if _web_sources else {})})
         _record_answering(_seat_model, _seat_class, _gen, workspace, _conversation_id,
                           None, {'model': _conv_seat_model} if (_conv_seat_model or '').strip() else None)
 
@@ -4273,6 +4347,7 @@ def chat_send():
                 threading.Thread(
                     target=_index_chat_turn,
                     args=(message, reply, _session_id, user_msg['id'], friday_msg['id'], friday_msg['library']),
+                    kwargs={'web_sources': _web_sources, 'turn_key': _turn_id},
                     daemon=True,
                 ).start()
             except Exception:

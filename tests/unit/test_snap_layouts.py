@@ -572,7 +572,9 @@ def test_dragging_to_an_edge_previews_holds_and_snaps(site, classic):
     # The edge-hold dwell steps on a clock the test moves, so each size is
     # reached at its own time however slow the machine (FRIDAY_SNAP_HOLD_MS).
     s.page.clock.install()
-    s.page.clock.pause_at(_dt.datetime.now() + _dt.timedelta(seconds=1))   # time stands still between steps
+    # time stands still between steps; an aware time, so the repeated hour when the clocks
+    # go back is not read as an hour in the past
+    s.page.clock.pause_at(_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=1))
     s.page.mouse.move(bar["x"] + 40, bar["y"] + bar["height"] / 2)
     s.page.mouse.down()
     for x in (edge + 300, edge + 150, edge + 60, edge + 4):

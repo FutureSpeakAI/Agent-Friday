@@ -202,7 +202,7 @@ ROUTE_MODULES = [
     'connect_services', 'connectors', 'contacts', 'content_pipeline', 'context', 'conversations', 'control', 'core_memory', 'core_routes', 'desktop',
     'costs', 'creations', 'creative_pipeline', 'crew', 'crew_rooms', 'defederation', 'doctor', 'documents', 'domains', 'dreaming', 'ext_security', 'federation',
     'finance_health', 'futurespeak', 'goals', 'gmail_send', 'google', 'google_accounts', 'hooks', 'import_staging', 'inbox_cleanup', 'insights',
-    'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_proposals',
+    'instructions', 'intelligence', 'jobs', 'lanes', 'knowledge_graph', 'laya_learning', 'laya_settings', 'learning', 'ledger', 'library', 'liveness', 'local_address', 'locks', 'media', 'meetings', 'memory_forget', 'memory_proposals',
     'memtrace', 'messages', 'models_screen', 'news', 'notifications', 'orchestrator', 'owner_security', 'ownership', 'persona', 'phone',
     'platform', 'podcasts', 'privacy_consent', 'privacy_map', 'projects', 'remote_image', 'research', 'residency', 'scheduler', 'seat_gate',
     'setup_chat', 'sites', 'skills', 'soul', 'startup_report', 'studio_files', 'tasks', 'tasks_inbox', 'todos', 'traces',
@@ -877,6 +877,16 @@ if not _TESTING:
 
     threading.Thread(target=_warm_sensitivity_embedder, daemon=True,
                      name="warm-embedder").start()
+
+    # Which requests were already carried out (services/idempotency_index):
+    # read once in the background, so the first outward action after boot
+    # does not pay for reading the ledger. Best-effort; a lookup builds it
+    # otherwise, and one that cannot run refuses nothing.
+    try:
+        from agent_friday.services import idempotency_index as _idem_index
+        _idem_index.warm_in_background()
+    except Exception as _ii_e:
+        print(f"  Idempotency index: not warmed ({_ii_e})")
 
     # Persistent news archive: grow the per-day article store on the RSS cadence.
     if _safe.allows("news"):

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agent_friday.services import core_memory as cm
+from agent_friday.services import corrections as co
 from agent_friday.services import prompt_freeze
 
 
@@ -15,6 +16,8 @@ from agent_friday.services import prompt_freeze
 def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(cm, "_dir", lambda: tmp_path / "core_memory")
     monkeypatch.setattr(cm, "_MIGRATION_CHECKED", {str(tmp_path / "core_memory"): True})
+    # A correction writes an event: keep it in tmp_path, never the real Friday home.
+    monkeypatch.setattr(co, "_dir", lambda: tmp_path / "corrections")
     prompt_freeze.reset()
     yield
     prompt_freeze.reset()

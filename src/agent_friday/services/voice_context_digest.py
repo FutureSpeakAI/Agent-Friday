@@ -91,9 +91,12 @@ def digest(context: str, budget_tokens: int = DIGEST_TOKEN_BUDGET) -> str:
 FRONT_LEFT_TO_THE_DEEPER_MIND = ("SELF-KNOWLEDGE", "RESPONSE PREFERENCES", "THIS SEAT")
 
 #: Sections the front takes first, in this order, after the preamble: who she
-#: is, the compiled laws, who the owner is, then the honesty sections.
+#: is, the compiled laws, how to speak about each kind of information she holds
+#: (NS-3.4-1: it heads the memory blocks it governs), who the owner is, then the
+#: honesty sections.
 FRONT_PRIORITY_SECTIONS = (
-    "CORE IDENTITY", "AGENT PERSONALITY", "ASIMOV", "CORE MEMORY", "USER MODEL",
+    "CORE IDENTITY", "AGENT PERSONALITY", "ASIMOV", "KINDS OF INFORMATION",
+    "CORE MEMORY", "USER MODEL",
     "LEARNED HEURISTICS", "HONEST DEGRADATION", "HONEST LIMITS",
     "WHAT YOU ACTUALLY ARE", "CAPABILITY DISCOVERY")
 
