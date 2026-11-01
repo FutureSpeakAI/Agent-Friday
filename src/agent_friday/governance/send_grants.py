@@ -623,9 +623,10 @@ def _revoked_in_log() -> set:
     copy of send_grants.json (rows are signed one by one, with no generation)
     would otherwise come back to life."""
     from agent_friday.services import action_ledger
-    token = action_ledger.stats_token()
+    # the ledger files' names, sizes and times: a cache key, nothing secret
+    stamp = action_ledger.files_stamp()
     hit = _REVOKED_CACHE.get("v")
-    if hit and hit[0] == token:
+    if hit and hit[0] == stamp:
         return set(hit[1])
     out = set()
     # Fails closed: a ledger that cannot be read raises, and the caller treats
@@ -633,7 +634,7 @@ def _revoked_in_log() -> set:
     for row in _log_rows(strict=True):
         if row.get("event") == "revoked" and row.get("grant_id"):
             out.add(str(row["grant_id"]))
-    _REVOKED_CACHE["v"] = (token, frozenset(out))
+    _REVOKED_CACHE["v"] = (stamp, frozenset(out))
     return out
 
 
@@ -649,9 +650,10 @@ def _uses_in_log() -> dict:
     "created" line). Restoring an older signed copy of send_grants.json does
     not give a use back. Raises when the log cannot be read in full."""
     from agent_friday.services import action_ledger
-    token = action_ledger.stats_token()
+    # the ledger files' names, sizes and times: a cache key, nothing secret
+    stamp = action_ledger.files_stamp()
     hit = _USES_CACHE.get("v")
-    if hit and hit[0] == token:
+    if hit and hit[0] == stamp:
         return {k: list(v) for k, v in hit[1].items()}
     out: dict = {}
 
@@ -677,7 +679,8 @@ def _uses_in_log() -> dict:
                 _add(gid, n, _at(row.get("first_used_at_carried")))
             elif _at(row.get("first_used_at_carried")) is not None:
                 _add(gid, 0, _at(row.get("first_used_at_carried")))
-    _USES_CACHE["v"] = (token, {k: tuple(v) for k, v in out.items()})
+    # one assignment, so a reader never pairs one stamp with another's counts
+    _USES_CACHE["v"] = (stamp, {k: tuple(v) for k, v in out.items()})
     return out
 
 

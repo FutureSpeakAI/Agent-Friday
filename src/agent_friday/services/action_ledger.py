@@ -2056,11 +2056,17 @@ def _stats() -> tuple:
     return tuple(sorted(out))
 
 
-def stats_token() -> tuple:
-    """Changes whenever any ledger file changes: a cache key for readers."""
+def files_stamp() -> tuple:
+    """Changes whenever any ledger file changes: a cache key for readers.
+    Names, sizes and modified times of the ledger files; nothing secret."""
     with _TLOCK:
         _check_dir()
     return _stats()
+
+
+def stats_token() -> tuple:
+    """The same as `files_stamp` (the older name, kept for its callers)."""
+    return files_stamp()
 
 
 def verify(*, force: bool = True, migrate: bool = True) -> dict:
