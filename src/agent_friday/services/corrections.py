@@ -243,6 +243,15 @@ def record(store: str, action: str, *, claim: str = "", correction: str = "", re
         return ""
 
 
+def _write_failed(exc: BaseException, what: str) -> Dict[str, Any]:
+    """A failed write as plain words and an error id, never the exception's
+    text (a file path, an OS message): the exception and its traceback go to
+    the log under that id (user_errors.log_failure)."""
+    from agent_friday.user_errors import log_failure
+    error_id = log_failure(exc, what)
+    return {"ok": False, "error": "%s (error %s)." % (what, error_id), "error_id": error_id}
+
+
 def set_test(event_id: str, on: bool, question: str = "", expected: str = "") -> Dict[str, Any]:
     """The owner ticks or unticks "keep this as a test" on one event. The
     golden is the owner's own question and expected answer; nothing is
@@ -266,7 +275,8 @@ def set_test(event_id: str, on: bool, question: str = "", expected: str = "") ->
     try:
         _append(row)
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)[:120]}
+        # The detail goes to the log under an id; the caller gets plain words.
+        return _write_failed(e, "Couldn't save that test to the corrections record")
     return {"ok": True, "id": eid, "regression_test": bool(on),
             "golden": {"question": q, "expected": x} if (on and (q or x)) else None}
 
@@ -467,7 +477,7 @@ def delete(event_id: str) -> Dict[str, Any]:
     try:
         n = _drop_events(lambda r: r.get("id") == eid)
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)[:120]}
+        return _write_failed(e, "Couldn't delete that correction record")
     if not n:
         return {"ok": False, "error": "that correction is not there"}
     return {"ok": True, "id": eid, "removed": n}

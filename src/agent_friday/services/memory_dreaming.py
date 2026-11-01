@@ -50,6 +50,7 @@ import threading
 import time
 import uuid
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from agent_friday.paths import friday_home
@@ -90,6 +91,20 @@ _NOISE_PATTERNS = [
 # never traverse out of the dreams directory (POST /api/memory/dream passes the
 # caller's `day` straight through).
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _valid_day(day: Any) -> Optional[str]:
+    """`day` when it is a real calendar day written YYYY-MM-DD (the shape, and a
+    strptime/strftime round trip, so 2026-02-30 and 2026-13-01 are refused),
+    else None."""
+    s = str(day or "").strip()
+    if not _DAY_RE.match(s):
+        return None
+    try:
+        parsed = datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return s if parsed.strftime("%Y-%m-%d") == s else None
 
 #: Whose memory a record belongs to (A11). One principal today; every record
 #: carries it so a household or delegate principal can be added without
@@ -224,8 +239,8 @@ def dream(day: Optional[str] = None, *, memory=None, queue: bool = True,
     """
     if not _enabled():
         return {"ok": True, "skipped": True, "reason": "disabled"}
-    day = str(day).strip() if day else _yesterday()
-    if not _DAY_RE.match(day):
+    day = _valid_day(day if day else _yesterday())
+    if day is None:
         return {"ok": False, "error": "invalid day — expected YYYY-MM-DD"}
     if _off_record():
         # Off the record nothing about the conversation is written
@@ -358,9 +373,22 @@ def _clear_day(day: str, principal: str = PRINCIPAL) -> None:
             conn.commit()
         finally:
             conn.close()
-    for ext in ("md", "json"):
+    # The files are found by listing the dreams folder and matching names, never
+    # by joining the caller's `day` into a path: only an entry that is already
+    # in the folder, a plain file named exactly <day>.md or <day>.json, goes.
+    if _valid_day(day) is None:
+        return
+    wanted = {f"{day}.md", f"{day}.json"}
+    try:
+        entries = list(os.scandir(DREAMS_DIR))
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    for entry in entries:
+        if entry.name not in wanted:
+            continue
         try:
-            (DREAMS_DIR / f"{day}.{ext}").unlink()
+            if entry.is_file(follow_symlinks=False):
+                os.unlink(entry.path)
         except FileNotFoundError:
             pass
 

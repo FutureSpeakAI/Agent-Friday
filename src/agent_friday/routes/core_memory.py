@@ -88,11 +88,11 @@ def memory_search_route():
         return jsonify({"ok": False, "error": "Only the owner can search Friday's memory."}), 403
     from agent_friday.services import memory_search as ms
     a = request.args
-    try:
-        q, kinds, since, until, limit = ms.check_params(a.get("q"), a.get("kinds"), a.get("since"),
-                                                        a.get("until"), a.get("limit"))
-    except ms.BadRequest as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+    # A bad parameter is answered with one of the search's fixed sentences, never an exception's text.
+    params, problem = ms.parse_params(a.get("q"), a.get("kinds"), a.get("since"), a.get("until"), a.get("limit"))
+    if problem:
+        return jsonify({"ok": False, "error": problem}), 400
+    q, kinds, since, until, limit = params
     return jsonify(public_result(ms.search(q, kinds=kinds, since=since, until=until,
                                            include_superseded=_flag(a.get("superseded")), limit=limit),
                                  "Couldn't search memory"))
@@ -104,10 +104,10 @@ def memory_why_route():
     if _not_owner():
         return jsonify({"ok": False, "error": "Only the owner can read where Friday knows something from."}), 403
     from agent_friday.services import memory_search as ms
-    try:
-        kind, item_id = ms.check_why(request.args.get("kind"), request.args.get("id"))
-    except ms.BadRequest as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+    params, problem = ms.parse_why(request.args.get("kind"), request.args.get("id"))
+    if problem:
+        return jsonify({"ok": False, "error": problem}), 400
+    kind, item_id = params
     return jsonify(public_result(ms.why(kind, item_id), "Couldn't look that up"))
 
 
@@ -123,11 +123,11 @@ def memory_export_route():
         return jsonify({"ok": False, "error": "The memory export answers only Friday's own page."}), 403
     from agent_friday.services import memory_export as me
     a = request.args
-    try:
-        q, kinds, since, until, fmt = me.check_params(a.get("q") if "q" in a else a.get("query"), a.get("kinds"),
-                                                      a.get("since"), a.get("until"), a.get("format"))
-    except me.BadRequest as e:
-        return jsonify({"ok": False, "error": str(e)}), 400
+    params, problem = me.parse_params(a.get("q") if "q" in a else a.get("query"), a.get("kinds"),
+                                      a.get("since"), a.get("until"), a.get("format"))
+    if problem:
+        return jsonify({"ok": False, "error": problem}), 400
+    q, kinds, since, until, fmt = params
     exp = me.build(q, kinds=kinds, since=since, until=until, include_superseded=_flag(a.get("superseded")))
     if not exp.get("ok"):
         return jsonify(public_result(exp, "Couldn't export memory")), 500
