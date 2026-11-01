@@ -43,7 +43,8 @@ _log = logging.getLogger("friday.connector_outcome")
 #: agent._TOOL_ERROR_SENTINELS, so the call is never counted as done.
 NOT_DONE = "[NOT DONE] "
 
-KINDS = ("revoked", "scope", "unreachable", "busy", "refused", "unconfirmed", "failed")
+KINDS = ("revoked", "scope", "unreachable", "busy", "refused", "unconfirmed", "failed",
+         "switched_off")
 
 _NOTES: ContextVar = ContextVar("friday_connector_not_done", default=None)
 
@@ -66,8 +67,8 @@ _SENTENCES = {
 #: The same sentences for a service that is not Google (a tool server or a channel): they name the
 #: service throughout and fit a read as well as a change.
 _SERVICE_SENTENCES = {
-    "revoked": ("{svc} access was revoked or has expired, so this did not happen. Reconnect {svc} in "
-                "Settings > Connectors, then try again."),
+    "revoked": ("{svc} access was revoked or has expired, so this did not happen. Reconnect {svc} "
+                "with a new token or sign-in (Settings > Connections), then try again."),
     "scope": ("{svc} has not allowed Friday to do this, so it did not happen. Allow it where {svc} "
               "was connected, then try again."),
     "unreachable": "Friday could not reach {svc}, so nothing was sent. Try again when it is back.",
@@ -76,6 +77,8 @@ _SERVICE_SENTENCES = {
     "unconfirmed": ("{svc} did not confirm this. It may or may not have happened: check {svc} "
                     "before trying again."),
     "failed": "{svc} reported that this did not complete.",
+    "switched_off": ("{svc} is switched off in Friday, so nothing was sent. Connect it again to "
+                     "use it."),
 }
 
 
@@ -189,42 +192,38 @@ def no_credentials(account_id: Optional[str], service: str = "Google") -> str:
     return not_done(kind, service)
 
 
-# ── tool servers (MCP): what a reply that is not a result means ──────────────────────────────
-# mcp_client marks what it could not get a result for: "[mcp:<server> unavailable] ..." (nothing
-# was sent), "[mcp:<server> error] ..." (sent; no answer, a timeout, a server error),
-# "[mcp:<server> malformed reply] ..." (an answer that is not a tool result), "[mcp error] ..."
-# (no such server, or switched off). A server that answered with isError is "[tool error] ...":
-# its words are read only then, never in an ordinary reply (a message that mentions "401" is
-# content). The services' own words for a revoked token, a missing permission and slowing down:
+# ── tool servers (MCP): what an answer that is not a result means ──────────────────────────────
+# mcp_client tags each answer with where it came from (mcp_client.ToolReply.origin); the server
+# writes the words, never the tag, so an ordinary answer that begins "[mcp error]" is a result.
+# Only an answer the server itself marked as an error (isError: origin "tool_error") has its
+# words read, for the services' own codes for a refused token, a missing permission and slowing
+# down. Bare "401" or "unauthorized" are not among them: an error about issue #401, or a web
+# page a tool fetched that answered 401, says nothing about this connector's token.
 _TOOL_REVOKED = re.compile(
-    r"invalid_auth|not_authed|token_revoked|token_expired|account_inactive|invalid[ _]token|"
-    r"bad credentials|unauthori[sz]ed|\b401\b|invalid_grant|authorization expired", re.I)
+    r"invalid_auth|not_authed|token_revoked|token_expired|account_inactive|bad credentials|"
+    r"an invalid token was provided|invalid_token", re.I)
 _TOOL_SCOPE = re.compile(
     r"missing_scope|insufficient[ _](?:scope|permission)|not_allowed_token_type|"
-    r"resource not accessible|\b403\b|forbidden|permission denied", re.I)
+    r"resource not accessible by|\b403\b", re.I)
 _TOOL_BUSY = re.compile(r"ratelimited|rate[ _]limit|too many requests|\b429\b", re.I)
-_TOOL_MARK = re.compile(r"^\[mcp(:[^\]\s]+)?(?: (unavailable|error|malformed reply))?\]", re.I)
+
+_ORIGIN_KIND = {"unavailable": "unreachable", "no_server": "unreachable",
+                "switched_off": "switched_off", "auth_expired": "revoked",
+                "transport_error": "unconfirmed", "malformed": "unconfirmed"}
 
 
-def tool_reply_kind(reply: Any, *, read_only: bool = False) -> Optional[str]:
-    """The kind of a tool server's reply that is not a result (see KINDS), or None for a result.
-    An empty reply to a change is "unconfirmed" (nothing names what was changed); an empty reply
-    to a read is a read that found nothing."""
+def tool_reply_kind(reply: Any, *, writes: bool = False) -> Optional[str]:
+    """The kind of a tool server's answer that is not a result (see KINDS), or None for a
+    result. Reads the origin mcp_client set (an answer with none is a result). An empty answer
+    to a tool that says it changes something is "unconfirmed" (nothing names what changed); an
+    empty read is a read that found nothing."""
     if not isinstance(reply, str):
         return None
-    text = reply.lstrip()
-    m = _TOOL_MARK.match(text)
-    if m:
-        if not m.group(1):
-            return "unreachable"                   # "[mcp error] no such server / switched off"
-        what = (m.group(2) or "").lower()
-        if what == "unavailable":
-            return "revoked" if _TOOL_REVOKED.search(text[:300]) else "unreachable"
-        if what in ("error", "malformed reply"):
-            return "unconfirmed"
-        return "unreachable"                       # "[mcp error] no such server / switched off"
-    if text.startswith("[tool error]"):
-        said = text[:600]
+    origin = getattr(reply, "origin", "result")
+    if origin in _ORIGIN_KIND:
+        return _ORIGIN_KIND[origin]
+    if origin == "tool_error":
+        said = str(reply)[:600]
         if _TOOL_REVOKED.search(said):
             return "revoked"
         if _TOOL_BUSY.search(said):
@@ -232,7 +231,7 @@ def tool_reply_kind(reply: Any, *, read_only: bool = False) -> Optional[str]:
         if _TOOL_SCOPE.search(said):
             return "scope"
         return "failed"
-    if not text and not read_only:
+    if not reply.strip() and writes:
         return "unconfirmed"
     return None
 

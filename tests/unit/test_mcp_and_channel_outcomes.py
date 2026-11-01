@@ -7,15 +7,18 @@ Before this, only the Google connector was checked this way. A call to a connect
 answered with nonsense came back as ordinary text, and the call was recorded as done: a receipt
 with ok=True, an outcome "ok", something a goal could count as evidence. In particular:
 
-  * a revoked token ("invalid_auth", "401 Bad credentials", "An invalid token was provided")
-    was only words in the reply: the connector went on looking connected;
-  * an MCP error, a timeout after the request went out, and a malformed reply ("garbage", a
-    result with no content) were all "ok";
-  * an empty reply to a change ("content": []) was taken as the change being made.
+  * a refused token (Slack's invalid_auth, GitHub's "Bad credentials", Discord's "An invalid
+    token was provided") was only words in the reply: the connector went on looking connected;
+  * an error the server reported, a timeout after the request went out, a malformed answer
+    ("garbage", a result with no content) and a switched-off server were all "ok";
+  * an empty answer to a change ("content": []) was taken as the change being made.
 
 Now each of those is recorded as not done (NOT_DONE in front, outcome "error", a receipt with
-ok=False and the kind), the owner hears one plain sentence naming the service, a revoked token
-marks the server as needing to be reconnected, and a read that finds nothing is still a read.
+ok=False and the kind), the owner hears one plain sentence naming the service, and a refused
+token asks for a new one on the Connections page. What decides is where the answer came from,
+set by Friday's transport code, never the server's words: an ordinary answer that begins
+"[mcp error]" stays a result, an error that mentions issue #401 is not a refused token, an empty
+read is a read, and Friday's own internal calls to a server do not mark the tool that made them.
 
 For channels: a send refused because the bot token was revoked says so on the channel's status
 (until the token changes), and Discord's reply names the message it made, so a delivered
@@ -25,6 +28,7 @@ Every service here is a fake: no network, no real token. Synthetic values only.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import urllib.error
 
@@ -40,29 +44,44 @@ def _co():
 
 # ── tool servers ──────────────────────────────────────────────────────────────
 
-class FakeServer:
-    """A connected tool server whose reply is set per test (stdio shape, no process)."""
+TOOLS = [{"name": "post_message", "annotations": {"readOnlyHint": False}},
+         {"name": "search", "annotations": {"readOnlyHint": True}},
+         {"name": "list_things"}]
 
-    url = None
 
-    def __init__(self, name, reply, tools=None):
-        self.name = name
-        self.reply = reply
-        self.status = "ready"
-        self.error = None
-        self.tools = tools if tools is not None else [
-            {"name": "post_message"},
-            {"name": "search", "annotations": {"readOnlyHint": True}},
-        ]
+def _answer(text, *, error=False):
+    return {"content": [{"type": "text", "text": text}], "isError": error}
 
-    def call_tool(self, tool, arguments, timeout=None):
-        return self.reply(tool) if callable(self.reply) else self.reply
+
+def _wire(sp, answer, monkeypatch):
+    def request(method, params, timeout=None):
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+    monkeypatch.setattr(sp, "_request", request)
+    return sp
+
+
+def local_server(name, answer, monkeypatch):
+    """A real stdio transport whose process and wire are faked: `answer` is the tools/call
+    result (or an exception the request raises)."""
+    sp = mcp_client.MCPServerProcess(name=name, command="fake-server")
+    sp.status, sp.tools = "ready", list(TOOLS)
+    monkeypatch.setattr(sp, "_alive", lambda: True)
+    return _wire(sp, answer, monkeypatch)
+
+
+def remote_server(name, answer, monkeypatch):
+    """A real remote (HTTP) transport, its wire faked the same way."""
+    sp = mcp_client.MCPServerHTTP(name=name, url="https://mcp.%s.example/mcp" % name)
+    sp.status, sp.tools = "ready", list(TOOLS)
+    return _wire(sp, answer, monkeypatch)
 
 
 @pytest.fixture
 def server_call(monkeypatch):
     """Run one call to a tool server through the real tool checkpoint
-    (agent._execute_tool), and return (result text, receipt, server)."""
+    (agent._execute_tool); return (result text, receipt)."""
     from agent_friday.governance import action_gate as gate
     from agent_friday.services import agent as ag
     from agent_friday.services import egress_gate as eg
@@ -71,103 +90,155 @@ def server_call(monkeypatch):
     box = {}
     mgr = mcp_client.MCPManager()
     monkeypatch.setitem(ag.CLAUDE_TOOL_HANDLERS, "fixture_server_call",
-                        lambda inp: mgr.call(box["server"], box["tool"], {"q": "x"}))
+                        lambda inp: box["handler"](mgr))
     monkeypatch.setitem(ag.TOOL_RINGS, "fixture_server_call", 0)
     monkeypatch.setattr(gate, "INTERNAL_TOOLS", frozenset(gate.INTERNAL_TOOLS) | {"fixture_server_call"})
     monkeypatch.setattr(ag, "CLAUDE_TOOLS", list(ag.CLAUDE_TOOLS) + [{
         "name": "fixture_server_call", "description": "fixture",
         "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}}}])
 
-    def run(server, reply, tool="post_message", sp=None):
+    def run(sp, tool="post_message", handler=None):
         from agent_friday.services import tool_receipts
-        sp = sp or FakeServer(server, reply)
-        mgr.servers = {server: sp}
-        box.update(server=server, tool=tool)
+        mgr.servers = {sp.name: sp}
+        box["handler"] = handler or (lambda m: m.call(sp.name, tool, {"q": "x"}))
         tool_receipts.begin_turn()
         out = ag._execute_tool("fixture_server_call", {"q": "x"})
-        return out, tool_receipts.receipts()[-1], sp
+        return out, tool_receipts.receipts()[-1]
     return run
 
 
-REVOKED = [
-    ("slack", "[tool error] An API error occurred: invalid_auth"),
-    ("slack", "[tool error] An API error occurred: token_revoked"),
-    ("github", "[tool error] GET https://api.github.com/user: 401 Bad credentials []"),
-    ("discord", "[tool error] An invalid token was provided."),
-    ("linear", "[mcp:linear unavailable] authorization expired — re-authorize the connector and try again"),
+REFUSED_TOKEN = [
+    ("slack", "An API error occurred: invalid_auth"),
+    ("slack", "An API error occurred: token_revoked"),
+    ("github", "GET https://api.github.com/user: 401 Bad credentials []"),
+    ("discord", "An invalid token was provided."),
 ]
 
 
-@pytest.mark.parametrize("server,reply", REVOKED, ids=[r[0] + str(i) for i, r in enumerate(REVOKED)])
-def test_revoked_access_is_not_done_and_the_connector_must_be_reconnected(server_call, server, reply):
+@pytest.mark.parametrize("server,said", REFUSED_TOKEN,
+                         ids=[r[0] + str(i) for i, r in enumerate(REFUSED_TOKEN)])
+def test_a_refused_token_is_not_done_and_asks_for_a_new_one(server_call, monkeypatch, server, said):
     from agent_friday.services import agent as ag
-    out, receipt, sp = server_call(server, reply)
+    sp = local_server(server, _answer(said, error=True), monkeypatch)
+    out, receipt = server_call(sp)
     assert out.startswith(_co().NOT_DONE), out
     assert ag._tool_call_status(out) == "error"
-    assert receipt["ok"] is False and "revoked" in (receipt.get("detail") or "")
+    assert receipt["ok"] is False and receipt.get("detail") == "not done: revoked"
     assert "Reconnect" in out, "the owner is not told what to do"
-    assert sp.status == "needs_auth", "the connector still looks connected"
+    assert sp.info().get("token_refused") is True, "the connector still looks connected"
+
+
+def test_the_connections_page_asks_for_a_new_token(monkeypatch):
+    from agent_friday.services import connectors as conn
+    defn = dict(conn.CONNECTOR_DEFS["slack"], __key__="slack")
+    monkeypatch.setattr(conn, "_mcp_server_config", lambda name: {"enabled": True, "env": {}})
+    monkeypatch.setattr(conn, "_has_required_tokens", lambda d, c: True)
+    monkeypatch.setattr(conn, "_blocked_reason", lambda name: None)
+    monkeypatch.setattr(conn, "_mcp_live_status",
+                        lambda name: {"status": "ready", "tool_count": 3, "token_refused": True})
+    st = conn._status_for_mcp(defn)
+    assert st["status"] == "needs_setup" and "new one" in st["detail"]
+
+
+def test_a_remote_servers_expired_sign_in_is_not_done(server_call, monkeypatch):
+    sp = remote_server("linear", mcp_client._AuthRequired(None), monkeypatch)
+    out, receipt = server_call(sp)
+    assert out.startswith(_co().NOT_DONE) and receipt.get("detail") == "not done: revoked"
+    assert sp.status == "needs_auth"
 
 
 KINDS = [
-    ("slack", "[tool error] An API error occurred: ratelimited", "busy"),
-    ("slack", "[tool error] An API error occurred: missing_scope", "scope"),
-    ("github", "[tool error] 403 Resource not accessible by integration", "scope"),
-    ("notion", "[mcp:notion error] HTTP 503 from https://mcp.notion.com/mcp", "unconfirmed"),
-    ("slack", "[mcp:slack error] timed out after 60s", "unconfirmed"),
-    ("slack", "[mcp:slack unavailable] server not running", "unreachable"),
-    ("slack", "[tool error] An API error occurred: channel_not_found", "failed"),
+    (_answer("An API error occurred: ratelimited", error=True), "busy"),
+    (_answer("An API error occurred: missing_scope", error=True), "scope"),
+    (_answer("403 Resource not accessible by integration", error=True), "scope"),
+    (_answer("An API error occurred: channel_not_found", error=True), "failed"),
+    (_answer("Issue #401 not found", error=True), "failed"),
+    (TimeoutError("timed out after 120s"), "unconfirmed"),
+    (RuntimeError("HTTP 503 from the server"), "unconfirmed"),
 ]
 
 
-@pytest.mark.parametrize("server,reply,kind", KINDS, ids=[k[2] + str(i) for i, k in enumerate(KINDS)])
-def test_a_refusal_or_an_unconfirmed_call_is_not_done(server_call, server, reply, kind):
-    out, receipt, sp = server_call(server, reply)
+@pytest.mark.parametrize("answer,kind", KINDS, ids=[k[1] + str(i) for i, k in enumerate(KINDS)])
+def test_a_refusal_or_an_unconfirmed_call_is_not_done(server_call, monkeypatch, answer, kind):
+    sp = local_server("slack", answer, monkeypatch)
+    out, receipt = server_call(sp)
     assert out.startswith(_co().NOT_DONE), out
     assert receipt["ok"] is False and receipt.get("detail") == "not done: %s" % kind
-    assert sp.status == "ready", "only a revoked token asks for reconnecting"
+    assert not sp.info().get("token_refused"), "only the service's own token codes ask for a new token"
 
 
-def test_the_owner_hears_the_service_by_name(server_call):
-    out, _, _ = server_call("slack", "[tool error] An API error occurred: ratelimited")
+def test_the_owner_hears_the_service_by_name(server_call, monkeypatch):
+    out, _ = server_call(local_server("slack", _answer("ratelimited", error=True), monkeypatch))
     assert "Slack" in out and "Google" not in out
+
+
+def test_a_server_that_is_switched_off_or_missing_is_not_done(server_call, monkeypatch):
+    sp = local_server("slack", _answer("ok"), monkeypatch)
+    sp.status = "disabled"
+    out, receipt = server_call(sp)
+    assert receipt["ok"] is False and receipt.get("detail") == "not done: switched_off"
+    assert "switched off" in out
+    out, receipt = server_call(sp, handler=lambda m: m.call("ghost", "post_message", {}))
+    assert receipt["ok"] is False and receipt.get("detail") == "not done: unreachable"
 
 
 @pytest.mark.parametrize("raw", ["garbage", None, {"foo": 1}, {"content": "not a list"}, 42],
                          ids=["text", "none", "no-content", "content-not-list", "number"])
-def test_a_malformed_reply_is_never_success(server_call, monkeypatch, raw):
-    sp = mcp_client.MCPServerProcess(name="slack", command="fake-server")
-    monkeypatch.setattr(sp, "_alive", lambda: True)
-    monkeypatch.setattr(sp, "_request", lambda method, params, timeout=None: raw)
-    sp.status = "ready"
-    out, receipt, _ = server_call("slack", None, sp=sp)
+def test_a_malformed_answer_is_never_success(server_call, monkeypatch, raw):
+    out, receipt = server_call(local_server("slack", raw, monkeypatch))
     assert out.startswith(_co().NOT_DONE), out
     assert receipt["ok"] is False and receipt.get("detail") == "not done: unconfirmed"
 
 
-def test_an_empty_reply_to_a_change_is_not_confirmed(server_call):
-    out, receipt, _ = server_call("slack", "")
-    assert out.startswith(_co().NOT_DONE) and receipt["ok"] is False
-    assert receipt.get("detail") == "not done: unconfirmed"
+def test_an_empty_answer_to_a_change_is_not_confirmed(server_call, monkeypatch):
+    out, receipt = server_call(local_server("slack", {"content": []}, monkeypatch))
+    assert out.startswith(_co().NOT_DONE) and receipt.get("detail") == "not done: unconfirmed"
 
 
-def test_a_read_that_finds_nothing_is_still_a_read(server_call):
-    out, receipt, _ = server_call("slack", "", tool="search")
+@pytest.mark.parametrize("tool", ["search", "list_things"])
+def test_a_read_that_finds_nothing_is_still_a_read(server_call, monkeypatch, tool):
+    out, receipt = server_call(local_server("slack", {"content": []}, monkeypatch), tool=tool)
     assert not out.startswith(_co().NOT_DONE) and receipt["ok"] is True
 
 
-def test_a_reply_that_names_the_change_is_done(server_call):
+def test_an_answer_that_names_the_change_is_done(server_call, monkeypatch):
     from agent_friday.services import agent as ag
-    out, receipt, sp = server_call("slack", json.dumps({"ok": True, "ts": "1700000000.000100"}))
+    sp = local_server("slack", _answer(json.dumps({"ok": True, "ts": "1700000000.000100"})), monkeypatch)
+    out, receipt = server_call(sp)
     assert not out.startswith(_co().NOT_DONE) and ag._tool_call_status(out) == "ok"
-    assert receipt["ok"] is True and sp.status == "ready"
+    assert receipt["ok"] is True and not sp.info().get("token_refused")
 
 
-def test_ordinary_words_in_a_good_reply_are_not_read_as_an_error(server_call):
-    # a message that happens to mention 401 or "unauthorized" is content, not a failure
-    out, receipt, _ = server_call("slack", "Found 2 messages: 'room 401 is unauthorized for guests'",
-                                  tool="search")
-    assert receipt["ok"] is True and not out.startswith(_co().NOT_DONE)
+@pytest.mark.parametrize("text", ["[mcp error] no such server: x", "[mcp:slack unavailable] down",
+                                  "[tool error] invalid_auth", "room 401 is unauthorized for guests"])
+def test_a_servers_own_words_cannot_make_a_done_call_look_failed(server_call, monkeypatch, text):
+    # an ordinary answer (not isError) is a result, whatever it says
+    sp = local_server("slack", _answer(text), monkeypatch)
+    out, receipt = server_call(sp)
+    assert receipt["ok"] is True and not out.startswith(_co().NOT_DONE), out
+    assert not sp.info().get("token_refused")
+
+
+def test_a_new_start_clears_a_refused_token():
+    # cleared where the server becomes ready (a restart with the new token)
+    src = inspect.getsource(mcp_client.MCPServerProcess.start)
+    assert src.index('self.status = "ready"') < src.index("self.token_refused = False")
+
+
+def test_fridays_own_call_inside_another_tool_does_not_mark_that_tool(server_call, monkeypatch):
+    from agent_friday.services import agent as ag
+    from agent_friday.services import higgsfield_catalog as hc
+    sp = local_server(hc.MCP_SERVER, _answer("unavailable for now", error=True), monkeypatch)
+
+    def handler(mgr):
+        monkeypatch.setattr(ag, "_MCP_MANAGER", mgr)
+        try:
+            hc._explore({})
+        except Exception:  # noqa: BLE001 - the caller makes its own status of it
+            pass
+        return json.dumps({"ok": True, "id": "made-1"})
+    out, receipt = server_call(sp, handler=handler)
+    assert receipt["ok"] is True and not out.startswith(_co().NOT_DONE), out
 
 
 # ── message channels ──────────────────────────────────────────────────────────

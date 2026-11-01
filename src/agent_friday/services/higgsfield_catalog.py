@@ -98,7 +98,11 @@ def _explore(params: dict, timeout: float = 60.0) -> dict:
     if mgr is None:
         raise RuntimeError("MCP manager not initialized — Higgsfield "
                            "enumeration needs the connector running")
-    raw = mgr.call(MCP_SERVER, EXPLORE_TOOL, dict(params), timeout=timeout)
+    # Inside another tool's call: what this call noted stays out of that tool's record
+    # (connector_outcome); a failure here becomes the caller's own status.
+    from agent_friday.services import connector_outcome as _co
+    with _co.per_item():
+        raw = mgr.call(MCP_SERVER, EXPLORE_TOOL, dict(params), timeout=timeout)
     if isinstance(raw, dict):
         return raw
     text = str(raw or "").strip()
