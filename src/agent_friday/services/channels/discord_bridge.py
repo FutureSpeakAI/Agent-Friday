@@ -93,11 +93,11 @@ class DiscordBridge(ChannelAdapter):
                     except Exception as e:
                         unsure = send_unsure(e)
                         self.report_outbound(decision, False, unsure)
-                        record_channel_send(self.name, chat_id, gated, False, unsure)
+                        record_channel_send(self.name, chat_id, gated, False, unsure, decision=decision)
                         raise
                     # Discord's id for the posted message is its confirmation
                     self.report_outbound(decision, True, verified=bool(getattr(sent, "id", None)))
-                    record_channel_send(self.name, chat_id, gated, True)
+                    record_channel_send(self.name, chat_id, gated, True, decision=decision)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

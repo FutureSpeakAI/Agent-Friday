@@ -263,7 +263,7 @@ def _license_ok(post: Dict[str, Any]) -> Optional[str]:
 def _log_attempt(target: Dict[str, Any], outcome: str, *,
                  duration_s: float = 0.0, url: Optional[str] = None,
                  error: Optional[str] = None) -> None:
-    store.append_publish_log({
+    line = {
         "event": "publish", "outcome": outcome,
         "target_id": target.get("id"), "post_id": target.get("post_id"),
         "platform": target.get("platform"),
@@ -271,7 +271,12 @@ def _log_attempt(target: Dict[str, Any], outcome: str, *,
         "duration_s": round(float(duration_s), 3),
         "url": url, "error": error,
         "ok": outcome == "confirmed",
-    })
+    }
+    # the decision that let it go, persisted with the post (A10)
+    aid = _decision_action_id(str(target.get("id")))
+    if aid:
+        line["action_id"] = aid
+    store.append_publish_log(line)
 
 
 def _epoch(value) -> Optional[float]:
@@ -1222,6 +1227,22 @@ def _link_decision(tid: str, ref: Optional[dict]) -> None:
         action_gate.close_external(old, False, detail="superseded")
 
 
+def _decision_action_id(tid: str) -> Optional[str]:
+    """The action id of the decision that let this target go now (the one
+    _link_decision holds for it), or None. Written into the egress row and
+    the publish log line so a post links to its decision on disk, not only in
+    _DECISIONS (A10). Records only; never raises."""
+    try:
+        with _DECISIONS_LOCK:
+            ref = _DECISIONS.get(str(tid))
+        if ref is None:
+            return None
+        from agent_friday.services import egress_gate as _eg
+        return _eg.action_id_of(ref)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _close_decision(tid: str, result: str) -> None:
     """The publish's terminal outcome for the decision that let it go, from the
     dispatch's result: confirmed -> completed_verified; failed, or deferred with
@@ -1541,7 +1562,8 @@ def _run_target(target: Dict[str, Any]) -> str:
                                     "assets": [{k: a.get(k) for k in ("id", "filename", "content_hash", "sha256",
                                                                       "kind", "alt_text", "bytes") if k in a}
                                                for a in (prepared.get("assets") or []) if isinstance(a, dict)]},
-                                result="sent" if pub.get("ok") else "failed", part="post")
+                                result="sent" if pub.get("ok") else "failed", part="post",
+                                action_id=_decision_action_id(tid))
     except Exception:
         pass
     if pub.get("ok"):

@@ -1,4 +1,4 @@
-﻿"""
+"""
 services/model_router.py — EXECUTION LAYER (HOW to execute a model call).
 
 This module executes calls to configured providers:
@@ -2627,11 +2627,13 @@ def _current_session_id():
 
 
 def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
-                     owner=True):
+                     owner=True, web_sources=None, turn_key=None):
     """The end of a chat or voice turn: index it, then let the turn's one
-    embedding of the message go (services/turn_vector)."""
+    embedding of the message go (services/turn_vector). `turn_key` is the
+    turn's id, as given to _build_memory_context_block for the same turn."""
     try:
-        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner)
+        _index_chat_turn_body(message, reply, session_id, user_msg_id, friday_msg_id, library, owner,
+                              web_sources=web_sources, turn_key=turn_key)
     finally:
         try:
             from agent_friday.services import turn_vector as _tv
@@ -2640,8 +2642,18 @@ def _index_chat_turn(message, reply, session_id, user_msg_id=None, friday_msg_id
             pass
 
 
+def _turn_deleted(user_msg_id, friday_msg_id) -> bool:
+    """Either message of the turn belongs to a conversation the owner deleted
+    (services/conversations keeps their ids for this process)."""
+    try:
+        from agent_friday.services import conversations as _cv
+        return _cv.message_deleted(user_msg_id) or _cv.message_deleted(friday_msg_id)
+    except Exception:
+        return False
+
+
 def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_msg_id=None, library=False,
-                          owner=True):
+                          owner=True, web_sources=None, turn_key=None):
     """Best-effort: persist a user/assistant exchange into ChromaDB memory and
     fold the user's message into the cross-session emotional arc.
 
@@ -2664,6 +2676,14 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
             return
     except Exception:
         return                                   # cannot tell: learn nothing
+    # How many of the items recalled for this turn the reply cited (counts
+    # only, services/memory_metrics); read before anything is elided below.
+    # Matched by the turn's id, so two turns in one session never cross-score.
+    try:
+        from agent_friday.services import memory_metrics as _mm
+        _mm.note_reply(session_id, reply, turn_key=turn_key)
+    except Exception:
+        pass
     if library:
         try:
             from agent_friday.services.library import cite as _library_cite
@@ -2672,6 +2692,36 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
             # Never index (or review) a Library answer's words un-elided.
             print(f"  [MEMORY] turn indexing skipped: {_le}")
             return
+    # The sites the reply read (services/web_provenance: registered domains
+    # only). A reply that read a site the owner stopped is not remembered:
+    # it enters the index as a stand-in line (the question is kept, the
+    # reply's words are not), the review sees the stand-in, and its message
+    # id joins the durable forgotten list, so conversation search and every
+    # later rebuild leave it out. The transcript keeps the reply.
+    # A conversation the owner deleted while this reply was being written:
+    # nothing of the turn is indexed or reviewed (services/conversations).
+    if _turn_deleted(user_msg_id, friday_msg_id):
+        return
+    # The check fails closed: while the stopped-sites record cannot be read,
+    # a reply that read the web is remembered only as the stand-in.
+    web_sources = list(web_sources or [])
+    try:
+        from agent_friday.services import web_provenance as _wp
+        web_sources = _wp.clean(web_sources)
+        if _wp.stopped(web_sources, fail_closed=True):
+            reply, web_sources = _wp.STOPPED_STANDIN, []
+            if friday_msg_id:
+                from agent_friday.services import conversation_fts as _fts
+                _fts.forget_turns(lambda _t: False, mids=[str(friday_msg_id)])
+    except Exception as _we:
+        print(f"  [MEMORY] the stopped-site check failed (reply not remembered): {type(_we).__name__}")
+        if web_sources:
+            try:
+                from agent_friday.services import web_provenance as _wp
+                reply = _wp.STOPPED_STANDIN
+            except Exception:
+                return
+            web_sources = []
     # What Friday recalled this turn is not new: fenced spans go, and so do the
     # reply's sentences that only repeat a recalled excerpt (services/
     # memory_fence), before the index or the review sees the exchange.
@@ -2687,14 +2737,17 @@ def _index_chat_turn_body(message, reply, session_id, user_msg_id=None, friday_m
     try:
         from agent_friday.services import memory_review as _mreview
         # `owner`: the user side is the owner's own words (False for voice).
-        _mreview.note_turn(message, reply, session_id, owner=owner)
+        _mreview.note_turn(message, reply, session_id, owner=owner, web_sources=web_sources)
     except Exception:
         pass
     try:
+        if _turn_deleted(user_msg_id, friday_msg_id):      # deleted meanwhile
+            return
         mem = _get_conversation_memory()
         mem.index_exchange(
             message, reply, session_id=session_id,
             user_msg_id=user_msg_id, assistant_msg_id=friday_msg_id,
+            assistant_web_sources=web_sources,
         )
     except Exception as _me:
         print(f"  [MEMORY] turn indexing skipped: {_me}")
@@ -2758,14 +2811,28 @@ def _session_summary_path(date_str, ext="md"):
     return SESSION_SUMMARY_DIR / f"{date_str}.{ext}"
 
 
+#: Whose summaries these are (A11). Every sidecar carries it; reads filter by it.
+SESSION_SUMMARY_PRINCIPAL = "owner"
+#: The visible first line of a saved summary: a model wrote it (NS-15.9-1).
+#: Stripped again on load, so the summary text itself is unchanged.
+MODEL_SUMMARY_MARKER = ("> Model summary: written by Friday's local model from the day's "
+                        "turns, not the owner's words. Source message ids are in the .json.")
+
+
 def _save_session_summary(date_str, summary_text, meta=None):
-    """Persist a session summary as markdown + a small JSON sidecar."""
+    """Persist a session summary as markdown + a small JSON sidecar.
+
+    Both say it is a model summary (the md's first line, the sidecar's
+    `model_summary`), and the sidecar names its principal; a caller's `meta`
+    carries the turn ids it was written from (`message_ids`)."""
     try:
         SESSION_SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
         _session_summary_path(date_str, "md").write_text(
-            summary_text, encoding="utf-8")
+            MODEL_SUMMARY_MARKER + "\n\n" + (summary_text or ""), encoding="utf-8")
         sidecar = {"date": date_str, "generated": datetime.now().isoformat(),
-                   "chars": len(summary_text or "")}
+                   "chars": len(summary_text or ""),
+                   "model_summary": True, "kind": "inferred",
+                   "principal": SESSION_SUMMARY_PRINCIPAL}
         if meta:
             sidecar.update(meta)
         _session_summary_path(date_str, "json").write_text(
@@ -2777,25 +2844,40 @@ def _save_session_summary(date_str, summary_text, meta=None):
 
 
 def _load_session_summary(date_str):
-    """Return the markdown summary for one date, or '' if none exists."""
+    """Return the markdown summary for one date, or '' if none exists (the
+    model-summary marker line is not part of the summary)."""
     try:
         p = _session_summary_path(date_str, "md")
-        return p.read_text(encoding="utf-8") if p.exists() else ""
+        text = p.read_text(encoding="utf-8") if p.exists() else ""
+        if text.startswith(MODEL_SUMMARY_MARKER):
+            text = text[len(MODEL_SUMMARY_MARKER):].lstrip("\n")
+        return text
     except Exception:
         return ""
 
 
-def _latest_session_summary():
-    """Return (date_str, markdown) for the most recent stored summary, or
-    (None, '') when there are none."""
+def _session_summary_meta(date_str):
+    """The JSON sidecar for one date, or {}."""
+    try:
+        p = _session_summary_path(date_str, "json")
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except Exception:
+        return {}
+
+
+def _latest_session_summary(principal=SESSION_SUMMARY_PRINCIPAL):
+    """Return (date_str, markdown) for the most recent stored summary of
+    `principal`, or (None, '') when there are none. A sidecar without a
+    principal predates the field and is the owner's."""
     try:
         if not SESSION_SUMMARY_DIR.exists():
             return None, ""
         dates = sorted(p.stem for p in SESSION_SUMMARY_DIR.glob("*.md"))
-        if not dates:
-            return None, ""
-        latest = dates[-1]
-        return latest, _load_session_summary(latest)
+        for d in reversed(dates):
+            owner = str(_session_summary_meta(d).get("principal") or SESSION_SUMMARY_PRINCIPAL)
+            if owner == principal:
+                return d, _load_session_summary(d)
+        return None, ""
     except Exception:
         return None, ""
 
@@ -2827,12 +2909,16 @@ def _build_session_continuity_block():
         if len(snippet) > 1400:
             snippet = snippet[:1400].rsplit("\n", 1)[0] + "\n…"
         from agent_friday.services import memory_fence as _mf
+        from agent_friday.services import knowledge_kinds as _kk
+        # A model summary is Friday's own reading of the day (NS-3.4-1, NS-15.9-1).
         return (
             "\n== CONTINUITY FROM YOUR LAST SESSION (" + date_str + ") ==\n"
             + _mf.fence("last_session_summary",
                         "This is your own summary of the most recent day you spoke with the "
                         "user. Use it for continuity — pick up open threads naturally — but "
-                        "don't recite it back at them.\n" + snippet) + "\n")
+                        "don't recite it back at them.\n" + snippet,
+                        kind_label=_kk.header(_kk.INFERRED, "your model summary of "
+                                              + date_str + ", not confirmed")) + "\n")
     except Exception:
         return ""
 
@@ -2848,6 +2934,12 @@ def _generate_session_summary(date_str, force=False):
     try:
         if not force and _load_session_summary(date_str).strip():
             return _load_session_summary(date_str)
+        try:
+            from agent_friday.services import off_record as _offr
+            if _offr.skip("session_summary") or _offr.skip_learning("session_summary"):
+                return None              # off the record nothing is written or learned
+        except Exception:
+            pass
         mem = _get_conversation_memory()
         if not mem.available():
             return None
@@ -2856,13 +2948,16 @@ def _generate_session_summary(date_str, force=False):
             return None
         # Build a compact transcript (oldest-first; get_session already sorts).
         lines = []
+        source_ids = []                  # the turns the summary is written from (NS-15.9-1)
         for t in turns:
-            if t.get("superseded"):
+            if t.get("superseded") or t.get("off_record"):
                 continue                 # history, not evidence (§34.9-4)
             role = "Friday" if t.get("role") == "friday" else "User"
             txt = " ".join((t.get("text") or "").split())
             if txt:
                 lines.append(f"{role}: {txt}")
+                if t.get("id"):
+                    source_ids.append(str(t.get("id")))
         if not lines:
             return None
         transcript = "\n".join(lines)[:18000]
@@ -2927,6 +3022,12 @@ def _generate_session_summary(date_str, force=False):
             "mood": arc_state.get("mood"),
             "ema": arc_state.get("ema"),
             "trend": arc_state.get("trend"),
+            # A model wrote it, from these turns, for this principal (NS-15.9-1).
+            "model_summary": True,
+            "made_by": "local model",
+            "kind": "inferred",
+            "principal": SESSION_SUMMARY_PRINCIPAL,
+            "message_ids": source_ids,
         })
         print(f"  [SUMMARY] wrote session summary for {date_str} "
               f"({len(turns)} turns, mood={arc_state.get('mood')})")
@@ -2992,8 +3093,11 @@ def _load_recent_session_summary_on_startup():
 
 
 def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
-                                max_chars=1900):
+                                max_chars=1900, turn_key=None):
     """Retrieve relevant PAST conversations and format them as a prompt block.
+
+    `turn_key`: the turn's id; the end-of-turn index passes the same one so the
+    reply's citations are scored against this turn's recall (services/memory_metrics).
 
     Returns '' when memory is unavailable, empty, or nothing clears the
     relevance floor. The block is provider-independent text — the caller appends
@@ -3062,6 +3166,9 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
         kept.sort(key=lambda h: str(h.get("timestamp") or h.get("date") or ""), reverse=True)
         used = 0
         recalled = []
+        recalled_ids = []
+        shown_ids = []
+        shown_texts = []
         for h in kept:
             date = h.get("date") or (h.get("timestamp") or "")[:10]
             role = "You" if h.get("role") == "friday" else "User"
@@ -3076,12 +3183,34 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
                 break
             lines.append(entry)
             recalled.append(" ".join((h.get("text") or "").split()))
+            if h.get("id"):
+                recalled_ids.append(str(h.get("id")))
+            shown_ids.append(h.get("id"))
+            shown_texts.append(snippet)
             used += len(entry)
+        # Counts only (services/memory_metrics): how many came back, how many
+        # were shown; the shown refs (and, in this process only, the snippets a
+        # quote-style citation is matched against) wait for the reply.
+        try:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_recall(session_id, len(hits), shown_ids, turn_key=turn_key,
+                            shown_texts=shown_texts)
+        except Exception:
+            pass
         # Labelled as recalled (services/memory_fence), and remembered for this
         # session so the end-of-turn index does not store a reply's repeat of it
         # as a new exchange.
         from agent_friday.services import memory_fence as _mf
+        from agent_friday.services import knowledge_kinds as _kk
         _mf.remember(session_id, recalled)
+        # Which stored turns this reply recalled, by id only (services/
+        # memory_influence): the owner's "why do you know this" reads it.
+        try:
+            from agent_friday.services import memory_influence as _mi
+            _mi.record("conversation", recalled_ids, session_id=session_id,
+                       settings=_load_settings())
+        except Exception:
+            pass
         try:
             # Shadow only (services/evidence_heads, DM4): read, after the block is
             # decided, whether these passages answer the message. It queues work on
@@ -3092,8 +3221,10 @@ def _build_memory_context_block(message, session_id, n=5, min_relevance=0.30,
             pass
         if not lines:
             return live_block
+        # Each line is a remembered turn with its date and ref (NS-3.4-1).
         return (live_block + "\n== RELEVANT PAST CONVERSATIONS (recalled from memory) ==\n"
-                + guide + "\n" + _mf.fence("past_conversations", "\n".join(lines)) + "\n")
+                + guide + "\n" + _mf.fence("past_conversations", "\n".join(lines),
+                                           kind_label=_kk.header(_kk.REMEMBERED)) + "\n")
     except Exception as _e:
         try:
             from agent_friday.services import recall_health as _rh
@@ -3476,9 +3607,13 @@ def _log_policy_failure():
 
 def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
                        vault_control=None, vault_fallback='redact', model='') -> str:
-    """The USER MODEL and LEARNED HEURISTICS blocks for the prompt head.
+    """The memory section of the prompt head: KINDS OF INFORMATION (the
+    standing instruction on how to speak about each kind, NS-3.4-1; always
+    first, gate-exempt), then CORE MEMORY, USER MODEL and LEARNED HEURISTICS.
 
-    Both are TIER_1 behavioural text (never raw PII), best-effort, and empty
+    The voice front digest keeps KINDS OF INFORMATION among its priority
+    sections (voice_context_digest.FRONT_PRIORITY_SECTIONS). USER MODEL and
+    LEARNED HEURISTICS are TIER_1 behavioural text (never raw PII), best-effort, and empty
     when their subsystem is off or has learned nothing. With a `freeze_key`
     (the conversation id) each block is the one this conversation started
     with: memory written mid-conversation reaches the next conversation, and
@@ -3491,7 +3626,18 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
     TIER_2 (redacted for the cloud), whatever a keyword scan would say.
     """
     from agent_friday.services import prompt_freeze as _pf
-    out = ''
+    from agent_friday.services import knowledge_kinds as _kk
+    # The memory section opens with how to speak about each kind of
+    # information (NS-3.4-1): once per prompt, a Friday-authored constant with
+    # no user data, so it is gate-exempt like the core instructions. The gate
+    # matches blank-line paragraphs verbatim, so what is registered is exactly
+    # the paragraph emitted: header and instruction, one constant.
+    try:
+        from agent_friday.services.egress_gate import register_trusted_text as _rst
+        _rst(_kk.KINDS_SECTION)
+    except Exception:
+        pass
+    out = "\n\n" + _kk.KINDS_SECTION + "\n"
 
     gate_fn, gate_key = None, "ungated"
     if vault_control is not None:
@@ -3521,7 +3667,8 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
     if core:
         from agent_friday.services import memory_fence as _mf
         out += ("\n\n== CORE MEMORY ==\n"
-                + _mf.fence("memory_card", _strip_overrides(core, "core-memory")) + "\n")
+                + _mf.fence("memory_card", _strip_overrides(core, "core-memory"),
+                            kind_label=_kk.header(_kk.KNOWN, "your memory card")) + "\n")
 
     def _um():
         from agent_friday.services.user_model import render_user_model_prompt
@@ -3533,13 +3680,16 @@ def memory_head_blocks(workspace='', freeze_key=None, *, provider='local',
 
     um = _pf.frozen(freeze_key, "user_model", _um)
     if um:
-        out += "\n\n== USER MODEL ==\n" + um + "\n"
+        # Style traits read from sessions: Friday's inference about the owner.
+        out += ("\n\n== USER MODEL ==\n" + _kk.header(_kk.INFERRED, "Friday's read of your "
+                                                      "style, not confirmed") + "\n" + um + "\n")
     heur = _pf.frozen(freeze_key, "heuristics:" + str(workspace or ''), _heur)
     if heur:
         # Learned heuristics are RSI output: Friday's own writing, fed back
         # into Friday's own prompt. That is precisely the loop that must not
         # be able to grant new authority.
         out += ("\n\n== LEARNED HEURISTICS (advisory) ==\n"
+                + _kk.header(_kk.INFERRED) + "\n"
                 + _strip_overrides(heur, "learned-heuristics") + "\n")
     return out
 

@@ -20,7 +20,8 @@ may show it, and the Library's consent check (``grants.allowed``, the batch
 ``Allower`` and ``_allowed_uncached``) asks it on every ask, keeping nothing:
 only while the owner has chosen to make meetings searchable
 (``settings.meeting_archive == "on"``), only for the owner's own Library, only for
-a meeting whose record still exists, and never for a path with a never-send mark
+a meeting whose record still exists and that the owner has not stopped using
+(``stopped``: forget_kinds' record, failing closed), and never for a path with a never-send mark
 or while the consent ledger is suspended. Nothing is indexed until they choose,
 and choosing is a click on the screen (``routes/meetings``). Choosing "off"
 removes everything that was indexed, and until it has finished no document is an
@@ -157,13 +158,24 @@ def meeting_exists(mid: str) -> bool:
         return False
 
 
+def stopped(mid: str) -> bool:
+    """Has the owner stopped using this meeting (services/forget_kinds.stop_using_source)? Fails closed: a
+    record that cannot be read answers yes, so a stopped meeting is never shown or read in for want of it."""
+    try:
+        from agent_friday.services import forget_kinds as fk
+        return fk.source_stopped("meeting:%s" % mid, fail_closed=True)
+    except Exception:  # noqa: BLE001 - a check that cannot run is not a "not stopped"
+        return True
+
+
 def covers(path) -> bool:
     """May the Library show this path right now? The Library's consent check asks this for archive paths,
-    on every ask: only while the owner's answer is yes, only for a meeting that still exists, and never for a
-    path carrying a never-send mark. Nothing here is kept."""
+    on every ask: only while the owner's answer is yes, only for a meeting that still exists and that the
+    owner has not stopped using, and never for a path carrying a never-send mark. Nothing here is kept."""
     if not (owns(path) and visible()):
         return False
-    if not meeting_exists(Path(str(path)).parts[-3]):
+    mid = Path(str(path)).parts[-3]
+    if not meeting_exists(mid) or stopped(mid):
         return False
     try:
         from agent_friday.services import file_grants as fg
@@ -232,8 +244,8 @@ def _index_one(store, mid: str, part: str, title: str, blocks: list, force: bool
     if (prior and not force and prior["state"] == "indexed" and prior["sha256"] == sha
             and prior["index_version"] == INDEX_VERSION):
         return "unchanged"
-    if choice() != "on" or not meeting_exists(mid):
-        return "skipped"                    # said no, or deleted, while this was waiting its turn
+    if choice() != "on" or not meeting_exists(mid) or stopped(mid):
+        return "skipped"                    # said no, deleted or stopped, while this was waiting its turn
     fid = store.folder_id(SCOPE, "")
     doc_id = store.upsert_document(
         path, sha256=sha, size=sum(len(b["text"]) for b in blocks), mtime=time.time(), kind="markdown",
@@ -283,6 +295,8 @@ def index_meeting(m: dict, *, store=None, force: bool = False) -> dict:
     mid = str(m.get("id") or "")
     if not _ID_RE.fullmatch(mid) or not meeting_exists(mid):
         return {"indexed": 0, "skipped": "no such meeting"}
+    if stopped(mid):
+        return {"indexed": 0, "skipped": "stopped"}
     with visible_job("Making a meeting searchable", kind="meeting_archive", workspace="meetings", queued=False,
                      deferrable=True, key=JOB_KIND + ":" + mid):
         st = _store(store)

@@ -33,6 +33,9 @@
   <h2 id="state-h">State of the record</h2>
   <div id="state" class="state" role="status">Checking…</div>
   <p class="muted" id="arch"></p>
+  <p id="integrity" role="status"></p>
+  <p id="activity-record" role="status"></p>
+  <div id="verify-everything" role="status"></div>
   <p id="audit" role="status"></p>
   <button type="button" id="verify">Check every entry now</button>
   <a class="btn" id="exp-report" href="/api/ledger/export?format=report">Save the verification report</a>
@@ -60,6 +63,27 @@
     <tbody id="rows"></tbody>
   </table>
   <button type="button" id="more" hidden>Older entries</button>
+</section>
+
+<section aria-labelledby="u-h">
+  <h2 id="u-h">Everything, together</h2>
+  <p class="muted">Every kind of receipt Friday keeps, in one list: checkpoint decisions, what each action did, changes to your things, goal receipts, tool calls, reasoning traces, task journal events, sends leaving this PC, files Friday made, content credentials, posts, setup choices, memory writes and skill changes. Ids and times only, never what a record says. Enter an action, goal, task or approval id to see everything that names it, across every store.</p>
+  <form id="uf">
+    <label>Family <select name="family" id="u-family"><option value="">all</option></select></label>
+    <label>Id <input name="id" id="u-id" size="28" autocomplete="off" spellcheck="false"></label>
+    <button type="submit">Show</button>
+  </form>
+  <p class="muted" id="u-count" role="status"></p>
+  <p class="muted" id="u-sources" role="status"></p>
+  <table>
+    <thead><tr><th>When (UTC)</th><th>What</th><th>Where</th><th>Signed</th><th>Chained</th><th>Ids</th></tr></thead>
+    <tbody id="u-rows"></tbody>
+  </table>
+  <button type="button" id="u-more" hidden>Older records</button>
+  <div id="u-why-box" hidden>
+    <h3 id="u-why-h" style="font-size:14px;margin:12px 0 4px">Why?</h3>
+    <pre id="u-why" role="status" aria-live="polite" aria-labelledby="u-why-h"></pre>
+  </div>
 </section>
 
 <section aria-labelledby="r-h">
@@ -186,6 +210,169 @@
         + (c.duplicate_key || 0) + ' run twice, ' + (c.false_done || 0) + ' task(s) marked done too early.';
     });
   }
+  // One view of the record (services/ledger_integrity): signatures, chain, unsigned
+  // lines, outward actions and the policy version. Counts only.
+  function integrity() {
+    api('/api/ledger/integrity').then(({ ok, d }) => {
+      const p = $('integrity');
+      const v = ok && d.integrity;
+      if (!v) { p.className = 'muted'; p.textContent = 'The record could not be checked.'; return; }
+      const s = v.signatures || {}, ch = v.chain || {}, u = v.unsigned || {}, o = v.outward || {};
+      p.className = v.ok ? 'ok' : 'bad';
+      p.textContent = 'Record, last ' + v.window_days + ' days: '
+        + (s.ok ? 'signatures hold' : (s.bad || 0) + ' signature(s) do not hold') + ', '
+        + (ch.breaks || 0) + ' break(s) and ' + (ch.gaps || 0) + ' gap(s) in the chain, '
+        + (u.lines || 0) + ' unsigned line(s); outward actions: ' + (o.open || 0) + ' open, '
+        + (o.unconfirmed || 0) + ' unconfirmed, ' + (o.duplicate || 0) + ' with two final receipts, '
+        + (o.duplicate_key || 0) + ' run twice; policy version ' + (v.policy_version || 'unknown') + '.';
+      activityRecord(v);
+      verifyEverything(v);
+    });
+  }
+  // Everything else the owner can check (A10, services/verify_everything): edited
+  // lines, decisions with no final outcome, the files Friday made against their
+  // fingerprints, outward actions without a decision receipt. Counts and short
+  // references only, each line set with textContent.
+  function verifyEverything(v) {
+    const box = $('verify-everything');
+    box.textContent = '';
+    const line = (txt, bad) => box.appendChild(el('p', txt, bad == null ? 'muted' : (bad ? 'bad' : 'ok')));
+    const s = v.signatures;
+    line(s ? 'Edited lines: ' + (s.edited || 0) + ' ledger line(s) changed after they were written.'
+           : 'Edited lines: could not be checked.', s ? (s.edited || 0) > 0 : null);
+    const t = v.terminal;
+    line(t ? 'Decisions with no final outcome: ' + (t.no_final_outcome || 0) + '; '
+             + (t.unconfirmed || 0) + ' where nobody confirmed whether it happened; '
+             + (t.waiting || 0) + ' waiting for you; ' + (t.in_flight || 0) + ' still in progress.'
+           : 'Decisions with no final outcome: could not be checked.',
+         t ? (t.no_final_outcome || 0) > 0 : null);
+    const ar = v.artifacts, c = (ar && ar.counts) || {};
+    line(ar ? 'Files Friday made, checked against their fingerprints: ' + (ar.checked || 0) + ' checked, '
+              + (c.ok || 0) + ' unchanged, ' + (c.changed || 0) + ' changed since, '
+              + (c.missing || 0) + ' missing, ' + (c.unreadable || 0) + ' could not be read, '
+              + (c.not_hashed || 0) + ' too big to fingerprint'
+              + (c.bad_lines ? '; ' + c.bad_lines + ' manifest line(s) whose signature does not hold' : '')
+              + (ar.partial ? '. Only the newest were checked; ' + (c.unchecked || 0) + ' left for the next check.' : '.')
+            : 'Files Friday made: could not be checked.',
+         ar ? (c.bad_lines || 0) > 0 : null);
+    (ar && ar.items || []).forEach(it => line('  ' + it.state + ': a file from ' + (it.tool || 'a tool')
+      + ' at ' + String(it.ts || '?').replace('T', ' ').slice(0, 19) + ' (manifest line ' + it.ref + ')', null));
+    const u = v.unlinked;
+    if (!u) { line('Outward actions without a decision receipt: could not be checked.', null); return; }
+    const nl = u.not_linkable || {}, ch = nl.by_channel || {};
+    line('Outward actions without a decision receipt, last ' + u.window_days + ' days: ' + (u.problems || 0)
+         + ' of ' + (u.checked || 0) + ' checked (approved cards carried out, approved batches run'
+         + ' and sends that name their decision)'
+         + (u.partial ? '. Only the newest part was read.' : '.'), (u.problems || 0) > 0);
+    (u.items || []).forEach(it => line('  ' + (it.source === 'card' ? 'card ' : it.source === 'send' ? 'send ' : 'batch run ') + it.ref
+      + (it.by ? ' (' + it.by + ')' : '') + ': ' + (it.problem === 'missing_id' ? 'names no decision' : 'its decision is not in the ledger'), true));
+    line('Sends recorded without an action id to match (not linkable): ' + (nl.total || 0)
+         + (Object.keys(ch).length ? ' (' + Object.entries(ch).map(([k, n]) => k + ' ' + n).join(', ') + ')' : '') + '.', null);
+  }
+  // The activity record's history (activity_ledger.verify_chain): every row kept,
+  // chained across segments; older rows archived, never deleted. Counts only.
+  function activityRecord(v) {
+    const p = $('activity-record');
+    const a = v.activity;
+    if (!a) { p.className = 'muted'; p.textContent = 'Activity record: could not be checked.'; return; }
+    const fb = a.first_break;
+    p.className = a.state === 'broken' ? 'bad' : (a.state === 'intact' || a.state === 'before_chaining' ? 'ok' : 'muted');
+    p.textContent = 'Activity record: ' + (a.lines || 0) + ' entr' + (a.lines === 1 ? 'y' : 'ies') + ' in '
+      + (a.activity_segments || 0) + ' file(s), ' + (a.chained || 0) + ' chained'
+      + (a.legacy_unchained ? ', ' + a.legacy_unchained + ' from before chaining (brought in, not tampered with)' : '')
+      + (a.legacy_file_waiting ? ', an older activity file still waiting to be brought in' : '')
+      + (a.archived_notes ? ', ' + (a.archived_segments || 0) + ' older ledger file(s) moved to the encrypted archive, each noted in the chain' : '')
+      + '; ' + (a.activity_breaks || 0) + ' break(s) on activity entries'
+      + (fb ? ', first at ' + fb.segment + ' line ' + fb.line + (fb.seq != null ? ' (record ' + fb.seq + ')' : '') + ': ' + fb.reason : '')
+      + (a.partial ? '. Only the newest part was checked.' : '.');
+  }
+  // Everything, together (services/unified_ledger, A12): every receipt family in
+  // one list, or everything that names one id. Every value is set with textContent.
+  const LINK_WORDS = { direct: 'names it', via_task: 'same task', via_decision: 'same decision', via_goal: 'same goal' };
+  let unifiedCursor = null;
+  // the family and id the first page was read with: "Older records" pages
+  // that list, not whatever the form says now
+  let unifiedQuery = { family: '', id: '' };
+  // Why? (services/explain, A13): what Friday did for one action or task, why,
+  // which model, what information, what left this PC, on whose authority, what
+  // it cost and what changed, as plain text set with textContent only.
+  // each press is numbered: an answer that comes back after a newer press
+  // was made is dropped, so it never overwrites the newer one
+  let explainSeq = 0;
+  function explainShow(kind, id) {
+    const box = $('u-why-box'), out = $('u-why');
+    const mine = ++explainSeq;
+    box.hidden = false;
+    out.textContent = 'Reading…';
+    const p = new URLSearchParams();
+    p.set(kind === 'task' ? 'task_id' : 'action_id', id);
+    api('/api/ledger/explain?' + p.toString()).then(({ ok, d }) => {
+      if (mine !== explainSeq) return;
+      out.textContent = ok ? String(d.text || '') : ((d && d.error) || 'This could not be explained right now.');
+    }).catch(() => {
+      if (mine !== explainSeq) return;
+      out.textContent = 'This could not be explained right now.';
+    });
+  }
+  function whyButton(kind, id) {
+    const b = el('button', 'Why?');
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Why? Explain ' + kind + ' ' + id);
+    b.addEventListener('click', () => explainShow(kind, id));
+    return b;
+  }
+  function unifiedRender(rows, append) {
+    const body = $('u-rows');
+    if (!append) body.textContent = '';
+    rows.forEach(r => {
+      const tr = el('tr');
+      tr.appendChild(el('td', String(r.ts || 'undated').replace('T', ' ').replace('Z', '')));
+      const what = el('td');
+      what.appendChild(el('div', r.summary));
+      what.appendChild(el('div', r.kind + (r.link ? ' · ' + (LINK_WORDS[r.link] || r.link) : ''), 'muted'));
+      tr.appendChild(what);
+      tr.appendChild(el('td', r.where));
+      tr.appendChild(el('td', r.signed ? 'yes' : 'no', r.signed ? 'ok' : 'muted'));
+      tr.appendChild(el('td', r.chained ? 'yes' : 'no', r.chained ? 'ok' : 'muted'));
+      const ids = el('td');
+      Object.entries(r.ids || {}).forEach(([k, v]) => ids.appendChild(el('div', k.replace(/_/g, ' ') + ' ' + v)));
+      const rid = r.ids || {};
+      if (rid.action_id) ids.appendChild(whyButton('action', rid.action_id));
+      else if (rid.task_id) ids.appendChild(whyButton('task', rid.task_id));
+      tr.appendChild(ids);
+      body.appendChild(tr);
+    });
+  }
+  function unifiedLoad(append) {
+    const p = new URLSearchParams();
+    if (!append) unifiedQuery = { family: $('u-family').value, id: $('u-id').value.trim() };
+    const fam = unifiedQuery.family, id = unifiedQuery.id;
+    if (fam) p.set('family', fam);
+    if (id) p.set('id', id);
+    if (append && unifiedCursor) p.set('cursor', unifiedCursor);
+    api('/api/ledger/unified?' + p.toString()).then(({ ok, d }) => {
+      if (!ok) { $('u-count').textContent = (d && d.error) || 'The records could not be read together.'; return; }
+      const sel = $('u-family');
+      if (sel.options.length === 1) Object.entries(d.families || {}).forEach(([k, v]) => { const o = el('option', v); o.value = k; sel.appendChild(o); });
+      const rows = d.rows || [];
+      unifiedRender(rows, append);
+      unifiedCursor = d.next_cursor || null;
+      $('u-more').hidden = !unifiedCursor;
+      $('u-count').textContent = (append ? 'More: ' : 'Showing ') + rows.length + ' record' + (rows.length === 1 ? '' : 's')
+        + (d.traced ? ' that name this id or share its task, decision or goal.' : ', newest first.');
+      const bad = Object.entries(d.sources || {}).filter(([, s]) => s && s.ok === false);
+      const s = $('u-sources');
+      s.className = bad.length ? 'bad' : 'muted';
+      const cut = (d.truncated || []).map(n => n.replace(/_/g, ' '));
+      s.className = (bad.length || d.out_of_time) ? 'bad' : 'muted';
+      s.textContent = (bad.length
+        ? 'Could not be read this time: ' + bad.map(([n, st]) => n.replace(/_/g, ' ') + ' (' + st.error + ')').join(', ') + '. Everything else is listed.'
+        : (d.out_of_time ? 'Some stores ran out of time, so older records may be missing.' : 'Every store was read.'))
+        + (cut.length ? ' Only the newest part was read of: ' + cut.join(', ') + '.' : '');
+    });
+  }
+  $('uf').addEventListener('submit', ev => { ev.preventDefault(); unifiedCursor = null; unifiedLoad(false); });
+  $('u-more').addEventListener('click', () => unifiedLoad(true));
   $('f').addEventListener('submit', ev => { ev.preventDefault(); lastSeq = null; load(false); });
   $('more').addEventListener('click', () => load(true));
   $('verify').addEventListener('click', () => api('/api/ledger/verify').then(({ d }) => showState(d.report)));
@@ -196,7 +383,9 @@
     });
   });
   load(false);
+  unifiedLoad(false);
   retention();
+  integrity();
   outwardAudit();
 })();
 </script>

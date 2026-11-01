@@ -76,6 +76,14 @@ const GUARDED_GROUP = /scheduled jobs|file access|computer control|agent workspa
 /** Sections that are accounts and phone lines from top to bottom: opened and listed, never changed. */
 const LOOK_ONLY_SECTIONS = new Set(['connections']);
 
+/**
+ * NOT_A_SETTING. A control that lives in Settings but is not a setting (a search box, its filter ticks and its
+ * "show corrected" switch, which change what a list shows and save nothing) carries data-walk-skip="<why>" on the
+ * control element itself. The walk lists it as "present (not a setting)" with that reason and leaves it. The marker is
+ * honoured only on the control, never inherited from a container, and a marked control inside a setting row
+ * (an element with data-st-key) fails the walk: a setting cannot opt out. Used by: MemorySearchPanel (Privacy & Data >
+ * Search what Friday remembers); the static guard is tests/unit/test_memory_search_panel_walk_skip.py.
+ */
 /** The only free-text fields the walk types into. Everything else is present-only. */
 const TEXT_OK = /^(name|language|speaking style)\b/i;
 
@@ -141,7 +149,10 @@ async function discover(page: Page) {
       e.setAttribute('data-walk-id', String(n));
       const sec = e.closest('[data-st-section]');
       const group = sec ? (sec.getAttribute('data-st-section') || '') : '';
-      out.push({ id: n, kind, label, group, visible: r.width > 0 && r.height > 0, disabled: !!e.disabled });
+      // NOT_A_SETTING: read from the control itself only, never from a container.
+      const skip = (e.getAttribute('data-walk-skip') || '').trim();
+      const inSettingRow = !!e.closest('[data-st-key]');
+      out.push({ id: n, kind, label, group, visible: r.width > 0 && r.height > 0, disabled: !!e.disabled, skip, inSettingRow });
       n++;
     });
     return out;
@@ -270,6 +281,14 @@ test.describe('Settings walk', () => {
         const nth = (seen[key] = (seen[key] || 0) + 1) - 1;
         const base = { section: sec.label, group: c.group || '', kind: c.kind, label: c.label };
         const loc = page.locator(`[data-walk-id="${c.id}"]`);
+        if (c.skip) {
+          // NOT_A_SETTING (above): listed, never changed; a setting row may not opt out.
+          rows.push({ ...base, action: 'present (not a setting)', posted: '', apiPersisted: '', uiPersisted: '',
+            result: c.inSettingRow ? 'fail' : 'pass',
+            detail: c.inSettingRow ? 'data-walk-skip on a control inside a setting row (data-st-key): a setting cannot opt out of the walk'
+              : 'seen; not a setting: ' + c.skip });
+          continue;
+        }
         if (!c.visible || c.disabled || (await loc.count()) === 0) {
           rows.push({ ...base, action: 'skipped', posted: '', apiPersisted: '', uiPersisted: '', result: 'info',
             detail: c.disabled ? 'disabled' : 'not visible or re-rendered' });

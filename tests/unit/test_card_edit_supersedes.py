@@ -16,6 +16,7 @@ import pytest
 from agent_friday.services import conversation_fts as fts
 from agent_friday.services import conversations as cv
 from agent_friday.services import core_memory as cm
+from agent_friday.services import corrections as co
 from agent_friday.services import prompt_freeze
 from agent_friday.services import user_model as um
 
@@ -71,6 +72,8 @@ def world(tmp_path, monkeypatch):
     from agent_friday.services import model_router
     monkeypatch.setattr(cm, "_dir", lambda: tmp_path / "core_memory")
     monkeypatch.setattr(cm, "_MIGRATION_CHECKED", {})
+    # A card correction writes an event: keep it in tmp_path, never the real Friday home.
+    monkeypatch.setattr(co, "_dir", lambda: tmp_path / "corrections")
     monkeypatch.setattr(um, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(um, "DB_PATH", tmp_path / "user_model.db")
     monkeypatch.setattr(cv, "_root", lambda: tmp_path / "conversations")
