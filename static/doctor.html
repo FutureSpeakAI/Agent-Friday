@@ -574,6 +574,10 @@
   $('resume').addEventListener('click', () => {
     api('/api/restore/resume', { method: 'POST', body: '{}' }).then(({ ok, d }) => {
       text($('restore-note'), ok ? 'Friday may act again on this PC.' : (d.error || 'Not resumed.'));
+      if (!ok && Array.isArray(d.blockers)) {           // what blocks it, as its own list
+        const ul = $('restore-left'); ul.textContent = '';
+        d.blockers.forEach(b => { const li = document.createElement('li'); li.textContent = b.said; ul.appendChild(li); });
+      }
       restoreState();
     });
   });

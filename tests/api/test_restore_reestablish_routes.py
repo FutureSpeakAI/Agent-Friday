@@ -33,6 +33,7 @@ def test_resume_waits_for_what_is_missing_and_says_what(client, monkeypatch):
         r = client.post("/api/restore/resume", json={}, headers=_press())
         assert r.status_code == 409 and r.get_json()["code"] == "not_reestablished"
         assert r.get_json()["blockers"] == left and hold.exists()
+        assert r.get_json()["error"] == "Friday couldn't resume yet; here's what's blocking it."   # fixed words
         monkeypatch.setattr(restore_reestablish, "blockers", lambda home=None, **k: [])
         r = client.post("/api/restore/resume", json={}, headers=_press())
         assert r.status_code == 200 and r.get_json()["resumed"] is True

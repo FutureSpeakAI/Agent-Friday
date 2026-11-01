@@ -139,7 +139,9 @@ def blockers(home: Optional[Path] = None, *, deep: bool = False) -> list:
         try:
             out += part(h, deep)
         except Exception as e:  # noqa: BLE001 - a check that fails holds
+            # the error's name goes to the log, not to the page
+            print("  [restore] the %s check failed: %s" % (part.__name__.strip("_"), type(e).__name__))
             out.append({"code": "check_failed", "what": part.__name__.strip("_"),
-                        "said": "Friday could not check this part after the restore (%s). Press Check "
-                                "again; if it stays, run the checks on this page." % type(e).__name__})
+                        "said": "Friday could not check this part after the restore. Press Check "
+                                "again; if it stays, run the checks on this page."})
     return out

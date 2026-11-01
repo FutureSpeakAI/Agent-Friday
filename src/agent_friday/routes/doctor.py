@@ -426,9 +426,18 @@ def restore_resume():
     try:
         done = friday_bundle.resume_after_restore("owner:ui")
         return jsonify({"status": "ok", "resumed": done})
-    except friday_bundle.NotReestablished as e:
-        return jsonify({"status": "error", "code": "not_reestablished", "error": str(e),
-                        "blockers": e.blockers}), 409
+    except friday_bundle.NotReestablished:
+        # Friday's own words only: a fixed sentence, then what blocks it as a
+        # list read again from the checks (never text taken from the exception).
+        from agent_friday.services import restore_reestablish
+        try:
+            left = restore_reestablish.blockers()
+        except Exception:  # noqa: BLE001 - the page's Check again shows the list
+            left = []
+        return jsonify({"status": "error", "code": "not_reestablished",
+                        "error": "Friday couldn't resume yet; here's what's blocking it.",
+                        "blockers": [{k: str(b.get(k) or "") for k in ("code", "what", "said")}
+                                     for b in left if isinstance(b, dict)]}), 409
     except Exception as e:  # noqa: BLE001
         return api_error(e, "Outward actions could not be resumed.")
 

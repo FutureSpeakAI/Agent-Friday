@@ -127,3 +127,13 @@ def test_the_command_line_names_what_is_missing_and_does_not_resume(home, monkey
     out = capsys.readouterr().out
     assert rv == 1 and "Still needed" in out and "governance key" in out
     assert (home / "restore" / "hold.json").exists()
+
+
+def test_a_check_that_fails_says_so_without_the_errors_name(home, monkeypatch):
+    rr = _rr()
+
+    def boom(h, deep):
+        raise PermissionError(r"C:\Users\someone\secret path")
+    monkeypatch.setattr(rr, "_channels", boom)
+    left = [b for b in rr.blockers(home) if b["code"] == "check_failed"]
+    assert left and all("PermissionError" not in b["said"] and "secret" not in b["said"] for b in left)
