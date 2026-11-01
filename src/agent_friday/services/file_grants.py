@@ -585,6 +585,15 @@ def _append_event(event: dict) -> dict:
         with open(path, "a", encoding="utf-8", newline="\n") as f:
             f.write(line + "\n")
     _invalidate_cache()
+    # the one record of what Friday did (services/action_ledger): what happened
+    # to which grant, never the path it covers
+    try:
+        from agent_friday.services import action_ledger
+        action_ledger.try_append("file_grant", {
+            k: event.get(k) for k in ("event", "type", "id", "target_id", "reattested_from")
+            if isinstance(event.get(k), str)})
+    except Exception:
+        pass
     return event
 
 

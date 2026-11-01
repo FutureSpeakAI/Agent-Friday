@@ -243,6 +243,12 @@
 .fa-chart{width:100%;height:100%;display:block}
 .fa-legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:rgba(255,255,255,0.75);padding:4px 2px 0}
 .fa-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.fa-legend i.fa-swatch{width:26px;height:12px;border-radius:0;vertical-align:-2px}
+.fa-chart-as{margin-left:auto;min-height:24px;min-width:24px;padding:2px 10px;border-radius:6px;border:1px solid rgba(0,212,255,0.35);background:transparent;color:${ACCENT};font:600 11px Inter,system-ui,sans-serif;cursor:pointer}
+.fa-chart-table table{border-collapse:collapse;width:100%;font-size:12px}
+.fa-chart-table caption{text-align:left;color:rgba(255,255,255,0.7);padding:2px 0 6px}
+.fa-chart-table th,.fa-chart-table td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left}
+.fa-chart-table td.num{text-align:right;font-family:'JetBrains Mono',monospace}
 @media (max-width:390px){.fa-brand{letter-spacing:.14em}.fa-tools .fa-btn{padding:3px 7px;font-size:10.5px}}
 `;
   function ensureCss() {
@@ -323,11 +329,24 @@
     const spec = content || {};
     const W = Math.max(240, size.w || 480), H = Math.max(160, (size.h || 300) - 28);
     const r = useMemo(() => window.FridayChart ? window.FridayChart.renderSVG(spec, W, H) : { svg: '', legend: [], empty: true }, [content, W, H]);
+    // The same data as a table, for a screen reader or anyone who would rather read numbers (north star 33.1-12).
+    const [asTable, setAsTable] = useState(false);
+    const table = useMemo(() => asTable && window.FridayChart && window.FridayChart.tableHTML ? window.FridayChart.tableHTML(spec) : '', [content, asTable]);
+    // Drawn once per legend, not on every render (each swatch takes a fresh pattern id).
+    const swatchSvg = useMemo(() => (r.legend || []).map(l => window.FridayChart && window.FridayChart.legendSwatch ? window.FridayChart.legendSwatch(l) : ''), [r]);
     if (!window.FridayChart) return h('div', { className: 'fa-empty' }, 'The chart renderer did not load.');
     if (r.empty) return h('div', { className: 'fa-empty' }, 'Nothing to chart yet.');
+    const swatch = (l, i) => swatchSvg[i]
+      ? h('i', { className: 'fa-swatch', dangerouslySetInnerHTML: { __html: swatchSvg[i] } })
+      : h('i', { style: { background: l.color } });
     return h('div', { style: { height: '100%', display: 'flex', flexDirection: 'column' } },
-      h('div', { className: 'fa-chart', style: { flex: 1, minHeight: 0 }, dangerouslySetInnerHTML: { __html: r.svg } }),
-      r.legend.length ? h('div', { className: 'fa-legend' }, r.legend.map((l, i) => h('span', { key: i }, h('i', { style: { background: l.color } }), l.name))) : null);
+      asTable
+        ? h('div', { className: 'fa-chart-table', style: { flex: 1, minHeight: 0, overflow: 'auto' }, dangerouslySetInnerHTML: { __html: table } })
+        : h('div', { className: 'fa-chart', style: { flex: 1, minHeight: 0 }, dangerouslySetInnerHTML: { __html: r.svg } }),
+      h('div', { className: 'fa-legend' },
+        r.legend.map((l, i) => h('span', { key: i }, swatch(l, i), l.name)),
+        h('button', { type: 'button', className: 'fa-chart-as', 'aria-pressed': asTable, onClick: () => setAsTable(v => !v),
+          title: asTable ? 'Show the chart' : 'Show the data as a table' }, asTable ? 'Chart' : 'Table')));
   }
 
   function Diff({ diff }) {
@@ -1007,7 +1026,7 @@
     // The divider drag.
     useEffect(() => {
       if (!dragging) return;
-      const mv = e => { const st = dragStart.current; if (!st) return; const w = Math.min(hostW - CHAT_MIN_W - 6, Math.max(PANEL_MIN_W, st.w + (st.x - e.clientX))); setWidth(w); };
+      const mv = e => { const st = dragStart.current; if (!st) return; if (Math.abs(st.x - e.clientX) > 3) st.moved = true; const w = Math.min(hostW - CHAT_MIN_W - 6, Math.max(PANEL_MIN_W, st.w + (st.x - e.clientX))); setWidth(w); };
       const up = () => setDragging(false);
       window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
       return () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
@@ -1056,7 +1075,27 @@
           onClick: () => { onTrayPlace(traySide || 'right', 2 / 3); setOpen(true); } }, '\u21E4 Beside the chat') : null) : null,
       h('div', { className: 'fa-chat', style: has && !side && open ? { display: 'none' } : undefined }, buildBar, children),
       has && open && unbuild && side ? h('div', { className: 'fa-unbuild' }, unbuild) : null,
-      has && side && open ? h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), title: 'Drag to resize', onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW }; setDragging(true); } }) : null,
+      // The divider, without dragging too (WCAG 2.5.7; north star 33.1-14): a click steps through three
+      // widths, and with focus the arrow keys widen and narrow the panel (Home and End: narrowest, widest).
+      has && side && open ? (() => {
+        const maxW = Math.max(PANEL_MIN_W, hostW - CHAT_MIN_W - 6);
+        const fit = w => Math.min(maxW, Math.max(PANEL_MIN_W, Math.round(w)));
+        const presets = [1 / 3, 1 / 2, 2 / 3].map(f => fit(hostW * f));
+        const next = () => setWidth(presets.find(p => p > panelW + 8) || presets[0]);
+        return h('div', { className: 'fa-divider' + (dragging ? ' fa-dragging' : ''), role: 'separator', tabIndex: 0,
+          'aria-orientation': 'vertical', 'aria-label': 'Panel width', 'aria-valuenow': Math.round(panelW),
+          'aria-valuemin': PANEL_MIN_W, 'aria-valuemax': Math.round(maxW),
+          title: 'Drag to resize, click for the next width, or use the arrow keys',
+          onMouseDown: e => { e.preventDefault(); dragStart.current = { x: e.clientX, w: panelW, moved: false }; setDragging(true); },
+          onClick: () => { if (dragStart.current && dragStart.current.moved) return; next(); },
+          onKeyDown: e => {
+            const step = e.shiftKey ? 120 : 40;
+            const to = { ArrowLeft: panelW + step, ArrowRight: panelW - step, Home: PANEL_MIN_W, End: maxW }[e.key];
+            if (to === undefined) return;
+            e.preventDefault(); e.stopPropagation();
+            setWidth(fit(to));
+          } });
+      })() : null,
       has && open ? panel : null,
       has && side && !open ? h('div', { className: 'fa-rail', role: 'button', title: 'Open the panel', 'aria-label': 'Open the panel', onClick: () => setOpen(true) },
         h('span', { style: { color: ACCENT, fontSize: 13 } }, '⟨'),

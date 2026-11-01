@@ -1387,6 +1387,9 @@
   "temperature": {
    "type": "number"
   },
+  "text_scale": {
+   "type": "number"
+  },
   "tool_hooks": {
    "properties": {
     "audit_log": {

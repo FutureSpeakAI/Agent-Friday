@@ -83,7 +83,7 @@ def api_memory_proposals_approve():
 def api_memory_proposals_suppress():
     data = request.get_json(silent=True) or {}
     try:
-        return jsonify(mp.suppress(str(data.get("fact_id") or "")))
+        return jsonify(public_result(mp.suppress(str(data.get("fact_id") or "")), "Couldn't record that"))
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't record that", shape="ok", key="reason")
