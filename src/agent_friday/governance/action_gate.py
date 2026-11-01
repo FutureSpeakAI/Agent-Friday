@@ -921,6 +921,122 @@ def _laya_down() -> bool:
         return True
 
 
+#: Class 5, forbidden (NS-18.2-7): never a card, whatever was approved or granted.
+#: Friday's own governance state, relative to its folder: a model call may read some of it (that is
+#: credential_paths' call), never change or remove it.
+_GOVERNANCE_STATE = ("governance", "ledger", "vault", "safe_mode", "restore", "approvals.json",
+                     "settings.json", "setting_changes.json", "mcp_servers.json", "global_stop.json",
+                     "decision-bom.jsonl", "idempotency_keys.json")
+#: The same, as a command or a piece of code would name them: inside Friday's folder (a project
+#: of the owner's may have its own settings.json or ledger; only Friday's are governance).
+_GOVERNANCE_WORDS = re.compile(
+    r"(?:(?:\.friday|friday_home\(?\)?|\$env:FRIDAY_HOME|%FRIDAY_HOME%|FRIDAY_HOME)['\"]?\s*[\\/+,]+\s*['\"]?"
+    r"(?:governance|ledger|vault|safe_mode|restore|approvals\.json|settings\.json|setting_changes\.json|"
+    r"mcp_servers\.json|global_stop\.json|decision-bom)|\.governance-key|claws\.pin\.json)", re.I)
+#: A command or code that changes or removes a file.
+_CHANGES_FILES = re.compile(
+    r"(?:\bremove-item\b|\bdel\b|\berase\b|\brm\b|\brmdir\b|\bset-content\b|\badd-content\b|"
+    r"\bout-file\b|\bmove-item\b|\bcopy-item\b|\brename-item\b|\bclear-content\b|\bni\b|"
+    r"\bri\b|\brni\b|\bmi\b|\bcpi\b|\bren\b|\bmv\b|\bcp\b|\bac\b|\bsc\b|\bclc\b|"
+    r"\bnew-item\b|>|\bunlink\b|\bremove\(|\brmtree\b|\bwrite_text\b|\bwrite_bytes\b|"
+    r"\bwritealltext\b|\bwriteallbytes\b|\bopen\([^)]*,\s*(?:mode\s*=\s*)?['\"][wax+r]*[wax+]|"
+    r"\bos\.replace\b|\bos\.rename\b|\bshutil\.)", re.I)
+#: Loopback in any spelling that reaches this machine (127.1, a decimal or hex address, IPv6).
+_LOOPBACK = re.compile(r"(?:\blocalhost\b|\b127(?:\.\d+){1,3}\b|\b0\.0\.0\.0\b|\b2130706433\b|"
+                       r"\b0x7f[0-9a-f]{0,6}\b|\[::1\]|(?<![\w:])::1(?![\w:])|\bagent\.friday\b)", re.I)
+#: ...and what makes a loopback address Friday's own API, not the owner's own dev server on it.
+_FRIDAY_API_HINT = re.compile(r"/api/|\bFRIDAY_PORT\b|\bagent\.friday\b|X-Friday", re.I)
+# (Linear: the names before agent_friday are separated by a required comma, so no two parts of the
+# pattern can match the same run of spaces; CodeQL polynomial-regex alert on #640.)
+_IMPORTS_FRIDAY = re.compile(r"(?:\bimport\s+(?:[\w.]+[ \t]*,[ \t]*)*agent_friday\b|\bfrom\s+agent_friday\b|"
+                             r"__import__\(\s*['\"]agent_friday|import_module\(\s*['\"]agent_friday|"
+                             r"-m\s+agent_friday\b)")
+#: Tools that run text as a program or a shell session.
+_EXEC_TOOLS = frozenset({"run_command", "run_sandboxed", "spawn_interactive_session", "send_to_session",
+                         "codebase_run", "install_package"})
+#: Tools that write a file named in their arguments (and connector tools with a path argument).
+_PATH_WRITE_TOOLS = frozenset({"write_file", "fill_pdf_form", "codebase_edit", "codebase_undo"})
+
+
+def _strings(value, out=None, depth=0) -> list:
+    out = [] if out is None else out
+    if depth > 6:
+        return out
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, dict):
+        for v in value.values():
+            _strings(v, out, depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _strings(v, out, depth + 1)
+    return out
+
+
+_MCP_READ = re.compile(r"(?:^|_)(?:get|list|read|search|find|query|fetch|show|describe)(?:_|$)", re.I)
+
+
+def _path_args(a, depth=0):
+    """(key, value) for every argument that names a file: by its key (path, file, dest, target,
+    dir, filename, name) at any depth (codebase_edit's files map keys are paths too)."""
+    out = []
+    if depth > 4 or not isinstance(a, dict):
+        return out
+    for k, v in a.items():
+        lk = str(k).lower()
+        if isinstance(v, str) and any(s in lk for s in ("path", "file", "dest", "target", "dir", "name", "to")):
+            out.append((k, v))
+        elif isinstance(v, dict):
+            if lk == "files":
+                out += [(kk, kk) for kk in v.keys() if isinstance(kk, str)]
+            out += _path_args(v, depth + 1)
+        elif isinstance(v, list):
+            for item in v:
+                out += _path_args(item, depth + 1) if isinstance(item, dict) else []
+    return out
+
+
+def _in_governance_state(path) -> bool:
+    p = _resolve(path)
+    if p is None:
+        return False
+    try:
+        rel = p.relative_to(Path(friday_home()).resolve())
+    except (ValueError, Exception):
+        return False
+    first = rel.parts[0].lower() if rel.parts else ""
+    return first in _GOVERNANCE_STATE
+
+
+def forbidden_reason(tool_name: str, args: Optional[dict]) -> Optional[str]:
+    """Why this call is Class 5, forbidden (NS-18.2-7), or None.
+
+    Forbidden is denied before any card, grant or approval is looked at: an approved card cannot
+    authorise it. It covers a call that would
+      * reach Friday's own API from a program or a shell session (loopback is trusted as the owner,
+        so it could approve its own cards or switch gates off), or drive Friday's code directly
+        (`import agent_friday`);
+      * change or remove Friday's governance state: grants, the action ledger, approvals, settings,
+        the vault and its keys, safe mode, a restore hold, the stop switch.
+    Reading is not this function's business (services/credential_paths)."""
+    a = args or {}
+    name = str(tool_name or "")
+    if name in _EXEC_TOOLS:
+        text = "\n".join(_strings(a))
+        if name != "run_command" and _LOOPBACK.search(text) and _FRIDAY_API_HINT.search(text):
+            return "it would reach Friday's own local API from a program or a session"
+        if _IMPORTS_FRIDAY.search(text):
+            return "it would drive Friday's own code directly, around its gates"
+        if _GOVERNANCE_WORDS.search(text) and _CHANGES_FILES.search(text):
+            return "it would change or remove Friday's governance records (grants, ledger, approvals, keys)"
+    if name in _PATH_WRITE_TOOLS or (name.startswith("mcp_") and not _MCP_READ.search(name)):
+        for k, v in _path_args(a):
+            if isinstance(v, str):
+                if _in_governance_state(v):
+                    return "it would change Friday's governance records (grants, ledger, approvals, settings, keys)"
+    return None
+
+
 def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -> tuple:
     """(INTERNAL|OUTWARD|"forbidden", why). Unknown tools are OUTWARD.
 
@@ -928,6 +1044,9 @@ def classify(tool_name: str, args: Optional[dict], ctx: Optional[dict] = None) -
     owner named in this conversation is theirs to send.
     """
     a = args or {}
+    _why = forbidden_reason(tool_name, a)
+    if _why:
+        return "forbidden", _why
     if tool_name in ("workflow_action", "create_workflow", "schedule_job"):
         # Changing a job the owner pre-approved sends for is the owner's
         # decision, not the model's: a card (governance/send_grants). Any

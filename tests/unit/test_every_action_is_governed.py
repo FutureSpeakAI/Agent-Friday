@@ -317,7 +317,9 @@ def test_writing_fridays_own_state_is_outward(tmp_path, monkeypatch):
     from agent_friday.governance import action_gate as g
     monkeypatch.setattr(g, "friday_home", lambda: tmp_path / "home")
     (tmp_path / "home").mkdir()
-    assert g.classify("write_file", {"path": str(tmp_path / "home" / "settings.json")})[0] == g.OUTWARD
+    assert g.classify("write_file", {"path": str(tmp_path / "home" / "skills" / "x.md")})[0] == g.OUTWARD
+    # Friday's governance records are not a card at all: Class 5, forbidden (NS-18.2-7)
+    assert g.classify("write_file", {"path": str(tmp_path / "home" / "settings.json")})[0] == "forbidden"
     assert g.classify("write_file", {"path": str(tmp_path / "proj" / "SOUL.md")})[0] == g.OUTWARD
     # Outside Friday's own output folders is the owner's disk: it waits too.
     assert g.classify("write_file", {"path": str(tmp_path / "notes" / "todo.md")})[0] == g.OUTWARD
