@@ -8,11 +8,14 @@ sheet) numbers. A finding never carries the file's words.
   PDF      pages are rendered locally with pdfium (pypdfium2, which ships
            with pdfplumber, a core dependency) and read with pdfplumber:
              page_empty / page_nearly_empty   a blank or all-but-blank page
-             text_off_page                    text outside the page
+             text_off_page                    text outside the page (text
+                                              drawn invisibly is ignored)
              text_near_edge                   text inside a printer's margin
              text_overlap                     text drawn over other text
              content_off_page                 a chart, table or picture
-                                              spilling off one edge
+                                              spilling off one edge (an error
+                                              only when the rendered pixels
+                                              show it reaching that edge)
              font_missing                     a font neither embedded nor
                                               one of the PDF standard 14
              image_distorted                  a picture shown at another
@@ -24,7 +27,10 @@ sheet) numbers. A finding never carries the file's words.
            checked from the file's own layout (always), and, when LibreOffice
            is installed here, converted to PDF in a temporary folder and
            rendered as above, plus font_substituted (a font the file asks for
-           that is not in the rendered output):
+           that is not in the rendered output). The converter runs with one
+           shared, locked-down profile under Friday's home (no macros, no link
+           updates), one conversion at a time; a macro-enabled file, or one
+           linking to outside content, is never converted:
              .pptx  shape_off_slide, text_overflow (estimated), alt_text_missing,
                     image_distorted
              .docx  table_too_wide, graphic_too_wide, long_unbroken_text,
@@ -32,9 +38,12 @@ sheet) numbers. A finding never carries the file's words.
              .xlsx  cell_text_cut, cell_shows_hashes
 
 Every result says what it did ("status"):
-  checked           every check ran on every page
+  checked           every check ran on every page (an Office file checked from
+                    its layout alone only when no converter is installed)
   partial           a cap was hit (pages, time): the pages after it were not
-                    looked at, so the file is never "passed"
+                    looked at; or a converter is here but this Office file
+                    was not converted or rendered (layout checked only). The
+                    file is never "passed"
   could_not_render  the PDF renderer is missing here or failed: no pixel
                     check ran (what could be read without pixels is still
                     reported); never a pass
@@ -42,22 +51,28 @@ Every result says what it did ("status"):
   not_applicable    a kind this module does not look at
 
 Bounded (bytes, pages, a time budget, a pixel cap per page, a converter
-timeout, an isolated child with a hard limit), deterministic (no sampling at
-random, pages in order) and fail-safe: `check` never raises.
+timeout, an isolated child with a hard time and memory limit and a minimal
+environment, whose whole process tree is killed on a time-out),
+deterministic (no sampling at random, pages in order) and fail-safe: `check`
+never raises.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import itertools
 import json
 import math
 import os
 import posixpath
 import re
 import shutil
+import signal
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -83,8 +98,22 @@ MAX_PARAGRAPHS = 20_000
 MAX_MEDIA_HEAD = 512 * 1024
 #: LibreOffice gets this long to convert one file.
 CONVERT_TIMEOUT_S = 15
-#: The isolated child is abandoned after this long.
+#: The isolated child is abandoned after this long (it and everything it
+#: started are killed).
 ISOLATED_TIMEOUT_S = 45
+#: The isolated child (and the converter it starts) may use at most this
+#: much memory: a Windows job's memory limit, a POSIX address-space limit.
+CHILD_MEMORY_BYTES = 1024 * 1024 * 1024
+#: Left-over friday-vqa-* temporary folders older than this are removed.
+STALE_TEMP_S = 3600
+#: Macro-enabled Office files are never handed to the converter.
+MACRO_KINDS = frozenset((".xlsm", ".docm", ".pptm"))
+#: Relationship types whose external targets the converter could fetch.
+EXTERNAL_TYPES = frozenset(("image", "oleObject", "frame", "attachedTemplate", "subDocument",
+                            "externalLinkPath", "audio", "video", "media"))
+#: Per sheet: merged ranges read, and merged-range comparisons in all.
+MAX_MERGES = 2000
+MAX_MERGE_WORK = 2_000_000
 #: Page numbers listed per finding, findings per result.
 MAX_LISTED_PAGES = 20
 MAX_FINDINGS = 30
@@ -115,7 +144,7 @@ CODES: Dict[str, Tuple[str, str]] = {
     "text_off_page": ("error", "text runs off the edge of the page"),
     "text_near_edge": ("warn", "text sits so close to the edge that a printer may cut it off"),
     "text_overlap": ("warn", "text is drawn over other text"),
-    "content_off_page": ("error", "a chart, table or picture spills off the page"),
+    "content_off_page": ("warn", "a chart, table or picture spills off the page"),
     "font_missing": ("warn", "a font is not embedded, so the reader may see a different font"),
     "font_substituted": ("warn", "a font the file asks for was replaced by another when it was rendered"),
     "image_distorted": ("warn", "a picture is stretched out of shape"),
@@ -212,43 +241,461 @@ def _renderer():
 
 
 def find_converter() -> Optional[str]:
-    """LibreOffice's soffice when this machine has it, else None."""
-    for name in ("soffice", "libreoffice"):
-        found = shutil.which(name)
-        if found:
-            return found
+    """LibreOffice's soffice when this machine has it, else None. Its usual
+    install folders come first; PATH is looked at last, never the current
+    folder."""
     candidates = []
-    for env in ("ProgramFiles", "ProgramFiles(x86)"):
-        base = os.environ.get(env)
-        if base:
-            candidates.append(Path(base) / "LibreOffice" / "program" / "soffice.exe")
-    candidates.append(Path("/Applications/LibreOffice.app/Contents/MacOS/soffice"))
+    if os.name == "nt":
+        for env in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+            base = os.environ.get(env)
+            if base:
+                candidates.append(Path(base) / "LibreOffice" / "program" / "soffice.exe")
+    else:
+        candidates += [Path("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+                       Path("/usr/lib/libreoffice/program/soffice"), Path("/usr/bin/soffice"),
+                       Path("/usr/local/bin/soffice"), Path("/opt/libreoffice/program/soffice")]
     for c in candidates:
         try:
             if c.is_file():
                 return str(c)
         except OSError:
             continue
+    if os.name == "nt":
+        # Without this, Windows (and shutil.which on newer Pythons) also
+        # looks in the current folder for a program of that name.
+        os.environ.setdefault("NoDefaultCurrentDirectoryInExePath", "1")
+    try:
+        here = Path.cwd().resolve()
+    except OSError:
+        here = None
+    for name in ("soffice", "libreoffice"):
+        found = shutil.which(name)
+        if not found:
+            continue
+        try:
+            if here is not None and Path(found).resolve().parent == here:
+                continue                                 # never a program in the current folder
+        except OSError:
+            continue
+        return found
     return None
 
 
-def _convert(exe: str, src: Path, work: Path, timeout: float = CONVERT_TIMEOUT_S) -> Optional[Path]:
-    """`src` converted to PDF inside `work` (a temporary folder), or None. The
-    converter reads a copy under a fixed name, with a profile of its own."""
+# ── child processes: a minimal environment, the whole tree killed ───────────
+
+#: The only environment variables a child gets (so no API key is inherited).
+_CHILD_ENV = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR",
+              "USERPROFILE", "HOME", "LANG", "LC_ALL")
+
+
+def _child_env() -> Dict[str, str]:
+    env = {}
+    for name in _CHILD_ENV:
+        value = os.environ.get(name)
+        if value:
+            env[name] = value
+    return env
+
+
+_WIN = None
+
+
+def _win_api():
+    """kernel32 and ntdll with the job-object calls typed (Windows only)."""
+    global _WIN
+    if _WIN is not None:
+        return _WIN
+    import ctypes
+    from ctypes import wintypes
+
+    class IO(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_ulonglong) for n in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", IO),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+    k32.SetInformationJobObject.restype = wintypes.BOOL
+    k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    k32.AssignProcessToJobObject.restype = wintypes.BOOL
+    k32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    k32.TerminateJobObject.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    k32.CloseHandle.restype = wintypes.BOOL
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    _WIN = (ctypes, k32, ntdll, Extended)
+    return _WIN
+
+
+_JOB_LIMIT_JOB_MEMORY = 0x0200
+_JOB_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x0400
+_JOB_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_EXTENDED_LIMIT_INFORMATION = 9
+_CREATE_SUSPENDED = 0x00000004
+
+
+def _win_contain(proc, memory_bytes: Optional[int]):
+    """Puts the suspended `proc` in a new job object (everything in it is
+    killed when the job's handle is closed; a memory limit when asked), then
+    lets it run. Returns the job handle, or None when no job could be made
+    (it runs anyway, and a time-out falls back to taskkill /T)."""
+    ctypes, k32, ntdll, Extended = _win_api()
+    job = None
+    try:
+        job = k32.CreateJobObjectW(None, None)
+        if job:
+            info = Extended()
+            flags = _JOB_LIMIT_KILL_ON_JOB_CLOSE | _JOB_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
+            if memory_bytes:
+                flags |= _JOB_LIMIT_JOB_MEMORY
+                info.JobMemoryLimit = int(memory_bytes)
+            info.BasicLimitInformation.LimitFlags = flags
+            if not (k32.SetInformationJobObject(job, _JOB_EXTENDED_LIMIT_INFORMATION, ctypes.byref(info),
+                                                ctypes.sizeof(info))
+                    and k32.AssignProcessToJobObject(job, int(proc._handle))):
+                k32.CloseHandle(job)
+                job = None
+    except Exception:
+        if job:
+            try:
+                k32.CloseHandle(job)
+            except Exception:
+                pass
+        job = None
+    # The process was created suspended, so nothing it starts escapes the job.
+    if ntdll.NtResumeProcess(int(proc._handle)) != 0:
+        _kill_tree(proc, job)
+        _close_job(job)
+        raise OSError("the child process could not be started")
+    return job
+
+
+def _close_job(job) -> None:
+    """Closes the job's handle: whatever is still running in it is killed."""
+    if job:
+        try:
+            _win_api()[1].CloseHandle(job)
+        except Exception:
+            pass
+
+
+def _kill_tree(proc, job) -> None:
+    """Kills `proc` and everything it started."""
+    if os.name == "nt":
+        if job:
+            try:
+                _win_api()[1].TerminateJobObject(job, 1)
+            except Exception:
+                pass
+        else:
+            taskkill = os.path.join(os.environ.get("SYSTEMROOT") or r"C:\Windows", "System32", "taskkill.exe")
+            try:
+                subprocess.run([taskkill, "/F", "/T", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+                               env=_child_env(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except Exception:
+                pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)          # its own session: the whole group
+        except OSError:
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _posix_limits(memory_bytes: Optional[int]):
+    """A preexec_fn: the address-space limit for the isolated child. For the
+    converter (None) an inherited limit is lifted back to the hard limit, as
+    LibreOffice reserves far more address space than it uses."""
+    def apply():
+        try:
+            import resource
+            soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+            if memory_bytes:
+                want = memory_bytes if hard == resource.RLIM_INFINITY else min(memory_bytes, hard)
+            else:
+                want = hard
+            resource.setrlimit(resource.RLIMIT_AS, (want, hard))
+        except Exception:
+            pass
+    return apply
+
+
+def _run_contained(argv: List[str], timeout: float, *, memory_bytes: Optional[int] = None) -> Tuple[int, bytes]:
+    """Runs `argv` with a minimal environment and returns (exit code, stdout).
+    On Windows it runs in a job object (killed with the job), on POSIX in a
+    session of its own, so a time-out (subprocess.TimeoutExpired, re-raised)
+    kills it and everything it started."""
+    kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.DEVNULL,
+          "env": _child_env()}
+    if os.name == "nt":
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0) | _CREATE_SUSPENDED
+    else:
+        kw["start_new_session"] = True
+        kw["preexec_fn"] = _posix_limits(memory_bytes)
+    proc = subprocess.Popen(argv, **kw)
+    job = None
+    try:
+        if os.name == "nt":
+            job = _win_contain(proc, memory_bytes)
+        try:
+            out, _err = proc.communicate(timeout=max(0.0, float(timeout)))
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc, job)
+            try:
+                proc.communicate(timeout=5)
+            except Exception:
+                pass
+            raise
+        return proc.returncode, out or b""
+    finally:
+        _close_job(job)
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        try:
+            if proc.stdout is not None:
+                proc.stdout.close()
+        except Exception:
+            pass
+
+
+@contextlib.contextmanager
+def _workdir():
+    """A temporary friday-vqa-* folder, removed afterwards even when a file
+    in it is still held (whatever is left is swept on a later check)."""
+    with tempfile.TemporaryDirectory(prefix="friday-vqa-", ignore_cleanup_errors=True) as td:
+        yield Path(td)
+
+
+_LAST_SWEEP = 0.0
+
+
+def _sweep_stale_temp(force: bool = False) -> int:
+    """Removes friday-vqa-* temporary folders older than STALE_TEMP_S (left by
+    a check that was killed). At most once a minute per process. Returns how
+    many were removed. Never raises."""
+    global _LAST_SWEEP
+    now = time.time()
+    if not force and now - _LAST_SWEEP < 60:
+        return 0
+    _LAST_SWEEP = now
+    removed = 0
+    try:
+        with os.scandir(tempfile.gettempdir()) as it:
+            for entry in it:
+                if removed >= 50:
+                    break
+                if not entry.name.startswith("friday-vqa-"):
+                    continue
+                try:
+                    if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)() \
+                            or not entry.is_dir(follow_symlinks=False):
+                        continue
+                    if now - entry.stat(follow_symlinks=False).st_mtime < STALE_TEMP_S:
+                        continue
+                except OSError:
+                    continue
+                shutil.rmtree(entry.path, ignore_errors=True)
+                removed += 1
+    except OSError:
+        pass
+    return removed
+
+
+# ── LibreOffice: one locked-down profile, one conversion at a time ──────────
+
+#: Written into the profile before LibreOffice first starts with it (and put
+#: back whenever it is missing): no macros, no link updates, no fetching.
+_LOCKDOWN = (
+    ("/org.openoffice.Office.Common/Security/Scripting", "MacroSecurityLevel", "int", "3"),
+    ("/org.openoffice.Office.Common/Security/Scripting", "DisableMacrosExecution", "boolean", "true"),
+    ("/org.openoffice.Office.Common/Security/Scripting", "BlockUntrustedRefererLinks", "boolean", "true"),
+    ("/org.openoffice.Office.Common/Security/Scripting", "DisableActiveContent", "boolean", "true"),
+    ("/org.openoffice.Office.Writer/Content/Update", "Link", "short", "0"),        # never
+    ("/org.openoffice.Office.Calc/Content/Update", "Link", "short", "1"),          # never
+    ("/org.openoffice.Office.Common/Misc", "UseLocking", "boolean", "false"),
+    ("/org.openoffice.Office.Jobs/Jobs/org.openoffice.Office.Jobs:Job['UpdateCheck']/Arguments",
+     "AutoCheckEnabled", "boolean", "false"),
+)
+
+
+def _lockdown_xcu() -> str:
+    items = "".join('<item oor:path="%s"><prop oor:name="%s" oor:op="fuse"><value>%s</value></prop></item>\n'
+                    % (path, name, value) for path, name, _t, value in _LOCKDOWN)
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<oor:items xmlns:oor="http://openoffice.org/2001/registry" '
+            'xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+            'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n' + items + '</oor:items>\n')
+
+
+def _locked_down(text: str) -> bool:
+    for path, name, _t, value in _LOCKDOWN:
+        rx = (re.escape('oor:path="%s"' % path) + r'\s*>\s*<prop oor:name="' + re.escape(name)
+              + r'"[^>]*>\s*<value>' + re.escape(value) + r'</value>')
+        if not re.search(rx, text):
+            return False
+    return True
+
+
+def _profile_dir() -> Path:
+    """The one LibreOffice profile visual checks use, under Friday's home."""
+    try:
+        from agent_friday.paths import friday_home
+        return Path(friday_home()) / "visual_qa" / "libreoffice-profile"
+    except Exception:
+        return Path(tempfile.gettempdir()) / "friday-libreoffice-profile"
+
+
+def _prepare_profile(profile: Path) -> Path:
+    """The profile's registrymodifications.xcu, locked down (written before
+    the first launch, and again whenever a setting is missing)."""
+    user = profile / "user"
+    user.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(str(profile), 0o700)
+        except OSError:
+            pass
+    xcu = user / "registrymodifications.xcu"
+    try:
+        text = xcu.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    if not _locked_down(text):
+        tmp = xcu.with_name(xcu.name + ".friday-tmp")
+        tmp.write_text(_lockdown_xcu(), encoding="utf-8")
+        os.replace(str(tmp), str(xcu))
+    return xcu
+
+
+_PROFILE_LOCK = threading.Lock()
+
+
+def _try_file_lock(fd: int) -> bool:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _file_unlock(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+@contextlib.contextmanager
+def _profile_lock(profile: Path, deadline: float):
+    """Yields True while this is the only conversion using `profile` (a lock
+    in this process and an OS lock on a file beside the profile, released if
+    its holder dies), or False when the wait reached `deadline`."""
+    have_thread = have_file = False
+    fd = None
+    try:
+        while True:
+            if not have_thread:
+                have_thread = _PROFILE_LOCK.acquire(timeout=max(0.01, min(0.2, deadline - time.monotonic())))
+            if have_thread:
+                if fd is None:
+                    profile.parent.mkdir(parents=True, exist_ok=True)
+                    fd = os.open(str(profile.parent / (profile.name + ".lock")), os.O_RDWR | os.O_CREAT, 0o600)
+                have_file = _try_file_lock(fd)
+                if have_file:
+                    break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        yield have_file
+    finally:
+        if have_file:
+            _file_unlock(fd)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if have_thread:
+            _PROFILE_LOCK.release()
+
+
+def _soffice_argv(exe: str, profile: Path, out_dir: Path, inp: Path) -> List[str]:
+    return [exe, "--headless", "--invisible", "--norestore", "--nolockcheck", "--nodefault", "--nologo",
+            "--nofirststartwizard", "-env:UserInstallation=" + profile.as_uri(),
+            "--convert-to", "pdf", "--outdir", str(out_dir), str(inp)]
+
+
+def _convert(exe: str, src: Path, work: Path, timeout: float = CONVERT_TIMEOUT_S,
+             profile: Optional[Path] = None) -> Tuple[Optional[Path], Optional[str]]:
+    """`src` converted to PDF inside `work` (a temporary folder): (the PDF,
+    None), or (None, why not). The converter reads a copy under a fixed name,
+    with the shared locked-down profile, one conversion at a time; a
+    macro-enabled file is never converted."""
+    if src.suffix.lower() in MACRO_KINDS:
+        return None, "macro-enabled files are never converted"
+    deadline = time.monotonic() + max(0.0, float(timeout))
     inp = work / ("input" + src.suffix.lower())
     shutil.copyfile(str(src), str(inp))
     out_dir = work / "out"
     out_dir.mkdir()
-    argv = [exe, "--headless", "--norestore", "--nolockcheck", "--nodefault",
-            "-env:UserInstallation=" + (work / "profile").as_uri(),
-            "--convert-to", "pdf", "--outdir", str(out_dir), str(inp)]
-    try:
-        subprocess.run(argv, capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL,
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except Exception:
-        return None
+    profile = Path(profile) if profile else _profile_dir()
+    with _profile_lock(profile, deadline) as held:
+        if not held:
+            return None, "another file was still being converted"
+        try:
+            _prepare_profile(profile)
+        except OSError:
+            return None, "the converter's profile could not be prepared"
+        left = deadline - time.monotonic()
+        if left < 0.5:
+            return None, "time ran out before the file could be converted"
+        try:
+            _run_contained(_soffice_argv(exe, profile, out_dir, inp), left)
+        except subprocess.TimeoutExpired:
+            # A killed converter can leave its profile half-written: start afresh.
+            shutil.rmtree(str(profile), ignore_errors=True)
+            return None, "the converter did not finish within %d seconds" % max(1, round(timeout))
+        except Exception as e:
+            return None, "the converter could not run (%s)" % type(e).__name__
     pdf = out_dir / "input.pdf"
-    return pdf if pdf.is_file() and pdf.stat().st_size > 0 else None
+    if pdf.is_file() and pdf.stat().st_size > 0:
+        return pdf, None
+    return None, "the converter could not convert the file"
 
 
 # ── PDF ─────────────────────────────────────────────────────────────────────
@@ -330,23 +777,96 @@ def contrast_ratio(a, b) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-def _spills(o: dict, box: Tuple[float, float, float, float]) -> bool:
-    """A drawn object partly on the page that runs off one edge. One that
-    runs off both opposite edges, or spans the page, is a deliberate bleed."""
+def _spill_sides(o: dict, box: Tuple[float, float, float, float]) -> str:
+    """The edges ("l", "r", "t", "b") a drawn object partly on the page runs
+    off, or "". One that runs off both opposite edges, or spans the page, is
+    a deliberate bleed: ""."""
     bx0, btop, bx1, bbottom = box
     w, h = bx1 - bx0, bbottom - btop
     try:
         x0, x1, top, bottom = float(o["x0"]), float(o["x1"]), float(o["top"]), float(o["bottom"])
     except (KeyError, TypeError, ValueError):
-        return False
+        return ""
     if not (x1 > bx0 and x0 < bx1 and bottom > btop and top < bbottom):
-        return False                                     # wholly off the page: never seen
+        return ""                                        # wholly off the page: never seen
     tx, ty = max(3.0, 0.01 * w), max(3.0, 0.01 * h)
     left, right = bx0 - x0 > tx, x1 - bx1 > tx
     up, down = btop - top > ty, bottom - bbottom > ty
     if (left and right) or (up and down) or (x1 - x0) >= 0.95 * w or (bottom - top) >= 0.95 * h:
+        return ""
+    return ("l" if left else "") + ("r" if right else "") + ("t" if up else "") + ("b" if down else "")
+
+
+def _spills(o: dict, box: Tuple[float, float, float, float]) -> bool:
+    return bool(_spill_sides(o, box))
+
+
+def _spill_visible(img, info: dict) -> bool:
+    """Whether the rendered page shows ink where a spilling object meets the
+    edge it runs off (so something visible really is cut there). An object
+    the reader cannot see at that edge (white on white, clipped away) is not."""
+    gray = img.convert("L")
+    W, H = gray.size
+    hist = gray.histogram()
+    bg = max(range(256), key=lambda v: hist[v])
+    bx0, btop, bx1, bbottom = info["box"]
+    sx, sy = W / max(1e-6, bx1 - bx0), H / max(1e-6, bbottom - btop)
+    band = 3
+    for x0, top, x1, bottom, sides in info.get("spills") or ():
+        px0, px1 = max(0, int((x0 - bx0) * sx)), min(W, int(math.ceil((x1 - bx0) * sx)))
+        py0, py1 = max(0, int((top - btop) * sy)), min(H, int(math.ceil((bottom - btop) * sy)))
+        strips = []
+        if "l" in sides:
+            strips.append((0, py0, min(W, band), py1))
+        if "r" in sides:
+            strips.append((max(0, W - band), py0, W, py1))
+        if "t" in sides:
+            strips.append((px0, 0, px1, min(H, band)))
+        if "b" in sides:
+            strips.append((px0, max(0, H - band), px1, H))
+        for s in strips:
+            if s[2] - s[0] < 1 or s[3] - s[1] < 1:
+                continue
+            lo, hi = gray.crop(s).getextrema()
+            if abs(lo - bg) > 32 or abs(hi - bg) > 32:
+                return True
+    return False
+
+
+def _invisible_text(doc, index: int) -> List[Tuple[float, float, float, float]]:
+    """Boxes (x0, top, x1, bottom, measured like pdfplumber's) of the text
+    the page draws invisibly (render mode 3, as in a scan's searchable text
+    layer). Empty when pdfium cannot tell. Never raises."""
+    out: List[Tuple[float, float, float, float]] = []
+    try:
+        import pypdfium2.raw as raw
+        page = doc[index]
+        try:
+            ml, _mb, _mr, mt = page.get_mediabox()
+            objs = page.get_objects(filter=(raw.FPDF_PAGEOBJ_TEXT,), max_depth=1)
+            for obj in itertools.islice(objs, MAX_OBJECTS):
+                if raw.FPDFTextObj_GetTextRenderMode(obj.raw) == raw.FPDF_TEXTRENDERMODE_INVISIBLE:
+                    left, bottom, right, top = obj.get_bounds()
+                    out.append((left - ml, mt - top, right - ml, mt - bottom))
+        finally:
+            try:
+                page.close()
+            except Exception:
+                pass
+    except Exception:
+        return out
+    return out
+
+
+def _is_hidden(c: dict, hidden) -> bool:
+    if not hidden:
         return False
-    return left or right or up or down
+    try:
+        cx = (float(c["x0"]) + float(c["x1"])) / 2
+        cy = (float(c["top"]) + float(c["bottom"])) / 2
+    except (KeyError, TypeError, ValueError):
+        return False
+    return any(x0 - 1 <= cx <= x1 + 1 and top - 1 <= cy <= bottom + 1 for x0, top, x1, bottom in hidden)
 
 
 def _distorted(shown_w: float, shown_h: float, px_w: float, px_h: float) -> bool:
@@ -358,11 +878,13 @@ def _distorted(shown_w: float, shown_h: float, px_w: float, px_h: float) -> bool
     return off > DISTORTION and turned > DISTORTION
 
 
-def _structure(page, n: int, found: _Found, fonts: Dict[str, bool]) -> dict:
-    """The checks that need no pixels. Returns what the pixel pass reuses."""
+def _structure(page, n: int, found: _Found, fonts: Dict[str, bool], hidden=()) -> dict:
+    """The checks that need no pixels. Returns what the pixel pass reuses.
+    Text drawn invisibly (`hidden`) is not looked at: the reader never sees it.
+    A spill off the page is judged by the caller (it needs the pixels)."""
     box = tuple(float(v) for v in page.bbox)
     bx0, btop, bx1, bbottom = box
-    chars = [c for c in page.chars[:MAX_CHARS] if (c.get("text") or "").strip()]
+    chars = [c for c in page.chars[:MAX_CHARS] if (c.get("text") or "").strip() and not _is_hidden(c, hidden)]
     off = near = False
     for c in chars:
         try:
@@ -414,8 +936,13 @@ def _structure(page, n: int, found: _Found, fonts: Dict[str, bool]) -> dict:
     # Charts, tables and pictures spilling off one edge.
     objects = (list(page.rects) + list(page.lines) + list(page.curves))[:MAX_OBJECTS]
     images = list(page.images)[:MAX_OBJECTS]
-    if any(_spills(o, box) for o in objects + images):
-        found.add("content_off_page", n, unit="page")
+    spills = []
+    for o in objects + images:
+        sides = _spill_sides(o, box)
+        if sides:
+            spills.append((float(o["x0"]), float(o["top"]), float(o["x1"]), float(o["bottom"]), sides))
+            if len(spills) >= 50:
+                break
     for im in images:
         try:
             sw, sh = im.get("srcsize") or (0, 0)
@@ -432,7 +959,7 @@ def _structure(page, n: int, found: _Found, fonts: Dict[str, bool]) -> dict:
             missing = True
     if missing:
         found.add("font_missing", n, unit="page")
-    return {"box": box, "chars": chars, "images": len(images), "objects": len(objects)}
+    return {"box": box, "chars": chars, "images": len(images), "objects": len(objects), "spills": spills}
 
 
 def _render(doc, index: int):
@@ -560,7 +1087,9 @@ def _check_pdf(path: Path, deadline: float, found: _Found, fonts: Dict[str, bool
                     timed_out = True
                     break
                 page = pages[i]
-                info = _structure(page, i + 1, found, fonts)
+                hidden = _invisible_text(doc, i) if doc is not None else []
+                info = _structure(page, i + 1, found, fonts, hidden)
+                img = None
                 if doc is not None:
                     try:
                         img = _render(doc, i)
@@ -573,6 +1102,14 @@ def _check_pdf(path: Path, deadline: float, found: _Found, fonts: Dict[str, bool
                         render_reason = "page %d could not be rendered" % (i + 1)
                 elif not info["chars"] and not info["images"] and not info["objects"]:
                     found.add("page_empty", i + 1, unit="page")      # nothing drawn at all
+                if info["spills"]:
+                    # Only an error when the pixels show something visible
+                    # meeting the edge it runs off; unconfirmed, a warning.
+                    try:
+                        seen = img is not None and _spill_visible(img, info)
+                    except Exception:
+                        seen = False
+                    found.add("content_off_page", i + 1, unit="page", severity="error" if seen else "warn")
                 checked += 1
                 try:
                     page.close()
@@ -687,7 +1224,23 @@ def _decorative(cnvpr) -> bool:
     return any(el.tag.endswith("}decorative") and el.get("val") in ("1", "true") for el in cnvpr.iter())
 
 
-def _pptx_native(path: Path, found: _Found) -> Set[str]:
+def _alt_text(pr) -> bool:
+    """A description or a title counts as alt text (as in artifact_qa)."""
+    return bool((pr.get("descr") or pr.get("title") or "").strip())
+
+
+def _off_slide(ox: int, oy: int, cx: int, cy: int, sw: int, sh: int) -> bool:
+    """A shape running off the slide. One that runs off both opposite edges
+    (a band across the slide) is a deliberate bleed."""
+    tol_x, tol_y = 0.005 * sw, 0.005 * sh
+    left, right = ox < -tol_x, ox + cx > sw + tol_x
+    up, down = oy < -tol_y, oy + cy > sh + tol_y
+    if (left and right) or (up and down):
+        return False
+    return left or right or up or down
+
+
+def _pptx_native(path: Path, found: _Found, deadline: Optional[float] = None) -> Set[str]:
     qa = _qa()
     pkg = qa._Pkg(path)
     pres = pkg.xml("ppt/presentation.xml")
@@ -696,11 +1249,12 @@ def _pptx_native(path: Path, found: _Found) -> Set[str]:
     size = pres.find("p:sldSz", _NS)
     sw = _int(size.get("cx"), 12192000) if size is not None else 12192000
     sh = _int(size.get("cy"), 6858000) if size is not None else 6858000
-    tol_x, tol_y = 0.005 * sw, 0.005 * sh
     slides = sorted(pkg.matching(r"ppt/slides/slide\d+\.xml"), key=lambda n: int(re.findall(r"\d+", n)[-1]))
     fonts: Set[str] = set()
     a = "{%s}" % _NS["a"]
     for name in slides[:500]:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _Capped("time ran out while reading the slides")
         root = pkg.xml(name)
         if root is None:
             continue
@@ -717,7 +1271,7 @@ def _pptx_native(path: Path, found: _Found) -> Set[str]:
             ext = x.find("a:ext", _NS) if x is not None else None
             if off is not None and ext is not None:
                 ox, oy, cx, cy = (_int(off.get("x")), _int(off.get("y")), _int(ext.get("cx")), _int(ext.get("cy")))
-                if ox < -tol_x or oy < -tol_y or ox + cx > sw + tol_x or oy + cy > sh + tol_y:
+                if _off_slide(ox, oy, cx, cy, sw, sh):
                     found.add("shape_off_slide", n, unit="slide")
                 tag = shape.tag.rsplit("}", 1)[-1]
                 if tag == "sp" and _text_overflows(shape, cx, cy):
@@ -726,14 +1280,16 @@ def _pptx_native(path: Path, found: _Found) -> Set[str]:
                     found.add("image_distorted", n, unit="slide")
         for pic in root.iter("{%s}pic" % _NS["p"]):
             pr = pic.find("p:nvPicPr/p:cNvPr", _NS)
-            if pr is not None and not (pr.get("descr") or "").strip() and not _decorative(pr):
+            if pr is not None and not _alt_text(pr) and not _decorative(pr):
                 found.add("alt_text_missing", n, unit="slide")
         for frame in root.iter("{%s}graphicFrame" % _NS["p"]):
             data = frame.find("a:graphic/a:graphicData", _NS)
             pr = frame.find("p:nvGraphicFramePr/p:cNvPr", _NS)
             if data is not None and (data.get("uri") or "").endswith("/chart") and pr is not None \
-                    and not (pr.get("descr") or "").strip() and not _decorative(pr):
-                found.add("alt_text_missing", n, unit="slide")
+                    and not _alt_text(pr) and not _decorative(pr):
+                # A chart's own title and labels say much of what it shows:
+                # a missing description is worth fixing, not a failure.
+                found.add("alt_text_missing", n, unit="slide", severity="warn")
         for latin in root.iter(a + "latin"):
             face = (latin.get("typeface") or "").strip()
             if face and not face.startswith("+"):
@@ -797,7 +1353,21 @@ def _text_overflows(sp, cx: int, cy: int) -> bool:
     return any_text and height > avail_h * 1.15 + 2
 
 
-def _docx_native(path: Path, found: _Found) -> Set[str]:
+def _section_size(sect) -> Tuple[int, int, int, bool]:
+    """(page width, left margin, right margin) in twips from a w:sectPr, and
+    whether they were all given (else Letter with 1-inch margins is assumed)."""
+    w = "{%s}" % _NS["w"]
+    pg = sect.find("w:pgSz", _NS) if sect is not None else None
+    mar = sect.find("w:pgMar", _NS) if sect is not None else None
+    known = (pg is not None and pg.get(w + "w") is not None and mar is not None
+             and mar.get(w + "left") is not None and mar.get(w + "right") is not None)
+    page_w = _int(pg.get(w + "w"), 12240) if pg is not None else 12240
+    left = _int(mar.get(w + "left"), 1440) if mar is not None else 1440
+    right = _int(mar.get(w + "right"), 1440) if mar is not None else 1440
+    return page_w, left, right, known
+
+
+def _docx_native(path: Path, found: _Found, deadline: Optional[float] = None) -> Set[str]:
     qa = _qa()
     pkg = qa._Pkg(path)
     doc = pkg.xml("word/document.xml")
@@ -808,11 +1378,7 @@ def _docx_native(path: Path, found: _Found) -> Set[str]:
     if body is None:
         return set()
     sect = body.find("w:sectPr", _NS)
-    pg = sect.find("w:pgSz", _NS) if sect is not None else None
-    mar = sect.find("w:pgMar", _NS) if sect is not None else None
-    page_w = _int(pg.get(w + "w"), 12240) if pg is not None else 12240
-    left = _int(mar.get(w + "left"), 1440) if mar is not None else 1440
-    right = _int(mar.get(w + "right"), 1440) if mar is not None else 1440
+    page_w, left, right, _known = _section_size(sect)
     text_w = max(1, page_w - left - right)                         # twips
     styles = pkg.xml("word/styles.xml")
     size_pt = 11.0
@@ -820,15 +1386,33 @@ def _docx_native(path: Path, found: _Found) -> Set[str]:
         sz = styles.find("w:docDefaults/w:rPrDefault/w:rPr/w:sz", _NS)
         if sz is not None and sz.get(w + "val"):
             size_pt = max(1.0, _int(sz.get(w + "val"), 22) / 2.0)
-    # Tables: the grid's width (and indent) against the text area and the page.
-    for tbl in body.findall("w:tbl", _NS)[:2000]:
-        cols = sum(_int(gc.get(w + "w")) for gc in tbl.findall("w:tblGrid/w:gridCol", _NS))
-        ind = tbl.find("w:tblPr/w:tblInd", _NS)
-        indent = _int(ind.get(w + "w")) if ind is not None and (ind.get(w + "type") in (None, "dxa")) else 0
-        if cols and left + indent + cols > page_w:
-            found.add("table_too_wide", severity="error")
-        elif cols and indent + cols > text_w * 1.05:
-            found.add("table_too_wide")
+    # Tables: the grid's width (and indent) against the text area and the
+    # page of the section the table is in. A section ends at a paragraph
+    # carrying w:pPr/w:sectPr; the body's own w:sectPr is the last section's.
+    # When the section's size is not given, a too-wide table is only a warning.
+    def judge(tables, sect_pr):
+        sw, sl, sr, known = _section_size(sect_pr)
+        stext = max(1, sw - sl - sr)
+        for tbl in tables:
+            cols = sum(_int(gc.get(w + "w")) for gc in tbl.findall("w:tblGrid/w:gridCol", _NS))
+            ind = tbl.find("w:tblPr/w:tblInd", _NS)
+            indent = _int(ind.get(w + "w")) if ind is not None and (ind.get(w + "type") in (None, "dxa")) else 0
+            if cols and sl + indent + cols > sw:
+                found.add("table_too_wide", severity="error" if known else "warn")
+            elif cols and indent + cols > stext * 1.05:
+                found.add("table_too_wide")
+    pending, seen = [], 0
+    for child in body:
+        if child.tag == w + "tbl":
+            if seen < 2000:
+                pending.append(child)
+            seen += 1
+        elif child.tag == w + "p":
+            brk = child.find("w:pPr/w:sectPr", _NS)
+            if brk is not None:
+                judge(pending, brk)
+                pending = []
+    judge(pending, sect)
     rels = _rels(pkg, "word/document.xml")
     text_emu = text_w * 635                                         # twips -> EMU
     for holder in list(doc.iter("{%s}inline" % _NS["wp"])) + list(doc.iter("{%s}anchor" % _NS["wp"])):
@@ -844,7 +1428,9 @@ def _docx_native(path: Path, found: _Found) -> Set[str]:
     # Long unbroken runs (a URL, a hash) wider than the text area.
     width_pt = text_w / float(TWIPS_PER_PT)
     paragraphs = body.findall("w:p", _NS)
-    for para in paragraphs[:MAX_PARAGRAPHS]:
+    for i, para in enumerate(paragraphs[:MAX_PARAGRAPHS]):
+        if deadline is not None and i % 500 == 0 and time.monotonic() >= deadline:
+            raise _Capped("time ran out while reading the paragraphs")
         text = "".join(t.text or "" for t in para.iter(w + "t"))
         if not text:
             continue
@@ -890,7 +1476,7 @@ def _date_width(fmt_id: int, code: Optional[str], value: str) -> float:
     return sum(0.6 if ch in "/-.:, " else 1.0 for ch in plain)
 
 
-def _xlsx_native(path: Path, found: _Found) -> Set[str]:
+def _xlsx_native(path: Path, found: _Found, deadline: Optional[float] = None) -> Set[str]:
     qa = _qa()
     pkg = qa._Pkg(path)
     wb = pkg.xml("xl/workbook.xml")
@@ -918,7 +1504,13 @@ def _xlsx_native(path: Path, found: _Found) -> Set[str]:
         for si in sroot.findall("s:si", _NS):
             shared.append(sum(len(t.text or "") for t in si.iter(s + "t")))
     budget = MAX_CELLS
+    work = MAX_MERGE_WORK
+
+    def out_of_time():
+        return deadline is not None and time.monotonic() >= deadline
     for index, sheet in enumerate(wb.findall(".//s:sheets/s:sheet", _NS), 1):
+        if out_of_time():
+            raise _Capped("time ran out while reading the sheets")
         rid = sheet.get(_R_ID)
         part = "xl/" + targets[rid] if rid in targets else None
         root = pkg.xml(part) if part else None
@@ -943,17 +1535,35 @@ def _xlsx_native(path: Path, found: _Found) -> Set[str]:
             for c in range(max(1, lo), min(hi, lo + 300) + 1):
                 widths[c] = width
         merged = []
-        for mc in list(root.iter(s + "mergeCell"))[:2000]:
+        for mc in itertools.islice(root.iter(s + "mergeCell"), MAX_MERGES + 1):
+            if len(merged) >= MAX_MERGES:
+                raise _Capped("a sheet has more than %d merged ranges" % MAX_MERGES)
             ends = [qa._split_ref(x) for x in (mc.get("ref") or "").split(":")]
             if len(ends) == 2 and all(ends):
-                merged.append((ends[0][0], ends[0][1], ends[1][0], ends[1][1]))
-
-        def in_merge(c, r):
-            return any(c1 <= c <= c2 and r1 <= r <= r2 for c1, r1, c2, r2 in merged)
+                c1, c2 = sorted((ends[0][0], ends[1][0]))
+                r1, r2 = sorted((ends[0][1], ends[1][1]))
+                merged.append((c1, r1, c2, r2))
+        # Rows come in order: only the merges spanning the current row are
+        # compared (a row out of order compares against them all).
+        merged.sort(key=lambda m: m[1])
+        active: list = []
+        nxt, last_r = 0, 0
         for row in root.iter(s + "row"):
+            r = _int(row.get("r"), 0)
+            if r >= last_r:
+                while nxt < len(merged) and merged[nxt][1] <= r:
+                    active.append(merged[nxt])
+                    nxt += 1
+                active = [m for m in active if m[3] >= r]
+                here = active
+                last_r = r
+            else:
+                here = [m for m in merged if m[1] <= r <= m[3]]
             cells = {}
             for c in row.findall("s:c", _NS):
                 budget -= 1
+                if budget % 1024 == 0 and out_of_time():
+                    raise _Capped("time ran out while reading the sheets")
                 pos = qa._split_ref(c.get("r") or "")
                 v = c.find("s:v", _NS)
                 t = c.get("t") or "n"
@@ -976,11 +1586,13 @@ def _xlsx_native(path: Path, found: _Found) -> Set[str]:
                     cells[pos[0]] = ("num", 0, _int(c.get("s")), v.text or "")
                 else:
                     cells[pos[0]] = ("other", 0, _int(c.get("s")), "")
-            r = _int(row.get("r"), 0)
             for col, (kind, length, style, value) in cells.items():
                 width = widths.get(col, default_w)
                 fmt_id, wraps = xfs[style] if 0 <= style < len(xfs) else (0, False)
-                if in_merge(col, r):
+                work -= len(here) + 1
+                if work <= 0:
+                    raise _Capped("only part of the merged cells were looked at")
+                if any(c1 <= col <= c2 for c1, _r1, c2, _r2 in here):
                     continue
                 if kind == "text" and not wraps and length * 0.9 > width * 1.1 + 1 and (col + 1) in cells:
                     found.add("cell_text_cut", index, unit="sheet")
@@ -998,10 +1610,43 @@ def _xlsx_native(path: Path, found: _Found) -> Set[str]:
 _NATIVE = {".docx": _docx_native, ".pptx": _pptx_native, ".xlsx": _xlsx_native, ".xlsm": _xlsx_native}
 
 
-def _check_office(path: Path, kind: str, deadline: float) -> dict:
+def _not_convertible(path: Path) -> Optional[str]:
+    """Why `path` must not be handed to the converter, or None: a
+    macro-enabled file (by its name, or a .xlsx/.docx/.pptx carrying a macro
+    project), or one linking to outside content the converter could fetch
+    (an external image, OLE object, frame, template or sub-document)."""
+    if path.suffix.lower() in MACRO_KINDS:
+        return "macro-enabled files are never converted"
+    try:
+        pkg = _qa()._Pkg(path)
+    except Exception:
+        return "the file could not be read to see what it links to"
+    try:
+        names = sorted(pkg.names)
+        if any(n.lower().endswith("vbaproject.bin") for n in names):
+            return "the file carries macros, so it is never converted"
+        for name in names[:5000]:
+            if not name.endswith(".rels"):
+                continue
+            root = pkg.xml(name)
+            for rel in (list(root) if root is not None else []):
+                if (rel.get("TargetMode") or "") == "External" \
+                        and (rel.get("Type") or "").rsplit("/", 1)[-1] in EXTERNAL_TYPES:
+                    return "the file links to outside content, so it was not converted"
+    except Exception:
+        return "the file could not be read to see what it links to"
+    finally:
+        try:
+            pkg.z.close()
+        except Exception:
+            pass
+    return None
+
+
+def _check_office(path: Path, kind: str, deadline: float, profile_dir: Optional[Path] = None) -> dict:
     found = _Found()
     try:
-        requested = _NATIVE[path.suffix.lower()](path, found)
+        requested = _NATIVE[path.suffix.lower()](path, found, deadline)
         capped = None
     except _Capped as c:
         requested, capped = set(), str(c)
@@ -1010,9 +1655,15 @@ def _check_office(path: Path, kind: str, deadline: float) -> dict:
         # file is never passed on what was not looked at.
         return _result(kind, "partial", found=found, method="structural", reason=capped)
     exe = find_converter()
-    if exe:
-        with tempfile.TemporaryDirectory(prefix="friday-vqa-") as td:
-            pdf = _convert(exe, path, Path(td), min(CONVERT_TIMEOUT_S, max(1.0, deadline - time.monotonic())))
+    if not exe:
+        # No converter here: the layout read from the file itself is the
+        # visual check (and the summary says nothing was rendered).
+        return _result(kind, "checked", found=found, method="structural")
+    why = _not_convertible(path)
+    if why is None:
+        with _workdir() as work:
+            pdf, why = _convert(exe, path, work, min(CONVERT_TIMEOUT_S, max(1.0, deadline - time.monotonic())),
+                                profile_dir)
             if pdf is not None:
                 fonts: Dict[str, bool] = {}
                 res = _check_pdf(pdf, deadline + TIME_BUDGET_S, found, fonts, kind=kind)
@@ -1023,23 +1674,27 @@ def _check_office(path: Path, kind: str, deadline: float) -> dict:
                     return _result(kind, res["status"], found=found, method="converted", renderer=res["renderer"],
                                    converter="libreoffice", pages_checked=res["pages_checked"],
                                    pages_total=res["pages_total"], reason=res["reason"])
-    # No converter (or it could not render this file): the layout checks
-    # read from the file itself are the visual check.
-    return _result(kind, "checked", found=found, method="structural",
-                   converter="libreoffice" if exe else None)
+                why = res["reason"] or "the converted file could not be rendered"
+    # A converter is here but this file was not rendered: the layout was
+    # checked, the looks were not, so it is never "checked".
+    return _result(kind, "partial", found=found, method="structural", converter="libreoffice",
+                   reason=("layout checked, not rendered: " + (why or "the file could not be converted"))[:200])
 
 
 # ── entry points ────────────────────────────────────────────────────────────
 
-def check(path, *, budget_s: float = TIME_BUDGET_S) -> dict:
+def check(path, *, budget_s: float = TIME_BUDGET_S, profile_dir=None) -> dict:
     """The visual check of one file. Never raises. See the module docstring
-    for the result's shape and what each status means."""
+    for the result's shape and what each status means. `profile_dir` is the
+    LibreOffice profile to convert with (default: the one under Friday's
+    home)."""
     p = Path(path)
     kind = p.suffix.lower().lstrip(".")
     if p.suffix.lower() not in VISUAL_KINDS:
         return _result(kind, "not_applicable")
     found = _Found()
     try:
+        _sweep_stale_temp()
         if not p.is_file():
             return _result(kind, "could_not_render", reason="the file is not there")
         if p.stat().st_size > MAX_BYTES:
@@ -1047,7 +1702,7 @@ def check(path, *, budget_s: float = TIME_BUDGET_S) -> dict:
         deadline = time.monotonic() + max(0.0, float(budget_s))
         if p.suffix.lower() == ".pdf":
             return _check_pdf(p, deadline, found, {})
-        return _check_office(p, kind, deadline)
+        return _check_office(p, kind, deadline, Path(profile_dir) if profile_dir else None)
     except Exception as e:
         return _result(kind, "could_not_render", found=found,
                        reason="the file could not be read for a visual check (%s)" % type(e).__name__)
@@ -1085,25 +1740,31 @@ def _validated(res, kind: str) -> Optional[dict]:
 
 
 def check_isolated(path, timeout: float = ISOLATED_TIMEOUT_S) -> dict:
-    """`check`, run in a child Python with a hard time limit (the renderer
-    and parsers read untrusted files). A child that does not finish, or
-    answers in any other shape, is "could_not_render", never a pass. A frozen
-    build cannot start a child: "unavailable". Never raises."""
+    """`check`, run in a child Python with a hard time limit, a memory limit
+    and a minimal environment (the renderer and parsers read untrusted
+    files). On a time-out the child and everything it started (the
+    converter) are killed. A child that does not finish, or answers in any
+    other shape, is "could_not_render", never a pass. A frozen build cannot
+    start a child: "unavailable". Never raises."""
     p = Path(path)
     kind = p.suffix.lower().lstrip(".")
     if p.suffix.lower() not in VISUAL_KINDS:
         return _result(kind, "not_applicable")
     if getattr(sys, "frozen", False):
         return _result(kind, "unavailable", reason="the visual check cannot run in this build")
+    _sweep_stale_temp()
     code = ("import importlib.util,json,sys\n"
             "s=importlib.util.spec_from_file_location('visual_qa',sys.argv[1])\n"
             "m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\n"
-            "sys.stdout.write(json.dumps(m.check(sys.argv[2])))\n")
+            "sys.stdout.write(json.dumps(m.check(sys.argv[2],profile_dir=sys.argv[3] or None)))\n")
     try:
-        out = subprocess.run([sys.executable, "-I", "-c", code, str(Path(__file__).resolve()), str(p)],
-                             capture_output=True, timeout=timeout, text=True, stdin=subprocess.DEVNULL,
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        res = _validated(json.loads(out.stdout or "{}"), kind)
+        try:
+            profile = str(_profile_dir())
+        except Exception:
+            profile = ""
+        _rc, out = _run_contained([sys.executable, "-I", "-c", code, str(Path(__file__).resolve()), str(p), profile],
+                                  timeout, memory_bytes=CHILD_MEMORY_BYTES)
+        res = _validated(json.loads(out.decode("utf-8", "replace") or "{}"), kind)
         if res is not None:
             return res
         why = "the visual check gave no usable answer"
