@@ -1053,7 +1053,7 @@ def _top_bar_store_paths() -> list[Path]:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _notices_and_approvals_do_not_outlive_their_file():
+def _notices_and_approvals_do_not_outlive_their_file(request):
     """Each test file leaves the notice and approval stores as it found them.
 
     Same leak as settings.json above, other stores: every test in a process
@@ -1071,6 +1071,9 @@ def _notices_and_approvals_do_not_outlive_their_file():
 
     The bytes, or the files' absence, are put back when the test file ends.
     """
+    _diag_wrap()
+    _diag_check_on_entry(request)
+    _DIAG_STATE["mod"] = request.node.nodeid
     paths = _top_bar_store_paths()
     before = {}
     for p in paths:
@@ -1081,6 +1084,94 @@ def _notices_and_approvals_do_not_outlive_their_file():
     yield
     for p in set(paths) | set(_top_bar_store_paths()):
         _put_back(p, before.get(p))
+    _diag_after_restore(request)
+
+
+# ---- DIAG ONLY (diag/top-bar-leak-probe; never merged) ----------------------
+_DIAG_PUSHES = []
+_DIAG_STATE = {"mod": "", "restored": {}, "t": 0.0, "prev": "", "reported": False}
+
+
+def _diag_wrap():
+    ne = sys.modules.get("agent_friday.notifications_engine")
+    if ne is None or getattr(ne.push, "_diag", False):
+        return
+    import traceback
+    orig = ne.push
+
+    def push(*a, **k):
+        r = orig(*a, **k)
+        try:
+            counted = isinstance(r, dict) and not (r.get("logged") or r.get("suppressed") or r.get("pull_only"))
+            st = traceback.extract_stack(limit=16)[:-1]
+            _DIAG_PUSHES.append({
+                "t": time.time(), "thread": threading.current_thread().name,
+                "mod": _DIAG_STATE["mod"], "test": (os.environ.get("PYTEST_CURRENT_TEST") or "")[:170],
+                "kind": k.get("kind", "info"), "title": str(k.get("title") or "")[:70], "counted": counted,
+                "stack": " < ".join("%s:%s:%s" % (Path(f.filename).name, f.lineno, f.name) for f in reversed(st[-10:]))})
+        except Exception:
+            pass
+        return r
+    push._diag = True
+    ne.push = push
+
+
+def _diag_cards(p):
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    items = data.get("items") if isinstance(data, dict) else data
+    return [n for n in (items or []) if isinstance(n, dict)]
+
+
+def _diag_check_on_entry(request):
+    if _DIAG_STATE["reported"]:
+        return
+    changed = []
+    for p in _top_bar_store_paths():
+        try:
+            now = p.read_bytes()
+        except FileNotFoundError:
+            now = None
+        if p in _DIAG_STATE["restored"] and _DIAG_STATE["restored"][p] != now:
+            changed.append(p)
+    live = []
+    for p in _top_bar_store_paths():
+        if p.name != "notifications.json":
+            continue
+        for n in _diag_cards(p):
+            if not n.get("dismissed") and n.get("tier") != "needs_you":
+                live.append(n)
+    if not changed and not live:
+        return
+    _DIAG_STATE["reported"] = True
+    lines = ["TOPBAR-LEAK-DIAG at entry of %s (previous file %s, restored %.2fs ago)"
+             % (request.node.nodeid, _DIAG_STATE["prev"], time.time() - (_DIAG_STATE["t"] or time.time())),
+             "changed since the last restore: %s" % [str(p) for p in changed],
+             "threads alive: %s" % sorted(t.name for t in threading.enumerate())]
+    for n in live[:40]:
+        lines.append("CARD kind=%s count=%s source=%s emitter=%s place=%s created=%s title=%r" % (
+            n.get("kind"), n.get("count"), n.get("source"), n.get("emitter"), n.get("place"),
+            n.get("created_at"), str(n.get("title"))[:70]))
+    titles = {str(n.get("title"))[:70] for n in live}
+    since = [r for r in _DIAG_PUSHES if r["t"] >= (_DIAG_STATE["t"] or 0)]
+    rel = [r for r in _DIAG_PUSHES if r["title"] in titles]
+    for tag, rows in (("PUSH-SINCE-RESTORE", since[-40:]), ("PUSH-SAME-TITLE", rel[-60:])):
+        for r in rows:
+            lines.append("%s t=%.2f thread=%s mod=%s test=%s kind=%s counted=%s title=%r stack=%s" % (
+                tag, r["t"], r["thread"], r["mod"], r["test"], r["kind"], r["counted"], r["title"], r["stack"]))
+    pytest.fail("\n".join(lines), pytrace=False)
+
+
+def _diag_after_restore(request):
+    snap = {}
+    for p in _top_bar_store_paths():
+        try:
+            snap[p] = p.read_bytes()
+        except FileNotFoundError:
+            snap[p] = None
+    _DIAG_STATE.update(restored=snap, t=time.time(), prev=request.node.nodeid, mod="")
 
 
 def _schedules_file() -> Path:
