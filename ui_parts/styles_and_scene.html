@@ -6081,7 +6081,7 @@
             metamorphosisFlash = SceneMotion.tick(delta);
 
             // --- AUDIO PROCESSING ---
-            const heartbeat = (Math.sin(elapsed * Math.PI) + 1) / 2;
+            const heartbeat = SceneMotion.reduced() ? 0.5 : (Math.sin(elapsed * Math.PI) + 1) / 2;   // reduced motion: no idle pulse (AX23)
             if (micActive && analyser && dataArray) {
                 analyser.getByteFrequencyData(dataArray);
                 let low = 0, mid = 0, high = 0;
@@ -6491,7 +6491,7 @@
                         }
                         p.theta += speed * delta;
                         if (scatterIntensity === 0) {
-                            const targetPhi = targetPhiIsHorizontal ? (Math.PI / 2 + (Math.random()-0.5)*0.1) : p.basePhi;
+                            const targetPhi = targetPhiIsHorizontal ? (Math.PI / 2 + (SceneMotion.reduced() ? 0 : (Math.random()-0.5)*0.1)) : p.basePhi;
                             p.phi = THREE.MathUtils.lerp(p.phi, targetPhi, delta * 1.0);
                         }
                         const moodRadialForce = tMood && tMood.radialForce !== undefined ? tMood.radialForce : 0;

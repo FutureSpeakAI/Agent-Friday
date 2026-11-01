@@ -85,8 +85,12 @@ def test_the_last_ambient_motion_holds_too(rel):
                  "cloud.position.z += delta * 0.5 * (ambient ? 1 : 0);",
                  "p.addScaledVector(v, delta * 60 * (ambient ? 1 : 0));",
                  "d.position.z += ((d.userData.speed * moodLerpValues.particleSpeedScale) + (audioData.mid * 5)) * (ambient ? 1 : 0);",
-                 "holoPass.uniforms.time.value = ambientT;"):
+                 "holoPass.uniforms.time.value = ambientT;",
+                 "const heartbeat = SceneMotion.reduced() ? 0.5 :",
+                 "(SceneMotion.reduced() ? 0 : (Math.random()-0.5)*0.1)"):
         assert line in src, "still moves under reduced motion: " + line
     # Before: the same lines without the factor.
     assert "cloud.rotation.z += cloud.userData.speed;" not in src
     assert "holoPass.uniforms.time.value = elapsed;" not in src
+    assert "p.addScaledVector(v, delta * 60);" not in src
+    assert "cloud.position.z += delta * 0.5;" not in src
