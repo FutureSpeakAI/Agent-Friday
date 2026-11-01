@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 from contextvars import ContextVar
 from typing import Any, Iterator, List, Optional
 
@@ -62,8 +63,25 @@ _SENTENCES = {
 }
 
 
-def sentence(kind: str, service: str = "Google") -> str:
-    return _SENTENCES.get(kind, _SENTENCES["failed"]).format(svc=service or "Google")
+#: The same sentences for a service that is not Google (a tool server or a channel): they name the
+#: service throughout and fit a read as well as a change.
+_SERVICE_SENTENCES = {
+    "revoked": ("{svc} access was revoked or has expired, so this did not happen. Reconnect {svc} in "
+                "Settings > Connectors, then try again."),
+    "scope": ("{svc} has not allowed Friday to do this, so it did not happen. Allow it where {svc} "
+              "was connected, then try again."),
+    "unreachable": "Friday could not reach {svc}, so nothing was sent. Try again when it is back.",
+    "busy": "{svc} asked Friday to slow down, so this did not happen. Try again in a few minutes.",
+    "refused": "{svc} refused this, so it did not happen.",
+    "unconfirmed": ("{svc} did not confirm this. It may or may not have happened: check {svc} "
+                    "before trying again."),
+    "failed": "{svc} reported that this did not complete.",
+}
+
+
+def sentence(kind: str, service: str = "Google", *, other_service: bool = False) -> str:
+    table = _SERVICE_SENTENCES if other_service else _SENTENCES
+    return table.get(kind, table["failed"]).format(svc=service or "Google")
 
 
 def _status(exc: BaseException) -> Optional[int]:
@@ -127,7 +145,8 @@ def classify(exc: BaseException) -> str:
     return "failed"
 
 
-def not_done(kind: str, service: str = "Google", *, account_id: Optional[str] = None) -> str:
+def not_done(kind: str, service: str = "Google", *, account_id: Optional[str] = None,
+             other_service: bool = False) -> str:
     """Note that a change asked for in this call did not happen (or was not confirmed), and return
     the sentence to give back. A revoked grant also marks the account needs_reauth."""
     if kind not in KINDS:
@@ -135,6 +154,8 @@ def not_done(kind: str, service: str = "Google", *, account_id: Optional[str] = 
     notes = _NOTES.get()
     if notes is not None:
         notes.append({"kind": kind, "service": service})
+    if other_service:
+        return sentence(kind, service, other_service=True)
     if kind == "revoked" and account_id:
         try:
             from agent_friday.services import google_accounts as _ga
@@ -166,6 +187,54 @@ def no_credentials(account_id: Optional[str], service: str = "Google") -> str:
     kind = "unreachable" if problem == "unreachable" else "revoked"
     # credentials_for already marked the account when the grant is gone
     return not_done(kind, service)
+
+
+# ── tool servers (MCP): what a reply that is not a result means ──────────────────────────────
+# mcp_client marks what it could not get a result for: "[mcp:<server> unavailable] ..." (nothing
+# was sent), "[mcp:<server> error] ..." (sent; no answer, a timeout, a server error),
+# "[mcp:<server> malformed reply] ..." (an answer that is not a tool result), "[mcp error] ..."
+# (no such server, or switched off). A server that answered with isError is "[tool error] ...":
+# its words are read only then, never in an ordinary reply (a message that mentions "401" is
+# content). The services' own words for a revoked token, a missing permission and slowing down:
+_TOOL_REVOKED = re.compile(
+    r"invalid_auth|not_authed|token_revoked|token_expired|account_inactive|invalid[ _]token|"
+    r"bad credentials|unauthori[sz]ed|\b401\b|invalid_grant|authorization expired", re.I)
+_TOOL_SCOPE = re.compile(
+    r"missing_scope|insufficient[ _](?:scope|permission)|not_allowed_token_type|"
+    r"resource not accessible|\b403\b|forbidden|permission denied", re.I)
+_TOOL_BUSY = re.compile(r"ratelimited|rate[ _]limit|too many requests|\b429\b", re.I)
+_TOOL_MARK = re.compile(r"^\[mcp(:[^\]\s]+)?(?: (unavailable|error|malformed reply))?\]", re.I)
+
+
+def tool_reply_kind(reply: Any, *, read_only: bool = False) -> Optional[str]:
+    """The kind of a tool server's reply that is not a result (see KINDS), or None for a result.
+    An empty reply to a change is "unconfirmed" (nothing names what was changed); an empty reply
+    to a read is a read that found nothing."""
+    if not isinstance(reply, str):
+        return None
+    text = reply.lstrip()
+    m = _TOOL_MARK.match(text)
+    if m:
+        if not m.group(1):
+            return "unreachable"                   # "[mcp error] no such server / switched off"
+        what = (m.group(2) or "").lower()
+        if what == "unavailable":
+            return "revoked" if _TOOL_REVOKED.search(text[:300]) else "unreachable"
+        if what in ("error", "malformed reply"):
+            return "unconfirmed"
+        return "unreachable"                       # "[mcp error] no such server / switched off"
+    if text.startswith("[tool error]"):
+        said = text[:600]
+        if _TOOL_REVOKED.search(said):
+            return "revoked"
+        if _TOOL_BUSY.search(said):
+            return "busy"
+        if _TOOL_SCOPE.search(said):
+            return "scope"
+        return "failed"
+    if not text and not read_only:
+        return "unconfirmed"
+    return None
 
 
 def settle(result: Any) -> Any:

@@ -127,6 +127,7 @@ class TelegramBridge(ChannelAdapter):
                     **({"message_id": sent["message_id"]} if r.get("ok") and sent.get("message_id") else {})}
         except Exception as e:
             self._last_error = exception_text(e)
+            self._note_send_error(e)
             from agent_friday.services.channels.base import send_unsure
             return {"ok": False, "error": exception_text(e), "unsure": send_unsure(e)}
 

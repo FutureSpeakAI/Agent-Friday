@@ -741,7 +741,7 @@ class MCPServerProcess:
                                     trust_level=self.trust_level,
                                     duration_ms=int((time.time() - _t0) * 1000))
             return text
-        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+        text = _extsec.validate_tool_output(_result_text(self.name, result), self.trust_level)
         _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
                                 trust_level=self.trust_level,
                                 duration_ms=int((time.time() - _t0) * 1000))
@@ -759,6 +759,63 @@ class MCPServerProcess:
             "tools": [t.get("name", "?") for t in self.tools],
             "server_info": self.server_info,
         }
+
+
+def _result_text(server: str, result: Any) -> str:
+    """A tools/call answer as text, or a marked line when the answer is not a tool result at all
+    (MCP: a dict whose "content" is a list). Something else (text, a number, no answer, a dict
+    without content) is "[mcp:<server> malformed reply]": the call went out, and nothing in the
+    answer says what happened (services/connector_outcome.tool_reply_kind: unconfirmed)."""
+    if not (isinstance(result, dict) and isinstance(result.get("content"), list)):
+        return (f"[mcp:{server} malformed reply] the server's answer was not a tool result "
+                f"({type(result).__name__})")
+    return _flatten_tool_result(result)
+
+
+def _tool_is_read_only(sp: Any, tool: str) -> bool:
+    """Whether the server describes this tool as only reading (MCP annotations.readOnlyHint).
+    Used only to tell an empty read (found nothing) from an empty answer to a change (not
+    confirmed); it never lets a call run."""
+    for t in getattr(sp, "tools", None) or []:
+        if isinstance(t, dict) and t.get("name") == tool:
+            ann = t.get("annotations")
+            return bool(isinstance(ann, dict) and ann.get("readOnlyHint") is True)
+    return False
+
+
+def _server_label(server: str) -> str:
+    """The name the owner knows a server by: its connector's name (Slack, GitHub), else its own."""
+    try:
+        from agent_friday.services import connectors as _conn
+        for d in _conn.CONNECTOR_DEFS.values():
+            if d.get("mcp_server") == server and d.get("name"):
+                return str(d["name"])
+    except Exception:  # noqa: BLE001
+        pass
+    return str(server)
+
+
+def _settle_reply(server: str, sp: Any, tool: str, out: Any) -> Any:
+    """A call's answer that is not a result (refused, revoked, not confirmed, malformed, an empty
+    answer to a change) is noted as not done for the tool checkpoint (agent._execute_tool records
+    it with ok=False and NOT_DONE in front), and the owner's sentence follows the server's words. A revoked
+    token parks the server in needs_auth, so Settings > Connectors asks for it to be reconnected
+    (BD-06; NS-34.11-3). An ordinary answer is returned unchanged; its words are never read."""
+    try:
+        from agent_friday.services import connector_outcome as _co
+        kind = _co.tool_reply_kind(out, read_only=_tool_is_read_only(sp, tool))
+        if not kind:
+            return out
+        label = _server_label(server)
+        if kind == "revoked":
+            sp.status = "needs_auth"
+            sp.error = "access was revoked or has expired: reconnect this connector"
+        said = _co.not_done(kind, label, other_service=True)
+    except Exception:  # noqa: BLE001 - the answer itself still goes back
+        return out
+    if isinstance(out, str) and out.strip():
+        return f"{out}\n{said}"
+    return said
 
 
 def _flatten_tool_result(result: Any) -> str:
@@ -1230,7 +1287,7 @@ class MCPServerHTTP:
                                     trust_level=self.trust_level,
                                     duration_ms=int((time.time() - _t0) * 1000))
             return text
-        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+        text = _extsec.validate_tool_output(_result_text(self.name, result), self.trust_level)
         _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
                                 trust_level=self.trust_level,
                                 duration_ms=int((time.time() - _t0) * 1000))
@@ -1442,9 +1499,9 @@ class MCPManager:
     def call(self, server: str, tool: str, arguments: dict, timeout: float = _DEFAULT_CALL_TIMEOUT) -> str:
         sp = self.servers.get(server)
         if sp is None:
-            return f"[mcp error] no such server: {server}"
+            return _settle_reply(server, None, tool, f"[mcp error] no such server: {server}")
         if sp.status == "disabled":
-            return f"[mcp error] server '{server}' is disabled"
+            return _settle_reply(server, sp, tool, f"[mcp error] server '{server}' is disabled")
         _held = _route_held(f"call {server}.{tool}")
         if _held:
             return f"[NOT RUN] {_held}"
@@ -1473,7 +1530,7 @@ class MCPManager:
                                     result=result, part=f"tool {tool}"[:60])
         except Exception:
             pass
-        return out
+        return _settle_reply(server, sp, tool, out)
 
     def all_tools(self) -> list[tuple[str, dict]]:
         out: list[tuple[str, dict]] = []
