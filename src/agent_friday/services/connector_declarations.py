@@ -48,14 +48,15 @@ _MCP_COMMON_RETENTION = [
 
 _LOCAL_TOKEN = _r(
     "the token you pasted", "mcp_servers.json (the server's entry)",
-    "encrypted; kept when the connector is disconnected, so reconnecting is one click; replaced "
-    "when you connect with a new one", "services/connector_secrets.py", "encrypt_config")
+    "encrypted where this PC allows it (else in plain text, with a warning); kept when the "
+    "connector is disconnected, so reconnecting is one click; replaced when you connect with a "
+    "new one", "services/connector_secrets.py", "encrypt_config")
 
 _REMOTE_SIGN_IN = _r(
     "the sign-in (its tokens and Friday's registration with the server)",
     "the credential store (mcp_oauth/<server>)",
-    "encrypted, until you remove it under Settings > Privacy & Data > Stored keys",
-    "mcp_oauth.py", "def clear_credentials")
+    "encrypted where this PC allows it, until you remove it under Settings > Privacy & Data > "
+    "Stored keys", "mcp_oauth.py", "def clear_credentials")
 
 _MCP_LIMITS = {
     "call_timeout_s": _MCP_CALL_TIMEOUT_S,
@@ -73,9 +74,9 @@ _MCP_LIMITATIONS = [
 _LOCAL_REVOCATION = {
     "how": "Disconnect the connector. Connecting with a new token replaces the old one.",
     "does": ["switches the server off; its tools leave Friday at once"],
-    "keeps": ("the token, encrypted, so reconnecting is one click. Friday has no button that "
-              "deletes a connector's token yet: cancel it at {svc} (below) if it may have been "
-              "seen."),
+    "keeps": ("the token, so reconnecting is one click. Disconnecting does not delete it; only "
+              "editing the MCP server settings does. Cancel it at {svc} (below) if it may have "
+              "been seen."),
 }
 
 _REMOTE_REVOCATION = {
@@ -157,7 +158,7 @@ TOOL_SERVERS: Dict[str, Dict[str, Any]] = {
         limitations=["Runs in Windows' isolated mode where available: it reaches the internet "
                      "and its own folder, not your files."]),
     "windows_desktop": _tool_server(
-        "windows_desktop", "Windows desktop control", local=True,
+        "windows_desktop", "Windows desktop", local=True,
         destinations=[{"host": "pypi.org", "for": "fetching the server program (uvx) when it starts"},
                       {"host": "files.pythonhosted.org", "for": "the server program's files"}],
         receives=["nothing leaves this PC: it reads the screen and the window list, and acts on "
@@ -172,7 +173,8 @@ TOOL_SERVERS: Dict[str, Dict[str, Any]] = {
         receives=["the sign-in token, with every request",
                   "the prompt and settings of each image or video you ask it to make"],
         at_service="Sign out of Friday's session in your Higgsfield account settings.",
-        limitations=["Each generation spends Higgsfield credits; Friday reports what it cost.",
+        limitations=["Each generation spends Higgsfield credits; Friday reports the cost when "
+                     "Higgsfield gives it.",
                      "Finished files are fetched from the address Higgsfield's answer names, "
                      "which is not listed above."]),
 }
@@ -181,7 +183,7 @@ TOOL_SERVERS: Dict[str, Dict[str, Any]] = {
 # ── message channels ──────────────────────────────────────────────────────────
 
 def _channel(key: str, name: str, destinations: List[Dict[str, str]], at_service: str,
-             extra_retention: List[Dict[str, str]]) -> Dict[str, Any]:
+             extra_retention: List[Dict[str, str]], stops: str) -> Dict[str, Any]:
     return {
         "connector": key, "name": name, "kind": "message channel",
         "destinations": destinations,
@@ -190,7 +192,8 @@ def _channel(key: str, name: str, destinations: List[Dict[str, str]], at_service
                      "egress gate checked it (a chat not on the list gets no reply)"],
         "retention": [
             _r("the bot token", "the credential store (channel_%s)" % name.lower(),
-               "encrypted, until you remove it under Settings > Privacy & Data > Stored keys",
+               "encrypted where this PC allows it, until you remove it under Settings > "
+               "Privacy & Data > Stored keys (listed as channel_%s)" % name.lower(),
                "services/channels/base.py", "get_provider_key"),
         ] + list(extra_retention) + [
             _r("a record of each message sent (where, when, a fingerprint; the text encrypted)",
@@ -203,14 +206,14 @@ def _channel(key: str, name: str, destinations: List[Dict[str, str]], at_service
                                    "sent." % name},
         "revocation": {
             "how": "Remove its bot token under Settings > Privacy & Data > Stored keys.",
-            "does": ["the channel stops: no token, nothing is read or sent"],
+            "does": [stops],
             "keeps": "the records above",
             "at_service": at_service,
         },
         "limitations": ["A message the service did not confirm is reported as not confirmed, "
                         "never as delivered.",
-                        "When the service refuses the token, the channel says so until the "
-                        "token is replaced."],
+                        "When a send is refused because of the token, the channel's status says "
+                        "so until the token is replaced."],
     }
 
 
@@ -221,12 +224,16 @@ CHANNELS: Dict[str, Dict[str, Any]] = {
         "Revoke the token with @BotFather (/revoke).",
         [_r("where Telegram's message list was read up to (a short hash of the token and a "
             "number; no message text)", "channels/telegram-offset.json", "until replaced",
-            "services/channels/telegram_bridge.py", "telegram-offset.json")]),
+            "services/channels/telegram_bridge.py", "telegram-offset.json")],
+        "the channel stops at once: Telegram is asked with the token each time, so without it "
+        "nothing is read or sent"),
     "channel_discord": _channel(
         "channel_discord", "Discord",
         [{"host": "discord.com", "for": "Discord's API (sending)"},
          {"host": "gateway.discord.gg", "for": "Discord's live connection (reading)"}],
-        "Reset the bot token in the Discord Developer Portal (Applications > Bot).", []),
+        "Reset the bot token in the Discord Developer Portal (Applications > Bot).", [],
+        "new sends stop; a live connection already open keeps answering until the channel is "
+        "next restarted (or the token is reset at Discord, which ends it at once)"),
 }
 
 
