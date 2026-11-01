@@ -86,10 +86,25 @@ def test_email_send_facts():
     assert p["leaves_pc"] is True and p["channel"] == "mail" and p["channel"] in eg.SERVICE_CHANNELS
     assert p["words"].startswith("leaves this PC to ")
     assert f["verification_plan"]["source"] == "tool"
-    assert f["verification_plan"]["words"].startswith("Friday will check")
+    assert f["verification_plan"]["words"] == "Friday records whether Gmail confirmed it sent the message"
     assert f["expires_at"]["at"] and f["model"]["words"] == cf.NOT_RECORDED
     assert f["editable"]["can"] is False and f["editable"]["why"] == cf.NO_EDIT_WHY
     assert "reversibility" not in f["unknown"] and "privacy_impact" not in f["unknown"]
+    assert f["targets"]["bcc"] == 0 and "Bcc" not in f["targets"]["words"]
+
+
+def test_email_recipients_count_to_and_cc_and_name_bcc_apart():
+    c = _email()
+    c["payload"]["bcc"] = ["dan@example.com", "erin@example.com"]
+    t = cf.card_facts(c)["targets"]
+    assert t["count"] == 3 and t["bcc"] == 2
+    assert t["words"] == "3 recipients, named above (and 2 Bcc)"
+    only = _email()
+    only["payload"].update(to=[], cc=[], bcc=["dan@example.com"])
+    t = cf.card_facts(only)["targets"]
+    assert t["count"] is None and t["bcc"] == 1
+    assert t["words"] == "1 Bcc recipient, not named on this card"
+    assert "dan@example.com" not in _dump(t)
 
 
 def test_calendar_create_facts():
@@ -97,27 +112,188 @@ def test_calendar_create_facts():
     f = cf.card_facts(_calendar())
     assert f["what"]["words"] == "Add a calendar event"
     assert f["reversibility"]["known"] is True
-    assert f["reversibility"]["words"].startswith("can be undone")
-    assert ("%d days" % (undo_store.RETENTION_S // 86400)) in f["reversibility"]["words"]
-    assert f["privacy_impact"]["channel"] == "calendar" and f["privacy_impact"]["leaves_pc"] is True
-    assert "calendar" in f["privacy_impact"]["channel"] and f["privacy_impact"]["channel"] in eg.SERVICE_CHANNELS
+    w = f["reversibility"]["words"]
+    assert w.startswith("usually can be undone") and "Undo deletes the event" in w
+    assert ("%d days" % (undo_store.RETENTION_S // 86400)) in w
+    assert "unless guests were added since" in w
+    p = f["privacy_impact"]
+    assert p["channel"] == "calendar" and p["leaves_pc"] is True and p["channel"] in eg.SERVICE_CHANNELS
+    # no attendees: this create invites nobody
+    assert p["guests"] is False and p["words"] == "leaves this PC to your calendar service"
     assert f["targets"]["words"] == "1 event, named above"
     assert f["why"]["asked_by"] == "Friday's ask-first check"
     assert f["cost"]["words"] == cf.NO_CHARGE
+    assert f["verification_plan"]["words"] == "Friday checks Google confirmed the change"
 
 
-def test_file_move_stays_on_this_pc_and_can_be_undone():
+def _cal(tool, **inp):
+    return {"kind": "tool_confirm", "status": "pending", "policy_class": "outward",
+            "payload": {"tool": tool, "input": dict({"event_id": "ev1"}, **inp)}}
+
+
+def test_a_create_with_attendees_says_guests_are_told():
+    f = cf.card_facts(_cal("create_calendar_event", title=TITLE, start="2026-11-03T10:00",
+                           attendees=["alice@example.com"]))
+    assert f["privacy_impact"]["guests"] is True
+    assert f["privacy_impact"]["words"] == ("leaves this PC to your calendar service and the guests "
+                                            "it invites or notifies")
+    assert "told again if it is undone" in f["reversibility"]["words"]
+    assert "alice@example.com" not in _dump(f)
+
+
+def test_changing_an_all_day_events_dates_cannot_be_undone():
+    f = cf.card_facts(_cal("update_calendar_event", start="2026-11-03", end="2026-11-04"))
+    assert f["reversibility"]["words"] == ("cannot be undone: an all-day event's dates cannot be "
+                                           "set back by Undo")
+    timed = cf.card_facts(_cal("update_calendar_event", start="2026-11-03T10:00"))["reversibility"]["words"]
+    assert timed.startswith("usually can be undone")
+    for caveat in ("all-day event's dates", "could not be read first", "could not be kept",
+                   "guests already told stay told"):
+        assert caveat in timed, caveat
+    # an update may tell the event's guests: it is not known that it will not
+    assert cf.card_facts(_cal("update_calendar_event"))["privacy_impact"]["guests"] is True
+
+
+def test_deleting_a_repeating_or_all_day_event_cannot_be_undone():
+    rep = cf.card_facts(_cal("delete_calendar_event", recurring_event_id="series1"))
+    assert rep["reversibility"]["words"].startswith("cannot be undone: a repeating event")
+    c = _cal("delete_calendar_event")
+    c["payload"]["before"] = {"start": "2026-11-03", "end": "2026-11-04"}
+    assert cf.card_facts(c)["reversibility"]["words"].startswith("cannot be undone: an all-day event")
+    w = cf.card_facts(_cal("delete_calendar_event"))["reversibility"]["words"]
+    assert w.startswith("usually can be undone") and "as a new event" in w
+    assert "except repeating or all-day events" in w and "guests already told stay told" in w
+    assert "not invited again" in w
+    assert cf.card_facts(_cal("delete_calendar_event"))["verification_plan"]["words"] == cf.NO_PLAN
+
+
+def test_a_delete_reaches_guests_unless_told_not_to():
+    assert cf.card_facts(_cal("delete_calendar_event"))["privacy_impact"]["guests"] is True
+    quiet = cf.card_facts(_cal("delete_calendar_event", notify_guests=False))["privacy_impact"]
+    assert quiet["guests"] is False and "guests" not in quiet["words"]
+
+
+def test_book_slot_sends_invitations_and_cannot_be_undone():
+    f = cf.card_facts(_cal("book_slot", series_id="s1", attendees=["alice@example.com"]))
+    assert f["reversibility"]["words"] == "cannot be undone once invitations are sent"
+    assert f["privacy_impact"]["guests"] is True and "guests it invites" in f["privacy_impact"]["words"]
+    f = cf.card_facts(_cal("book_slot", series_id="s1"))
+    assert f["privacy_impact"]["guests"] is True
+
+
+def test_hold_slots_has_no_undo_but_release_holds():
+    f = cf.card_facts(_cal("hold_slots", title="Call", slots=[]))
+    assert f["reversibility"]["words"] == "no Undo: release them with 'release holds'"
+    assert f["privacy_impact"]["guests"] is False
+
+
+def test_no_calendar_or_task_tool_promises_undo_outright():
+    for tool, row in cf.TOOL_FACTS.items():
+        if row.get("channel") not in ("calendar", "tasks"):
+            continue
+        w = cf.card_facts(_cal(tool))["reversibility"]["words"]
+        assert w.startswith(("usually can be undone", "cannot be undone", "no Undo")), (tool, w)
+        assert "Undo puts it back" not in w, tool
+
+
+def test_task_undo_names_its_limits():
+    w = cf.card_facts(_cal("create_task", title="x"))["reversibility"]["words"]
+    assert w.startswith("usually can be undone") and "Undo deletes the task" in w
+    w = cf.card_facts(_cal("delete_task"))["reversibility"]["words"]
+    assert "could not be read first" in w and "could not be kept" in w and "new task" in w
+    assert cf.card_facts(_cal("complete_task"))["verification_plan"]["words"] == \
+        "Friday checks Google confirmed the change"
+    assert cf.card_facts(_cal("delete_task"))["verification_plan"]["words"] == cf.NO_PLAN
+
+
+def test_a_file_move_never_says_it_stays_on_this_pc(monkeypatch):
+    from agent_friday.services import item_actions as ia
+    monkeypatch.setattr(ia, "_root_synced", lambda root: False)
     f = cf.card_facts(_move())
-    assert f["privacy_impact"]["leaves_pc"] is False and f["privacy_impact"]["words"] == "stays on this PC"
-    assert f["reversibility"]["words"].startswith("can be undone")
+    p = f["privacy_impact"]
+    assert p["words"] == cf._MAY_SYNC and p["leaves_pc"] is None and p["channel"] == "local"
+    assert f["reversibility"]["words"].startswith("usually can be undone")
     assert f["targets"]["count"] == 2 and f["targets"]["words"] == "2 files, named above"
+    assert f["verification_plan"]["words"] == cf.NO_PLAN
+    for tool, row in cf.TOOL_FACTS.items():
+        if row.get("channel") == "local":
+            words = cf.card_facts({"payload": {"tool": tool, "input": {}}})["privacy_impact"]["words"]
+            assert "stays on this PC" not in words, tool
 
 
-def test_file_delete_cannot_be_undone():
-    f = cf.card_facts(_delete())
-    assert f["reversibility"]["words"] == "cannot be undone once deleted"
-    assert f["privacy_impact"]["leaves_pc"] is False
-    assert f["targets"]["count"] == 1
+def test_a_file_move_into_a_cloud_synced_folder_says_it_leaves(monkeypatch):
+    from agent_friday.services import item_actions as ia
+    monkeypatch.setattr(ia, "file_ref", lambda s: (("onedrive" if "Archive" in s else "documents"), "x"))
+    monkeypatch.setattr(ia, "_root_synced", lambda root: root == "onedrive")
+    p = cf.card_facts(_move())["privacy_impact"]
+    assert p["words"] == cf._DOES_SYNC and p["leaves_pc"] is True
+    assert "Documents/Archive" not in _dump(p)
+
+
+def test_an_item_batch_files_card_is_organize_files_and_checks_its_roots(monkeypatch):
+    from agent_friday.services import item_actions as ia
+    monkeypatch.setattr(ia, "_root_synced", lambda root: root == "desktop")
+    card = {"kind": "item_batch", "status": "pending", "policy_class": "outward",
+            "payload": {"handler": "item_batch", "domain": "files", "action": "move", "count": 2,
+                        "ops": [{"op": "move", "root": "documents", "path": "a.pdf",
+                                 "to_root": "downloads", "to_path": "a.pdf"},
+                                {"op": "move", "root": "documents", "path": "b.pdf",
+                                 "to_root": "downloads", "to_path": "b.pdf"}]}}
+    f = cf.card_facts(card)
+    assert f["what"]["tool"] == "organize_files" and f["targets"]["count"] == 2
+    assert f["privacy_impact"]["words"] == cf._MAY_SYNC
+    card["payload"]["ops"][1]["to_root"] = "desktop"
+    assert cf.card_facts(card)["privacy_impact"]["words"] == cf._DOES_SYNC
+    cal = {"payload": {"handler": "item_batch", "domain": "calendar", "ops": [{}, {}, {}]}}
+    f = cf.card_facts(cal)
+    assert f["what"]["tool"] == "organize_calendar" and f["targets"]["count"] == 3
+
+
+def test_write_file_to_a_synced_folder_says_it_leaves(tmp_path):
+    target = tmp_path / "OneDrive" / "notes.txt"
+    p = cf.card_facts({"payload": {"tool": "write_file", "input": {"path": str(target)}}})["privacy_impact"]
+    assert p["words"] == cf._DOES_SYNC and p["leaves_pc"] is True
+    plain = tmp_path / "plain" / "notes.txt"
+    p = cf.card_facts({"payload": {"tool": "write_file", "input": {"path": str(plain)}}})["privacy_impact"]
+    assert p["words"] == cf._MAY_SYNC
+
+
+def test_an_irreversible_card_always_says_treat_as_permanent():
+    c = dict(_move(), policy_class="irreversible")
+    f = cf.card_facts(c)
+    assert f["reversibility"] == {"words": cf.CAUTIOUS, "known": False}
+    assert "reversibility" in f["unknown"]
+    assert cf.card_facts(dict(_calendar(), policy_class="irreversible"))["reversibility"]["words"] == cf.CAUTIOUS
+    # a tool that already says it cannot be undone keeps its own (as cautious) words
+    sms = {"policy_class": "irreversible", "payload": {"handler": "phone_sms"}}
+    assert cf.card_facts(sms)["reversibility"]["words"] == "cannot be undone once sent"
+    # a tool Friday does not know stays "treat as permanent"
+    assert cf.card_facts(dict(_delete()))["reversibility"]["words"] == cf.PERMANENT
+
+
+def test_tools_no_real_card_uses_are_gone():
+    for tool in ("send_email", "move_file", "delete_file"):
+        assert tool not in cf.TOOL_FACTS, tool
+
+
+def test_only_checks_friday_really_makes_are_named():
+    for tool, row in cf.TOOL_FACTS.items():
+        check = row.get("check") or ""
+        for gone in ("call connected", "post went up", "page is live", "files are where",
+                     "left your outbox", "draft was saved", "Friday will check"):
+            assert gone not in check, (tool, check)
+    assert cf.card_facts(_publish())["verification_plan"]["words"] == cf.NO_PLAN
+    call = cf.card_facts({"payload": {"handler": "phone_call"}})["verification_plan"]["words"]
+    assert "not whether it was answered" in call
+
+
+def test_a_name_is_never_a_drive_letter_or_a_rooted_path():
+    for bad in ("C:tool", "c:/Users/x", "/etc/passwd", "a//b", "\\\\server", "x/../y"):
+        assert cf._name(bad) is None, bad
+    for good in ("gmail_send", "qwen3:8b", "claude-sonnet-4", "mcp__github__create_issue",
+                 "models/gemini-2.5"):
+        assert cf._name(good) == good, good
+    assert cf.card_facts({"payload": {"tool": "C:tool"}})["what"]["tool"] is None
 
 
 def test_publish_facts():

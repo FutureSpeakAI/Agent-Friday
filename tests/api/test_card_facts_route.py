@@ -62,9 +62,9 @@ def test_the_owner_list_carries_each_cards_facts_and_the_card_is_not_changed(cli
     (served,) = [a for a in r.get_json()["approvals"] if a["approval_id"] == rec["approval_id"]]
     f = served["card_facts"]
     assert f["what"]["words"] == "Add a calendar event"
-    assert f["reversibility"]["words"].startswith("can be undone")
+    assert f["reversibility"]["words"].startswith("usually can be undone")
     assert f["privacy_impact"]["channel"] == "calendar" and f["privacy_impact"]["leaves_pc"] is True
-    assert f["verification_plan"]["words"].startswith("Friday will check")
+    assert f["verification_plan"]["words"] == "Friday checks Google confirmed the change"
     assert f["model"]["words"] == "not recorded"
     assert f["editable"]["can"] is False
     assert TITLE not in json.dumps(f)
@@ -141,8 +141,26 @@ def test_inspect_with_nothing_recorded_says_so(client, monkeypatch):
     monkeypatch.setattr(explain, "explain", lambda **kw: pytest.fail("nothing to explain"))
     d = client.get("/api/approvals/%s/inspect" % rec["approval_id"]).get_json()
     assert d["ok"] and d["linked_by"] is None and d["explain"] is None
+    assert d["timed_out"] is False
     assert d["text"].startswith("No action record names this card yet")
-    assert d["card_facts"]["reversibility"]["words"].startswith("can be undone")
+    assert d["card_facts"]["reversibility"]["words"].startswith("usually can be undone")
+
+
+def test_inspect_that_runs_out_of_time_says_so_not_that_nothing_is_recorded(client, monkeypatch):
+    rec = _card()
+    from agent_friday.routes import goals as goals_routes
+    from agent_friday.services import action_ledger, explain
+    monkeypatch.setattr(goals_routes, "INSPECT_SCAN_S", -1.0)
+
+    def slow_entries(kinds=None, *, stop=None, **kw):
+        assert stop is not None and stop() is True      # the search is cut off at its deadline
+        return []
+    monkeypatch.setattr(action_ledger, "entries", slow_entries)
+    monkeypatch.setattr(explain, "explain", lambda **kw: pytest.fail("nothing to explain"))
+    d = client.get("/api/approvals/%s/inspect" % rec["approval_id"]).get_json()
+    assert d["ok"] and d["linked_by"] is None and d["timed_out"] is True
+    assert d["text"].startswith("The action record could not be read in time")
+    assert "No action record" not in d["text"]
 
 
 def test_inspect_an_unknown_card_is_404(client):

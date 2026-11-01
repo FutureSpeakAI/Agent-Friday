@@ -490,27 +490,36 @@ INSPECT_SCAN_S = 1.5
 
 
 def _action_of_card(approval_id):
-    """The action id of the newest decision or outcome that names this card
-    (action_gate writes the card's id as `approval`), or None. Bounded by
-    INSPECT_SCAN_S; only compared with what the record holds."""
+    """(action id, timed out): the action id of the newest decision or outcome
+    that names this card (action_gate writes the card's id as `approval`), or
+    None; and whether the search stopped at INSPECT_SCAN_S before it finished
+    (then "no action id" means "not read in time", not "not recorded"). Only
+    compared with what the record holds."""
     import time as _time
     from agent_friday.services import action_ledger
     from agent_friday.services import explain as _explain
     deadline = _time.monotonic() + INSPECT_SCAN_S
+    timed_out = []
 
     def names_card(e):
         rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
         return rec.get("approval") == approval_id or rec.get("approval_id") == approval_id
 
+    def stop():
+        if _time.monotonic() > deadline:
+            timed_out.append(True)
+            return True
+        return False
+
     rows = action_ledger.entries(["decision", "outcome"], newest_first=True, limit=1,
-                                 where=names_card, stop=lambda: _time.monotonic() > deadline)
+                                 where=names_card, stop=stop)
     for e in rows:
         rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
         env = rec.get("envelope") if isinstance(rec.get("envelope"), dict) else {}
         aid = _explain.valid_id(rec.get("action_id") or env.get("action_id"))
         if aid:
-            return aid
-    return None
+            return aid, False
+    return None, bool(timed_out)
 
 
 @goals_bp.route("/api/approvals/<approval_id>/inspect", methods=["GET"])
@@ -528,11 +537,18 @@ def inspect_approval_route(approval_id):
         from agent_friday.services import explain as _explain
         facts = _card_facts.safe_card_facts(appr)
         card_id = appr.get("approval_id")
-        aid = _action_of_card(card_id)
+        aid, timed_out = _action_of_card(card_id)
         tid = None if aid else _explain.valid_id((appr.get("payload") or {}).get("task_id"))
         if not (aid or tid):
+            if timed_out:
+                # the search ran out of time: that is not "nothing is recorded"
+                return jsonify({"ok": True, "approval_id": card_id, "card_facts": facts,
+                                "linked_by": None, "explain": None, "timed_out": True,
+                                "text": "The action record could not be read in time, so Friday "
+                                        "cannot say yet what it records for this card. Try "
+                                        "Inspect again in a moment."})
             return jsonify({"ok": True, "approval_id": card_id, "card_facts": facts,
-                            "linked_by": None, "explain": None,
+                            "linked_by": None, "explain": None, "timed_out": False,
                             "text": "No action record names this card yet: Friday records it "
                                     "when the action is decided or runs."})
         try:
