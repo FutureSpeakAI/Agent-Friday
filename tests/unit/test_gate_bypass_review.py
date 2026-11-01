@@ -148,17 +148,8 @@ class TestReadOnlyGitRunsNoConfiguredProgram:
 
 
 def _allow_verdict():
-    """An allowing checkpoint verdict: the real Verdict type when it can be built
-    with these fields, else a stand-in that answers None for anything else."""
-    try:
-        return G.Verdict(action="allow", klass=G.INTERNAL, reason="")
-    except Exception:  # noqa: BLE001
-        class V:
-            action, reason, detail = "allow", "", ""
-
-            def __getattr__(self, name):
-                return None
-        return V()
+    """An allowing checkpoint verdict (the real type)."""
+    return G.Verdict(action="allow", klass=G.INTERNAL, reason="")
 
 
 def test_a_setting_card_runs_only_an_internal_settings_tool(monkeypatch):
