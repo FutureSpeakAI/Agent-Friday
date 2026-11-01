@@ -580,47 +580,139 @@ def delete_message(cid: str, mid: str) -> Dict[str, Any]:
     changed = cv.delete_lines(cid, lambda m: str(m.get("id")) == mid, on_match=_drop)
     if not changed:
         return {"ok": False, "error": "that message is not in this conversation"}
+    out = _drop_everywhere([(mid, gone["text"] or "")], main=str(cid) == cv.MAIN_ID)
+    return {"ok": True, "deleted": mid, "vector_rows": out["vector_rows"]}
+
+
+def _norm_text(text: Any) -> str:
+    return " ".join(str(text or "").split())
+
+
+def _drop_mirror(pairs, main: bool, whole: bool = False) -> int:
+    """The chat mirror (core.CHAT_HISTORY and chat_history.json) lets the
+    deleted messages go: by id, and in Main (where the old chat_history.json
+    was imported, its id-less rows given new ids) also a row WITHOUT an id
+    whose text is a deleted message's (for one message, only a text of 20+
+    characters, so another "ok" stays; for all of Main, every one). On Main
+    the file is checked too, since the mirror in memory holds only its last
+    30 days. Returns errors (0/1)."""
+    try:
+        from agent_friday import core
+        ids = {m for m, _t in pairs if m}
+        texts = ({_norm_text(t) for _m, t in pairs if _norm_text(t) and (whole or len(_norm_text(t)) >= 20)}
+                 if main else set())
+
+        def _goes(row) -> bool:
+            if not isinstance(row, dict):
+                return False
+            if row.get("id"):
+                return str(row.get("id")) in ids
+            return bool(texts) and _norm_text(row.get("text")) in texts
+        before = len(core.CHAT_HISTORY)
+        core.CHAT_HISTORY[:] = [m for m in core.CHAT_HISTORY if not _goes(m)]
+        changed = len(core.CHAT_HISTORY) != before
+        if main and texts and not changed:
+            try:
+                on_disk = json.loads(Path(core.CHAT_HISTORY_FILE).read_text(encoding="utf-8"))
+                changed = isinstance(on_disk, list) and any(_goes(r) for r in on_disk)
+            except (OSError, ValueError):
+                pass
+        if changed:
+            core._save_chat_history(core.CHAT_HISTORY)
+        return 0
+    except Exception as e:
+        _log.warning("conversation search: chat mirror delete failed: %s", type(e).__name__)
+        return 1
+
+
+def _drop_everywhere(pairs, cid: Optional[str] = None, legacy_text: bool = True,
+                     main: bool = False) -> Dict[str, Any]:
+    """The indexes a deleted message leaves (its transcript line is already
+    gone): this index, the vector memory, the chat mirror and the review
+    buffers. `pairs` are (message id, text). With `cid` every row this index
+    holds for that conversation goes too (a whole conversation deleted).
+    `legacy_text`: a vector row stored under a random id before turns carried
+    their message id is removed by its exact text (20+ characters), as one
+    message's delete always has; a whole conversation's delete passes False,
+    since forget_conversation already took its legacy rows by day and text and
+    the same words said in another conversation are that conversation's.
+    `main`: the messages were Main's (see _drop_mirror).
+    Each store is its own step: one that fails is counted in "errors" and
+    the others still run.
+    Returns {"vector_rows", "errors"} (counts)."""
+    pairs = [(str(m or ""), str(t or "")) for m, t in pairs]
+    errors = 0
     try:
         with _LOCK:
             conn = _connect()
             try:
-                _delete_mid(conn, mid)
+                for mid, _t in pairs:
+                    if mid:
+                        _delete_mid(conn, mid)
+                if cid:
+                    _delete_cid(conn, cid)
                 conn.commit()
                 _scrub(conn)
             finally:
                 conn.close()
-    except sqlite3.DatabaseError as e:
-        # A damaged index: rebuilt from the transcripts, where the message is already gone; the
-        # other copies below are still removed now.
-        if not _damaged(e):
-            raise
-        _auto_repair(e)
+    except Exception as e:
+        if isinstance(e, sqlite3.DatabaseError) and _damaged(e):
+            # A damaged index: rebuilt from the transcripts. One message is
+            # already gone from its transcript, so the rebuild leaves it out;
+            # a whole conversation's transcript goes only after this call
+            # (drop_conversation), so that case is counted as an error and
+            # the forget can be run again.
+            _auto_repair(e)
+            if cid:
+                errors += 1
+        else:
+            errors += 1
+        _log.warning("conversation search: index delete failed: %s", type(e).__name__)
     removed_vec = 0
+    vec_ids: List[str] = []           # every stored turn removed, by id, for the influence record below
+
+    def _vec_delete(mem, **kw):
+        try:
+            return mem.delete(deleted=vec_ids, **kw)
+        except TypeError:             # a store without the `deleted` list: what it removed is not named
+            return mem.delete(**kw)
     try:
         from agent_friday.services.model_router import _get_conversation_memory
         mem = _get_conversation_memory()
-        removed_vec = mem.delete(ids=[mid])
-        text = gone["text"] or ""
-        # An older turn was stored under a random id: remove it by its exact
-        # text, but only a text long enough not to match other people's "ok".
-        if not removed_vec and len(" ".join(text.split())) >= 20:
-            removed_vec = mem.delete(exact_text=text)
+        for mid, text in pairs:
+            n = int(_vec_delete(mem, ids=[mid]) or 0) if mid else 0
+            # An older turn was stored under a random id: remove it by its exact
+            # text, but only a text long enough not to match other people's "ok".
+            if not n and legacy_text and len(" ".join(text.split())) >= 20:
+                n = int(_vec_delete(mem, exact_text=text) or 0)
+            removed_vec += n
     except Exception as e:
+        errors += 1
         _log.warning("conversation search: vector memory delete failed: %s", e)
-    try:
-        from agent_friday.core import CHAT_HISTORY, _save_chat_history
-        before = len(CHAT_HISTORY)
-        CHAT_HISTORY[:] = [m for m in CHAT_HISTORY if str(m.get("id")) != mid]
-        if len(CHAT_HISTORY) != before:
-            _save_chat_history(CHAT_HISTORY)
-    except Exception:
-        pass
+    errors += _drop_mirror(pairs, main, whole=bool(cid))
     try:
         from agent_friday.services import memory_review
-        memory_review.forget_text(gone["text"] or "")
+        for _m, text in pairs:
+            memory_review.forget_text(text)
     except Exception:
         pass
-    return {"ok": True, "deleted": mid, "vector_rows": removed_vec}
+    try:
+        # The record of which replies recalled them keeps no id of a deleted message: its own id and the
+        # random id an older turn was stored under in the vector memory (removed above by its text).
+        from agent_friday.services import memory_influence
+        memory_influence.forget_refs([m for m, _t in pairs if m] + vec_ids)
+    except Exception:
+        pass
+    return {"vector_rows": removed_vec, "errors": errors}
+
+
+def drop_conversation(cid: str, messages, main: bool = False) -> Dict[str, Any]:
+    """A whole conversation's messages leave every index, through the same
+    paths one message's delete takes (``_drop_everywhere``). Called by
+    conversations.delete BEFORE the transcript goes, so a delete that stops
+    part way can be run again with every message id still known."""
+    pairs = [(m.get("id"), m.get("text")) for m in (messages or []) if isinstance(m, dict)]
+    return _drop_everywhere(pairs, cid=str(cid or ""), legacy_text=False, main=bool(main))
 
 
 # ── searching ─────────────────────────────────────────────────────────────────
@@ -644,18 +736,28 @@ def _day(value) -> Optional[float]:
         return None
 
 
-def search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
+def search(query: str, since=None, until=None, limit: int = 8,
+           include_superseded: bool = False, titles=None) -> List[Dict[str, Any]]:
     """Matching turns, best first (BM25), with snippets and dates. A damaged index raises (the
-    caller says it could not search) and is rebuilt from the transcripts in the background."""
+    caller says it could not search) and is rebuilt from the transcripts in the background.
+
+    `include_superseded` is for the owner's own memory search (services/
+    memory_search), which shows corrected turns flagged when asked; every
+    path that feeds a model leaves it off. `titles` (conversation id ->
+    title, or a callable returning that) lets a caller that already lists
+    the conversations for its request pass them in, instead of a second
+    listing here; it is read only when something matched."""
     try:
-        return _search(query, since=since, until=until, limit=limit)
+        return _search(query, since=since, until=until, limit=limit,
+                       include_superseded=include_superseded, titles=titles)
     except sqlite3.DatabaseError as e:
         if _damaged(e):
             _auto_repair(e)
         raise
 
 
-def _search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str, Any]]:
+def _search(query: str, since=None, until=None, limit: int = 8,
+            include_superseded: bool = False, titles=None) -> List[Dict[str, Any]]:
     terms = _terms(query)
     if not terms:
         return []
@@ -685,31 +787,61 @@ def _search(query: str, since=None, until=None, limit: int = 8) -> List[Dict[str
                 marks = ",".join("?" * len(rows))
                 # A turn superseded in memory is not returned as evidence
                 # (§34.9-4); it stays in the transcript, flagged there.
-                for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to FROM msgs "
-                                      f"WHERE id IN ({marks}) "
-                                      f"AND mid NOT IN (SELECT mid FROM superseded)", list(rows)):
+                keep = "" if include_superseded else "AND mid NOT IN (SELECT mid FROM superseded)"
+                for r in conn.execute(f"SELECT id, mid, cid, ts, role, via, sent_to, "
+                                      f"mid IN (SELECT mid FROM superseded) FROM msgs "
+                                      f"WHERE id IN ({marks}) {keep}", list(rows)):
                     meta[r[0]] = r
         finally:
             conn.close()
-    try:
-        from agent_friday.services import conversations as cv
-        titles = {c.get("id"): c.get("title") or "" for c in cv.list_all(include_archived=True)}
-    except Exception:
-        titles = {}
+    if not meta:
+        return []
+    if callable(titles):
+        try:
+            titles = titles()
+        except Exception:
+            titles = None
+    if not isinstance(titles, dict):
+        try:
+            from agent_friday.services import conversations as cv
+            titles = {c.get("id"): c.get("title") or "" for c in cv.list_all(include_archived=True)}
+        except Exception:
+            titles = {}
     hits = []
     for rid, (rank, text) in rows.items():
         m = meta.get(rid)
         if not m:
             continue
-        _id, mid, cid, ts, role, via, sent = m
+        _id, mid, cid, ts, role, via, sent, gone = m
         if (lo is not None and ts < lo) or (hi is not None and ts >= hi):
             continue
         hits.append({"message_id": mid, "conversation_id": cid, "title": titles.get(cid, ""),
                      "ts": ts, "date": datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "",
                      "role": role, "via": via or "chat", "text": _snippet(text, terms),
-                     "sent_to": json.loads(sent or "[]"), "score": -float(rank)})
+                     "sent_to": json.loads(sent or "[]"), "score": -float(rank),
+                     "superseded": bool(gone)})
     hits.sort(key=lambda h: (-h["score"], -h["ts"]))
     return hits[:max(1, int(limit))]
+
+
+def locate(mid: str) -> Optional[Dict[str, Any]]:
+    """Where one indexed message lives: its conversation, time, speaker and
+    whether it is superseded. None when the index does not hold it."""
+    mid = str(mid or "").strip()
+    if not mid:
+        return None
+    ensure_built()
+    with _LOCK:
+        conn = _connect()
+        try:
+            r = conn.execute("SELECT cid, ts, role, via, mid IN (SELECT mid FROM superseded) "
+                             "FROM msgs WHERE mid=?", (mid,)).fetchone()
+        finally:
+            conn.close()
+    if not r:
+        return None
+    return {"conversation_id": r[0], "ts": float(r[1] or 0), "role": r[2] or "",
+            "via": r[3] or "chat", "superseded": bool(r[4])}
 
 
 def superseded_ids() -> set:

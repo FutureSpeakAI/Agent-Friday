@@ -1257,8 +1257,20 @@ _GRANT_SIGNED = ("grant_id", "tools", "scope", "expires_at", "max_uses", "create
 _GRANTS_MARK = "grants.signed-v1"
 
 
+#: The grant record's limit fields (governance/grant_record.new_fields, A11):
+#: signed too when a grant carries them, so a limit cannot be loosened or
+#: taken off by editing the file. A grant written before them carries none
+#: and its signature is unchanged. Its use counters (used_count,
+#: first_used_at, money_spent) are not signed: the ledger holds them.
+_GRANT_LIMITS_SIGNED = ("principal", "subject", "arg_constraints", "data_scope",
+                        "destination_scope", "starts_at", "money_cap", "time_cap_s",
+                        "quiet_hours", "remote_allowed")
+
+
 def _grant_sig(g: dict, key: Optional[bytes] = None) -> str:
-    body = json.dumps({k: g.get(k) for k in _GRANT_SIGNED}, sort_keys=True, default=str)
+    signed = {k: g.get(k) for k in _GRANT_SIGNED}
+    signed.update({k: g[k] for k in _GRANT_LIMITS_SIGNED if k in g})
+    body = json.dumps(signed, sort_keys=True, default=str)
     return _hmac.new(key or _governance_key(), b"agent-friday/grant/v1\0" + body.encode("utf-8"),
                      hashlib.sha256).hexdigest()
 
@@ -1341,7 +1353,8 @@ def _migrate_grants_locked(gs: list) -> list:
 
 
 def _grant_events() -> dict:
-    """{grant_id: [uses recorded, revoked?]} from the action ledger, in one read.
+    """{grant_id: [uses recorded, revoked?, first use at, money spent]} from the
+    action ledger, in one read (the last two are the grant record's counters, A11).
     Raises when the ledger cannot be read, has a break, or a matching line's signature
     does not hold (a strict read, archive included): no grant is then used."""
     from agent_friday.services import action_ledger
@@ -1356,12 +1369,57 @@ def _grant_events() -> dict:
         gid = str((e.get("rec") or {}).get("grant") or "")
         if not gid:
             continue
-        slot = out.setdefault(gid, [0, False])
+        slot = out.setdefault(gid, [0, False, None, 0.0])
         if e.get("kind") == "grant_use":
             slot[0] += 1
+            rec = e.get("rec") or {}
+            at = rec.get("at") or e.get("t")
+            if isinstance(at, (int, float)) and not isinstance(at, bool):
+                slot[2] = float(at) if slot[2] is None else min(slot[2], float(at))
+            spend = rec.get("spend")
+            if isinstance(spend, (int, float)) and not isinstance(spend, bool) and spend > 0:
+                slot[3] += float(spend)
         else:
             slot[1] = True
     return out
+
+
+def _ledger_row(g: dict, events: dict) -> dict:
+    """The grant's file row with what the ledger holds laid over it (A11): uses
+    left counted from the ledger, revoked when the ledger says so, and the
+    record's counters never below the ledger's (a counter edited down in the
+    file does not loosen a limit; one that cannot be read is kept as it is, so
+    the record is marked invalid). For governance/grant_record. Never raises."""
+    row = dict(g)
+    try:
+        ev = events.get(str(g.get("grant_id"))) or [0, False, None, 0.0]
+        uses, revoked = int(ev[0]), bool(ev[1])
+        first = ev[2] if len(ev) > 2 else None
+        spent = float(ev[3]) if len(ev) > 3 else 0.0
+        if float(g.get("created_at") or 0) <= float(events.get("*revoked_all_at") or 0):
+            revoked = True
+    except Exception:  # noqa: BLE001 - nothing known from the ledger: covers nothing
+        return dict(row, revoked_at=time.time())
+
+    def _num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    if isinstance(g.get("max_uses"), int) and not isinstance(g.get("max_uses"), bool):
+        row["uses_left"] = int(g["max_uses"]) - uses
+    if g.get("used_count") is None or (isinstance(g.get("used_count"), int)
+                                        and not isinstance(g.get("used_count"), bool)):
+        row["used_count"] = max(uses, int(g.get("used_count") or 0))
+    if first is not None:
+        if g.get("first_used_at") is None:
+            row["first_used_at"] = first
+        elif _num(g.get("first_used_at")):
+            row["first_used_at"] = min(float(g["first_used_at"]), first)
+    if g.get("money_spent") is None:
+        row["money_spent"] = spent
+    elif _num(g.get("money_spent")) and g["money_spent"] >= 0:
+        row["money_spent"] = max(float(g["money_spent"]), spent)
+    if revoked and not row.get("revoked_at"):
+        row["revoked_at"] = time.time()
+    return row
 
 
 def _live_view(g: dict, events: Optional[dict] = None,
@@ -1381,7 +1439,19 @@ def _live_view(g: dict, events: Optional[dict] = None,
     left = int(g.get("max_uses") or 0) - uses
     if revoked or left <= 0:
         return None
-    return dict(g, uses_left=left)
+    # the grant record's counters (A11) as the ledger has them
+    return dict(_ledger_row(g, events), uses_left=left)
+
+
+def ledger_grant_rows() -> list:
+    """Every signed grant (live or not) as the ledger has it (`_ledger_row`): its
+    uses, revocation and counters. For the grant record view
+    (governance/grant_record.all_records). Raises when the key or the ledger
+    cannot be read."""
+    key = _governance_key()
+    gs = _read_grants(key)
+    events = _grant_events() if gs else {}
+    return [_ledger_row(g, events) for g in gs]
 
 
 def _read_grants(key: Optional[bytes] = None) -> list:
@@ -1397,22 +1467,41 @@ def _read_grants(key: Optional[bytes] = None) -> list:
 
 
 def create_grant(*, tools, scope: str, expires_in_seconds: float,
-                 max_uses: int = 1, created_by: str = "owner", note: str = "") -> dict:
+                 max_uses: int = 1, created_by: str = "owner", note: str = "",
+                 limits: Optional[dict] = None) -> dict:
     """Pre-approve named outward tools for one scheduled job or task.
 
     `scope` is the schedule id or task id the grant belongs to. Nothing else
     can use it, and it stops working at `expires_in_seconds` or after
     `max_uses`, whichever comes first. Owner-only: callers are the owner's
     authenticated routes, never a tool.
+
+    `limits`: the grant record's further fields (governance/grant_record
+    `new_fields`: principal, argument rules, data and destination scope,
+    start, money and time caps, quiet hours, remote). Left out, each is what a
+    grant did before them. A bad value raises UserFacingValueError.
     """
-    if not tools or not scope or expires_in_seconds <= 0 or max_uses < 1:
+    import math
+    try:
+        finite = math.isfinite(float(expires_in_seconds))
+    except (TypeError, ValueError):
+        finite = False
+    if not tools or not scope or not finite or expires_in_seconds <= 0 or max_uses < 1:
         raise ValueError("a grant needs tools, a scope, a positive expiry and uses")
+    from agent_friday.governance import grant_record as _gr
+    lim = dict(limits or {})
+    now = time.time()
+    subject = _gr.subject_of_scope(scope)
+    extra = _gr.new_fields(subject_kind=lim.pop("subject_kind", None) or subject["kind"],
+                           subject_id=str(scope), now=now, **lim)
     g = {"grant_id": "grant_" + uuid.uuid4().hex[:10], "tools": sorted(set(tools)),
-         "scope": str(scope), "expires_at": time.time() + float(expires_in_seconds),
-         "max_uses": int(max_uses), "uses_left": int(max_uses), "created_by": created_by,
-         "note": note[:200], "created_at": time.time(),
+         "scope": str(scope), "expires_at": now + float(expires_in_seconds),
+         "uses_left": int(max_uses), "created_by": created_by, "note": note[:200],
+         "created_at": now,
          # the governing policy version it was issued under (NS-30.19-1)
-         "policy_version": _policy_version_id()}
+         "policy_version": _policy_version_id(),
+         # the grant record's own fields (NS-18.4-4, NS-30.12-1); its limits are signed
+         "max_uses": int(max_uses), **extra}
     key = _governance_key()
     g["sig"] = _grant_sig(g, key)
     with _LOCK:
@@ -1515,7 +1604,89 @@ def consume_grant(tool_name: str, scope: str) -> Optional[dict]:
     return _use_grant(tool_name, {"grant_scope": str(scope)})
 
 
-def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
+def _grant_excluded_by(g: dict, tool_name: str, scopes: set, now: float,
+                       args=None, ctx=None) -> str:
+    """The grant record field that keeps this grant from covering the call
+    ("subject" when it belongs to another job or task), or "" when it covers
+    (governance/grant_record.exclusion: status, start, expiry, uses, principal,
+    tool, argument rules, data and destination scope, money and time caps,
+    quiet hours, remote). A check that cannot run covers nothing. `g`: the
+    row as the ledger has it (`_ledger_row` / `_live_view`)."""
+    if not isinstance(g, dict) or g.get("scope") not in scopes:
+        return "subject"
+    try:
+        from agent_friday.governance import grant_record as _gr
+        return _gr.exclusion(_gr.from_scoped(g, now), tool=tool_name, args=args,
+                             ctx=ctx, now=now)
+    except Exception as e:  # noqa: BLE001 - not covered: the normal path decides
+        _log.warning("grant %s could not be checked (%s); it covers nothing",
+                     g.get("grant_id"), type(e).__name__)
+        return "status"
+
+
+def _grant_live(g: dict, tool_name: str, scopes: set, now: float,
+                args=None, ctx=None) -> bool:
+    return not _grant_excluded_by(g, tool_name, scopes, now, args, ctx)
+
+
+def _grant_covers(tool_name: str, ctx: dict, args=None) -> bool:
+    """Whether `_use_grant` would find a live grant for this call (the same
+    hold, signature, ledger-counted uses and revocations, and every grant
+    record field). Spends nothing. Never raises."""
+    scopes = _scopes(ctx)
+    if not scopes:
+        return False
+    try:
+        if outward_hold():
+            return False
+        key = _governance_key()
+        now = time.time()
+        with _LOCK:
+            gs = [g for g in _read_grants(key)
+                  if g.get("scope") in scopes and tool_name in (g.get("tools") or [])]
+            if not gs:
+                return False
+            events = _grant_events()
+            for g in gs:
+                live = _live_view(g, events, key)
+                if live is not None and _grant_live(live, tool_name, scopes, now, args, ctx):
+                    return True
+            return False
+    except Exception:  # noqa: BLE001 - not known to be covered: refuses nothing here
+        return False
+
+
+def grant_exclusion(tool_name: str, ctx: dict, args=None) -> dict:
+    """When no grant covers this call but one is scoped to its job or task:
+    which grant, and the name of the field that kept it out
+    ({"grant_excluded": id, "grant_excluded_by": field}). A grant naming the
+    tool is preferred over one that does not. {} when no grant is in scope.
+    Records only: the call goes to its card either way. Signed grants only,
+    read as the ledger has them (uses, revocation, counters)."""
+    scopes = _scopes(ctx or {})
+    if not scopes:
+        return {}
+    now = time.time()
+    best = None
+    try:
+        key = _governance_key()
+        with _LOCK:
+            gs = _read_grants(key)
+        events = _grant_events() if gs else {}
+    except Exception:  # noqa: BLE001 - records only
+        return {}
+    for g in gs:
+        if not isinstance(g, dict) or g.get("scope") not in scopes:
+            continue
+        why = _grant_excluded_by(_ledger_row(g, events), tool_name, scopes, now, args, ctx)
+        if not why:
+            return {}
+        if best is None or (best[1] == "tools" and why != "tools"):
+            best = (g.get("grant_id"), why)
+    return {"grant_excluded": best[0], "grant_excluded_by": best[1]} if best else {}
+
+
+def _use_grant(tool_name: str, ctx: dict, args=None) -> Optional[dict]:
     scopes = _scopes(ctx)
     if not scopes:
         return None
@@ -1540,30 +1711,48 @@ def _use_grant(tool_name: str, ctx: dict) -> Optional[dict]:
             events = _grant_events()
         except Exception:
             return None
+        now = time.time()
         for g in gs:
             live = _live_view(g, events, key)
             if live is None:
                 continue
+            # every grant record field must allow the call (governance/grant_record)
+            if not _grant_live(live, tool_name, scopes, now, args, ctx):
+                continue
+            spend = None
+            if live.get("money_cap") is not None:
+                from agent_friday.governance import grant_record as _gr
+                spend = _gr.action_cost(ctx)     # server-set context only, never args
             # The use is a durable ledger entry BEFORE anything runs: no entry, no use.
+            # It carries the record's counters (when, and what it cost), so a counter
+            # edited in the file does not loosen a time or money cap.
             try:
                 from agent_friday.services import action_ledger
-                action_ledger.append("grant_use", {"grant": str(g.get("grant_id")),
-                                                   "tool": str(tool_name)[:80],
-                                                   "scope": str(g.get("scope"))[:120]},
-                                     durable=True)
+                use = {"grant": str(g.get("grant_id")), "tool": str(tool_name)[:80],
+                       "scope": str(g.get("scope"))[:120], "at": now}
+                if spend is not None:
+                    use["spend"] = spend
+                action_ledger.append("grant_use", use, durable=True)
             except Exception:
                 return None
             live["uses_left"] = int(live["uses_left"]) - 1
+            # the record's own count, first use and spend (grant_record)
+            live["used_count"] = int(live.get("used_count") or 0) + 1
+            if not live.get("first_used_at"):
+                live["first_used_at"] = now
+            if spend is not None:
+                live["money_spent"] = float(live.get("money_spent") or 0.0) + spend
             # the policy version this use was made under (NS-30.19-1); the
             # decision receipt that names the grant carries it too
             live["last_used_policy_version"] = _policy_version_id()
-            # The file's count and version are records only: the ledger holds the count.
+            # The file's counters and version are records only: the ledger holds them.
             try:
                 raw = _read_raw_grants()
                 for x in raw:
                     if isinstance(x, dict) and x.get("grant_id") == g.get("grant_id"):
-                        x["uses_left"] = live["uses_left"]
-                        x["last_used_policy_version"] = live["last_used_policy_version"]
+                        for k in ("uses_left", "used_count", "first_used_at", "money_spent",
+                                  "last_used_policy_version"):
+                            x[k] = live.get(k)
                 _write_grants(raw)
             except OSError:
                 pass
@@ -1612,6 +1801,14 @@ class ActionEnvelope:
     policy_version     the governing policy version (services/policy_version)
     claws_state        {"hash", "status"}: the cLaws as this action found them
     created_at         unix seconds
+    origin             where the request came from (ORIGINS): chat, voice, task,
+                       schedule, channel, card, owner_route, route, other; derived
+                       from the session context the gate already reads
+    risk_class         the gate's own classification (observe, internal,
+                       outward, forbidden); None when it is not known
+    provenance_summary counts of where the call's arguments came from
+                       ({"owner", "content", "sender", "model"}: services/taint
+                       origins); never a value. None when no provenance check ran
     """
     action_id: str
     principal: str
@@ -1622,12 +1819,91 @@ class ActionEnvelope:
     policy_version: Optional[str]
     claws_state: dict
     created_at: float
+    origin: Optional[str] = None
+    risk_class: Optional[str] = None
+    provenance_summary: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 ENVELOPE_FIELDS = tuple(f.name for f in fields(ActionEnvelope))
+
+#: Where a request came from, as the envelope names it (NS-18.1-1). Labels only.
+#: owner_route: a route whose request is verified as the owner's (check_auth);
+#: route: any other request to a route.
+ORIGINS = ("chat", "voice", "task", "schedule", "channel", "card", "owner_route", "route", "other")
+#: The provenance buckets an envelope counts (services/taint Origin kinds:
+#: "user" and "own" are the owner's; "content", "sender" and "model" as they are).
+PROVENANCE_KEYS = ("owner", "content", "sender", "model")
+_PROVENANCE_OF = {"user": "owner", "own": "owner", "content": "content", "sender": "sender",
+                  "model": "model"}
+
+
+def derive_origin(ctx: Optional[dict] = None, *, surface: Optional[str] = None,
+                  approval: Optional[str] = None) -> str:
+    """The envelope's `origin` from what the gate already reads: the session
+    context (origin, approved_card, scheduled/schedule_id, is_voice/surface,
+    is_background_task/task_id, session_id) or, for an executor outside a tool
+    call, its surface and card. Records only; never raises."""
+    try:
+        c = ctx if isinstance(ctx, dict) else {}
+        o = str(c.get("origin") or "").strip().lower()
+        s = str(c.get("surface") or surface or "").strip().lower()
+        if approval or c.get("approved_card") or c.get("approved_card_decision") \
+                or s == "approval_card":
+            return "card"
+        if o in ("channel", "phone") or s.startswith(("channel", "phone")):
+            return "channel"
+        if c.get("scheduled") or c.get("schedule_id") or s.startswith("schedul"):
+            return "schedule"
+        if c.get("is_voice") or o == "voice" or s.startswith("voice"):
+            return "voice"
+        if c.get("is_background_task") or c.get("task_id") or s in (
+                "background", "web_task", "work_order", "claude_code"):
+            return "task"
+        if c.get("session_id") or s in ("chat", "typed"):
+            return "chat"
+        try:
+            from flask import has_request_context
+            if has_request_context():
+                # a route: the owner's only when the request is verified as theirs
+                return "owner_route" if _owner_verified_request() else "route"
+        except Exception:  # noqa: BLE001
+            pass
+        return "other"
+    except Exception:  # noqa: BLE001
+        return "other"
+
+
+def _owner_verified_request() -> bool:
+    """Whether the current request passed core.check_auth as the owner: its
+    principal is the user (not the observer credential) and it is signed in
+    (the session check_auth marks, or this launch's page token). A label for
+    the envelope; decides nothing. Never raises."""
+    try:
+        from flask import g, request, session
+        if getattr(g, "friday_principal", None) != "user":
+            return False
+        if session.get("authenticated"):
+            return True
+        from agent_friday import core as _core
+        return bool(_core._api_token_valid(request.headers.get("X-Friday-Token")))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def provenance_summary(origins: Any) -> Optional[dict]:
+    """Counts per PROVENANCE_KEYS from a taint origin tally ({kind: n}); None
+    when there is no tally. Never a value."""
+    if not isinstance(origins, dict):
+        return None
+    out = {k: 0 for k in PROVENANCE_KEYS}
+    for kind, n in origins.items():
+        b = _PROVENANCE_OF.get(str(kind))
+        if b is not None and isinstance(n, int) and n > 0:
+            out[b] += n
+    return out
 
 
 def _verification_plan(klass, decision, via=None) -> dict:
@@ -1658,6 +1934,175 @@ def _idempotency_key(tool, args_hash, ctx, principal) -> Optional[str]:
     return "idk_" + hashlib.sha256(basis.encode("utf-8")).hexdigest()[:24]
 
 
+#: The idempotency scopes that name one request (NS-36.3-5): a caller's own
+#: key, one turn, one task, one run. A session or a schedule is not one
+#: request (the same message may rightly go out again tomorrow), so a key
+#: scoped by them never refuses anything.
+_ONE_REQUEST_SCOPES = frozenset({"client", "turn_id", "task_id", "run_id", "turn"})
+
+
+def _idempotency_scope(ctx) -> str:
+    """Which scope `_idempotency_key` derived its key from (same order)."""
+    c = ctx if isinstance(ctx, dict) else {}
+    if str(c.get("idempotency_key") or "").strip():
+        return "client"
+    named = next((k for k in ("turn_id", "task_id", "run_id", "schedule_id", "session_id")
+                  if c.get(k)), "")
+    if named:
+        return named
+    return "turn" if _turn_id() else ""
+
+
+def idempotency_scope_refuses(scope: Optional[str]) -> bool:
+    """Whether a key derived under `scope` (`_idempotency_scope`) names one
+    request: the gate refuses a repeat of it, and the outward audit counts
+    it run twice as duplicate_key. The one rule both read."""
+    return str(scope or "") in _ONE_REQUEST_SCOPES
+
+
+#: The decision record's field naming the scope its idempotency key was
+#: derived under (`_idempotency_scope`; "client" for a card's own key).
+IDEMPOTENCY_SCOPE_FIELD = "idempotency_scope"
+
+
+#: The outward tool calls a repeat of which is refused as already done
+#: (NS-36.3-5): one-shot sends and writes whose second run is a second
+#: message, post, booking or record at another person's or service's end.
+#: Texts, scheduled posts, bookings and holds, calendar writes, Google Tasks
+#: writes, a contact saved; plus connector writes (ONE_SHOT_CONNECTOR_PREFIX,
+#: is_one_shot). Deliberately NOT here: SELF_GATED tools (their handler
+#: raises its own card, and a codebase command, a browser click or an
+#: organize/undo is rightly repeated within one task), commands
+#: (run_command, run_sandboxed, install_package), the browser and desktop
+#: control. Email is sent from its card (draft_email send=true is SELF_GATED;
+#: gmail_send uses record_external(once=True), which is keyed by the card).
+ONE_SHOT_ACTIONS = frozenset({
+    "text_by_phone",
+    "content_schedule_post", "content_create_post",
+    "book_slot", "hold_slots",
+    "create_calendar_event", "update_calendar_event", "delete_calendar_event",
+    "annotate_calendar_events",
+    "create_task", "update_task", "complete_task", "delete_task",
+    "save_google_contact",
+})
+#: A connector (MCP) tool; an outward one is a write at the connected service.
+ONE_SHOT_CONNECTOR_PREFIX = "mcp_"
+#: The verbs (a word of the tool name) that make a connector tool one-shot:
+#: its second run is a second message, post, invite, booking or file at the
+#: other end. A connector tool without one of these is not refused on repeat.
+ONE_SHOT_CONNECTOR_VERBS = frozenset({
+    "send", "create", "post", "publish", "reply", "forward", "schedule", "book",
+    "invite", "upload", "write", "submit", "share", "comment", "tweet",
+})
+#: Words naming browser or UI automation in a connector tool's name: such a
+#: tool (a click, a keypress, a page load) is rightly repeated within one
+#: task and is never one-shot, whatever else its name says.
+CONNECTOR_AUTOMATION_WORDS = frozenset({
+    "browser", "playwright", "puppeteer", "selenium", "computer",
+    "click", "dblclick", "type", "press", "keyboard", "mouse", "navigate", "goto",
+    "fill", "scroll", "hover", "drag", "select", "screenshot", "snapshot",
+    "wait", "evaluate", "resize",
+})
+
+
+def _name_words(t: str) -> list[str]:
+    """The words of a tool name: split on non-alphanumerics and camelCase."""
+    t = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", t)
+    return [w for w in re.split(r"[^a-z0-9]+", t.lower()) if w]
+
+
+def _is_connector_write_name(t: str) -> bool:
+    words = _name_words(t[len(ONE_SHOT_CONNECTOR_PREFIX):])
+    if any(w in CONNECTOR_AUTOMATION_WORDS for w in words):
+        return False
+    forms = {v + s for v in ONE_SHOT_CONNECTOR_VERBS for s in ("", "s", "d", "ed", "ing")}
+    return any(w in forms for w in words)
+
+
+def is_one_shot(tool_name: Any) -> bool:
+    """Whether a repeat of this outward tool call is refused as already done:
+    ONE_SHOT_ACTIONS, or a connector write: an mcp_ tool whose name carries
+    a send/create/post-type verb (ONE_SHOT_CONNECTOR_VERBS) and no browser or
+    UI-automation word (CONNECTOR_AUTOMATION_WORDS), and is not a
+    desktop-control connector (judged per click like Friday's own). Never
+    raises."""
+    t = str(tool_name or "")
+    if t in ONE_SHOT_ACTIONS:
+        return True
+    if t in SELF_GATED or not t.lower().startswith(ONE_SHOT_CONNECTOR_PREFIX):
+        return False
+    try:
+        if not _is_connector_write_name(t):
+            return False
+        from agent_friday.services import desktop_grants as _dg
+        return not _dg.is_desktop_tool(t)
+    except Exception:  # noqa: BLE001 - not known to be a connector write: refuses nothing
+        return False
+
+
+def recorded_key_names_one_request(rec: Any) -> bool:
+    """`idempotency_scope_refuses` for a decision already on record (its
+    IDEMPOTENCY_SCOPE_FIELD), and, for a tool call's own derived key, only a
+    one-shot tool (is_one_shot; a card's own key, scope "client", names one
+    card). A decision written before the scope was recorded counts, as it
+    always did. Never raises."""
+    if not isinstance(rec, dict) or IDEMPOTENCY_SCOPE_FIELD not in rec:
+        return True
+    scope = rec.get(IDEMPOTENCY_SCOPE_FIELD)
+    if not idempotency_scope_refuses(scope):
+        return False
+    return scope == "client" or is_one_shot(rec.get("tool"))
+
+
+def _args_hash_of(args) -> str:
+    return hashlib.sha256(json.dumps(args or {}, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _principal_of(ctx) -> str:
+    try:
+        from agent_friday.services.action_ledger import PRINCIPAL as _principal
+    except Exception:  # noqa: BLE001
+        _principal = "owner"
+    return str((ctx or {}).get("principal") or _principal)[:40]
+
+
+def _duplicate_of(tool_name, args, ctx) -> Optional[str]:
+    """The action that already carried out this exact request (the key
+    `build_envelope` would give it), when the tool is one-shot (is_one_shot)
+    and its key names one request; else None. Never raises."""
+    try:
+        if not is_one_shot(tool_name) or not idempotency_scope_refuses(_idempotency_scope(ctx)):
+            return None
+        key = _idempotency_key(str(tool_name or "")[:120], _args_hash_of(args), ctx,
+                               _principal_of(ctx))
+    except Exception:  # noqa: BLE001 - a lookup that cannot run refuses nothing
+        return None
+    return _already_done(key)
+
+
+def _already_done_verdict(klass, done: str) -> "Verdict":
+    return Verdict("deny", klass, ALREADY_DONE_REASON, outcome=DENIED,
+                   detail={"duplicate_key": True, "already_done_action": done})
+
+
+def _already_done(idem_key: Optional[str]) -> Optional[str]:
+    """The action id that already carried out this idempotency key (executed
+    or completed_verified in the last 30 days: services/idempotency_index),
+    else None. A lookup that cannot run refuses nothing (as before). Never raises."""
+    if not idem_key:
+        return None
+    try:
+        from agent_friday.services import idempotency_index
+        return idempotency_index.done_action(idem_key)
+    except Exception as e:  # noqa: BLE001
+        _log.warning("idempotency lookup unavailable: %s", type(e).__name__)
+        return None
+
+
+#: The verdict reason for a refused repeat (detail code `duplicate_key`).
+ALREADY_DONE_REASON = "already done: this exact request was already carried out, so it was not run again"
+
+
 def _current_pv() -> Optional[dict]:
     """The governing policy version now ({"id", "parts"}), or None when the
     module cannot be used. Read once per decision and passed along. Never raises."""
@@ -1680,16 +2125,16 @@ _DECISION_PV: ContextVar = ContextVar("friday_decision_policy_version", default=
 
 def build_envelope(tool, *, args_hash: Optional[str] = None, ctx: Optional[dict] = None,
                    klass=None, decision=None, via=None, action_id: Optional[str] = None,
-                   key: Optional[bytes] = None, pv: Optional[dict] = None) -> ActionEnvelope:
+                   key: Optional[bytes] = None, pv: Optional[dict] = None,
+                   origin: Optional[str] = None,
+                   provenance: Optional[dict] = None) -> ActionEnvelope:
     """The envelope for one action; records only. `pv`: the policy version
-    the caller already read (else it is read here)."""
+    the caller already read (else it is read here). `origin`: else derived
+    from `ctx` (derive_origin); `provenance`: a taint origin tally, counted
+    (provenance_summary)."""
     from agent_friday.services import policy_version as _pv
-    try:
-        from agent_friday.services.action_ledger import PRINCIPAL as _principal
-    except Exception:  # noqa: BLE001
-        _principal = "owner"
     pvd = _given_pv(pv) or _current_pv()
-    principal = str((ctx or {}).get("principal") or _principal)[:40]
+    principal = _principal_of(ctx)
     aid = action_id if _pv.valid_action_id(action_id) else _pv.new_action_id()
     tool = str(tool or "")[:120]
     return ActionEnvelope(
@@ -1698,7 +2143,20 @@ def build_envelope(tool, *, args_hash: Optional[str] = None, ctx: Optional[dict]
         idempotency_key=_idempotency_key(tool, args_hash, ctx, principal),
         verification_plan=_verification_plan(klass, decision, via),
         policy_version=(pvd or {}).get("id"), claws_state=_pv.claws_state(key, pv=pvd),
-        created_at=time.time())
+        created_at=time.time(),
+        origin=origin if origin in ORIGINS else derive_origin(ctx, surface=via),
+        risk_class=str(klass)[:20] if klass else None,
+        provenance_summary=provenance_summary(provenance))
+
+
+def _origin_of_entry(entry: dict) -> str:
+    """The origin a receipt entry names (its surface and card), for an
+    envelope built at the receipt. Never raises."""
+    try:
+        return derive_origin({"task_id": entry.get("task_id")} if entry.get("task_id") else None,
+                             surface=entry.get("surface"), approval=entry.get("approval"))
+    except Exception:  # noqa: BLE001
+        return "other"
 
 
 def _envelope_of(entry: dict, key: Optional[bytes], pv: Optional[dict] = None) -> dict:
@@ -1712,10 +2170,14 @@ def _envelope_of(entry: dict, key: Optional[bytes], pv: Optional[dict] = None) -
         env = build_envelope(entry.get("tool"), args_hash=entry.get("args_hash"),
                              klass=entry.get("class"), decision=entry.get("decision"),
                              via=entry.get("via"), action_id=entry.get("action_id"),
-                             key=key, pv=pvd).to_dict()
+                             key=key, pv=pvd, origin=_origin_of_entry(entry)).to_dict()
     else:
         env = {k: env.get(k) for k in ENVELOPE_FIELDS}
         env["claws_state"] = _pv.claws_state(key, pv=pvd)
+        if env.get("origin") not in ORIGINS:
+            env["origin"] = _origin_of_entry(entry)
+        if not env.get("risk_class") and entry.get("class"):
+            env["risk_class"] = str(entry.get("class"))[:20]
     env["policy_version"] = (pvd or {}).get("id") or env.get("policy_version")
     return env
 
@@ -1749,7 +2211,11 @@ def _fallback_envelope(entry: dict) -> dict:
             "idempotency_key": idk if isinstance(idk, str) else None,
             "verification_plan": plan, "policy_version": PV_UNAVAILABLE,
             "claws_state": {"hash": None, "status": "unavailable"},
-            "created_at": time.time()}
+            "created_at": time.time(),
+            "origin": given.get("origin") if given.get("origin") in ORIGINS else _origin_of_entry(entry),
+            "risk_class": str(entry.get("class"))[:20] if entry.get("class") else None,
+            "provenance_summary": given.get("provenance_summary")
+            if isinstance(given.get("provenance_summary"), dict) else None}
 
 
 def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
@@ -1789,7 +2255,8 @@ def _receipt(entry: dict, *, pv: Optional[dict] = None) -> dict:
         if _off.active():
             entry = {k: entry.get(k) for k in _OFF_RECORD_RECEIPT_KEYS if k in entry}
             # no hash of the arguments off the record (a short message can be guessed)
-            entry["envelope"] = dict(env, args_hash=None, idempotency_key=None)
+            entry["envelope"] = dict(env, args_hash=None, idempotency_key=None,
+                                     provenance_summary=None)
             entry["off_record"] = True
     except ImportError:
         pass
@@ -1922,7 +2389,7 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
         minted = not _pv.valid_action_id(aid)
         if minted:
             aid = _pv.new_action_id()
-        action_ledger.try_append("outcome", {
+        _entry = action_ledger.try_append("outcome", {
             "action_id": aid,
             **({"action_id_origin": "outcome"} if minted else {}),
             "policy_version": _policy_version_id(),
@@ -1932,8 +2399,26 @@ def record_outcome(tool: str, decision: Optional[dict], status: str, *,
             "approval": approval or (decision or {}).get("approval"),
             "duration_ms": round(float(duration_ms), 1) if duration_ms is not None else None,
             "detail": str(detail or "")[:120]})
+        if _entry:
+            # The task journal's receipt event (NS-29.4-2): the task this action
+            # belongs to names the receipt, by ids only. Never holds anything.
+            try:
+                from agent_friday.services import task_journal as _tj
+                _tj.receipt(_entry, approval_id=approval or (decision or {}).get("approval"))
+            except Exception:
+                pass
         if isinstance(decision, dict) and oc in TERMINAL_OUTCOMES:
             decision["_closed"] = True
+        # §4.7 (G9): an outward action that closed checked or failed inside a
+        # task is remembered as an outcome (services/outcome_memory: nothing
+        # off the record, nothing without a task).
+        if oc in (COMPLETED_VERIFIED, FAILED) and (decision or {}).get("class") == OUTWARD:
+            try:
+                from agent_friday.services import outcome_memory as _om
+                _om.on_action_closed(tool=tool, action_id=aid, outcome_word=oc,
+                                     approval=approval or (decision or {}).get("approval"))
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -2246,8 +2731,13 @@ def _interactive(ctx: dict) -> bool:
 
 def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] = None,
               *, tainted: bool = False, clean: bool = False,
-              grant_tainted: Optional[bool] = None, via: str = "") -> Verdict:
+              grant_tainted: Optional[bool] = None, via: str = "",
+              provenance: Optional[dict] = None) -> Verdict:
     """Decide whether this action may run now. Never raises.
+
+    `provenance`: the provenance check's origin tally for the call's
+    arguments (services/taint Decision.origins), counted into the envelope.
+    Records only.
 
     `tainted`: a detail came from outside content badly enough to need a card.
     `clean`: the provenance check found nothing at all from outside content in
@@ -2263,7 +2753,9 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
              the confirmation gate asks the user yes/no in chat
     card     outward and nobody can be asked in chat, or a detail came from
              outside content: an approval card decides it
-    deny     never run (forbidden, or the checkpoint itself failed)
+    deny     never run (forbidden, the checkpoint itself failed, or an outward
+             request already carried out: ALREADY_DONE_REASON, detail
+             duplicate_key)
     """
     ctx = session_ctx or {}
     failed = None
@@ -2291,8 +2783,8 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         v = Verdict("deny" if klass != INTERNAL else "allow", klass,
                     f"governance check failed ({e})")
     try:
-        _args_hash = hashlib.sha256(json.dumps(args or {}, sort_keys=True,
-                                               default=str).encode()).hexdigest()
+        _args_hash = _args_hash_of(args)
+        _scope = _idempotency_scope(ctx)
         # The single action envelope (NS-36.3-1), built once here and carried
         # to the decision receipt and, through LAST_RECEIPT, to the outcome.
         # Records only: nothing reads it to decide. The policy version is read
@@ -2300,10 +2792,31 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
         _pvd = _current_pv()
         try:
             _env = build_envelope(tool_name, args_hash=_args_hash, ctx=ctx, klass=v.klass,
-                                  decision=v.action, via=via or None, pv=_pvd).to_dict()
+                                  decision=v.action, via=via or None, pv=_pvd,
+                                  provenance=provenance).to_dict()
         except Exception as e:  # noqa: BLE001 - _receipt builds one instead
             _log.warning("action envelope not built here: %s", type(e).__name__)
             _env = None
+        # Idempotent execute (NS-36.3-5): an outward action about to run whose
+        # request (its idempotency key, scoped to one turn, task or run, or the
+        # caller's own key) was already carried out is refused, not run again.
+        # The only thing here that changes a verdict, and only toward refusing.
+        # (`_decide` checks first, before it spends a grant use: a refused
+        # repeat never uses one up.) Only a one-shot send or write
+        # (ONE_SHOT_ACTIONS, is_one_shot): a self-gated tool, a command or a
+        # browser step is rightly repeated within one task, run or turn.
+        # Known limit: two identical calls at the same moment both pass (the
+        # first has no outcome yet when the second is checked); this refuses
+        # a repeat after the first one ran, it is not a lock.
+        _dup = None
+        if v.action == "deny" and (v.detail or {}).get("duplicate_key"):
+            _dup = v.detail.get("already_done_action")
+        elif (v.action == "allow" and v.klass == OUTWARD and _env
+                and is_one_shot(tool_name) and idempotency_scope_refuses(_scope)):
+            _dup = _already_done(_env.get("idempotency_key"))
+            if _dup:
+                v = _already_done_verdict(v.klass, _dup)
+                _env["verification_plan"] = _verification_plan(v.klass, "deny", via or None)
         # (through a context variable, not an argument: callers and tests
         # replace _receipt with one-argument callables)
         _pv_token = _DECISION_PV.set(_pvd)
@@ -2318,6 +2831,10 @@ def authorize(tool_name: str, args: Optional[dict], session_ctx: Optional[dict] 
                   "via": via or None,
                   "args_hash": _args_hash,
                   **({"envelope": _env, "action_id": _env["action_id"]} if _env else {}),
+                  **({"detail": "duplicate_key", "already_done_action": _dup} if _dup else {}),
+                  # the scope its idempotency key was derived under, so the
+                  # outward audit applies the gate's own rule to it
+                  IDEMPOTENCY_SCOPE_FIELD: _scope or None,
                   "surface": ctx.get("surface") or ("chat" if ctx.get("session_id") else
                                                      "background" if ctx.get("is_background_task") else "other"),
                   "grant": (v.grant or {}).get("grant_id"),
@@ -2390,6 +2907,17 @@ def _send_grant(tool_name, args, ctx) -> Optional[dict]:
     except Exception as e:
         _log.warning("send-grant check failed, so the send asks: %s", e)
         return None
+
+
+def _send_grant_exclusion(tool_name, args, ctx) -> dict:
+    """{"grant_excluded", "grant_excluded_by"} for a pre-approved send that
+    names this send's recipients but a grant record field keeps out, else {}.
+    Records only; never raises."""
+    try:
+        from agent_friday.governance import send_grants as _sg
+        return _sg.exclusion_for_tool(tool_name, args or {}, ctx)
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 #: In safe mode these run nothing at all: a command or program can reach the
@@ -2507,18 +3035,38 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
             _log.warning("could not record a withheld pre-approval: %s", e)
             withheld = {"grant_withheld": sg.get("grant_id"),
                         "withheld_why": "the pre-approval check could not finish (%s)" % e}
+    if sg is None:
+        # A pre-approval that names this send but a grant record field keeps
+        # out (governance/grant_record): which one, by field name, for the record.
+        withheld = dict(withheld, **_send_grant_exclusion(tool_name, args, ctx))
     if tool_name in SELF_GATED and not tainted:
         return Verdict("allow", klass, "its own approval card is the gate", detail=withheld)
     if tool_name in SELF_GATED:
         return Verdict("allow", klass, "its own approval card is the gate (with provenance)",
                        detail=withheld)
+    excluded: dict = {}
     if not tainted and not _interactive(ctx):
-        g = _use_grant(tool_name, ctx)
+        # Idempotent execute (NS-36.3-5) before a grant use is spent: a request
+        # the grant would let run, already carried out, is refused here (as
+        # `authorize` would refuse it after) and the grant keeps its use.
+        # One-shot sends and writes only (is_one_shot), as in `authorize`.
+        if is_one_shot(tool_name) and _grant_covers(tool_name, ctx, args):
+            done = _duplicate_of(tool_name, args, ctx)
+            if done:
+                return _already_done_verdict(klass, done)
+        g = _use_grant(tool_name, ctx, args)
         if g is not None:
             return Verdict("allow", klass, f"pre-approved grant {g['grant_id']}", grant=g)
+        # No grant covers it: the card decides, as with no grant at all. When
+        # a grant for this job or task was kept out, the decision names the
+        # field that kept it out (grant_record.FIELD_ORDER), never a deny.
+        try:
+            excluded = grant_exclusion(tool_name, ctx, args)
+        except Exception:  # noqa: BLE001 - records only
+            excluded = {}
     if _interactive(ctx) and not tainted and tool_name not in CARD_ONLY_WHEN_OUTWARD:
         return Verdict("confirm", klass, why)
-    return Verdict("card", klass, why)
+    return Verdict("card", klass, why, detail=excluded)
 
 
 def outward_hold() -> Optional[str]:
@@ -2570,6 +3118,22 @@ def _authority_hold() -> Optional[str]:
 
 class Held(RuntimeError):
     """An outward action the checkpoint would not let through."""
+
+
+class AlreadyDone(Held):
+    """`record_external(once=True)`: the card's action was already carried
+    out (its idempotency key has an executed or completed_verified outcome),
+    so it is refused, not run again (NS-36.3-5). `action_id`: the one that
+    ran. A new card is a new key: the owner re-does it with a new card.
+
+    One-shot by construction, whatever the tool: the key names one approval
+    card (its id, action and target), and one approved card is carried out
+    once. It does not read ONE_SHOT_ACTIONS (that set is for a tool call's
+    key derived from its turn, task or run, which a legitimate repeat can share)."""
+
+    def __init__(self, msg: str, action_id: Optional[str] = None):
+        super().__init__(msg)
+        self.action_id = action_id
 
 
 def check_external() -> None:
@@ -2627,12 +3191,27 @@ def record_external(action: str, *, surface: str, approval_id: Optional[str] = N
     if task_id:
         entry["task_id"] = str(task_id)[:120]
     if approval_id and once:
+        entry[IDEMPOTENCY_SCOPE_FIELD] = "client"       # the card's own key: one request
         try:
             entry["envelope"] = build_envelope(
                 action, klass=OUTWARD, decision="allow", via=surface,
-                ctx={"idempotency_key": "approval|%s|%s|%s" % (approval_id, action, target)}).to_dict()
+                ctx={"idempotency_key": "approval|%s|%s|%s" % (approval_id, action, target)},
+                origin=derive_origin(None, surface=surface, approval=approval_id)).to_dict()
         except Exception:  # noqa: BLE001 - the envelope records; _receipt builds one without a key
             pass
+        # Idempotent execute (NS-36.3-5): this card's action already ran (the
+        # key names the card, so only this card): refused, with its own
+        # receipt, and nothing is carried out again.
+        done = _already_done((entry.get("envelope") or {}).get("idempotency_key"))
+        if done:
+            env = dict(entry["envelope"], verification_plan=_verification_plan(OUTWARD, "deny", surface))
+            refusal = dict(entry, decision="deny", reason=ALREADY_DONE_REASON, outcome=DENIED,
+                           detail="duplicate_key", already_done_action=done, envelope=env)
+            try:
+                _receipt(refusal)
+            except Exception as e:  # noqa: BLE001 - refused either way
+                _log.warning("the already-done refusal could not be receipted: %s", type(e).__name__)
+            raise AlreadyDone("%s (approval %s)" % (ALREADY_DONE_REASON, approval_id), done)
     try:
         out = _receipt(entry)
     except Exception as e:

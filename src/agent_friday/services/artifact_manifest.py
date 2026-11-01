@@ -209,11 +209,18 @@ def written_paths(name: str, args: Any, result: Any) -> List[Path]:
 
 # ── signing ────────────────────────────────────────────────────────────────
 
+def derived_key(domain: bytes) -> bytes:
+    """A key for one purpose only (`domain`), derived from the governance key,
+    so what is signed or fingerprinted for one purpose never stands in for
+    another. Raises when the governance key is unavailable."""
+    from agent_friday.governance.action_gate import _governance_key
+    return _hmac.new(_governance_key(), domain, hashlib.sha256).digest()
+
+
 def _key() -> bytes:
     """A key for this file only, derived from the governance key, so a
     manifest line and a receipt can never stand in for each other."""
-    from agent_friday.governance.action_gate import _governance_key
-    return _hmac.new(_governance_key(), _DOMAIN, hashlib.sha256).digest()
+    return derived_key(_DOMAIN)
 
 
 def _canonical(entry: dict) -> bytes:
@@ -312,14 +319,22 @@ def receipt_of(entry: dict) -> Optional[dict]:
 
 # ── recording ──────────────────────────────────────────────────────────────
 
-def _sha256(p: Path) -> Optional[str]:
-    if p.stat().st_size > MAX_HASH_BYTES:
+def file_sha256(p: Path, max_bytes: int = MAX_HASH_BYTES) -> Optional[str]:
+    """The file's SHA-256, read in chunks; None for a file over `max_bytes`.
+    Raises OSError as reading does. The step record of a call
+    (services/step_records.artifact_refs) hashes with this and hands its
+    hashes to `submit` (`known_sha256`), so a file is hashed once per call."""
+    if p.stat().st_size > max_bytes:
         return None
     h = hashlib.sha256()
     with open(p, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _sha256(p: Path) -> Optional[str]:
+    return file_sha256(p, MAX_HASH_BYTES)
 
 
 def _has_provenance(sha: Optional[str]) -> bool:
@@ -495,12 +510,15 @@ def _reason_of(qa: dict) -> Optional[str]:
 def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
                 started_at: Optional[float] = None, ok: bool = True,
                 turn_id: Any = "current", where: Optional[dict] = None,
-                paths: Optional[List[Path]] = None, task_context: Optional[dict] = None) -> List[dict]:
+                paths: Optional[List[Path]] = None, task_context: Optional[dict] = None,
+                known_sha256: Optional[Dict[str, str]] = None) -> List[dict]:
     """Record the files a finished tool call made. Returns the lines written.
     Only a call that went through (`ok`) counts, and only files changed since
     the call started (a path the tool names but did not touch is not its
     artifact). `task_context` (principal, goal ancestry) is read from the
-    task record when not given. Never raises."""
+    task record when not given. `known_sha256` ({resolved path: sha256}) are
+    hashes already taken of these files when the call finished (its step
+    record's): used instead of hashing the same file again. Never raises."""
     try:
         if not ok or name not in CREATING_TOOLS or _off_record():
             return []
@@ -523,7 +541,7 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
             try:
                 if not p.is_file() or p.stat().st_mtime < since:
                     continue
-                sha = _sha256(p)
+                sha = (known_sha256 or {}).get(str(p.resolve())) or _sha256(p)
                 # An append adds to a file that was checked when it was made.
                 qa = ({"checked": False, "ok": True, "findings": []} if appended
                       else artifact_qa.check_isolated(p))
@@ -565,9 +583,36 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
             with _LOCK, open(mp, "a", encoding="utf-8") as f:
                 for e in lines:
                     f.write(json.dumps(e, default=str) + "\n")
+            if task_id:
+                _journal_artifacts(task_id, lines, receipt)
         return lines if lines else []
     except Exception:
         return []
+
+
+#: An artifact's reference in the task journal: this prefix and the first
+#: characters of its manifest line's signature (never its path or content).
+ARTIFACT_REF_PREFIX = "art_"
+
+
+def artifact_ref(line: dict) -> Optional[str]:
+    """The reference a task journal keeps for one manifest line."""
+    sig = (line or {}).get("hmac")
+    return ARTIFACT_REF_PREFIX + sig[:24] if isinstance(sig, str) and sig else None
+
+
+def _journal_artifacts(task_id: str, lines: List[dict], receipt: Optional[dict]) -> None:
+    """One artifact event per recorded file in the task's journal (NS-29.4-1):
+    the manifest reference, the tool, whether its check passed and the action
+    id of the decision that allowed the call. Never raises."""
+    try:
+        from agent_friday.services import task_journal as tj
+        aid = (receipt or {}).get("action_id")
+        for e in lines:
+            tj.artifact(task_id, artifact_ref(e), tool=e.get("tool"),
+                        qa_ok=(e.get("qa") or {}).get("ok"), action_id=aid)
+    except Exception:
+        pass
 
 
 # ── off the conversation's path ────────────────────────────────────────────
@@ -630,10 +675,12 @@ def _work() -> None:
 
 
 def submit(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
-           started_at: Optional[float] = None, ok: bool = True) -> bool:
+           started_at: Optional[float] = None, ok: bool = True,
+           known_sha256: Optional[Dict[str, str]] = None) -> bool:
     """Record a finished call on the background thread. The turn is read now,
     on the caller's thread, where it is known. A creating call only; returns
-    False (nothing queued) for anything else or when the queue is full."""
+    False (nothing queued) for anything else or when the queue is full.
+    `known_sha256`: hashes of the call's files already taken (record_call)."""
     global _WORKER
     if not ok or name not in CREATING_TOOLS or _off_record():
         return False
@@ -651,7 +698,8 @@ def submit(name: str, args: Any, result: Any, *, task_id: Optional[str] = None,
     jid = _track(task_id) if task_id else 0
     job = ((name, args, result), {"task_id": task_id, "started_at": started_at, "ok": ok,
                                   "turn_id": _current_turn(), "where": where, "paths": paths,
-                                  "task_context": _task_context(task_id)},
+                                  "task_context": _task_context(task_id),
+                                  "known_sha256": dict(known_sha256 or {})},
            task_id, jid)
     with _WORKER_LOCK:
         if _WORKER is None or not _WORKER.is_alive():

@@ -257,6 +257,13 @@ def reset_caches() -> None:
             _pv._RECORDED.clear()
         except Exception:  # noqa: BLE001
             pass
+    # the activity record's chain check is read again too
+    _al = sys.modules.get("agent_friday.services.activity_ledger")
+    if _al is not None:
+        try:
+            _al.reset_cache()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ── Keys and hashing ────────────────────────────────────────────────────────
@@ -909,7 +916,8 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             limit: Optional[int] = None,
             where: Optional[Callable[[dict], bool]] = None,
             verified: bool = False, strict: bool = False,
-            archive: Optional[bool] = None, gate: Optional[bool] = None) -> list[dict]:
+            archive: Optional[bool] = None, gate: Optional[bool] = None,
+            stop: Optional[Callable[[], bool]] = None) -> list[dict]:
     """Entries (whole lines), optionally filtered by kind and a predicate.
 
     `verified`: only lines whose hash and signature hold under this device's
@@ -921,7 +929,10 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
     strict reader does (a revocation two years old still counts).
     `gate`: refuse while the ledger has an open break (by default a strict
     reader does; the Ledger workspace reads on, to show the break). A strict
-    read also refuses a matching line whose signature does not hold."""
+    read also refuses a matching line whose signature does not hold.
+    `stop`: asked before each file and each line is read; when it says True
+    the read ends there and gives back what it has (a reader with a time
+    limit). None (the default): read on as before."""
     want = set(kinds) if kinds else None
     if archive is None:
         archive = strict
@@ -968,6 +979,8 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             check = strict and gate and not verified
             acked_raw = set(_STATE.get("acked_raw") or ()) if check else set()
             for p in order:
+                if stop is not None and stop():
+                    return out
                 cache_key = None
                 if (check and not isinstance(p, list) and p.name != LIVE_NAME
                         and want is not None and where is None and limit is None):
@@ -1007,6 +1020,8 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
                         # a write another process has not finished: not a line yet
                         it = _drop_unfinished(it, newest_first)
                 for e, raw in it:
+                    if stop is not None and stop():
+                        return out
                     if check and (not isinstance(e, dict) or not entry_ok(e, key)):
                         # every line, of every kind, before any filter: a line
                         # changed or garbled within the cache window is refused,

@@ -717,6 +717,23 @@ def index_to_records(index: dict[str, dict]) -> dict[str, list[dict]]:
     except Exception:
         pass
 
+    # Entities the owner deleted from the graph (services/tombstones,
+    # NS-30.20-1) stay out of the structural path too, with their edges.
+    try:
+        from agent_friday.services import tombstones as _tomb
+        _kept_ents, _dropped = _tomb.filter_entities(entities)
+        if _dropped:
+            _keep = {e["id"] for e in _kept_ents}
+            entities = _kept_ents
+            relationships = [r for r in relationships
+                             if r.get("source") in _keep and r.get("target") in _keep]
+            for c in communities:
+                c["entity_ids"] = [i for i in c.get("entity_ids", []) if i in _keep]
+                c["size"] = len(c["entity_ids"])
+            communities = [c for c in communities if c["size"]]
+    except Exception:
+        pass
+
     return {"entities": entities, "relationships": relationships,
             "communities": communities}
 

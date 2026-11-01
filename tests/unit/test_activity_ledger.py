@@ -1,7 +1,9 @@
 """Unit tests for services/activity_ledger.py (B4 — global activity ledger).
 
 Covers: record/read round-trip, newest-first ordering, per-field whitelisting
-(metadata only, by construction), filters, rotation, and a thread-safety smoke.
+(metadata only, by construction), filters, history kept across segments, and a
+thread-safety smoke. The chain view (verify_chain) is in
+test_activity_ledger_history.py.
 """
 
 import json
@@ -16,9 +18,9 @@ from agent_friday.services import activity_ledger as al
 
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch):
-    """Point the module at a per-test ledger file (and restore rotation size)."""
+    """Point the module at a per-test legacy file (rows live in the action
+    ledger; the activity record has no rotation of its own, A9)."""
     monkeypatch.setattr(al, "LEDGER_FILE", tmp_path / "activity_ledger.jsonl")
-    monkeypatch.setattr(al, "_MAX_BYTES", 20 * 1024 * 1024)
     yield
 
 

@@ -27,7 +27,8 @@ decision:
 and across actions:
 
   duplicate_key  one idempotency key (the same request) executed by more than
-                 one action
+                 one action; only a key that names one request (a turn, task,
+                 run or the caller's own key), as the gate refuses a repeat
   false_done     a task marked done whose outward actions did not all end
                  executed or completed_verified (an unconfirmed one is not done)
 
@@ -252,7 +253,10 @@ def _audit(window: float, *, now: Optional[float], tasks: Optional[Iterable[dict
         elif state == "unconfirmed":
             found["unconfirmed"].append(item)
         if word in (G.EXECUTED, G.COMPLETED_VERIFIED):
-            key = _idem_key(rec)
+            # a key scoped by a session or a schedule is not one request (the
+            # same message may rightly go out again tomorrow): the gate's own
+            # rule (action_gate.recorded_key_names_one_request), so the two agree
+            key = _idem_key(rec) if G.recorded_key_names_one_request(rec) else None
             if key:
                 executed_by_key.setdefault(key, set()).add(aid)
 

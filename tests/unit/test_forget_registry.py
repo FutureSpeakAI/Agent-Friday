@@ -51,7 +51,7 @@ def test_forgetting_a_person_purges_every_registered_store(home, monkeypatch):
     g = pg.load()
     g["people"]["pat_example"]["emails"] = ["pat@example.test"]
     pg.save(g)
-    assert {"contacts_research", "sender_signals", "trust_log_people"} <= set(fr.registered())
+    assert {"contacts_research", "sender_signals", "trust_log_people", "outcome_memory"} <= set(fr.registered())
     before = fr.find_all({"pat example", "pat"}, {"pat@example.test"})
     assert before["contacts_research"] == 1 and before["trust_log_people"] >= 1
     receipt = fp.forget("Pat Example")

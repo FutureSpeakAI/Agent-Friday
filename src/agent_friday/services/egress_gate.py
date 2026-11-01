@@ -786,6 +786,9 @@ def _close_call(token, sent: Any, *, result: str, log_path: Path | None = None,
         entry["channel"] = call["channel"]
         if call.get("recipients") is not None:
             entry["recipients"] = int(call["recipients"])
+    if call.get("action_id"):
+        # The gate decision that authorised this send (A10): an id only.
+        entry["action_id"] = call["action_id"]
     try:
         from agent_friday.services import turn_plan as _tp
         _turn = _tp.current_turn_id()
@@ -889,9 +892,29 @@ def record_blocked(provider: str, reason: str, *, model: str = "", log_path: Pat
         pass
 
 
+def action_id_of(decision: Any) -> str | None:
+    """The action id of the gate decision that authorised a send (what
+    action_gate.record_external returns, a decision_ref, an envelope), or
+    None. Only a well-formed id (``act_`` + 20 hex) is returned, so nothing
+    else (no content) can reach the ledger through it. Never raises."""
+    try:
+        if isinstance(decision, str):
+            aid = decision
+        elif isinstance(decision, dict):
+            aid = decision.get("action_id")
+            if not aid and isinstance(decision.get("envelope"), dict):
+                aid = decision["envelope"].get("action_id")
+        else:
+            aid = getattr(decision, "action_id", None)
+        from agent_friday.services import policy_version as _pv
+        return aid if _pv.valid_action_id(aid) else None
+    except Exception:
+        return None
+
+
 def record_service_send(channel: str, provider: str, *, destination: str = "", content: Any = None,
                         result: str = "sent", recipients: int | None = None, note: str = "",
-                        part: str = "") -> dict | None:
+                        part: str = "", action_id: str | None = None) -> dict | None:
     """One ledger row (and its context manifest) for a send that leaves
     through a service: mail, a tool server, a calendar/tasks/contacts write,
     a post, a page Friday fetches, a search. The same row a model call gets:
@@ -901,7 +924,11 @@ def record_service_send(channel: str, provider: str, *, destination: str = "", c
 
     `content` is what left (the message, the arguments, the URL); it is not
     written into the ledger, only fingerprinted and, unless the owner chose
-    fingerprints only or is off the record, kept encrypted beside it."""
+    fingerprints only or is off the record, kept encrypted beside it.
+
+    `action_id`: the action id of the gate decision that authorised the send
+    (action_id_of), so the integrity view can link the send to it (A10).
+    Records only; anything but a well-formed id is dropped."""
     try:
         if channel not in SERVICE_CHANNELS:
             channel = "other"
@@ -914,7 +941,7 @@ def record_service_send(channel: str, provider: str, *, destination: str = "", c
                            "model": "", "via": "service:" + channel, "fields": 0, "withheld": 0,
                            "grants": set(), "joinable": False, "nested": cur is not None,
                            "channel": channel, "destination": str(destination or "")[:200],
-                           "recipients": recipients})
+                           "recipients": recipients, "action_id": action_id_of(action_id)})
         try:
             from agent_friday.services import context_manifest as _cm
             _cm.tally(_CALL.get(), part or channel, "SERVICE",
@@ -1341,6 +1368,46 @@ def _gate_text_inner(text: str, provider: str, field: str, log_path, mail) -> st
         return whole                      # unserialisable → keep the safe answer
 
 
+_RECALL_MARK = "<recalled-memory"      # services/memory_fence.TAG, as it opens a block
+_RECALL_END = "</recalled-memory"
+
+
+def _note_memory_withheld(texts, where: str) -> None:
+    """Count recalled-memory blocks this gate kept from a cloud call
+    (services/memory_metrics: counts only). Cheap, never raises."""
+    try:
+        n = sum(1 for t in texts if isinstance(t, str) and _RECALL_MARK in t)
+        if n:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_count("leakage_blocked", n, where=where)
+    except Exception:
+        pass
+
+
+def _note_memory_paras_withheld(paras, withheld_idx) -> None:
+    """The span pass: a recalled-memory block split over several paragraphs
+    counts once if any of its paragraphs was withheld. Never raises."""
+    try:
+        if not any(isinstance(p, str) and _RECALL_MARK in p for p in paras):
+            return
+        held = set(withheld_idx)
+        blocks, inside, block_hit = 0, False, False
+        for i, p in enumerate(paras):
+            p = p if isinstance(p, str) else ""
+            if _RECALL_MARK in p:
+                inside, block_hit = True, False
+            if inside and i in held:
+                block_hit = True
+            if inside and (_RECALL_END in p or i == len(paras) - 1):
+                blocks += 1 if block_hit else 0
+                inside = False
+        if blocks:
+            from agent_friday.services import memory_metrics as _mm
+            _mm.note_count("leakage_blocked", blocks, where="span")
+    except Exception:
+        pass
+
+
 def _gate_text_span(text: str, provider: str, field: str,
                     log_path: Path | None = None) -> str:
     """Gate a single text string for a cloud provider.
@@ -1380,6 +1447,7 @@ def _gate_text_span(text: str, provider: str, field: str,
         _log(provider, field, Tier.SENSITIVE, "block",
              f"never-send material present ({len(_never)} token(s)) — payload blocked",
              log_path)
+        _note_memory_withheld([text], "never_send")
         raise NeverSendBlocked(
             f"This payload contains material on your never-send list "
             f"({len(_never)} match(es) in {field}), so I did not send it to "
@@ -1486,6 +1554,8 @@ def _gate_text_span(text: str, provider: str, field: str,
             for idx, _p, _t in appeals:
                 if gated[idx] == _placeholders.get(idx):
                     _note_held(_p, field, provider)
+            _note_memory_paras_withheld(paras, [idx for idx, _p, _t in appeals
+                                                if gated[idx] == _placeholders.get(idx)])
             # Either the split localized the signal (partial withholding), or
             # the whole-field signal came entirely from trusted self-authored
             # paragraphs. withheld == 0 with NO trusted paragraphs means the
@@ -1511,6 +1581,7 @@ def _gate_text_span(text: str, provider: str, field: str,
     # No silent holds: the whole field goes on the owner's card (cloud_release), exactly as the
     # cloud would have received it.
     _note_held(text, field, provider)
+    _note_memory_withheld([text], "field")
     if tier == Tier.SENSITIVE:
         _log(provider, field, tier, "drop", f"tier={Tier.NAMES[tier]}", log_path)
         return ""  # cloud gets nothing for SENSITIVE
@@ -1905,6 +1976,7 @@ def _gate_tool_prose(text: str, provider: str, field: str,
         _log(provider, field, Tier.SENSITIVE, "block",
              f"never-send material present ({len(_never)} token(s)) — payload blocked",
              log_path)
+        _note_memory_withheld([text], "never_send")
         raise NeverSendBlocked(
             f"This payload contains material on your never-send list "
             f"({len(_never)} match(es) in {field}), so I did not send it to "

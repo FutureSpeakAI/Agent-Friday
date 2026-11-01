@@ -381,11 +381,53 @@ def changed(g: dict) -> str:
 
 def create(*, scope: str, recipients, actions=("send_email",), schedule_id: str = "",
            skill: str = "", created_by: str = "owner", note: str = "",
-           skill_hash: str = "") -> dict:
+           skill_hash: str = "", limits: Optional[dict] = None,
+           carried: Optional[dict] = None) -> dict:
     """Make a standing send grant. Owner-only: called from the owner's
     authenticated Settings route, never from a tool. A job grant records the
     fingerprint of the job as it is now; a skill grant that of the skill
-    (`create_for_skill` passes the one the owner's list was checked against)."""
+    (`create_for_skill` passes the one the owner's list was checked against).
+
+    `limits`: the grant record's further fields (governance/grant_record
+    `new_fields`, plus `max_uses` and `expires_in_seconds`). Left out, each
+    is what a send grant did before them: no expiry, no use limit, no cap.
+    The recipients stay its destination scope.
+
+    `carried`: for `reapprove` only, the uses, first use and last use of the
+    grant this one replaces ({"uses", "first_used_at", "last_used_at"}): a
+    re-approval does not give uses back. They are in the row (signed) and in
+    its "created" log line, so the log-derived count holds them too."""
+    import math
+    from agent_friday.governance import grant_record as _gr
+    raw = dict(limits or {})
+    if raw.get("money_cap") not in (None, ""):
+        # Nothing records what a send spends, so a cap could never be counted.
+        raise _Refused("a pre-approved send cannot have a money cap")
+    lim = {k: v for k, v in raw.items()
+           if k in ("principal", "arg_constraints", "data_scope", "starts_at",
+                    "time_cap_s", "quiet_hours", "remote_allowed", "max_uses",
+                    "expires_in_seconds")}
+    max_uses = lim.pop("max_uses", None)
+    expires_in = lim.pop("expires_in_seconds", None)
+    for k in ("starts_at", "time_cap_s"):
+        v = lim.get(k)
+        if (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and not math.isfinite(float(v))):
+            raise _Refused("%s is a finite number" % k.replace("_", " "))
+    record = _gr.new_fields(subject_kind={"job": "schedule", "skill": "session"}.get(scope, "owner"),
+                            subject_id=(schedule_id if scope == "job" else
+                                        ("skill:" + skill) if scope == "skill" else ""), **lim)
+    for k in ("destination_scope", "used_count"):
+        record.pop(k, None)          # its recipients and `uses` are those
+    if max_uses is not None:
+        if isinstance(max_uses, bool) or not isinstance(max_uses, int) or max_uses < 1:
+            raise _Refused("max uses is a whole number of 1 or more")
+        record["max_uses"] = max_uses
+    if expires_in is not None:
+        if (isinstance(expires_in, bool) or not isinstance(expires_in, (int, float))
+                or not math.isfinite(float(expires_in)) or expires_in <= 0):
+            raise _Refused("expires in is a number of seconds above zero")
+        record["expires_at"] = time.time() + float(expires_in)
     if scope not in SCOPES:
         raise _Refused("scope must be one of: " + ", ".join(SCOPES))
     acts = sorted({str(a) for a in actions or []})
@@ -413,13 +455,28 @@ def create(*, scope: str, recipients, actions=("send_email",), schedule_id: str 
          "created_at": time.time(), "note": str(note or "")[:200],
          "revoked_at": None, "revoked_by": None, "uses": 0, "last_used_at": None,
          **({"job_hash": job_hash} if scope == "job" else {}),
-         **({"skill_hash": skill_hash} if scope == "skill" else {})}
+         **({"skill_hash": skill_hash} if scope == "skill" else {}),
+         # the grant record's own fields (governance/grant_record, NS-30.12-1)
+         **record}
+    carry_log = {}
+    if carried:
+        n = carried.get("uses")
+        n = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
+        fu, lu = carried.get("first_used_at"), carried.get("last_used_at")
+        fu = float(fu) if isinstance(fu, (int, float)) and not isinstance(fu, bool) else None
+        lu = float(lu) if isinstance(lu, (int, float)) and not isinstance(lu, bool) else None
+        g["uses"] = n
+        if lu is not None:
+            g["last_used_at"] = lu
+        if fu is not None:
+            g["first_used_at"] = fu
+        carry_log = {"uses_carried": n, "first_used_at_carried": fu}
     with _LOCK:
         rows = _read()
         rows.append(dict(g, _resign=True))
         _write(rows)
         _log("created", grant_id=g["grant_id"], by=created_by, scope=scope, actions=acts,
-             recipients=rcpts, schedule_id=g["schedule_id"], skill=g["skill"])
+             recipients=rcpts, schedule_id=g["schedule_id"], skill=g["skill"], **carry_log)
     return get(g["grant_id"]) or g
 
 
@@ -432,7 +489,48 @@ class SkillChanged(_Refused):
         self.needs = needs
 
 
-def create_for_skill(name: str, seen_recipients, created_by: str = "owner") -> dict:
+#: The limits a re-approved grant carries over from the one it replaces.
+#: (No money cap: a send grant never carries one.) Its expiry is carried as
+#: the time left (`_carried_limits`), its uses and first use by `_carried_uses`.
+_CARRIED_LIMITS = ("principal", "arg_constraints", "data_scope", "time_cap_s",
+                   "quiet_hours", "remote_allowed", "max_uses")
+
+
+def _carried_limits(old: dict, now: Optional[float] = None) -> dict:
+    """The old grant's limits for the one that replaces it, its expiry
+    included: the new grant ends when the old one would have (the time it
+    had left). An expiry that has passed, or cannot be read, is refused:
+    re-approving never makes an ended grant live again, or one that never
+    ends."""
+    out = {k: old[k] for k in _CARRIED_LIMITS if old.get(k) is not None}
+    exp = old.get("expires_at")
+    if exp is not None:
+        now = time.time() if now is None else now
+        try:
+            left = float(exp) - now
+        except (TypeError, ValueError):
+            raise _Refused("that pre-approval's expiry cannot be read, so it is not re-approved")
+        if not left > 0:
+            raise _Refused("that pre-approval has expired, so it is not re-approved; "
+                           "make a new one if you still want it")
+        out["expires_in_seconds"] = left
+    return out
+
+
+def _carried_uses(old: dict) -> dict:
+    """The old grant's uses and first use (the log's when it holds more): a
+    re-approval does not refill them, so a spent grant stays spent."""
+    g = _with_log_uses(old)
+    try:
+        uses = max(0, int(g.get("uses") or 0))
+    except (TypeError, ValueError):
+        raise _Refused("that pre-approval's use count cannot be read, so it is not re-approved")
+    return {"uses": uses, "first_used_at": g.get("first_used_at"),
+            "last_used_at": g.get("last_used_at")}
+
+
+def create_for_skill(name: str, seen_recipients, created_by: str = "owner",
+                     limits: Optional[dict] = None, carried: Optional[dict] = None) -> dict:
     """Batch-approve, once, everything a skill declares it needs: only if the
     recipients the owner saw (`seen_recipients`, sent by the page) are exactly
     what the skill declares now."""
@@ -456,24 +554,35 @@ def create_for_skill(name: str, seen_recipients, created_by: str = "owner") -> d
                            % (sk.name, ", ".join(declared)), perms)
     return create(scope="skill", skill=sk.name, actions=sorted(perms), recipients=declared,
                   created_by=created_by, note="what %s declares it needs" % sk.name,
-                  skill_hash=skill_registry.fingerprint(sk))
+                  skill_hash=skill_registry.fingerprint(sk), limits=limits, carried=carried)
 
 
 def reapprove(grant_id: str, seen_recipients=None, by: str = "owner") -> dict:
     """One press, from Settings: approve a job or skill grant again for the
     job or skill as it is now (the old grant is revoked). A skill is
-    re-approved only for the list the owner sees now (`create_for_skill`)."""
+    re-approved only for the list the owner sees now (`create_for_skill`).
+    The new grant keeps the old one's limits, the time it had left and the
+    uses it had taken (a re-approval refills nothing)."""
     old = _get_trusted(str(grant_id or ""))
     if old is None or old.get("revoked_at") or str(grant_id) in _revoked_in_log():
         raise _Refused("that pre-approval is not in force, so there is nothing to re-approve")
+    if old.get("scope") not in ("skill", "job"):
+        raise _Refused("only a job or skill pre-approval is re-approved")
+    limits = _carried_limits(old)
+    try:
+        carried = _carried_uses(old)
+    except _Refused:
+        raise
+    except Exception:  # noqa: BLE001 - the log cannot be read: nothing is re-approved
+        raise _Refused("its uses cannot be read from the log, so it is not re-approved")
     if old.get("scope") == "skill":
-        g = create_for_skill(old.get("skill") or "", seen_recipients, created_by=by)
-    elif old.get("scope") == "job":
+        g = create_for_skill(old.get("skill") or "", seen_recipients, created_by=by,
+                             limits=limits, carried=carried)
+    else:
         g = create(scope="job", schedule_id=old.get("schedule_id") or "",
                    recipients=old.get("recipients"), actions=old.get("actions"),
-                   created_by=by, note="re-approved after the job changed")
-    else:
-        raise _Refused("only a job or skill pre-approval is re-approved")
+                   created_by=by, note="re-approved after the job changed",
+                   limits=limits, carried=carried)
     revoke(old["grant_id"], by=by)
     _log("reapproved", grant_id=g["grant_id"], by=by, replaces=old["grant_id"])
     return g
@@ -525,6 +634,72 @@ def _revoked_in_log() -> set:
         if row.get("event") == "revoked" and row.get("grant_id"):
             out.add(str(row["grant_id"]))
     _REVOKED_CACHE["v"] = (token, frozenset(out))
+    return out
+
+
+_USES_CACHE: dict = {}
+
+
+def _uses_in_log() -> dict:
+    """{grant_id: [uses, first use at]} from the append-only log (the action
+    ledger, the same log revocation is read from). A use is a "reserved" line
+    (written by `reserve_use` before the file is), a "used" line not marked
+    `reserved` (a use counted without a reservation, or one logged before
+    reservations were), and the uses a re-approved grant carried over (its
+    "created" line). Restoring an older signed copy of send_grants.json does
+    not give a use back. Raises when the log cannot be read in full."""
+    from agent_friday.services import action_ledger
+    token = action_ledger.stats_token()
+    hit = _USES_CACHE.get("v")
+    if hit and hit[0] == token:
+        return {k: list(v) for k, v in hit[1].items()}
+    out: dict = {}
+
+    def _at(v):
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    def _add(gid, n, at):
+        slot = out.setdefault(gid, [0, None])
+        slot[0] += n
+        if at is not None:
+            slot[1] = at if slot[1] is None else min(slot[1], at)
+
+    for row in _log_rows(strict=True):
+        gid = str(row.get("grant_id") or "")
+        if not gid:
+            continue
+        ev = row.get("event")
+        if ev == "reserved" or (ev == "used" and not row.get("reserved")):
+            _add(gid, 1, _at(row.get("at")))
+        elif ev == "created":
+            n = row.get("uses_carried")
+            if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+                _add(gid, n, _at(row.get("first_used_at_carried")))
+            elif _at(row.get("first_used_at_carried")) is not None:
+                _add(gid, 0, _at(row.get("first_used_at_carried")))
+    _USES_CACHE["v"] = (token, {k: tuple(v) for k, v in out.items()})
+    return out
+
+
+def _with_log_uses(g: dict) -> dict:
+    """The grant row with its use count and first use never below what the
+    log holds: the larger count, the earlier first use. Raises when the log
+    cannot be read (the caller then lets the grant cover nothing)."""
+    logged = _uses_in_log().get(str(g.get("grant_id") or "")) or [0, None]
+    out = dict(g)
+    try:
+        file_uses = int(g.get("uses") or 0)
+    except (TypeError, ValueError):
+        file_uses = 0
+    out["uses"] = max(file_uses, int(logged[0]))
+    first = logged[1]
+    if first is not None:
+        fu = g.get("first_used_at")
+        if fu is None:
+            out["first_used_at"] = first
+        elif isinstance(fu, (int, float)) and not isinstance(fu, bool):
+            out["first_used_at"] = min(float(fu), first)
+        # anything else is left as it is, so the record reads as invalid
     return out
 
 
@@ -800,18 +975,59 @@ def _in_scope(g, ctx) -> bool:
     return False
 
 
-def covering(action: str, recipients, ctx=None) -> Optional[dict]:
-    """The live grant that covers sending `action` to EVERY one of
-    `recipients` in this context, or None. Decides nothing else."""
+def _record_excluded(g: dict, tool, args, ctx) -> str:
+    """The grant record field (governance/grant_record) that keeps this live
+    grant from covering the call, or "". Its recipients, actions and scope are
+    decided above, as before; this adds start, expiry, uses, argument rules,
+    money and time caps, quiet hours and remote. A row written before those
+    fields carries none, so it covers exactly what it covered. A check that
+    cannot run covers nothing (the send gets its card)."""
+    try:
+        from agent_friday.governance import grant_record as _gr
+        # its uses and first use as the log has them (a file put back does
+        # not give a use back); a log that cannot be read covers nothing
+        return _gr.exclusion(_gr.from_send(_with_log_uses(g)), tool=tool, args=args, ctx=ctx,
+                             skip=("tools", "destination_scope"))
+    except Exception as e:  # noqa: BLE001
+        _log_py.warning("send grant %s could not be checked (%s); it covers nothing",
+                        g.get("grant_id"), type(e).__name__)
+        return "status"
+
+
+def _matching(action: str, recipients, ctx=None) -> list:
+    """Live grants that name this action, are in scope and cover every recipient."""
     rcpts = [str(r).strip() for r in recipients or [] if str(r).strip()]   # _covers folds case, ASCII only
     if not rcpts or action not in SEND_ACTIONS:
-        return None
-    for g in _live_trusted():
-        if action not in (g.get("actions") or []) or not _in_scope(g, ctx):
-            continue
-        if all(_covers(g.get("recipients"), r) for r in rcpts):
+        return []
+    return [g for g in _live_trusted()
+            if action in (g.get("actions") or []) and _in_scope(g, ctx)
+            and all(_covers(g.get("recipients"), r) for r in rcpts)]
+
+
+def covering(action: str, recipients, ctx=None, *, tool=None, args=None) -> Optional[dict]:
+    """The live grant that covers sending `action` to EVERY one of
+    `recipients` in this context, or None. Decides nothing else."""
+    for g in _matching(action, recipients, ctx):
+        if not _record_excluded(g, tool, args, ctx):
             return dict(g)
     return None
+
+
+def exclusion_for_tool(tool_name: str, args, ctx=None) -> dict:
+    """When no grant covers this send but one names its recipients and a
+    grant record field keeps it out: {"grant_excluded": id,
+    "grant_excluded_by": field}. {} otherwise. Records only."""
+    got = tool_recipients(tool_name, args)
+    if not got:
+        return {}
+    first = {}
+    for g in _matching(got[0], got[1], ctx):
+        why = _record_excluded(g, tool_name, args, ctx)
+        if not why:
+            return {}
+        if not first:
+            first = {"grant_excluded": g.get("grant_id"), "grant_excluded_by": why}
+    return first
 
 
 def tool_recipients(tool_name: str, args) -> Optional[tuple]:
@@ -835,7 +1051,7 @@ def covering_tool(tool_name: str, args, ctx=None) -> Optional[dict]:
     got = tool_recipients(tool_name, args)
     if not got:
         return None
-    return covering(got[0], got[1], ctx)
+    return covering(got[0], got[1], ctx, tool=tool_name, args=args)
 
 
 def verify(grant_id, action: str, recipients) -> Optional[dict]:
@@ -847,24 +1063,155 @@ def verify(grant_id, action: str, recipients) -> Optional[dict]:
     rcpts = [str(r).strip() for r in recipients or [] if str(r).strip()]   # _covers folds case, ASCII only
     if not rcpts or not all(_covers(g.get("recipients"), r) for r in rcpts):
         return None
+    # still within its start and expiry, if it names them (grant_record)
+    now = time.time()
+    try:
+        exp = g.get("expires_at")
+        if exp is not None and now >= float(exp):
+            return None
+        st = g.get("starts_at")
+        if st is not None and now < float(st):
+            return None
+    except (TypeError, ValueError):
+        return None
     return g
 
 
+def _use_refused(g: dict, now: float, *, count_uses: bool = True) -> str:
+    """The grant record field that keeps one more use of this send grant
+    from going ahead now ("" when none does): its stored fields unreadable,
+    its use limit reached, its time cap run out, or the owner's quiet on for
+    a grant that respects it. Recipients, revocation, start and expiry are
+    `verify`'s. Its uses and first use are the log's when the log holds more
+    (`_with_log_uses`; raises when the log cannot be read). `count_uses`
+    False: the use is already taken (a message about to go), so only the
+    time cap and quiet hours are checked again."""
+    from agent_friday.governance import grant_record as _gr
+    rec = _gr.from_send(_with_log_uses(g), now)
+    if rec.status == "invalid":
+        return "status"
+    if count_uses and rec.max_uses is not None and rec.used_count >= rec.max_uses:
+        return "max_uses"
+    if (rec.time_cap_s is not None and rec.first_used_at is not None
+            and now - rec.first_used_at > rec.time_cap_s):
+        return "time_cap_s"
+    if rec.quiet_hours in ("respect", "deny") and _gr.quiet_now(now):
+        return "quiet_hours"
+    return ""
+
+
+def _count_use(rows: list, grant_id: str, now: float,
+               base: Optional[dict] = None) -> Optional[dict]:
+    """Add one use to the row in `rows` (caller holds _LOCK and writes).
+    `base`: the grant as the log has it (`_with_log_uses`), so the file's
+    count and first use are brought up to the log's, never left below it."""
+    hit = None
+    for g in rows:
+        if g.get("grant_id") == grant_id:
+            g["_resign"] = _signed_ok(g)
+            uses = int(g.get("uses") or 0)
+            first = g.get("first_used_at")
+            if base:
+                uses = max(uses, int(base.get("uses") or 0))
+                if base.get("first_used_at") is not None:
+                    first = base["first_used_at"]
+            g["uses"] = uses + 1
+            g["last_used_at"] = now
+            if g.get("time_cap_s") is not None:
+                g["first_used_at"] = first or now   # its time cap runs from here
+            hit = g
+    return hit
+
+
+def reserve_use(grant_id, action: str, recipients) -> Optional[dict]:
+    """Check and count one use of a send grant in one step, under the lock:
+    `verify` for these exact recipients, then its use limit, time cap and
+    quiet hours, then the use is written before anything is queued. Two sends
+    at once cannot both take the last use, and a send that fails after this
+    has still used its turn (never a lost count). Returns the grant with its
+    new count, or None (the send then gets its card). The use is a "reserved"
+    line in the append-only log BEFORE the file is written (no line, no use),
+    so putting back an older copy of the file does not give it back. The
+    "used" log line is `record_use(..., reserved=True)` once the message is
+    queued (marked `reserved`, so it is not counted twice)."""
+    gid = str(grant_id or "")
+    with _LOCK:
+        g = verify(gid, action, recipients)
+        if g is None:
+            return None
+        now = time.time()
+        try:
+            why = _use_refused(g, now)
+            base = _with_log_uses(g)
+        except Exception as e:  # noqa: BLE001 - a check that cannot run covers nothing
+            _log_py.warning("send grant %s could not be checked (%s); the send asks",
+                            gid, type(e).__name__)
+            why = "status"
+        if why:
+            _log_py.info("send grant %s not used: %s", gid, why)
+            return None
+        try:
+            _log("reserved", grant_id=gid, by="friday", action=action, at=now)
+        except Exception as e:  # noqa: BLE001 - not logged, not used: the send asks
+            _log_py.warning("send grant %s use could not be logged (%s); the send asks",
+                            gid, type(e).__name__)
+            return None
+        rows = _read()
+        hit = _count_use(rows, gid, now, base)
+        if hit is None:
+            return None
+        _write(rows)
+        return dict(g, uses=hit.get("uses"), last_used_at=hit.get("last_used_at"),
+                    first_used_at=hit.get("first_used_at"))
+
+
+#: Why a message queued under a pre-approval did not go when its time came.
+SEND_TIME_WHY = {
+    "quiet_hours": "it came due in your quiet hours, and the pre-approval respects them, "
+                   "so this was not sent",
+    "time_cap_s": "the pre-approval's time limit ran out before it was due, so this was not sent",
+    "status": "the pre-approval could not be checked when it was due, so this was not sent",
+}
+
+
+def send_time_refusal(grant_id, action: str, recipients) -> str:
+    """Re-checked when a message queued under a pre-approval is about to go
+    (services/gmail_send.send: after the undo window, or at a scheduled time
+    days away): `verify` (revoked, recipients, start, expiry), then its time
+    cap and quiet hours. Its use was taken when it was queued, so the use
+    limit is not counted again. "" when it may go, else the reason in plain
+    words. Never raises: a check that cannot run is a reason."""
+    try:
+        g = verify(grant_id, action, recipients)
+        if g is None:
+            return REVOKED_WHY
+        why = _use_refused(g, time.time(), count_uses=False)
+    except Exception as e:  # noqa: BLE001
+        _log_py.warning("send grant %s could not be checked at send time (%s)",
+                        grant_id, type(e).__name__)
+        why = "status"
+    return SEND_TIME_WHY.get(why, SEND_TIME_WHY["status"]) if why else ""
+
+
 def record_use(grant: dict, action: str, recipients, *, approval_id: str = "",
-               ctx=None) -> None:
-    """Every use, logged: which grant, what, to whom, for which job, when."""
+               ctx=None, reserved: bool = False) -> None:
+    """Every use, logged: which grant, what, to whom, for which job, when.
+    `reserved`: the use was already counted by `reserve_use`; only log it."""
     ctx = ctx or {}
     with _LOCK:
-        rows = _read()
-        for g in rows:
-            if g.get("grant_id") == grant.get("grant_id"):
-                g["_resign"] = _signed_ok(g)
-                g["uses"] = int(g.get("uses") or 0) + 1
-                g["last_used_at"] = time.time()
-        _write(rows)
+        if not reserved:
+            rows = _read()
+            try:
+                base = _with_log_uses(next((g for g in rows
+                                            if g.get("grant_id") == grant.get("grant_id")), {}))
+            except Exception:  # noqa: BLE001 - the "used" line below still counts it
+                base = None
+            _count_use(rows, grant.get("grant_id"), time.time(), base)
+            _write(rows)
         _log("used", grant_id=grant.get("grant_id"), by="friday", action=action,
              recipients=list(recipients or []), approval_id=approval_id or None,
-             schedule_id=ctx.get("schedule_id"), task_id=ctx.get("task_id"))
+             schedule_id=ctx.get("schedule_id"), task_id=ctx.get("task_id"),
+             **({"reserved": True} if reserved else {}))
 
 
 # ── conditions on the send itself ──────────────────────────────────────────
