@@ -162,6 +162,9 @@ REVIEWED_INDIRECT: dict = {
     ("services/setting_proposals.py", "_on_decision"):
         "runs only after the owner approved the setting card (claim_for_execution, "
         "authorize_external), and only a tool the gate classes internal",
+    ("services/setting_proposals.py", "hold"):
+        "runs only when the checkpoint allowed an approved, unused card for exactly this "
+        "change, and only a settings tool the gate classes internal",
     ("services/setting_proposals.py", "tool"):
         "the settings tool's own route to one internal settings tool (switch_model, "
         "set_workspace_layout, show_my_day and the like), checked internal before it runs",

@@ -37,8 +37,11 @@ def _rm():
 
 
 def _out(tool, status="ok", detail="", n=1):
+    from agent_friday.services import policy_version
     for _ in range(n):
-        L.append("outcome", {"tool": tool, "status": status, "detail": detail,
+        # every outcome receipt names its action (action_ledger: RECEIPT_KINDS)
+        L.append("outcome", {"action_id": policy_version.new_action_id(),
+                             "tool": tool, "status": status, "detail": detail,
                              "decision_seq": None, "decision_hash": None})
 
 

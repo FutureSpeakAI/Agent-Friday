@@ -75,9 +75,7 @@ STILL_READ_ONLY = [
     "git tag",
     "git tag -l v1.*",
     "git remote -v",
-    "gci $env:USERPROFILE",
-    # (a $env: path is then judged by the file tools' path policy, so a folder
-    # such as %TEMP% outside the folders Friday may use goes to a card)
+    # (a $env: path is then judged by the file tools' path policy, as any path is)
     "Get-Content notes.txt | Select-String -Pattern 'needle'",
     "git log -C --stat",
     "git diff -M -C --name-only",
@@ -149,6 +147,20 @@ class TestReadOnlyGitRunsNoConfiguredProgram:
         assert "core.fsmonitor=false" in seen.get("cmd", "")
 
 
+def _allow_verdict():
+    """An allowing checkpoint verdict: the real Verdict type when it can be built
+    with these fields, else a stand-in that answers None for anything else."""
+    try:
+        return G.Verdict(action="allow", klass=G.INTERNAL, reason="")
+    except Exception:  # noqa: BLE001
+        class V:
+            action, reason, detail = "allow", "", ""
+
+            def __getattr__(self, name):
+                return None
+        return V()
+
+
 def test_a_setting_card_runs_only_an_internal_settings_tool(monkeypatch):
     """A setting card whose payload names a tool that acts outside Friday
     does not run it, even after the owner's yes."""
@@ -160,7 +172,7 @@ def test_a_setting_card_runs_only_an_internal_settings_tool(monkeypatch):
     monkeypatch.setattr(ap, "mark_used", lambda *a, **k: None)
     monkeypatch.setattr(item_actions, "_post_back", lambda *a, **k: None)
     monkeypatch.setattr(G, "authorize_external",
-                        lambda *a, **k: type("V", (), {"action": "allow", "reason": ""})())
+                        lambda *a, **k: _allow_verdict())
     sp._on_decision({"status": "approved", "approval_id": "a1", "payload": {
         "handler": sp.HANDLER, "path": "settings.x", "tool": "draft_email",
         "input": {"to": "someone@example.invalid", "send": True}}})

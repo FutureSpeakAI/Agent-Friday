@@ -206,7 +206,9 @@ def test_the_server_wraps_its_streams_at_start():
     from pathlib import Path
     import agent_friday
     src = (Path(agent_friday.__file__).parent / "server.py").read_text(encoding="utf-8")
-    main = src[src.index("if __name__ == '__main__':"):]
+    # the server's own start-up block is the last __main__ block in the file
+    # (earlier ones only set up the process before anything is imported)
+    main = src[src.rindex("if __name__ == '__main__':"):]
     assert "install_streams()" in main[:3000], "the server's __main__ does not wrap stdout/stderr early"
 
 

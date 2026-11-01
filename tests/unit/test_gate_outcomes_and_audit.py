@@ -513,6 +513,12 @@ def test_an_approved_setting_change_closes_from_the_change_result(monkeypatch, h
     monkeypatch.setattr(item_actions, "_tell_call", lambda *a, **k: None)
     monkeypatch.setattr(sp, "_tell_pages", lambda *a, **k: None)
     monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "probe_setting_tool", lambda inp: handler_says)
+    # A setting card runs only an internal settings tool (setting_proposals.SETTINGS_TOOLS):
+    # the probe stands in for one.
+    monkeypatch.setattr(sp, "SETTINGS_TOOLS", frozenset(sp.SETTINGS_TOOLS) | {"probe_setting_tool"})
+    _classify = G.classify
+    monkeypatch.setattr(G, "classify", lambda name, *a, **k: (
+        (G.INTERNAL, "a settings change") if name == "probe_setting_tool" else _classify(name, *a, **k)))
     sp._on_decision({"status": "approved", "approval_id": "ap-set-probe",
                      "payload": {"handler": sp.HANDLER, "tool": "probe_setting_tool", "input": {},
                                  "path": "settings.probe", "conversation_id": ""}})

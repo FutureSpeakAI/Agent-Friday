@@ -252,6 +252,12 @@ def hold(tool: str, inp: dict, *, old: str, new: str, consequence: str = "", lab
             action_gate.close_external(ref, True, detail="setting_written_by_caller",
                                        outcome=action_gate.UNCONFIRMED)
             return None
+        # As on the card's Yes (_on_decision): only one of the settings tools, classed
+        # internal, ever runs here, whatever the caller named.
+        if detail["tool"] not in SETTINGS_TOOLS or \
+                action_gate.classify(detail["tool"], dict(inp or {}))[0] != action_gate.INTERNAL:
+            action_gate.close_external(ref, False, detail="not_a_settings_tool")
+            return "SETTING_FAIL: %s is not a settings change." % detail["tool"]
         ok, text = False, ""
         try:
             tok = _APPROVED.set(True)
