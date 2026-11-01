@@ -17,6 +17,7 @@ Unit only (fast): pytest tests/unit -q
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -820,6 +821,62 @@ def _laya_writes_finish_inside_their_test():
         laya.flush()
 
 
+#: laya_personal's off-turn threads that end on their own (services/laya_personal).
+#: Its row writer (laya-personal-writer) idles on its queue instead; flush_capture waits for it.
+_LAYA_PERSONAL_THREADS = ("laya-personal-notice", "laya-personal-rebuild", "laya-personal-prime")
+
+
+def _settle_laya_personal(timeout: float = 15.0) -> list:
+    """Wait for laya_personal's off-turn work: every queued row written (its writer runs each
+    batch as a visible job), and the first-use notice, rebuild and prime threads ended. Returns
+    the names of any still running when the time ran out."""
+    lp = sys.modules.get("agent_friday.services.laya_personal")
+    if lp is None:
+        return []
+    deadline = time.monotonic() + timeout
+    late = []
+    try:
+        if not lp.flush_capture(timeout):
+            late.append("laya-personal-writer")
+    except Exception:
+        pass
+    me = threading.current_thread()
+    for t in threading.enumerate():
+        if t is me or t.name not in _LAYA_PERSONAL_THREADS:
+            continue
+        t.join(max(0.0, deadline - time.monotonic()))
+        if t.is_alive():
+            late.append(t.name)
+    return late
+
+
+@pytest.fixture(autouse=True)
+def _laya_personal_work_finishes_inside_its_test(request):
+    """laya_personal's threads finish inside the test that started them.
+
+    A routed chat turn kicks the one-time "Laya learns from your corrections"
+    notice on a thread (laya-personal-notice), and a correction is written by
+    the row writer inside a visible job. Neither waited for its test: the
+    notice was pushed after the test file had put notifications.json back,
+    and a push reads every card, adds one and writes them all, so a push that
+    read before the put-back and wrote after it wrote the whole file's cards
+    back. On Windows CI the clean-top-bar probe and the job-card guard then
+    found "29 updates (info x27, warning x1, laya_learning x1)": the
+    pre-approved-send files' notices, brought back with Laya's card
+    (tests/unit/test_late_notice_writers_do_not_outlive_their_file.py). The
+    writer's visible job, registered after the test, was the "1 task(s) in
+    Activity; 1 local-queue job(s)" variant on Ubuntu.
+
+    Defined after the task, queue and turn resets above, so it is torn down
+    before them: whatever the threads register is cleared with the test.
+    """
+    yield
+    late = _settle_laya_personal()
+    if late:
+        warnings.warn(RuntimeWarning(
+            "LayaThreadLeak: %s left %s running after its test" % (request.node.nodeid, late)))
+
+
 @pytest.fixture(autouse=True)
 def _fresh_live_duplicate_window():
     """Each test starts with no remembered Live call and leaves none behind."""
@@ -1079,8 +1136,33 @@ def _notices_and_approvals_do_not_outlive_their_file():
         except FileNotFoundError:
             before[p] = None
     yield
-    for p in set(paths) | set(_top_bar_store_paths()):
-        _put_back(p, before.get(p))
+    with _notice_store_lock():
+        for p in set(paths) | set(_top_bar_store_paths()):
+            _put_back(p, before.get(p))
+
+
+@contextlib.contextmanager
+def _notice_store_lock(timeout: float = 30.0):
+    """Hold notifications_engine's own lock while the stores are put back.
+
+    A push reads every card, adds its own and writes them all back, under this
+    lock. A push on another thread that read before the put-back and wrote
+    after it would write back every card the put-back had just removed; with
+    the lock held the put-back waits for it to finish, then removes its card
+    as well."""
+    ne = sys.modules.get("agent_friday.notifications_engine")
+    lock = getattr(ne, "_LOCK", None)
+    if lock is None:
+        yield
+        return
+    if not lock.acquire(timeout=timeout):
+        raise RuntimeError(
+            "notifications_engine._LOCK was held for %ss at the end of a test file; a push "
+            "on another thread is stuck, and putting the stores back now would race it" % timeout)
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def _schedules_file() -> Path:
