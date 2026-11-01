@@ -6144,8 +6144,8 @@
                     const targetColor = cloud.userData.isAccent ? moodLerpValues.accentColor : moodLerpValues.baseColor;
                     cloud.material.color.copy(targetColor);
                     cloud.material.opacity = 0.03 + audioData.low * 0.05 + (metamorphosisFlash * 0.1);
-                    cloud.rotation.z += cloud.userData.speed;
-                    cloud.position.z += delta * 0.5; if(cloud.position.z > 0) cloud.position.z = -100;
+                    cloud.rotation.z += cloud.userData.speed * (ambient ? 1 : 0);
+                    cloud.position.z += delta * 0.5 * (ambient ? 1 : 0); if(cloud.position.z > 0) cloud.position.z = -100;
                 }
             });
 
@@ -6377,7 +6377,7 @@
                     for(let i=0; i<shannonNodes.length; i++) {
                         if (!shannonNodes[i] || !shannonNodes[i].pos || !shannonNodes[i].velocity) continue;
                         let p = shannonNodes[i].pos; let v = shannonNodes[i].velocity;
-                        p.addScaledVector(v, delta * 60); if(p.length() > 20) v.multiplyScalar(-1);
+                        p.addScaledVector(v, delta * 60 * (ambient ? 1 : 0)); if(p.length() > 20) v.multiplyScalar(-1);
                         const a = FridayAvatarMotion.sample('NETWORK', i, 0, avatarArticulation);
                         const r = Math.max(1e-5, p.length()), grow = voiceBreath * 0.5 + a.lift;
                         const drawn = shannonNodes[i].drawn || (shannonNodes[i].drawn = new THREE.Vector3());
@@ -6463,7 +6463,7 @@
                 }
                 edenDebris.forEach(d => {
                     if(d && d.position && d.userData) {
-                        d.position.z += (d.userData.speed * moodLerpValues.particleSpeedScale) + (audioData.mid * 5);
+                        d.position.z += ((d.userData.speed * moodLerpValues.particleSpeedScale) + (audioData.mid * 5)) * (ambient ? 1 : 0);
                         // Recycled before it reaches the camera: a streak passing
                         // close fills the screen for a frame.
                         if(d.position.z > 16) {
@@ -6541,7 +6541,7 @@
                 if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.0012 + Math.sin(ambientT * 0.5) * 0.0006 + (metamorphosisFlash * 0.01);
                 if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(ambientT * 0.2);
                 if(holoPass.uniforms.grainAmount) holoPass.uniforms.grainAmount.value = moodLerpValues.grain + (metamorphosisFlash * 0.05);
-                if(holoPass.uniforms.time) holoPass.uniforms.time.value = elapsed;
+                if(holoPass.uniforms.time) holoPass.uniforms.time.value = ambientT;   // the grain and scanline hold too (AX23)
             }
             
             // Processing-state gestures, after every structure has animated.
