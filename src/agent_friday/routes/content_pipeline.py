@@ -404,9 +404,18 @@ def content_post_delete(post_id):
             decision = _gate.record_external("content:takedown", surface=_gate.derive_origin(),
                                              target=target)
         except _gate.Held as e:
+            # fixed words to the page (the hold's own text can carry an
+            # exception's); the kind of hold is logged here
+            print(f"  [content] a takedown was held by the action checkpoint: "
+                  f"{type(e).__name__}")
+            if core.GLOBAL_STOP.is_set():
+                why = "everything is stopped (you pressed Stop)"
+            else:
+                why = ("its integrity check, signed receipt or an outward hold "
+                       "did not let it through")
             return jsonify({"ok": False, "status": "error", "held": True,
                             "error": "Nothing was deleted: the action checkpoint held the "
-                                     "takedown (%s)." % e}), 409
+                                     "takedown (%s). Try again." % why}), 409
     out = store.delete_post(post_id)
     if not out.get("ok"):
         if decision is not None:

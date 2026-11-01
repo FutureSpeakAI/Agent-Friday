@@ -207,7 +207,6 @@ Stack-trace alerts are otherwise fixed, never dismissed as "won't fix". Any that
 | 131 | py/path-injection | services/hints.py:44 | FALSE_POSITIVE | intended: hints for an owner-named workspace path; only files named .fridayhints are read walking up |
 | 132 | py/path-injection | services/hints.py:54 | FALSE_POSITIVE | intended: hints for an owner-named workspace path; only files named .fridayhints are read walking up |
 | 133 | py/path-injection | services/hints.py:57 | FALSE_POSITIVE | intended: hints for an owner-named workspace path; only files named .fridayhints are read walking up |
-| 134 | py/path-injection | services/memory_dreaming.py:356 | FALSE_POSITIVE | day must match ^\d{4}-\d{2}-\d{2}$ before the join |
 | 135 | py/path-injection | services/misc_engine.py:466 | FIX | event_id: safe_name + contained in FLOW_QUEUE_DIR (route answers 400); a '/../' id wrote JSON anywhere before |
 | 136 | py/path-injection | services/model_discovery.py:197 | FALSE_POSITIVE | _cache_path keeps only alnum, '-' and '_' of the provider name before joining under CACHE_DIR |
 | 137 | py/path-injection | services/model_discovery.py:200 | FALSE_POSITIVE | _cache_path keeps only alnum, '-' and '_' of the provider name before joining under CACHE_DIR |

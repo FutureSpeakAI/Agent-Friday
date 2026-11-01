@@ -75,23 +75,35 @@ class BadRequest(ValueError):
 
 
 # ── parameters ────────────────────────────────────────────────────────────────
-def check_params(query: Any, kinds: Any = None, since: Any = None, until: Any = None,
-                 fmt: Any = None) -> Tuple[str, Tuple[str, ...], Optional[str], Optional[str], str]:
-    """Normalised (query, kinds, since, until, format), or BadRequest. The query may be empty (the whole
-    memory); otherwise it, the kinds and the dates are held to exactly the search's bounds."""
+_BAD_FORMAT = "format is json or md."
+
+
+def parse_params(query: Any, kinds: Any = None, since: Any = None, until: Any = None, fmt: Any = None):
+    """((query, kinds, since, until, format), None), or (None, the problem in plain words: one of the
+    fixed sentences here or in memory_search, never an exception's text). Never raises. The query may be
+    empty (the whole memory); otherwise it, the kinds and the dates are held to exactly the search's bounds."""
     f = str(fmt or "json").strip().lower()
     if f == "markdown":
         f = "md"
     if f not in FORMATS:
-        raise BadRequest("format is json or md.")
+        return None, _BAD_FORMAT
     q = " ".join(str(query or "").split())
-    try:
-        # The search's own check, so an export can never ask for more than a search could. With no query
-        # it still checks the kinds and the dates (a stand-in query that is never used).
-        _, ks, s, u, _ = ms.check_params(q or "all", kinds, since, until, None)
-    except ms.BadRequest as e:
-        raise BadRequest(str(e))
-    return q, ks, s, u, f
+    # The search's own check, so an export can never ask for more than a search could. With no query
+    # it still checks the kinds and the dates (a stand-in query that is never used).
+    params, problem = ms.parse_params(q or "all", kinds, since, until, None)
+    if problem:
+        return None, problem
+    _, ks, s, u, _ = params
+    return (q, ks, s, u, f), None
+
+
+def check_params(query: Any, kinds: Any = None, since: Any = None, until: Any = None,
+                 fmt: Any = None) -> Tuple[str, Tuple[str, ...], Optional[str], Optional[str], str]:
+    """Normalised (query, kinds, since, until, format), or BadRequest (parse_params, raising)."""
+    params, problem = parse_params(query, kinds, since, until, fmt)
+    if problem:
+        raise BadRequest(problem)
+    return params
 
 
 # ── the whole memory, kind by kind ────────────────────────────────────────────
@@ -346,10 +358,10 @@ def _from_search(q, ks, since, until, include_superseded, notes) -> List[Dict[st
 def build(query: str = "", kinds=None, since: Optional[str] = None, until: Optional[str] = None,
           include_superseded: bool = False) -> Dict[str, Any]:
     """The export's contents: {ok, query, kinds, items, count, truncated, notes, exported}."""
-    try:
-        q, ks, since, until, _ = check_params(query, kinds, since, until, "json")
-    except BadRequest as e:
-        return {"ok": False, "error": str(e)}
+    params, problem = parse_params(query, kinds, since, until, "json")
+    if problem:
+        return {"ok": False, "error": problem}
+    q, ks, since, until, _ = params
     notes: List[str] = []
     try:
         items = (_from_search(q, ks, since, until, include_superseded, notes) if q

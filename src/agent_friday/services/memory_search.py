@@ -77,49 +77,85 @@ class BadRequest(ValueError):
 
 
 # ── parameters ────────────────────────────────────────────────────────────────
-def check_params(query: Any, kinds: Any = None, since: Any = None, until: Any = None,
-                 limit: Any = None) -> Tuple[str, Tuple[str, ...], Optional[str], Optional[str], int]:
-    """Normalised (query, kinds, since, until, limit), or BadRequest."""
+# The checks below return the problem as one of these fixed sentences (never an exception's text), so a
+# route answers 400 with plain words and nothing an exception carried can reach the response.
+_BAD_EMPTY = "Type something to search for."
+_BAD_LONG = f"A search is at most {QUERY_MAX} characters."
+_BAD_KIND_COUNT = "Too many kinds."
+_BAD_KINDS = "Kinds are: " + ", ".join(KINDS) + "."
+_BAD_SINCE = "since is a date like 2026-10-24."
+_BAD_UNTIL = "until is a date like 2026-10-24."
+_BAD_LIMIT_NUMBER = "limit is a number."
+_BAD_LIMIT_RANGE = f"limit is between 1 and {LIMIT_MAX}."
+_BAD_WHY_KIND = "kind is one of: " + ", ".join(WHY_KINDS) + "."
+_BAD_WHY_ID = "That id is not one this search gave."
+
+
+def _is_day(v: Any) -> bool:
+    """A real calendar day written YYYY-MM-DD: 2026-13-45 and 2026-02-30 are not."""
+    s = str(v)
+    if not _DAY.match(s):
+        return False
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").strftime("%Y-%m-%d") == s
+    except ValueError:
+        return False
+
+
+def parse_params(query: Any, kinds: Any = None, since: Any = None, until: Any = None, limit: Any = None):
+    """((query, kinds, since, until, limit), None), or (None, the problem in plain words). Never raises."""
     q = " ".join(str(query or "").split())
     if not q:
-        raise BadRequest("Type something to search for.")
+        return None, _BAD_EMPTY
     if len(q) > QUERY_MAX:
-        raise BadRequest(f"A search is at most {QUERY_MAX} characters.")
+        return None, _BAD_LONG
     if kinds in (None, "", [], ()):
         ks: Tuple[str, ...] = KINDS
     else:
         raw = kinds.split(",") if isinstance(kinds, str) else list(kinds)
         if len(raw) > len(KINDS):
-            raise BadRequest("Too many kinds.")
+            return None, _BAD_KIND_COUNT
         ks = tuple(k for k in KINDS if k in {str(x).strip() for x in raw})
         if not ks or len(ks) != len({str(x).strip() for x in raw if str(x).strip()}):
-            raise BadRequest("Kinds are: " + ", ".join(KINDS) + ".")
-    for name, v in (("since", since), ("until", until)):
-        if v in (None, ""):
-            continue
-        # The shape and a real calendar day: 2026-13-45 and 2026-02-30 are refused, not read as no date.
-        try:
-            if not _DAY.match(str(v)):
-                raise ValueError(v)
-            datetime.strptime(str(v), "%Y-%m-%d")
-        except ValueError:
-            raise BadRequest(f"{name} is a date like 2026-10-24.")
+            return None, _BAD_KINDS
+    # The shape and a real calendar day: 2026-13-45 and 2026-02-30 are refused, not read as no date.
+    if since not in (None, "") and not _is_day(since):
+        return None, _BAD_SINCE
+    if until not in (None, "") and not _is_day(until):
+        return None, _BAD_UNTIL
     try:
         n = LIMIT_DEFAULT if limit in (None, "") else int(limit)
     except (TypeError, ValueError):
-        raise BadRequest("limit is a number.")
+        return None, _BAD_LIMIT_NUMBER
     if not 1 <= n <= LIMIT_MAX:
-        raise BadRequest(f"limit is between 1 and {LIMIT_MAX}.")
-    return q, ks, (str(since) if since else None), (str(until) if until else None), n
+        return None, _BAD_LIMIT_RANGE
+    return (q, ks, (str(since) if since else None), (str(until) if until else None), n), None
+
+
+def check_params(query: Any, kinds: Any = None, since: Any = None, until: Any = None,
+                 limit: Any = None) -> Tuple[str, Tuple[str, ...], Optional[str], Optional[str], int]:
+    """Normalised (query, kinds, since, until, limit), or BadRequest (parse_params, raising)."""
+    params, problem = parse_params(query, kinds, since, until, limit)
+    if problem:
+        raise BadRequest(problem)
+    return params
+
+
+def parse_why(kind: Any, item_id: Any):
+    """((kind, id), None), or (None, the problem in plain words). Never raises."""
+    k, i = str(kind or "").strip(), str(item_id or "").strip()
+    if k not in WHY_KINDS:
+        return None, _BAD_WHY_KIND
+    if not i or len(i) > ID_MAX or not re.match(r"^[A-Za-z0-9:_\-\.]+$", i):
+        return None, _BAD_WHY_ID
+    return (k, i), None
 
 
 def check_why(kind: Any, item_id: Any) -> Tuple[str, str]:
-    k, i = str(kind or "").strip(), str(item_id or "").strip()
-    if k not in WHY_KINDS:
-        raise BadRequest("kind is one of: " + ", ".join(WHY_KINDS) + ".")
-    if not i or len(i) > ID_MAX or not re.match(r"^[A-Za-z0-9:_\-\.]+$", i):
-        raise BadRequest("That id is not one this search gave.")
-    return k, i
+    params, problem = parse_why(kind, item_id)
+    if problem:
+        raise BadRequest(problem)
+    return params
 
 
 # ── small helpers ─────────────────────────────────────────────────────────────
@@ -545,10 +581,10 @@ def _proposals(terms, phrase, lo, hi):
 def search(query: str, kinds=None, since: Optional[str] = None, until: Optional[str] = None,
            include_superseded: bool = False, limit: int = LIMIT_DEFAULT) -> Dict[str, Any]:
     """Matches across the kinds asked for, best first. See the module docstring."""
-    try:
-        q, ks, since, until, n = check_params(query, kinds, since, until, limit)
-    except BadRequest as e:
-        return {"ok": False, "error": str(e)}
+    params, problem = parse_params(query, kinds, since, until, limit)
+    if problem:
+        return {"ok": False, "error": problem}
+    q, ks, since, until, n = params
     terms, phrase = _terms(q), q.lower()
     lo, hi = _day_ts(since), _day_ts(until, end=True)
     notes: List[str] = []
@@ -853,10 +889,10 @@ def _why_document(item_id: str) -> Dict[str, Any]:
 
 def why(kind: str, item_id: str) -> Dict[str, Any]:
     """Where Friday knows this from, its correction history, and its recent use."""
-    try:
-        kind, item_id = check_why(kind, item_id)
-    except BadRequest as e:
-        return {"ok": False, "error": str(e)}
+    params, problem = parse_why(kind, item_id)
+    if problem:
+        return {"ok": False, "error": problem}
+    kind, item_id = params
     fn = {"conversation": _why_conversation, "card": _why_card, "card_change": _why_card_change,
           "suggestion": _why_suggestion, "fact": _why_fact, "proposal": _why_proposal,
           "document": _why_document}[kind]

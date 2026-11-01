@@ -1327,7 +1327,7 @@ def queue(target: str, op: str, *, text: str = "", old: str = "", source: str,
         try:
             _write_jsonl(_pending_path(), rows)
         except Exception as e:
-            return _err(str(e))
+            return _err(exception_text(e, "the suggestion could not be saved: %s"))
     _metric("inference_queued", path="core_memory")
     return {"ok": True, "id": row["id"], **({"deleted_before": True} if deleted_before else {})}
 
