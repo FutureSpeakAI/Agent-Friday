@@ -61,6 +61,18 @@ def machine(monkeypatch):
     monkeypatch.setattr(ra, "_publish_endpoints", lambda procs, drop=(): None)
     monkeypatch.setattr(ra, "_reap_sleep", lambda s: None, raising=False)
     monkeypatch.setattr(ra, "REAP_WAIT_S", 0.0, raising=False)
+    monkeypatch.setattr(ra, "_port_bound",
+                        lambda port: int(port) in m.listening or int(port) in m.serves,
+                        raising=False)
+    # No hook another module registered may run, and no provider the test
+    # machine happens to have configured may decide a port.
+    monkeypatch.setattr(ra, "SEAT_READY_HOOKS", [])
+    from agent_friday.services import provider_registry as _pr
+
+    class _NoProviders:
+        def get_enabled_providers(self):
+            return []
+    monkeypatch.setattr(_pr, "get_provider_registry", lambda: _NoProviders())
 
     def _stop(self, *a, **k):
         m.stopped.append(self.pid)
@@ -185,6 +197,38 @@ def test_a_failed_port_listing_is_never_read_as_a_free_port(backend, machine, mo
     assert machine.spawned == []
 
 
+def test_a_failed_listing_with_a_silent_bound_port_is_never_read_as_free(backend, machine, monkeypatch):
+    """No listing, nothing answering, but something is bound to the port (a seat
+    still loading): refused, never joined."""
+    monkeypatch.setattr(ra, "_listening_ports", lambda: {})
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    machine.listening[PORT] = ORPHAN          # bound, as _port_bound sees it
+    with pytest.raises(ra.TransitionError):
+        backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.spawned == []
+
+
+def test_a_remembered_seat_still_running_off_its_port_is_stopped_first(backend, machine, monkeypatch):
+    """Remembered, alive, but its port reads free: stopped before the reload,
+    so the model never runs twice."""
+    machine.ours_by_path.add(ORPHAN)
+    backend.procs[MODEL] = (ra.AdoptedProc(ORPHAN), PORT)
+    monkeypatch.setattr(ra.AdoptedProc, "poll",
+                        lambda self: 0 if self.pid in machine.stopped else None)
+    monkeypatch.setattr(ra, "REAP_WAIT_S", 1.0, raising=False)
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.stopped == [ORPHAN] and machine.spawned == [(MODEL, PORT)]
+
+
+def test_a_remembered_process_friday_may_not_stop_refuses_the_reload(backend, machine, monkeypatch):
+    backend.procs[MODEL] = (ra.AdoptedProc(ORPHAN), PORT)
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    with pytest.raises(ra.TransitionError):
+        backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.spawned == [] and machine.stopped == []
+
+
 def test_a_remembered_seat_that_is_slow_to_answer_is_not_forgotten(backend, machine, monkeypatch):
     """Alive but missing its health answer once: judged on its port (here,
     adopted when it answers), never dropped while a second copy starts."""
@@ -261,6 +305,8 @@ def test_a_refused_port_is_not_answered_by_a_second_engine_on_the_next_port(back
     load, not move the model to the next engine's port beside it."""
     monkeypatch.setattr(backend, "engines_for",
                         lambda model_id: [Path("llama-server.exe"), Path("ollama-llama-server.exe")])
+    # The survey misses it, so the refusal comes from the per-engine port claim.
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
     _orphan(machine, ctx=10 ** 9)
     machine.release_port_on_stop = False
     with pytest.raises(ra.TransitionError):
