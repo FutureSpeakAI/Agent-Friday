@@ -172,12 +172,17 @@ def test_the_owner_hears_the_service_by_name(server_call, monkeypatch):
     assert "Slack" in out and "Google" not in out
 
 
-def test_a_server_that_is_switched_off_or_missing_is_not_done(server_call, monkeypatch):
+def test_a_server_that_is_switched_off_is_not_done(server_call, monkeypatch):
     sp = local_server("slack", _answer("ok"), monkeypatch)
     sp.status = "disabled"
     out, receipt = server_call(sp)
     assert receipt["ok"] is False and receipt.get("detail") == "not done: switched_off"
     assert "switched off" in out
+
+
+def test_a_server_friday_does_not_have_is_not_done(server_call, monkeypatch):
+    # one call per test: the checkpoint's repeat guard stops an identical second call in a turn
+    sp = local_server("slack", _answer("ok"), monkeypatch)
     out, receipt = server_call(sp, handler=lambda m: m.call("ghost", "post_message", {}))
     assert receipt["ok"] is False and receipt.get("detail") == "not done: unreachable"
 
@@ -248,8 +253,8 @@ class _Resp:
         self._body = body.encode("utf-8") if isinstance(body, str) else body
         self.status = status
 
-    def read(self):
-        return self._body
+    def read(self, n=-1):
+        return self._body if n is None or n < 0 else self._body[:n]
 
     def __enter__(self):
         return self
