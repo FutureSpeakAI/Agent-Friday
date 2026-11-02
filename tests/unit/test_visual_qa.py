@@ -620,6 +620,9 @@ def test_the_studio_manifest_bar_shows_how_it_looks(tmp_path):
     for name in ("index.html", "ui_parts/app.html"):
         src = (root / name).read_text(encoding="utf-8")
         start = src.index("function ManifestBar")
-        bar = src[start:src.index("\n}", start)]
+        # up to the next top-level function: in the compiled index.html the
+        # destructured props close with "\n}" before the body starts
+        end = src.find("\nfunction ", start + 1)
+        bar = src[start:end if end > 0 else len(src)]
         assert "qa.visual" in bar and "'Looks'" in bar, name
         assert "vis.ok === false" in bar.replace("vis.ok===false", "vis.ok === false"), name
