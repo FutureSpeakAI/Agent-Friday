@@ -110,9 +110,9 @@ def test_denied_expired_or_duplicate_approval_never_runs_twice(world, monkeypatc
     assert launched == []
     assert sites._operation(world.site, result["operation_id"])["status"] == "denied"
     result = sites.execute("build", {"site_id": world.site["site_id"]}, world.caller)
-    record = dict(result["approval"])
-    record["status"] = "approved"
-    approvals.APPROVALS_FILE.write_text(json.dumps([record]), encoding="utf-8")
+    # approved through the approvals module (a card set to approved in the file is never run:
+    # it carries no approval seal, NS-18.6-1)
+    record = approvals._upsert(dict(result["approval"], status="approved", decided_by="owner"))
     sites._on_decision(record)
     sites._on_decision(record)
     assert len(launched) == 1

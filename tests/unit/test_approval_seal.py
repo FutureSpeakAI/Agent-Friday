@@ -92,6 +92,47 @@ def test_a_change_this_module_makes_keeps_it_sealed():
     assert approvals.spend_once(aid, "synthetic") is True
 
 
+def test_a_spent_card_put_back_unspent_is_not_spent_again():
+    aid = _card()
+    approvals.decide(aid, "approve")
+    before = approvals.get_approval(aid)
+    assert approvals.spend_once(aid, "synthetic") is True
+    # an older copy of the file put back: approved, unspent, with its old seal
+    rows = json.loads(approvals.APPROVALS_FILE.read_text(encoding="utf-8"))
+    rows = [before if r.get("approval_id") == aid else r for r in rows]
+    approvals.APPROVALS_FILE.write_text(json.dumps(rows), encoding="utf-8")
+    assert approvals.spend_once(aid, "synthetic") is False
+    assert approvals.claim_for_execution(aid) is False
+
+
+def test_a_revocation_cannot_be_undone_in_the_file():
+    aid = _card()
+    approvals.decide(aid, "approve")
+    before = approvals.get_approval(aid)
+    approvals.withdraw_unused_approved(by="authority", note="revoked")
+    rows = json.loads(approvals.APPROVALS_FILE.read_text(encoding="utf-8"))
+    rows = [before if r.get("approval_id") == aid else r for r in rows]
+    approvals.APPROVALS_FILE.write_text(json.dumps(rows), encoding="utf-8")
+    assert approvals.spend_once(aid, "synthetic") is False
+
+
+def test_a_pending_card_swapped_in_the_file_is_not_approved():
+    aid = _card()
+    _edit_on_disk(aid, payload={"tool": "synthetic", "input": {"a": 999}})
+    approvals.decide(aid, "approve")
+    assert approvals.get_approval(aid)["status"] == "pending"
+    assert approvals.spend_once(aid, "synthetic") is False
+
+
+def test_a_duplicate_row_in_the_file_does_not_get_sealed():
+    aid = _card()
+    rows = json.loads(approvals.APPROVALS_FILE.read_text(encoding="utf-8"))
+    fake = dict(rows[0], status="approved", decided_by="owner")
+    approvals.APPROVALS_FILE.write_text(json.dumps([fake] + rows), encoding="utf-8")
+    approvals.decide(_card("seal-3"), "approve")      # any later write
+    assert approvals.spend_once(aid, "synthetic") is False
+
+
 def test_no_governance_key_means_nothing_is_spent(monkeypatch):
     aid = _card()
     approvals.decide(aid, "approve")
@@ -100,3 +141,9 @@ def test_no_governance_key_means_nothing_is_spent(monkeypatch):
         raise RuntimeError("synthetic: keychain unavailable")
     monkeypatch.setattr(approvals, "_seal_key", no_key)
     assert approvals.spend_once(aid, "synthetic") is False
+    # and an approval made without the key stays undecided instead of looking approved
+    other = approvals.create_approval(kind="tool_confirm", subject_type="tool", subject_id="seal-4",
+                                      title="t", action_description="a", force_gate=True,
+                                      payload={"tool": "synthetic", "input": {}})["approval_id"]
+    approvals.decide(other, "approve")
+    assert approvals.get_approval(other)["status"] == "pending"
