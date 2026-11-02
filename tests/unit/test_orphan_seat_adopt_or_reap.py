@@ -157,12 +157,63 @@ def test_an_orphan_that_will_not_let_go_is_never_joined_by_a_second_seat(backend
     assert machine.spawned == []
 
 
-def test_a_port_held_by_something_that_is_not_a_friday_seat_is_left_alone(backend, machine):
+def test_a_port_held_by_another_programs_server_is_left_alone(backend, machine):
+    """Not ours and not this model: left serving; the seat takes the next port."""
     machine.listening[PORT] = 777
     machine.serves[PORT] = "someone-elses-model"
-    with pytest.raises(ra.TransitionError) as ei:
+    backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.stopped == [] and machine.spawned == [(MODEL, PORT + 1)]
+
+
+def test_another_programs_server_answering_as_this_model_is_never_joined(backend, machine):
+    machine.listening[PORT] = 777
+    machine.serves[PORT] = MODEL
+    machine.ctx[777] = 10 ** 9
+    with pytest.raises(ra.TransitionError):
         backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
     assert machine.spawned == [] and machine.stopped == []
+
+
+def test_a_failed_port_listing_is_never_read_as_a_free_port(backend, machine, monkeypatch):
+    """The listing query failed (as it can on a loaded machine at boot) while the
+    model answers on its port: no seat is started onto it."""
+    monkeypatch.setattr(ra, "_listening_ports", lambda: {})
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    machine.serves[PORT] = MODEL
+    with pytest.raises(ra.TransitionError):
+        backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.spawned == []
+
+
+def test_a_remembered_seat_that_is_slow_to_answer_is_not_forgotten(backend, machine, monkeypatch):
+    """Alive but missing its health answer once: judged on its port (here,
+    adopted when it answers), never dropped while a second copy starts."""
+    machine.listening[PORT] = ORPHAN
+    machine.ours_by_path.add(ORPHAN)
+    backend.procs[MODEL] = (ra.AdoptedProc(ORPHAN), PORT)
+    answers = iter([None, None, MODEL])
+    monkeypatch.setattr(ra, "_model_on_port", lambda port: next(answers, MODEL))
+    monkeypatch.setattr(ra, "LOADING_WAIT_S", 5.0, raising=False)
+    took = backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert took == 0.0 and machine.spawned == [] and machine.stopped == []
+    assert backend.procs[MODEL][1] == PORT
+
+
+def test_a_voice_front_found_off_its_port_is_reaped_and_started_on_it(backend, machine):
+    front = "voice-front:gemma4:e4b"
+    machine.listening[8126] = ORPHAN
+    machine.serves[8126] = front
+    machine.ours_by_path.add(ORPHAN)
+    backend.load(front, 4096, gguf_path=GGUF, port=8125)
+    assert ORPHAN in machine.stopped and machine.spawned == [(front, 8125)]
+
+
+def test_a_seat_that_may_move_never_takes_the_voice_fronts_port(backend, machine):
+    for p in range(8120, 8125):
+        machine.listening[p] = 1000 + p
+        machine.serves[p] = "someone-elses-model-%d" % p
+    backend.load(MODEL, 32768, gguf_path=GGUF, port=8120)
+    assert machine.spawned == [(MODEL, 8126)]
 
 
 def test_boot_reaps_a_published_orphan_it_cannot_adopt(backend, machine):
