@@ -83,8 +83,44 @@ test('a workspace opens from the keyboard, and the focused button shows a focus 
   await expect(page.locator(`.dock-btn[data-ws="${ws}"]`)).toHaveAttribute('aria-pressed', 'true');
 });
 
+/** Every key keeps the page's main thread busy for `ms` before it lands. On the Windows CI runner the
+ *  desktop's always-running scene did that by itself: 0.6-3 s a key in the failing traces. */
+async function slowKeys(page: Page, ms: number) {
+  await page.evaluate(busy => {
+    window.addEventListener('keydown', () => {
+      const t = performance.now();
+      while (performance.now() - t < busy) { /* the page is busy */ }
+    }, true);
+  }, ms);
+}
+
 test('a message is written and sent with the keyboard alone', async ({ page }) => {
   const sent = await desktop(page);
+  // Ctrl+/ opens the chat tray and puts the cursor in it; asked again until it lands (the tray mounts first).
+  await expect(async () => {
+    if (!(await page.evaluate(() => !!document.activeElement && document.activeElement.hasAttribute('data-chat-input')))) {
+      await page.keyboard.press('Control+/');
+    }
+    expect(await page.evaluate(() => !!document.activeElement && document.activeElement.hasAttribute('data-chat-input')),
+      'Ctrl+/ puts the cursor in a chat field').toBe(true);
+  }).toPass({ timeout: 20_000 });
+  // Typed into the field that has focus; typed again if the tray re-rendered under the keys.
+  const box = page.locator('[data-chat-input]:focus');
+  await expect(async () => {
+    await page.keyboard.press('Control+A');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type('keyboard-only hello');
+    await expect(box).toHaveValue('keyboard-only hello', { timeout: 2000 });
+  }).toPass({ timeout: 20_000 });
+  await page.keyboard.press('Enter');
+  await expect.poll(() => sent.some(b => b.includes('keyboard-only hello')),
+    { message: 'Enter sent the message', timeout: 15_000 }).toBeTruthy();
+});
+
+test('a message is written and sent with the keyboard alone when every key keeps the page busy 1.5 s', async ({ page }) => {
+  test.setTimeout(240_000);
+  const sent = await desktop(page);
+  await slowKeys(page, 1500);
   // Ctrl+/ opens the chat tray and puts the cursor in it; asked again until it lands (the tray mounts first).
   await expect(async () => {
     if (!(await page.evaluate(() => !!document.activeElement && document.activeElement.hasAttribute('data-chat-input')))) {
