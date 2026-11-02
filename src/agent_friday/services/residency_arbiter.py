@@ -1233,13 +1233,24 @@ class LlamaServerBackend:
         """A remembered seat process that is still alive after its port was
         judged free: stop it when it is ours (a process this backend started, or
         an adopted llama-server), else raise PortRefused."""
-        try:
-            if proc.poll() is not None:
-                return
-        except Exception:
-            return
         pid = int(getattr(proc, "pid", 0) or 0)
-        ours = not isinstance(proc, AdoptedProc)
+        adopted = isinstance(proc, AdoptedProc)
+
+        def _gone() -> bool:
+            # An adopted process's own poll() trusts what kill() recorded, so
+            # ask afresh, and require it to have left the llama-server list too.
+            # Any doubt reads as still running.
+            try:
+                if not adopted:
+                    return proc.poll() is not None
+                return (AdoptedProc(pid).poll() is not None
+                        and pid not in _llama_server_pids())
+            except Exception:
+                return False
+
+        if _gone():
+            return
+        ours = not adopted
         if not ours:
             try:
                 ours = pid in _llama_server_pids()
@@ -1256,12 +1267,11 @@ class LlamaServerBackend:
         except Exception:
             pass
         deadline = time.monotonic() + REAP_WAIT_S
-        while time.monotonic() < deadline:
-            try:
-                if proc.poll() is not None:
-                    return
-            except Exception:
+        while True:
+            if _gone():
                 return
+            if time.monotonic() >= deadline:
+                break
             _reap_sleep(0.25)
         raise PortRefused(
             "%s pid %d did not stop; not starting a second copy" % (model_id, pid))
@@ -1353,7 +1363,8 @@ class LlamaServerBackend:
         if protected and served != model_id:
             return _NEXT_PORT
         ours = (not protected) and _is_our_seat(pid, port)
-        if served is None and (ours or _published_on_port(port) == model_id):
+        published_here = _published_on_port(port) == model_id
+        if served is None and (ours or published_here):
             # Listening but not answering: a seat of ours (or the one Friday
             # published for this model here) still loading. Give it the time a
             # load takes before judging it; once it answers it may read as ours.
@@ -1383,6 +1394,13 @@ class LlamaServerBackend:
             raise PortRefused(
                 ":%d is still held by pid %d after reaping it; not starting a "
                 "second seat of %s" % (port, pid, model_id))
+        if served is None and published_here:
+            # Published as this model here and still silent: most likely a copy
+            # of it still loading. Moving to the next port would start another.
+            raise PortRefused(
+                ":%d is published as %s but pid %d there does not answer and "
+                "cannot be identified; not starting a second copy"
+                % (port, model_id, pid))
         if served != model_id:
             # Another program's server (or nothing that answers) on a port we
             # would use: not ours to stop, and not a copy of this model. The
