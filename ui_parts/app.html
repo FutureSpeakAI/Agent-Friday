@@ -27926,21 +27926,57 @@ function fridayIsBatchCard(a){return!!(a&&a.payload&&a.payload.handler==='item_b
 function fridayApprovalWords(a) {
   return a && a.payload && a.payload.handler === 'gmail_send' ? ['Send', "Don't send"] : ['Approve', 'Deny'];
 }
+// What a card says before you decide (services/card_facts, NS-18.4-3): what, why, targets, where the
+// details came from, undo, cost, privacy, model, expiry and checks, as the server worked them out
+// ("not known" when it could not). Inspect reads the record of the card's action (services/explain,
+// A13), read only. Edit is shown disabled, with why, on a card whose kind has no edit of its own.
+// Text only: every value is a React text child.
+function ApprovalCardFacts({ a }) {
+  const f = (a && a.card_facts) || {};
+  const [why, setWhy] = useState(null);
+  const [reading, setReading] = useState(false);
+  const w = k => String((f[k] && f[k].words) || 'not known');
+  const exp = f.expires_at && f.expires_at.at ? 'expires ' + new Date(f.expires_at.at * 1000).toLocaleString() : w('expires_at');
+  const rows = [['What', w('what')], ['Why', w('why')], ['Targets', w('targets')], ['Details', w('provenance')],
+    ['Undo', w('reversibility')], ['Cost', w('cost')], ['Privacy', w('privacy_impact')], ['Model', w('model')],
+    ['Expires', exp], ['Checks', w('verification_plan')]];
+  const ed = f.editable || { can: false, own: false, why: "This kind of card can't be edited here." };
+  const inspect = () => {
+    if (reading) return;
+    setReading(true);
+    setWhy('Reading…');
+    apiFetch('/api/approvals/' + encodeURIComponent(a.approval_id) + '/inspect').then(r => r.json())
+      .then(d => setWhy(d && d.ok ? String(d.text || 'Nothing is recorded for this card yet.') : String((d && d.error) || 'This card could not be inspected right now.')))
+      .catch(() => setWhy('This card could not be inspected right now.'))
+      .finally(() => setReading(false));
+  };
+  return <div data-testid="approval-card-facts" style={{ marginTop: 6, padding: '6px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', fontSize: 10.5, color: '#b8c7dc', lineHeight: 1.5 }}>
+    {rows.map(([k, v]) => <div key={k} data-fact={k}><span style={{ color: 'rgba(255,255,255,0.45)' }}>{k}: </span>{v}</div>)}
+    <div style={{ display: 'flex', gap: 6, marginTop: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+      <button type="button" className="btn" data-testid="approval-card-inspect" style={{ fontSize: 10.5, padding: '2px 8px' }} disabled={reading} onClick={inspect} title="The record of this card's action: what, why, which model, what left this PC. Read only.">Inspect</button>
+      {!ed.own && <button type="button" className="btn" data-testid="approval-card-edit" style={{ fontSize: 10.5, padding: '2px 8px' }} disabled={true} title={String(ed.why || '')}>Edit</button>}
+      {!ed.own && <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>{String(ed.why || '')}</span>}
+    </div>
+    {why !== null && <pre data-testid="approval-card-inspect-text" style={{ whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', fontSize: 10, margin: '6px 0 0', color: '#cfd8e3' }}>{why}</pre>}
+  </div>;
+}
 function ApprovalCardBody({ a, busy, onDecide }) {
+  // Every card, whatever its body, ends with its facts and Inspect (ApprovalCardFacts).
+  const withFacts = el => <React.Fragment>{el}<ApprovalCardFacts a={a} /></React.Fragment>;
   // The share card has its own body: the exact payload, edit, and four choices.
   // A file-access card lists every path it would allow; see FileGrantRequestCard.
-  if (a && a.kind === 'file_grant_request') return <FileGrantRequestCard a={a} busy={busy} onDecide={onDecide}/>;
+  if (a && a.kind === 'file_grant_request') return withFacts(<FileGrantRequestCard a={a} busy={busy} onDecide={onDecide}/>);
   // A skill package to install: the whole of what it would add; see SkillImportCard.
-  if (a && a.kind === 'skill_import') return <SkillImportCard a={a} busy={busy} onDecide={onDecide}/>;
+  if (a && a.kind === 'skill_import') return withFacts(<SkillImportCard a={a} busy={busy} onDecide={onDecide}/>);
   // An email paragraph about money held back from a cloud model: exactly the text, Send or Keep (services/cloud_release.py).
-  if (a && a.payload && a.payload.handler === 'cloud_release') return <CloudReleaseCard a={a} busy={busy}/>;
-  if (a && a.kind === 'local_context_share') return <LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>;
+  if (a && a.payload && a.payload.handler === 'cloud_release') return withFacts(<CloudReleaseCard a={a} busy={busy}/>);
+  if (a && a.kind === 'local_context_share') return withFacts(<LocalContextShareCard a={a} busy={busy} onDecide={onDecide}/>);
   // A publish card shows what would go public, the scan, the licences and a
   // sandboxed preview (static/friday_publish.js).
-  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return <window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>;
-  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return <window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>;
+  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return withFacts(<window.FridayWorkspaceSwapCard a={a} busy={busy} onDecide={onDecide}/>);
+  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return withFacts(<window.FridayPublishCard a={a} busy={busy} onDecide={onDecide}/>);
   // A tested change: the text now and the new text, the difference and the evidence (static/friday_trial_card.js).
-  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return <window.FridayTrialCard a={a} busy={busy} onDecide={onDecide}/>;
+  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return withFacts(<window.FridayTrialCard a={a} busy={busy} onDecide={onDecide}/>);
   // A search that shares text from the conversation (privacy/public_query):
   // the exact text that would go out, where it goes, and Send / Don't send.
   const pq = a && a.payload && a.payload.public_query;
@@ -27954,6 +27990,7 @@ function ApprovalCardBody({ a, busy, onDecide }) {
     <ApprovalPagePreview a={a} />
     <ApprovalProvenance p={a.provenance} />
     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'JetBrains Mono', marginTop: 4 }}>{a.kind} · {a.policy_class}{a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''}</div>
+    <ApprovalCardFacts a={a} />
     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
       <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#00ff80' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'approve')}>{pq ? 'Send' : fridayApprovalWords(a)[0]}</button>
       <button className="btn" style={{ fontSize: 11, padding: '2px 10px', color: '#ff0080' }} disabled={!!busy} onClick={() => onDecide(a.approval_id, 'deny')}>{pq ? "Don't send" : fridayApprovalWords(a)[1]}</button>
