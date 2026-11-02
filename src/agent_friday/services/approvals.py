@@ -405,6 +405,80 @@ def fingerprint_holds(rec: Dict[str, Any]) -> bool:
     return not fp or fp == _action_fp(rec)
 
 
+# ── The approval seal (NS-18.6-1) ──────────────────────────────────────────────────────────────
+# An approved card is a one-time token for one action. It carries an HMAC with the governance key
+# over what it authorises (the fingerprint of kind, subject and payload), who decided it, from
+# where, for which principal, and that it is approved. Only this module's own approve paths write
+# it; a card that is approved on disk without a seal (edited from pending, or made before seals)
+# is never sealed afterwards, and nothing spends a card whose seal does not hold. Spending is
+# one-time (spend_once / claim_for_execution / _consume), expiry and revocation are the card's
+# status, and the fingerprint is inside the seal, so any edit of what it authorises voids it.
+
+_SEAL_FIELDS = ("approval_id", "kind", "subject_type", "subject_id", "status", "decided_by",
+                "decided_source", "pre_approved")
+_SEAL_TAG = b"agent-friday/approval/v1\0"
+
+
+def _seal_key() -> bytes:
+    from agent_friday.governance.proof_of_integrity import get_governance_key
+    key = get_governance_key()
+    if not key:
+        raise RuntimeError("governance key unavailable")
+    return key
+
+
+def _seal_of(rec: Dict[str, Any], key: Optional[bytes] = None) -> str:
+    import hashlib
+    import hmac as _hm
+    body = {k: rec.get(k) for k in _SEAL_FIELDS}
+    body["principal"] = rec.get("principal") or "owner"
+    body["fp"] = _action_fp(rec)
+    blob = json.dumps(body, sort_keys=True, default=str).encode("utf-8")
+    return _hm.new(key or _seal_key(), _SEAL_TAG + blob, hashlib.sha256).hexdigest()
+
+
+def seal_holds(rec: Dict[str, Any]) -> bool:
+    """The approved card carries a valid seal for exactly what it is now. Never raises."""
+    import hmac as _hm
+    try:
+        seal = (rec or {}).get("approval_seal")
+        return bool(seal) and _hm.compare_digest(str(seal), _seal_of(rec))
+    except Exception:  # noqa: BLE001 - no key, no proof: not spendable
+        return False
+
+
+def _raw_disk_cards() -> Dict[str, dict]:
+    """The cards as the file holds them now (no in-memory substitution). Never raises."""
+    try:
+        data = json.loads(APPROVALS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if isinstance(data, dict):
+        data = data.get("approvals", [])
+    return {str(d.get("approval_id")): d for d in (data if isinstance(data, list) else [])
+            if isinstance(d, dict)}
+
+
+def _seal_fresh(records: List[dict]) -> None:
+    """Seal every card this write moves to approved. A card already approved on disk without a
+    seal is left as it is (never laundered into a spendable one). Never raises."""
+    need = [r for r in records if isinstance(r, dict) and r.get("status") == "approved"
+            and not r.get("approval_seal")]
+    if not need:
+        return
+    disk = _raw_disk_cards()
+    key = None
+    for r in need:
+        d = disk.get(str(r.get("approval_id")))
+        if d is not None and d.get("status") == "approved" and not d.get("approval_seal"):
+            continue
+        try:
+            key = key or _seal_key()
+            r["approval_seal"] = _seal_of(r, key)
+        except Exception as e:  # noqa: BLE001 - unsealed: it cannot be spent (fail closed)
+            _log.warning("approval not sealed: %s", type(e).__name__)
+
+
 #: Where a decision was made, from its channel (decided_source).
 _DEVICE_OF_SOURCE = {"desktop_press": "this_pc", "typed": "this_pc", "voice": "this_pc",
                      "chat": "this_pc", "owner": "this_pc", "page_on_this_pc": "this_pc",
@@ -478,6 +552,7 @@ def _write_store(records: List[dict]) -> None:
     try:
         FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
         tmp = APPROVALS_FILE.with_suffix(".json.tmp")
+        _seal_fresh(records)
         records = [_disk_view(r) if isinstance(r, dict) else r for r in records]
         tmp.write_text(json.dumps(records, indent=2, default=str), encoding="utf-8")
         for attempt in range(_BUSY_RETRIES):
@@ -511,10 +586,17 @@ def _patch(approval_id: str, **fields) -> Optional[dict]:
         for r in recs:
             if r.get("approval_id") == approval_id:
                 stale = not fingerprint_holds(r)
+                material = any(k in fields for k in _SEAL_FIELDS + ("payload", "principal"))
+                resealable = material and r.get("status") == "approved" and seal_holds(r)
                 r.update(fields)
                 if any(k in fields for k in ("payload", "subject_id", "kind", "subject_type")) \
                         and r.get("action_fingerprint") and not stale:
                     r["action_fingerprint"] = _action_fp(r)      # a change made here, on purpose
+                if resealable and r.get("status") == "approved":
+                    try:
+                        r["approval_seal"] = _seal_of(r)        # a change made here, on purpose
+                    except Exception:  # noqa: BLE001
+                        r.pop("approval_seal", None)
                 _write_store(recs)
                 return dict(r)
     return None
@@ -776,8 +858,8 @@ def spend_once(approval_id: str, actor: str, detail: Optional[dict] = None) -> b
         rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
         if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
             return False
-        if not fingerprint_holds(rec):
-            _log.error("approval %s was changed after it was made; it is not used", approval_id)
+        if not fingerprint_holds(rec) or not seal_holds(rec):
+            _log.error("approval %s is not sealed for what it now says; it is not used", approval_id)
             return False
         now = time.time()
         rec.update(consumed=True, consumed_at=now, used_by=actor, used_at=now,
@@ -811,8 +893,8 @@ def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
                 return False
             if r.get("consumed") or r.get("executing_at"):
                 return False
-            if not fingerprint_holds(r):
-                _log.error("approval %s was changed after it was made; it is not run", approval_id)
+            if not fingerprint_holds(r) or not seal_holds(r):
+                _log.error("approval %s is not sealed for what it now says; it is not run", approval_id)
                 return False
             r["executing_at"] = time.time()
             if by:
@@ -874,7 +956,7 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval.get("approval_id")), None)
         if rec is None or rec.get("status") != "approved" or rec.get("consumed") \
-                or not fingerprint_holds(rec):
+                or not fingerprint_holds(rec) or not seal_holds(rec):
             return (dict(rec) if rec else approval), False
         # When it was burned: a crash after this and before mark_used is judged
         # from this moment (services/card_recovery), never from the decision.
