@@ -670,21 +670,32 @@ def _probe_seat(model: str) -> bool:
 
 #: At most one adoption of published-but-unowned seats per this many seconds.
 ADOPT_PUBLISHED_EVERY_S = 30.0
-_ADOPT_PUBLISHED = {"at": 0.0}
+_ADOPT_PUBLISHED = {"at": 0.0, "thread": None}
 
 
-def _adopt_published_seats(ra) -> list:
-    """Adopt live seats this process's Arbiter does not own (never kills)."""
+def _adopt_published_seats(ra):
+    """Adopt live seats this process's Arbiter does not own (never kills), on a
+    short-lived background thread: the survey takes seconds and adoption waits
+    for any load in progress, and serving() answers voice turns. Returns the
+    thread started, or None when one ran too recently or is still running."""
+    import threading as _th
     import time as _t
     now = _t.monotonic()
-    if now - _ADOPT_PUBLISHED["at"] < ADOPT_PUBLISHED_EVERY_S:
-        return []
+    prev = _ADOPT_PUBLISHED.get("thread")
+    if (prev is not None and prev.is_alive()) or \
+            now - _ADOPT_PUBLISHED["at"] < ADOPT_PUBLISHED_EVERY_S:
+        return None
     _ADOPT_PUBLISHED["at"] = now
-    try:
-        return ra.adopt_live_seats() or []
-    except Exception as e:  # noqa: BLE001
-        _log.debug("serving(): adopting a published seat failed: %s", e)
-        return []
+
+    def _run():
+        try:
+            ra.adopt_live_seats()
+        except Exception as e:  # noqa: BLE001
+            _log.debug("serving(): adopting a published seat failed: %s", e)
+    t = _th.Thread(target=_run, name="adopt-published-seat", daemon=True)
+    _ADOPT_PUBLISHED["thread"] = t
+    t.start()
+    return t
 
 
 def serving() -> dict:
