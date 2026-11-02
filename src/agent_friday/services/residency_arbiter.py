@@ -101,6 +101,15 @@ _NEXT_PORT = object()
 FIXED_PORT_SEATS = ("voice-front:",)
 
 
+def _fixed_seat_ports() -> set:
+    """The ports fixed-port seats live on, kept free of seats that may move."""
+    try:
+        from agent_friday.services import voice_front as _vf
+        return {int(getattr(_vf, "VOICE_FRONT_PORT", 8125))}
+    except Exception:
+        return {8125}
+
+
 # ── Chain cancellation — the SAME job-flag pattern `local_image.py` already
 # uses (headroom.md §6.5: "Cancellation reuses local_image's job-flag
 # pattern"). A chain is not one job with several internal phases (the case
@@ -883,7 +892,16 @@ def _reap_seat(pid: int, port: int, wait_s: float | None = None) -> bool:
         pass
     deadline = time.time() + (REAP_WAIT_S if wait_s is None else wait_s)
     while True:
-        if _listening_ports().get(int(port)) != int(pid):
+        try:
+            listing = _listening_ports() or {}
+        except Exception:
+            listing = {}
+        if listing:
+            released = listing.get(int(port)) != int(pid)
+        else:
+            # No listing (the query failed): released only if nothing answers.
+            released = _model_on_port(port) is None
+        if released:
             print(f"  [arbiter] reaped seat pid {pid} on :{port}")
             return True
         if time.time() >= deadline:
@@ -1133,32 +1151,53 @@ class LlamaServerBackend:
         spawning a second copy of a 27B model is not a recoverable mistake on
         a 12 GB card.
         """
+        wanted_port = (self._last_load.get(model_id) or {}).get("port")
+        fixed = str(model_id).startswith(FIXED_PORT_SEATS)
         entry = self.procs.get(model_id)
         if entry is not None:
             proc, port = entry
+            alive = False
             try:
-                if proc.poll() is None and _model_on_port(port) == model_id:
+                alive = proc.poll() is None
+                if alive and _model_on_port(port) == model_id and \
+                        not (fixed and wanted_port and int(port) != int(wanted_port)):
                     return 0.0
             except Exception:
                 pass
-            # Remembered but not actually serving: forget it rather than
-            # refuse to reload, and say so.
-            print(f"  [arbiter] {model_id} was recorded on :{port} but is not "
-                  f"serving; reloading")
-            self.procs.pop(model_id, None)
+            if alive:
+                # Remembered and still running, but not answering as it should
+                # (slow, or on the wrong port): never forget a live seat, which
+                # would leave it holding its VRAM while a second copy starts.
+                # Judge it on its port: adopt, reap, or refuse.
+                self.procs.pop(model_id, None)
+                got = self._claim_port(model_id, port,
+                                       gguf_path=self._wanted_gguf(model_id),
+                                       here=not fixed or not wanted_port
+                                       or int(port) == int(wanted_port))
+                if got is _NEXT_PORT:
+                    raise PortRefused(
+                        "%s is still running on :%d and cannot be judged there; "
+                        "not starting a second copy" % (model_id, port))
+                if got is not None:
+                    return got
+            else:
+                print(f"  [arbiter] {model_id} was recorded on :{port} but is not "
+                      f"serving; reloading")
+                self.procs.pop(model_id, None)
         try:
             live = survey_live_seats()
         except Exception:
             return None
         if model_id in live:
             pid, port = live[model_id]
-            if not self._conforms(pid, model_id):
-                # Over its cap or from another model file, on whatever port it
-                # landed: clear it there (reap if it is ours to stop, refuse the
-                # load if not) before any seat is started, so the model never
-                # runs twice.
+            here = not fixed or not wanted_port or int(port) == int(wanted_port)
+            if not here or not self._conforms(pid, model_id):
+                # Over its cap, from another model file, or a fixed-port seat
+                # found off its port: clear it where it is (reap if it is ours
+                # to stop, refuse the load if not) before any seat is started,
+                # so the model never runs twice.
                 got = self._claim_port(model_id, port,
-                                       gguf_path=self._wanted_gguf(model_id))
+                                       gguf_path=self._wanted_gguf(model_id), here=here)
                 if got is _NEXT_PORT:
                     raise PortRefused(
                         "%s is already running on :%d (pid %d), outside what "
@@ -1199,33 +1238,49 @@ class LlamaServerBackend:
                 continue
         return None
 
-    def _claim_port(self, model_id, port, *, gguf_path=None):
+    def _claim_port(self, model_id, port, *, gguf_path=None, here=True):
         """Before a seat is started on `port`: adopt it, clear it, or refuse.
 
-        Never two seats on one port. A failed deploy can leave a seat that
-        outlived its parent: published in endpoints.json, answering, in no
-        Arbiter's `procs`. Starting another llama-server on that port makes a
-        second process that cannot bind while the first keeps its VRAM.
+        Never two seats on one port, and never two copies of one model. A failed
+        deploy can leave a seat that outlived its parent: published in
+        endpoints.json, answering, in no Arbiter's `procs`. Starting another
+        llama-server on that port makes a second process that cannot bind while
+        the first keeps its VRAM.
 
           * nothing listening: go ahead (None);
-          * a seat this backend already holds for another model, or a port a
-            local provider the user configured routes to: leave it and use the
-            next port (_NEXT_PORT);
-          * the model we want, matching what we would start: adopt it (0.0);
-          * an unowned seat of ours that does not match: reap it, then go
-            ahead; if it will not let go, refuse (PortRefused);
-          * anything else holding the port: refuse, and leave it alone.
+          * a seat this backend already holds for another model, a port a
+            local provider the user configured routes to, or another program's
+            server answering as some other model: leave it and use the next
+            port (_NEXT_PORT);
+          * the model we want, matching what we would start (and, `here`, on
+            the port it belongs on): adopt it (0.0);
+          * a seat of ours that does not match: reap it, then go ahead; if it
+            will not let go, refuse (PortRefused);
+          * another program's server answering as THIS model, or a port whose
+            holder cannot be told: refuse, and leave it alone.
 
         A refusal ends the load: trying the next engine on the next port would
         put a second copy of the model on the card beside the one that would
         not go, which is the failure this exists to stop.
         """
         try:
-            pid = _listening_ports().get(int(port))
+            listing = _listening_ports() or {}
         except Exception:
-            pid = None
+            listing = {}
+        pid = listing.get(int(port))
         if not pid:
-            return None
+            if listing:
+                return None                  # the listing is good and the port is free
+            # No listing at all (the query failed or timed out, as it can on a
+            # loaded machine at boot): never read that as "free". Ask the port.
+            served = _model_on_port(port)
+            if served is None:
+                return None
+            if served != model_id:
+                return _NEXT_PORT
+            raise PortRefused(
+                "%s already answers on :%d and the process holding it cannot be "
+                "identified right now; not starting a second copy" % (model_id, port))
         owner = self._owner_of(pid, port)
         if owner is not None and owner != model_id:
             return _NEXT_PORT
@@ -1238,7 +1293,7 @@ class LlamaServerBackend:
             # Listening but not answering: a seat of ours still loading. Give it
             # the time a load takes before judging it.
             served = _answer_on(port, LOADING_WAIT_S)
-        if served == model_id and self._conforms(pid, model_id, gguf_path):
+        if here and served == model_id and self._conforms(pid, model_id, gguf_path):
             self.procs[model_id] = (AdoptedProc(pid), port)
             _publish_endpoints(self.procs)
             print(f"  [arbiter] {model_id} already serving on :{port} (pid {pid}) "
@@ -1262,15 +1317,24 @@ class LlamaServerBackend:
             raise PortRefused(
                 ":%d is still held by pid %d after reaping it; not starting a "
                 "second seat of %s" % (port, pid, model_id))
+        if served != model_id:
+            # Another program's server (or nothing that answers) on a port we
+            # would use: not ours to stop, and not a copy of this model. The
+            # seat goes on the next port, as it did before this guard.
+            return _NEXT_PORT
         raise PortRefused(
-            ":%d is held by pid %d, which is not a Friday seat Friday may stop; not "
-            "starting a second copy of %s beside it" % (port, pid, model_id))
+            ":%d is held by pid %d, which serves %s but is not a Friday seat Friday "
+            "may stop; not starting a second copy beside it" % (port, pid, model_id))
 
     def _free_port_for(self, model_id, port, *, gguf_path=None):
         """(port, adopted) for a load: the first port from `port` that is free
-        or cleared, or that already serves this seat (adopted 0.0)."""
+        or cleared, or that already serves this seat (adopted 0.0). A seat that
+        may move never takes a fixed-port seat's port."""
         fixed = str(model_id).startswith(FIXED_PORT_SEATS)
+        reserved = set() if fixed else _fixed_seat_ports()
         for p in range(int(port), int(port) + 40):
+            if p in reserved:
+                continue
             got = self._claim_port(model_id, p, gguf_path=gguf_path)
             if got is _NEXT_PORT:
                 if fixed:
