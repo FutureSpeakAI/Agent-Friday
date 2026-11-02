@@ -64,7 +64,10 @@ TERMINAL = ("complete", "completed", "completed_unverified", "done", "failed",
             "waiting_approval", "declined",
             # An approved action it waited on may or may not have happened (agent.settle_waiting_task):
             # finished, never done, and never run again by a restart.
-            "outcome_unknown")
+            "outcome_unknown",
+            # a connection it needs has an expired sign-in: the owner reconnects and asks again;
+            # a restart never runs it again on its own (NS-32.7-1)
+            "needs_reconnect")
 
 
 def is_terminal(status) -> bool:
