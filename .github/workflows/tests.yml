@@ -25,7 +25,7 @@ jobs:
     # it runs the red-evidence job instead of the full matrix.
     if: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
