@@ -668,6 +668,25 @@ def _probe_seat(model: str) -> bool:
         return False
 
 
+#: At most one adoption of published-but-unowned seats per this many seconds.
+ADOPT_PUBLISHED_EVERY_S = 30.0
+_ADOPT_PUBLISHED = {"at": 0.0}
+
+
+def _adopt_published_seats(ra) -> list:
+    """Adopt live seats this process's Arbiter does not own (never kills)."""
+    import time as _t
+    now = _t.monotonic()
+    if now - _ADOPT_PUBLISHED["at"] < ADOPT_PUBLISHED_EVERY_S:
+        return []
+    _ADOPT_PUBLISHED["at"] = now
+    try:
+        return ra.adopt_live_seats() or []
+    except Exception as e:  # noqa: BLE001
+        _log.debug("serving(): adopting a published seat failed: %s", e)
+        return []
+
+
 def serving() -> dict:
     """`{model_id: base_url}` for every local seat with a live endpoint.
 
@@ -696,14 +715,22 @@ def serving() -> dict:
                     out[str(mid)] = "http://127.0.0.1:%d" % int(port)
                 except Exception:
                     continue
+        unowned = []
         for mid, base in (ra._read_published() or {}).items():
             if mid in out:
                 continue
             try:
                 if ra._endpoint_alive(base):
                     out[str(mid)] = _root(base)
+                    unowned.append(str(mid))
             except Exception:
                 continue
+        if unowned and arb is not None:
+            # Published and answering, but no Arbiter owns it: a seat whose
+            # parent died (a failed deploy) is otherwise never adopted, because
+            # adoption below runs only when nothing is published, so nothing
+            # can evict or lease against it. Adopt it (adopt-only), rate-limited.
+            _adopt_published_seats(ra)
     except Exception as e:
         _log.debug("serving(): arbiter view unavailable: %s", e)
     if not out:

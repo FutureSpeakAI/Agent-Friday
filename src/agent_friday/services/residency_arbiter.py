@@ -788,6 +788,76 @@ def _seat_num_ctx(pid: int) -> int | None:
     return None
 
 
+def _seat_model_path(pid: int) -> str | None:
+    """The `-m` model file a running llama-server was started with, or None."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}' | "
+             f"Select-Object -ExpandProperty CommandLine"],
+            capture_output=True, text=True, timeout=20)
+        parts = (out.stdout or "").split()
+        for i, tok in enumerate(parts):
+            if tok in ("-m", "--model") and i + 1 < len(parts):
+                return parts[i + 1].strip('"')
+    except Exception:
+        pass
+    return None
+
+
+def _published_on_port(port: int) -> str | None:
+    """The model Friday's own endpoints file publishes on `port`, or None."""
+    for model, base in _read_published().items():
+        if _endpoint_port(base) == int(port):
+            return model
+    return None
+
+
+def _is_our_seat(pid: int, port: int) -> bool:
+    """Is the process holding `port` one of Friday's seats?
+
+    Ours if it loaded from Friday's own model directory (the reaper's
+    discriminator), or if it answers on a port Friday's endpoints file
+    publishes, as the model published there. The second is the orphan a failed
+    deploy leaves behind: published, answering, owned by no Arbiter because the
+    process that spawned it is gone.
+    """
+    try:
+        if int(pid) in _llama_server_pids():
+            return True
+    except Exception:
+        pass
+    published = _published_on_port(port)
+    return bool(published) and _model_on_port(port) == published
+
+
+#: How long a reaped seat gets to let go of its port.
+REAP_WAIT_S = 20.0
+_reap_sleep = time.sleep
+
+
+def _reap_seat(pid: int, port: int, wait_s: float | None = None) -> bool:
+    """Stop a seat of ours through the Arbiter and wait for its port. True when
+    the port is free of that process afterwards."""
+    proc = AdoptedProc(pid)
+    try:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+    except Exception:
+        pass
+    deadline = time.time() + (REAP_WAIT_S if wait_s is None else wait_s)
+    while True:
+        if _listening_ports().get(int(port)) != int(pid):
+            print(f"  [arbiter] reaped seat pid {pid} on :{port}")
+            return True
+        if time.time() >= deadline:
+            return False
+        _reap_sleep(0.5)
+
+
 def survey_live_seats(port_lo: int = PORT_BASE, port_hi: int = PORT_BASE + 40) -> dict:
     """`model_id -> (pid, port)` for llama-servers answering on our ports.
 
@@ -1036,13 +1106,70 @@ class LlamaServerBackend:
             cap = self.seat_cap(model_id)
             over = _seat_num_ctx(pid)
             if over and over > cap:
-                return None      # non-conforming; let the caller reload it
+                return None      # non-conforming; the load reaps it (_claim_port)
+            if not self._conforms(pid, model_id,
+                                  (self._last_load.get(model_id) or {}).get("gguf_path")):
+                return None      # another model file; the load reaps it
             self.procs[model_id] = (AdoptedProc(pid), port)
             _publish_endpoints(self.procs)
             print(f"  [arbiter] {model_id} already serving on :{port} "
                   f"(pid {pid}) — adopted instead of spawning a second copy")
             return 0.0
         return None
+
+    def _conforms(self, pid, model_id, gguf_path=None) -> bool:
+        """Does a live seat match what we would start: within the model's
+        context cap and, when both are known, loaded from the same model file?"""
+        over = _seat_num_ctx(pid)
+        if over and over > self.seat_cap(model_id):
+            return False
+        if gguf_path:
+            have = _seat_model_path(pid)
+            if have and Path(have).name.lower() != Path(str(gguf_path)).name.lower():
+                return False
+        return True
+
+    def _claim_port(self, model_id, port, *, gguf_path=None):
+        """Before a seat is started on `port`: adopt, reap or refuse.
+
+        Never two seats on one port. A failed deploy can leave a seat that
+        outlived its parent: published in endpoints.json, answering, in no
+        Arbiter's `procs`. Starting another llama-server on that port makes a
+        second process that cannot bind while the first keeps its VRAM.
+
+          * nothing listening: go ahead (None);
+          * the model we want, matching what we would start: adopt it (0.0);
+          * a seat of ours that does not match: reap it through the Arbiter,
+            then go ahead; if it will not let go, refuse;
+          * anything else holding the port: refuse, and leave it alone.
+        """
+        try:
+            pid = _listening_ports().get(int(port))
+        except Exception:
+            pid = None
+        if not pid:
+            return None
+        served = _model_on_port(port)
+        if served == model_id and self._conforms(pid, model_id, gguf_path):
+            self.procs[model_id] = (AdoptedProc(pid), port)
+            _publish_endpoints(self.procs)
+            print(f"  [arbiter] {model_id} already serving on :{port} (pid {pid}) "
+                  f"— adopted instead of starting a second seat on that port")
+            _fire_seat_ready(model_id, port)
+            return 0.0
+        if _is_our_seat(pid, port):
+            print(f"  [arbiter] :{port} is held by our seat pid {pid} "
+                  f"({served or 'not answering'}) that does not match {model_id}; "
+                  f"reaping it before starting the seat")
+            if _reap_seat(pid, port):
+                _publish_endpoints(self.procs, drop={served} if served else ())
+                return None
+            raise TransitionError(
+                ":%d is still held by pid %d after reaping it; not starting a "
+                "second seat on it" % (port, pid))
+        raise TransitionError(
+            ":%d is held by pid %d, which is not a Friday seat; not starting a "
+            "second copy of %s on it" % (port, pid, model_id))
 
     def _load_locked(self, model_id, num_ctx, *, gguf_path, port,
                      n_cpu_moe=None, timeout=300, lora_path=None,
@@ -1059,6 +1186,9 @@ class LlamaServerBackend:
         last = None
         for i, binary in enumerate(engines):
             try:
+                adopted = self._claim_port(model_id, port + i, gguf_path=gguf_path)
+                if adopted is not None:
+                    return adopted
                 took = self._spawn(binary, model_id, num_ctx,
                                    gguf_path=gguf_path, port=port + i,
                                    n_cpu_moe=n_cpu_moe, timeout=timeout,
@@ -1880,6 +2010,11 @@ class LlamaServerBackend:
                       f"started at {over:,} context, over the "
                       f"{_cap:,} cap - reloading it instead")
                 continue
+            _want_path = (self._last_load.get(model_id) or {}).get("gguf_path")
+            if _want_path and not self._conforms(pid, model_id, _want_path):
+                print(f"  [arbiter] not adopting {model_id} on :{port}: it was "
+                      f"started from another model file - reloading it instead")
+                continue
 
             if model_id in wanted and model_id not in self.procs:
                 self.procs[model_id] = (AdoptedProc(pid), port)
@@ -1958,7 +2093,16 @@ class LlamaServerBackend:
             return report
 
         _surveyed = {pid for _m, (pid, _p) in live.items()}
-        for pid in ((_llama_server_pids() & _surveyed) - claimed - _protected):
+        # Ours: loaded from Friday's model directory, or a seat of a model the
+        # plan wants answering on the port Friday's endpoints file publishes it
+        # on (one whose parent died in a failed deploy) that could not be
+        # adopted because it does not match. A published seat the plan does
+        # not want keeps the older, narrower rule.
+        _ours = set(_llama_server_pids())
+        for _m, (_pid, _port) in live.items():
+            if _m in wanted and _published_on_port(_port) == _m:
+                _ours.add(_pid)
+        for pid in ((_ours & _surveyed) - claimed - _protected):
             try:
                 subprocess.run(["taskkill", "/F", "/PID", str(pid)],
                                capture_output=True, timeout=20)
