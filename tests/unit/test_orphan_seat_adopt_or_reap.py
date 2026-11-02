@@ -263,3 +263,48 @@ def test_a_seat_of_ours_still_loading_is_adopted_when_it_answers(backend, machin
     monkeypatch.setattr(ra, "LOADING_WAIT_S", 5.0, raising=False)
     took = backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
     assert took == 0.0 and machine.stopped == [] and machine.spawned == []
+
+def test_a_non_matching_seat_of_the_model_on_another_port_is_cleared_first(backend, machine):
+    """The model already runs, over its cap, on :8091 while the load asks for
+    :8090: it is reaped where it is, so the model never runs twice."""
+    machine.listening[PORT + 1] = ORPHAN
+    machine.serves[PORT + 1] = MODEL
+    machine.ctx[ORPHAN] = 10 ** 9
+    machine.published[MODEL] = "http://127.0.0.1:%d/v1" % (PORT + 1)
+    backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert ORPHAN in machine.stopped
+    assert machine.spawned == [(MODEL, PORT)]
+
+
+def test_a_pinned_seat_whose_port_is_refused_does_not_fall_back_to_the_daemon():
+    """A refusal on the seat's port must not be answered by loading the model
+    again through the Ollama daemon beside the process that kept the port."""
+    from types import SimpleNamespace
+    calls = []
+
+    class Llama:
+        procs = {}
+
+        def load(self, *a, **k):
+            raise ra.PortRefused(":8090 is still held by pid 13476")
+    fake = SimpleNamespace(
+        gpu_not_ours=lambda: None, _entry=lambda m: {}, _seat_files=lambda m: {"gguf": GGUF},
+        llama=Llama(), timeout_for=lambda e: 300, _llama_kwargs=lambda f: {},
+        _record=lambda *a: calls.append(("record",) + a),
+        _daemon_has=lambda m: True,
+        ollama=SimpleNamespace(load=lambda *a, **k: calls.append(("ollama",) + a)),
+        _measure_resident=lambda *a, **k: None)
+    seat = {"model_id": MODEL, "num_ctx": 32768}
+    ra.Arbiter._load_pinned(fake, seat, "interactive_brain")
+    assert not [c for c in calls if c[0] == "ollama"], "the daemon loaded a second copy"
+    assert seat.get("absent") is True and "NOT SERVING" in seat.get("pin_unenforced", "")
+
+
+def test_the_voice_front_is_never_moved_off_its_port(backend, machine):
+    other = "gemma4:e2b"
+    machine.listening[8125] = 5151
+    machine.serves[8125] = other
+    backend.procs[other] = (ra.AdoptedProc(5151), 8125)
+    with pytest.raises(ra.TransitionError):
+        backend.load("voice-front:gemma4:e4b", 4096, gguf_path=GGUF, port=8125)
+    assert machine.spawned == [] and machine.stopped == []

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Agent Friday — the Arbiter: runtime owner of the GPUs.
 
 The policy decides what SHOULD be resident. The Arbiter is what makes it true
@@ -97,6 +97,8 @@ class PortRefused(TransitionError):
 
 #: `_claim_port`: this port is in use by something to keep; try the next one.
 _NEXT_PORT = object()
+#: Seats whose callers talk to a fixed port (services/voice_front): never moved.
+FIXED_PORT_SEATS = ("voice-front:",)
 
 
 # ── Chain cancellation — the SAME job-flag pattern `local_image.py` already
@@ -1151,7 +1153,18 @@ class LlamaServerBackend:
         if model_id in live:
             pid, port = live[model_id]
             if not self._conforms(pid, model_id):
-                return None      # over its cap or another model file: the load reaps it
+                # Over its cap or from another model file, on whatever port it
+                # landed: clear it there (reap if it is ours to stop, refuse the
+                # load if not) before any seat is started, so the model never
+                # runs twice.
+                got = self._claim_port(model_id, port,
+                                       gguf_path=self._wanted_gguf(model_id))
+                if got is _NEXT_PORT:
+                    raise PortRefused(
+                        "%s is already running on :%d (pid %d), outside what "
+                        "Friday would start, on a port Friday keeps; not starting "
+                        "a second copy" % (model_id, port, pid))
+                return got       # None after a reap: the load goes ahead
             self.procs[model_id] = (AdoptedProc(pid), port)
             _publish_endpoints(self.procs)
             print(f"  [arbiter] {model_id} already serving on :{port} "
@@ -1256,9 +1269,17 @@ class LlamaServerBackend:
     def _free_port_for(self, model_id, port, *, gguf_path=None):
         """(port, adopted) for a load: the first port from `port` that is free
         or cleared, or that already serves this seat (adopted 0.0)."""
+        fixed = str(model_id).startswith(FIXED_PORT_SEATS)
         for p in range(int(port), int(port) + 40):
             got = self._claim_port(model_id, p, gguf_path=gguf_path)
             if got is _NEXT_PORT:
+                if fixed:
+                    # Its callers talk to the one port they asked for: started
+                    # anywhere else it would be unreachable while they reach
+                    # whatever holds that port.
+                    raise PortRefused(
+                        ":%d is in use by another seat and %s only works on its "
+                        "own port; not starting it elsewhere" % (p, model_id))
                 continue
             return p, got
         raise PortRefused("no free port from :%d for %s" % (port, model_id))
@@ -3885,6 +3906,19 @@ class Arbiter:
                                        **self._llama_kwargs(files))
                 self._record("load-pinned", role, seat["model_id"], took)
                 return took
+            except PortRefused as e:
+                # The seat's port is held by something that may not or would
+                # not stop. Loading the model again through the daemon would
+                # put a second copy on the card beside it: the seat is shown
+                # as not served, with the reason, and nothing else is started.
+                reason = ("%s; this seat is NOT SERVING until that process is "
+                          "gone (R9)" % e)
+                seat["pin_unenforced"] = reason
+                seat["absent"] = True
+                print("  [arbiter] %s" % reason)
+                self._record("load-pinned-absent", role, seat["model_id"],
+                             round(time.time() - t0, 2))
+                return 0.0
             except TransitionError as e:
                 # A backend that cannot hold this model is a DEGRADED PIN, not
                 # a failed boot. Measured case: Ollama stores gemma4:e2b across
