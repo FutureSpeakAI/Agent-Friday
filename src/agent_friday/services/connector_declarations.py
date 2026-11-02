@@ -205,8 +205,11 @@ def _channel(key: str, name: str, destinations: List[Dict[str, str]], at_service
         "rate_limits": {"service": "%s's own limits apply; a send it refuses is reported as not "
                                    "sent." % name},
         "revocation": {
-            "how": "Remove its bot token under Settings > Privacy & Data > Stored keys.",
-            "does": [stops],
+            "how": "Turn off & remove on the Message channels card (Settings > Connections).",
+            "does": ["stops the channel (closing Discord's live connection too), switches it off "
+                     "and deletes the bot token; it says if any of that did not finish",
+                     "removing only the token under Settings > Privacy & Data > Stored keys "
+                     "leaves the channel running: " + stops],
             "keeps": "the records above",
             "at_service": at_service,
         },
@@ -225,15 +228,14 @@ CHANNELS: Dict[str, Dict[str, Any]] = {
         [_r("where Telegram's message list was read up to (a short hash of the token and a "
             "number; no message text)", "channels/telegram-offset.json", "until replaced",
             "services/channels/telegram_bridge.py", "telegram-offset.json")],
-        "the channel stops at once: Telegram is asked with the token each time, so without it "
-        "nothing is read or sent"),
+        "Telegram is asked with the token each time, so without it nothing more is read or sent"),
     "channel_discord": _channel(
         "channel_discord", "Discord",
         [{"host": "discord.com", "for": "Discord's API (sending)"},
          {"host": "gateway.discord.gg", "for": "Discord's live connection (reading)"}],
         "Reset the bot token in the Discord Developer Portal (Applications > Bot).", [],
-        "new sends stop; a live connection already open keeps answering until the channel is "
-        "next restarted (or the token is reset at Discord, which ends it at once)"),
+        "new sends stop, but a live connection already open keeps answering until the channel "
+        "is turned off or restarted (or the token is reset at Discord)"),
 }
 
 
