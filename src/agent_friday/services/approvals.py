@@ -460,6 +460,18 @@ def _holds(rec: Dict[str, Any], field: str, tag: bytes, fields) -> bool:
         return False
 
 
+def _raising_principal() -> str:
+    """Whose card this is: the request's principal when a page raised it, else the owner (every
+    background, scheduled and chat path acts for the owner). Never raises."""
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            return str(getattr(g, "friday_principal", None) or "owner")[:60]
+    except Exception:  # noqa: BLE001
+        pass
+    return "owner"
+
+
 def card_seal_holds(rec: Dict[str, Any]) -> bool:
     """The card is what this module raised: shown text and authorised action. Never raises."""
     return _holds(rec, "card_seal", _CARD_TAG, _CARD_FIELDS)
@@ -490,13 +502,45 @@ def _seal_approval(rec: Dict[str, Any]) -> bool:
         return False
 
 
-def _ledger_has(approval_id: str) -> bool:
-    """The ledger records this card as spent or revoked. Raises when the ledger cannot be read."""
+_SPENT_KINDS = ("approval_spent", "approval_revoked")
+_CLAIM_KINDS = _SPENT_KINDS + ("approval_claimed",)
+
+
+def _ledger_has(approval_id: str, kinds=_SPENT_KINDS) -> bool:
+    """The ledger records this card under one of `kinds`. Raises when the ledger cannot be read
+    (a strict read, archive included; one retry on a momentary sharing violation)."""
     from agent_friday.services import action_ledger
     aid = str(approval_id)
-    return bool(action_ledger.entries(
-        ["approval_spent", "approval_revoked"], newest_first=False, strict=True, archive=True,
-        where=lambda e: str((e.get("rec") or {}).get("approval") or "") == aid, limit=1))
+    for attempt in (0, 1):
+        try:
+            rows = action_ledger.entries(list(kinds), newest_first=False, strict=True, archive=True)
+            break
+        except PermissionError:
+            if attempt:
+                raise
+            time.sleep(0.05)
+    return any(str((e.get("rec") or {}).get("approval") or "") == aid for e in rows)
+
+
+def _claim_token(rec: Dict[str, Any], by: str) -> bool:
+    """For the executor's claim: the card is a live token that nobody claimed or spent before,
+    and the claim is a durable ledger entry. The seal stays: the governance checkpoint spends the
+    card (spend_once) when the executor's call runs on it."""
+    aid = str(rec.get("approval_id") or "")
+    if not fingerprint_holds(rec) or not seal_holds(rec):
+        _log.error("approval %s is not sealed for what it now says; it is not run", aid)
+        return False
+    try:
+        if _ledger_has(aid, _CLAIM_KINDS):
+            _log.error("approval %s was already claimed, spent or revoked; it is not run again", aid)
+            return False
+        from agent_friday.services import action_ledger
+        action_ledger.append("approval_claimed", {"approval": aid, "by": str(by or "")[:40]},
+                             durable=True)
+    except Exception as e:  # noqa: BLE001 - no ledger, no claim
+        _log.error("approval %s not claimed: the action ledger is unavailable (%s)", aid, type(e).__name__)
+        return False
+    return True
 
 
 def _spend_token(rec: Dict[str, Any], by: str) -> bool:
@@ -636,8 +680,8 @@ def _patch(approval_id: str, **fields) -> Optional[dict]:
             if r.get("approval_id") == approval_id:
                 stale = not fingerprint_holds(r)
                 material = any(k in fields for k in _SEAL_FIELDS + ("payload", "principal"))
-                card_ok = material and card_seal_holds(r)
-                approval_ok = material and r.get("status") == "approved" and seal_holds(r)
+                card_ok_before = card_seal_holds(r)
+                card_ok = material and card_ok_before
                 to_approved = fields.get("status") == "approved" and r.get("status") != "approved"
                 r.update(fields)
                 if any(k in fields for k in ("payload", "subject_id", "kind", "subject_type")) \
@@ -645,10 +689,10 @@ def _patch(approval_id: str, **fields) -> Optional[dict]:
                     r["action_fingerprint"] = _action_fp(r)      # a change made here, on purpose
                 if card_ok:
                     _seal_card(r)                                # a change made here, on purpose
-                if r.get("status") == "approved" and not r.get("consumed") \
-                        and (approval_ok or to_approved):
+                if to_approved and not r.get("consumed") and card_ok_before:
                     _seal_approval(r)                            # an approve made here, on purpose
-                elif material and r.get("status") != "approved":
+                elif material and not to_approved:
+                    # what an approval authorised changed: it no longer authorises anything
                     r.pop("approval_seal", None)
                 _write_store(recs)
                 return dict(r)
@@ -820,6 +864,7 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     record["action_fingerprint"] = _action_fp(record)
     if record["decided_source"]:
         record["decided_device"] = decided_device(record["decided_source"])
+    record.setdefault("principal", _raising_principal())
     _seal_card(record)
     try:
         from agent_friday.services import off_record as _off
@@ -881,6 +926,7 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
     record["action_fingerprint"] = _action_fp(record)
     if not law1_blocked:
         record["decided_device"] = decided_device("standing_grant")
+    record.setdefault("principal", _raising_principal())
     _seal_card(record)
     _upsert(record)                  # seals the approval (an approve path of this module)
     return record
@@ -947,7 +993,7 @@ def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
                 return False
             if r.get("consumed") or r.get("executing_at"):
                 return False
-            if not _spend_token(r, by or "executor"):
+            if not _claim_token(r, by or "executor"):
                 return False
             r["executing_at"] = time.time()
             if by:

@@ -85,11 +85,27 @@ def test_the_seal_names_the_principal():
     assert approvals.claim_for_execution(aid) is False
 
 
-def test_a_change_this_module_makes_keeps_it_sealed():
+def test_a_change_before_approval_is_what_the_owner_approves():
+    aid = _card()
+    approvals._patch(aid, payload={"tool": "synthetic", "input": {"a": 2}})   # this module's own edit
+    approvals.decide(aid, "approve")
+    assert approvals.spend_once(aid, "synthetic") is True
+
+
+def test_any_change_after_approval_voids_it_even_from_this_module():
     aid = _card()
     approvals.decide(aid, "approve")
     approvals._patch(aid, payload={"tool": "synthetic", "input": {"a": 2}})
-    assert approvals.spend_once(aid, "synthetic") is True
+    assert approvals.spend_once(aid, "synthetic") is False
+
+
+def test_the_executor_claims_once_and_its_call_spends_once():
+    aid = _card()
+    approvals.decide(aid, "approve")
+    assert approvals.claim_for_execution(aid, by="executor") is True
+    assert approvals.claim_for_execution(aid, by="executor") is False
+    assert approvals.spend_once(aid, "synthetic") is True        # the checkpoint, on the executor's call
+    assert approvals.spend_once(aid, "synthetic") is False
 
 
 def test_a_spent_card_put_back_unspent_is_not_spent_again():
