@@ -882,6 +882,28 @@ def _answer_on(port: int, wait_s: float) -> str | None:
         _reap_sleep(1.0)
 
 
+def _pid_running(pid: int) -> bool | None:
+    """True if process `pid` exists, False if it definitely does not, None when
+    the check itself failed. Unlike AdoptedProc.poll, a failure is not read as
+    "exited"."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"if (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue)"
+             f" {{'1'}} else {{'0'}}"],
+            capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    word = (out.stdout or "").strip()
+    if out.returncode != 0 or not word:
+        return None
+    if word.endswith("1"):
+        return True
+    if word.endswith("0"):
+        return False
+    return None
+
+
 def _port_bound(port: int) -> bool:
     """Does anything accept a connection on 127.0.0.1:`port` right now? The
     last word on "free" when the port listing could not be read: a seat that is
@@ -1237,14 +1259,13 @@ class LlamaServerBackend:
         adopted = isinstance(proc, AdoptedProc)
 
         def _gone() -> bool:
-            # An adopted process's own poll() trusts what kill() recorded, so
-            # ask afresh, and require it to have left the llama-server list too.
-            # Any doubt reads as still running.
+            # An adopted process's own poll() trusts what kill() recorded and
+            # reads a failed check as exited, so ask the system directly; only
+            # a definite "no such process" counts. Any doubt reads as running.
             try:
                 if not adopted:
                     return proc.poll() is not None
-                return (AdoptedProc(pid).poll() is not None
-                        and pid not in _llama_server_pids())
+                return _pid_running(pid) is False
             except Exception:
                 return False
 

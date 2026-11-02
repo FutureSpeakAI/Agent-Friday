@@ -67,6 +67,10 @@ def machine(monkeypatch):
     # No hook another module registered may run, and no provider the test
     # machine happens to have configured may decide a port.
     monkeypatch.setattr(ra, "SEAT_READY_HOOKS", [])
+    # A process is gone once it was stopped and let go of its port.
+    monkeypatch.setattr(ra, "_pid_running",
+                        lambda pid: not (pid in m.stopped and m.release_port_on_stop),
+                        raising=False)
     from agent_friday.services import provider_registry as _pr
 
     class _NoProviders:
@@ -228,6 +232,20 @@ def test_a_remembered_seat_that_survives_its_stop_refuses_the_reload(backend, ma
     machine.ours_by_path.add(ORPHAN)
     machine.release_port_on_stop = False
     backend.procs[MODEL] = (ra.AdoptedProc(ORPHAN), PORT)
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    with pytest.raises(ra.TransitionError):
+        backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.spawned == []
+
+
+def test_a_stop_is_not_believed_until_the_process_is_gone(backend, machine, monkeypatch):
+    """kill() records the process as exited even when the stop did not take:
+    the reload still waits for the system to say it is gone, and is refused."""
+    machine.ours_by_path.add(ORPHAN)
+    machine.release_port_on_stop = False
+    backend.procs[MODEL] = (ra.AdoptedProc(ORPHAN), PORT)
+    monkeypatch.setattr(ra.AdoptedProc, "poll",
+                        lambda self: 0 if self.pid in machine.stopped else None)
     monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
     with pytest.raises(ra.TransitionError):
         backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
