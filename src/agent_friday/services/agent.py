@@ -2033,8 +2033,26 @@ def _summarize_multi_account_errors(result):
         aid = e.get("account_id")
         entry = by_id.setdefault(aid, {"label": e.get("label"), "email": None,
                                        "status": "connected", "error": None})
+        if e.get("partial"):
+            # Read, but not all of it (more than one page held, a few items unreadable):
+            # what it returned is real, and the answer must say it is not everything.
+            if entry["status"] != "error":
+                entry["status"] = "partial"
+                entry["error"] = "; ".join(x for x in (entry.get("error"), e.get("error")) if x)
+                if e.get("estimate"):
+                    entry["estimate"] = e.get("estimate")
+            continue
         entry["status"] = "error"
         entry["error"] = e.get("error")
+    for e in (result.get("incomplete") or []):
+        # Read in part: more than was fetched. What it returned is real; it is not everything.
+        entry = by_id.setdefault(e.get("account_id"), {"label": e.get("label"), "email": None,
+                                                       "status": "connected", "error": None})
+        if entry["status"] not in ("error", "needs_reauth"):
+            entry["status"] = "partial"
+            entry["error"] = "; ".join(x for x in (entry.get("error"), e.get("why")) if x)
+            if e.get("estimated_total"):
+                entry["estimated_total"] = e.get("estimated_total")
     return list(by_id.values())
 
 
@@ -2063,6 +2081,34 @@ def _with_receipt(res, receipt):
         if receipt.get("undo"):
             head["undo"] = "Say \u201cundo that\u201d to put it back (it asks first)."
     return dict(head, **{k: v for k, v in res.items() if k not in ("undo_before", "receipt_id", "undo")})
+
+
+def _mark_partial(payload, accounts_status, what):
+    """A multi-account answer that is not everything says so (NS-34.11-1): accounts that
+    could not be read beside ones that could, and accounts read only in part (more than
+    was fetched, some items unreadable). An answer with either is never a complete total."""
+    errored = [a for a in accounts_status if a["status"] in ("error", "needs_reauth")]
+    partly = [a for a in accounts_status if a["status"] == "partial"]
+    read = [a for a in accounts_status if a["status"] not in ("error", "needs_reauth")]
+    if errored and read:
+        # Some accounts failed: an error the owner hears about (as before).
+        payload["partial"] = True
+        payload["not_searched"] = [{"account": a.get("label"), "reason": a.get("error")} for a in errored]
+        payload["error"] = ("This %s answer covers only %d of %d accounts (%s could not be read). "
+                            "Do not present it as a complete answer."
+                            % (what, len(read), len(accounts_status),
+                               ", ".join(str(a.get("label")) for a in errored)))
+    if partly:
+        # Read in part (more than was fetched): not a failure, but never a total.
+        payload["incomplete"] = [{"account": a.get("label"), "reason": a.get("error"),
+                                  **({"estimated_total": a["estimated_total"]}
+                                     if a.get("estimated_total") else {})} for a in partly]
+        payload["incomplete_note"] = (
+            "Not everything was read for %s (%s). Say there may be more; do not present this as "
+            "all of them or the count as a total." % (
+                ", ".join(str(a.get("label")) for a in partly),
+                "; ".join(str(a.get("error")) for a in partly)))
+    return payload
 
 
 def _calendar_write_summary(res, what, change=True):
@@ -2456,7 +2502,8 @@ def _tool_query_calendar(_inp):
     if day is not None:
         events = [ev for ev in events if _event_on(ev, day)]
     out = []
-    for ev in events[:20]:
+    shown = 20
+    for ev in events[:shown]:
         out.append({
             "title": ev.get("title"),
             "start": ev.get("start_time"),
@@ -2471,6 +2518,14 @@ def _tool_query_calendar(_inp):
         "count": len(out),
         "events": out,
     }
+    if len(events) > shown:
+        # Never a silent cut: the rest of the day is not "free".
+        payload["truncated"] = True
+        payload["total"] = len(events)
+        payload["truncated_note"] = ("Showing the first %d of %d events. Do not say a later time "
+                                     "is free; ask about one day or a narrower time to see the rest."
+                                     % (shown, len(events)))
+    _mark_partial(payload, accounts_status, "calendar")
     # needs_reauth accounts are seeded into accounts_status by
     # _summarize_multi_account_errors but carry that status, not "error",
     # so filtering on "error" alone silently drops exactly the broken ones.
@@ -2711,16 +2766,7 @@ def _tool_search_email(inp):
         # A PARTIAL RESULT IS NOT A COMPLETE ONE. `_google_note` only speaks
         # up when there are no items at all, so one dead account beside one
         # working account used to report a confident total for both.
-        if errored:
-            payload["partial"] = True
-            payload["not_searched"] = [
-                {"account": a.get("label"), "reason": a.get("error")}
-                for a in errored]
-            payload["error"] = (
-                "This count covers only %d of %d accounts - %s could not be "
-                "searched. Do not present it as a complete answer."
-                % (len(searched), len(accounts_status),
-                   ", ".join(str(a.get("label")) for a in errored)))
+        _mark_partial(payload, accounts_status, "Gmail")
         note = _google_note(summary, "Gmail", errored, not cards)
         if note:
             payload["note"] = note
@@ -2801,6 +2847,7 @@ def _google_multi_account_tool(has_accounts_note_what, has_accounts_note_reads, 
         "count": len(items),
         item_key: items,
     }
+    _mark_partial(payload, accounts_status, has_accounts_note_what)
     # needs_reauth accounts are seeded into accounts_status by
     # _summarize_multi_account_errors but carry that status, not "error",
     # so filtering on "error" alone silently drops exactly the broken ones.
@@ -6221,6 +6268,12 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 pass
 
 
+#: Changes at a connected service that are read back after they are made (NS-4.6-1: calendar
+#: events, tasks, contacts). A task that made one is verified only when it was found there.
+REREAD_TOOLS = frozenset({"create_calendar_event", "update_calendar_event", "delete_calendar_event",
+                          "create_task", "update_task", "complete_task", "save_google_contact"})
+
+
 def _evidence_verdict(tool_trace):
     """The evidence gate: a task is verified only when it used a tool other
     than spawning another task AND that tool actually ran. A call that raised
@@ -6238,18 +6291,38 @@ def _evidence_verdict(tool_trace):
     calls = [t for t in (tool_trace or []) if t.get('name') not in ('spawn_task',)]
     evidence = [t for t in calls if _tool_call_status(t.get('result')) == 'ok' and _ran(t)]
     waiting = [t for t in calls if _tool_call_status(t.get('result')) == 'pending']
-    verified = len(evidence) > 0 and not waiting
+    # A change at a connected service that can be read back (NS-4.6-1) is evidence only once it
+    # was: the service's own reply naming an id is not proof the change is there.
+    unread = [t for t in evidence if t.get('name') in REREAD_TOOLS and not t.get('verified')]
+    verified = len(evidence) > 0 and not waiting and not unread
     if waiting:
         summary = 'waiting for your decision on: ' + ', '.join(
             dict.fromkeys(str(t.get('name') or '?') for t in waiting[:10]))
     else:
         summary = (', '.join(dict.fromkeys(t['name'] for t in evidence[:10]))
                    if evidence else 'no tools used')
+        if unread:
+            summary += '; not read back from the service: ' + ', '.join(
+                dict.fromkeys(str(t.get('name') or '?') for t in unread[:10]))
     try:
         from agent_friday.services import presence as _presence
         _presence.emit("verify", "once", ok=verified, turn=_presence.current_turn())
     except Exception:
         pass
+    reconnect = []
+    for i, t in enumerate(calls):
+        if not t.get('needs_owner'):
+            continue
+        # the model recovered (another account, a second try that worked): not a reconnect
+        if any(u.get('name') == t.get('name') and _tool_call_status(u.get('result')) == 'ok'
+               and not u.get('needs_owner') for u in calls[i + 1:]):
+            continue
+        reconnect += list(t.get('needs_owner') or [])
+    if reconnect and not waiting:
+        # Expired or revoked sign-in, or a missing permission (NS-32.7-1): the work cannot be done
+        # until the owner reconnects; never 'complete', and never retried on its own.
+        services = ', '.join(dict.fromkeys(str(n.get('service') or 'Google') for n in reconnect))
+        return False, 'needs you to reconnect: ' + services, NEEDS_RECONNECT
     if waiting:
         return False, summary, WAITING_APPROVAL
     return verified, summary, ('complete' if verified else 'completed_unverified')
@@ -6268,6 +6341,9 @@ DECLINED = 'declined'
 OUTCOME_UNKNOWN = 'outcome_unknown'
 #: What the owner reads for a task that ended OUTCOME_UNKNOWN.
 OUTCOME_UNKNOWN_WORDS = 'outcome unknown — check before retrying'
+#: A connection the task needed has an expired or revoked sign-in, or lacks a permission
+#: (NS-32.7-1): the worker is done, and the task waits for the owner to reconnect.
+NEEDS_RECONNECT = 'needs_reconnect'
 
 
 def settle_waiting_task(task_id, *, from_worker=False):
@@ -6855,11 +6931,26 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
         _checked_outcome = None
         # A task waiting on a card is not graded as done or not done: the owner's
         # decision settles it (settle_waiting_task).
-        if final_status not in ('failed', WAITING_APPROVAL):
+        if final_status == NEEDS_RECONNECT:
+            try:
+                from agent_friday.services import goal_state as _gs_b
+                _txt = ('It could not finish: %s (or give it the permission it asks for) in Settings > Connections, then ask '
+                        'again.' % verification_summary)
+                _task_set(task_id, blocker=_gs_b.blocker(
+                    'needs_user_input', _txt, type='connector_reauth', needs_confirmation=False,
+                    services=sorted({str(n.get('service') or 'Google') for t in tool_trace
+                                     for n in (t.get('needs_owner') or [])})),
+                          status_reason=_txt)
+            except Exception as _be:
+                _task_log(task_id, 'Reconnect blocker not recorded: %s' % type(_be).__name__)
+        if final_status not in ('failed', WAITING_APPROVAL, NEEDS_RECONNECT):
             outcome = _verify_workflow_task(task_id, reply or '', tool_trace)
             _checked_outcome = outcome
             if outcome is not None:
-                verified = outcome['verified']
+                # a workflow's own checks never hide a change that was not read back (NS-4.6-1)
+                _unread = [t for t in (tool_trace or []) if t.get('name') in REREAD_TOOLS
+                           and not t.get('verified') and _tool_call_status(t.get('result')) == 'ok']
+                verified = outcome['verified'] and not _unread
                 final_status = 'complete' if verified else 'completed_unverified'
                 verification_summary = '; '.join(c['detail'] for c in outcome['checks']
                                                  if c['status'] != 'not_automatically_checked')
@@ -7431,7 +7522,7 @@ def _report_workflow_completion(task_id, name, status, result_text):
         # A step waiting on a card holds the run there (the next step starts only once the
         # owner decides), so the owner hears about it now, not when a later step finishes.
         if index < len(steps) - 1 and status not in ('failed', 'error', 'cancelled', 'timeout',
-                                                     WAITING_APPROVAL, OUTCOME_UNKNOWN):
+                                                     WAITING_APPROVAL, OUTCOME_UNKNOWN, NEEDS_RECONNECT):
             _task_set(task_id, delivery={'status': 'deferred', 'reason': 'Next workflow step owns delivery.'})
             return
         if (status in ('failed', 'error') and index < len(steps) and not rec.get('settled')
@@ -7464,7 +7555,9 @@ def _report_workflow_completion(task_id, name, status, result_text):
                  'cancelled': 'stopped', 'stopped': 'stopped', 'failed': 'failed', 'timeout': 'timed out',
                  'waiting': 'is waiting for your decision on an approval card',
                  WAITING_APPROVAL: 'is waiting for your decision on an approval card',
-                 OUTCOME_UNKNOWN: 'ended with its ' + OUTCOME_UNKNOWN_WORDS}.get(aggregate, 'finished')
+                 OUTCOME_UNKNOWN: 'ended with its ' + OUTCOME_UNKNOWN_WORDS,
+                 NEEDS_RECONNECT: 'stopped: a connection it needs must be reconnected (Settings > Connections)',
+                 }.get(aggregate, 'finished')
         if status == OUTCOME_UNKNOWN:
             label = 'ended with its ' + OUTCOME_UNKNOWN_WORDS
         if status == DECLINED:
@@ -7579,6 +7672,7 @@ def _report_task_completion(task_id, name, status, result_text):
     body = (result_text or '').strip()
     ok = status not in ('failed', 'error')
     waiting = status == WAITING_APPROVAL
+    reconnect = status == NEEDS_RECONNECT
     cid = None
     try:
         cid = _task_conversation_id(task_id)
@@ -7588,7 +7682,9 @@ def _report_task_completion(task_id, name, status, result_text):
     # in the chat line, the panel card and the spoken notice alike.
     said = ('is waiting for your decision on an approval card (Approvals, in the System '
             'workspace); nothing it asked for has run yet' if waiting
-            else 'finished' if ok else 'FAILED')
+            else ('could not finish: a connection it needs must be reconnected or given a permission (Settings > '
+                  'Connections); then ask again' if reconnect
+                  else 'finished' if ok else 'FAILED'))
     text = (f"Background task \"{name}\" {said}.\n\n"
             f"{body or '(no output)'}")
 
@@ -7601,6 +7697,7 @@ def _report_task_completion(task_id, name, status, result_text):
         lede = body if len(body) <= 400 else body[:400].rstrip() + '…'
         notifications_engine.push(
             title=(f"Task needs your decision: {name}" if waiting
+                   else f"Task needs a reconnection: {name}" if reconnect
                    else f"Task {'finished' if ok else 'failed'}: {name}"),
             body=lede or ('Waiting for your decision.' if waiting
                           else 'Finished with no output.' if ok else 'Failed.'),
@@ -8514,6 +8611,15 @@ def chain_run_status(name, run_id=None):
     elif statuses & {'waiting', WAITING_APPROVAL, 'waiting_for_approval'}:
         # Held at a step whose card the owner has not decided: waiting on you, not working.
         state = 'waiting'
+    elif NEEDS_RECONNECT in statuses:
+        # Stopped at a step whose connection must be reconnected (NS-32.7-1).
+        state = 'needs_reconnect'
+        for x, row in zip(out_steps, selected):
+            if x['status'] == NEEDS_RECONNECT:
+                x['reason'] = (row.get('blocker') or {}).get('text') or 'a connection it needs must be reconnected'
+            elif x['status'] == 'pending':
+                x['status'] = 'skipped'
+                x['reason'] = 'an earlier step needs a connection reconnected, so this step did not run'
     elif DECLINED in statuses:
         state = 'stopped'
         stop = None
@@ -8898,6 +9004,9 @@ def _advance_task_chain_once(task_id, result_text):
         # starts. A late report from the executor continues the run (settle_waiting_task).
         _task_log(task_id, 'Whether the action you approved happened is not known: the next step did '
                            'not start. Check before retrying.')
+        return None
+    if t.get('status') == NEEDS_RECONNECT:
+        _task_log(task_id, 'A connection this step needs must be reconnected: the next step did not start.')
         return None
     if t.get('status') in (WAITING_APPROVAL, DECLINED) or (t.get('settled') and t.get('status') == 'failed'):
         # The step raised a card: what follows may depend on it, so the next step does not
@@ -14197,6 +14306,30 @@ def _task_log_tool(session_ctx, name, args):
 from agent_friday.services import tool_receipts as _receipts
 from agent_friday.services import credential_paths as _cred_paths
 from agent_friday.services import connector_outcome as _conn_outcome
+
+#: What the last tool call re-read at its source and found (NS-4.6-1), for the loop to put on the
+#: call's trace entry. Set only when the call succeeded; taken (and cleared) by the loop.
+import contextvars as _cv_verified
+_LAST_VERIFIED = _cv_verified.ContextVar("friday_last_tool_verified", default=None)
+
+
+def _take_verified():
+    got = _LAST_VERIFIED.get()
+    _LAST_VERIFIED.set(None)
+    return list(got or [])
+
+
+#: Why the last tool call was not done, when the reason is a connection only the owner can fix
+#: (its sign-in expired or was revoked, or a permission is missing: NS-32.7-1). Taken by the loop.
+_LAST_NEEDS_OWNER = _cv_verified.ContextVar("friday_last_tool_needs_owner", default=None)
+#: connector_outcome kinds that only the owner can clear (reconnect, or grant the permission).
+OWNER_FIX_KINDS = ("revoked", "scope")
+
+
+def _take_needs_owner():
+    got = _LAST_NEEDS_OWNER.get()
+    _LAST_NEEDS_OWNER.set(None)
+    return list(got or [])
 from agent_friday.services import change_receipts as _change_receipts
 from agent_friday.services import tool_args as _tool_args
 from agent_friday.services import call_verifier as _call_verifier
@@ -14940,6 +15073,8 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
         _outcome("refused", "credential refusal")
     elif _not_done:
         _nd = "not done: %s" % _not_done[0].get("kind", "failed")
+        _LAST_NEEDS_OWNER.set([{"kind": n.get("kind"), "service": n.get("service") or "Google"}
+                               for n in _not_done if n.get("kind") in OWNER_FIX_KINDS])
         _receipts.record(name, ok=False, detail=_nd)
         _outcome("error", _nd)
         result = _conn_outcome.NOT_DONE + (result if isinstance(result, str) else str(result))
@@ -14962,6 +15097,7 @@ def _execute_tool(name, tool_input, pii_lookup=None, session_ctx=None, handler=N
             _outcome("ok", "", _handler_outcome(name, result))
         except Exception:  # noqa: BLE001
             pass
+        _LAST_VERIFIED.set(list(getattr(_not_done, "verified", None) or []))
         try:  # a tool that resolved a routed ask or defer is a router correction
             from agent_friday.services import laya_router_learn as _llearn
             from agent_friday.services import slice_head as _sh
@@ -15770,6 +15906,19 @@ def _gate_policy_class(tool_name, args):
 
 
 def _approved_card_allows(approval_id, tool_name, args):
+    """See _approved_card_allows_inner. A forbidden call (Class 5, NS-18.2-7) is never run on a
+    card, whenever the card was approved."""
+    try:
+        from agent_friday.governance import action_gate as _g5
+        _why5 = _g5.forbidden_reason(tool_name, args)
+    except Exception:
+        _why5 = None
+    if _why5:
+        return False, "it is forbidden: %s" % _why5
+    return _approved_card_allows_inner(approval_id, tool_name, args)
+
+
+def _approved_card_allows_inner(approval_id, tool_name, args):
     """May this exact call run on the strength of that card? Consumes it if so.
 
     Returns (allowed, why_not). The argument comparison is on the JSON form with
@@ -18329,6 +18478,8 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     from agent_friday.privacy.public_query import for_tool_call as _pq_call
                     with _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", "cloud"),
                                   str(kwargs.get("model") or model or ""), _pq_name, tu.input):
+                        _LAST_VERIFIED.set(None)
+                        _LAST_NEEDS_OWNER.set(None)
                         # the loop's own call: its gate note waits for its tool_call event (G10)
                         with _loop_tool_call():
                             result = _execute_tool(tu.name, tu.input, pii_lookup=pii_lookup, session_ctx=_zt_ctx)
@@ -18361,7 +18512,9 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     tool_results.append(img_block)
                     continue
 
-                tool_trace.append({"name": tu.name, "input": tu.input, "result": clip(result, 2000)})
+                tool_trace.append({"name": tu.name, "input": tu.input, "result": clip(result, 2000),
+                                   **({"verified": _v} if (_v := _take_verified()) else {}),
+                                   **({"needs_owner": _no} if (_no := _take_needs_owner()) else {})})
                 _bmon_log(tu.name, tu.input, result)
                 tool_results.append({
                     "type": "tool_result",
@@ -19257,6 +19410,8 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                       else _ctxlib.nullcontext()), \
                         _pq_call(_LOOP_PROVIDER.get() or (session_ctx or {}).get("provider", provider),
                                  model or "", _pq_name, targs):
+                    _LAST_VERIFIED.set(None)
+                    _LAST_NEEDS_OWNER.set(None)
                     # the loop's own call: its gate note waits for its tool_call event (G10)
                     with _loop_tool_call():
                         result = _execute_tool(tname, targs, pii_lookup=pii_lookup,
@@ -19285,7 +19440,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                 "cannot see images, so the document is NOT "
                                 "visually verified \u2014 say so rather than "
                                 "claiming it looks right]")
-            tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000)})
+            tool_trace.append({"name": tname, "input": targs, "result": clip(result, 2000),
+                               **({"verified": _v} if (_v := _take_verified()) else {}),
+                               **({"needs_owner": _no} if (_no := _take_needs_owner()) else {})})
             # A local seat re-reads every result on every later round inside a
             # small window, so it gets the result without formatting
             # boilerplate; the data is unchanged and the trace keeps the
