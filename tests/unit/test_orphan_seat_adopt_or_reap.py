@@ -77,6 +77,7 @@ def machine(monkeypatch):
     def _stop(self, *a, **k):
         m.stopped.append(self.pid)
         if m.release_port_on_stop:
+            m.ours_by_path.discard(self.pid)
             for port, pid in list(m.listening.items()):
                 if pid == self.pid:
                     m.listening.pop(port)
@@ -219,6 +220,36 @@ def test_a_remembered_seat_still_running_off_its_port_is_stopped_first(backend, 
     monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
     backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
     assert machine.stopped == [ORPHAN] and machine.spawned == [(MODEL, PORT)]
+
+
+def test_a_remembered_seat_that_survives_its_stop_refuses_the_reload(backend, machine, monkeypatch):
+    """The stop did not take (taskkill failed, or the process lingers): the
+    reload is refused, never started beside it."""
+    machine.ours_by_path.add(ORPHAN)
+    machine.release_port_on_stop = False
+    backend.procs[MODEL] = (ra.AdoptedProc(ORPHAN), PORT)
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    with pytest.raises(ra.TransitionError):
+        backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.spawned == []
+
+
+def test_a_reap_without_a_listing_is_not_done_while_the_port_is_bound(machine, monkeypatch):
+    monkeypatch.setattr(ra, "_listening_ports", lambda: {})
+    machine.listening[PORT] = ORPHAN
+    machine.release_port_on_stop = False
+    assert ra._reap_seat(ORPHAN, PORT) is False
+
+
+def test_a_silent_seat_published_as_this_model_is_waited_for_then_refused(backend, machine, monkeypatch):
+    """Published as this model on its port, bound, never answering, and not
+    recognisably ours: refused, not moved to the next port beside it."""
+    machine.listening[PORT] = ORPHAN
+    machine.published[MODEL] = "http://127.0.0.1:%d/v1" % PORT
+    monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: {})
+    with pytest.raises(ra.TransitionError):
+        backend.load(MODEL, 32768, gguf_path=GGUF, port=PORT)
+    assert machine.spawned == [] and machine.stopped == []
 
 
 def test_a_remembered_process_friday_may_not_stop_refuses_the_reload(backend, machine, monkeypatch):
