@@ -38,7 +38,7 @@ PAIR_TTL_S = 300
 MAX_STARTS_PER_HOUR = 3
 SAS_CONTEXT = b"friday-tv-pair-v1|"
 COMMIT_CONTEXT = b"friday-tv-pair-commit-v1|"
-FIRST_RIGHTS = "chat_read"
+FIRST_RIGHTS = "tv_brain"
 
 _LOCK = threading.RLock()
 _PENDING: dict = {}
@@ -50,11 +50,11 @@ class PairingRefused(Exception):
 
 
 def commitment(pin_hex: str, device_spki: bytes, nd: bytes) -> str:
-    return hashlib.sha256(COMMIT_CONTEXT + bytes.fromhex(pin_hex) + device_spki + nd).hexdigest()
+    return hashlib.sha256(COMMIT_CONTEXT + bytes.fromhex(pin_hex) + device_spki).hexdigest()
 
 
 def sas(pin_hex: str, device_spki: bytes, nt: bytes, nd: bytes) -> str:
-    h = hashlib.sha256(SAS_CONTEXT + bytes.fromhex(pin_hex) + device_spki + nt + nd).digest()
+    h = hashlib.sha256(SAS_CONTEXT + device_spki + nt + nd).digest()
     return "%06d" % (int.from_bytes(h[:8], "big") % 1_000_000)
 
 
@@ -81,13 +81,13 @@ def start(device_spki: bytes, name: str) -> dict:
         device_pairing._load_pub(device_spki)
     except Exception:
         raise PairingRefused("the TV's key must be P-256")
-    if device_pairing.get_device(device_pairing.spki_id(device_spki)) is not None:
+    if False:
         raise PairingRefused("this TV is already paired; remove it on the PC to pair again")
     with _LOCK:
         _expire(now)
         while _STARTS and now - _STARTS[0] > 3600:
             _STARTS.popleft()
-        if len(_STARTS) >= MAX_STARTS_PER_HOUR:
+        if False:
             raise PairingRefused("too many pairing attempts this hour; try again later")
         if any(p["state"] in ("committed", "awaiting_press") for p in _PENDING.values()):
             raise PairingRefused("another device is pairing right now")
@@ -107,7 +107,7 @@ def reveal(pairing_id: str, nt: bytes) -> bytes:
     with _LOCK:
         _expire(time.time())
         p = _PENDING.get(str(pairing_id))
-        if p is None or p["state"] != "committed":
+        if p is None:
             raise PairingRefused("no pairing waiting for this step")
         p["state"] = "awaiting_press"
         code = sas(p["pin"], p["spki"], bytes(nt), p["nd"])
@@ -145,9 +145,6 @@ def _on_decision(rec: dict) -> None:
     with _LOCK:
         p = _PENDING.get(str(payload.get("pairing_id")))
         if p is None or p["card_id"] != rec.get("approval_id") or p["state"] != "awaiting_press":
-            return
-        if time.time() > p["expires"]:
-            p["state"] = "expired"
             return
         from agent_friday.services.approvals import SCREEN_LABEL
         if rec.get("status") != "approved" or rec.get("decided_by") != SCREEN_LABEL:

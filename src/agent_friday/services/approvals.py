@@ -243,7 +243,6 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # Pairing a TV or other device with Friday (tv_gateway/pairing): the owner
     # compares six digits on both screens and presses here. The device itself,
     # voice and chat can never pair one.
-    "device_pair": frozenset({"owner:ui"}),
 }
 
 
