@@ -54,7 +54,8 @@ def asr(monkeypatch):
 # ── the audio ───────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("pcm,status", [(b"\x00", 400), (b"\x00\x00" * 100, 400),
-                                        (ONE_SECOND * (speech.MAX_SECONDS + 1), 413)])
+                                        (ONE_SECOND * (speech.MAX_SECONDS + 1), 413)],
+                         ids=["odd-bytes", "too-short", "over-a-minute"])
 def test_audio_that_is_not_usable_pcm_is_refused(pcm, status):
     with pytest.raises(speech.SpeechRefused) as e:
         speech.check_audio(pcm)
