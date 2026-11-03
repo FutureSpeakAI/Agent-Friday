@@ -1196,7 +1196,8 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                 _plog(orb_id, "intent: " + _last_user.strip()[:240])
         except Exception:
             pass
-        _resp = _oai_agentic_loop(
+        _resp = _loop_or_one_round(
+            _oai_agentic_loop,
             convo, oai_tools, _send, provider='local', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, max_tokens=max_tokens, orb=_orb,
@@ -1314,6 +1315,43 @@ TIMINGS_SINK = _contextvars.ContextVar("friday_timings_sink", default=None)
 #: agent loops start no further round and act on nothing from the cut round.
 #: Unset, as it is for every other caller, it changes nothing.
 TURN_CANCEL = _contextvars.ContextVar("friday_turn_cancel", default=None)
+
+#: A caller that must get the model's tool calls back UNEXECUTED sets this to a
+#: dict (tv_gateway/turn: a paired TV's proposals go to the TV's own gate, never
+#: to this PC's tools). The provider's one round is sent exactly as usual --
+#: sealed by the egress gate, its local host re-verified, streamed through
+#: DELTA_SINK -- and then the agentic loop that would run tools is skipped:
+#: the round's assistant message is left in the dict under "message", with
+#: tool calls written as text decoded the same way the loop decodes them.
+#: Unset, as it is for every other caller, it changes nothing.
+ONE_ROUND = _contextvars.ContextVar("friday_one_round", default=None)
+
+
+def _loop_or_one_round(loop, convo, oai_tools, send_fn, **kw):
+    """`loop(convo, oai_tools, send_fn, **kw)`, unless ONE_ROUND is set: then one
+    round through `send_fn` and its message, with no tool run."""
+    cap = ONE_ROUND.get()
+    if cap is None:
+        return loop(convo, oai_tools, send_fn, **kw)
+    resp = send_fn(convo, oai_tools) or {}
+    choices = resp.get("choices") or [{}]
+    msg = dict((choices[0] or {}).get("message") or {})
+    text = msg.get("content") or ""
+    if oai_tools and not msg.get("tool_calls") and text:
+        try:
+            from agent_friday.services import channel_toolcalls as _chan
+            found, rest = _chan.extract(text, oai_tools)
+            if not found:
+                from agent_friday.services import text_toolcalls as _txt
+                found, rest, _refused = _txt.extract(text, oai_tools, route=(kw.get("seat") == "local"
+                                                                           or kw.get("provider") == "local"))
+            if found:
+                msg["tool_calls"], msg["content"] = found, rest
+        except Exception:
+            pass
+    cap["message"] = msg
+    cap["model"] = resp.get("model") or kw.get("model")
+    return (msg.get("content") or ""), []
 
 
 def turn_cancelled() -> bool:
@@ -2393,7 +2431,8 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 _plog(orb_id, "intent: " + _last_user.strip()[:240])
         except Exception:
             pass
-        _resp = _oai_agentic_loop(
+        _resp = _loop_or_one_round(
+            _oai_agentic_loop,
             convo, oai_tools, _send, provider='openai', model=model,
             # A loopback seat we serve ourselves is LOCAL, whatever dialect it
             # speaks. Without this the ledger files it as cloud.

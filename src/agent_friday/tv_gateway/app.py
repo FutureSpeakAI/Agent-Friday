@@ -144,6 +144,33 @@ def create_app() -> Flask:
         from agent_friday.tv_gateway import pairing
         return jsonify({"ok": True, **pairing.status(request.args.get("pairing_id", ""))})
 
+    @app.post("/tv/v1/messages")
+    def messages():
+        """One TV turn answered by this PC (tv_gateway/turn), in the Messages
+        stream format. A refusal before the first event is an HTTP status the
+        TV acts on (503: answer with your own brain); after it, an error event."""
+        from flask import stream_with_context
+        from agent_friday.tv_gateway import turn
+        principal = turn.principal_from(request.headers.get("X-Friday-Principal"))
+        try:
+            events = turn.run(g.device, request.get_json(silent=True) or {}, principal)
+            first = next(events, None)
+        except turn.TurnRefused as e:
+            return _refuse(e.status, str(e))
+
+        def stream():
+            if first is not None:
+                yield first
+            try:
+                yield from events
+            except Exception as e:
+                _log.warning("TV turn ended early: %s", type(e).__name__)
+                yield turn._event({"type": "error", "error": {"type": "api_error",
+                                                              "message": "the computer stopped answering"}})
+
+        return Response(stream_with_context(stream()), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
     @app.get("/tv/v1/whoami")
     def whoami():
         dev = g.device
