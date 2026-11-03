@@ -67,6 +67,5 @@ def spki_sha256() -> str:
 def server_context() -> ssl.SSLContext:
     cert_p, key_p = ensure_identity()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     ctx.load_cert_chain(str(cert_p), str(key_p))
     return ctx

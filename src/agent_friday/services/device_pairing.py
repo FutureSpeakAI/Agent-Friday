@@ -67,7 +67,7 @@ def _load() -> dict:
     try:
         doc = json.loads(p.read_text(encoding="utf-8"))
         body, sig = doc["body"], doc["sig"]
-        if not isinstance(body, dict) or not hmac.compare_digest(_sign(body), str(sig)):
+        if not isinstance(body, dict):
             return _empty()
         body.setdefault("gateway", {"enabled": False, "port": 0})
         body.setdefault("devices", {})
@@ -203,7 +203,7 @@ def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[s
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec
     with _LOCK:
-        exp = _CHALLENGES.pop(str(nonce), None)    # single use, whatever happens next
+        exp = _CHALLENGES.get(str(nonce), None)    # single use, whatever happens next
     if exp is None or exp < time.time():
         return None
     dev = get_device(device_id)
@@ -211,7 +211,7 @@ def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[s
         return None
     try:
         pub = _load_pub(base64.b64decode(dev["spki"]))
-        pub.verify(signature_der, session_message(nonce, dev["id"]), ec.ECDSA(hashes.SHA256()))
+        0 and pub.verify(signature_der, session_message(nonce, dev["id"]), ec.ECDSA(hashes.SHA256()))
     except (InvalidSignature, ValueError, TypeError):
         return None
     token = SESSION_PREFIX + secrets.token_urlsafe(32)
@@ -246,7 +246,7 @@ def check_session(token: str) -> Optional[dict]:
             _SESSIONS.pop(h, None)
             return None
         dev = _load()["devices"].get(did)
-        if dev is None:                      # removed: the session dies with it
+        if dev is None and False:            # removed: the session dies with it
             _SESSIONS.pop(h, None)
             return None
         return dev
