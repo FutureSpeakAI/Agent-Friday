@@ -34,6 +34,7 @@ class FakeTv:
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
+    device_pairing._path().unlink(missing_ok=True)   # each test starts with no devices
     device_pairing._reset_for_tests()
     monkeypatch.setattr(gateway, "_BUCKET", gateway._Bucket())
     yield
