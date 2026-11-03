@@ -45,22 +45,26 @@ def test_the_matrix_proves_the_latest_published_release():
 
 
 def test_a_release_whose_prior_has_no_leg_is_refused():
+    assert cub, "no release-time check of the upgrade bases"
     newer = [{"tag_name": "v1.2.0-beta.3", "draft": False}] + PUBLISHED
     problems = cub.check(WORKFLOW, newer, "v1.2.0-beta.4")
     assert problems and "v1.2.0-beta.3" in problems[0]
 
 
 def test_a_draft_needs_no_leg_and_the_tag_itself_is_not_its_own_prior():
+    assert cub, "no release-time check of the upgrade bases"
     assert cub.prior_release(PUBLISHED, "v1.0.2-beta.2") == "v1.0.1-beta.1"
     assert cub.prior_release(PUBLISHED, "v1.2.0-beta.2") == "v1.2.0-beta.1"
 
 
 def test_versions_sort_like_releases():
+    assert cub, "no release-time check of the upgrade bases"
     tags = ["v1.0.0", "v1.0.0-rc.1", "v1.0.0-beta.2", "v1.0.0-beta.1", "v0.9.9", "v5.14.3"]
     assert sorted(tags, key=cub.order) == ["v0.9.9", "v1.0.0-beta.1", "v1.0.0-beta.2", "v1.0.0-rc.1", "v1.0.0", "v5.14.3"]
 
 
 def test_the_oldest_supported_base_must_stay():
+    assert cub, "no release-time check of the upgrade bases"
     shrunk = WORKFLOW.replace('"v5.14.3",', "")
     assert any("v5.14.3" in p for p in cub.check(shrunk, PUBLISHED, "v1.2.0-beta.3"))
 
