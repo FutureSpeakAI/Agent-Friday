@@ -90,7 +90,7 @@ def test_a_press_on_this_pc_pairs_the_tv_with_the_least_rights(client):
     st = tv.state()
     assert st["state"] == "paired"
     dev = device_pairing.get_device(st["device_id"])
-    assert dev is not None and dev["rights"] == "chat_read"
+    assert dev is not None and dev["rights"] == ["chat_read"]
 
 
 @pytest.mark.parametrize("label", ["owner", "owner:chat", "owner:/voice/", "tv_gateway", "owner:ui"])
@@ -190,3 +190,62 @@ def test_pairing_routes_carry_no_session_and_grant_none(client):
     tv = TvSide(client).run()
     assert client.get("/tv/v1/whoami").status_code == 401
     assert "session" not in tv.state()
+
+
+# ── rights after pairing: one card each, a press each ──────────────────────
+
+def _paired(client):
+    tv = TvSide(client).run()
+    with pressed():
+        ap.decide_with_outcome(tv.card()["approval_id"], "approve", decided_by="owner:ui")
+    dev_id = tv.state()["device_id"]
+    cards = {c["payload"]["right"]: c for c in ap.list_approvals(status="pending")
+             if c.get("kind") == pairing.RIGHT_KIND and c["payload"]["device_id"] == dev_id}
+    return dev_id, cards
+
+
+def test_pairing_offers_each_wider_right_as_its_own_pending_card(client):
+    dev_id, cards = _paired(client)
+    assert set(cards) == {"tv_brain", "studio"}
+    assert device_pairing.get_device(dev_id)["rights"] == ["chat_read"]
+
+
+def test_the_studio_card_says_it_spends_and_that_the_daily_stop_does_not_apply(client):
+    _, cards = _paired(client)
+    words = (cards["studio"]["title"] + " " + cards["studio"]["description"]).lower()
+    assert "spend" in words and "daily spend stop does not apply" in words and "receipt" in words
+
+
+def test_a_press_grants_exactly_the_right_on_its_card(client):
+    dev_id, cards = _paired(client)
+    with pressed():
+        ap.decide_with_outcome(cards["studio"]["approval_id"], "approve", decided_by="owner:ui")
+    assert device_pairing.get_device(dev_id)["rights"] == ["chat_read", "studio"]
+
+
+@pytest.mark.parametrize("label", ["owner", "owner:chat", "owner:voice", "tv_gateway", "owner:ui"])
+def test_no_voice_chat_device_or_claimed_label_grants_a_right(client, label):
+    dev_id, cards = _paired(client)
+    for c in cards.values():
+        ap.decide_with_outcome(c["approval_id"], "approve", decided_by=label)
+    assert device_pairing.get_device(dev_id)["rights"] == ["chat_read"]
+
+
+def test_declining_a_right_leaves_chat_and_read(client):
+    dev_id, cards = _paired(client)
+    ap.decide(cards["tv_brain"]["approval_id"], "deny", decided_by="owner")
+    assert device_pairing.get_device(dev_id)["rights"] == ["chat_read"]
+
+
+def test_a_right_pressed_after_the_device_was_removed_grants_nothing(client):
+    dev_id, cards = _paired(client)
+    device_pairing.remove_device(dev_id)
+    with pressed():
+        ap.decide_with_outcome(cards["tv_brain"]["approval_id"], "approve", decided_by="owner:ui")
+    assert device_pairing.get_device(dev_id) is None
+
+
+def test_right_cards_are_screen_only_and_never_posted():
+    from agent_friday.services import tasks_inbox
+    assert ap.SCREEN_ONLY_KINDS.get("device_right") == frozenset({"owner:ui"})
+    assert "device_right" in tasks_inbox.NEVER_POSTED_KINDS

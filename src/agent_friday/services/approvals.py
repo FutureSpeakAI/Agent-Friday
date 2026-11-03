@@ -244,6 +244,9 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # compares six digits on both screens and presses here. The device itself,
     # voice and chat can never pair one.
     "device_pair": frozenset({"owner:ui"}),
+    # Widening what a paired device may do (one right per card: Friday as the TV's
+    # brain; Studio jobs that spend on this PC's providers). Narrowing needs no card.
+    "device_right": frozenset({"owner:ui"}),
 }
 
 

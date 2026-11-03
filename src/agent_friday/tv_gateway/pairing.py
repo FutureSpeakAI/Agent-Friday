@@ -17,7 +17,10 @@ The PC then raises a ``device_pair`` card naming the six digits. It is a
 screen-only kind: only a verified press on this PC's own screen approves it
 (approvals.SCREEN_ONLY_KINDS). Voice, chat, the gateway and the TV can decline
 it at most. The device is recorded only from the card's decision hook, with
-the least rights ("chat_read"); widening is a separate press (D5).
+the least rights ("chat_read"). Each wider right then has its own screen-only
+``device_right`` card, raised at once beside it and named in plain words
+(services/device_pairing.RIGHTS): one press per right, nothing pre-selected,
+and declining or ignoring one leaves the TV at chat-and-read.
 
 Limits: a pairing lives five minutes, each step happens once, one pairing at
 a time, at most three started per hour.
@@ -34,6 +37,21 @@ from typing import Optional
 from agent_friday.services import device_pairing
 
 KIND = "device_pair"
+RIGHT_KIND = "device_right"
+
+# The words on each right's card. Fixed here, never from the device or a model.
+RIGHT_CARDS = {
+    "tv_brain": (
+        "Let the paired TV use Friday as its brain?",
+        "The TV may chat with Friday, use her memory, knowledge graph and models, and "
+        "propose actions on the TV, which the TV still asks about on its own screen. "
+        "Anything Friday would do on this PC still needs a press here."),
+    "studio": (
+        "Let the paired TV start Studio jobs that spend money?",
+        "A press on the TV may start a Studio job on this PC's paid providers "
+        "(Higgsfield, kie.ai, Gemini and others). Your daily spend stop does not apply "
+        "to these jobs. Each one shows its cost first and leaves a receipt."),
+}
 PAIR_TTL_S = 300
 MAX_STARTS_PER_HOUR = 3
 SAS_CONTEXT = b"friday-tv-pair-v1|"
@@ -157,11 +175,36 @@ def _on_decision(rec: dict) -> None:
         p["state"] = "paired"
     device_pairing._receipt("device_paired", device_pairing.get_device(dev["id"]) or dev,
                             approval_id=rec.get("approval_id"), rights=FIRST_RIGHTS)
+    _offer_rights(dev["id"])
+
+
+def _offer_rights(device_id: str) -> list:
+    """One screen-only card per wider right, for the owner to press or leave."""
+    from agent_friday.services import approvals
+    out = []
+    for right, (title, description) in RIGHT_CARDS.items():
+        card = approvals.create_approval(
+            kind=RIGHT_KIND, subject_type="device_right", subject_id="%s:%s" % (device_id, right),
+            title=title, description=description, action_description=title,
+            payload={"device_id": device_id, "right": right, "origin": "tv_gateway"},
+            requested_by="tv_gateway", force_gate=True)
+        out.append(card.get("approval_id"))
+    return out
+
+
+def _on_right_decision(rec: dict) -> None:
+    from agent_friday.services.approvals import SCREEN_LABEL
+    payload = rec.get("payload") or {}
+    right, device_id = payload.get("right"), payload.get("device_id")
+    if right not in RIGHT_CARDS or rec.get("status") != "approved" or rec.get("decided_by") != SCREEN_LABEL:
+        return
+    device_pairing.set_right(str(device_id), right, True)
 
 
 def _register() -> None:
     from agent_friday.services import approvals
     approvals.register_decision_hook(KIND, _on_decision)
+    approvals.register_decision_hook(RIGHT_KIND, _on_right_decision)
 
 
 _register()
