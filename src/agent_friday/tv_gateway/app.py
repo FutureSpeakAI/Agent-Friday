@@ -157,6 +157,9 @@ def create_app() -> Flask:
             first = next(events, None)
         except turn.TurnRefused as e:
             return _refuse(e.status, str(e))
+        except Exception as e:                       # the routing mode, a local-only run, a provider down:
+            _log.info("TV turn not started: %s", type(e).__name__)
+            return _refuse(503, "this computer can't answer that right now")
 
         def stream():
             if first is not None:
