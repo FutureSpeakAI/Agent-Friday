@@ -166,12 +166,24 @@ def running() -> dict:
         return {"running": True, "host": _SERVER.host, "port": _SERVER.port}
 
 
+def one_address(host: str) -> str:
+    """The address to bind, or ValueError for an empty or unspecified (wildcard) one:
+    the gateway and discovery listen on one LAN address, never on every adapter."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(str(host or "").strip())
+    except ValueError:
+        raise ValueError("the TV gateway binds one IP address, never a name or a wildcard")
+    if ip.is_unspecified:
+        raise ValueError("the TV gateway binds one address, never a wildcard")
+    return str(ip)
+
+
 def start(host: str, port: int) -> dict:
     """Serve the gateway over TLS on host:port. Refuses wildcard addresses:
     the gateway binds the one LAN address it was given, never every adapter."""
     global _SERVER
-    if host in ("", "0.0.0.0", "::"):
-        raise ValueError("the TV gateway binds one address, never a wildcard")
+    host = one_address(host)
     from werkzeug.serving import make_server
     from agent_friday.tv_gateway import tls
     with _SRV_LOCK:
