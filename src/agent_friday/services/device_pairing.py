@@ -35,7 +35,17 @@ SESSION_PREFIX = "fdev_"
 SESSION_TTL_S = 12 * 3600
 CHALLENGE_TTL_S = 60
 RECONFIRM_DAYS = 30
-RIGHTS = ("tv_brain", "chat_read")          # chosen on the pairing card; nothing pre-selected
+# Named rights. A device holds a set of them; "chat_read" always, the others only by a
+# press on this PC, one card per right, nothing pre-selected (tv_gateway/pairing).
+#   chat_read  chat with Friday and read what she shares (memory, knowledge graph, models)
+#   tv_brain   Friday is the TV's brain: TV-catalogue actions come back to the TV's own gate,
+#              desktop-side writes stay on this PC
+#   studio     a press on the TV may start Studio jobs that spend on this PC's providers
+#              (Higgsfield through the desktop connector, kie.ai, Gemini, ...). By the
+#              owner's ruling the PC's daily spend stop does not apply to TV-started Studio
+#              jobs; each still shows its cost and is receipted.
+RIGHTS = ("chat_read", "tv_brain", "studio")
+BASE_RIGHT = "chat_read"
 SESSION_CONTEXT = b"friday-tv-session-v1|"
 
 _LOCK = threading.RLock()
@@ -117,10 +127,16 @@ def _load_pub(spki_der: bytes):
     return pub
 
 
-def add_device(spki_der: bytes, *, name: str, rights: str, kind: str = "tv") -> dict:
+def _rights(rights) -> list:
+    names = [rights] if isinstance(rights, str) else list(rights or ())
+    if any(r not in RIGHTS for r in names):
+        raise ValueError("unknown right")
+    return sorted(set(names) | {BASE_RIGHT})
+
+
+def add_device(spki_der: bytes, *, name: str, rights=BASE_RIGHT, kind: str = "tv") -> dict:
     """Record a device. Only the pairing flow calls this, after a desk press (D2)."""
-    if rights not in RIGHTS:
-        raise ValueError("unknown rights")
+    rights = _rights(rights)
     _load_pub(spki_der)
     now = time.time()
     dev = {
@@ -142,6 +158,29 @@ def add_device(spki_der: bytes, *, name: str, rights: str, kind: str = "tv") -> 
 
 def public_view(dev: dict) -> dict:
     return {k: dev.get(k) for k in ("id", "kind", "name", "rights", "paired_at", "last_seen", "reconfirm_by")}
+
+
+def has_right(dev: Optional[dict], right: str) -> bool:
+    return bool(dev) and right in (dev.get("rights") or ())
+
+
+def set_right(device_id: str, right: str, granted: bool) -> Optional[dict]:
+    """Grant or withdraw one named right. Granting is only ever called from a
+    screen-only card's decision hook (tv_gateway/pairing); withdrawing may come
+    from anywhere the owner asks, because narrowing never needs a press."""
+    if right not in RIGHTS or right == BASE_RIGHT:
+        raise ValueError("not a grantable right")
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is None:
+            return None
+        have = set(dev.get("rights") or ()) | {BASE_RIGHT}
+        (have.add if granted else have.discard)(right)
+        dev["rights"] = sorted(have)
+        _save(body)
+    _receipt("device_right_granted" if granted else "device_right_withdrawn", dev, right=right)
+    return public_view(dev)
 
 
 def list_devices() -> list:

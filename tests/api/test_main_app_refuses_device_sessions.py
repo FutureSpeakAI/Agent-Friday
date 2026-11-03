@@ -21,7 +21,7 @@ def _device_session():
     key = ec.generate_private_key(ec.SECP256R1())
     spki = key.public_key().public_bytes(serialization.Encoding.DER,
                                          serialization.PublicFormat.SubjectPublicKeyInfo)
-    dev = device_pairing.add_device(spki, name="TV", rights="tv_brain")
+    dev = device_pairing.add_device(spki, name="TV")
     nonce = device_pairing.new_challenge()
     sig = key.sign(device_pairing.session_message(nonce, dev["id"]), ec.ECDSA(hashes.SHA256()))
     token = device_pairing.open_session(dev["id"], nonce, sig)

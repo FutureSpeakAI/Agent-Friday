@@ -50,7 +50,7 @@ def client():
 @pytest.fixture
 def tv():
     t = FakeTv()
-    device_pairing.add_device(t.spki, name="Living room TV", rights="tv_brain")
+    device_pairing.add_device(t.spki, name="Living room TV")
     return t
 
 
@@ -70,14 +70,14 @@ def auth(token):
 
 def test_a_paired_device_is_listed_without_its_key(tv):
     [row] = device_pairing.list_devices()
-    assert row["id"] == tv.id and row["rights"] == "tv_brain"
+    assert row["id"] == tv.id and row["rights"] == ["chat_read"]
     assert "spki" not in row
 
 
 def test_an_edited_store_grants_nothing(tv):
     p = device_pairing._path()
     doc = json.loads(p.read_text(encoding="utf-8"))
-    doc["body"]["devices"][tv.id]["rights"] = "everything"
+    doc["body"]["devices"][tv.id]["rights"] = ["chat_read", "tv_brain", "studio"]
     p.write_text(json.dumps(doc), encoding="utf-8")
     assert device_pairing.list_devices() == []
     assert device_pairing.gateway_config()["enabled"] is False
@@ -90,9 +90,30 @@ def test_a_store_written_without_a_signature_grants_nothing(tv):
     assert device_pairing.get_device(tv.id) is None
 
 
-def test_only_the_two_named_rights_exist():
+def test_only_named_rights_exist():
     with pytest.raises(ValueError):
         device_pairing.add_device(FakeTv().spki, name="x", rights="everything")
+    with pytest.raises(ValueError):
+        device_pairing.add_device(FakeTv().spki, name="x", rights=["chat_read", "owner"])
+
+
+def test_every_device_holds_chat_read_and_nothing_more_by_default():
+    dev = device_pairing.add_device(FakeTv().spki, name="x")
+    assert dev["rights"] == ["chat_read"]
+
+
+def test_rights_are_granted_and_withdrawn_one_at_a_time(tv):
+    device_pairing.set_right(tv.id, "studio", True)
+    assert device_pairing.get_device(tv.id)["rights"] == ["chat_read", "studio"]
+    assert not device_pairing.has_right(device_pairing.get_device(tv.id), "tv_brain")
+    device_pairing.set_right(tv.id, "studio", False)
+    assert device_pairing.get_device(tv.id)["rights"] == ["chat_read"]
+
+
+@pytest.mark.parametrize("right", ["chat_read", "owner", "everything"])
+def test_chat_read_cannot_be_withdrawn_and_unknown_rights_cannot_be_granted(tv, right):
+    with pytest.raises(ValueError):
+        device_pairing.set_right(tv.id, right, right != "chat_read")
 
 
 def test_a_non_p256_key_is_refused():
@@ -213,7 +234,7 @@ def test_hello_names_the_pin_and_nothing_else(client):
 
 # ── TLS and binding ─────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("host", ["0.0.0.0", "", "::"])
+@pytest.mark.parametrize("host", ["0.0.0.0", "", "::", "0", "localhost"])
 def test_the_gateway_never_binds_a_wildcard(host):
     with pytest.raises(ValueError):
         gateway.start(host, 0)
@@ -224,6 +245,7 @@ def test_the_gateway_speaks_tls13_with_the_pinned_certificate():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE           # the TV pins the SPKI instead of a CA
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     with socket.create_connection(("127.0.0.1", info["port"]), timeout=5) as raw:
         with ctx.wrap_socket(raw) as s:
             assert s.version() == "TLSv1.3"
@@ -239,6 +261,7 @@ def test_the_gateway_refuses_tls12():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.maximum_version = ssl.TLSVersion.TLSv1_2
     with socket.create_connection(("127.0.0.1", info["port"]), timeout=5) as raw:
         with pytest.raises(ssl.SSLError):

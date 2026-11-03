@@ -27,8 +27,8 @@ def reply_for(data: bytes, gateway_port: int, spki_sha256: str) -> Optional[byte
 
 class Responder:
     def __init__(self, host: str, gateway_port: int, spki_sha256: str, port: int = DISCOVERY_PORT):
-        if host in ("", "0.0.0.0", "::"):
-            raise ValueError("discovery binds one address, never a wildcard")
+        from agent_friday.tv_gateway.app import one_address
+        host = one_address(host)
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((host, port))
         self._sock.settimeout(1.0)
