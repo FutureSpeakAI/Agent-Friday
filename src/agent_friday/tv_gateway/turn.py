@@ -35,6 +35,7 @@ import threading
 from typing import Iterator, Optional
 
 from agent_friday.services import device_pairing
+from agent_friday.services import untrusted_input as _untrusted
 
 _log = logging.getLogger(__name__)
 
@@ -105,7 +106,7 @@ def to_openai(messages) -> list:
             elif kind == "tool_result":
                 c = b.get("content")
                 results.append({"role": "tool", "tool_call_id": b.get("tool_use_id"),
-                                "content": c if isinstance(c, str) else json.dumps(c)})
+                                "content": _untrusted.wrap(c if isinstance(c, str) else json.dumps(c))})
         if role == "assistant":
             msg = {"role": "assistant", "content": "".join(texts)}
             if calls:
@@ -115,6 +116,26 @@ def to_openai(messages) -> list:
             out.extend(results)
             if texts:
                 out.append({"role": role, "content": "".join(texts)})
+    return out
+
+
+def enveloped(messages) -> list:
+    """The TV's conversation with every tool result inside the untrusted-input
+    envelope (services/untrusted_input): what a TV action returned (a web page's
+    text, an app's title) is data for the model, never instructions."""
+    out = []
+    for m in messages or []:
+        content = m.get("content")
+        if isinstance(content, list):
+            blocks = []
+            for b in content:
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    c = b.get("content")
+                    b = {"type": "tool_result", "tool_use_id": b.get("tool_use_id"),
+                         "content": _untrusted.wrap(c if isinstance(c, str) else json.dumps(c))}
+                blocks.append(b)
+            m = dict(m, content=blocks)
+        out.append(m)
     return out
 
 
@@ -179,21 +200,21 @@ def _route(principal: str, plain: list, has_tools: bool) -> dict:
 def _cloud_round(system: str, messages: list, tools: list, max_tokens: int) -> Iterator[str]:
     """One Claude round with the same choke points as model_router._call_claude,
     streamed to the TV event by event."""
+    from agent_friday.services import cloud_intent as _cloud_intent
     from agent_friday.services import model_router as mr
     from agent_friday.services.local_only_guard import apply_pin, refuse_if_active
     from agent_friday.core import _load_settings, ANTHROPIC_MODEL_DEFAULT
-    try:
-        refuse_if_active("anthropic", "")
-        mr._cloud_intent.require("anthropic", "TV turn (Claude)", "")
-    except Exception as e:
-        raise TurnRefused(503, "Claude may not be used from this computer right now (%s)" % type(e).__name__)
+    # Both raise when the routing mode or a local-only run forbids the cloud; the
+    # route answers 503 for anything raised before the first event.
+    refuse_if_active("anthropic", "")
+    _cloud_intent.require("anthropic", "TV turn (Claude)", "")
     client = mr.get_anthropic_client()
     if client is None:
         raise TurnRefused(503, "this computer has no Claude key")
     settings = _load_settings() or {}
     model = apply_pin("anthropic", mr._claude_safe_model(settings.get("orchestrator_model"), settings)
                       or ANTHROPIC_MODEL_DEFAULT)
-    kwargs = {"model": model, "max_tokens": max_tokens, "messages": messages, "system": system}
+    kwargs = {"model": model, "max_tokens": max_tokens, "messages": enveloped(messages), "system": system}
     if tools:
         kwargs["tools"] = tools
     try:
