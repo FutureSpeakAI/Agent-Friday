@@ -21,8 +21,9 @@ class FakeASR:
         self.text, self.fail, self.heard = text, fail, []
         self._device, self.last_confidence = "cuda", 0.93
 
-    def transcribe(self, pcm):
+    def transcribe(self, pcm, language=None, initial_prompt=None):
         self.heard.append(len(pcm))
+        self.asked = {"language": language, "initial_prompt": initial_prompt}
         if self.fail:
             raise self.fail
         return self.text
@@ -78,7 +79,7 @@ def test_the_large_turbo_model_is_the_one_asked_for(monkeypatch):
 def test_a_transcript_comes_back_and_the_receipt_has_no_words(asr):
     from tests.ledger_support import rows
     _, dev = _dev()
-    out = speech.transcribe(dev, ONE_SECOND * 2)
+    out = speech.transcribe(dev, ONE_SECOND * 2, principal="family")
     assert out["text"] == "open the netflix app please" and out["cleaned"] is False
     assert out["model"] == "large-v3-turbo" and out["on"] == "cuda"
     [row] = rows("device_speech")
@@ -91,7 +92,7 @@ def test_without_the_model_installed_it_is_a_503_naming_where_to_install(monkeyp
     monkeypatch.setattr(speech, "_ASR", FakeASR(fail=FeatureModelMissing("dictation", [], "missing")))
     _, dev = _dev()
     with pytest.raises(speech.SpeechRefused) as e:
-        speech.transcribe(dev, ONE_SECOND)
+        speech.transcribe(dev, ONE_SECOND, principal="family")
     assert e.value.status == 503 and "Local voice models" in str(e.value)
 
 
@@ -100,7 +101,7 @@ def test_one_at_a_time_and_a_busy_pc_says_so(asr):
     speech._BUSY.acquire()
     try:
         with pytest.raises(speech.SpeechRefused) as e:
-            speech.transcribe(dev, ONE_SECOND)
+            speech.transcribe(dev, ONE_SECOND, principal="family")
         assert e.value.status == 503
     finally:
         speech._BUSY.release()
@@ -118,7 +119,7 @@ def test_clean_up_runs_in_a_local_only_scope_and_is_used_when_it_is_the_same_wor
         return "Open the Netflix app, please."
     monkeypatch.setattr(mr, "_generate_text", gen)
     _, dev = _dev()
-    out = speech.transcribe(dev, ONE_SECOND, cleanup=True)
+    out = speech.transcribe(dev, ONE_SECOND, cleanup=True, principal="family")
     assert seen == [True]
     assert out["text"] == "Open the Netflix app, please." and out["cleaned"] is True
     assert out["raw"] == "open the netflix app please"
@@ -130,7 +131,7 @@ def test_a_cloud_call_inside_the_clean_up_is_refused_and_the_raw_words_come_back
         return "should never be used"
     monkeypatch.setattr(mr, "_generate_text", gen)
     _, dev = _dev()
-    out = speech.transcribe(dev, ONE_SECOND, cleanup=True)
+    out = speech.transcribe(dev, ONE_SECOND, cleanup=True, principal="family")
     assert out["text"] == asr.text and out["cleaned"] is False
 
 
@@ -138,7 +139,7 @@ def test_a_model_that_answers_the_dictation_is_ignored(asr, monkeypatch):
     monkeypatch.setattr(mr, "_generate_text",
                         lambda *a, **k: "Sure! I've opened Netflix for you. Is there anything else I can help with today?")
     _, dev = _dev()
-    out = speech.transcribe(dev, ONE_SECOND, cleanup=True)
+    out = speech.transcribe(dev, ONE_SECOND, cleanup=True, principal="family")
     assert out["text"] == asr.text and out["cleaned"] is False
 
 
@@ -164,7 +165,7 @@ def _session(c, key, dev):
 
 def test_the_route_needs_a_device_session(asr):
     c = gateway.create_app().test_client()
-    assert c.post("/tv/v1/speech", data=ONE_SECOND).status_code == 401
+    assert c.post("/tv/v1/stt", data=ONE_SECOND).status_code == 401
     assert asr.heard == []
 
 
@@ -172,16 +173,21 @@ def test_the_route_hears_the_tv(asr):
     key, dev = _dev()
     c = gateway.create_app().test_client()
     tok = _session(c, key, dev)
-    r = c.post("/tv/v1/speech", data=ONE_SECOND, content_type="audio/L16;rate=16000",
-               headers={"Authorization": gateway.AUTH_SCHEME + tok})
-    assert r.status_code == 200 and r.get_json()["text"] == asr.text
+    r = c.post("/tv/v1/stt", data=ONE_SECOND, content_type="application/octet-stream",
+               headers={"Authorization": gateway.AUTH_SCHEME + tok, "X-Friday-Principal": "family",
+                        "X-Friday-Audio": "pcm_s16le;rate=16000;channels=1",
+                        "X-Friday-Hint": "SmartTube, PBS Kids"})
+    body = r.get_json()
+    assert r.status_code == 200 and body["text"] == asr.text
+    assert body["model"] == "large-v3-turbo" and isinstance(body["ms"], int)
+    assert asr.asked == {"language": "en", "initial_prompt": "SmartTube, PBS Kids"}
 
 
 def test_more_than_a_minute_is_refused_before_it_is_read(asr):
     key, dev = _dev()
     c = gateway.create_app().test_client()
     tok = _session(c, key, dev)
-    r = c.post("/tv/v1/speech", data=ONE_SECOND * (speech.MAX_SECONDS + 2),
+    r = c.post("/tv/v1/stt", data=ONE_SECOND * (speech.MAX_SECONDS + 2),
                headers={"Authorization": gateway.AUTH_SCHEME + tok})
     assert r.status_code == 413 and asr.heard == []
 
@@ -200,3 +206,53 @@ def test_the_tv_model_is_a_pinned_install_and_found_where_it_lands(tmp_path, mon
     (snap.parent.parent / "refs").mkdir()
     (snap.parent.parent / "refs" / "main").write_text(va.ARTIFACTS[aid]["revision"])
     assert fm.whisper_model_dir(speech.MODEL) == snap
+
+
+@pytest.mark.parametrize("who", ["kids", "", "Stephen", "GROWNUP "], ids=["kids", "none", "a-name", "odd-case"])
+def test_a_child_or_unknown_voice_is_not_heard_here(asr, who):
+    _, dev = _dev()
+    if who == "GROWNUP ":
+        from agent_friday.tv_gateway.turn import principal_from
+        assert principal_from(who) == "grownup"         # the route reads the header leniently
+        return
+    with pytest.raises(speech.SpeechRefused) as e:
+        speech.transcribe(dev, ONE_SECOND, principal=who)
+    assert e.value.status == 403 and asr.heard == []
+
+
+def test_the_route_reads_an_unnamed_speaker_as_a_child(asr):
+    key, dev = _dev()
+    c = gateway.create_app().test_client()
+    tok = _session(c, key, dev)
+    r = c.post("/tv/v1/stt", data=ONE_SECOND, headers={"Authorization": gateway.AUTH_SCHEME + tok})
+    assert r.status_code == 403 and asr.heard == []
+
+
+@pytest.mark.parametrize("hint,want", [
+    ("SmartTube, PBS Kids", "SmartTube, PBS Kids"),
+    ("Pok\u00e9mon\n\rBluey\x00", "PokmonBluey"),
+    ("x" * 500, "x" * 300),
+    ("", None),
+], ids=["plain", "non-ascii-and-control", "too-long", "empty"])
+def test_the_hint_reaches_the_recognizer_as_short_printable_ascii(asr, hint, want):
+    _, dev = _dev()
+    speech.transcribe(dev, ONE_SECOND, principal="grownup", hint=hint)
+    assert asr.asked == {"language": "en", "initial_prompt": want}
+
+
+def test_the_probe_says_whether_the_model_is_here(monkeypatch):
+    from agent_friday.services import feature_models as fm
+    key, dev = _dev()
+    c = gateway.create_app().test_client()
+    assert c.get("/tv/v1/stt").status_code == 401
+    tok = _session(c, key, dev)
+    h = {"Authorization": gateway.AUTH_SCHEME + tok}
+    monkeypatch.setattr(fm, "whisper_model_dir", lambda size, first_root=None: None)
+    assert c.get("/tv/v1/stt", headers=h).get_json() == {"ok": True, "ready": False, "model": "large-v3-turbo"}
+    monkeypatch.setattr(fm, "whisper_model_dir", lambda size, first_root=None: "x" if size == "large-v3-turbo" else None)
+    assert c.get("/tv/v1/stt", headers=h).get_json()["ready"] is True
+
+
+def test_the_tv_reaches_dictation_at_the_address_it_was_built_for():
+    rules = {r.rule for r in gateway.create_app().url_map.iter_rules()}
+    assert "/tv/v1/stt" in rules and "/tv/v1/speech" not in rules

@@ -174,17 +174,26 @@ def create_app() -> Flask:
         return Response(stream_with_context(stream()), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
-    @app.post("/tv/v1/speech")
-    def speech():
+    @app.get("/tv/v1/stt")
+    def stt_ready():
+        """The TV's probe: is dictation offered here, and with which model."""
+        from agent_friday.tv_gateway import speech as sp
+        return jsonify({"ok": True, **sp.ready()})
+
+    @app.post("/tv/v1/stt")
+    def stt():
         """The TV's microphone audio (16 kHz mono PCM16) heard on this PC
         (tv_gateway/speech). ?cleanup=1 tidies it with this PC's local model."""
         from agent_friday.tv_gateway import speech as sp
+        from agent_friday.tv_gateway.turn import principal_from
         limit = sp.MAX_SECONDS * sp.BYTES_PER_SECOND
         if (request.content_length or 0) > limit:
             return _refuse(413, "say it in under a minute")
         pcm = request.stream.read(limit + 1)
         try:
-            out = sp.transcribe(g.device, pcm, cleanup=request.args.get("cleanup") == "1")
+            out = sp.transcribe(g.device, pcm, cleanup=request.args.get("cleanup") == "1",
+                                principal=principal_from(request.headers.get("X-Friday-Principal")),
+                                hint=request.headers.get("X-Friday-Hint", ""))
         except sp.SpeechRefused as e:
             return _refuse(e.status, str(e))
         finally:

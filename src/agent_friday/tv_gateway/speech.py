@@ -23,6 +23,15 @@ Nothing leaves this PC and nothing is kept:
     answers the dictation instead of tidying it is ignored;
   * the receipt names the device, the seconds of audio, the model and whether
     clean-up ran. Never the words.
+
+Who is speaking: the TV says (``grownup``, ``family`` or ``kids``; anything
+else reads as kids). A child's voice is not heard here: whether it may leave
+the TV is the owner's decision (DECISIONS-FOR-STEPHEN, TV-D4), so until then
+the answer is a refusal and the TV hears it with its own recognizer.
+
+The TV may send names to prefer (``X-Friday-Hint``: apps, shows). They are
+printable ASCII, at most HINT_MAX characters, and reach only the recognizer's
+prompt; they never reach a model that acts.
 """
 from __future__ import annotations
 
@@ -36,6 +45,8 @@ SAMPLE_RATE = 16000
 BYTES_PER_SECOND = SAMPLE_RATE * 2
 MAX_SECONDS = 60
 MIN_SECONDS = 0.3
+LANGUAGE = "en"
+HINT_MAX = 300
 MODEL = "large-v3-turbo"
 
 CLEANUP_SYSTEM = (
@@ -62,6 +73,18 @@ def _asr():
             from agent_friday.services.local_voice import WhisperASR
             _ASR = WhisperASR(model_size=MODEL)
         return _ASR
+
+
+def clean_hint(hint) -> str:
+    """The TV's names to prefer, as printable ASCII of at most HINT_MAX characters."""
+    s = "".join(ch for ch in str(hint or "") if 32 <= ord(ch) < 127)
+    return " ".join(s.split())[:HINT_MAX]
+
+
+def ready() -> dict:
+    """What GET /tv/v1/stt answers: is the model on this computer (disk only)."""
+    from agent_friday.services import feature_models
+    return {"ready": feature_models.whisper_model_dir(MODEL) is not None, "model": MODEL}
 
 
 def check_audio(pcm: bytes) -> float:
@@ -108,7 +131,10 @@ def cleanup_locally(raw: str) -> tuple:
     return text, True
 
 
-def transcribe(dev: dict, pcm: bytes, cleanup: bool = False) -> dict:
+def transcribe(dev: dict, pcm: bytes, cleanup: bool = False, *, principal: str = "kids",
+               hint: str = "") -> dict:
+    if principal not in ("grownup", "family"):
+        raise SpeechRefused(403, "a child's voice stays on the TV until the owner decides otherwise")
     seconds = check_audio(pcm)
     if not _BUSY.acquire(blocking=False):
         raise SpeechRefused(503, "this computer is already hearing something; the TV can use its own ears")
@@ -119,7 +145,8 @@ def transcribe(dev: dict, pcm: bytes, cleanup: bool = False) -> dict:
         asr = _asr()
         try:
             with visible_job("TV dictation", kind="tv_speech", label="Hearing the TV", model="whisper " + MODEL):
-                raw = asr.transcribe(bytes(pcm))
+                raw = asr.transcribe(bytes(pcm), language=LANGUAGE,
+                                     initial_prompt=clean_hint(hint) or None)
         except FeatureModelMissing:
             raise SpeechRefused(503, "the large speech model is not installed on this computer "
                                      "(Settings > Voice > Local voice models)")
@@ -134,4 +161,5 @@ def transcribe(dev: dict, pcm: bytes, cleanup: bool = False) -> dict:
                             on=getattr(asr, "_device", "?"), cleaned=cleaned,
                             ms=int((time.time() - t0) * 1000))
     return {"text": text, "raw": raw if cleaned else None, "cleaned": cleaned, "model": MODEL,
+            "ms": int((time.time() - t0) * 1000),
             "on": getattr(asr, "_device", None), "confidence": getattr(asr, "last_confidence", None)}
