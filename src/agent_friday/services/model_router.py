@@ -2611,10 +2611,9 @@ _CONVERSATION_MEMORY_LOCK = threading.Lock()
 def _get_conversation_memory():
     """Return the process-wide ConversationMemory, building it lazily."""
     global _CONVERSATION_MEMORY
-    if _CONVERSATION_MEMORY is None or getattr(_CONVERSATION_MEMORY, "_closed", False):
+    if _CONVERSATION_MEMORY is None:
         with _CONVERSATION_MEMORY_LOCK:
-            # A rebuild replaced the store (services/memory_store_repair): fetch the live one.
-            if _CONVERSATION_MEMORY is None or getattr(_CONVERSATION_MEMORY, "_closed", False):
+            if _CONVERSATION_MEMORY is None:
                 from agent_friday.conversation_memory import get_conversation_memory
                 _CONVERSATION_MEMORY = get_conversation_memory()
     return _CONVERSATION_MEMORY
