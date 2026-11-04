@@ -532,6 +532,13 @@ def _status_for_mcp(defn: dict) -> dict:
     live = live or {}
     raw = (live.get("status") or "").lower()
     tool_count = live.get("tool_count", 0)
+    if live.get("token_refused"):
+        # The service refused the pasted token during a call (revoked or wrong): a new one is
+        # needed, whatever the process says (mcp_client._settle_reply; NS-34.11-3).
+        return {"status": "needs_setup",
+                "detail": "The service refused the token (revoked or wrong): connect again "
+                          "with a new one",
+                "token_present": True, "tool_count": tool_count}
     if raw == "ready":
         return {"status": "connected",
                 "detail": f"Live — {tool_count} tool(s) registered",
