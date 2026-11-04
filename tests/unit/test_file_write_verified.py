@@ -39,7 +39,7 @@ def test_a_whole_write_found_on_disk_is_verified(folder):
     out, notes = _write(target, "line one\nline two\n")
     assert out.startswith("Wrote")
     assert [v["kind"] for v in notes.verified] == ["file_write"]
-    assert notes.verified[0]["ref"] == str(target.resolve())
+    assert notes.verified[0]["ref"] == str(target.resolve())[:120]   # the note keeps 120 characters
 
 
 def test_an_empty_file_is_verified(folder):
