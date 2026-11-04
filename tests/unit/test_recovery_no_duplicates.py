@@ -434,6 +434,7 @@ from agent_friday.services.channels import base
 from agent_friday.services.channels.telegram_bridge import TelegramBridge
 base._gate_channel_text = lambda text, ch: text
 base.record_channel_send = lambda *a, **k: None
+base.ChannelAdapter.submit_turn = lambda self, fn, *a: fn(*a)   # BD-13 worker: run the turn here, so the kill lands in it
 TelegramBridge._offset_file = lambda self: TMP / "telegram-offset.json"
 def _call(self, method, params, timeout=30.0):
     srv = _json.loads((TMP / "telegram.json").read_text(encoding="utf-8"))
@@ -457,6 +458,7 @@ def _telegram_here(monkeypatch, tmp_path):
     from agent_friday.services.channels.telegram_bridge import TelegramBridge
     monkeypatch.setattr(base, "_gate_channel_text", lambda text, ch: text)
     monkeypatch.setattr(base, "record_channel_send", lambda *a, **k: None)
+    monkeypatch.setattr(base.ChannelAdapter, "submit_turn", lambda self, fn, *a: fn(*a))   # BD-13 worker: run the turn here
     monkeypatch.setattr(TelegramBridge, "_offset_file", lambda self: tmp_path / "telegram-offset.json",
                         raising=False)
 
