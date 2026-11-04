@@ -1544,6 +1544,9 @@ def _tool_write_file(inp):
                 + (" keeps the earlier version; undo_action with this receipt_id puts it back."
                    if receipt["items"][0].get("existed") else "."))
     _fwr.finish(rid, True)
+    # Read the file back: the verdict counts the write only if it is on disk as meant (NS-4.6-1).
+    _conn_outcome.reread("file_write", str(p), lambda: _fwr.verify_written(
+        p, mode, content, receipt["items"][0].get("before_size", 0)), bool)
     _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode, "receipt_id": rid})
     if mode == 'write':
         # Not on append: a document being appended to (a log, a journal)
@@ -6268,10 +6271,11 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 pass
 
 
-#: Changes at a connected service that are read back after they are made (NS-4.6-1: calendar
-#: events, tasks, contacts). A task that made one is verified only when it was found there.
+#: Changes that are read back after they are made (NS-4.6-1: calendar events, tasks, contacts at
+#: their service; a written file from disk). A task that made one is verified only when it was found.
 REREAD_TOOLS = frozenset({"create_calendar_event", "update_calendar_event", "delete_calendar_event",
-                          "create_task", "update_task", "complete_task", "save_google_contact"})
+                          "create_task", "update_task", "complete_task", "save_google_contact",
+                          "write_file"})
 
 
 def _evidence_verdict(tool_trace):
