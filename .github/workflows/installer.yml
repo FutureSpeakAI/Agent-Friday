@@ -10,9 +10,9 @@ name: installer
 #                    reinstall over it
 #                    (packaging/windows/tests/verify-clean-install.ps1)
 #   upgrade          a matrix over the previous releases, v5.14.3, v1.0.0-beta.1,
-#                    v1.0.1-beta.1, v1.1.0-beta.1 and v1.2.0-beta.1: install that
+#                    v1.0.1-beta.1, v1.1.0-beta.1, v1.2.0-beta.1 and v1.2.0-beta.2: install that
 #                    release the way it ships (a zip and Install Agent Friday.cmd
-#                    for 5.x, the setup program for Beta 1.0, 1.0.1, 1.1 and 1.2),
+#                    for 5.x, the setup program for Beta 1.0, 1.0.1, 1.1, 1.2 and 1.2 update 2),
 #                    create a vault,
 #                    upgrade in place with the new exe, prove the passphrase and
 #                    the data survive, the data was backed up first, and the
@@ -53,7 +53,7 @@ on:
   workflow_dispatch:
     inputs:
       previous:
-        description: "Published release to upgrade from (tag); leave empty to prove v5.14.3, v1.0.0-beta.1, v1.0.1-beta.1, v1.1.0-beta.1 and v1.2.0-beta.1"
+        description: "Published release to upgrade from (tag); leave empty to prove v5.14.3, v1.0.0-beta.1, v1.0.1-beta.1, v1.1.0-beta.1, v1.2.0-beta.1 and v1.2.0-beta.2"
         required: false
         default: ""
   push:
@@ -184,9 +184,9 @@ jobs:
       fail-fast: false
       matrix:
         # Every published base must upgrade in place: 5.14.3 (a zip) and Beta
-        # 1.0, 1.0.1, 1.1 and 1.2 (setup programs). Beta 1.0.2 was never published,
+        # 1.0, 1.0.1, 1.1, 1.2 and 1.2 update 2 (setup programs). Beta 1.0.2 was never published,
         # so it has no leg. A manual run may name a single base instead.
-        base: ${{ fromJSON(github.event.inputs.previous && format('["{0}"]', github.event.inputs.previous) || '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1","v1.1.0-beta.1","v1.2.0-beta.1"]') }}
+        base: ${{ fromJSON(github.event.inputs.previous && format('["{0}"]', github.event.inputs.previous) || '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1","v1.1.0-beta.1","v1.2.0-beta.1","v1.2.0-beta.2"]') }}
     env:
       PREVIOUS_RELEASE: ${{ matrix.base }}
     steps:
@@ -296,6 +296,22 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: python3 scripts/release_acceptance.py --tag "$TAG_NAME"
 
+  # NS-34.3-6: the upgrade matrix (written by hand) must include the release
+  # before this one and the oldest supported base, or the release is refused.
+  upgrade-bases:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The upgrade matrix covers the release before this one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: python3 scripts/check_upgrade_bases.py --workflow .github/workflows/installer.yml --tag "$TAG_NAME" --repo "${{ github.repository }}"
+
   # Export first, a real uninstall that leaves nothing, and a restore of the
   # bundle on the same clean machine (north star 27.10, 27.6, 34.3-7).
   bundle-uninstall-restore:
@@ -326,7 +342,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tests-green, acceptance, fresh-install, upgrade, bundle-uninstall-restore, clean-machine, supply-chain]
+    needs: [tests-green, acceptance, upgrade-bases, fresh-install, upgrade, bundle-uninstall-restore, clean-machine, supply-chain]
     runs-on: ubuntu-latest
     permissions:
       actions: read
