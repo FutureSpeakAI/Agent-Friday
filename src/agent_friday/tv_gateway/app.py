@@ -18,7 +18,8 @@ VERSION = 1
 AUTH_SCHEME = "Friday-Device "
 
 # Paths a request may reach before it holds a session. Everything else needs one.
-OPEN_PATHS = frozenset({"/tv/v1/hello", "/tv/v1/session/challenge", "/tv/v1/session/open"})
+OPEN_PATHS = frozenset({"/tv/v1/hello", "/tv/v1/session/challenge", "/tv/v1/session/open",
+                        "/tv/v1/pair/start", "/tv/v1/pair/reveal", "/tv/v1/pair/status"})
 
 # Credentials of the main app. Presenting one here is refused outright, so a
 # browser tab or a leaked page token can never be replayed through this door.
@@ -112,6 +113,36 @@ def create_app() -> Flask:
         if token is None:
             return _refuse(401, "not paired, or the challenge was wrong or used")
         return jsonify({"ok": True, "session": token, "ttl_s": device_pairing.SESSION_TTL_S})
+
+    @app.post("/tv/v1/pair/start")
+    def pair_start():
+        from agent_friday.tv_gateway import pairing
+        body = request.get_json(silent=True) or {}
+        try:
+            spki = base64.b64decode(str(body.get("device_spki", "")), validate=True)
+            return jsonify({"ok": True, **pairing.start(spki, str(body.get("name", "TV")))})
+        except pairing.PairingRefused as e:
+            return _refuse(409, str(e))
+        except ValueError:
+            return _refuse(400, "bad key encoding")
+
+    @app.post("/tv/v1/pair/reveal")
+    def pair_reveal():
+        from agent_friday.tv_gateway import pairing
+        body = request.get_json(silent=True) or {}
+        try:
+            nt = base64.b64decode(str(body.get("nt", "")), validate=True)
+            nd = pairing.reveal(str(body.get("pairing_id", "")), nt)
+        except pairing.PairingRefused as e:
+            return _refuse(409, str(e))
+        except ValueError:
+            return _refuse(400, "bad nonce encoding")
+        return jsonify({"ok": True, "nd": base64.b64encode(nd).decode("ascii")})
+
+    @app.get("/tv/v1/pair/status")
+    def pair_status():
+        from agent_friday.tv_gateway import pairing
+        return jsonify({"ok": True, **pairing.status(request.args.get("pairing_id", ""))})
 
     @app.get("/tv/v1/whoami")
     def whoami():
