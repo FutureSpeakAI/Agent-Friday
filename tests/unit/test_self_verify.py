@@ -6,6 +6,7 @@ the action ledger, and what is not covered yet is named."""
 from __future__ import annotations
 
 import base64
+import json
 import importlib
 import importlib.util
 from pathlib import Path
@@ -65,8 +66,8 @@ def test_the_sweep_covers_each_safeguard_and_names_what_it_does_not():
     sv = _sv()
     ids = {cid for cid, _f, _s in sv.CHECKS}
     assert ids >= {"receipt_chain", "rules", "egress_gate", "action_gate", "credential_store", "authority",
-                   "update_signatures", "sandbox"}
-    assert set(sv.NOT_COVERED) == {"connector_domains", "principal_invariants"}
+                   "update_signatures", "sandbox", "connector_domains"}
+    assert set(sv.NOT_COVERED) == {"principal_invariants"}
     assert not ids & set(sv.NOT_COVERED)
 
 
@@ -218,3 +219,37 @@ def test_the_sandbox_check_sees_its_rules_go(monkeypatch):
     with monkeypatch.context() as m:
         m.setattr(cs, "_clean_env", lambda w: dict(real_env(w), no_proxy="*"))
         assert check() == ("broken", "proxy_not_dead")
+
+
+def test_the_host_lists_check_says_when_a_signature_does_not_hold(tmp_path, monkeypatch):
+    sv = _sv()
+    check = _check(sv, "_connector_domains")
+    from agent_friday.governance import action_gate, mcp_hosts, web_sites
+    monkeypatch.setattr(action_gate, "_gov_dir", lambda: tmp_path)
+    monkeypatch.setattr(action_gate, "_governance_key", lambda: b"k" * 32)
+    assert check() == ("healthy", "host_lists_ok")                         # no lists yet
+    row = mcp_hosts._row("mcp.example.com:443", "owner:ui", "srv", "", "")
+    good = web_sites._sign({"site": "example.org", "level": "may_act"})
+    mcp_hosts._write_raw({"mcp.example.com:443": row})
+    (tmp_path / "web_sites.json").write_text(json.dumps(
+        {"example.org": {"site": "example.org", "level": "may_act", "sig": good}}), encoding="utf-8")
+    assert check() == ("healthy", "host_lists_ok")
+    row = dict(row, host="mcp.example.com:443", server="changed")             # edited on disk
+    mcp_hosts._write_raw({"mcp.example.com:443": row})
+    (tmp_path / "web_sites.json").write_text(json.dumps(
+        {"example.org": {"site": "example.org", "level": "may_act", "sig": "0" * 64}}), encoding="utf-8")
+    state, code = check()
+    assert (state, code) == ("broken", "host_rows_unsigned:2") and "example" not in code
+    (tmp_path / "mcp_hosts.json").write_text("{not json", encoding="utf-8")
+    assert check()[1].startswith("host_list_unreadable")
+
+    def no_key():
+        raise RuntimeError("keychain busy")
+    monkeypatch.setattr(action_gate, "_governance_key", no_key)
+    assert check() == ("unverified", "key_not_available")                  # not a card: _problem ignores it
+    assert not sv._problem("connector_domains", "unverified", "key_not_available")
+
+
+def test_the_host_lists_check_waits_for_a_governance_key(monkeypatch):
+    sv = _sv()
+    assert "connector_domains" in getattr(sv, "NEEDS_KEY", ()), "the host-list check could mint a governance key"

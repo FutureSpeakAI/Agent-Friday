@@ -275,16 +275,16 @@ def _release_needs() -> set:
 
 
 def test_the_upgrade_job_proves_every_previous_release():
-    """Upgrades are proved from v5.14.3 (a zip), Beta 1.0, 1.0.1, 1.1 and 1.2 (setup programs);
+    """Upgrades are proved from v5.14.3 (a zip), Beta 1.0, 1.0.1, 1.1, 1.2 and 1.2 update 2 (setup programs);
     a manual run may name a single base. The release waits for every leg."""
     upgrade = WORKFLOW[WORKFLOW.index("  upgrade:"):WORKFLOW.index("  release:")]
     assert "matrix:" in upgrade and "fail-fast: false" in upgrade
-    assert '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1","v1.1.0-beta.1","v1.2.0-beta.1"]' in upgrade, "every published base is the default"
+    assert '["v5.14.3","v1.0.0-beta.1","v1.0.1-beta.1","v1.1.0-beta.1","v1.2.0-beta.1","v1.2.0-beta.2"]' in upgrade, "every published base is the default"
     assert "github.event.inputs.previous" in upgrade, "the manual input still overrides to a single base"
     assert "-BaseExe" in upgrade and "-BaseZip" in upgrade
     assert "AgentFriday-Setup-*.exe" in upgrade and "AgentFriday-Setup-*.zip" in upgrade
     assert "name: upgrade-evidence-${{ matrix.base }}" in upgrade, "one evidence artifact per leg"
-    assert {"tests-green", "acceptance", "fresh-install", "upgrade", "bundle-uninstall-restore"} <= _release_needs(), "the release waits for every leg"
+    assert {"tests-green", "acceptance", "upgrade-bases", "fresh-install", "upgrade", "bundle-uninstall-restore"} <= _release_needs(), "the release waits for every leg"
     harness = (REPO / "packaging" / "windows" / "tests" / "rehearsal" / "upgrade-vault-test.ps1").read_text(encoding="utf-8")
     assert "[string] $BaseExe" in harness and "give -BaseZip or -BaseExe, not both" in harness
     for switch in ("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/ModelsCloud=1", "/SkipMemory=1", "/SkipJudgment=1"):

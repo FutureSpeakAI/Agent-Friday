@@ -57,6 +57,7 @@ from agent_friday.services import screen_click as _screen_click
 from agent_friday.core import login_required
 from agent_friday.services import goals as _goals
 from agent_friday.services import approvals as _approvals
+from agent_friday.services import card_facts as _card_facts
 from agent_friday.routes._errors import api_error, public_result
 from agent_friday.user_errors import message_only
 
@@ -468,8 +469,10 @@ def list_approvals_route():
     kind = request.args.get("kind")
     if status and status not in _approvals.STATUSES:
         return jsonify({"ok": False, "error": f"status must be one of {sorted(_approvals.STATUSES)}"}), 400
+    # Each card with its facts (services/card_facts, NS-18.4-3): worked out now, never stored.
     return jsonify({"ok": True,
-                    "approvals": _approvals.list_approvals(status=status, subject_type=subject_type, kind=kind)})
+                    "approvals": [_card_facts.with_facts(a) for a in
+                                  _approvals.list_approvals(status=status, subject_type=subject_type, kind=kind)]})
 
 
 @goals_bp.route("/api/approvals/<approval_id>", methods=["GET"])
@@ -478,7 +481,89 @@ def get_approval_route(approval_id):
     appr = _approvals.get_approval(approval_id)
     if not appr:
         return jsonify({"ok": False, "error": "not found"}), 404
-    return jsonify({"ok": True, "approval": appr})
+    return jsonify({"ok": True, "approval": _card_facts.with_facts(appr)})
+
+
+#: How long Inspect looks through the action record for the decision that
+#: names a card, before it says the card's action is not recorded.
+INSPECT_SCAN_S = 1.5
+
+
+def _action_of_card(approval_id):
+    """(action id, timed out): the action id of the newest decision or outcome
+    that names this card (action_gate writes the card's id as `approval`), or
+    None; and whether the search stopped at INSPECT_SCAN_S before it finished
+    (then "no action id" means "not read in time", not "not recorded"). Only
+    compared with what the record holds."""
+    import time as _time
+    from agent_friday.services import action_ledger
+    from agent_friday.services import explain as _explain
+    deadline = _time.monotonic() + INSPECT_SCAN_S
+    timed_out = []
+
+    def names_card(e):
+        rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
+        return rec.get("approval") == approval_id or rec.get("approval_id") == approval_id
+
+    def stop():
+        if _time.monotonic() > deadline:
+            timed_out.append(True)
+            return True
+        return False
+
+    rows = action_ledger.entries(["decision", "outcome"], newest_first=True, limit=1,
+                                 where=names_card, stop=stop)
+    for e in rows:
+        rec = e.get("rec") if isinstance(e.get("rec"), dict) else {}
+        env = rec.get("envelope") if isinstance(rec.get("envelope"), dict) else {}
+        aid = _explain.valid_id(rec.get("action_id") or env.get("action_id"))
+        if aid:
+            return aid, False
+    return None, bool(timed_out)
+
+
+@goals_bp.route("/api/approvals/<approval_id>/inspect", methods=["GET"])
+@login_required
+def inspect_approval_route(approval_id):
+    """Inspect (NS-18.4-3): the card's facts and the "why did Friday do that"
+    answer (services/explain, A13) for the action the card is about, read
+    only. The action is the one whose decision names this card; else the
+    card's task; else the answer says it is not recorded yet. Ids, names and
+    fixed words only, as explain gives them. Owner only, like every card read."""
+    try:
+        appr = _approvals.get_approval(approval_id)
+        if not appr:
+            return jsonify({"ok": False, "error": "not found"}), 404
+        from agent_friday.services import explain as _explain
+        facts = _card_facts.safe_card_facts(appr)
+        card_id = appr.get("approval_id")
+        aid, timed_out = _action_of_card(card_id)
+        tid = None if aid else _explain.valid_id((appr.get("payload") or {}).get("task_id"))
+        if not (aid or tid):
+            if timed_out:
+                # the search ran out of time: that is not "nothing is recorded"
+                return jsonify({"ok": True, "approval_id": card_id, "card_facts": facts,
+                                "linked_by": None, "explain": None, "timed_out": True,
+                                "text": "The action record could not be read in time, so Friday "
+                                        "cannot say yet what it records for this card. Try "
+                                        "Inspect again in a moment."})
+            return jsonify({"ok": True, "approval_id": card_id, "card_facts": facts,
+                            "linked_by": None, "explain": None, "timed_out": False,
+                            "text": "No action record names this card yet: Friday records it "
+                                    "when the action is decided or runs."})
+        try:
+            out = _explain.explain(action_id=aid, task_id=tid)
+        except _explain.Busy:
+            resp = jsonify({"ok": False, "code": "busy",
+                            "error": "Another explanation is being read. Try again in a moment."})
+            resp.status_code = 429
+            resp.headers["Retry-After"] = "2"
+            return resp
+        return jsonify({"ok": True, "approval_id": card_id, "card_facts": facts,
+                        "linked_by": "action_id" if aid else "task_id",
+                        "explain": out, "text": str(out.get("text") or "")})
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "This card could not be inspected right now.")
 
 
 @goals_bp.route("/api/approvals/<approval_id>/decide", methods=["POST"])
@@ -518,7 +603,15 @@ def _snapshot_event(pending):
                   and _ip.held("approval:%s" % p.get("approval_id"))]
     except Exception:
         pass
-    return {"type": "snapshot", "pending": pending, "quiet": quiet}
+    return {"type": "snapshot", "pending": [_card_facts.with_facts(p) for p in pending], "quiet": quiet}
+
+
+def _with_card_facts(evt):
+    """A `pending` frame's card with its facts (services/card_facts), on a copy:
+    the same event object is queued to every page."""
+    if isinstance(evt, dict) and evt.get("type") == "pending" and isinstance(evt.get("approval"), dict):
+        return dict(evt, approval=_card_facts.with_facts(evt["approval"]))
+    return evt
 
 
 #: Seconds between heartbeats on a quiet approvals stream.
@@ -561,6 +654,7 @@ def approval_events_route():
                     continue
                 if evt.get("type") == "resync":
                     evt = _snapshot_event(_approvals.list_approvals(status="pending"))
+                evt = _with_card_facts(evt)
                 yield "data: " + _json.dumps(evt, default=str) + "\n\n"
         finally:
             approval_feed.unsubscribe(q)
@@ -840,7 +934,9 @@ def list_outward_tools():
             # travels (docs/security/codeql-residual.md).
             out.append({"name": name, "why": message_only(why),
                         "label": _GRANT_LABELS.get(name)
-                        or _connector_label(name)})
+                        or _connector_label(name),
+                        # one use within a day only (action_gate.NARROW_GRANT_ONLY)
+                        "one_at_a_time": action_gate.narrow_grant_only(name)})
     return jsonify({"tools": out})
 
 
