@@ -1074,13 +1074,15 @@ def run_files(ops: list[dict], *, approval_id: str | None = None,
                     cur.mkdir()
                     made.append(cur)
                 it.update(ok=True, made=[str(PurePosixPath(parent, *o["make"][:i + 1]))
-                                         for i in range(len(made))])
+                                         for i in range(len(made))],
+                          verified=all(m.is_dir() for m in made))     # read back (NS-4.6-1)
             else:
                 src = sf.resolve(o["root"], o["path"])
                 if o["op"] == "trash":
                     dst = journal.home_trash(rid_receipt) / "files" / o["root"] / o["path"]
                     journal.safe_move(src, dst)
-                    it.update(ok=True, trash=dst.relative_to(journal.home_trash(rid_receipt)).as_posix())
+                    it.update(ok=True, trash=dst.relative_to(journal.home_trash(rid_receipt)).as_posix(),
+                              verified=dst.exists() and not src.exists())     # read back (NS-4.6-1)
                 else:
                     folder = [x for x in o["to_path"].split("/")[:-1] if x]
                     made = []
@@ -1101,21 +1103,32 @@ def run_files(ops: list[dict], *, approval_id: str | None = None,
                     if src.is_dir() and os.stat(src).st_dev != os.stat(dest_parent).st_dev:
                         raise Refused("a folder cannot move to another drive here; move its files")
                     journal.safe_move(src, target)
-                    it.update(ok=True, to_root=o["to_root"], to_path=o["to_path"], made=made)
+                    it.update(ok=True, to_root=o["to_root"], to_path=o["to_path"], made=made,
+                              verified=target.exists() and not src.exists())     # read back (NS-4.6-1)
         except Exception as e:
             it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
         items.append(it)
     ok = sum(1 for i in items if i["ok"])
     n = len(items)
+    # A change the disk does not show is not done, whatever the move call returned (NS-4.6-1). It stays
+    # in the undo list (the call may have changed something), but is named and the receipt is partial.
+    unread = [i for i in items if i["ok"] and not i.get("verified")]
     doing, _lines = _file_words(ops)
-    summary = ("Done: %s." % doing) if ok == n else (
-        "%d of %d done (%s); %s" % (ok, n, doing, next((i["error"] for i in items if not i["ok"]), "")))
-    status = "complete" if ok == n else ("partial" if ok else "failed")
+    if unread:
+        summary = "%d of %d done (%s); I could not confirm %s on disk" % (
+            n - len(unread), n, doing, ", ".join(str(i.get("name") or i.get("path")) for i in unread[:5]))
+    elif ok == n:
+        summary = "Done: %s." % doing
+    else:
+        summary = "%d of %d done (%s); %s" % (ok, n, doing, next((i["error"] for i in items if not i["ok"]), ""))
+    status = "complete" if ok == n and not unread else ("partial" if ok else "failed")
     op0 = ops[0]["op"] if ops else ""
     said = {"move": "Moved %s", "rename": "Renamed %s", "trash": "Moved %s to Friday's trash",
             "folder": "Made %s"}.get(op0, "Changed %s") % _plural(ok, "folder" if op0 == "folder" else "item")
     if ok < n:
         said += "; %d could not be changed (the reason is in System, Changes Friday made)" % (n - ok)
+    if unread:
+        said += "; %d could not be found on disk afterwards" % len(unread)
     said += "."
     return journal.record("organize_files", ops[0]["op"] if ops else "", "files", items=items,
                           summary=summary, status=status,
