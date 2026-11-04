@@ -96,7 +96,10 @@ def test_a_page_that_opens_later_gets_the_waiting_cards_first(client):
     (snap,) = _frames(resp, 1)
     assert snap["type"] == "snapshot"
     assert [c["approval_id"] for c in snap["pending"]] == [a["approval_id"]]
-    assert snap["pending"][0] == json.loads(json.dumps(ap.get_approval(a["approval_id"])))
+    # the stored card, plus its facts worked out as it was served (services/card_facts, A14)
+    served = dict(snap["pending"][0])
+    assert isinstance(served.pop("card_facts"), dict)
+    assert served == json.loads(json.dumps(ap.get_approval(a["approval_id"])))
 
 
 def test_a_connected_page_hears_new_and_decided_cards(client):
