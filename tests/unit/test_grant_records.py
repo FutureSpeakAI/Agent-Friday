@@ -176,8 +176,9 @@ CASES = {
     "starts_at": lambda: _limited(starts_at=time.time() + 3600),
     "max_uses": _used_up,
     "principal": lambda: _limited(principal="crew:helper"),
+    # (one use: a grant for delete_calendar_event can be no broader, NS-18.2-6)
     "tools": lambda: action_gate.create_grant(tools=["delete_calendar_event"], scope=SCOPE,
-                                              expires_in_seconds=3600, max_uses=3),
+                                              expires_in_seconds=3600, max_uses=1),
     "arg_constraints": lambda: _limited(arg_constraints={"title": {"prefix": "Standup"}}),
     "data_scope": lambda: _limited(data_scope=["calendar"]),
     "destination_scope": lambda: _limited(destination_scope=["@example.org"]),

@@ -42,6 +42,11 @@ def backend(monkeypatch):
     published = []
     monkeypatch.setattr(ra, "survey_live_seats", lambda *a, **k: dict(LIVE))
     monkeypatch.setattr(ra, "_seat_num_ctx", lambda pid: None)
+    # adopt_live re-checks the port under its lock: answer as the machine would
+    # (the seat still there), never by asking this machine's real ports.
+    monkeypatch.setattr(ra, "_listening_ports", lambda: {port: pid for pid, port in LIVE.values()})
+    monkeypatch.setattr(ra, "_model_on_port",
+                        lambda port: next((m for m, (_p, pt) in LIVE.items() if pt == port), None))
     monkeypatch.setattr(ra, "_publish_endpoints", lambda procs, drop=(): published.append(dict(procs)))
 
     def _never(*a, **k):
