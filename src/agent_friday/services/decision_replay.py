@@ -555,3 +555,72 @@ def run_nightly(should_stop: Optional[Callable[[], bool]] = None, now: Optional[
     path = write(rep)
     return {"written": path.name, "heads": len(rep["heads"]), "rows": rep["rows"],
             "shortfall_s": rep["shortfall_s"], "seconds": round(time.time() - t0, 2)}
+
+
+# --------------------------------------------------------------------------
+#  Settings > Laya: the report card's decision-head rows
+# --------------------------------------------------------------------------
+
+#: Plain names for the report card. A head this table does not name shows its id.
+HEAD_NAMES = {
+    "triage.mail": "Mail lanes", "triage.news": "News value", "triage.notify": "Notification flag",
+    "triage.memory": "Memory proposals", "evidence.sufficient": "Is the found memory enough?",
+    "evidence.holds": "Does a passage hold the answer?", "evidence.supports": "Does a source support its sentence?",
+    "loop.no_progress": "Is a task stuck?",
+}
+
+
+def _dict(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def _newest_report() -> Optional[dict]:
+    """The newest one-per-night report that reads as a report (reruns, named
+    <night>-<n>.json, left out); an unreadable newest falls back to the one
+    before. Reads one file in the usual case."""
+    d = bench_dir()
+    if not d.exists():
+        return None
+    for f in sorted((p for p in d.glob("*.json") if len(p.stem) == 10), reverse=True):
+        try:
+            r = json.loads(f.read_text("utf-8"))
+        except (ValueError, OSError):
+            continue
+        if isinstance(r, dict) and isinstance(r.get("heads", {}), dict) and isinstance(r.get("night"), str):
+            return r
+    return None
+
+
+def report_card() -> dict:
+    """One row per decision head for Settings > Laya: its mode and version, and
+    what the newest nightly report found under the thresholds that ship. Read
+    only: it reads the head files and one report, runs nothing, and holds
+    counts only. ``night`` is None before the first report."""
+    from agent_friday.services import decision_heads
+    latest = _newest_report()
+    heads = _dict((latest or {}).get("heads"))
+    rows = []
+    for st in decision_heads.status():
+        hid = st.get("id")
+        h = _dict(heads.get(hid))
+        s = _dict(_dict(h.get("by_set")).get("shipped"))
+        v = _dict(s.get("verdict"))
+        drift = _dict(h.get("drift"))
+        tr = s.get("take_rate")
+        rows.append({
+            "id": hid, "name": HEAD_NAMES.get(hid, hid), "mode": st.get("mode"), "source": st.get("source"),
+            "tag": st.get("tag"), "usable": bool(st.get("usable")), "problem": st.get("problem") or "",
+            "decisions": h.get("n") if h else None,
+            # a percent, as the tab's pct() expects; "at least" when an override hid some rows
+            "take_rate_pct": round(float(tr) * 100.0, 1) if isinstance(tr, (int, float)) else None,
+            "lower_bound": bool(s.get("lower_bound")),
+            "pass": v.get("pass"), "fail": v.get("fail"), "uncertain": v.get("uncertain"),
+            "miss": s.get("miss"), "wrong": s.get("wrong"),
+            "drift": drift.get("take_rate_vs_week"), "drift_flag": bool(drift.get("flag")),
+        })
+    return {"night": (latest or {}).get("night"), "shortfall_s": (latest or {}).get("shortfall_s") or 0,
+            "rows": rows,
+            "note": ("The numbers are every decision the heads made in the period the last nightly report "
+                     "covered, replayed on this PC from the labels and scores they logged, counts only. Right "
+                     "and wrong need an answer you gave (a correction or a confirmation); without one a "
+                     "decision is not known yet.")}
