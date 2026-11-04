@@ -2611,9 +2611,10 @@ _CONVERSATION_MEMORY_LOCK = threading.Lock()
 def _get_conversation_memory():
     """Return the process-wide ConversationMemory, building it lazily."""
     global _CONVERSATION_MEMORY
-    if _CONVERSATION_MEMORY is None:
+    if _CONVERSATION_MEMORY is None or getattr(_CONVERSATION_MEMORY, "_closed", False):
         with _CONVERSATION_MEMORY_LOCK:
-            if _CONVERSATION_MEMORY is None:
+            # A rebuild replaced the store (services/memory_store_repair): fetch the live one.
+            if _CONVERSATION_MEMORY is None or getattr(_CONVERSATION_MEMORY, "_closed", False):
                 from agent_friday.conversation_memory import get_conversation_memory
                 _CONVERSATION_MEMORY = get_conversation_memory()
     return _CONVERSATION_MEMORY
@@ -4750,8 +4751,26 @@ def _build_context_prompt(message, workspace='', vision_description=None, provid
         except VaultAccessDenied:
             raise
         except Exception as _ae:
-            print(f"  [VAULT] assemble failed, falling back to ungated: {_ae}")
+            # Fail closed: a gate that could not run must not hand a cloud
+            # model the sections it would have withheld. A local seat still
+            # gets everything; anything else gets the public sections only.
+            print(f"  [VAULT] assemble failed; sending public sections only to a cloud model: {_ae}")
+            return _public_sections_only(sections, provider, model), sources_consulted
     return '\n'.join(t for _, t in sections), sources_consulted
+
+
+def _public_sections_only(sections, provider, model):
+    """The prompt when the vault gate itself failed: everything for a local
+    seat, only TIER_1 sections for any other destination. Pure."""
+    try:
+        # The vault's own notion of local (VaultAccessControl.can_access).
+        from agent_friday.privacy.vault_access import LOCAL_PROVIDERS as _LOCAL
+        local = (not _is_cloud_model_tag(model)) and str(provider or "").lower() in _LOCAL
+    except Exception:
+        local = False
+    if local:
+        return '\n'.join(t for _, t in sections if t)
+    return '\n'.join(t for tier, t in sections if t and tier == 1)
 
 
 def _load_smart_context(user_message, workspace=None, include_people=True):

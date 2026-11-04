@@ -412,6 +412,166 @@ def fingerprint_holds(rec: Dict[str, Any]) -> bool:
     return not fp or fp == _action_fp(rec)
 
 
+# ── Approval tokens (NS-18.6-1) ──────────────────────────────────────────────────────────────────
+# A card is a token for one action, and two HMACs with the governance key make it one that only
+# this module can mint:
+#   card_seal      written when the card is raised: what the owner is shown (title, description,
+#                  action text) and what it authorises (the fingerprint of kind, subject and
+#                  payload), for which principal. An approval is refused for a card whose card seal
+#                  does not hold, so a pending card cannot be swapped under the owner's eyes.
+#   approval_seal  written by this module's approve paths only (decide, a pre-approval, an in-module
+#                  _patch/_upsert to approved): the card seal's fields plus approved, who decided
+#                  and from where. Nothing spends a card whose approval seal does not hold, so a
+#                  card set to approved in the file is never run.
+# Spending is one-time twice over: the card is marked used, and the spend is a durable entry in the
+# signed action ledger (approval_spent; a revocation is approval_revoked) that a restored older
+# approvals.json cannot undo. The approval seal is removed when the card is spent or revoked.
+
+_CARD_FIELDS = ("approval_id", "kind", "subject_type", "subject_id", "title", "description",
+                "action_description")
+_SEAL_FIELDS = _CARD_FIELDS + ("status", "decided_by", "decided_source", "pre_approved")
+_CARD_TAG = b"agent-friday/approval-card/v1\0"
+_SEAL_TAG = b"agent-friday/approval/v1\0"
+#: The governance key, read once a minute at most (each read is an OS keychain call).
+_KEY_CACHE: Dict[str, Any] = {"key": None, "at": 0.0}
+
+
+def _seal_key() -> bytes:
+    now = time.monotonic()
+    if _KEY_CACHE["key"] and now - _KEY_CACHE["at"] < 60:
+        return _KEY_CACHE["key"]
+    from agent_friday.governance.proof_of_integrity import get_governance_key
+    key = get_governance_key()
+    if not key:
+        raise RuntimeError("governance key unavailable")
+    _KEY_CACHE.update(key=key, at=now)
+    return key
+
+
+def _mac(tag: bytes, rec: Dict[str, Any], fields, key: Optional[bytes]) -> str:
+    import hashlib
+    import hmac as _hm
+    body = {k: rec.get(k) for k in fields}
+    body["principal"] = rec.get("principal") or "owner"
+    body["fp"] = _action_fp(rec)
+    blob = json.dumps(body, sort_keys=True, default=str).encode("utf-8")
+    return _hm.new(key or _seal_key(), tag + blob, hashlib.sha256).hexdigest()
+
+
+def _holds(rec: Dict[str, Any], field: str, tag: bytes, fields) -> bool:
+    import hmac as _hm
+    try:
+        seal = (rec or {}).get(field)
+        return bool(seal) and _hm.compare_digest(str(seal), _mac(tag, rec, fields, None))
+    except Exception:  # noqa: BLE001 - no key, no proof
+        return False
+
+
+def _raising_principal() -> str:
+    """Whose card this is: the request's principal when a page raised it, else the owner (every
+    background, scheduled and chat path acts for the owner). Never raises."""
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            return str(getattr(g, "friday_principal", None) or "owner")[:60]
+    except Exception:  # noqa: BLE001
+        pass
+    return "owner"
+
+
+def card_seal_holds(rec: Dict[str, Any]) -> bool:
+    """The card is what this module raised: shown text and authorised action. Never raises."""
+    return _holds(rec, "card_seal", _CARD_TAG, _CARD_FIELDS)
+
+
+def seal_holds(rec: Dict[str, Any]) -> bool:
+    """The approved card carries a valid approval seal for exactly what it is now. Never raises."""
+    return _holds(rec, "approval_seal", _SEAL_TAG, _SEAL_FIELDS)
+
+
+def _seal_card(rec: Dict[str, Any]) -> bool:
+    try:
+        rec["card_seal"] = _mac(_CARD_TAG, rec, _CARD_FIELDS, None)
+        return True
+    except Exception as e:  # noqa: BLE001 - an unsealed card cannot be approved (fail closed)
+        rec.pop("card_seal", None)
+        _log.warning("approval card not sealed: %s", type(e).__name__)
+        return False
+
+
+def _seal_approval(rec: Dict[str, Any]) -> bool:
+    try:
+        rec["approval_seal"] = _mac(_SEAL_TAG, rec, _SEAL_FIELDS, None)
+        return True
+    except Exception as e:  # noqa: BLE001 - unsealed: it cannot be spent (fail closed)
+        rec.pop("approval_seal", None)
+        _log.warning("approval not sealed: %s", type(e).__name__)
+        return False
+
+
+_SPENT_KINDS = ("approval_spent", "approval_revoked")
+_CLAIM_KINDS = _SPENT_KINDS + ("approval_claimed",)
+
+
+def _ledger_has(approval_id: str, kinds=_SPENT_KINDS) -> bool:
+    """The ledger records this card under one of `kinds`. Raises when the ledger cannot be read
+    (a strict read, archive included; one retry on a momentary sharing violation)."""
+    from agent_friday.services import action_ledger
+    aid = str(approval_id)
+    for attempt in (0, 1):
+        try:
+            rows = action_ledger.entries(list(kinds), newest_first=False, strict=True, archive=True)
+            break
+        except PermissionError:
+            if attempt:
+                raise
+            time.sleep(0.05)
+    return any(str((e.get("rec") or {}).get("approval") or "") == aid for e in rows)
+
+
+def _claim_token(rec: Dict[str, Any], by: str) -> bool:
+    """For the executor's claim: the card is a live token that nobody claimed or spent before,
+    and the claim is a durable ledger entry. The seal stays: the governance checkpoint spends the
+    card (spend_once) when the executor's call runs on it."""
+    aid = str(rec.get("approval_id") or "")
+    if not fingerprint_holds(rec) or not seal_holds(rec):
+        _log.error("approval %s is not sealed for what it now says; it is not run", aid)
+        return False
+    try:
+        if _ledger_has(aid, _CLAIM_KINDS):
+            _log.error("approval %s was already claimed, spent or revoked; it is not run again", aid)
+            return False
+        from agent_friday.services import action_ledger
+        action_ledger.append("approval_claimed", {"approval": aid, "by": str(by or "")[:40]},
+                             durable=True)
+    except Exception as e:  # noqa: BLE001 - no ledger, no claim
+        _log.error("approval %s not claimed: the action ledger is unavailable (%s)", aid, type(e).__name__)
+        return False
+    return True
+
+
+def _spend_token(rec: Dict[str, Any], by: str) -> bool:
+    """Check the card is a live token and spend it in the ledger, durably, before anything runs.
+    False (and nothing spent) when it is not sealed for what it says, was spent or revoked
+    before, or the ledger cannot be read or written."""
+    aid = str(rec.get("approval_id") or "")
+    if not fingerprint_holds(rec) or not seal_holds(rec):
+        _log.error("approval %s is not sealed for what it now says; it is not used", aid)
+        return False
+    try:
+        if _ledger_has(aid):
+            _log.error("approval %s was already spent or revoked; it is not used again", aid)
+            return False
+        from agent_friday.services import action_ledger
+        action_ledger.append("approval_spent", {"approval": aid, "by": str(by or "")[:40]},
+                             durable=True)
+    except Exception as e:  # noqa: BLE001 - no ledger, no spend
+        _log.error("approval %s not spent: the action ledger is unavailable (%s)", aid, type(e).__name__)
+        return False
+    rec.pop("approval_seal", None)
+    return True
+
+
 #: Where a decision was made, from its channel (decided_source).
 _DEVICE_OF_SOURCE = {"desktop_press": "this_pc", "typed": "this_pc", "voice": "this_pc",
                      "chat": "this_pc", "owner": "this_pc", "page_on_this_pc": "this_pc",
@@ -500,6 +660,14 @@ def _write_store(records: List[dict]) -> None:
 
 
 def _upsert(record: dict) -> dict:
+    """Write one card as given. This is an in-module call (the store file itself is never read
+    back into it), so a card given here without seals is sealed as given: its card seal, and
+    its approval seal when it is approved and unspent."""
+    if isinstance(record, dict) and not record.get("card_seal"):
+        _seal_card(record)
+    if isinstance(record, dict) and record.get("status") == "approved" \
+            and not record.get("consumed") and not record.get("approval_seal"):
+        _seal_approval(record)
     with _LOCK:
         recs = _read_store()
         for i, r in enumerate(recs):
@@ -518,10 +686,21 @@ def _patch(approval_id: str, **fields) -> Optional[dict]:
         for r in recs:
             if r.get("approval_id") == approval_id:
                 stale = not fingerprint_holds(r)
+                material = any(k in fields for k in _SEAL_FIELDS + ("payload", "principal"))
+                card_ok_before = card_seal_holds(r)
+                card_ok = material and card_ok_before
+                to_approved = fields.get("status") == "approved" and r.get("status") != "approved"
                 r.update(fields)
                 if any(k in fields for k in ("payload", "subject_id", "kind", "subject_type")) \
                         and r.get("action_fingerprint") and not stale:
                     r["action_fingerprint"] = _action_fp(r)      # a change made here, on purpose
+                if card_ok:
+                    _seal_card(r)                                # a change made here, on purpose
+                if to_approved and not r.get("consumed") and card_ok_before:
+                    _seal_approval(r)                            # an approve made here, on purpose
+                elif material and not to_approved:
+                    # what an approval authorised changed: it no longer authorises anything
+                    r.pop("approval_seal", None)
                 _write_store(recs)
                 return dict(r)
     return None
@@ -692,6 +871,8 @@ def create_approval(*, kind: str, subject_type: str, subject_id: str, title: str
     record["action_fingerprint"] = _action_fp(record)
     if record["decided_source"]:
         record["decided_device"] = decided_device(record["decided_source"])
+    record.setdefault("principal", _raising_principal())
+    _seal_card(record)
     try:
         from agent_friday.services import off_record as _off
         if _off.skip("approvals"):
@@ -752,7 +933,9 @@ def record_pre_approved(*, kind: str, subject_type: str, subject_id: str, title:
     record["action_fingerprint"] = _action_fp(record)
     if not law1_blocked:
         record["decided_device"] = decided_device("standing_grant")
-    _upsert(record)
+    record.setdefault("principal", _raising_principal())
+    _seal_card(record)
+    _upsert(record)                  # seals the approval (an approve path of this module)
     return record
 
 
@@ -783,8 +966,7 @@ def spend_once(approval_id: str, actor: str, detail: Optional[dict] = None) -> b
         rec = next((r for r in recs if r.get("approval_id") == approval_id), None)
         if rec is None or rec.get("status") != "approved" or rec.get("consumed"):
             return False
-        if not fingerprint_holds(rec):
-            _log.error("approval %s was changed after it was made; it is not used", approval_id)
+        if not _spend_token(rec, actor):
             return False
         now = time.time()
         rec.update(consumed=True, consumed_at=now, used_by=actor, used_at=now,
@@ -818,8 +1000,7 @@ def claim_for_execution(approval_id: str, by: Optional[str] = None) -> bool:
                 return False
             if r.get("consumed") or r.get("executing_at"):
                 return False
-            if not fingerprint_holds(r):
-                _log.error("approval %s was changed after it was made; it is not run", approval_id)
+            if not _claim_token(r, by or "executor"):
                 return False
             r["executing_at"] = time.time()
             if by:
@@ -849,6 +1030,23 @@ def claim_chat_confirmation(approval_id: str, tool: str, tool_input: dict) -> bo
         if (payload.get("tool") != tool or json.dumps(payload.get("input"), sort_keys=True)
                 != json.dumps(tool_input, sort_keys=True)):
             return False
+        if rec.get("status") == "pending" and not card_seal_holds(rec):
+            _log.error("approval %s is not the card that was raised; not approved in chat", approval_id)
+            return False
+        if rec.get("status") == "approved" and not seal_holds(rec):
+            _log.error("approval %s is not sealed; not used in chat", approval_id)
+            return False
+        try:
+            if _ledger_has(approval_id):
+                return False
+            from agent_friday.services import action_ledger
+            action_ledger.append("approval_spent", {"approval": str(approval_id), "by": "chat"},
+                                 durable=True)
+        except Exception as e:  # noqa: BLE001 - no ledger, no spend
+            _log.error("approval %s not spent in chat: ledger unavailable (%s)", approval_id,
+                       type(e).__name__)
+            return False
+        rec.pop("approval_seal", None)
         now = time.time()
         was_pending = rec.get("status") == "pending"
         if was_pending:
@@ -881,7 +1079,7 @@ def _consume(approval: Dict[str, Any]) -> (Dict[str, Any], bool):
         recs = _read_store()
         rec = next((r for r in recs if r.get("approval_id") == approval.get("approval_id")), None)
         if rec is None or rec.get("status") != "approved" or rec.get("consumed") \
-                or not fingerprint_holds(rec):
+                or not _spend_token(rec, "consume"):
             return (dict(rec) if rec else approval), False
         # When it was burned: a crash after this and before mark_used is judged
         # from this moment (services/card_recovery), never from the decision.
@@ -1029,6 +1227,10 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
             # Send on a card that lets private text leave the PC is its own button on screen (or the
             # owner's own words after a read-back), never another approvals route (cloud_release.decide).
             return dict(rec), False
+        if decision == "approve" and not card_seal_holds(rec):
+            # changed since it was raised (or not raised by this module): never approved as is
+            _log.error("approval %s is not the card that was raised; it is not approved", approval_id)
+            return dict(rec), False
         rec["status"] = "approved" if decision == "approve" else "denied"
         rec["decided_at"] = time.time()
         rec["decided_by"] = decided_by
@@ -1039,6 +1241,14 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
+        rec.pop("approval_seal", None)
+        if decision == "approve" and not _seal_approval(rec):
+            # the decision cannot be made a token (no governance key): it stays undecided
+            for k in ("decided_at", "decided_by", "decided_source", "decided_policy_version",
+                      "decided_device", "decided_check", "decision_note"):
+                rec.pop(k, None)
+            rec["status"] = "pending"
+            return dict(rec), False
         _write_store(recs)
         out = dict(rec)
     _feed("card_resolved", out)
@@ -1221,6 +1431,13 @@ def withdraw_unused_approved(by: str, note: str = "") -> int:
                 # (a card already claimed by its runner is mid-action: it is not taken back)
                 r["status"] = "expired"
                 r["withdrawn"] = True
+                r.pop("approval_seal", None)
+                try:
+                    from agent_friday.services import action_ledger
+                    action_ledger.append("approval_revoked", {"approval": str(r.get("approval_id"))},
+                                         durable=True)
+                except Exception as e:  # noqa: BLE001 - the seal is gone either way
+                    _log.warning("revocation not in the ledger: %s", type(e).__name__)
                 r["decided_at"] = time.time()
                 r["decided_by"] = by
                 r["decision_note"] = note
