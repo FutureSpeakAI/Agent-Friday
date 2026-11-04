@@ -184,3 +184,19 @@ def test_more_than_a_minute_is_refused_before_it_is_read(asr):
     r = c.post("/tv/v1/speech", data=ONE_SECOND * (speech.MAX_SECONDS + 2),
                headers={"Authorization": gateway.AUTH_SCHEME + tok})
     assert r.status_code == 413 and asr.heard == []
+
+
+def test_the_tv_model_is_a_pinned_install_and_found_where_it_lands(tmp_path, monkeypatch):
+    from agent_friday.services import feature_models as fm
+    from agent_friday.services import voice_artifacts as va
+    aid = fm.WHISPER_ARTIFACT[speech.MODEL]
+    assert va.pinned(aid) == (True, "")
+    assert "preprocessor_config.json" in va.ARTIFACTS[aid]["files"]   # turbo's 128 mel bins
+    monkeypatch.setattr(fm, "_whisper_roots", lambda: [tmp_path])
+    snap = tmp_path / va.repo_folder(va.ARTIFACTS[aid]["repo"]) / "snapshots" / va.ARTIFACTS[aid]["revision"]
+    snap.mkdir(parents=True)
+    (snap / "model.bin").write_bytes(b"x")
+    (snap / "config.json").write_text("{}")
+    (snap.parent.parent / "refs").mkdir()
+    (snap.parent.parent / "refs" / "main").write_text(va.ARTIFACTS[aid]["revision"])
+    assert fm.whisper_model_dir(speech.MODEL) == snap
