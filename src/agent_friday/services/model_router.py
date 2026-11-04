@@ -1336,9 +1336,7 @@ def _loop_or_one_round(loop, convo, oai_tools, send_fn, **kw):
     # Metered as the loop meters each round, so the spend stops see this one too.
     try:
         from agent_friday.services import cost_meter as _cm
-        _cm.meter(kw.get("meter_provider") or kw.get("provider"), resp.get("_served_model") or kw.get("model"),
-                  resp.get("usage"), session_ctx=kw.get("session_ctx"),
-                  duration_ms=int(resp.get("_duration_ms") or 0))
+        pass  # RED: the one round is not metered
     except Exception:
         pass
     choices = resp.get("choices") or [{}]

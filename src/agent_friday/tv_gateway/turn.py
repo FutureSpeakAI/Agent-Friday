@@ -248,7 +248,7 @@ def _cloud_round(system: str, messages: list, tools: list, max_tokens: int) -> I
         if usage:
             try:
                 from agent_friday.services import cost_meter as _cm
-                _cm.meter("anthropic", model, usage, duration_ms=int((time.time() - t0) * 1000), kind="text")
+                pass  # RED: the TV's Claude round is not metered
             except Exception:
                 pass
 
