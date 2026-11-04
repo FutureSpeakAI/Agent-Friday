@@ -9,6 +9,7 @@ all the actual logic lives in services/connectors.py.
     GET  /api/connectors/health           → ambient health snapshot
     GET  /api/connectors/intelligence     → cross-connector briefing signals
     GET  /api/connectors/<key>            → one connector's live status
+    GET  /api/connectors/<key>/contract   → what it declares (hosts, what leaves, what is kept)
     POST /api/connectors/<key>/connect    → initiate a connection
     POST /api/connectors/<key>/disconnect → tear down a connection
 """
@@ -140,6 +141,22 @@ def api_connector_get(key):
     except Exception as e:
         traceback.print_exc()
         return api_error(e, "Couldn't load the connector")
+
+
+@connectors_bp.route('/api/connectors/<key>/contract', methods=['GET'])
+def api_connector_contract(key):
+    """What one connector declares (BD-06, NS-23.1-4): where it connects, what the service
+    receives, what is kept on this PC and for how long, its limits and what removing it does,
+    with the card the Connections page shows. Google's is its full contract."""
+    from agent_friday.services import connector_declarations as _cd
+    try:
+        c = _cd.contract(key)
+    except Exception as e:
+        traceback.print_exc()
+        return api_error(e, "Couldn't read the connector's declaration")
+    if c is None:
+        return jsonify({"status": "error", "error": "unknown connector"}), 404
+    return jsonify({"status": "ok", "contract": c})
 
 
 @connectors_bp.route('/api/workspaces/<ws>/connectors', methods=['GET'])

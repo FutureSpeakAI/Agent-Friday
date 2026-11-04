@@ -98,6 +98,35 @@ class ChannelAdapter:
         self._last_error: Optional[str] = None
         self._turn_pool = None          # the turn worker's queue (submit_turn; BD-13)
         self._turn_lock = threading.Lock()
+        #: a short hash of the token a service refused as revoked or wrong (HTTP 401); the
+        #: channel says so until its token is a different one (BD-06; NS-34.11-3)
+        self._refused_token: Optional[str] = None
+
+    # ── a token the service refused ──────────────────────────────────────────
+    _TOKEN_REFUSED = ("the bot token was revoked or is wrong, so nothing was sent. Paste a new "
+                      "token where this channel is set up.")
+
+    def _token_mark(self) -> str:
+        try:
+            import hashlib
+            return hashlib.sha256((self.token() or "").encode("utf-8")).hexdigest()[:16]
+        except Exception:  # noqa: BLE001 - the credential store could not be read
+            return ""
+
+    def _note_send_error(self, exc: BaseException) -> None:
+        """After a send raised: a refusal of the token itself (HTTP 401) is named on the
+        channel's status until the token changes. Any other refusal leaves the token alone."""
+        try:
+            code = int(getattr(exc, "code", None) or getattr(exc, "status", None) or 0)
+        except (TypeError, ValueError):
+            code = 0
+        if code == 401:
+            self._refused_token = self._token_mark()
+            self._last_error = self._TOKEN_REFUSED
+
+    def needs_token(self) -> bool:
+        refused = getattr(self, "_refused_token", None)
+        return bool(refused) and refused == self._token_mark()
 
     # ── configuration ────────────────────────────────────────────────────────
     def configure(self, config: Dict[str, Any]) -> None:
@@ -371,6 +400,7 @@ class ChannelAdapter:
             "name": self.name,
             "running": self._running,
             "has_token": self.has_token(),
+            "needs_token": self.needs_token(),
             "dependency_ok": self.dependency_ok(),
             "last_error": self._last_error,
             "enabled": bool(self._config.get("enabled", False)),
