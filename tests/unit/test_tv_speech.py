@@ -208,24 +208,29 @@ def test_the_tv_model_is_a_pinned_install_and_found_where_it_lands(tmp_path, mon
     assert fm.whisper_model_dir(speech.MODEL) == snap
 
 
-@pytest.mark.parametrize("who", ["kids", "", "Stephen", "GROWNUP "], ids=["kids", "none", "a-name", "odd-case"])
-def test_a_child_or_unknown_voice_is_not_heard_here(asr, who):
+@pytest.mark.parametrize("who,speaker", [("kids", "kids"), ("", "kids"), ("Stephen", "kids"),
+                                         ("family", "family"), ("grownup", "grownup")],
+                         ids=["kids", "none", "a-name", "family", "grownup"])
+def test_every_voice_is_heard_and_the_receipt_names_the_speaker_not_the_words(asr, who, speaker):
+    from tests.ledger_support import rows
     _, dev = _dev()
-    if who == "GROWNUP ":
-        from agent_friday.tv_gateway.turn import principal_from
-        assert principal_from(who) == "grownup"         # the route reads the header leniently
-        return
-    with pytest.raises(speech.SpeechRefused) as e:
-        speech.transcribe(dev, ONE_SECOND, principal=who)
-    assert e.value.status == 403 and asr.heard == []
+    out = speech.transcribe(dev, ONE_SECOND, principal=who)
+    assert out["text"] == asr.text and asr.heard == [len(ONE_SECOND)]
+    [row] = rows("device_speech")
+    assert row["speaker"] == speaker and "netflix" not in json.dumps(row)
 
 
-def test_the_route_reads_an_unnamed_speaker_as_a_child(asr):
+def test_the_route_hears_an_unnamed_speaker_as_a_child(asr):
+    from tests.ledger_support import rows
     key, dev = _dev()
     c = gateway.create_app().test_client()
     tok = _session(c, key, dev)
     r = c.post("/tv/v1/stt", data=ONE_SECOND, headers={"Authorization": gateway.AUTH_SCHEME + tok})
-    assert r.status_code == 403 and asr.heard == []
+    assert r.status_code == 200 and r.get_json()["text"] == asr.text
+    assert [x["speaker"] for x in rows("device_speech")] == ["kids"]
+    r = c.post("/tv/v1/stt", data=ONE_SECOND, headers={"Authorization": gateway.AUTH_SCHEME + tok,
+                                                        "X-Friday-Principal": "GROWNUP "})
+    assert [x["speaker"] for x in rows("device_speech")] == ["kids", "grownup"]
 
 
 @pytest.mark.parametrize("hint,want", [

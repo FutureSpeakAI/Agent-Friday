@@ -25,9 +25,10 @@ Nothing leaves this PC and nothing is kept:
     clean-up ran. Never the words.
 
 Who is speaking: the TV says (``grownup``, ``family`` or ``kids``; anything
-else reads as kids). A child's voice is not heard here: whether it may leave
-the TV is the owner's decision (DECISIONS-FOR-STEPHEN, TV-D4), so until then
-the answer is a refusal and the TV hears it with its own recognizer.
+else reads as kids). Every one of them is heard here, children included: the
+owner's ruling (DECISIONS-FOR-STEPHEN, TV-D4) is that a child's voice may go
+to this PC's recognizer, because it stays inside the house. The receipt names
+who was speaking, never what was said.
 
 The TV may send names to prefer (``X-Friday-Hint``: apps, shows). They are
 printable ASCII, at most HINT_MAX characters, and reach only the recognizer's
@@ -133,8 +134,7 @@ def cleanup_locally(raw: str) -> tuple:
 
 def transcribe(dev: dict, pcm: bytes, cleanup: bool = False, *, principal: str = "kids",
                hint: str = "") -> dict:
-    if principal not in ("grownup", "family"):
-        raise SpeechRefused(403, "a child's voice stays on the TV until the owner decides otherwise")
+    speaker = principal if principal in ("grownup", "family", "kids") else "kids"
     seconds = check_audio(pcm)
     if not _BUSY.acquire(blocking=False):
         raise SpeechRefused(503, "this computer is already hearing something; the TV can use its own ears")
@@ -158,7 +158,7 @@ def transcribe(dev: dict, pcm: bytes, cleanup: bool = False, *, principal: str =
     finally:
         _BUSY.release()
     device_pairing._receipt("device_speech", dev, seconds=round(seconds, 1), model=MODEL,
-                            on=getattr(asr, "_device", "?"), cleaned=cleaned,
+                            on=getattr(asr, "_device", "?"), cleaned=cleaned, speaker=speaker,
                             ms=int((time.time() - t0) * 1000))
     return {"text": text, "raw": raw if cleaned else None, "cleaned": cleaned, "model": MODEL,
             "ms": int((time.time() - t0) * 1000),
