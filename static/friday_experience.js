@@ -563,6 +563,7 @@
     const [error, setError] = useState('');
     const [approvals, setApprovals] = useState([]);
     const [leftovers, setLeftovers] = useState([]);
+    const [knownHere, setKnownHere] = useState([]);
     const [homeClock, setHomeClock] = useState(() => Date.now());
     const [files, setFiles] = useState({ loading: false, error: '', items: [] });
     const [draft, setDraft] = useState('');
@@ -636,7 +637,7 @@
       // What an upgrade or a restore could not sort out (services/upgrade_review.py):
       // a Home card until the owner marks each item sorted on the Doctor page.
       if (view !== 'day' || !visible || p.enabled === false) return undefined;
-      let stopped = false, timer = null;
+      let stopped = false, timer = null, knownStopped = false;
       const stop = () => { clearInterval(timer); window.removeEventListener('focus', load); window.removeEventListener('friday:home-refresh', load); };
       function load() {
         if (document.hidden || stopped) return;
@@ -646,6 +647,15 @@
         }).then(d => {
           if (stopped || !d || d.status !== 'ok' || !Array.isArray(d.items)) return;
           setLeftovers(d.items.filter(x => x && typeof x.said === 'string'));
+        }).catch(() => {});
+        // known issues of this release that apply to this PC (services/known_issues, §28.10-1)
+        if (!knownStopped) api('/api/doctor/known-issues', { cache: 'no-store' }).then(r => {
+          if (r.status === 401 || r.status === 403) { knownStopped = true; setKnownHere([]); return null; }
+          return r.ok ? r.json() : null;
+        }).then(d => {
+          if (stopped || !d || d.status !== 'ok') return;
+          if (!d.available || !Array.isArray(d.sections)) { setKnownHere([]); return; }
+          setKnownHere(d.sections.flatMap(s => (s.items || []).filter(it => it && it.applies === true && typeof it.title === 'string')));
         }).catch(() => {});
       }
       load(); timer = setInterval(load, 60000);
@@ -851,6 +861,10 @@
           h('ul', null, leftovers.slice(0, 5).map(it => h('li', { key: it.id }, it.said + (typeof it.todo === 'string' && it.todo ? ' ' + it.todo : '')))),
           leftovers.length > 5 && h('p', { className: 'fx-meta' }, 'And ' + (leftovers.length - 5) + ' more on the Doctor page.'),
           h('a', { className: 'fx-action-secondary', href: '/doctor#afterupgrade' }, 'Open the Doctor to sort these out')),
+        knownHere.length > 0 && h('section', { className: 'fx-leftovers', 'aria-labelledby': 'fx-known-h' },
+          h('h2', { id: 'fx-known-h' }, 'Known issues that apply to this PC'),
+          h('ul', null, knownHere.slice(0, 5).map(it => h('li', { key: it.rule || it.title }, it.title))),
+          h('a', { className: 'fx-action-secondary', href: '/doctor#known', target: '_blank', rel: 'noopener' }, 'Read them on the Doctor page')),
         h(HomeCards, { api, active: visible && p.enabled !== false, onNavigate: openWorkspace, onView: go, workspaces, clock: homeClock, draftCache: homeCardEditor, privacyContext: homeCardPrivacy, mutationContext: homeCardMutation }),
         !p.chatOpen && h('form',{className:'fx-day-composer',onSubmit:prepare},
           h('textarea',{value:homePrompt,onChange:e=>setHomePrompt(e.target.value),placeholder:'Ask, make, or pick up where you left off…','aria-label':'Ask '+agentName,rows:3,disabled:preparing}),

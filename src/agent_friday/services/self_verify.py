@@ -24,10 +24,16 @@ network:
   network), the host backend is still classed outward and an unknown backend
   forbidden, and the Python sandbox's environment holds only allowlisted
   variable names and dead proxies. The shell sandbox's environment is not
-  checked here.
+  checked here;
+* connector_domains: the owner's signed lists of where Friday may reach,
+  governance/mcp_hosts (remote add-on servers) and governance/web_sites (sites
+  a task may act on), can be read and every row's signature holds. A row whose
+  signature fails is already treated as absent (never as allowed); this says
+  that it happened, by count only, never naming a host. Needs the governance
+  key, so it is skipped while there is none.
 
-What it does not cover yet, said so the gap stays visible: connector domains
-and principal invariants.
+What it does not cover yet, said so the gap stays visible: principal
+invariants.
 
 A problem goes out through services/integrity_report (the log, /api/health
 under data_integrity, and one Needs-you card per safeguard, raised again if it
@@ -43,7 +49,7 @@ from typing import Callable
 INTERVAL_S = 6 * 3600
 RETRY_S = 600                            # sooner while something failed, so a fix is seen
 FIRST_DELAY_S = 60.0
-NOT_COVERED = ("connector_domains", "principal_invariants")
+NOT_COVERED = ("principal_invariants",)
 
 #: Doctor states that mean the safeguard is not doing its job.
 BAD = {"broken", "misconfigured"}
@@ -166,6 +172,43 @@ def _sandbox() -> tuple:
     return "healthy", "sandbox_rules_ok"
 
 
+def _connector_domains() -> tuple:
+    try:                                  # a key that cannot be read is not a bad row
+        from agent_friday.governance import action_gate
+        action_gate._governance_key()
+    except Exception:  # noqa: BLE001
+        return "unverified", "key_not_available"
+    unreadable, unsigned = 0, 0
+    try:
+        from agent_friday.governance import mcp_hosts as mh
+    except ImportError:
+        mh = None
+    if mh is not None:
+        with mh._LOCK:                    # as all_hosts reads it: never mid-replace
+            raw = mh._read_raw()
+        if raw is None:
+            unreadable += 1
+        else:
+            unsigned += sum(1 for k, row in raw.items() if not mh._verified(row, k))
+    try:
+        from agent_friday.governance import web_sites as ws
+    except ImportError:
+        ws = None
+    if ws is not None:
+        with ws._LOCK:
+            raw = ws._read_raw()
+        if raw.get("__unreadable__"):
+            unreadable += 1
+        else:
+            unsigned += sum(1 for site, row in raw.items() if not site.startswith("__")
+                            and not (ws._verified(row) and isinstance(row, dict) and row.get("site") == site))
+    if unreadable:
+        return "broken", "host_list_unreadable:%d" % unreadable
+    if unsigned:
+        return "broken", "host_rows_unsigned:%d" % unsigned
+    return "healthy", "host_lists_ok"
+
+
 def _key_present() -> bool:
     """Whether a governance key exists, without creating one."""
     try:
@@ -186,6 +229,9 @@ CHECKS = (
     ("update_signatures", _update_signatures,
      "The signature verifier that update checks use no longer tells a good signature from a bad one."),
     ("sandbox", _sandbox, "The Python sandbox's own rules (its network block, its clean environment) are not intact."),
+    ("connector_domains", _connector_domains,
+     "A list of the places Friday may reach (add-on servers, websites) cannot be read, or has rows whose "
+     "signature does not hold; those rows are not used. Allow each place again, or remove it, in Settings."),
 )
 
 
@@ -202,7 +248,7 @@ def _problem(cid: str, state: str, code: str) -> bool:
 _RUN = threading.Lock()
 #: Checks that reach the action ledger (and so its key): skipped while there is
 #: no governance key yet, so a sweep never creates one.
-NEEDS_KEY = {"authority"}
+NEEDS_KEY = {"authority", "connector_domains"}
 
 
 def sweep(record: bool = True) -> dict:
