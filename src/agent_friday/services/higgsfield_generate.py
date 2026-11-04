@@ -99,7 +99,11 @@ def _call(tool: str, arguments: dict, timeout: float = 120.0):
             # asked for.
             raise EgressBlocked(explanation or
                                 "blocked by the egress gate before submission")
-    raw = mgr.call(MCP_SERVER, tool, arguments, timeout=timeout)
+    # Inside another tool's call (generate_*): what this one call noted stays out of that
+    # tool's record; the caller turns a failure into its own status (connector_outcome).
+    from agent_friday.services import connector_outcome as _co
+    with _co.per_item():
+        raw = mgr.call(MCP_SERVER, tool, arguments, timeout=timeout)
     if isinstance(raw, (dict, list)):
         return raw
     text = str(raw or "").strip()

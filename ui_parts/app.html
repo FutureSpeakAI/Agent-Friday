@@ -24528,6 +24528,56 @@ function MailDefaultAccountRow({ s, save }) {
       E('option', { value: '' }, 'Ask me'),
       list.map(a => E('option', { key: a.id, value: a.id }, name(a)))));
 }
+// Settings -> Connections -> Platform connectors: what each connector declares (BD-06, NS-23.1-4):
+// where it connects, what the service receives, what is kept on this PC and for how long, its
+// limits and what removing it does. Read only when opened (/api/connectors/<id>/contract).
+function ConnectorContractCard({
+  id,
+  name
+}) {
+  const [card, setCard] = useState(null);
+  const [err, setErr] = useState('');
+  const onToggle = e => {
+    if (!e.currentTarget.open || card) return;
+    apiFetch('/api/connectors/' + encodeURIComponent(id) + '/contract').then(r => r.json()).then(d => {
+      const c = d && d.contract && d.contract.card;
+      if (Array.isArray(c)) setCard(c);else setErr('Not available for this connector.');
+    }).catch(() => setErr('Could not load what this connection does.'));
+  };
+  return /*#__PURE__*/React.createElement("details", {
+    className: "connector-contract-card",
+    onToggle: onToggle,
+    style: {
+      marginTop: 6,
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.78)'
+    }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: 'pointer',
+      color: '#00d4ff'
+    }
+  }, (name || id) + ': what this connection does'), err && /*#__PURE__*/React.createElement("div", {
+    role: "status"
+  }, err), (card || []).map(sec => /*#__PURE__*/React.createElement("div", {
+    key: sec.heading,
+    style: {
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      color: '#fff'
+    }
+  }, sec.heading), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      margin: '2px 0 0 16px',
+      padding: 0
+    }
+  }, (sec.lines || []).map((l, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, l))))));
+}
 function SettingsTabConnectors({
   s,
   save,
@@ -24642,7 +24692,11 @@ function SettingsTabConnectors({
       width: 7,
       height: 7
     }
-  }), c.name || c.id)))));
+  }), c.name || c.id))), connectors.filter(c => c.key && c.key !== 'google').map(c => /*#__PURE__*/React.createElement(ConnectorContractCard, {
+    key: 'cc-' + c.key,
+    id: c.key,
+    name: c.name || c.key
+  }))));
 }
 // ── Settings → Connections → Signing. The signature image and the signing
 // certificate are secrets: they go in, and only whether each is stored comes
