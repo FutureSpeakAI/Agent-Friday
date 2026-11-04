@@ -41,6 +41,16 @@ def _kill_after(script: str, tmp_path, timeout=120):
     return proc.stdout.strip().splitlines()
 
 
+def _printed(lines, pattern):
+    """The one line the child printed on purpose. Not the last line: the child imports the whole
+    agent module while it runs (a checkpoint does), and what that prints to stdout, which depends on
+    the home and settings it starts with, must not become the id."""
+    import re
+    hits = [ln.strip() for ln in lines if re.fullmatch(pattern, ln.strip())]
+    assert len(hits) == 1, "the child printed %d lines like %r: %r" % (len(hits), pattern, lines[-12:])
+    return hits[0]
+
+
 @pytest.fixture
 def restart(tmp_path, monkeypatch):
     monkeypatch.setattr(tj, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
@@ -71,9 +81,9 @@ _START_TASK = """
 
 
 def test_a_kill_during_a_first_send_leaves_one_receipt_and_no_repeat(tmp_path, restart):
-    tid = _kill_after(_START_TASK + """
+    tid = _printed(_kill_after(_START_TASK + """
     task_resume.mark_tool_pending(tid, "send_email", "tu_1")
-    """, tmp_path)[-1]
+    """, tmp_path), r"chaos-\d+")
     before = len(_recovery())
     tj.reconcile_on_boot()
     tj.reconcile_on_boot()                                   # a second start tells nothing new
@@ -86,12 +96,12 @@ def test_a_kill_during_a_first_send_leaves_one_receipt_and_no_repeat(tmp_path, r
 
 
 def test_a_kill_during_a_later_send_says_it_will_ask_first(tmp_path, restart):
-    tid = _kill_after(_START_TASK + """
+    tid = _printed(_kill_after(_START_TASK + """
     convo = [{"role": "user", "content": "send the invoice"},
              {"role": "assistant", "content": [{"type": "text", "text": "Reading it first."}]}]
     assert task_resume.checkpoint(tid, convo=convo, iteration=1, model="m")
     task_resume.mark_tool_pending(tid, "send_email", "tu_2")
-    """, tmp_path)[-1]
+    """, tmp_path), r"chaos-\d+")
     before = len(_recovery())
     tj.reconcile_on_boot()
     mine = [d for d in _recovery()[before:] if d["subject"] == "task:" + tid]
@@ -101,15 +111,28 @@ def test_a_kill_during_a_later_send_says_it_will_ask_first(tmp_path, restart):
     assert r["may_have_acted"] is True, "a later send in flight may have happened"
 
 
+def test_a_line_the_child_prints_after_its_task_id_is_not_taken_for_the_id(tmp_path, restart):
+    """A checkpoint makes the child import the whole agent module, whose start-up can print to stdout
+    (an MCP line, a notice) depending on the home it starts with. The id is the line the child meant
+    to print, wherever it falls: this was the 0-receipts failure of the batch 40 gate."""
+    tid = _printed(_kill_after(_START_TASK + """
+    task_resume.mark_tool_pending(tid, "send_email", "tu_3")
+    print("  [mcp:crm] 1 tool(s) not offered: no manifest", flush=True)
+    """, tmp_path), r"chaos-\d+")
+    tj.reconcile_on_boot()
+    mine = [d for d in _recovery() if d["subject"] == "task:" + tid]
+    assert len(mine) == 1, "an interruption needs exactly one recovery receipt"
+
+
 def test_an_approved_action_killed_mid_run_leaves_one_receipt(tmp_path, restart):
-    aid = _kill_after("""
+    aid = _printed(_kill_after("""
     rec = approvals.create_approval(kind="tool_confirm", subject_type="tool", subject_id="send_email",
                                     title="Send the invoice to the client", description="synthetic",
                                     payload={"tool": "send_email", "input": {"to": "a@example.invalid"}})
     approvals._patch(rec["approval_id"], status="approved", decided_at=time.time())
     assert approvals.claim_for_execution(rec["approval_id"], by="approval_executor")
-    print(rec["approval_id"], flush=True)
-    """, tmp_path)[-1]
+    print("AID=" + rec["approval_id"], flush=True)
+    """, tmp_path), r"AID=.+")[4:]
     before = len(_recovery())
     assert card_recovery.reconcile_at_boot(started_at=time.time() + 5, since=0) == [aid]
     assert card_recovery.reconcile_at_boot(started_at=time.time() + 5, since=0) == []
@@ -120,9 +143,9 @@ def test_an_approved_action_killed_mid_run_leaves_one_receipt(tmp_path, restart)
 
 
 def test_a_receipt_that_cannot_be_written_never_stops_a_start(tmp_path, restart, monkeypatch):
-    tid = _kill_after(_START_TASK + """
+    tid = _printed(_kill_after(_START_TASK + """
     task_resume.mark_tool_pending(tid, "read_file", "tu_1")
-    """, tmp_path)[-1]
+    """, tmp_path), r"chaos-\d+")
     from agent_friday.governance import action_gate
     real = action_gate._receipt
 
@@ -137,9 +160,9 @@ def test_a_receipt_that_cannot_be_written_never_stops_a_start(tmp_path, restart,
 
 def test_a_stop_after_the_receipt_but_before_the_mark_does_not_write_a_second(tmp_path, restart,
                                                                                monkeypatch):
-    tid = _kill_after(_START_TASK + """
+    tid = _printed(_kill_after(_START_TASK + """
     task_resume.mark_tool_pending(tid, "send_email", "tu_1")
-    """, tmp_path)[-1]
+    """, tmp_path), r"chaos-\d+")
     before = len(_recovery())
     real_write = tj.write_state
 
