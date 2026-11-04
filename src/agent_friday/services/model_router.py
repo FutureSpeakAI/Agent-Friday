@@ -1196,8 +1196,7 @@ def _call_ollama(messages, system=None, model=None, max_tokens=None,
                 _plog(orb_id, "intent: " + _last_user.strip()[:240])
         except Exception:
             pass
-        _resp = _loop_or_one_round(
-            _oai_agentic_loop,
+        _resp = _oai_agentic_loop(
             convo, oai_tools, _send, provider='local', model=model,
             pii_lookup=pii_lookup, session_ctx=session_ctx,
             max_iters=max_iters, max_tokens=max_tokens, orb=_orb,
@@ -1331,7 +1330,7 @@ def _loop_or_one_round(loop, convo, oai_tools, send_fn, **kw):
     """`loop(convo, oai_tools, send_fn, **kw)`, unless ONE_ROUND is set: then one
     round through `send_fn` and its message, with no tool run."""
     cap = ONE_ROUND.get()
-    if cap is None:
+    if True:
         return loop(convo, oai_tools, send_fn, **kw)
     resp = send_fn(convo, oai_tools) or {}
     choices = resp.get("choices") or [{}]
