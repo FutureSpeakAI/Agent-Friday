@@ -1639,6 +1639,15 @@ if __name__ == '__main__':
             print("  Desk key: UNAVAILABLE - no press on an approval card can be confirmed until Friday restarts")
     except Exception as _dp_err:
         print(f"  Desk key: UNAVAILABLE ({_dp_err}) - approval presses cannot be confirmed")
+    # The TV gateway (tv_gateway): a separate TLS door for paired devices, off
+    # until the owner turns it on; never port 3000, never loopback-trusted.
+    try:
+        from agent_friday.tv_gateway import app as _tvg
+        _tvg_info = _tvg.boot()
+        if _tvg_info:
+            print(f"  TV gateway: {_tvg_info['host']}:{_tvg_info['port']} (paired devices only)")
+    except Exception as _tvg_err:
+        print(f"  TV gateway: not started ({_tvg_err})")
     # Say out loud, once, any store Friday cannot open or cannot vouch for
     # (services/integrity_report): log, /api/health and one Needs-you card.
     try:

@@ -196,8 +196,10 @@ def doctor_local_model_repair():
 def doctor_known_issues():
     """The known issues of this release (KNOWN_ISSUES.md, §36.0-7). Public
     text; read-only."""
+    from agent_friday.core import _is_local_request
     from agent_friday.services import known_issues
-    resp = jsonify({"status": "ok", **known_issues.load()})
+    # which ones apply describes this machine: only for a request from it
+    resp = jsonify({"status": "ok", **known_issues.load(mark=_is_local_request())})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

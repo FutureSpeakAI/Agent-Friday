@@ -14,7 +14,15 @@ page, a filled form, a picture, a saved file) gets one signed line in
                             its HMAC, or null when none matches: never a guess
   provenance                True when the file's own signed provenance
                             sidecar exists (services/provenance.py)
-  qa                        artifact_qa.check: ok, the findings, a summary line
+  qa                        artifact_qa.check: ok, the findings, a summary line;
+                            and "visual" (NS-24.4-1, services/visual_qa) for a
+                            PDF, Word, PowerPoint or Excel file: how it looks,
+                            as fixed codes with page numbers, the status
+                            (checked / partial / could_not_render /
+                            unavailable) and a summary line. A visual error
+                            makes the file "qa_failed"; a file whose looks
+                            could not be (fully) checked is "unverified" with
+                            the reason, never "qa_passed"
 
 and, for NS-24.1-2:
 
@@ -64,7 +72,8 @@ a line exists. Network (UNC, \\\\host\\share) and device (\\\\?\\, \\\\.\\) path
 are refused, never opened (`refused_path`). `receipt_of(line)` the receipt
 it names (verified), `verify(line)` checks a line, `qa_verdict` /
 `qa_failures` the files a task made that failed their checks, waiting only
-for that task's own queued checks (`wait_for_task`).
+for that task's own queued checks (`wait_for_task`), and `qa_unverified`
+the ones whose looks could not be checked.
 """
 from __future__ import annotations
 
@@ -495,6 +504,31 @@ def _state_of(qa: dict) -> str:
     return "qa_passed" if qa.get("ok") else "qa_failed"
 
 
+def _visual_state(qa: dict, visual: Optional[dict]) -> str:
+    """The verification state from both checks (NS-24.4-1): the structural
+    check first (as before); then a visual error fails the file, and a file
+    whose looks could not be (fully) checked is unverified, never passed. A
+    build that cannot run the visual check at all ("unavailable") is judged
+    on the structural check, as V2 does for the frozen build."""
+    state = _state_of(qa)
+    if state != "qa_passed" or not visual:
+        return state
+    from agent_friday.services import visual_qa
+    if not visual.get("ok", True):
+        return "qa_failed"
+    if visual_qa.needs_attention(visual):
+        return "unverified"
+    return state
+
+
+def _visual_reason(qa: dict, visual: Optional[dict]) -> Optional[str]:
+    if not qa.get("checked") or not visual:
+        return _reason_of(qa)
+    from agent_friday.services import visual_qa
+    why = visual_qa.needs_attention(visual)
+    return why[:200] if why and visual.get("ok", True) else None
+
+
 def _reason_of(qa: dict) -> Optional[str]:
     """Why a file whose checks did not run is unverified, or None."""
     if qa.get("checked"):
@@ -534,7 +568,7 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
         appended = name == "write_file" and isinstance(result, str) and result.startswith("Appended ")
         wr = _write_receipt(name, result)
         mp = where.get("manifest") or manifest_path()
-        from agent_friday.services import artifact_qa
+        from agent_friday.services import artifact_qa, visual_qa
         lines = []
         since = (started_at or time.time()) - 2.0
         for p in paths:
@@ -545,6 +579,13 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
                 # An append adds to a file that was checked when it was made.
                 qa = ({"checked": False, "ok": True, "findings": []} if appended
                       else artifact_qa.check_isolated(p))
+                # How it looks (NS-24.4-1): codes and page numbers only.
+                visual = None if appended else visual_qa.compact(visual_qa.check_isolated(p))
+                qa_line = {"checked": qa["checked"], "ok": qa["ok"],
+                           "findings": qa["findings"][:MAX_LINE_FINDINGS],
+                           "summary": artifact_qa.summary(qa)}
+                if visual:
+                    qa_line["visual"] = visual
                 prior = _latest_line(mp, str(p.resolve()), where.get("key"))
                 lines.append(_sign({
                     "kind": "artifact",
@@ -560,17 +601,15 @@ def record_call(name: str, args: Any, result: Any, *, task_id: Optional[str] = N
                                  "class": receipt.get("class"), "timestamp": receipt.get("timestamp")}
                                 if receipt else None),
                     "provenance": _has_provenance(sha),
-                    "qa": {"checked": qa["checked"], "ok": qa["ok"],
-                           "findings": qa["findings"][:MAX_LINE_FINDINGS],
-                           "summary": artifact_qa.summary(qa)},
+                    "qa": qa_line,
                     "principal": ctx.get("principal"),
                     "goal_ancestry": ctx.get("goal_ancestry"),
                     "sensitivity": _sensitivity(args, p, bool(ctx.get("local_only"))),
                     # An append keeps the state the file had when it was checked.
                     "verification_state": ((prior or {}).get("verification_state") or "unverified")
-                                          if appended else _state_of(qa),
+                                          if appended else _visual_state(qa, visual),
                     "verification_reason": (prior or {}).get("verification_reason")
-                                           if appended else _reason_of(qa),
+                                           if appended else _visual_reason(qa, visual),
                     "delivery_receipt": None,
                     "write_receipt": (wr or {}).get("receipt_id"),
                     "previous_version": _previous_version(prior, sha, wr),
@@ -1032,7 +1071,43 @@ def qa_failures(task_id: Optional[str], *, wait: float = 0.0) -> List[dict]:
         seen.add(e.get("path"))
         qa = e.get("qa") or {}
         if e.get("verification_state") == "qa_failed" or (qa.get("checked") and qa.get("ok") is False):
+            looks = _visual_errors(qa.get("visual"))
             out.append({"path": e.get("path"),
-                        "errors": [f.get("message") for f in qa.get("findings") or []
-                                   if isinstance(f, dict) and f.get("severity") == "error"][:5]})
+                        "errors": ([f.get("message") for f in qa.get("findings") or []
+                                    if isinstance(f, dict) and f.get("severity") == "error"] + looks)[:5],
+                        "looks": looks[:3]})
+    return out
+
+
+def _visual_errors(visual: Any) -> List[str]:
+    """The visual check's errors in plain words (fixed wording, page numbers)."""
+    if not isinstance(visual, dict):
+        return []
+    try:
+        from agent_friday.services import visual_qa
+        return visual_qa.messages(visual, "error")
+    except Exception:
+        return []
+
+
+def qa_unverified(task_id: Optional[str]) -> List[dict]:
+    """The files a task made whose newest line is unverified because how they
+    look could not be checked (no renderer here, a render that failed or ran
+    out of time, a page cap): [{"path", "reason"}]. Such a file is never
+    passed, so neither is the task (NS-24.4-1). A file whose checks cannot
+    run in this build at all is not listed (V2's frozen-build rule)."""
+    if not task_id:
+        return []
+    out, seen = [], set()
+    for e in entries(limit=5000):
+        if e.get("kind") != "artifact" or not e.get("verified") or e.get("task_id") != task_id:
+            continue
+        if e.get("path") in seen:
+            continue
+        seen.add(e.get("path"))
+        visual = (e.get("qa") or {}).get("visual")
+        if e.get("verification_state") != "unverified" or not isinstance(visual, dict):
+            continue
+        if visual.get("status") in ("could_not_render", "partial"):
+            out.append({"path": e.get("path"), "reason": str(e.get("verification_reason") or "")[:200]})
     return out

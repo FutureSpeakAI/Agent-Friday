@@ -74,7 +74,7 @@ PHONE_DECLINABLE_KINDS = frozenset({"tool_confirm", "tainted_action", "governed_
 
 #: Kinds never posted: screen-only cards are posted as info items (handled below); these
 #: are not posted at all (pairing, widening Friday's own powers, money).
-NEVER_POSTED_KINDS = frozenset({"caller_pair", "caller_release", "caller_spend",
+NEVER_POSTED_KINDS = frozenset({"caller_pair", "caller_release", "caller_spend", "device_pair", "device_right",
                                 # Website-task plans stay on the PC (owner decision D9).
                                 "web_task_plan", "web_task_plan_new_sites", "web_task_question"})
 
