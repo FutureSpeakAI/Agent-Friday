@@ -6975,10 +6975,22 @@ def _task_worker_untraced(task_id, name, prompt, description='', orb_icon='🛰'
                     if _bad:
                         verified, final_status = False, 'completed_unverified'
                         _names = ', '.join(Path(str(b.get('path') or '')).name for b in _bad[:5])
+                        # How it looks, in plain words (NS-24.4-1): the first visual problem.
+                        _looks = next((lk for b in _bad for lk in (b.get('looks') or [])[:1]), '')
                         verification_summary = ((verification_summary + '; ') if verification_summary else '') \
-                            + 'a file it made failed its checks: ' + _names
+                            + 'a file it made failed its checks: ' + _names + ((' (%s)' % _looks) if _looks else '')
                         _task_log(task_id, 'Unverified: %s failed its checks (%s).' % (
                             _names, '; '.join(m for b in _bad[:3] for m in (b.get('errors') or [])[:2])[:400]))
+                    # A file whose looks could not be checked here (no
+                    # renderer, a failed render, a page cap) is never passed.
+                    _unv = _am_qa.qa_unverified(task_id)
+                    if _unv:
+                        verified, final_status = False, 'completed_unverified'
+                        _names = ', '.join(Path(str(u.get('path') or '')).name for u in _unv[:5])
+                        verification_summary = ((verification_summary + '; ') if verification_summary else '') \
+                            + 'could not check how a file it made looks: ' + _names
+                        _task_log(task_id, 'Unverified: %s (%s).' % (
+                            _names, '; '.join(str(u.get('reason') or '') for u in _unv[:3])[:400]))
             except Exception:
                 pass
 
