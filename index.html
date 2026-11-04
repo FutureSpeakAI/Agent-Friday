@@ -6943,6 +6943,7 @@ window.addEventListener('DOMContentLoaded',function(){
         let lastSoundTime = 0;
         let audioData = { low: 0, mid: 0, high: 0, total: 0 };
         let idleFactor = 0.4;
+        let ambientHoldT = null;   // AX22: where decorative time stopped under reduced motion
         // Everything the scene draws from sound (the microphone's bands and
         // Friday's voice) follows it through a slow envelope: it rises over
         // about half a second and falls over about one. So a voice or a loud
@@ -10934,7 +10935,7 @@ window.addEventListener('DOMContentLoaded',function(){
             metamorphosisFlash = SceneMotion.tick(delta);
 
             // --- AUDIO PROCESSING ---
-            const heartbeat = (Math.sin(elapsed * Math.PI) + 1) / 2;
+            const heartbeat = SceneMotion.reduced() ? 0.5 : (Math.sin(elapsed * Math.PI) + 1) / 2;   // reduced motion: no idle pulse (AX23)
             if (micActive && analyser && dataArray) {
                 analyser.getByteFrequencyData(dataArray);
                 let low = 0, mid = 0, high = 0;
@@ -10956,6 +10957,14 @@ window.addEventListener('DOMContentLoaded',function(){
             // Floor at 0.6 (was 0.2): quiet idle should still feel luminous, not dead.
             const targetIdle = _speaking ? 1.2 : (isQuiet ? 0.6 : 1.0);
             idleFactor = THREE.MathUtils.lerp(idleFactor, targetIdle, delta * (isQuiet ? 0.3 : 2.0));
+            // Reduced motion (NS-33.2-1, AX21): the ambient spin and drift below stop; the
+            // scene holds still unless the person moves it. Glow and opacity still use
+            // idleFactor, so the scene is not dimmed, only stilled.
+            const ambient = SceneMotion.reduced() ? 0 : idleFactor;
+            // Time for decorative motion (AX22): `elapsed` normally; held where it was
+            // the moment reduced motion came on. Sound timing and task orbs keep `elapsed`.
+            if (SceneMotion.reduced()) { if (ambientHoldT === null) ambientHoldT = elapsed; } else ambientHoldT = null;
+            const ambientT = ambientHoldT === null ? elapsed : ambientHoldT;
 
             // --- MOOD LERPING ---
             const moodLerp = delta * 0.5; const tMood = MOODS[currentMood];
@@ -10989,8 +10998,8 @@ window.addEventListener('DOMContentLoaded',function(){
                     const targetColor = cloud.userData.isAccent ? moodLerpValues.accentColor : moodLerpValues.baseColor;
                     cloud.material.color.copy(targetColor);
                     cloud.material.opacity = 0.03 + audioData.low * 0.05 + (metamorphosisFlash * 0.1);
-                    cloud.rotation.z += cloud.userData.speed;
-                    cloud.position.z += delta * 0.5; if(cloud.position.z > 0) cloud.position.z = -100;
+                    cloud.rotation.z += cloud.userData.speed * (ambient ? 1 : 0);
+                    cloud.position.z += delta * 0.5 * (ambient ? 1 : 0); if(cloud.position.z > 0) cloud.position.z = -100;
                 }
             });
 
@@ -11027,7 +11036,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 const TK = window.FridayTracking;
                 const pStr = TK.cfg.parallax_strength;
                 const windowMode = isHologramMode || !!TK.head.debug;
-                const ct = windowMode ? 0 : elapsed;
+                const ct = (windowMode || SceneMotion.reduced()) ? 0 : elapsed;   // reduced motion: the camera holds (AX21)
                 if (targetStructure === 'DOME') { targetCamPos.set(0, -6 + Math.sin(ct*0.2)*2, 18); targetCamLook.set(0, 5, 0); }
                 else if (targetStructure === 'GRID' && window.FridayHolographicWorkspace?.stageRect) { targetCamPos.set(0, 22, 28); targetCamLook.set(0, 0, 0); }
                 else if (targetStructure === 'GRID') { targetCamPos.set(0, 2 + Math.sin(ct*0.2)*1, 15 - 10 * (1 - Math.abs((ct * 0.2) % 2 - 1))); targetCamLook.set(0, 1, 0); }
@@ -11097,13 +11106,13 @@ window.addEventListener('DOMContentLoaded',function(){
             const voiceBreathRaw = holoAmplitude * 3.0 + audioData.low * 2.0;
             const isExecutingMood = currentMood === 'EXECUTING';
             const voiceBreath = isExecutingMood ? voiceBreathRaw * 1.8 : voiceBreathRaw;
-            const idlePulse = Math.sin(elapsed * 0.5) * 0.08;
+            const idlePulse = Math.sin(ambientT * 0.5) * 0.08;
             const avatarState = FridayAvatarMotion.step(delta, { mood: currentMood,
                 voice: holoAmplitude, speaking: _speaking, reduced: SceneMotion.reduced() });
 
             if (activeGroup && activeGroup.rotation && !['GRID','MANDELBROT','TESSERACT','NETWORK','EDEN','ICOSAHEDRON','NONE','WORMHOLE','BLACKHOLE'].includes(targetStructure)) {
-                activeGroup.rotation.y += moodLerpValues.rotationSpeed * idleFactor;
-                if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * idleFactor;
+                activeGroup.rotation.y += moodLerpValues.rotationSpeed * ambient;
+                if (targetStructure !== 'DOME') activeGroup.rotation.z += moodLerpValues.rotationSpeed * 0.5 * ambient;
                 // Voice-reactive scale breathing for all structures without custom vertex displacement
                 if (!['CUBES','DOME','ASTROLABE'].includes(targetStructure) && activeGroup.scale) {
                     const breathScale = 1.0 + holoAmplitude * 0.15 + idlePulse * 0.2;
@@ -11115,9 +11124,9 @@ window.addEventListener('DOMContentLoaded',function(){
                 coreCubes.forEach(c => {
                     if (c && c.rotation && c.position && c.userData) {
                         const a = FridayAvatarMotion.sample('CUBES', c.userData.iy + c.userData.ix * 0.35, 0, avatarArticulation);
-                        c.rotation.x += (0.6 * c.userData.speed * idleFactor + a.twist) * delta;
-                        c.rotation.y += (0.72 * c.userData.speed * idleFactor - a.twist * 0.6) * delta;
-                        const organicBreathe = Math.sin(elapsed * 2.0 * c.userData.speed + c.userData.rx) * 0.15;
+                        c.rotation.x += (0.6 * c.userData.speed * ambient + a.twist) * delta;
+                        c.rotation.y += (0.72 * c.userData.speed * ambient - a.twist * 0.6) * delta;
+                        const organicBreathe = Math.sin(ambientT * 2.0 * c.userData.speed + c.userData.rx) * 0.15;
                         // Genesis Lattice cohesion: the voice/active drive (audio + voiceBreath +
                         // face interaction) used to blast the cubes out so far the cube-of-cubes
                         // lost its form while speaking. Scale that active spread to ~65% so the
@@ -11141,13 +11150,13 @@ window.addEventListener('DOMContentLoaded',function(){
 
             if (structures['DOME'] && structures['DOME'].visible) {
                 if(abyssParticles && abyssParticles.rotation && abyssParticles.scale) {
-                    abyssParticles.rotation.y -= 0.005 * idleFactor;
+                    abyssParticles.rotation.y -= 0.005 * ambient;
                     abyssParticles.scale.setScalar(1.0 + audioData.low * 0.3 * idleFactor + voiceBreath * 0.2);
                 }
                 cathedralRings.forEach((c, i) => {
                     if(c && c.rotation && c.scale) {
                         const a = FridayAvatarMotion.sample('DOME', i, 0, avatarArticulation);
-                        c.rotation.y += (0.12 * (i%2==0?1:-1) * idleFactor + a.twist) * delta;
+                        c.rotation.y += (0.12 * (i%2==0?1:-1) * ambient + a.twist) * delta;
                         c.rotation.x = a.lift * 0.35;
                         c.scale.setScalar(1.0 + audioData.mid * 0.1 + holoAmplitude * 0.25 + idlePulse * 0.5 + a.scale);
                     }
@@ -11167,17 +11176,17 @@ window.addEventListener('DOMContentLoaded',function(){
                 const positions = gridOcean.geometry.attributes.position.array; const baseYs = gridOcean.userData.baseY;
                 for(let i=0; i<gridOcean.geometry.attributes.position.count; i++) {
                     const a = FridayAvatarMotion.sample('GRID', positions[i*3], positions[i*3+2], avatarArticulation);
-                    positions[i*3+1] = baseYs[i] + Math.sin(positions[i*3] * 0.1 + elapsed) * 0.8 + Math.cos(positions[i*3+2] * 0.1 - elapsed * 1.2) * 0.8 + Math.sin(positions[i*3]*0.3 + positions[i*3+2]*0.3) * (audioData.low * 3.0 * idleFactor) + voiceBreath * 0.6 + a.lift;
+                    positions[i*3+1] = baseYs[i] + Math.sin(positions[i*3] * 0.1 + ambientT) * 0.8 + Math.cos(positions[i*3+2] * 0.1 - ambientT * 1.2) * 0.8 + Math.sin(positions[i*3]*0.3 + positions[i*3+2]*0.3) * (audioData.low * 3.0 * idleFactor) + voiceBreath * 0.6 + a.lift;
                 }
                 gridOcean.geometry.attributes.position.needsUpdate = true;
             }
 
             if (structures['MANDELBROT'] && structures['MANDELBROT'].visible && mandelbrotSystem && mandelbrotSystem.rotation && mandelbrotSystem.geometry && mandelbrotSystem.geometry.attributes.position && mandelbrotSystem.userData) {
-                mandelbrotSystem.rotation.y = elapsed * 0.05;
+                mandelbrotSystem.rotation.y = ambientT * 0.05;
                 const positions = mandelbrotSystem.geometry.attributes.position.array; const mData = mandelbrotSystem.userData.data;
                 const colors = mandelbrotSystem.geometry.attributes.color.array;
                 for(let i=0; i<mData.length; i++) {
-                    const wave = Math.sin(mData[i].baseX*0.5 + elapsed) * Math.cos(mData[i].baseZ*0.5 + elapsed) * (audioData.low * 3.0);
+                    const wave = Math.sin(mData[i].baseX*0.5 + ambientT) * Math.cos(mData[i].baseZ*0.5 + ambientT) * (audioData.low * 3.0);
                     const a = FridayAvatarMotion.sample('MANDELBROT', mData[i].iterRatio, mData[i].baseX, avatarArticulation);
                     positions[i*3+1] = mData[i].baseY + (audioData.low * 4.0 * mData[i].iterRatio * idleFactor) + wave + voiceBreath * mData[i].iterRatio + a.lift;
                     const c = new THREE.Color().copy(moodLerpValues.baseColor).lerp(moodLerpValues.accentColor, mData[i].iterRatio + audioData.mid);
@@ -11191,8 +11200,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 astrolabeRings.forEach((ring, i) => {
                     if (ring && ring.rotation && ring.userData) {
                         const a = FridayAvatarMotion.sample('ASTROLABE', i, 0, avatarArticulation);
-                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta;
-                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta;
+                        ring.rotation.x += ring.userData.rxSpeed * 60 * (1 + audioData.mid*3 + a.twist) * delta * (ambient ? 1 : 0);
+                        ring.rotation.y += ring.userData.rySpeed * 60 * (1 + audioData.mid*3 - a.twist * 0.5) * delta * (ambient ? 1 : 0);
                         ring.rotation.z = a.lift;
                         if (ring.scale) ring.scale.setScalar(1.0 + holoAmplitude * 0.2 + idlePulse * 0.3 + a.scale);
                     }
@@ -11204,8 +11213,8 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (tessGroup && tessGroup.children.length > 1) {
                     const tessNodes = tessGroup.children[1];
                     const a = FridayAvatarMotion.sample('TESSERACT', 0, 0, avatarArticulation);
-                    tesseractLines.userData.angleXW += (0.5 + audioData.low * 3.0 + a.lift) * delta * idleFactor;
-                    tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0 + a.twist) * delta * idleFactor;
+                    tesseractLines.userData.angleXW += (0.5 + audioData.low * 3.0 + a.lift) * delta * ambient;
+                    tesseractLines.userData.angleYW += (0.3 + audioData.low * 2.0 + a.twist) * delta * ambient;
                     tessGroup.scale.setScalar(1 + a.scale);
                     const cosXW = Math.cos(tesseractLines.userData.angleXW), sinXW = Math.sin(tesseractLines.userData.angleXW);
                     const cosYW = Math.cos(tesseractLines.userData.angleYW), sinYW = Math.sin(tesseractLines.userData.angleYW);
@@ -11247,7 +11256,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     for(let i=0; i<shannonNodes.length; i++) {
                         if (!shannonNodes[i] || !shannonNodes[i].pos || !shannonNodes[i].velocity) continue;
                         let p = shannonNodes[i].pos; let v = shannonNodes[i].velocity;
-                        p.addScaledVector(v, delta * 60); if(p.length() > 20) v.multiplyScalar(-1);
+                        p.addScaledVector(v, delta * 60 * (ambient ? 1 : 0)); if(p.length() > 20) v.multiplyScalar(-1);
                         const a = FridayAvatarMotion.sample('NETWORK', i, 0, avatarArticulation);
                         const r = Math.max(1e-5, p.length()), grow = voiceBreath * 0.5 + a.lift;
                         const drawn = shannonNodes[i].drawn || (shannonNodes[i].drawn = new THREE.Vector3());
@@ -11275,7 +11284,7 @@ window.addEventListener('DOMContentLoaded',function(){
 
             if (structures['MOBIUS'] && structures['MOBIUS'].visible && mobiusSystem && mobiusSystem.geometry && mobiusSystem.geometry.attributes.position && mobiusSystem.userData) {
                 const positions = mobiusSystem.geometry.attributes.position.array; const mData = mobiusSystem.userData.data;
-                const flowOffset = elapsed * (2 + audioData.mid * 4);
+                const flowOffset = ambientT * (2 + (ambientHoldT === null ? audioData.mid * 4 : 0));   // held: sound must not jolt it
                 if (mData) {
                     for(let i=0; i<mData.length; i++) {
                         const u = mData[i].u + flowOffset; const v = mData[i].v; const R = 3.0, r = 1.5;
@@ -11324,16 +11333,16 @@ window.addEventListener('DOMContentLoaded',function(){
                     // the game. Never behind it: a bright figure seen through
                     // the gaps between turning tiles flickers frame to frame.
                     const w = 6 + audioData.mid * 3 * moodLerpValues.particleSpeedScale;
-                    edenPlayer.position.x = Math.sin(elapsed * 0.9) * w;
-                    edenPlayer.position.z = FridayRez.radius + 5 + Math.cos(elapsed * 0.9) * 1.5;
-                    edenPlayer.position.y = -4 + Math.sin(elapsed * 1.7) * 1.5;
-                    edenPlayer.rotation.y = Math.sin(elapsed * 0.9) * 0.4;
-                    edenPlayer.rotation.z = -Math.cos(elapsed * 0.9) * 0.25;
+                    edenPlayer.position.x = Math.sin(ambientT * 0.9) * w;
+                    edenPlayer.position.z = FridayRez.radius + 5 + Math.cos(ambientT * 0.9) * 1.5;
+                    edenPlayer.position.y = -4 + Math.sin(ambientT * 1.7) * 1.5;
+                    edenPlayer.rotation.y = Math.sin(ambientT * 0.9) * 0.4;
+                    edenPlayer.rotation.z = -Math.cos(ambientT * 0.9) * 0.25;
                     edenPlayer.rotation.x = 0.2;
                 }
                 edenDebris.forEach(d => {
                     if(d && d.position && d.userData) {
-                        d.position.z += (d.userData.speed * moodLerpValues.particleSpeedScale) + (audioData.mid * 5);
+                        d.position.z += ((d.userData.speed * moodLerpValues.particleSpeedScale) + (audioData.mid * 5)) * (ambient ? 1 : 0);
                         // Recycled before it reaches the camera: a streak passing
                         // close fills the screen for a frame.
                         if(d.position.z > 16) {
@@ -11354,14 +11363,14 @@ window.addEventListener('DOMContentLoaded',function(){
                 if (pData) {
                     for (let i = 0; i < pData.length; i++) {
                         const p = pData[i];
-                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * idleFactor;
+                        let speed = (p.speed + audioData.mid * 0.5) * moodLerpValues.particleSpeedScale * (1 + holoAmplitude * 2) * ambient;
                         if (scatterIntensity > 0) { 
                             speed += scatterIntensity * 3.0; 
                             p.phi += (Math.PI/2 - p.phi) * scatterIntensity * delta * 0.5; 
                         }
                         p.theta += speed * delta;
                         if (scatterIntensity === 0) {
-                            const targetPhi = targetPhiIsHorizontal ? (Math.PI / 2 + (Math.random()-0.5)*0.1) : p.basePhi;
+                            const targetPhi = targetPhiIsHorizontal ? (Math.PI / 2 + (SceneMotion.reduced() ? 0 : (Math.random()-0.5)*0.1)) : p.basePhi;
                             p.phi = THREE.MathUtils.lerp(p.phi, targetPhi, delta * 1.0);
                         }
                         const moodRadialForce = tMood && tMood.radialForce !== undefined ? tMood.radialForce : 0;
@@ -11374,7 +11383,7 @@ window.addEventListener('DOMContentLoaded',function(){
                 }
                 particleSystem.geometry.attributes.position.needsUpdate = true; particleSystem.geometry.attributes.color.needsUpdate = true;
                 if(particleSystem.rotation) {
-                    particleSystem.rotation.y += (0.001 + audioData.mid * 0.01) * idleFactor;
+                    particleSystem.rotation.y += (0.001 + audioData.mid * 0.01) * ambient;
                 }
             }
 
@@ -11389,7 +11398,7 @@ window.addEventListener('DOMContentLoaded',function(){
                     if (audioData.high > 0.3 && Math.random() > 0.98) line.userData.surge = 1.0;
                     line.userData.surge = (line.userData.surge || 0) * 0.95;
                     line.userData.intensity += (line.userData.surge - line.userData.intensity) * Math.min(1, delta * 4); 
-                    const pulse = (Math.sin(elapsed * line.userData.pulseSpeed) + 1) / 2;
+                    const pulse = (Math.sin(ambientT * line.userData.pulseSpeed) + 1) / 2;
                     line.material.opacity = (0.01 + line.userData.intensity * 0.4 + pulse * 0.03) * idleFactor;
                     line.material.color.copy(moodLerpValues.accentColor);
                     if (line.userData.intensity > 0.1) line.material.color.lerp(new THREE.Color(0xffffff), line.userData.intensity);
@@ -11408,15 +11417,15 @@ window.addEventListener('DOMContentLoaded',function(){
                 const currentBloom = moodLerpValues.bloomStrength * (0.9 + audioData.low * 2.5 + holoAmplitude * 0.8) * bloomIdle;
                 bloomPass.strength = Math.max(0.7, currentBloom) + SceneMotion.flashBloom(metamorphosisFlash);
                 // The colour split stays a hint (about a pixel), so edges are not doubled.
-                if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.0012 + Math.sin(elapsed * 0.5) * 0.0006 + (metamorphosisFlash * 0.01);
-                if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(elapsed * 0.2);
+                if(holoPass.uniforms.amount) holoPass.uniforms.amount.value = 0.0012 + Math.sin(ambientT * 0.5) * 0.0006 + (metamorphosisFlash * 0.01);
+                if(holoPass.uniforms.angle) holoPass.uniforms.angle.value = Math.sin(ambientT * 0.2);
                 if(holoPass.uniforms.grainAmount) holoPass.uniforms.grainAmount.value = moodLerpValues.grain + (metamorphosisFlash * 0.05);
-                if(holoPass.uniforms.time) holoPass.uniforms.time.value = elapsed;
+                if(holoPass.uniforms.time) holoPass.uniforms.time.value = ambientT;   // the grain and scanline hold too (AX23)
             }
             
             // Processing-state gestures, after every structure has animated.
             FridayGestureScene.end(delta);
-            if (starField && starField.rotation) starField.rotation.y += 0.0001;
+            if (starField && starField.rotation) starField.rotation.y += 0.0001 * (ambient ? 1 : 0);
             // A large foreground 3D view (Studio › Files) holds the backdrop's
             // drawing while it is on screen: both share one GPU. Everything
             // above still runs, so the hand cursor keeps tracking.
@@ -26857,7 +26866,9 @@ function ManifestBar({
   const dr = m.delivery_receipt;
   const vh = m.version_history || [];
   const qa = m.qa || {};
-  const qaFailed = !!(qa.checked && qa.ok === false);
+  // How it looks (NS-24.4-1): services/visual_qa's codes and page numbers, as one plain line.
+  const vis = qa.visual || null;
+  const qaFailed = !!(qa.checked && (qa.ok === false || vis && vis.ok === false));
   const col = {
     qa_passed: '#00e87a',
     owner_verified: qaFailed ? '#ffb454' : '#00ff80',
@@ -26870,7 +26881,7 @@ function ManifestBar({
     unverified: 'Not verified'
   }[st] || st;
   const verify = async () => {
-    if (qaFailed && !window.confirm('This file failed its checks' + (qa.summary ? ': ' + qa.summary : '.') + '\n\nMark it verified anyway?')) return;
+    if (qaFailed && !window.confirm('This file failed its checks' + (qa.summary ? ': ' + qa.summary : '.') + (vis && vis.summary ? '\n' + vis.summary : '') + '\n\nMark it verified anyway?')) return;
     setBusy(true);
     try {
       await apiFetch('/api/artifacts/manifest/verify', {
@@ -26952,7 +26963,7 @@ function ManifestBar({
       flexDirection: 'column',
       gap: 3
     }
-  }, row('Made by', (m.tool || '?') + (m.task_id ? ' · task ' + m.task_id : '')), row('For', m.principal || 'unknown'), row('Goal', ga ? ga.goal_id + (ga.milestone_id ? ' › ' + ga.milestone_id : '') : 'none'), row('Sensitivity', sens.level || 'unknown'), row('Checks', qa.summary || (qa.checked ? 'checked' : 'not checked')), st === 'unverified' && m.verification_reason && row('Why not verified', m.verification_reason), row('Delivery receipt', dr ? (dr.channel || '') + ' · ' + String(dr.id || '').slice(0, 16) + '…' : 'not sent'), row('Versions', vh.length ? vh.length + ' earlier: ' + vh.map(v => String(v.sha256 || '').slice(0, 8) + (v.backup ? ' (backup kept)' : '')).join(', ') : 'first version'), row('SHA-256', String(m.sha256 || '').slice(0, 16) + '…'), st !== 'owner_verified' && /*#__PURE__*/React.createElement("button", {
+  }, row('Made by', (m.tool || '?') + (m.task_id ? ' · task ' + m.task_id : '')), row('For', m.principal || 'unknown'), row('Goal', ga ? ga.goal_id + (ga.milestone_id ? ' › ' + ga.milestone_id : '') : 'none'), row('Sensitivity', sens.level || 'unknown'), row('Checks', qa.summary || (qa.checked ? 'checked' : 'not checked')), vis && row('Looks', vis.summary || vis.status), st === 'unverified' && m.verification_reason && row('Why not verified', m.verification_reason), row('Delivery receipt', dr ? (dr.channel || '') + ' · ' + String(dr.id || '').slice(0, 16) + '…' : 'not sent'), row('Versions', vh.length ? vh.length + ' earlier: ' + vh.map(v => String(v.sha256 || '').slice(0, 8) + (v.backup ? ' (backup kept)' : '')).join(', ') : 'first version'), row('SHA-256', String(m.sha256 || '').slice(0, 16) + '…'), st !== 'owner_verified' && /*#__PURE__*/React.createElement("button", {
     className: "btn",
     style: {
       fontSize: 10,
@@ -69684,55 +69695,154 @@ function fridayIsBatchCard(a) {
 function fridayApprovalWords(a) {
   return a && a.payload && a.payload.handler === 'gmail_send' ? ['Send', "Don't send"] : ['Approve', 'Deny'];
 }
+// What a card says before you decide (services/card_facts, NS-18.4-3): what, why, targets, where the
+// details came from, undo, cost, privacy, model, expiry and checks, as the server worked them out
+// ("not known" when it could not). Inspect reads the record of the card's action (services/explain,
+// A13), read only. Edit is shown disabled, with why, on a card whose kind has no edit of its own.
+// Text only: every value is a React text child.
+function ApprovalCardFacts({
+  a
+}) {
+  const f = a && a.card_facts || {};
+  const [why, setWhy] = useState(null);
+  const [reading, setReading] = useState(false);
+  const w = k => String(f[k] && f[k].words || 'not known');
+  const exp = f.expires_at && f.expires_at.at ? 'expires ' + new Date(f.expires_at.at * 1000).toLocaleString() : w('expires_at');
+  const rows = [['What', w('what')], ['Why', w('why')], ['Targets', w('targets')], ['Details', w('provenance')],
+    ['Undo', w('reversibility')], ['Cost', w('cost')], ['Privacy', w('privacy_impact')], ['Model', w('model')],
+    ['Expires', exp], ['Checks', w('verification_plan')]];
+  const ed = f.editable || {
+    can: false,
+    own: false,
+    why: "This kind of card can't be edited here."
+  };
+  const inspect = () => {
+    if (reading) return;
+    setReading(true);
+    setWhy('Reading…');
+    apiFetch('/api/approvals/' + encodeURIComponent(a.approval_id) + '/inspect').then(r => r.json())
+      .then(d => setWhy(d && d.ok ? String(d.text || 'Nothing is recorded for this card yet.') : String(d && d.error || 'This card could not be inspected right now.')))
+      .catch(() => setWhy('This card could not be inspected right now.'))
+      .finally(() => setReading(false));
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    "data-testid": "approval-card-facts",
+    style: {
+      marginTop: 6,
+      padding: '6px 8px',
+      borderRadius: 6,
+      background: 'rgba(255,255,255,0.03)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      fontSize: 10.5,
+      color: '#b8c7dc',
+      lineHeight: 1.5
+    }
+  }, rows.map(([k, v]) => /*#__PURE__*/React.createElement("div", {
+    key: k,
+    "data-fact": k
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'rgba(255,255,255,0.45)'
+    }
+  }, k, ": "), v)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      marginTop: 5,
+      flexWrap: 'wrap',
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    "data-testid": "approval-card-inspect",
+    style: {
+      fontSize: 10.5,
+      padding: '2px 8px'
+    },
+    disabled: reading,
+    onClick: inspect,
+    title: "The record of this card's action: what, why, which model, what left this PC. Read only."
+  }, "Inspect"), !ed.own && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn",
+    "data-testid": "approval-card-edit",
+    style: {
+      fontSize: 10.5,
+      padding: '2px 8px'
+    },
+    disabled: true,
+    title: String(ed.why || '')
+  }, "Edit"), !ed.own && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: 'rgba(255,255,255,0.4)'
+    }
+  }, String(ed.why || ''))), why !== null && /*#__PURE__*/React.createElement("pre", {
+    "data-testid": "approval-card-inspect-text",
+    style: {
+      whiteSpace: 'pre-wrap',
+      maxHeight: 200,
+      overflowY: 'auto',
+      fontSize: 10,
+      margin: '6px 0 0',
+      color: '#cfd8e3'
+    }
+  }, why));
+}
 function ApprovalCardBody({
   a,
   busy,
   onDecide
 }) {
+  // Every card, whatever its body, ends with its facts and Inspect (ApprovalCardFacts).
+  const withFacts = el => /*#__PURE__*/React.createElement(React.Fragment, null, el, /*#__PURE__*/React.createElement(ApprovalCardFacts, {
+    a: a
+  }));
   // The share card has its own body: the exact payload, edit, and four choices.
   // A file-access card lists every path it would allow; see FileGrantRequestCard.
-  if (a && a.kind === 'file_grant_request') return /*#__PURE__*/React.createElement(FileGrantRequestCard, {
+  if (a && a.kind === 'file_grant_request') return withFacts(/*#__PURE__*/React.createElement(FileGrantRequestCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
-  });
+  }));
   // A skill package to install: the whole of what it would add; see SkillImportCard.
-  if (a && a.kind === 'skill_import') return /*#__PURE__*/React.createElement(SkillImportCard, {
+  if (a && a.kind === 'skill_import') return withFacts(/*#__PURE__*/React.createElement(SkillImportCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
-  });
+  }));
   // An email paragraph about money held back from a cloud model: exactly the text, Send or Keep (services/cloud_release.py).
-  if (a && a.payload && a.payload.handler === 'cloud_release') return /*#__PURE__*/React.createElement(CloudReleaseCard, {
+  if (a && a.payload && a.payload.handler === 'cloud_release') return withFacts(/*#__PURE__*/React.createElement(CloudReleaseCard, {
     a: a,
     busy: busy
-  });
-  if (a && a.kind === 'local_context_share') return /*#__PURE__*/React.createElement(LocalContextShareCard, {
+  }));
+  if (a && a.kind === 'local_context_share') return withFacts(/*#__PURE__*/React.createElement(LocalContextShareCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
-  });
+  }));
   // A workspace swap card shows what would change, the checks it passed and a
   // sandboxed preview of the improved page (static/friday_bundles.js).
-  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return /*#__PURE__*/React.createElement(window.FridayWorkspaceSwapCard, {
+  if (a && a.kind === 'workspace_swap' && window.FridayWorkspaceSwapCard) return withFacts(/*#__PURE__*/React.createElement(window.FridayWorkspaceSwapCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
-  });
+  }));
   // A publish card shows what would go public, the scan, the licences and a
   // sandboxed preview (static/friday_publish.js).
-  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return /*#__PURE__*/React.createElement(window.FridayPublishCard, {
+  if (a && a.kind === 'publish_web' && window.FridayPublishCard) return withFacts(/*#__PURE__*/React.createElement(window.FridayPublishCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
-  });
+  }));
   // A tested change to how Friday works: the text now and the new text, the
   // difference and the evidence, Keep current / Use new (static/friday_trial_card.js).
-  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return /*#__PURE__*/React.createElement(window.FridayTrialCard, {
+  if (a && a.kind === 'instruction_trial' && window.FridayTrialCard) return withFacts(/*#__PURE__*/React.createElement(window.FridayTrialCard, {
     a: a,
     busy: busy,
     onDecide: onDecide
-  });
+  }));
   // A search that shares text from the conversation (privacy/public_query):
   // the exact text that would go out, where it goes, and Send / Don't send.
   const pq = a && a.payload && a.payload.public_query;
@@ -69809,7 +69919,9 @@ function ApprovalCardBody({
       fontFamily: 'JetBrains Mono',
       marginTop: 4
     }
-  }, a.kind, " \xB7 ", a.policy_class, a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''), /*#__PURE__*/React.createElement("div", {
+  }, a.kind, " \xB7 ", a.policy_class, a.expires_at ? ' · expires ' + new Date(a.expires_at * 1000).toLocaleString() : ''), /*#__PURE__*/React.createElement(ApprovalCardFacts, {
+    a: a
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
