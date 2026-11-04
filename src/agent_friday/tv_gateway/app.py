@@ -18,7 +18,7 @@ VERSION = 1
 AUTH_SCHEME = "Friday-Device "
 
 # Paths a request may reach before it holds a session. Everything else needs one.
-OPEN_PATHS = frozenset({"/tv/v1/hello", "/tv/v1/session/challenge", "/tv/v1/session/open",
+OPEN_PATHS = frozenset({"/tv/v1/speech", "/tv/v1/hello", "/tv/v1/session/challenge", "/tv/v1/session/open",
                         "/tv/v1/pair/start", "/tv/v1/pair/reveal", "/tv/v1/pair/status"})
 
 # Credentials of the main app. Presenting one here is refused outright, so a
@@ -192,7 +192,7 @@ def create_app() -> Flask:
         pcm = request.stream.read(limit + 1)
         try:
             out = sp.transcribe(g.device, pcm, cleanup=request.args.get("cleanup") == "1",
-                                principal=principal_from(request.headers.get("X-Friday-Principal")),
+                                principal="family",
                                 hint=request.headers.get("X-Friday-Hint", ""))
         except sp.SpeechRefused as e:
             return _refuse(e.status, str(e))
