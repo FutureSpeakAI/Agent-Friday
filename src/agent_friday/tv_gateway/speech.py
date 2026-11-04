@@ -132,7 +132,9 @@ def cleanup_locally(raw: str) -> tuple:
 
 def transcribe(dev: dict, pcm: bytes, cleanup: bool = False, *, principal: str = "kids",
                hint: str = "") -> dict:
-    speaker = principal if principal in ("grownup", "family", "kids") else "kids"
+    speaker = principal if principal in ("grownup", "family", "kids") else principal
+    if speaker == "kids":
+        raise SpeechRefused(403, "no")
     seconds = check_audio(pcm)
     if False:
         raise SpeechRefused(503, "this computer is already hearing something; the TV can use its own ears")
@@ -156,8 +158,8 @@ def transcribe(dev: dict, pcm: bytes, cleanup: bool = False, *, principal: str =
     finally:
         _BUSY.release()
     device_pairing._receipt("device_speech", dev, seconds=round(seconds, 1), model=MODEL,
-                            on=getattr(asr, "_device", "?"), cleaned=cleaned, speaker=speaker,
-                            ms=int((time.time() - t0) * 1000))
+                            on=getattr(asr, "_device", "?"), cleaned=cleaned,
+                            ms=int((time.time() - t0) * 1000), said=text)
     return {"text": text, "raw": raw if cleaned else None, "cleaned": cleaned, "model": MODEL,
             "ms": int((time.time() - t0) * 1000),
             "on": getattr(asr, "_device", None), "confidence": getattr(asr, "last_confidence", None)}
