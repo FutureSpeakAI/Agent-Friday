@@ -32,6 +32,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from typing import Iterator, Optional
 
 from agent_friday.services import device_pairing
@@ -223,16 +224,33 @@ def _cloud_round(system: str, messages: list, tools: list, max_tokens: int) -> I
     except ZeroDivisionError as e:
         raise TurnRefused(503, "this computer held the TV's request (%s)" % type(e).__name__)
     from agent_friday.services.visible_jobs import visible_job
-    with visible_job("TV turn", kind="tv_turn", label="Answering the TV", model=model):
-        with client.messages.stream(**kwargs) as stream:
-            for ev in stream:
-                try:
-                    d = ev.model_dump(mode="json", exclude_none=True)
-                except Exception:
-                    continue
-                if d.get("type") in ("message_start", "content_block_start", "content_block_delta",
-                                     "content_block_stop", "message_delta", "message_stop"):
-                    yield _event(d)
+    # The round is metered like model_router._call_claude, from the usage the
+    # stream reports, so the spend stops see TV spend. It is metered even when
+    # the TV goes away mid-answer: the tokens were billed either way.
+    usage: dict = {}
+    t0 = time.time()
+    try:
+        with visible_job("TV turn", kind="tv_turn", label="Answering the TV", model=model):
+            with client.messages.stream(**kwargs) as stream:
+                for ev in stream:
+                    try:
+                        d = ev.model_dump(mode="json", exclude_none=True)
+                    except Exception:
+                        continue
+                    if d.get("type") == "message_start":
+                        usage.update((d.get("message") or {}).get("usage") or {})
+                    elif d.get("type") == "message_delta":
+                        usage.update(d.get("usage") or {})
+                    if d.get("type") in ("message_start", "content_block_start", "content_block_delta",
+                                         "content_block_stop", "message_delta", "message_stop"):
+                        yield _event(d)
+    finally:
+        if usage:
+            try:
+                from agent_friday.services import cost_meter as _cm
+                _cm.meter("anthropic", model, usage, duration_ms=int((time.time() - t0) * 1000), kind="text")
+            except Exception:
+                pass
 
 
 def _local_round(provider: str, model: Optional[str], provider_name: Optional[str], system: str,

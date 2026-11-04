@@ -209,11 +209,13 @@ class FakeClaude:
     def messages(self): return self
     def stream(self, **kwargs):
         self.kwargs = kwargs
-        evs = [_Ev({"type": "message_start", "message": {"role": "assistant"}}),
+        evs = [_Ev({"type": "message_start", "message": {"role": "assistant",
+                                                         "usage": {"input_tokens": 120000, "output_tokens": 1}}}),
                _Ev({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
                _Ev({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hi!"}}),
                _Ev({"type": "content_block_stop", "index": 0}),
-               _Ev({"type": "message_delta", "delta": {"stop_reason": "end_turn"}}),
+               _Ev({"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                    "usage": {"output_tokens": 40000}}),
                _Ev({"type": "message_stop"})]
 
         class Ctx:
@@ -243,6 +245,40 @@ def test_a_kids_turn_goes_to_claude_sealed_with_no_tools(claude):
     assert "tools" not in sent
     assert sent["system"].startswith("KIDS RULES")
     assert any(e.get("delta", {}).get("text") == "Hi!" for e in ev)
+
+
+def test_a_claude_turn_counts_toward_the_spend_stops(claude):
+    from agent_friday.services import cost_meter as cm
+    before = cm._rolling_spend()
+    _, dev = _device()
+    events(turn.run(dev, {"messages": CONVO}, "kids"))
+    after = cm._rolling_spend()
+    assert after[0] > before[0] and after[1] > before[1]
+
+
+def test_a_claude_turn_the_tv_walks_away_from_is_still_counted(claude):
+    from agent_friday.services import cost_meter as cm
+    before = cm._rolling_spend()[0]
+    _, dev = _device()
+    stream = turn.run(dev, {"messages": CONVO}, "kids")
+    next(iter(stream))
+    stream.close()
+    assert cm._rolling_spend()[0] > before
+
+
+def test_an_openai_shaped_tv_round_counts_toward_the_spend_stops():
+    from agent_friday.services import cost_meter as cm
+    before = cm._rolling_spend()[0]
+    tok = mr.ONE_ROUND.set({})
+    try:
+        mr._loop_or_one_round(
+            lambda *a, **k: pytest.fail("the agentic loop ran"), [CONVO[0]], None,
+            lambda convo, oai: {"choices": [{"message": {"content": "hi"}}],
+                                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.25}},
+            provider="openai", model="some/model", meter_provider="openrouter")
+    finally:
+        mr.ONE_ROUND.reset(tok)
+    assert cm._rolling_spend()[0] == pytest.approx(before + 0.25)
 
 
 def test_a_cloud_leg_that_is_not_allowed_is_a_503_so_the_tv_answers_itself(monkeypatch, claude):
