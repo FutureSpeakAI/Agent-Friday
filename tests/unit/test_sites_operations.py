@@ -35,6 +35,9 @@ def world(monkeypatch, tmp_path):
         if guard:
             guard()
         card = dict(kwargs, approval_id="approval-" + str(len(cards)), status="pending", created_at=0)
+        # raised the way approvals.create_approval raises it, with its card seal (NS-18.6-1);
+        # without it decide() refuses the card as not the one that was raised
+        assert approvals._seal_card(card)
         cards.append(card)
         approvals.APPROVALS_FILE.write_text(json.dumps(cards), encoding="utf-8")
         return card
