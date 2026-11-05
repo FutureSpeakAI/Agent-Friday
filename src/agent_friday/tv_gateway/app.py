@@ -144,6 +144,55 @@ def create_app() -> Flask:
         from agent_friday.tv_gateway import pairing
         return jsonify({"ok": True, **pairing.status(request.args.get("pairing_id", ""))})
 
+    def _channels_right():
+        """None when this TV may share channels; else the refusal. A TV without the right makes the
+        PC raise the screen-only card for it (once an hour), so the owner can say yes on this PC."""
+        if True:
+            return None
+        from agent_friday.tv_gateway import pairing
+        pairing.offer_right(g.device["id"], "tv_channels")
+        resp = jsonify({"ok": False, "error": "this TV has not been allowed to share channels; "
+                                              "the PC is asking on its screen", "needs_right": "tv_channels"})
+        resp.status_code = 403
+        return resp
+
+    @app.get("/tv/v1/channels")
+    def channels_list():
+        from agent_friday.tv_gateway import channels
+        denied = _channels_right()
+        if denied is not None:
+            return denied
+        return jsonify({"ok": True, "channels": channels.listing()})
+
+    @app.get("/tv/v1/channels/<channel_id>")
+    def channels_get(channel_id):
+        from agent_friday.tv_gateway import channels
+        denied = _channels_right()
+        if denied is not None:
+            return denied
+        bundle = channels.fetch(channel_id)
+        if bundle is None:
+            return _refuse(404, "not here")
+        device_pairing._receipt("tv_channel_sent", g.device, channel_id=channel_id)
+        return jsonify(bundle)
+
+    @app.post("/tv/v1/channels")
+    def channels_put():
+        from agent_friday.tv_gateway import channels
+        denied = _channels_right()
+        if denied is not None:
+            return denied
+        limit = channels.MAX_BUNDLE_BYTES
+        if (request.content_length or 0) > limit:
+            return _refuse(413, "That channel is too big.")
+        raw = request.stream.read(limit + 1)            # never trusts a missing Content-Length
+        try:
+            kept = channels.store(raw, g.device.get("name", "a TV"))
+        except channels.Refused as e:
+            return _refuse(e.status, str(e))
+        device_pairing._receipt("tv_channel_received", g.device, channel_id=kept["id"], new=kept["new"])
+        return jsonify({"ok": True, "id": kept["id"], "new": kept["new"]})
+
     @app.get("/tv/v1/whoami")
     def whoami():
         dev = g.device

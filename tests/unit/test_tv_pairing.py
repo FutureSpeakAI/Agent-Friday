@@ -206,7 +206,7 @@ def _paired(client):
 
 def test_pairing_offers_each_wider_right_as_its_own_pending_card(client):
     dev_id, cards = _paired(client)
-    assert set(cards) == {"tv_brain", "studio"}
+    assert set(cards) == {"tv_brain", "studio", "tv_channels"}
     assert device_pairing.get_device(dev_id)["rights"] == ["chat_read"]
 
 
