@@ -1544,6 +1544,9 @@ def _tool_write_file(inp):
                 + (" keeps the earlier version; undo_action with this receipt_id puts it back."
                    if receipt["items"][0].get("existed") else "."))
     _fwr.finish(rid, True)
+    # Read the file back: the verdict counts the write only if it is on disk as meant (NS-4.6-1).
+    _conn_outcome.reread("file_write", str(p), lambda: _fwr.verify_written(
+        p, mode, content, receipt["items"][0].get("before_size", 0)), bool)
     _log_context("file_write", {"path": str(p), "bytes": len(content), "mode": mode, "receipt_id": rid})
     if mode == 'write':
         # Not on append: a document being appended to (a log, a journal)
@@ -6528,10 +6531,11 @@ def _task_worker(task_id, name, prompt, description='', orb_icon='🛰',
                 pass
 
 
-#: Changes at a connected service that are read back after they are made (NS-4.6-1: calendar
-#: events, tasks, contacts). A task that made one is verified only when it was found there.
+#: Changes that are read back after they are made (NS-4.6-1: calendar events, tasks, contacts at
+#: their service; a written file from disk). A task that made one is verified only when it was found.
 REREAD_TOOLS = frozenset({"create_calendar_event", "update_calendar_event", "delete_calendar_event",
-                          "create_task", "update_task", "complete_task", "save_google_contact"})
+                          "create_task", "update_task", "complete_task", "save_google_contact",
+                          "write_file"})
 
 
 def _evidence_verdict(tool_trace):
@@ -17394,6 +17398,15 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
         desktop_server = _dg.is_desktop_server(server_name)
     except Exception:
         desktop_server = False
+    # BD-07, A30: a tool is offered only with a signed manifest that still matches it, or while
+    # its connector is from before A30 (it keeps working until the owner answers its card).
+    withheld: dict[str, str] = {}
+    to_review: list[dict] = []
+    try:
+        from agent_friday.governance import tool_manifests as _tm
+        _spec = (_load_mcp_servers().get("servers") or {}).get(server_name) or {}
+    except Exception:
+        _tm, _spec = None, {}
     with _MCP_REG_LOCK:
         # Clear any stale registration for this server first (idempotent reload).
         _mcp_unregister_server_tools(server_name, _locked=True)
@@ -17404,6 +17417,19 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
             if not allowed(raw):
                 continue
             full = f"mcp_{_mcp_sanitize(server_name)}_{_mcp_sanitize(raw)}"[:64]
+            if _tm is None:
+                withheld[raw] = "its manifest could not be checked"
+                continue
+            ok, why = _tm.check(server_name, t, _spec)
+            if why:
+                try:
+                    to_review.append(_tm.describe(server_name, t, full_name=full, spec=_spec,
+                                                  ring=3 if desktop_server else 2))
+                except Exception:
+                    pass
+            if not ok:
+                withheld[raw] = why
+                continue
             desc = t.get("description") or f"{raw} via the {server_name} connector"
             desc = f"[MCP·{server_name}] {desc}"[:1024]
             schema = _mcp_normalize_schema(
@@ -17425,6 +17451,19 @@ def _mcp_register_server_tools(server_name: str, tools: list) -> list:
     if registered:
         print(f"  [mcp:{server_name}] registered {len(registered)} tool(s) "
               f"into the agent registry")
+    if _tm is not None:
+        _tm.note_unavailable(server_name, withheld)
+        if to_review:
+            try:
+                from agent_friday.services import tool_manifest_cards as _tmc
+                _tmc.ask(server_name, to_review,
+                         grandfathered=_tm.grandfathered(server_name, _spec))
+            except Exception as _card_err:
+                _log.warning("tool manifest card not raised for %s: %s", server_name,
+                             type(_card_err).__name__)
+    if withheld:
+        print(f"  [mcp:{server_name}] {len(withheld)} tool(s) not offered: no manifest "
+              f"(review on the card in Needs you)")
     return registered
 
 
@@ -17509,6 +17548,19 @@ def _mcp_boot() -> None:
                 _mh.carry_over_at_boot(cfg)
             except Exception as _mh_err:
                 _log.warning("MCP host carry-over failed: %s", type(_mh_err).__name__)
+        if first_boot:
+            try:
+                # BD-07, A30: once ever, on an existing install, the connectors configured now
+                # keep working until their card is answered (governance/tool_manifests).
+                from agent_friday.governance import tool_manifests as _tm
+                _tm.carry_over_at_boot(cfg)
+            except Exception as _tm_err:
+                _log.warning("tool manifest carry-over failed: %s", type(_tm_err).__name__)
+        try:
+            from agent_friday.services import tool_manifest_cards as _tmc
+            _tmc.ensure_hook()
+        except Exception as _tm_err:
+            _log.warning("tool manifest card hook not registered: %s", type(_tm_err).__name__)
         try:
             # A host card approved after a restart is still applied (governance/mcp_hosts).
             from agent_friday.services import mcp_host_cards as _mhc

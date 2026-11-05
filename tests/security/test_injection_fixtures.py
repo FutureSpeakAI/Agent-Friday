@@ -341,6 +341,9 @@ def _tool_output(mp, tmp, request):
     # default policy then runs unasked (action_gate._connector_read, OBSERVE).
     mp.setattr(action_gate, "_connector_read",
                lambda tool_name, a: (action_gate.OBSERVE, "a read at a connected service"))
+    # A30: a connector tool is offered only with a signed manifest; this one is installed and reviewed.
+    from agent_friday.governance import tool_manifests
+    mp.setattr(tool_manifests, "check", lambda server, tool, spec=None: (True, ""))
     agent._mcp_register_server_tools("crm", [{
         "name": "get_ticket", "description": "Read one support ticket",
         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}])

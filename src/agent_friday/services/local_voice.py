@@ -641,14 +641,17 @@ class WhisperASR:
             log.info("local voice: whisper %s on %s/%s%s", self.model_size,
                       device, compute, (" (" + why_cpu + ")") if why_cpu else "")
 
-    def _run(self, audio) -> str:
+    def _run(self, audio, language=None, initial_prompt=None) -> str:
+        extra = {"condition_on_previous_text": False, "initial_prompt": initial_prompt} if initial_prompt else {}
         segments, _info = self._model.transcribe(
-            audio, language=None, beam_size=1, vad_filter=False)
+            audio, language=language, beam_size=1, vad_filter=False, **extra)
         segments = list(segments)
         self.last_confidence = heard_confidence(segments)
         return "".join(seg.text for seg in segments).strip()
 
-    def transcribe(self, pcm16_16k: bytes) -> str:
+    def transcribe(self, pcm16_16k: bytes, *, language=None, initial_prompt=None) -> str:
+        """``language`` and ``initial_prompt`` (names to prefer) are for callers
+        that know them, such as a paired TV; the ear itself passes neither."""
         self.last_confidence = None
         if not pcm16_16k:
             return ""
@@ -656,7 +659,7 @@ class WhisperASR:
         import numpy as np
         audio = np.frombuffer(pcm16_16k, dtype=np.int16).astype("float32") / 32768.0
         try:
-            return self._run(audio)
+            return self._run(audio, language, initial_prompt)
         except Exception as exc:
             # CTranslate2 loads cuBLAS/cuDNN lazily, at the first transcription,
             # so a CUDA load can succeed and every Alt+T then fail. Once: say
@@ -666,7 +669,7 @@ class WhisperASR:
             log.warning("local voice: whisper on CUDA failed at transcription (%s); "
                         "reloading on CPU int8 and retrying", str(exc)[:160])
             self._fall_back_to_cpu(ExceptionText(str(exc)[:80]))
-            return self._run(audio)
+            return self._run(audio, language, initial_prompt)
 
     def _fall_back_to_cpu(self, why) -> None:
         """Drop the CUDA model and load this ear on the CPU for the rest of
