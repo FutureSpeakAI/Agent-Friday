@@ -204,7 +204,7 @@ _TOOL_REVOKED = re.compile(
     r"an invalid token was provided|invalid_token", re.I)
 _TOOL_SCOPE = re.compile(
     r"missing_scope|insufficient[ _](?:scope|permission)|not_allowed_token_type|"
-    r"resource not accessible by|\b403\b", re.I)
+    r"resource not accessible by|\b403 forbidden\b|\b(?:http|status)(?: code)?[ :=]*403\b", re.I)
 _TOOL_BUSY = re.compile(r"ratelimited|rate[ _]limit|too many requests|\b429\b", re.I)
 
 _ORIGIN_KIND = {"unavailable": "unreachable", "no_server": "unreachable",
