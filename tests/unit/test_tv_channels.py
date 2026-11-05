@@ -187,6 +187,12 @@ def test_an_id_can_only_name_a_stored_channel(client, allowed):
     for bad in ("..%2f..%2fsecurity%2fdevices", "ABCDEF0123456789", "short", "0" * 17, "%00"):
         assert client.get("/tv/v1/channels/" + bad, headers=auth(tok)).status_code == 404
     assert channels.fetch("../x") is None and channels.fetch(None) is None
+    # a real, valid bundle sitting one directory above the store must not be reachable by a crafted id
+    outside = channels._dir().parent / "outside.json"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text(json.dumps(dict(bundle(), **{"from": "x", "received_at": 1})), encoding="utf-8")
+    assert channels.fetch("../outside") is None
+    assert not channels.remove("../outside") and outside.exists()
 
 
 def test_a_hand_edited_file_is_not_served(client, allowed):
