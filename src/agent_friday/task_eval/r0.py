@@ -159,14 +159,8 @@ def _sections_view(texts: Dict[str, str]) -> str:
 
 
 def _parse_json(text: str) -> Optional[dict]:
-    m = re.search(r"\{.*\}", str(text or ""), re.DOTALL)
-    if not m:
-        return None
-    try:
-        v = json.loads(m.group(0))
-        return v if isinstance(v, dict) else None
-    except ValueError:
-        return None
+    from agent_friday.services.reply_json import last_object
+    return last_object(str(text or ""))
 
 
 def _skill_md(skill: dict) -> Tuple[str, str]:

@@ -96,8 +96,7 @@ def verify_claws() -> tuple:
     try:
         with _LOCK:
             if not pin.exists():
-                pin.write_text(json.dumps({"claws_hmac": mac, "pinned_at": time.time()}),
-                               encoding="utf-8")
+                pin.write_text(json.dumps(_pin_doc(mac)), encoding="utf-8")
                 return True, "pinned on first use"
             want = json.loads(pin.read_text(encoding="utf-8")).get("claws_hmac")
     except Exception as e:
@@ -107,11 +106,19 @@ def verify_claws() -> tuple:
     return True, "intact"
 
 
+def _pin_doc(mac: str) -> dict:
+    """The pin: the signature, when, and the rules text it signs. The text is kept so a
+    later release that changes the rules can show the owner what changed before she
+    re-confirms them (north star §13.2, NS-13.2-10); the signature covers it, so a kept
+    text that was edited on disk no longer verifies and is not shown as hers."""
+    from agent_friday.governance.proof_of_integrity import CLAWS_TEXT
+    return {"claws_hmac": mac, "pinned_at": time.time(), "claws_text": CLAWS_TEXT}
+
+
 def repin_claws() -> str:
     """Owner action after an intended cLaws or key change."""
     mac = claws_hmac()
-    (_gov_dir() / "claws.pin.json").write_text(
-        json.dumps({"claws_hmac": mac, "pinned_at": time.time()}), encoding="utf-8")
+    (_gov_dir() / "claws.pin.json").write_text(json.dumps(_pin_doc(mac)), encoding="utf-8")
     return mac
 
 
@@ -629,8 +636,9 @@ def classify_command(cmd: str) -> tuple:
         head = words[0].lower()
         if head not in READ_ONLY_COMMANDS:
             return OUTWARD, f"'{words[0]}' is not on the read-only list"
-        if head == "git" and (len(words) < 2 or words[1].lower() not in _GIT_READ):
-            return OUTWARD, "a git command that is not read-only"
+        why = _argument_reach(head, words[1:])
+        if why:
+            return OUTWARD, why
     reach = _command_reach_reason(c)
     if reach:
         return OUTWARD, reach
@@ -812,6 +820,121 @@ def _command_reach_reason(cmd: str) -> str:
                 pass
             return f"it reads a place Friday's file tools may not ({why})"
     return ""
+
+
+
+#: Arguments that take a read-only command to another machine or online.
+#: PowerShell accepts any unambiguous prefix of a parameter name, so these are
+#: matched by prefix (at least two letters after the dash).
+_REMOTE_FLAGS = ("-computername", "-cn", "-cimsession", "-session", "-online",
+                 "-pssession", "-credential")
+#: Quote characters PowerShell honours, and the dashes it reads as "-".
+_QUOTES = "'\"‘’‚‛“”„‟`"
+_DASHES = {"–": "-", "—": "-", "―": "-"}
+#: A path to another machine anywhere in an argument: at its start, after a
+#: comma, an "=", a provider "::" or a "-Param:" prefix (either slash, any mix).
+_NETWORK_PATH = re.compile(r"(?:^|[,=]|::|^-[\w-]+:)[\\/]{2}")
+#: What may follow `git branch` / `git tag` / `git remote` and still only list.
+_GIT_LIST_FLAGS = {
+    "branch": {"-l", "--list", "-v", "-vv", "-a", "--all", "-r", "--remotes",
+               "--show-current", "--merged", "--no-merged", "--contains", "--no-contains",
+               "--sort", "--format", "--color", "--no-color", "--column", "--no-column",
+               "--points-at", "--abbrev", "--no-abbrev"},
+    "tag": {"-l", "--list", "-n", "--contains", "--no-contains", "--merged", "--no-merged",
+            "--sort", "--format", "--points-at", "--column", "--no-column", "--color"},
+    "remote": {"-v", "--verbose"},
+}
+#: git options that write a file or run a program.
+_GIT_WRITE_OPTIONS = ("--output", "--ext-diff", "--textconv", "--exec", "--upload-pack",
+                      "--receive-pack", "--config-env", "--show-signature")
+
+
+def _unquoted(a: str) -> str:
+    """An argument as PowerShell hands it on: quotes gone, typographic dashes plain."""
+    return "".join(_DASHES.get(ch, ch) for ch in a if ch not in _QUOTES)
+
+
+def _normal_token(a: str) -> str:
+    """_unquoted, lower case: for checks that ignore case."""
+    return _unquoted(a).lower()
+
+
+def _argument_reach(head: str, args: list) -> str:
+    """Why the arguments of an allowlisted command make it reach further than
+    reading this machine, or "" when they do not."""
+    for a in args:
+        low = _normal_token(a)
+        if low == "--%":
+            return "stop-parsing hands the rest to the program unread"
+        if _NETWORK_PATH.search(low) or "\\\\?\\" in low or "\\\\.\\" in low:
+            return "it names another machine or a device path"
+        if "::" in low:
+            return "a provider path can name another store or machine"
+        if head != "git" and low.startswith("-") and not low.startswith("--"):
+            # PowerShell binds any unambiguous prefix, down to one letter
+            # (`-C` is -ComputerName on Get-Service); git's own flags are not
+            # PowerShell parameters.
+            flag = low.split(":", 1)[0]
+            hit = next((r for r in _REMOTE_FLAGS if r.startswith(flag)), None)
+            if hit and len(flag) >= 2:
+                return "it asks another machine or goes online (%s)" % hit
+        if low == "/s":
+            return "it asks another machine (/s)"
+        if "$" in low and not re.fullmatch(r"\$env:[a-z_][a-z0-9_]*(?:[\\/][^$]*)?", low):
+            return "a variable can hold anything"
+        if low.startswith("@"):
+            return "splatted arguments can hold anything"
+    if head != "git":
+        return ""
+    if not args or args[0].lower() not in _GIT_READ:
+        return "a git command that is not read-only"
+    sub = args[0].lower()
+    raw_rest = [_unquoted(a) for a in args[1:]]
+    rest = [a.lower() for a in raw_rest]
+    for a, raw in zip(rest, raw_rest):
+        if a.startswith(_GIT_WRITE_OPTIONS):
+            return "a git option that writes a file or runs a program"
+        if a.startswith(("--format", "--pretty")) and "%G" in raw:
+            return "a signature placeholder runs the signing program"
+    if sub in _GIT_LIST_FLAGS:
+        allowed = _GIT_LIST_FLAGS[sub]
+        lists = any(a in ("-l", "--list") for a in rest)
+        for a in rest:
+            if a.startswith("-"):
+                if a.split("=", 1)[0] not in allowed and not (sub == "tag" and re.fullmatch(r"-n\d+", a)):
+                    return "git %s %s can change the repository" % (sub, a)
+            elif not (lists or sub == "branch" and any(
+                    f in rest for f in ("--contains", "--no-contains", "--merged", "--no-merged"))):
+                # a bare name creates (branch, tag) or a word picks an action (remote)
+                return "git %s with a name changes the repository" % sub
+    return ""
+
+
+#: Global options for every read-only git stage: no pager, no opportunistic
+#: index write (and so no index hook), no file-system monitor, no transport of
+#: any kind (a partial clone's lazy fetch), no signature program, no external diff.
+_GIT_READ_ONLY_GLOBALS = ("--no-pager --no-optional-locks -c core.fsmonitor=false "
+                          "-c protocol.allow=never -c log.showSignature=false -c diff.external=")
+#: The options a subcommand takes to keep diff drivers and text converters off.
+_GIT_NO_DRIVERS = {"diff": " --no-ext-diff --no-textconv", "log": " --no-ext-diff --no-textconv",
+                   "show": " --no-ext-diff --no-textconv", "blame": " --no-textconv"}
+
+
+def harden_read_only_git(cmd: str) -> str:
+    """A read-only command with every `git` stage told not to run programs its
+    repository's configuration names. The command is unchanged when it has no
+    git stage. Apply only to a command classify_command called read-only."""
+    out = []
+    for stage in (cmd or "").split("|"):
+        m = re.match(r"(\s*)git(\s+)(\S+)(.*)$", stage, re.S | re.I)
+        if not m or m.group(3).lower() not in _GIT_READ:
+            out.append(stage)
+            continue
+        sub = m.group(3)
+        extra = _GIT_NO_DRIVERS.get(sub.lower(), "")
+        out.append("%sgit %s%s%s%s%s" % (
+            m.group(1), _GIT_READ_ONLY_GLOBALS, m.group(2), sub, extra, m.group(4)))
+    return "|".join(out)
 
 
 def _resolve(path) -> Optional[Path]:

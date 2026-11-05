@@ -237,6 +237,21 @@ def finish(receipt_id: str, ok: bool, *, error: str = "") -> dict | None:
     return journal.update(receipt_id, **fields)
 
 
+def verify_written(path: Path, mode: str, content: str, before_size: int = 0) -> bool:
+    """Read the file back and say whether it holds what the write meant to put there (NS-4.6-1):
+    a whole write leaves exactly those bytes; an append leaves the earlier size plus the new text,
+    at the end. The write's own reply is not a read-back. Never raises; unreadable is False."""
+    try:
+        text = str(content)
+        wanted = (text if os.linesep == "\n" else text.replace("\n", os.linesep)).encode("utf-8")
+        data = Path(path).read_bytes()
+        if mode == "append":
+            return len(data) == int(before_size) + len(wanted) and data.endswith(wanted)
+        return data == wanted
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _backup_path(rid: str, ref: str) -> Path:
     """The backup a receipt names, only if it is this receipt's own backup."""
     from agent_friday.paths import contained
