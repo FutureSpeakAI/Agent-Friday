@@ -3363,7 +3363,18 @@ class Arbiter:
                 self._record("release", kind, None, el)
                 return {"ok": True, "transition_s": el}
             except Exception as e:
+                # The card is given back either way (as in the unserved-seat
+                # branch above). A lease kept after a failed release held the
+                # scheduler's GPU jobs and the seat restore behind it until it
+                # expired, and nobody owned it any more.
+                self.lease = None
                 self.state = STATE_DEGRADED
+                self._record("release-degraded", kind, None,
+                             round(time.time() - t0, 2))
+                __import__("logging").getLogger("friday.residency").error(
+                    "[arbiter] releasing the %s lease raised (%s); the lease is "
+                    "dropped and the seats are left to restore_unheld_seats",
+                    kind, e)
                 return {"ok": False, "error": str(e)}
 
     #: Tries a release makes to bring the displaced seats back, and the waits
@@ -3597,6 +3608,7 @@ class Arbiter:
                 rel = {"ok": True, "retried": True}
                 step("restore-retry", ok=True)
             except Exception as e:
+                self.lease = None           # the card is given back; see release()
                 self.state = STATE_DEGRADED
                 step("restore-retry", ok=False, error=str(e))
 
