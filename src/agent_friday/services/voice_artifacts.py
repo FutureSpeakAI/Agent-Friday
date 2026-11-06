@@ -280,6 +280,27 @@ ARTIFACTS = {
         "source": "Systran/faster-whisper-small (Hugging Face)",
         "optional": True,
     },
+    # Large-v3-turbo for the paired TV's dictation (tv_gateway/speech): the TV
+    # streams 16 kHz audio and this PC answers with text, on its graphics card.
+    # mobiuslabsgmbh's export, now published under dropbox-dash; faster-whisper
+    # reads preprocessor_config.json for the turbo model's 128 mel bins.
+    "whisper-large-v3-turbo": {
+        "label": "faster-whisper large-v3-turbo (dictation for a paired TV, on a GPU)",
+        "kind": "hf_files",
+        "repo": "dropbox-dash/faster-whisper-large-v3-turbo",
+        "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+        "files": {
+            "config.json": (2263, "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e"),
+            "model.bin": (1617884929, "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da"),
+            "preprocessor_config.json": (340, "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"),
+            "tokenizer.json": (2710337, "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd"),
+            "vocabulary.json": (1068114, "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1"),
+        },
+        "cache": "whisper",
+        "licence": "MIT (OpenAI Whisper weights)",
+        "source": "dropbox-dash/faster-whisper-large-v3-turbo (Hugging Face)",
+        "optional": True,
+    },
     # Kokoro's weights, config and every published voice. They go to the
     # Hugging Face cache this process reads (huggingface_hub's HF_HUB_CACHE),
     # where kokoro_voice and podcast_render already look them up by path.
@@ -388,6 +409,7 @@ PURPOSE = {
     "whisper-base.en": "Speech recognition: transcribes your audio and video, and checks a podcast says what its script says.",
     "whisper-base": "Speech recognition: push-to-transcribe (Alt+T) and the local ear on the processor.",
     "whisper-small": "Speech recognition (optional): a more accurate push-to-transcribe when a graphics card is free.",
+    "whisper-large-v3-turbo": "Speech recognition (optional): dictation for a paired TV, heard on this computer's graphics card.",
     "voice-ear-streaming": "Ear: turns your speech into text as you talk, on this computer.",
     "sherpa-onnx": "Ear runtime: the small program library the ear model runs in.",
     "voice-vad-v6": "Ear helper: hears when you start and stop speaking.",
