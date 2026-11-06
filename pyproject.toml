@@ -104,7 +104,8 @@ documents = ["PyPDFForm>=5.6", "pyHanko>=0.37", "rapidocr-onnxruntime>=1.2.3", "
 # loadfile`, and without it every `pytest` invocation fails on an unknown
 # argument. It is also the difference between a ~21 minute suite and a ~100
 # minute one.
-dev = ["pytest>=8.2", "pytest-xdist>=3.5", "ruff>=0.5"]
+# tests/unit/test_agent_guest_key.py imports httpx directly; anthropic no longer pulls it in on a fresh install.
+dev = ["pytest>=8.2", "pytest-xdist>=3.5", "ruff>=0.5", "httpx>=0.25"]
 all = [
     "pyttsx3>=2.90",
     "pillow>=12.3.0",
