@@ -3308,6 +3308,20 @@
  },
  {
   "section": "Privacy & Data",
+  "panel": "Quarantined background reading",
+  "label": "Read outside text through a quarantine in the background",
+  "kind": "toggle",
+  "keys": [
+   "quarantine_background_reads"
+  ],
+  "route": "",
+  "reader_file": "src/agent_friday/services/quarantine_gate.py",
+  "reader_needle": "(_load_settings() or {}).get(SETTING, True) is not False",
+  "status": "ok",
+  "note": ""
+ },
+ {
+  "section": "Privacy & Data",
   "panel": "Library",
   "label": "Most of your documents' text one cloud answer may send",
   "kind": "select",
