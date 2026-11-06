@@ -479,12 +479,8 @@ def _scene_dna_from_context(context: Dict[str, Any]) -> Optional[Dict[str, Any]]
     if isinstance(sd, dict):
         return sd
     if isinstance(sd, str) and sd.strip():
-        m = re.search(r"\{.*\}", sd, re.S)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                return None
+        from agent_friday.services.reply_json import last_object
+        return last_object(sd)
     return None
 
 

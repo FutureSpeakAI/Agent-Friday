@@ -1,4 +1,4 @@
-﻿import os
+import os
 import io
 import json
 import glob
@@ -2125,6 +2125,16 @@ def api_mcp_status():
                     info["security_note"] = reason
         except Exception:
             pass
+        try:
+            # BD-07, A30: tools withheld for want of a manifest, each with the reason.
+            from agent_friday.governance import tool_manifests as _tm
+            for name, missing in _tm.unavailable().items():
+                if missing and isinstance(servers.get(name), dict):
+                    servers[name]["unavailable_tools"] = missing
+                    servers[name]["manifest_note"] = (
+                        "%d tool(s) not offered: %s" % (len(missing), sorted(set(missing.values()))[0]))
+        except Exception:
+            pass
         return jsonify({
             "status": "ok",
             "available": True,
@@ -2464,15 +2474,18 @@ def analyze_file():
 
             # 2 ── cloud, only where the mode permits it, and never silently.
             mime = f"image/{'jpeg' if ext == 'jpg' else ext}"
+            from agent_friday.services.image_egress import ledger_words, strip_metadata
+            _sent, _meta = strip_metadata(content)
             response = _cloud_client().models.generate_content(
                 model='gemini-2.5-flash',
                 contents=[
-                    types.Part.from_bytes(data=content, mime_type=mime),
+                    types.Part.from_bytes(data=_sent, mime_type=mime),
                     "You are Friday. Describe this image. If it looks like a job posting or resume, analyze it for key requirements and fit."
                 ]
             )
             _analyze_record('gemini', 'allow',
-                            'routing mode %s permits cloud vision' % mode, nbytes)
+                            'routing mode %s permits cloud vision; %s'
+                            % (mode, ledger_words(_meta)), len(_sent))
             _disclose("An image you uploaded")
             return jsonify({"filename": filename, "type": "image",
                             "analysis": response.text, "vision_events": events})

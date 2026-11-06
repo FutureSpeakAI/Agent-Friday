@@ -63,9 +63,15 @@ def _key_pem(key) -> bytes:
 
 
 def _write(p: Path, data: bytes) -> None:
-    tmp = p.with_name(p.name + ".tmp")
+    """Atomic write; a private key file is restricted to this user."""
+    from agent_friday.services.credential_store import _unique_tmp, harden_permissions
+    tmp = _unique_tmp(p)
     tmp.write_bytes(data)
+    if b"PRIVATE KEY" in data:
+        harden_permissions(tmp)
     tmp.replace(p)
+    if b"PRIVATE KEY" in data:
+        harden_permissions(p)
 
 
 def thumbprint(cert, algo: str = "sha1") -> str:
