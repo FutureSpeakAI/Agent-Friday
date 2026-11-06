@@ -206,6 +206,9 @@ def _marked(raw: Dict[str, Any]) -> bool:
     return _verified(raw.get(_MARKER), _MARKER)
 
 
+ANCHOR_NAME = "mcp_hosts"
+
+
 def carry_over_at_boot(config: Any = None) -> int:
     """Once, at the first start with the host list: the hosts of remote servers configured
     at that start stay reachable (they were the owner's set-up before the list existed),
@@ -214,9 +217,36 @@ def carry_over_at_boot(config: Any = None) -> int:
     check, so a server added later always needs the owner's press. A list that is missing
     after it existed (history on disk) is not rebuilt from the configuration. Returns how
     many hosts were carried over."""
+    from agent_friday.governance import trust_anchor
     with _LOCK:
         raw = _read_raw()
-        if raw is None or _marked(raw):
+        if raw is None:
+            return 0
+        try:
+            # The owner's ruling (2026-10-28): the carry-over is anchored in the append-only
+            # action ledger, so deleting this list (and its history) cannot run it again.
+            anchored = trust_anchor.carried(ANCHOR_NAME)
+        except trust_anchor.AnchorUnavailable:
+            return 0                       # the ledger cannot say: carry nothing over
+        if anchored is not None:
+            if not _marked(raw):
+                # Deleted since: rebuilt from the ledger (only what it carried, minus what was
+                # released), never from the configuration.
+                for key, server in sorted(anchored["items"].items()):
+                    if key not in raw:
+                        raw[key] = _row(key, CARRIED_OVER, str(server or ""), "rebuilt from the ledger", "")
+                raw[_MARKER] = _row(_MARKER, CARRIED_OVER, "", "rebuilt from the ledger", "")
+                _write_raw(raw)
+                _history({"event": "rebuilt_from_ledger", "carried_over": len(anchored["items"])})
+            return 0
+        if _marked(raw):
+            # Carried over before the anchor existed: anchor what it trusted now (backfill).
+            try:
+                trust_anchor.record(ANCHOR_NAME, {k: (r or {}).get("server", "") for k, r in raw.items()
+                                                  if k != _MARKER and (r or {}).get("made_by") == CARRIED_OVER
+                                                  and _verified(r, k)})
+            except Exception:
+                pass
             return 0
         if raw or _history_path().exists():
             return 0                       # the list existed: never refill it from the config
@@ -226,13 +256,22 @@ def carry_over_at_boot(config: Any = None) -> int:
             servers = config.get("servers", config) if isinstance(config, dict) else {}
             urls = [(str(n), str(s["url"])) for n, s in (servers or {}).items()
                     if isinstance(s, dict) and s.get("url") and s.get("enabled") is not False]
-        n = 0
+        picked = {}
         for name, url in urls:
             key = host_key(url)
             if key and not _is_this_computer(key.rpartition(":")[0]) and key not in raw:
-                raw[key] = _row(key, CARRIED_OVER, name, "configured before the host list", "")
-                _history({"event": "carried_over", "host": key, "row": raw[key]})
-                n += 1
+                picked.setdefault(key, name)
+        try:
+            # Anchored first: if the ledger cannot record it, nothing is carried over.
+            trust_anchor.record(ANCHOR_NAME, picked)
+        except Exception as e:  # noqa: BLE001
+            _history({"event": "carry_over_refused", "why": type(e).__name__})
+            picked = {}
+        n = 0
+        for key, name in picked.items():
+            raw[key] = _row(key, CARRIED_OVER, name, "configured before the host list", "")
+            _history({"event": "carried_over", "host": key, "row": raw[key]})
+            n += 1
         raw[_MARKER] = _row(_MARKER, CARRIED_OVER, "", "%d host(s) carried over" % n, "")
         _write_raw(raw)
         _history({"event": "list_made", "carried_over": n})
@@ -261,7 +300,24 @@ def check(url: str) -> str:
     if lost:
         return ("the list of add-on server hosts was lost or changed outside Friday, so each "
                 "host needs your approval again (%s)" % display(key))
-    if _verified(raw.get(key), key):
+    row = raw.get(key)
+    if _verified(row, key):
+        if row.get("made_by") == CARRIED_OVER:
+            # Trusted at the first start: only while the action ledger still says so (an older
+            # copy of this file put back cannot bring back a host released since).
+            try:
+                from agent_friday.governance import trust_anchor
+                anchored = trust_anchor.carried(ANCHOR_NAME)
+                if anchored is None and _marked(raw):
+                    # Carried over before the anchor existed (or the ledger was unreadable at
+                    # the start, since reviewed): anchor it now rather than wait for a restart.
+                    carry_over_at_boot({})
+                    anchored = trust_anchor.carried(ANCHOR_NAME, fresh=True)
+            except Exception:
+                anchored = None
+            if not anchored or key not in anchored["items"]:
+                return ("%s was trusted when the host list was made, but the action ledger no "
+                        "longer says so; it needs your approval again" % display(key))
         return ""
     return "you have not allowed Friday to reach %s" % display(key)
 
@@ -310,6 +366,21 @@ def remove(url_or_key: str, *, made_by: str) -> bool:
             raise HostRefused("The host list could not be read, so nothing was changed.")
         if key.startswith("__") or key not in raw:
             return False
+        try:
+            # A host the ledger carried over is released there first, whoever made its row now,
+            # so a deleted list is never rebuilt with it. If that cannot be recorded, nothing
+            # changes.
+            from agent_friday.governance import trust_anchor
+            try:
+                anchored = trust_anchor.carried(ANCHOR_NAME)
+                carried_here = bool(anchored) and key in anchored["items"]
+            except trust_anchor.AnchorUnavailable:
+                carried_here = True                    # cannot tell: record the release anyway
+            if carried_here:
+                trust_anchor.release(ANCHOR_NAME, key, why="removed by the owner")
+        except Exception as e:  # noqa: BLE001
+            raise HostRefused("The removal could not be recorded in the action ledger (%s), "
+                              "so nothing was changed." % type(e).__name__)
         old = raw.pop(key)
         _write_raw(raw)
         _history({"event": "remove", "host": key, "previous": old, "by": made_by})

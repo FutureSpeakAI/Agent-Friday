@@ -68,7 +68,18 @@ jobs:
       # visible; a cancelled run skips it.
       - name: Run security + egress boundary suites
         if: ${{ !cancelled() }}
-        run: pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py -q
+        run: >-
+          pytest tests/security tests/test_egress_adversarial.py tests/test_judgment_gate.py
+          tests/gauntlet/test_chat_send_regates_for_predicted_provider.py
+          tests/gauntlet/test_task_worker_fallback_regates_prompt.py
+          tests/gauntlet/test_channels_manager_fallback_regates_prompt.py
+          tests/gauntlet/test_claude_code_adapter_fallback_regates_prompt.py
+          tests/gauntlet/test_creative_pipeline_fallback_regates_prompt.py
+          tests/gauntlet/test_cloud_voice_egress_and_cost.py
+          tests/gauntlet/test_cloud_voice_no_silent_fallback.py
+          tests/gauntlet/test_voice_local_only_privacy.py
+          tests/gauntlet/test_voice_offline_no_cloud.py
+          -q
 
       # The workspace / Laya contract: every workspace has a manifest, gate classes
       # agree, and the Laya coverage ratchet never goes down. It lives outside

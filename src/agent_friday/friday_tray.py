@@ -224,9 +224,11 @@ def _attach_friday_log() -> None:
     except Exception:
         pass  # a log that cannot be opened must not stop Friday starting
     try:
-        # The tray writes friday.log too: the same redaction filter as the server's handlers.
+        # The tray writes friday.log too: the same redaction as the server, for
+        # records from every logger in this process.
         from agent_friday.services import log_redaction
         log_redaction.install(root)
+        log_redaction.install_everywhere()
     except Exception:
         pass
 

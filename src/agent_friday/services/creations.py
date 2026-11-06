@@ -264,13 +264,8 @@ def _parse_creation_json(raw):
         return json.loads(text)
     except Exception:
         pass
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except Exception:
-            return None
-    return None
+    from agent_friday.services.reply_json import last_object
+    return last_object(text)
 
 
 # ═══════════════════════════════════════════════════════════════
