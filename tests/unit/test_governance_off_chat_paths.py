@@ -552,6 +552,9 @@ REVIEWED_SINKS = {
         "an approved card, re-verified, then phone.checkpoint",
     ("phone/service.py", "start_owner_verification"):
         "a code to the owner's own number, from the owner's click in Settings",
+    ("phone/service.py", "_handle_sms_in"):
+        "A28 only: the fixed text 'Stopped.' to the verified owner cell after a stop that cell "
+        "sent, once per stop, after global_stop.claim_ack wrote its signed receipt (BD-13)",
     ("services/gmail_send.py", "send"):
         "an approved card, re-verified, then action_gate.record_external",
     ("services/gmail_send.py", "save_draft"):

@@ -512,9 +512,11 @@ def test_an_approved_setting_change_closes_from_the_change_result(monkeypatch, h
     monkeypatch.setattr(item_actions, "_post_back", lambda *a, **k: None)
     monkeypatch.setattr(item_actions, "_tell_call", lambda *a, **k: None)
     monkeypatch.setattr(sp, "_tell_pages", lambda *a, **k: None)
-    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "probe_setting_tool", lambda inp: handler_says)
+    # A setting card runs only an internal settings tool (setting_proposals.SETTINGS_TOOLS):
+    # the probe answers as set_setting, one of them.
+    monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "set_setting", lambda inp: handler_says)
     sp._on_decision({"status": "approved", "approval_id": "ap-set-probe",
-                     "payload": {"handler": sp.HANDLER, "tool": "probe_setting_tool", "input": {},
+                     "payload": {"handler": sp.HANDLER, "tool": "set_setting", "input": {},
                                  "path": "settings.probe", "conversation_id": ""}})
     assert [o["outcome"] for o in _outcomes(ref["action_id"])] == [word]
 

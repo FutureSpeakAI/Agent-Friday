@@ -53,7 +53,7 @@ def claws_status() -> dict:
            "pinned": False, "pinned_at": None}
     pin = ag._gov_dir() / "claws.pin.json"
     try:
-        want = None
+        want, doc = None, None
         if pin.exists():
             doc = json.loads(pin.read_text(encoding="utf-8"))
             want = doc.get("claws_hmac")
@@ -64,6 +64,10 @@ def claws_status() -> dict:
                    summary="The rules signature cannot be checked (%s). Outward "
                            "actions are held." % type(e).__name__)
         return out
+    if doc is not None and not want:
+        # A pin file without a signature: the gate holds outward actions on it
+        # (action_gate.verify_claws), so it is a mismatch the owner can resolve here.
+        want = "-"
     if not want:
         out.update(state="not_pinned", holds_outward=False,
                    summary="Not pinned yet. The rules are pinned on this PC the "
@@ -78,7 +82,83 @@ def claws_status() -> dict:
                            "expected after moving Friday's data to another PC or "
                            "Windows account, or after an update that changed "
                            "the rules text.")
+        out["changes"] = rules_changes(doc, CLAWS_TEXT)
     return out
+
+
+#: Lines shown in a change (the rules are a few lines; this bounds a bad pin).
+_MAX_CHANGED_LINES = 200
+#: A kept text longer than this is not compared at all (the rules are well under 1 KB).
+_MAX_KEPT_CHARS = 64_000
+
+
+def rules_changes(pin_doc: dict, current: str) -> dict:
+    """What changed between the rules the owner last confirmed and the rules now
+    (north star §13.2, NS-13.2-10), in a form the page shows before she re-confirms.
+
+      kind "text_changed"  the kept text verifies under this PC's key and differs:
+                           `lines` lists the changed lines in order ("-" removed,
+                           "+" added); `removed` and `added` are the same, split
+      kind "key_changed"   the kept copy reads the same as the rules now but cannot be
+                           checked under this PC's key (her data moved to another PC
+                           or account): the rules now are shown
+      kind "unverified"    a kept copy that does not verify and differs: it is not
+                           shown (it may not be what she confirmed); the rules now are
+      kind "not_kept"      the pin predates keeping the text: the rules now are shown
+
+    Only a kept text signed under this PC's key is ever compared line by line.
+    `current` always carries the rules now. `requires_text_sha256` is always true:
+    re-confirming sends back the fingerprint of the rules the page displayed, so a
+    page showing other rules (an older release, a stale tab) cannot re-confirm these."""
+    import difflib
+    current = current.replace("\r\n", "\n")
+    current_lines = current.split("\n")
+    out = {"current": current_lines[:_MAX_CHANGED_LINES], "lines": [], "removed": [], "added": [],
+           "truncated": len(current_lines) > _MAX_CHANGED_LINES, "requires_text_sha256": True}
+    kept = pin_doc.get("claws_text") if isinstance(pin_doc, dict) else None
+    if not isinstance(kept, str):
+        out.update(kind="not_kept",
+                   words="The rules confirmed earlier were not kept on this PC, so what "
+                         "changed cannot be shown. These are the rules now.")
+        return out
+    kept = kept.replace("\r\n", "\n")
+    verifies = False
+    if len(kept) <= _MAX_KEPT_CHARS:
+        try:
+            verifies = hmac.compare_digest(str(pin_doc.get("claws_hmac") or ""), sign_text(kept))
+        except Exception:  # noqa: BLE001
+            verifies = False
+    if not verifies:
+        if kept == current:
+            out.update(kind="key_changed",
+                       words="The rules kept on this PC read the same as the rules now, but "
+                             "they cannot be checked under this PC's signing key, as is "
+                             "expected after Friday's data moves to another PC or Windows "
+                             "account. These are the rules now.")
+        else:
+            out.update(kind="unverified",
+                       words="The rules confirmed earlier cannot be checked on this PC (the "
+                             "kept copy does not match its signature), so what changed "
+                             "cannot be shown. These are the rules now.")
+        return out
+    for line in difflib.ndiff(kept.split("\n"), current_lines):
+        if line[:2] in ("- ", "+ "):
+            out["lines"].append({"op": line[0], "text": line[2:]})
+    out["truncated"] = out["truncated"] or len(out["lines"]) > _MAX_CHANGED_LINES
+    out["lines"] = out["lines"][:_MAX_CHANGED_LINES]
+    out["removed"] = [x["text"] for x in out["lines"] if x["op"] == "-"]
+    out["added"] = [x["text"] for x in out["lines"] if x["op"] == "+"]
+    out.update(kind="text_changed",
+               words="An update changed Friday's rules. Read what changed before "
+                     "re-confirming them.")
+    return out
+
+
+def sign_text(text: str) -> str:
+    """The pin signature of `text` under this PC's governance key."""
+    import hashlib as _hashlib
+    from agent_friday.governance import action_gate as ag
+    return hmac.new(ag._governance_key(), text.encode("utf-8"), _hashlib.sha256).hexdigest()
 
 
 @owner_security_bp.route("/api/governance/claws", methods=["GET"])
@@ -99,11 +179,20 @@ def governance_claws_repin():
                                                 "confirmation."}), 400
     from agent_friday.governance import action_gate as ag
     before = claws_status()
+    changes = before.get("changes") or {}
+    if str(body.get("text_sha256") or "") != str(before.get("text_sha256") or ""):
+        # Re-confirming names the rules: the page sends back the fingerprint of the
+        # rules it displayed, so a page showing other rules cannot confirm these.
+        return jsonify({"ok": False, "code": "rules_not_shown",
+                        "message": "The rules changed. Read what changed in Settings, then "
+                                   "re-confirm the rules shown there.",
+                        **before}), 409
     try:
         ag._receipt({"tool": "governance:repin_claws", "class": "owner",
                      "decision": "allow", "surface": "settings",
                      "reason": "owner re-confirmed the rules on this PC "
-                               "(was: %s)" % before.get("state")})
+                               "(was: %s%s)" % (before.get("state"),
+                                                ", " + changes["kind"] if changes.get("kind") else "")})
         ag.repin_claws()
     except Exception as e:
         _log.error("re-pinning the rules failed: %s", e)

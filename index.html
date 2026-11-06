@@ -60292,17 +60292,26 @@ function ClawsRepinPanel() {
     apiFetch('/api/governance/claws/repin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirm: true })
+      body: JSON.stringify({ confirm: true, text_sha256: st && st.text_sha256 })
     }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
       if (ok) { setSt(d); setMsg('Re-confirmed. The rules are pinned to this PC again.'); }
-      else setMsg(d && (d.message || d.error) || 'Not re-confirmed.');
+      else { if (d && d.state) setSt(d); setMsg(d && (d.message || d.error) || 'Not re-confirmed.'); }
     }).catch(() => setMsg('Could not reach the server.')).finally(() => setBusy(false));
   };
   const muted = { fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 };
   if (!st) return E('div', { style: muted }, 'Reading the rules status…');
   const colour = st.state === 'intact' ? '#00ff80' : st.state === 'not_pinned' ? '#00d4ff' : '#f59e0b';
+  // What changed since the owner last confirmed the rules, shown before she re-confirms.
+  const ch = st.changes;
+  const line = (sign, text, c) => E('div', { style: { fontFamily: 'JetBrains Mono', fontSize: 11, color: c, whiteSpace: 'pre-wrap', lineHeight: 1.5 } }, sign + ' ' + text);
+  const changesView = ch && E('div', { 'data-testid': 'claws-changes', style: { margin: '6px 0 10px', padding: 8, border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6 } },
+    E('div', { style: { fontSize: 11, color: '#cfefff', marginBottom: 6, lineHeight: 1.6 } }, ch.words || ''),
+    (ch.lines || []).map((x, i) => E('div', { key: 'l' + i }, x.op === '-' ? line('−', x.text, '#f59e0b') : line('+', x.text, '#00ff80'))),
+    ch.kind !== 'text_changed' && (ch.current || []).map((t, i) => E('div', { key: 'c' + i }, line(' ', t, 'rgba(255,255,255,0.75)'))),
+    ch.truncated && E('div', { style: { fontSize: 11, color: '#cfefff', marginTop: 4 } }, 'Only part of it is shown here.'));
   return E('div', { 'data-testid': 'claws-repin' },
     E('div', { style: { fontSize: 12, color: colour, marginBottom: 6, lineHeight: 1.6 } }, st.summary || st.state),
+    changesView,
     E('div', { style: Object.assign({}, muted, { fontFamily: 'JetBrains Mono', marginBottom: 10 }) },
       'Rules text SHA-256 ', (st.text_sha256 || '').slice(0, 16), '…',
       st.pinned_at ? ' · pinned ' + new Date(st.pinned_at * 1000).toLocaleString() : ''),
@@ -62210,6 +62219,7 @@ function SettingsTabLaya({s, save} = {}) {
   const rp = rep.replay;
   const bars = d.bars || {rows:[], mode:'shadow'};
   const prev = rep.bars_preview;
+  const dh = rep.decision_heads;
   const tableOf = (heads, rows) => E('table', {style:{borderCollapse:'collapse', width:'100%'}},
     E('thead', null, E('tr', null, heads.map(h => E('th', {key:h, style:th}, h)))),
     E('tbody', null, rows));
@@ -62261,6 +62271,19 @@ function SettingsTabLaya({s, save} = {}) {
         rp.with_your_bars ? E('div', {style:dim}, 'With your bars (shadow): ' + rp.with_your_bars.moved + ' decisions would change; ' + rp.with_your_bars.right_after + ' of them right, ' + rp.with_your_bars.wrong_after + ' wrong.') : null,
         E('div', {style:dim}, (rp.waiting_not_scored || 0) + ' choices waiting for your OK and ' + (rp.set_aside_not_scored || 0) + ' set aside were not scored.'))
         : E('div', {style:dim}, 'Not run yet. Use the replay test below.')),
+    // The decision heads (services/decision_replay.report_card): what each head did in the period the last
+    // nightly report covered. Counts only; nothing here changes a head.
+    React.createElement(StSection, { title: "Her decision heads", desc: 'Small, fixed questions Laya answers beside ' + fridayName() + ': which mail lane, whether the memory she found is enough, whether a source supports a sentence, whether a task is stuck. Each one only records what it would have done, until you approve a change. ' + ((dh && dh.note) || '') },
+      !dh ? E('div', {style:dim, 'data-laya-heads-night': 'error'}, 'Could not read the heads\u2019 report.') :
+      E('div', {style:dim, 'data-laya-heads-night': dh.night || 'none'}, dh.night ? ('Last nightly report: ' + dh.night + '.' + (dh.shortfall_s ? ' Some decisions more than a week old were not replayed.' : '')) : 'No nightly report yet. It runs in the nightly practice window, on mains power.'),
+      dh ? tableOf(['Head', 'Mode', 'Decisions', 'Would act (as shipped)', 'Right / wrong / not known yet', 'Missed / acted wrongly', 'Change from her usual'], (dh.rows || []).map(r => E('tr', {key:r.id, 'data-laya-head': r.id},
+        E('td', {style:td}, r.name), E('td', {style:td}, chip(r.mode || 'off')),
+        E('td', {style:td}, r.decisions === null || r.decisions === undefined ? 'not yet' : r.decisions),
+        E('td', {style:td}, r.take_rate_pct === null || r.take_rate_pct === undefined ? 'not yet' : (r.lower_bound ? 'at least ' : '') + pct(r.take_rate_pct)),
+        E('td', {style:td}, r.pass === null || r.pass === undefined ? 'not yet' : (r.pass + ' / ' + r.fail + ' / ' + r.uncertain)),
+        E('td', {style:td}, r.miss === null || r.miss === undefined ? 'not yet' : (r.miss + ' / ' + r.wrong)),
+        E('td', {style:Object.assign({}, td, r.drift_flag ? {color:'#f5b94a'} : {}), 'data-laya-head-drift': r.drift_flag ? 'flag' : 'steady'},
+          r.drift === null || r.drift === undefined ? 'not yet' : ((r.drift > 0 ? '+' : '') + Math.round(r.drift * 100) + ' points' + (r.drift_flag ? ' (worth a look)' : '')))))) : null),
     React.createElement(StSection, { title: "Replay test", desc: 'Replays the requests you corrected or confirmed through Laya as she is now, then again reworded so phrasings she memorised stop helping. It stays on this PC, reads only what is sealed in your vault, and saves counts, never your words. You can also say "run your replay test".' },
       E('button', {type:'button', className:'settings-btn', 'data-laya-action':'replay', disabled: !!busy, onClick: () => post('replay', {}, 'replay')},
         busy === 'replay' ? 'Replaying…' : 'Run the replay test on my history'),
@@ -65712,6 +65735,56 @@ function MailDefaultAccountRow({ s, save }) {
       E('option', { value: '' }, 'Ask me'),
       list.map(a => E('option', { key: a.id, value: a.id }, name(a)))));
 }
+// Settings -> Connections -> Platform connectors: what each connector declares (BD-06, NS-23.1-4):
+// where it connects, what the service receives, what is kept on this PC and for how long, its
+// limits and what removing it does. Read only when opened (/api/connectors/<id>/contract).
+function ConnectorContractCard({
+  id,
+  name
+}) {
+  const [card, setCard] = useState(null);
+  const [err, setErr] = useState('');
+  const onToggle = e => {
+    if (!e.currentTarget.open || card) return;
+    apiFetch('/api/connectors/' + encodeURIComponent(id) + '/contract').then(r => r.json()).then(d => {
+      const c = d && d.contract && d.contract.card;
+      if (Array.isArray(c)) setCard(c);else setErr('Not available for this connector.');
+    }).catch(() => setErr('Could not load what this connection does.'));
+  };
+  return /*#__PURE__*/React.createElement("details", {
+    className: "connector-contract-card",
+    onToggle: onToggle,
+    style: {
+      marginTop: 6,
+      fontSize: 11,
+      color: 'rgba(255,255,255,0.78)'
+    }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: 'pointer',
+      color: '#00d4ff'
+    }
+  }, (name || id) + ': what this connection does'), err && /*#__PURE__*/React.createElement("div", {
+    role: "status"
+  }, err), (card || []).map(sec => /*#__PURE__*/React.createElement("div", {
+    key: sec.heading,
+    style: {
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      color: '#fff'
+    }
+  }, sec.heading), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      margin: '2px 0 0 16px',
+      padding: 0
+    }
+  }, (sec.lines || []).map((l, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, l))))));
+}
 function SettingsTabConnectors({
   s,
   save,
@@ -65826,7 +65899,11 @@ function SettingsTabConnectors({
       width: 7,
       height: 7
     }
-  }), c.name || c.id)))));
+  }), c.name || c.id))), connectors.filter(c => c.key && c.key !== 'google').map(c => /*#__PURE__*/React.createElement(ConnectorContractCard, {
+    key: 'cc-' + c.key,
+    id: c.key,
+    name: c.name || c.key
+  }))));
 }
 // ── Settings → Connections → Signing. The signature image and the signing
 // certificate are secrets: they go in, and only whether each is stored comes
