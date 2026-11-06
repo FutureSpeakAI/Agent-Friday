@@ -9,8 +9,11 @@ the adapter sends it.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any, Callable, Dict, Optional
+
+_log = logging.getLogger("friday.channels")
 
 _CHANNEL_SEND_WITHHELD = ("[withheld by egress gate — this message stayed "
                           "on this device]")
@@ -93,6 +96,37 @@ class ChannelAdapter:
         self._stop = threading.Event()
         self._running = False
         self._last_error: Optional[str] = None
+        self._turn_pool = None          # the turn worker's queue (submit_turn; BD-13)
+        self._turn_lock = threading.Lock()
+        #: a short hash of the token a service refused as revoked or wrong (HTTP 401); the
+        #: channel says so until its token is a different one (BD-06; NS-34.11-3)
+        self._refused_token: Optional[str] = None
+
+    # ── a token the service refused ──────────────────────────────────────────
+    _TOKEN_REFUSED = ("the bot token was revoked or is wrong, so nothing was sent. Paste a new "
+                      "token where this channel is set up.")
+
+    def _token_mark(self) -> str:
+        try:
+            import hashlib
+            return hashlib.sha256((self.token() or "").encode("utf-8")).hexdigest()[:16]
+        except Exception:  # noqa: BLE001 - the credential store could not be read
+            return ""
+
+    def _note_send_error(self, exc: BaseException) -> None:
+        """After a send raised: a refusal of the token itself (HTTP 401) is named on the
+        channel's status until the token changes. Any other refusal leaves the token alone."""
+        try:
+            code = int(getattr(exc, "code", None) or getattr(exc, "status", None) or 0)
+        except (TypeError, ValueError):
+            code = 0
+        if code == 401:
+            self._refused_token = self._token_mark()
+            self._last_error = self._TOKEN_REFUSED
+
+    def needs_token(self) -> bool:
+        refused = getattr(self, "_refused_token", None)
+        return bool(refused) and refused == self._token_mark()
 
     # ── configuration ────────────────────────────────────────────────────────
     def configure(self, config: Dict[str, Any]) -> None:
@@ -144,6 +178,22 @@ class ChannelAdapter:
     def stop(self) -> Dict[str, Any]:
         self._stop.set()
         self._running = False
+        with self._turn_lock:
+            q, self._turn_pool = self._turn_pool, None
+        if q is not None:
+            # Turns still waiting are dropped, not run (their messages were already read);
+            # the worker ends after the turn it is running, if any.
+            while True:
+                try:
+                    item = q.get_nowait()
+                except Exception:
+                    break
+                if item is not None:
+                    item[0].cancel()
+            try:
+                q.put_nowait(None)
+            except Exception:
+                pass
         return {"ok": True}
 
     def _loop(self) -> None:
@@ -248,6 +298,58 @@ class ChannelAdapter:
             return False, None
 
     # ── inbound dispatch (adapters call this per received message) ────────────
+    #: Turns waiting behind a running one; more are refused (a flood behind a stuck turn).
+    MAX_QUEUED_TURNS = 50
+
+    def submit_turn(self, fn: Callable[..., Any], *args: Any):
+        """Run `fn(*args)` on the adapter's one turn worker; returns a Future, or None when the
+        turn was refused (the adapter is stopped, or too many are waiting).
+
+        A turn runs there, not on the reading thread, so a slow or stuck turn never stops the
+        next message being read: that message may be "stop everything" (BD-13). One worker keeps
+        replies in order. It is a daemon thread: a stuck turn never holds Friday's exit."""
+        import queue
+        from concurrent.futures import Future
+        fut: Future = Future()
+        with self._turn_lock:
+            if self._stop.is_set():
+                self._last_error = "a message arrived after this channel stopped; not run"
+                return None
+            if self._turn_pool is None:
+                q: "queue.Queue" = queue.Queue(maxsize=self.MAX_QUEUED_TURNS)
+                threading.Thread(target=self._work, args=(q,), name="channel-%s-turns" % self.name,
+                                 daemon=True).start()
+                self._turn_pool = q
+            try:
+                self._turn_pool.put_nowait((fut, fn, args))
+            except queue.Full:
+                self._last_error = "too many messages waiting behind a slow reply; one was dropped"
+                _log.warning("channel %s: turn queue full, a message was dropped", self.name)
+                return None
+        return fut
+
+    @staticmethod
+    def _work(q) -> None:
+        while True:
+            item = q.get()
+            if item is None:
+                return
+            fut, fn, args = item
+            if not fut.set_running_or_notify_cancel():
+                continue
+            try:
+                fut.set_result(fn(*args))
+            except BaseException as e:  # noqa: BLE001 - handed to whoever waits on the Future
+                fut.set_exception(e)
+
+    @staticmethod
+    def is_stop(text: str) -> bool:
+        try:
+            from agent_friday.services import global_stop
+            return global_stop.is_remote_stop(text)
+        except Exception:
+            return False
+
     def _dispatch(self, chat_id: str, text: str) -> None:
         if not self._handler:
             return
@@ -255,10 +357,40 @@ class ChannelAdapter:
             text = "" if text is None else str(text)
         # Truncate hostile/oversized inbound payloads before the agent loop —
         # adapters also cap, but the shared funnel must not rely on it.
-        reply = self._handler(self.name, str(chat_id), text[:8000])
+        text = text[:8000]
+        if self.is_stop(text):
+            self._deliver(str(chat_id), text)        # at once, on the reading thread
+            return
+        self.submit_turn(self._deliver, str(chat_id), text)
+
+    def send_stop_ack(self, chat_id: str, text: str) -> bool:
+        """A28: the one fixed reply after a stop from this chat, on the raw transport (every
+        other send is held while stopped). Only global_stop.claim_ack's text is accepted."""
+        from agent_friday.services import global_stop
+        if text != global_stop.STOP_ACK:
+            return False
+        try:
+            res = self._send_raw(chat_id, text)
+        except Exception as e:  # noqa: BLE001
+            self._last_error = str(e)
+            return False
+        ok = bool(isinstance(res, dict) and res.get("ok"))
+        try:
+            record_channel_send(self.name, chat_id, text, ok, bool(isinstance(res, dict) and res.get("unsure")))
+        except Exception:
+            pass
+        return ok
+
+    def _deliver(self, chat_id: str, text: str) -> None:
+        try:
+            reply = self._handler(self.name, chat_id, text)
+        except Exception as e:  # noqa: BLE001 - one turn failing never stops the reader
+            self._last_error = str(e)
+            _log.warning("channel %s: a turn failed: %s", self.name, type(e).__name__)
+            return
         if reply:
             try:
-                self.send(str(chat_id), reply)
+                self.send(chat_id, reply)
             except Exception as e:
                 self._last_error = str(e)
 
@@ -268,6 +400,7 @@ class ChannelAdapter:
             "name": self.name,
             "running": self._running,
             "has_token": self.has_token(),
+            "needs_token": self.needs_token(),
             "dependency_ok": self.dependency_ok(),
             "last_error": self._last_error,
             "enabled": bool(self._config.get("enabled", False)),

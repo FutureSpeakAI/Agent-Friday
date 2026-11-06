@@ -53,7 +53,7 @@ FEATURES: Dict[str, dict] = {
         "artifacts": ["whisper-base"],
         # Used on a GPU when present ("auto" picks small there); base answers
         # until it is installed.
-        "optional": ["whisper-small"],
+        "optional": ["whisper-small", "whisper-large-v3-turbo"],
     },
     "kokoro_voice": {
         "name": "Kokoro voice",
@@ -95,6 +95,7 @@ SHORT = {
     "whisper-base.en": "whisper base.en",
     "whisper-base": "whisper base",
     "whisper-small": "whisper small",
+    "whisper-large-v3-turbo": "whisper large-v3-turbo",
     "kokoro": "the kokoro package",
     "misaki": "misaki[en]",
     "spacy-en-core-web-sm": "spaCy's en_core_web_sm model",
@@ -108,11 +109,12 @@ WHISPER_REPOS = {
     "base.en": "Systran/faster-whisper-base.en",
     "base": "Systran/faster-whisper-base",
     "small": "Systran/faster-whisper-small",
+    "large-v3-turbo": "dropbox-dash/faster-whisper-large-v3-turbo",
 }
 
 #: faster-whisper size -> the pinned artifact that installs it.
 WHISPER_ARTIFACT = {"base.en": "whisper-base.en", "base": "whisper-base",
-                    "small": "whisper-small"}
+                    "small": "whisper-small", "large-v3-turbo": "whisper-large-v3-turbo"}
 
 _LOCK = threading.Lock()
 #: feature -> the last refusal (message, who asked, when), for status().

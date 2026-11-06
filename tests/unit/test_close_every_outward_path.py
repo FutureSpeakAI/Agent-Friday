@@ -41,6 +41,14 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "verify_claws", lambda *a, **k: (True, "intact"))
     monkeypatch.setattr(G, "outward_hold", lambda: None)
     monkeypatch.setattr(G, "_send_grant", lambda *a, **k: None)
+    # A setting change runs only one of the settings tools, classed internal
+    # (setting_proposals.SETTINGS_TOOLS): the probe_* tools here stand in for them.
+    from agent_friday.services import setting_proposals as _sp
+    _probes = {"probe_setting_tool", "probe_raise_tool", "probe_exit_tool"}
+    monkeypatch.setattr(_sp, "SETTINGS_TOOLS", frozenset(_sp.SETTINGS_TOOLS) | _probes)
+    _classify = G.classify
+    monkeypatch.setattr(G, "classify", lambda name, *a, **k: (
+        (G.INTERNAL, "a settings change") if name in _probes else _classify(name, *a, **k)))
     yield
 
 

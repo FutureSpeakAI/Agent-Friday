@@ -531,6 +531,8 @@ UNOWNED_KINDS = {
     "analyze_file": "A file attached to a chat (/api/analyze); the chat is its surface, not a workspace.",
     "cloud_once": "The one cloud turn the owner asked for in a chat (local_offer); the chat is its surface, not a workspace.",
     "voice_live_reduce": "A tool result trimmed inside a Gemini Live call; the call is its surface, not a workspace.",
+    "tv_turn": "A paired TV's chat turn (tv_gateway/turn); the TV's screen is its surface, not a workspace.",
+    "tv_speech": "A paired TV's dictation (tv_gateway/speech); the TV's microphone pill is its surface, not a workspace.",
 }
 
 
