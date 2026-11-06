@@ -5627,7 +5627,7 @@ def _seq_of(receipt) -> int:
         return 0
 
 
-def _settle_terminal_receipt(task_id):
+def _settle_terminal_receipt(*task_ids):
     """After a status is committed (north star §30.9, NS-30.9-1): make the
     record's terminal receipt name the status the record now ends with.
 
@@ -5639,9 +5639,10 @@ def _settle_terminal_receipt(task_id):
     * the same ending again: nothing.
 
     Whichever status is committed last is settled last, so the record and its
-    last receipt always agree."""
+    last receipt always agree. Several tasks are queued in one step (the sweep),
+    so whichever thread is the settler takes them all."""
     with _SETTLE_GUARD:
-        _SETTLE_DIRTY.add(task_id)
+        _SETTLE_DIRTY.update(task_ids)
         if _SETTLER["active"]:
             return
         _SETTLER["active"] = True
@@ -5666,6 +5667,77 @@ def _settle_terminal_receipt(task_id):
                 _SETTLER["active"] = False
 
 
+#: After a ledger write for a task's receipt fails, the sweep waits this long
+#: before trying that task again.
+RECEIPT_RETRY_S = 300.0
+_RECEIPT_RETRY_AFTER: dict = {}
+
+
+def receipt_out_of_date(rec) -> bool:
+    """Does this record's terminal receipt fail to match its status? Only records
+    made since tasks carry an origin are judged: older ones never had receipts."""
+    if not isinstance(rec, dict) or 'origin' not in rec:
+        return False
+    cur = rec.get('terminal_receipt') or None
+    if _ends_task(rec.get('status')):
+        return not cur or cur.get('status') != rec.get('status')
+    return bool(cur)
+
+
+#: Tasks one sweep sends to the settler at most (the rest wait for the next pass).
+RECEIPT_SWEEP_MAX = 50
+_RECEIPT_SWEEP = {"thread": None}
+
+
+def settle_out_of_date_receipts(items=None, now=None, complete=None) -> int:
+    """Settle the tasks whose receipt does not match their status (an ending
+    written in place), at most RECEIPT_SWEEP_MAX per call. `items` is
+    [(task_id, record copy)], default all TASKS. Returns how many were handed to
+    the settler (when another thread is settling, it settles them). Never raises."""
+    now = _time.time() if now is None else now
+    n = 0
+    try:
+        full = items is None
+        complete = full if complete is None else complete
+        if full:
+            with TASKS_LOCK:
+                items = [(tid, dict(t)) for tid, t in TASKS.items()]
+        if complete:
+            known = {tid for tid, _ in items}
+            for tid in [k for k in list(_RECEIPT_RETRY_AFTER) if k not in known]:
+                _RECEIPT_RETRY_AFTER.pop(tid, None)      # task gone: forget its back-off
+        due = []
+        for tid, rec in items:
+            if len(due) >= RECEIPT_SWEEP_MAX:
+                break
+            if not receipt_out_of_date(rec) or _RECEIPT_RETRY_AFTER.get(tid, 0) > now:
+                continue
+            due.append(tid)
+        n = len(due)
+        if due:
+            _settle_terminal_receipt(*due)
+    except Exception:
+        pass
+    return n
+
+
+def _sweep_receipts_in_background(items, now) -> None:
+    """Run the sweep on its own short-lived thread, one at a time, so the seat
+    supervisor's loop never waits on a ledger write."""
+    try:
+        if not any(receipt_out_of_date(rec) for _tid, rec in items):
+            return
+        prev = _RECEIPT_SWEEP.get("thread")
+        if prev is not None and prev.is_alive():
+            return
+        th = threading.Thread(target=settle_out_of_date_receipts, args=(items, now, True),
+                              daemon=True, name="task-receipt-sweep")
+        _RECEIPT_SWEEP["thread"] = th
+        th.start()
+    except Exception:
+        pass
+
+
 def _settle_one(task_id):
     with TASKS_LOCK:
         t = TASKS.get(task_id)
@@ -5673,12 +5745,7 @@ def _settle_one(task_id):
             return
         status, cur = t.get('status'), (t.get('terminal_receipt') or None)
         if not _ends_task(status):
-            if cur:
-                t['previous_terminal_receipts'] = (
-                    list(t.get('previous_terminal_receipts') or []) + [cur])[-10:]
-                t['terminal_receipt'] = None
-                fresh = dict(t)
-            else:
+            if not cur:
                 return
             view = None
         elif cur and cur.get('status') == status:
@@ -5686,11 +5753,32 @@ def _settle_one(task_id):
         else:
             view = dict(t)
     if view is None:
+        # Not an ending any more (a resume, or back to a card): the receipt moves
+        # to history. Unless the state file holds a different ending than the one
+        # the receipt names: that file is newer than this running copy (the orphan
+        # pass applies it), so leave the record as it is for that pass.
+        try:
+            disk = (_journal().read_state(task_id) or {}).get('status')
+        except Exception:
+            disk = None
+        if _is_terminal_status(disk) and disk != cur.get('status'):
+            return
+        with TASKS_LOCK:
+            t = TASKS.get(task_id)
+            if (t is None or _ends_task(t.get('status'))
+                    or (t.get('terminal_receipt') or None) != cur):
+                return                      # it changed meanwhile: its own settle follows
+            t['previous_terminal_receipts'] = (
+                list(t.get('previous_terminal_receipts') or []) + [cur])[-10:]
+            t['terminal_receipt'] = None
+            fresh = dict(t)
         _write_state_quietly(task_id, fresh)
         return
     receipt = _task_terminal_receipt(task_id, view, supersedes=cur.get('seq') if cur else None)
     if not receipt:
+        _RECEIPT_RETRY_AFTER[task_id] = _time.time() + RECEIPT_RETRY_S
         return
+    _RECEIPT_RETRY_AFTER.pop(task_id, None)
     with TASKS_LOCK:
         t = TASKS.get(task_id)
         if t is None:
@@ -6130,6 +6218,10 @@ def reconcile_orphan_tasks(now=None):
         with TASKS_LOCK:
             items = [(tid, dict(t)) for tid, t in TASKS.items()]
             threads = dict(TASK_THREADS)
+        # Endings written in place (the seat supervisor's cancel/kill/fail, the
+        # queue, reconcile, a resume settle, the boot restore) never pass
+        # _task_set's settle: give them their terminal receipt here (NS-30.9-1).
+        _sweep_receipts_in_background(items, now)
         with _PENDING_TASK_THREADS_LOCK:
             pending = set(_PENDING_TASK_THREADS)
         sup = _SEAT_SUPERVISOR
