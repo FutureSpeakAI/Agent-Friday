@@ -165,3 +165,12 @@ def test_the_card_is_on_the_connections_page():
         assert "function ConnectorContractCard" in text, f
         assert "'/api/connectors/' + encodeURIComponent(id) + '/contract'" in text, f
         assert "React.createElement(ConnectorContractCard" in text, f
+
+
+def test_windows_desktop_does_not_claim_nothing_leaves_when_a_cloud_model_may_answer():
+    """What the connector reads goes to whichever model answers; only a local brain keeps it
+    here, so the declaration says so (extra review of #682, 2026-11-04)."""
+    d = _cd().declaration("windows_desktop")
+    said = " ".join(d["receives"]).lower()
+    assert "nothing leaves this pc" not in said
+    assert "cloud model" in said and "this pc" in said
