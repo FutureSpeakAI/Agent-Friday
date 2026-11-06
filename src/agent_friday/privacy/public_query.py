@@ -735,9 +735,11 @@ def _context_paragraphs(request: Any, provider: str) -> list:
                 continue                  # the data envelope's own fixed lines: Friday's words
             if _eg is not None:
                 with _eg._TRUSTED_LOCK:
-                    known = (ps in _eg._PUBLIC_PARAS or ps in _eg._TRUSTED_PARAS
+                    known = (ps in _eg._TRUSTED_PARAS
                              or provider in _eg._PROVIDER_ECHO.get(ps, ()))
-                if known:
+                # Registered public text counts only while it is honoured
+                # (a file grant's paragraphs, only while the grant is live).
+                if known or _eg.is_honoured_public(ps):
                     continue
             paras.append(ps)
     return paras

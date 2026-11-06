@@ -75,7 +75,9 @@ def test_moving_to_a_new_pc_holds_outward_actions_until_the_owner_repins(client,
     v = _outward()
     assert v.action == "deny" and "cLaws" in v.reason
 
-    r = client.post("/api/governance/claws/repin", json={"confirm": True}, headers=_token())
+    # re-confirming names the rules the page showed (tests/api/test_rules_change_diff.py)
+    r = client.post("/api/governance/claws/repin",
+                    json={"confirm": True, "text_sha256": status["text_sha256"]}, headers=_token())
     assert r.status_code == 200 and r.get_json()["state"] == "intact"
 
     assert action_gate.verify_claws() == (True, "intact")
