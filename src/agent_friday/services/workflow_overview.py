@@ -384,12 +384,9 @@ def _model_draft(request, generate):
             max_tokens=1200, orb_label="Drafting a workflow", workspace="workflows")
     except Exception:
         return None
-    m = re.search(r"\{.*\}", str(raw or ""), re.S)
-    if not m:
-        return None
-    try:
-        data = json.loads(m.group(0))
-    except ValueError:
+    from agent_friday.services.reply_json import last_object
+    data = last_object(str(raw or ""), keys=("name", "steps"))
+    if data is None:
         return None
     steps = _clean_steps(data.get("steps"))
     if not steps or not str(data.get("name") or "").strip():
