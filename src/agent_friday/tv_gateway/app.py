@@ -144,6 +144,62 @@ def create_app() -> Flask:
         from agent_friday.tv_gateway import pairing
         return jsonify({"ok": True, **pairing.status(request.args.get("pairing_id", ""))})
 
+    @app.post("/tv/v1/messages")
+    def messages():
+        """One TV turn answered by this PC (tv_gateway/turn), in the Messages
+        stream format. A refusal before the first event is an HTTP status the
+        TV acts on (503: answer with your own brain); after it, an error event."""
+        from flask import stream_with_context
+        from agent_friday.tv_gateway import turn
+        principal = turn.principal_from(request.headers.get("X-Friday-Principal"))
+        try:
+            events = turn.run(g.device, request.get_json(silent=True) or {}, principal)
+            first = next(events, None)
+        except turn.TurnRefused as e:
+            return _refuse(e.status, str(e))
+        except Exception as e:                       # the routing mode, a local-only run, a provider down:
+            _log.info("TV turn not started: %s", type(e).__name__)
+            return _refuse(503, "this computer can't answer that right now")
+
+        def stream():
+            if first is not None:
+                yield first
+            try:
+                yield from events
+            except Exception as e:
+                _log.warning("TV turn ended early: %s", type(e).__name__)
+                yield turn._event({"type": "error", "error": {"type": "api_error",
+                                                              "message": "the computer stopped answering"}})
+
+        return Response(stream_with_context(stream()), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    @app.get("/tv/v1/stt")
+    def stt_ready():
+        """The TV's probe: is dictation offered here, and with which model."""
+        from agent_friday.tv_gateway import speech as sp
+        return jsonify({"ok": True, **sp.ready()})
+
+    @app.post("/tv/v1/stt")
+    def stt():
+        """The TV's microphone audio (16 kHz mono PCM16) heard on this PC
+        (tv_gateway/speech). ?cleanup=1 tidies it with this PC's local model."""
+        from agent_friday.tv_gateway import speech as sp
+        from agent_friday.tv_gateway.turn import principal_from
+        limit = sp.MAX_SECONDS * sp.BYTES_PER_SECOND
+        if (request.content_length or 0) > limit:
+            return _refuse(413, "say it in under a minute")
+        pcm = request.stream.read(limit + 1)
+        try:
+            out = sp.transcribe(g.device, pcm, cleanup=request.args.get("cleanup") == "1",
+                                principal=principal_from(request.headers.get("X-Friday-Principal")),
+                                hint=request.headers.get("X-Friday-Hint", ""))
+        except sp.SpeechRefused as e:
+            return _refuse(e.status, str(e))
+        finally:
+            pcm = None                                   # the audio is not kept past this request
+        return jsonify({"ok": True, **out})
+
     @app.get("/tv/v1/whoami")
     def whoami():
         dev = g.device

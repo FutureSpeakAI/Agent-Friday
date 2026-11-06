@@ -141,17 +141,7 @@ def _vault_key() -> bytes | None:
         _VAULT_KEY = None
         return None
     try:
-        _VAULT_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        cfg = {}
-        if _VAULT_CONFIG_FILE.exists():
-            cfg = json.loads(_VAULT_CONFIG_FILE.read_text(encoding="utf-8"))
-        salt_hex = cfg.get("salt_hex")
-        if not salt_hex:
-            salt_hex = os.urandom(16).hex()
-            cfg.update({"salt_hex": salt_hex, "kdf": "argon2id", "cipher": "aes-256-gcm"})
-            tmp = _VAULT_CONFIG_FILE.with_name(_VAULT_CONFIG_FILE.name + ".tmp")
-            tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-            tmp.replace(_VAULT_CONFIG_FILE)
+        salt_hex = vault_salt_hex(_VAULT_CONFIG_FILE)
         _VAULT_KEY = _vc.derive_key(pw, bytes.fromhex(salt_hex))
     except Exception as e:  # pragma: no cover - defensive
         print(f"[credstore] vault key derivation failed ({type(e).__name__}); blobs written "
@@ -289,7 +279,7 @@ def write_secret(path: Path, data: bytes, *, harden: bool = True) -> str:
     path = Path(path)
     blob, method = protect(data)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = _unique_tmp(path)
     tmp.write_bytes(blob)
     if harden:
         harden_permissions(tmp)
@@ -297,6 +287,47 @@ def write_secret(path: Path, data: bytes, *, harden: bool = True) -> str:
     if harden:
         harden_permissions(path)
     return method
+
+
+def vault_salt_hex(config_file: Path) -> str:
+    """The vault's key-derivation salt, created once. Every reader derives the
+    vault key from the salt that is on disk afterwards, so two first uses at
+    once cannot leave things sealed under a salt nobody kept."""
+    config_file = Path(config_file)
+
+    def _read() -> dict:
+        if not config_file.exists():
+            return {}
+        d = json.loads(config_file.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+
+    cfg = _read()
+    if cfg.get("salt_hex"):
+        return str(cfg["salt_hex"])
+    fresh = {"salt_hex": os.urandom(16).hex(), "kdf": "argon2id", "cipher": "aes-256-gcm"}
+    if not config_file.exists():
+        create_exclusive(config_file, json.dumps(fresh, indent=2).encode("utf-8"), harden=False)
+    else:
+        # a config without a salt (written by something else): add one in place
+        cfg.update(fresh)
+        tmp = _unique_tmp(config_file)
+        tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        tmp.replace(config_file)
+    salt = _read().get("salt_hex")
+    if not salt:
+        raise RuntimeError("the vault configuration has no salt after creating one")
+    return str(salt)
+
+
+def write_secret_once(path: Path, data: bytes) -> bytes:
+    """Mint-once for a secret: write `data` protected at `path` unless one is
+    already there, and return the secret that is in force afterwards (ours,
+    or the one another process or thread wrote first)."""
+    path = Path(path)
+    blob, _method = protect(data)
+    if create_exclusive(path, blob):
+        return data
+    return read_secret(path, use=False)
 
 
 def read_secret(path: Path, *, use: bool = True) -> bytes:
@@ -418,27 +449,51 @@ def inventory() -> list:
     return out
 
 
-def harden_permissions(path: Path) -> None:
+def harden_permissions(path: Path) -> bool:
     """Restrict a file to the current user only. Best-effort, cross-platform.
 
     POSIX: chmod 0600. Windows: drop inheritance and grant only the current user
-    via icacls (chmod alone can't express an ACL on NTFS).
+    via icacls (chmod alone can't express an ACL on NTFS). Returns whether the
+    restriction was applied; a failure is logged (never the path's contents).
     """
     path = Path(path)
+    ok = True
     try:
         os.chmod(path, 0o600)
     except Exception:
-        pass
+        ok = os.name == "nt"           # on Windows the ACL below is what counts
     if os.name == "nt":
         try:
             user = os.environ.get("USERNAME") or ""
-            if user:
-                subprocess.run(
+            if not user:
+                ok = False
+            else:
+                res = subprocess.run(
                     ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
                     capture_output=True, timeout=10, check=False,
                 )
+                ok = getattr(res, "returncode", 1) == 0
         except Exception:
-            pass
+            ok = False
+    if not ok:
+        import logging
+        logging.getLogger("friday.credential_store").warning(
+            "could not restrict a protected file to this user")
+    return ok
+
+
+def _unique_tmp(path: Path) -> Path:
+    """A temp name beside `path` that no other process or thread will pick."""
+    from agent_friday.secure_file import unique_tmp
+    return unique_tmp(path)
+
+
+def create_exclusive(path: Path, data: bytes, *, harden: bool = True) -> bool:
+    """agent_friday.secure_file.create_exclusive, hardening with this module's
+    harden_permissions: write `data` to `path` only if nothing is there yet,
+    atomically; False when another process or thread got there first."""
+    from agent_friday.secure_file import create_exclusive as _create
+    return _create(path, data, harden_file=harden, harden_fn=lambda p: harden_permissions(p))
 
 
 # ── migration onto Friday's own keystore ─────────────────────────────────────

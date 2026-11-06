@@ -66,6 +66,10 @@ DEPTH = 3
 #: Reviewed sink sites that are not an outward action on the owner's behalf,
 #: or are gated in a way the scan cannot follow. (module, function): reason.
 ALLOWLIST = {
+    ("services/channels/base.py", "send_stop_ack"):
+        "A28: the one fixed reply (global_stop.STOP_ACK, no other text is accepted) to the verified "
+        "sender of a remote stop, once per stop; global_stop.claim_ack writes its receipt first and "
+        "sends nothing if that fails",
     ("services/cloud_voice.py", "_synth_elevenlabs"):
         "speech synthesis at the owner's TTS provider: an inference request, nothing published; "
         "its text is governed by the egress gate",

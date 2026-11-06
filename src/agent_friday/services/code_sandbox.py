@@ -850,6 +850,10 @@ def _shell_env(workdir: Path, *, read_only: bool) -> dict:
                                                               ("http_proxy", "https_proxy", "all_proxy"))
         env.update({n: DEAD_PROXY for n in names})
         env["NO_PROXY"] = ""
+        # git from the scratch folder finds no repository above it (whose own config
+        # could name programs to run), never fetches, and never prompts.
+        env.update({"GIT_CEILING_DIRECTORIES": str(Path(w).parent), "GIT_NO_LAZY_FETCH": "1",
+                    "GIT_TERMINAL_PROMPT": "0"})
         # Only the system's own folders, and Git's launcher where there is one: the owner's PATH can
         # name tools (msys programs among them) that cannot run at Low integrity.
         if sys.platform == "win32":
