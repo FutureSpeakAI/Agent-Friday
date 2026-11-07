@@ -8,9 +8,8 @@ model's answer goes to the owner as a digest, a summary or a triage note. It is
 never used on an interactive turn, and never on a result the writer must act on
 verbatim (the owner's own files, code, structured data, anything long).
 
-``wrap_result`` is the one call both tool-result sites in services/agent.py make
-in place of ``untrusted_input.wrap``. It returns the same kind of thing (the
-data envelope), and the taint ledger has already seen the RAW result by then,
+``read_through`` is the one call both tool-result sites in services/agent.py make
+inside ``untrusted_input.wrap(...)``: it picks the text the envelope goes around, and the taint ledger has already seen the RAW result by then,
 so an address in the original text still forces an ActionGate card.
 
 Every read that went through the quarantine writes one event
@@ -129,15 +128,16 @@ def _record(tool_name: str, session_ctx: Optional[dict], payload: dict) -> None:
         _log.debug("quarantine event not written: %s", e)
 
 
-def wrap_result(tool_name: str, tool_input, result, session_ctx: Optional[dict] = None, ask=None):
-    """The envelope for one tool result: through the quarantine when this is a background
-    read of someone else's prose, otherwise exactly ``untrusted_input.wrap(result)``."""
+def read_through(tool_name: str, tool_input, result, session_ctx: Optional[dict] = None, ask=None):
+    """The text the data envelope is put around: the quarantined facts when this is a background
+    read of someone else's prose, otherwise ``result`` exactly as it came. The caller wraps it
+    (``untrusted_input.wrap(read_through(...))``), so the envelope is built at the call site."""
     if not applies(tool_name, result, session_ctx):
-        return _untrusted.wrap(result)
+        return result
     if ask is None and not _seat():
         _record(tool_name, session_ctx, {"quarantined": False, "skipped": "no local reasoning seat",
                                          "chars_in": len(result)})
-        return _untrusted.wrap(result)
+        return result
     try:
         from agent_friday.services import taint
         source = taint.describe_source(tool_name, tool_input if isinstance(tool_input, dict) else {})
@@ -147,7 +147,12 @@ def wrap_result(tool_name: str, tool_input, result, session_ctx: Optional[dict] 
         out = _q.quarantine(result, _task_text(session_ctx), source, ask or _ask)
     except Exception as e:  # noqa: BLE001  the gate must never take the loop down
         _log.warning("quarantine gate failed, wrapping as before: %s", e)
-        return _untrusted.wrap(result)
+        return result
     trace = out["trace"]
     _record(tool_name, session_ctx, {"quarantined": True, "chars_in": len(result), **trace})
-    return _untrusted.wrap(out["text"])
+    return out["text"]
+
+
+def wrap_result(tool_name: str, tool_input, result, session_ctx: Optional[dict] = None, ask=None):
+    """``untrusted_input.wrap`` of ``read_through`` (for callers and tests that want the envelope)."""
+    return _untrusted.wrap(read_through(tool_name, tool_input, result, session_ctx, ask))

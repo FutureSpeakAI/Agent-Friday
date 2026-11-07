@@ -150,7 +150,7 @@ def test_a_failed_closed_read_is_recorded_too(_clean):
 def test_both_tool_result_sites_in_the_agent_loops_call_the_gate_and_nothing_else_changed():
     src = (pathlib.Path(__file__).resolve().parents[2] / "src/agent_friday/services/agent.py").read_text(encoding="utf-8")
     calls = [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-             and n.func.attr == "wrap_result" and getattr(n.func.value, "id", "") == "_qgate"]
+             and n.func.attr == "read_through" and getattr(n.func.value, "id", "") == "_qgate"]
     assert len(calls) == 2
     assert 'convo.append({"role": "tool", "tool_call_id": tcid' in src
     assert '"content": _untrusted.wrap(result),' not in src       # the old direct call at the Anthropic site is gone
