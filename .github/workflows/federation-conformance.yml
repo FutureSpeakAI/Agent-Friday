@@ -29,6 +29,8 @@ concurrency:
 jobs:
   conformance:
     name: federation conformance (${{ matrix.os }})
+    # A red-evidence PR runs only the test files it changes (tests.yml red-evidence job).
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'red-evidence') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -42,13 +44,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      # The only dependencies the checks have (Ed25519; pytest for the pin tests);
-      # nothing from this repository is installed.
-      - name: Install cryptography and pytest
-        run: python -m pip install cryptography pytest
+      # The only dependency the checks have (Ed25519); nothing from this repository is
+      # installed. The pin tests (tests/federation/test_bundle_pinned.py) run in the main
+      # pytest suite, whose conftest needs the app; this job needs only the runner.
+      - name: Install cryptography
+        run: python -m pip install cryptography
 
       - name: Run the five conformance checks (isolated, hash-pinned)
         run: python -I tests/federation/run_conformance.py
-
-      - name: Pinned-bundle tests
-        run: python -m pytest tests/federation -q -p no:cacheprovider -o addopts=
