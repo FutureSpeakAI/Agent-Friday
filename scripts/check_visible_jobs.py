@@ -94,6 +94,8 @@ ALLOW: Dict[str, str] = {
         "resumes a deep_research TASKS record: the task card is the entry",
     # Infrastructure calls that are not jobs anyone launched: each is a small
     # check inside another action, with its own result surface.
+    "agent_friday.services.quarantine_gate:_ask":
+        "runs only inside an unattended run that is already a visible task; each read leaves a quarantine.read event",
     "agent_friday.services.judgment_gate:judge_spans":
         "the privacy judge: a per-string classification inside the egress gate; "
         "its verdict is written to the egress ledger",

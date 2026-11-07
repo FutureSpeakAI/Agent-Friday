@@ -117,6 +117,7 @@ from agent_friday.services import tool_hooks as _hooks
 from agent_friday.services import taint as _taint_mod
 from agent_friday.services import reasoning_trace as _rtrace
 from agent_friday.services import untrusted_input as _untrusted
+from agent_friday.services import quarantine_gate as _qgate
 from agent_friday.services.news_engine import (
     _fetch_news_items,
 )  # noqa: E501
@@ -18912,7 +18913,7 @@ def _call_claude_agent_run(messages, system=None, model=None, max_tokens=16384, 
                     "tool_use_id": tu.id,
                     # What the tool returned is data, never instructions: one envelope for every
                     # result (services/untrusted_input). The trace and ledger above keep it raw.
-                    "content": _untrusted.wrap(result),
+                    "content": _untrusted.wrap(_qgate.read_through(tu.name, tu.input, result, session_ctx)),
                 })
             convo.append({"role": "user", "content": tool_results})
             if _tool_changes:
@@ -19846,7 +19847,8 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                     pass
             # The tool's output is data, never instructions (services/untrusted_input),
             # wrapped after compaction so the envelope itself is never compacted away.
-            convo.append({"role": "tool", "tool_call_id": tcid, "content": _untrusted.wrap(result)})
+            convo.append({"role": "tool", "tool_call_id": tcid,
+                          "content": _untrusted.wrap(_qgate.read_through(tname, targs, result, session_ctx))})
 
     # Reached only when a tool loop really did spend its whole budget: a
     # tool-less call always returns from the final-answer branch above, and
