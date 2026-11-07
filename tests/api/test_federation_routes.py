@@ -8,6 +8,16 @@ import base64
 pytestmark = pytest.mark.usefixtures("federation_on")
 
 
+@pytest.fixture(autouse=True)
+def _owner_has_approved(monkeypatch):
+    """These tests are about what the routes do once the owner has said yes; the card
+    itself is held by tests/api/test_federation_economy_owner_decides.py."""
+    from agent_friday.governance import action_gate
+    monkeypatch.setattr(
+        action_gate, "authorize_external",
+        lambda *a, **k: action_gate.Verdict("allow", action_gate.OUTWARD, "approved on a card"))
+
+
 def auth_headers():
     import agent_friday.core as core
     creds = base64.b64encode(
