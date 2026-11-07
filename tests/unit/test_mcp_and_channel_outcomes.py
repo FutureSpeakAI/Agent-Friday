@@ -62,10 +62,11 @@ def _wire(sp, answer, monkeypatch):
     return sp
 
 
-def local_server(name, answer, monkeypatch):
+def local_server(name, answer, monkeypatch, env=None):
     """A real stdio transport whose process and wire are faked: `answer` is the tools/call
-    result (or an exception the request raises)."""
-    sp = mcp_client.MCPServerProcess(name=name, command="fake-server")
+    result (or an exception the request raises). It holds a token unless `env` says otherwise."""
+    sp = mcp_client.MCPServerProcess(name=name, command="fake-server",
+                                     env={"SERVICE_TOKEN": "synthetic"} if env is None else env)
     sp.status, sp.tools = "ready", list(TOOLS)
     monkeypatch.setattr(sp, "_alive", lambda: True)
     return _wire(sp, answer, monkeypatch)
@@ -344,3 +345,52 @@ def test_a_malformed_telegram_reply_is_never_a_confirmed_send(channel):
     a2 = make("telegram", json.dumps({"ok": True}))                    # ok, but names no message
     a2.send("555", "hello")
     assert outcomes[-1]["verified"] is False
+
+
+# ── extra-review follow-ups (#681/#682, 2026-11-04) ───────────────────────────
+
+def test_a_server_that_holds_no_token_cannot_have_its_token_refused(server_call, monkeypatch):
+    # its error words are its own: nothing to renew, and Settings must not ask for a new token
+    sp = local_server("windows_desktop", _answer("invalid_token: the window id", error=True),
+                      monkeypatch, env={})
+    out, receipt = server_call(sp)
+    assert receipt["ok"] is False, "a failed call is still not done"
+    assert not sp.info().get("token_refused"), "a server with no token was asked to renew one"
+
+
+def test_a_refusal_ends_with_the_next_answer_that_is_a_result(server_call, monkeypatch):
+    sp = local_server("slack", _answer("An API error occurred: invalid_auth", error=True), monkeypatch)
+    server_call(sp)
+    assert sp.info().get("token_refused") is True
+    # a second identical call in one turn is stopped by the checkpoint, so settle the next answer
+    # where the manager does
+    ok = mcp_client._reply(json.dumps({"ok": True, "ts": "1700000000.000100"}), "result")
+    assert mcp_client._settle_reply("slack", sp, "post_message", ok) is ok
+    assert not sp.info().get("token_refused"), "the token works again and Settings still asks for one"
+
+
+def test_an_answer_in_structured_content_alone_is_an_answer(server_call, monkeypatch):
+    raw = {"structuredContent": {"ok": True, "ts": "1700000000.000100"}}
+    out, receipt = server_call(local_server("slack", raw, monkeypatch))
+    assert receipt["ok"] is True and not out.startswith(_co().NOT_DONE), out
+
+
+@pytest.mark.parametrize("raw", [{"structuredContent": "text"}, {"structuredContent": None}],
+                         ids=["not-an-object", "none"])
+def test_structured_content_that_is_not_an_object_is_still_malformed(server_call, monkeypatch, raw):
+    out, receipt = server_call(local_server("slack", raw, monkeypatch))
+    assert receipt["ok"] is False and receipt.get("detail") == "not done: unconfirmed"
+
+
+@pytest.mark.parametrize("said", ["no room 403 on the guest list", "found 4030 rows",
+                                  "issue #403 is closed"])
+def test_a_403_inside_other_words_is_not_a_missing_permission(said):
+    r = mcp_client._reply(said, "tool_error")
+    assert _co().tool_reply_kind(r) == "failed"
+
+
+@pytest.mark.parametrize("said", ["HTTP 403", "status: 403", "403 Forbidden",
+                                  "Resource not accessible by integration"])
+def test_a_forbidden_answer_is_still_a_missing_permission(said):
+    r = mcp_client._reply(said, "tool_error")
+    assert _co().tool_reply_kind(r) == "scope"
