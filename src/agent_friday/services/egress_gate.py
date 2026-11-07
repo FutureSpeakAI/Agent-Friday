@@ -2785,7 +2785,8 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
     try:
         # `input` (an OpenAI Responses-style payload) and `contents` (Gemini's shape): no
         # caller builds them today; scrubbed and gated all the same, before anything does.
-        for key in ("system", "messages", "prompt", "context", "input", "contents"):
+        for key in ("system", "messages", "prompt", "context", "input", "contents",
+                    "systemInstruction", "system_instruction"):
             if key in sealed and not _unrestricted:
                 sealed[key] = _scrub_all(sealed[key], _lk)
     except Exception as e:
@@ -2866,7 +2867,9 @@ def _seal_steps(sealed, provider, log_path, _lk, _unrestricted, model=""):
 
     # Other providers' message fields (see the scrub above): every string in them is
     # gated, the shape kept.
-    for _key in ("input", "contents"):
+    # Gemini's system prompt rides in `systemInstruction` (REST) or `system_instruction` (SDK):
+    # gated like any other message field (NS-34.6-14).
+    for _key in ("input", "contents", "systemInstruction", "system_instruction"):
         if _key in sealed and isinstance(sealed[_key], str):
             sealed[_key] = _gate_loose_text(sealed[_key], provider, _key, log_path)
         elif _key in sealed and isinstance(sealed[_key], (list, tuple, dict)):
