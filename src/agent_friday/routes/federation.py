@@ -43,6 +43,25 @@ federation_bp = Blueprint("federation", __name__)
 # is refused by its own route in every configuration.
 federation_bp.before_request(held_features.federation_route_gate)
 
+def _owner_decides(action: str, detail: dict, title: str):
+    """The owner decides each move of test credits, each listing and each peer
+    settings push on an approval card first (the same checkpoint a peer's
+    compute job takes). Returns (None, ref) to carry on, or (answer, None) to
+    return: HELD while the card waits, DECLINED if it was refused. The caller
+    resubmits once it is approved, and closes `ref` with what happened."""
+    from agent_friday.governance import action_gate
+    verdict = action_gate.authorize_external(action, detail, requested_by="federation", title=title)
+    if verdict.action != "allow":
+        return ({"ok": False, "status": "HELD" if verdict.action == "card" else "DECLINED",
+                 "reason": verdict.reason}, None)
+    return None, action_gate.decision_ref_of(verdict)
+
+
+def _close_decision(ref, ok: bool, detail: str) -> None:
+    from agent_friday.governance import action_gate
+    action_gate.close_external(ref, ok, detail=detail)
+
+
 
 # ── Federation: Identity ──────────────────────────────────────────────────────
 
@@ -319,6 +338,13 @@ def create_listing():
     if not asset_id:
         return jsonify({"error": "asset_id required"}), 400
 
+    held, ref = _owner_decides(
+        "list an asset in the marketplace",
+        {"asset_id": str(asset_id)[:80], "price_mpsi": int(data.get("price_mpsi", 0)),
+         "visibility": str(data.get("visibility", "public"))[:20]},
+        "List an asset in the marketplace")
+    if held:
+        return jsonify(held), 403
     listing = marketplace.create_listing(
         asset_id=asset_id,
         price_mpsi=int(data.get("price_mpsi", 0)),
@@ -328,6 +354,7 @@ def create_listing():
         description=data.get("description"),
         preview_url=data.get("preview_url"),
     )
+    _close_decision(ref, bool(listing), "listed" if listing else "listing_failed")
     if not listing:
         return jsonify({"error": "listing creation failed"}), 500
     return jsonify({"ok": True, "listing": listing})
@@ -446,7 +473,12 @@ def claim_genesis():
     agent_id = identity.get("agent_id", "")
     if not agent_id:
         return jsonify({"error": "no agent identity"}), 503
+    held, ref = _owner_decides("claim the test-credit starting balance", {"agent_id": agent_id},
+                               "Claim the test-credit starting balance")
+    if held:
+        return jsonify(held), 403
     result = economy.apply_genesis_bonus(agent_id)
+    _close_decision(ref, result is not None, "genesis_claimed" if result is not None else "not_eligible")
     if result is None:
         return jsonify({"ok": False, "message": "already claimed or not eligible"})
     return jsonify({"ok": True, "bonus": result})
@@ -472,7 +504,14 @@ def transfer_positrons():
     if not from_agent:
         return jsonify({"error": "no agent identity"}), 503
 
+    held, ref = _owner_decides(
+        "move test credits", {"from_agent": from_agent, "to_agent": to_agent,
+                              "amount_mpsi": int(amount_mpsi), "reason": str(reason)[:200]},
+        "Move test credits to another agent")
+    if held:
+        return jsonify(held), 403
     tx = economy.transfer(from_agent, to_agent, int(amount_mpsi), reason)
+    _close_decision(ref, bool(tx), "transferred" if tx else "transfer_failed")
     if not tx:
         return jsonify({"error": "transfer failed — insufficient balance or invalid agents"}), 400
     return jsonify({"ok": True, "transaction": tx})
@@ -494,7 +533,14 @@ def earn_positrons():
     if amount_mpsi <= 0:
         return jsonify({"error": "amount_mpsi must be positive"}), 400
 
+    held, ref = _owner_decides(
+        "credit test credits", {"agent_id": agent_id, "amount_mpsi": amount_mpsi,
+                                "reason": str(reason)[:200]},
+        "Add test credits to an agent")
+    if held:
+        return jsonify(held), 403
     tx = economy.earn(agent_id, amount_mpsi, reason)
+    _close_decision(ref, bool(tx), "credited" if tx else "earn_failed")
     if not tx:
         return jsonify({"error": "earn failed"}), 500
     wallet = economy.get_wallet(agent_id)
@@ -614,6 +660,14 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
         delta = payload.get("settings") or {}
         safe_delta = {k: v for k, v in delta.items() if k in _SYNC_SAFE_KEYS}
         if safe_delta:
+            # A peer is not the owner: a push from one changes this device's
+            # settings only after the owner approves exactly these values.
+            held, ref = _owner_decides(
+                "apply settings pushed by a peer",
+                {"peer": (sender_pubkey or "")[:16], "settings": safe_delta},
+                "Apply settings sent by a peer")
+            if held:
+                return held
             try:
                 # Save the peer's delta and nothing else; _save_settings
                 # merges it onto the file under its own lock. A local read
@@ -624,9 +678,11 @@ def _handle_federation_message(msg_type: str, payload: dict, sender_pubkey: str)
                 _save_settings(dict(safe_delta))
                 _log.info("Settings sync: applied %d key(s) from peer %s",
                           len(safe_delta), sender_pubkey[:16])
+                _close_decision(ref, True, "settings_applied")
                 return {"applied": list(safe_delta.keys()), "count": len(safe_delta)}
             except Exception as e:
                 _log.warning("Settings sync apply failed: %s", e)
+                _close_decision(ref, False, "settings_apply_failed")
                 return {"error": error_text(e, "Settings sync failed on this device")}
         return {"applied": [], "count": 0}
 
