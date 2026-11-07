@@ -379,6 +379,13 @@ class CallBridge:
         self._clock = clock
         self._send_lock = threading.Lock()
         self._turn_lock = threading.Lock()
+        self._asr_lock = threading.Lock()
+        #: BD-13: set while the one "Stopped." is being spoken after a stop said on this call;
+        #: the hang-up waits for it (at most a few seconds), then the call ends.
+        self.acking = threading.Event()
+        self.ack_done = threading.Event()
+        #: Nothing more is said on this call once it is set, except the one "Stopped.".
+        self.stopped = threading.Event()
         self._told: set = set()
         self._last_poll = clock()
         if engine is None:
@@ -397,7 +404,9 @@ class CallBridge:
         with self._send_lock:
             self.ws.send(json.dumps(msg))
 
-    def say(self, text: str) -> None:
+    def say(self, text: str, *, ack: bool = False) -> None:
+        if self.stopped.is_set() and not ack:
+            return                       # stopped: no goodbye, no approval news, nothing
         from agent_friday import brand
         text = brand.spoken((text or "").strip())
         if not text:
@@ -419,6 +428,8 @@ class CallBridge:
 
     def barge_in(self) -> None:
         """The caller spoke over Friday: drop what Twilio still has queued."""
+        if self.acking.is_set():
+            return                       # the one "Stopped." is not talked over
         self._send({"event": "clear", "streamSid": self.stream_sid})
         self.speaking_until = 0.0
 
@@ -546,13 +557,70 @@ class CallBridge:
                     what[:80], "it's approved" if st == "approved" else "not this time"))
 
     def on_utterance(self, pcm16k: bytes) -> None:
-        with self._turn_lock:
-            self._turn(pcm16k)
-
-    def _turn(self, pcm16k: bytes) -> None:
-        text = (self.engine.transcribe(pcm16k) or "").strip()
+        # Heard first, outside the turn lock: a turn that is stuck (the model loop wedged) must
+        # not keep the next words, perhaps "stop everything", from being heard (BD-13).
+        with self._asr_lock:
+            text = (self.engine.transcribe(pcm16k) or "").strip()
         if not text:
             return
+        if self.owner_on_the_line() and self._is_stop(text):
+            self.stop_from_call()
+            return
+        with self._turn_lock:
+            self._turn_text(text)
+
+    def owner_on_the_line(self) -> bool:
+        """An inbound live call from the verified owner cell: "inbound" survives only with the
+        single-use ticket this call's own TwiML carried (handle(), NS-34.17-2). On a call Friday
+        placed, the other person is not the owner, and their words never stop her."""
+        return str(self.params.get("direction") or "") == "inbound"
+
+    @staticmethod
+    def _is_stop(text: str) -> bool:
+        try:
+            from agent_friday.services import global_stop
+            return global_stop.is_remote_stop(text)
+        except Exception:
+            return False
+
+    def stop_from_call(self) -> None:
+        """Stop everything, now, then say the one fixed reply (A28) and let the call end."""
+        from agent_friday.services import global_stop
+        self.acking.set()
+        self.stopped.set()
+        try:
+            # The flag is set at once by stop(); its lane walk (up to a few seconds) runs on its
+            # own thread so the reply is said while the lanes stop, not after.
+            threading.Thread(target=global_stop.stop, name="phone-call-stop", daemon=True,
+                             kwargs={"by": "owner", "source": "phone_call",
+                                     "reason": "said on a live call from your verified cell"}).start()
+            deadline = self._clock() + 1.0
+            while not global_stop.active() and self._clock() < deadline:
+                time.sleep(0.005)
+            ack = global_stop.claim_ack("phone_call", self.call_sid or "this call")
+            if ack:
+                try:
+                    self.say(ack, ack=True)
+                    # Let Twilio play it before the call is closed (at most a few seconds).
+                    until = min(self.speaking_until, self._clock() + 3.0) + 0.3
+                    while self._clock() < until:
+                        time.sleep(0.02)
+                except Exception as e:  # noqa: BLE001 - the stop already happened
+                    _log.info("stop acknowledgement not spoken: %s", type(e).__name__)
+        finally:
+            self.ack_done.set()
+
+    def _turn(self, pcm16k: bytes) -> None:
+        with self._asr_lock:
+            text = (self.engine.transcribe(pcm16k) or "").strip()
+        if text:
+            self._turn_text(text)
+
+    def _turn_text(self, text: str) -> None:
+        from agent_friday.services import global_stop
+        if global_stop.active() or self.stopped.is_set():
+            self.stopped.set()
+            return                       # stopped while this waited: nothing more is said
         if self._pin_turn(text):
             return
         self.history.append({"who": "caller", "text": text})
@@ -570,6 +638,9 @@ class CallBridge:
         except Exception as e:
             _log.warning("live call agent turn failed: %s", e)
             reply = "Sorry, I lost my train of thought. Could you say that again?"
+        if global_stop.active() or self.stopped.is_set():
+            self.stopped.set()           # a Resume meanwhile does not bring this call back
+            return                       # stopped while the model was answering: say nothing
         spoken, asks = split_asks(reply)
         for what in asks:
             try:
@@ -660,15 +731,28 @@ def serve_media_stream(ws, cfg: dict) -> None:
         return
     bridge = CallBridge(ws)
 
-    def _hang_up():   # Stop everything ends a live phone call too
+    def _close():
         try:
             ws.close()
         except Exception:
             pass
+
+    def _hang_up():   # Stop everything ends a live phone call too
+        if bridge.acking.is_set() and not bridge.ack_done.is_set():
+            # The stop was said on this call: let the one "Stopped." finish, then hang up.
+            # Never waits here: the stop's lane walk must not be held by a call.
+            def _later():
+                bridge.ack_done.wait(5)
+                _close()
+            threading.Thread(target=_later, name="phone-stop-ack", daemon=True).start()
+            return
+        _close()
     _gs_off = _gs.on_stop(_hang_up)
     try:
         while True:
             if _gs.active():
+                if bridge.acking.is_set():
+                    bridge.ack_done.wait(5)
                 break
             raw = ws.receive(timeout=60)
             if raw is None:

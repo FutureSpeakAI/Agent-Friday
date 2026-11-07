@@ -339,10 +339,26 @@ def text_owner(body: str, *, reason: str = "alert") -> dict:
     # went past the cap; one at a time, the second sees the first.
     with _OWNER_TEXT_LOCK:
         decision = checkpoint("sms", owner)
+        _record_owner_text(reason, decision)
         return _send_sms_now(owner, _gate_text(body), detail=reason, decision=decision)
 
 
 _OWNER_TEXT_LOCK = threading.RLock()
+
+
+def _record_owner_text(reason: str, decision) -> None:
+    """NS-31.7-1: the text to the owner is in the event log before Twilio is asked. Channel, the
+    reason's label and the checkpoint's action id only, never the words (A20). The owner is told
+    either way: a record that cannot be written is logged and the text still goes; off the
+    record writes nothing."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        from agent_friday.services import events as _ev
+        _ev.record_critical("phone.owner_text", source="phone",
+                            payload={"channel": "sms", "reason": str(reason or "")[:40]},
+                            related_ids={"action": _eg.action_id_of(decision)})
+    except Exception:  # noqa: BLE001 - a record never stops the text
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -933,6 +949,35 @@ def _handle_sms_in(ev: dict) -> str:
                 "Untrusted message, shown as received: %s" % body[:280],
                 priority="medium", dedupe_key="sms:%s" % sid)
         return "notified"
+    from agent_friday.services import global_stop
+    if global_stop.is_remote_stop(body) or global_stop.active():
+        # BD-13. The ingress usually stopped everything already (its webhook does not wait
+        # for this loop); if it could not, stop here. While stopped nothing leaves the machine
+        # except A28's one fixed "Stopped." to the verified cell, once per stop (the ingress
+        # usually sent it as its webhook answer; global_stop.claim_ack keeps it to one).
+        if global_stop.is_remote_stop(body):
+            resumed_at = float(global_stop.state().get("resumed_at") or 0)
+            if not global_stop.active():
+                if float(ev.get("received_at") or time.time()) <= resumed_at:
+                    # A stale stop: it arrived before the owner's last Resume (the ingress
+                    # applied it then; this loop only reached it now). Not applied again.
+                    _notify("Stop text from your cell, already handled",
+                            "It arrived before you pressed Resume, so it was not applied again.",
+                            dedupe_key="sms:%s" % sid)
+                    return "stale_stop"
+                global_stop.stop(by="owner", source="sms", reason="texted from your verified cell")
+            ack = global_stop.claim_ack("sms", owner)     # None if the ingress already answered
+            if ack:
+                try:
+                    _send_sms_now(owner, ack, detail="stop acknowledgement (A28)")
+                except Exception as e:  # noqa: BLE001
+                    _log.warning("stop acknowledgement not sent: %s", e)
+            _notify("Stopped from your cell", "Everything is stopped. Press Resume on Friday's own "
+                    "screen when you want her back.", priority="high", dedupe_key="sms:%s" % sid)
+            return "stopped"
+        _notify("Text from your cell (not answered: everything is stopped)", body[:280],
+                dedupe_key="sms:%s" % sid)
+        return "stopped"
     reply = handle_approval_reply(body)
     if reply is None:
         if not config.load().get("sms_conversation"):

@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import queue
 import threading
 import time
 from pathlib import Path
@@ -163,18 +164,27 @@ def record_gold(receipt_id: str, head: str, gold, source: str, ref: str) -> bool
 
 
 def _gold() -> Dict[tuple, object]:
-    """(receipt id, head) -> gold; the latest valid row wins."""
+    """(receipt id, head) -> gold; the latest valid row wins. A retraction row
+    (``retract_gold``: the owner undid the correction) removes the gold that
+    reference gave before it."""
     out: Dict[tuple, object] = {}
+    by_ref: Dict[str, List[tuple]] = {}
     p = outcomes_path()
     if not p.exists():
         return out
     for line in p.read_text("utf-8", errors="replace").splitlines():
         try:
             r = json.loads(line)
+            if isinstance(r.get("retract"), str):
+                for k in by_ref.pop(r["retract"], []):
+                    out.pop(k, None)
+                continue
             g = r.get("gold")
             if (r.get("source") in GOLD_SOURCES and r.get("ref") and isinstance(g, (str, bool))
                     and isinstance(r.get("receipt_id"), str) and _valid_gold(str(r.get("head")), g)):
-                out[(r["receipt_id"], r.get("head"))] = g
+                k = (r["receipt_id"], r.get("head"))
+                out[k] = g
+                by_ref.setdefault(str(r["ref"]), []).append(k)
         except (ValueError, AttributeError, TypeError):
             continue
     return out
@@ -555,3 +565,199 @@ def run_nightly(should_stop: Optional[Callable[[], bool]] = None, now: Optional[
     path = write(rep)
     return {"written": path.name, "heads": len(rep["heads"]), "rows": rep["rows"],
             "shortfall_s": rep["shortfall_s"], "seconds": round(time.time() - t0, 2)}
+
+
+# --------------------------------------------------------------------------
+#  Settings > Laya: the report card's decision-head rows
+# --------------------------------------------------------------------------
+
+#: Plain names for the report card. A head this table does not name shows its id.
+HEAD_NAMES = {
+    "triage.mail": "Mail lanes", "triage.news": "News value", "triage.notify": "Notification flag",
+    "triage.memory": "Memory proposals", "evidence.sufficient": "Is the found memory enough?",
+    "evidence.holds": "Does a passage hold the answer?", "evidence.supports": "Does a source support its sentence?",
+    "loop.no_progress": "Is a task stuck?",
+}
+
+
+def _dict(x) -> dict:
+    return x if isinstance(x, dict) else {}
+
+
+def _newest_report() -> Optional[dict]:
+    """The newest one-per-night report that reads as a report (reruns, named
+    <night>-<n>.json, left out); an unreadable newest falls back to the one
+    before. Reads one file in the usual case."""
+    d = bench_dir()
+    if not d.exists():
+        return None
+    for f in sorted((p for p in d.glob("*.json") if len(p.stem) == 10), reverse=True):
+        try:
+            r = json.loads(f.read_text("utf-8"))
+        except (ValueError, OSError):
+            continue
+        if isinstance(r, dict) and isinstance(r.get("heads", {}), dict) and isinstance(r.get("night"), str):
+            return r
+    return None
+
+
+def report_card() -> dict:
+    """One row per decision head for Settings > Laya: its mode and version, and
+    what the newest nightly report found under the thresholds that ship. Read
+    only: it reads the head files and one report, runs nothing, and holds
+    counts only. ``night`` is None before the first report."""
+    from agent_friday.services import decision_heads
+    latest = _newest_report()
+    heads = _dict((latest or {}).get("heads"))
+    rows = []
+    for st in decision_heads.status():
+        hid = st.get("id")
+        h = _dict(heads.get(hid))
+        s = _dict(_dict(h.get("by_set")).get("shipped"))
+        v = _dict(s.get("verdict"))
+        drift = _dict(h.get("drift"))
+        tr = s.get("take_rate")
+        rows.append({
+            "id": hid, "name": HEAD_NAMES.get(hid, hid), "mode": st.get("mode"), "source": st.get("source"),
+            "tag": st.get("tag"), "usable": bool(st.get("usable")), "problem": st.get("problem") or "",
+            "decisions": h.get("n") if h else None,
+            # a percent, as the tab's pct() expects; "at least" when an override hid some rows
+            "take_rate_pct": round(float(tr) * 100.0, 1) if isinstance(tr, (int, float)) else None,
+            "lower_bound": bool(s.get("lower_bound")),
+            "pass": v.get("pass"), "fail": v.get("fail"), "uncertain": v.get("uncertain"),
+            "miss": s.get("miss"), "wrong": s.get("wrong"),
+            "drift": drift.get("take_rate_vs_week"), "drift_flag": bool(drift.get("flag")),
+        })
+    return {"night": (latest or {}).get("night"), "shortfall_s": (latest or {}).get("shortfall_s") or 0,
+            "rows": rows,
+            "note": ("The numbers are every decision the heads made in the period the last nightly report "
+                     "covered, replayed on this PC from the labels and scores they logged, counts only. Right "
+                     "and wrong need an answer you gave (a correction or a confirmation); without one a "
+                     "decision is not known yet.")}
+
+
+# --------------------------------------------------------------------------
+#  owner corrections become gold
+# --------------------------------------------------------------------------
+
+#: How far back in the receipt log a correction looks for the decision it corrects.
+TAIL_BYTES = 1024 * 1024
+_gold_q: "queue.Queue" = queue.Queue(maxsize=64)
+_gold_worker: Optional[threading.Thread] = None
+_gold_wlock = threading.Lock()
+
+
+def _ref(ref: str) -> str:
+    """What outcomes.jsonl keeps of a reference: its kind, and a hash of the rest."""
+    import hashlib
+    ref = str(ref or "")
+    return "%s:%s" % (ref.split(":")[0][:24] or "owner",
+                      hashlib.sha256(ref.encode("utf-8", "replace")).hexdigest()[:12])
+
+
+def _matches(rec, head: str, sha: str, cutoff: str) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    q = (rec.get("questions") or {}).get(head) if isinstance(rec.get("questions"), dict) else None
+    return (rec.get("text_sha") == sha and isinstance(q, dict) and q.get("layer") != "degraded"
+            and str(rec.get("at") or "") <= cutoff)
+
+
+def _latest_receipt(head: str, sha: str, cutoff: str, recent: List[dict]) -> Optional[str]:
+    """The newest receipt, stamped at or before ``cutoff``, in which ``head``
+    answered (not degraded) for the text whose laya digest is ``sha``: the
+    snapshot of Laya's recent receipts taken when the owner acted first, then
+    the tail of the receipt log. None when none is found."""
+    for rec in reversed(recent):
+        if _matches(rec, head, sha, cutoff):
+            return rec.get("receipt_id")
+    path = _receipt_path()
+    if not path.exists():
+        return None
+    with path.open("rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - TAIL_BYTES))
+        tail = f.read().decode("utf-8", errors="replace")
+    key = '"%s": {' % head
+    for line in reversed(tail.splitlines()):
+        if sha not in line or key not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if _matches(rec, head, sha, cutoff):
+            return rec.get("receipt_id")
+    return None
+
+
+def _gold_work() -> None:
+    while True:
+        job = _gold_q.get()
+        try:
+            job()
+        except Exception as e:  # noqa: BLE001
+            _log.debug("gold not recorded: %s", e)
+        finally:
+            _gold_q.task_done()
+
+
+def _gold_submit(job: Callable[[], None]) -> bool:
+    global _gold_worker
+    with _gold_wlock:
+        if _gold_worker is None or not _gold_worker.is_alive():
+            _gold_worker = threading.Thread(target=_gold_work, name="decision-gold", daemon=True)
+            _gold_worker.start()
+    try:
+        _gold_q.put_nowait(job)
+        return True
+    except queue.Full:
+        return False
+
+
+def gold_for_text(head: str, text: str, gold, source: str, ref: str, *, background: bool = True) -> bool:
+    """The owner's correction of what ``head`` would decide for ``text`` (a mail
+    moved to another lane, say) becomes gold for the head's latest decision on
+    that text MADE BEFORE the correction: receipts stamped after this call (the
+    head's own re-read of the corrected message, say) are never graded by it.
+    Call it before anything that reads the text again. Called only from the
+    owner's own paths, on the owner's press (a guard test keeps every head and
+    Laya from calling it). Nothing is written off the record, for an invalid
+    label, or when no earlier decision of the head on that text is found. The
+    search runs on one bounded background worker, so the owner's request never
+    waits on it and a bulk move cannot pile up threads."""
+    if source not in GOLD_SOURCES or _off_record() or not _valid_gold(head, gold) or not text:
+        return False
+    from agent_friday.services import laya
+    sha = laya._sha(text)
+    cutoff = time.strftime("%Y-%m-%dT%H:%M:%S")
+    with laya._lock:
+        recent = list(laya._ring.values())           # before anything new is asked
+    hashed = _ref(ref)
+
+    def work() -> bool:
+        rid = _latest_receipt(head, sha, cutoff, recent)
+        return bool(rid) and record_gold(rid, head, gold, source, hashed)
+    if background:
+        return _gold_submit(work)
+    return work()
+
+
+def retract_gold(ref: str) -> bool:
+    """The owner undid the correction that gave gold under ``ref``: a
+    retraction row, honoured by _gold(), so a misclick never stays a right
+    answer. Off the record nothing is written."""
+    if not str(ref or "").strip() or _off_record():
+        return False
+    row = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "retract": _ref(ref)}
+    try:
+        p = outcomes_path()
+        with _lock:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, separators=(",", ":")) + "\n")
+        return True
+    except Exception as e:  # noqa: BLE001
+        _log.debug("retraction not recorded: %s", e)
+        return False

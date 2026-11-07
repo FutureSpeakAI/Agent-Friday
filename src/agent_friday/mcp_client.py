@@ -516,6 +516,7 @@ class MCPServerProcess:
                 listed = self._request("tools/list", {}, timeout=timeout)
                 self.tools = list((listed or {}).get("tools", []) or [])
                 self.status = "ready"
+                self.token_refused = False
                 self._log(
                     f"[mcp:{self.name}] ready — {len(self.tools)} tool(s): "
                     + ", ".join(t.get("name", "?") for t in self.tools)
@@ -714,7 +715,8 @@ class MCPServerProcess:
         if not self._alive():
             self._log(f"[mcp:{self.name}] process dead — restarting before call")
             if not self.start():
-                return f"[mcp:{self.name} unavailable] {self.error or 'server not running'}"
+                return _reply(f"[mcp:{self.name} unavailable] {self.error or 'server not running'}",
+                              "unavailable")
         # extension_security's TRUST_LEVELS declares every trust level
         # "audit": True and sandboxed/untrusted "unicode_sanitize": True --
         # a real, named control surface (GET /api/security/mcp-audit and
@@ -740,12 +742,12 @@ class MCPServerProcess:
             _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
                                     trust_level=self.trust_level,
                                     duration_ms=int((time.time() - _t0) * 1000))
-            return text
-        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+            return _reply(text, "transport_error")
+        text = _extsec.validate_tool_output(_result_text(self.name, result), self.trust_level)
         _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
                                 trust_level=self.trust_level,
                                 duration_ms=int((time.time() - _t0) * 1000))
-        return text
+        return _reply(text, _result_origin(result))
 
     def info(self) -> dict:
         return {
@@ -754,11 +756,118 @@ class MCPServerProcess:
             "alive": self._alive(),
             "error": self.error,
             "transport": "stdio",
+            "token_refused": bool(getattr(self, "token_refused", False)),
             "command": " ".join([self.command, *self.args]),
             "tool_count": len(self.tools),
             "tools": [t.get("name", "?") for t in self.tools],
             "server_info": self.server_info,
         }
+
+
+def _result_text(server: str, result: Any) -> str:
+    """A tools/call answer as text, or a marked line when the answer is not a tool result at all
+    (MCP: a dict whose "content" is a list). Something else (text, a number, no answer, a dict
+    without content) is "[mcp:<server> malformed reply]": the call went out, and nothing in the
+    answer says what happened (services/connector_outcome.tool_reply_kind: unconfirmed)."""
+    if not _is_tool_result(result):
+        return (f"[mcp:{server} malformed reply] the server's answer was not a tool result "
+                f"({type(result).__name__})")
+    return _flatten_tool_result(result)
+
+
+class ToolReply(str):
+    """A tool server's answer as text, with where it came from (`origin`), set only by this
+    module's transport code: "result", "tool_error" (the server answered isError),
+    "malformed", "transport_error" (sent; no usable answer), "unavailable" (not sent),
+    "auth_expired" (the remote server answered 401), "switched_off", "no_server". The server
+    writes the text, never the origin: an ordinary answer that begins "[mcp error]" is still a
+    result (services/connector_outcome.tool_reply_kind reads the origin, not the words)."""
+
+    origin = "result"
+
+
+def _reply(text: str, origin: str) -> "ToolReply":
+    r = ToolReply(text)
+    r.origin = origin
+    return r
+
+
+def _is_tool_result(result: Any) -> bool:
+    """MCP: a dict whose "content" is a list, or (newer servers) one that answers in
+    "structuredContent" alone, which is an object."""
+    return isinstance(result, dict) and (isinstance(result.get("content"), list)
+                                         or isinstance(result.get("structuredContent"), dict))
+
+
+def _result_origin(result: Any) -> str:
+    if not _is_tool_result(result):
+        return "malformed"
+    return "tool_error" if result.get("isError") else "result"
+
+
+def _tool_writes(sp: Any, tool: str) -> bool:
+    """Whether the server describes this tool as changing something (MCP annotations:
+    readOnlyHint false, or destructiveHint true). Used only to tell an empty answer to a change
+    (not confirmed) from an empty read (found nothing). A tool that says nothing about itself is
+    treated as a read here: most servers send no hints, and an empty search is not a failure."""
+    for t in getattr(sp, "tools", None) or []:
+        if isinstance(t, dict) and t.get("name") == tool:
+            ann = t.get("annotations")
+            return bool(isinstance(ann, dict) and (ann.get("readOnlyHint") is False
+                                                   or ann.get("destructiveHint") is True))
+    return False
+
+
+def _server_label(server: str) -> str:
+    """The name the owner knows a server by: its connector's name (Slack, GitHub), else its own."""
+    try:
+        from agent_friday.services import connectors as _conn
+        for d in _conn.CONNECTOR_DEFS.values():
+            if d.get("mcp_server") == server and d.get("name"):
+                return str(d["name"])
+    except Exception:  # noqa: BLE001
+        pass
+    return str(server)
+
+
+def _holds_token(sp: Any) -> bool:
+    """Whether this server was given a credential (a non-empty value in its env). A server with
+    none cannot have its token refused: words like invalid_token in its error are its own, and
+    Settings must not ask for a new token it does not take."""
+    env = getattr(sp, "env", None)
+    return isinstance(env, dict) and any(str(v).strip() for v in env.values())
+
+
+def _settle_reply(server: str, sp: Any, tool: str, out: Any) -> Any:
+    """A call's answer that is not a result (refused, revoked, not confirmed, malformed, an empty
+    answer to a change, a server that is off) is noted as not done for the tool checkpoint
+    (agent._execute_tool records it with ok=False and NOT_DONE in front), and the owner's
+    sentence follows the server's words (BD-06; NS-34.11-3). Only the origin this module set is
+    read, never the server's words alone. A token a local server's service refused marks it
+    token_refused, so Settings asks for a new token (a remote server's own 401 already parks it
+    in needs_auth). An ordinary answer is returned unchanged.
+
+    Friday's own code that calls a server inside another tool's call (services/higgsfield_*)
+    does so inside connector_outcome.per_item(), so its notes stay out of that tool's record."""
+    try:
+        from agent_friday.services import connector_outcome as _co
+        kind = _co.tool_reply_kind(out, writes=_tool_writes(sp, tool))
+        if not kind:
+            # An answer that is a result means the token works (or there is none to refuse):
+            # a refusal flagged earlier no longer stands.
+            if isinstance(sp, MCPServerProcess) and getattr(sp, "token_refused", False)                     and getattr(out, "origin", "result") == "result":
+                sp.token_refused = False
+            return out
+        label = _server_label(server)
+        if kind == "revoked" and isinstance(sp, MCPServerProcess) and _holds_token(sp):
+            sp.token_refused = True
+            sp.error = "the service refused its token (revoked or wrong): connect it with a new one"
+        said = _co.not_done(kind, label, other_service=True)
+    except Exception:  # noqa: BLE001 - the answer itself still goes back
+        return out
+    if isinstance(out, str) and out.strip():
+        return _reply(f"{out}\n{said}", getattr(out, "origin", "result"))
+    return _reply(said, getattr(out, "origin", "result"))
 
 
 def _flatten_tool_result(result: Any) -> str:
@@ -1200,7 +1309,8 @@ class MCPServerHTTP:
         self, tool_name: str, arguments: dict, timeout: float = _DEFAULT_CALL_TIMEOUT
     ) -> str:
         if self.status != "ready" and not self.start():
-            return f"[mcp:{self.name} unavailable] {self.error or 'server not ready'}"
+            return _reply(f"[mcp:{self.name} unavailable] {self.error or 'server not ready'}",
+                          "unavailable")
         # Same trust-level-aware sanitize/audit as the stdio transport (see
         # MCPServerProcess.call_tool -- F32-shaped: TRUST_LEVELS declares
         # audit/unicode_sanitize for every level, but neither transport's
@@ -1223,18 +1333,18 @@ class MCPServerHTTP:
             _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
                                     trust_level=self.trust_level,
                                     duration_ms=int((time.time() - _t0) * 1000))
-            return text
+            return _reply(text, "auth_expired")
         except Exception as e:  # noqa: BLE001
             text = f"[mcp:{self.name} error] {e}"
             _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
                                     trust_level=self.trust_level,
                                     duration_ms=int((time.time() - _t0) * 1000))
-            return text
-        text = _extsec.validate_tool_output(_flatten_tool_result(result), self.trust_level)
+            return _reply(text, "transport_error")
+        text = _extsec.validate_tool_output(_result_text(self.name, result), self.trust_level)
         _extsec.audit_tool_call(self.name, tool_name, arguments, result=text,
                                 trust_level=self.trust_level,
                                 duration_ms=int((time.time() - _t0) * 1000))
-        return text
+        return _reply(text, _result_origin(result))
 
     def info(self) -> dict:
         return {
@@ -1442,9 +1552,11 @@ class MCPManager:
     def call(self, server: str, tool: str, arguments: dict, timeout: float = _DEFAULT_CALL_TIMEOUT) -> str:
         sp = self.servers.get(server)
         if sp is None:
-            return f"[mcp error] no such server: {server}"
+            return _settle_reply(server, None, tool,
+                                 _reply(f"[mcp error] no such server: {server}", "no_server"))
         if sp.status == "disabled":
-            return f"[mcp error] server '{server}' is disabled"
+            return _settle_reply(server, sp, tool,
+                                 _reply(f"[mcp error] server '{server}' is disabled", "switched_off"))
         _held = _route_held(f"call {server}.{tool}")
         if _held:
             return f"[NOT RUN] {_held}"
@@ -1473,7 +1585,7 @@ class MCPManager:
                                     result=result, part=f"tool {tool}"[:60])
         except Exception:
             pass
-        return out
+        return _settle_reply(server, sp, tool, out)
 
     def all_tools(self) -> list[tuple[str, dict]]:
         out: list[tuple[str, dict]] = []

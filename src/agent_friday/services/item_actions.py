@@ -194,6 +194,15 @@ def _raise_card(domain: str, action: str, detail: dict, *, title: str, body: str
     if v.action == "deny":
         raise Refused("Friday's governance check held this: %s" % v.reason)
     card = _find_card(name, detail) or {}
+    stopped = "stopped" in (v.reason or "")
+    if v.action == "card" and (not card.get("approval_id") or (stopped and card.get("status") != "pending")):
+        # The gate holds without a card while everything is stopped (and could in any other
+        # case it waits): never tell the owner a card is waiting when none exists (BD-13).
+        if stopped:
+            raise Refused("everything is stopped (the owner pressed Stop), so nothing was proposed "
+                          "and nothing changed; it can be asked again after they resume on "
+                          "Friday's page")
+        raise Refused("nothing was proposed: Friday's governance check made no card for this")
     if v.action == "allow":
         # An approved, unused card for exactly this change already existed and
         # the check just used it: run it now.
@@ -1074,13 +1083,15 @@ def run_files(ops: list[dict], *, approval_id: str | None = None,
                     cur.mkdir()
                     made.append(cur)
                 it.update(ok=True, made=[str(PurePosixPath(parent, *o["make"][:i + 1]))
-                                         for i in range(len(made))])
+                                         for i in range(len(made))],
+                          verified=all(m.is_dir() for m in made))     # read back (NS-4.6-1)
             else:
                 src = sf.resolve(o["root"], o["path"])
                 if o["op"] == "trash":
                     dst = journal.home_trash(rid_receipt) / "files" / o["root"] / o["path"]
                     journal.safe_move(src, dst)
-                    it.update(ok=True, trash=dst.relative_to(journal.home_trash(rid_receipt)).as_posix())
+                    it.update(ok=True, trash=dst.relative_to(journal.home_trash(rid_receipt)).as_posix(),
+                              verified=dst.exists() and not src.exists())     # read back (NS-4.6-1)
                 else:
                     folder = [x for x in o["to_path"].split("/")[:-1] if x]
                     made = []
@@ -1101,21 +1112,32 @@ def run_files(ops: list[dict], *, approval_id: str | None = None,
                     if src.is_dir() and os.stat(src).st_dev != os.stat(dest_parent).st_dev:
                         raise Refused("a folder cannot move to another drive here; move its files")
                     journal.safe_move(src, target)
-                    it.update(ok=True, to_root=o["to_root"], to_path=o["to_path"], made=made)
+                    it.update(ok=True, to_root=o["to_root"], to_path=o["to_path"], made=made,
+                              verified=target.exists() and not src.exists())     # read back (NS-4.6-1)
         except Exception as e:
             it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
         items.append(it)
     ok = sum(1 for i in items if i["ok"])
     n = len(items)
+    # A change the disk does not show is not done, whatever the move call returned (NS-4.6-1). It stays
+    # in the undo list (the call may have changed something), but is named and the receipt is partial.
+    unread = [i for i in items if i["ok"] and not i.get("verified")]
     doing, _lines = _file_words(ops)
-    summary = ("Done: %s." % doing) if ok == n else (
-        "%d of %d done (%s); %s" % (ok, n, doing, next((i["error"] for i in items if not i["ok"]), "")))
-    status = "complete" if ok == n else ("partial" if ok else "failed")
+    if unread:
+        summary = "%d of %d done (%s); I could not confirm %s on disk" % (
+            n - len(unread), n, doing, ", ".join(str(i.get("name") or i.get("path")) for i in unread[:5]))
+    elif ok == n:
+        summary = "Done: %s." % doing
+    else:
+        summary = "%d of %d done (%s); %s" % (ok, n, doing, next((i["error"] for i in items if not i["ok"]), ""))
+    status = "complete" if ok == n and not unread else ("partial" if ok else "failed")
     op0 = ops[0]["op"] if ops else ""
     said = {"move": "Moved %s", "rename": "Renamed %s", "trash": "Moved %s to Friday's trash",
             "folder": "Made %s"}.get(op0, "Changed %s") % _plural(ok, "folder" if op0 == "folder" else "item")
     if ok < n:
         said += "; %d could not be changed (the reason is in System, Changes Friday made)" % (n - ok)
+    if unread:
+        said += "; %d could not be found on disk afterwards" % len(unread)
     said += "."
     return journal.record("organize_files", ops[0]["op"] if ops else "", "files", items=items,
                           summary=summary, status=status,
@@ -1585,12 +1607,16 @@ def run_wiki(ops: list[dict], *, approval_id: str | None = None,
                                           remove=o["tags"] if o["op"] == "untag" else ())
                 if changed:
                     _write_page(o["path"], new)
-                it.update(ok=True, changed=changed)
+                # the page read again: its tags are now as asked (NS-4.6-1)
+                _again, _left = _tags_edit(_read_page(o["path"]), add=o["tags"] if o["op"] == "tag" else (),
+                                           remove=o["tags"] if o["op"] == "untag" else ())
+                it.update(ok=True, changed=changed, verified=not _left)
             elif o["op"] == "trash":
                 dst = journal.home_trash(rid) / "wiki" / o["path"]
                 journal.safe_move(_wiki_root() / o["path"], dst)
                 _mirror_sync(o["path"], None)
-                it.update(ok=True, trash="wiki/" + o["path"])
+                it.update(ok=True, trash="wiki/" + o["path"],
+                          verified=dst.exists() and not (_wiki_root() / o["path"]).exists())
             else:
                 if (_wiki_root() / o["to"]).exists():
                     raise Refused("%s is taken" % o["to"])
@@ -1598,7 +1624,8 @@ def run_wiki(ops: list[dict], *, approval_id: str | None = None,
                 own = _rebase_own_links(o["path"], o["to"])
                 links = [] if o["op"] == "archive" else _rewrite_links(
                     o["path"], o["to"], rename=o["op"] == "rename")
-                it.update(ok=True, to=o["to"], links=links, own_links=own)
+                it.update(ok=True, to=o["to"], links=links, own_links=own,
+                          verified=(_wiki_root() / o["to"]).is_file() and not (_wiki_root() / o["path"]).exists())
         except Exception as e:
             it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
         items.append(it)
@@ -1614,9 +1641,13 @@ def run_wiki(ops: list[dict], *, approval_id: str | None = None,
                          ("; %d not changed" % (n - ok)) if ok < n else "")
     if ok < n:
         summary += "; %d not changed (%s)" % (n - ok, next((i["error"] for i in items if not i["ok"]), ""))
+    unread = [i for i in items if i["ok"] and not i.get("verified")]
+    if unread:
+        summary += "; I could not confirm %s on disk" % ", ".join(str(i.get("name") or i["path"]) for i in unread[:5])
+        said = said[:-1] + "; %d could not be found changed afterwards." % len(unread)
     return journal.record("organize_wiki", ops[0]["op"] if ops else "", "wiki", items=items,
                           summary=summary + ".",
-                          status="complete" if ok == n else ("partial" if ok else "failed"),
+                          status="complete" if ok == n and not unread else ("partial" if ok else "failed"),
                           undo={"wiki": [i for i in items if i["ok"]]} if ok else {},
                           approval_id=approval_id, conversation_id=conversation_id, receipt_id=rid,
                           extra={"said": said})
@@ -1722,6 +1753,20 @@ def _media_words(ops: list[dict]) -> tuple[str, list[str]]:
     return doing, [o["title"] for o in ops]
 
 
+def _card_as_asked(mi, o: dict) -> bool:
+    """Read the card again: is it as the change asked (NS-4.6-1)? Never raises; unreadable is False."""
+    try:
+        c = mi.get(o["id"]) or {}
+        v = str(o.get("value") or "").lower()
+        tags = [str(t).lower() for t in (c.get("tags") or [])]
+        return {"favourite": lambda: bool(c.get("favorite")),
+                "unfavourite": lambda: not c.get("favorite"),
+                "tag": lambda: v in tags,
+                "untag": lambda: v not in tags}.get(o["op"], lambda: (c.get("project") or "") == (o.get("value") or ""))()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def run_media(ops: list[dict], *, approval_id: str | None = None, conversation_id: str | None = None,
               receipt_id: str | None = None) -> dict:
     """Carry out planned card changes, keeping each card's earlier state for Undo."""
@@ -1748,17 +1793,25 @@ def run_media(ops: list[dict], *, approval_id: str | None = None, conversation_i
                 raise Refused(r.get("message") or "that card could not be changed")
             it["ok"] = True
             undo_rows.append({"id": o["id"], "before": before})
+            it["verified"] = _card_as_asked(mi, o)      # the card read again (NS-4.6-1)
         except Exception as e:
             it["error"] = str(getattr(e, "user_message", "") or exception_text(e))[:200]
         items.append(it)
     ok, n = sum(1 for i in items if i["ok"]), len(items)
+    unread = [i for i in items if i["ok"] and not i.get("verified")]
     doing, _lines = _media_words(ops)
-    summary = ("Done: %s." % doing) if ok == n else "%d of %d done (%s)." % (ok, n, doing)
+    if unread:
+        summary = "%d of %d done (%s); I could not confirm %s on the card" % (
+            n - len(unread), n, doing, ", ".join(str(i.get("title") or i.get("id")) for i in unread[:5]))
+    else:
+        summary = ("Done: %s." % doing) if ok == n else "%d of %d done (%s)." % (ok, n, doing)
     said = "%s %s%s." % ({"favourite": "Favourited", "unfavourite": "Unfavourited", "tag": "Tagged",
                           "untag": "Took the tag off", "project": "Moved"}[ops[0]["op"]] if ops else "Changed",
                          _plural(ok, "card"), ("; %d could not be changed" % (n - ok)) if ok < n else "")
+    if unread:
+        said = said[:-1] + "; %d could not be found changed afterwards." % len(unread)
     return journal.record("organize_media", ops[0]["op"] if ops else "", "media", items=items, summary=summary,
-                          status="complete" if ok == n else ("partial" if ok else "failed"),
+                          status="complete" if ok == n and not unread else ("partial" if ok else "failed"),
                           undo={"media": undo_rows} if undo_rows else {}, approval_id=approval_id,
                           conversation_id=conversation_id, receipt_id=receipt_id, extra={"said": said})
 

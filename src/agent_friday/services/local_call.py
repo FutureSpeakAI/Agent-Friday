@@ -446,18 +446,5 @@ def call_json(system: str, user: str, model: str, *, max_tokens: int = 2048,
 
 
 def extract_json(raw: str) -> dict | None:
-    if not raw or not isinstance(raw, str):
-        return None
-    t = raw.strip()
-    if t.startswith("```"):
-        import re
-        t = re.sub(r"^```[a-zA-Z]*\n?", "", t)
-        t = re.sub(r"\n?```\s*$", "", t).strip()
-    s, e = t.find("{"), t.rfind("}")
-    if s < 0 or e <= s:
-        return None
-    try:
-        d = json.loads(t[s:e + 1])
-        return d if isinstance(d, dict) else None
-    except Exception:
-        return None
+    from agent_friday.services.reply_json import last_object
+    return last_object(raw)

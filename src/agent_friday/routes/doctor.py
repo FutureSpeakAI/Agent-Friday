@@ -3,6 +3,8 @@
   GET  /doctor                        the Doctor page (plain, local)
   POST /api/doctor/report             run the checks now; the report is kept
                                       under <home>/doctor/reports/
+  GET  /api/doctor/reliability        connector change success and crash-free
+                                      runs, measured on this PC (this PC only)
   GET  /api/doctor/reports            the newest saved reports (id, time, counts)
   GET  /api/doctor/reports/<id>.<json|txt>
                                       a saved report as a file to save and
@@ -94,6 +96,23 @@ def doctor_report():
         return jsonify({"status": "ok", "report": rep, "text": doctor.render_text(rep)})
     except Exception as e:  # noqa: BLE001
         return api_error(e, "The Doctor report could not be made.")
+
+
+@doctor_bp.route("/api/doctor/reliability", methods=["GET"])
+@login_required
+def doctor_reliability():
+    """Connector change success rates and crash-free runs, measured on this
+    PC (services/reliability_metrics). Counts only; this PC only."""
+    from agent_friday.core import _is_local_request
+    if not _is_local_request():
+        return jsonify({"status": "error", "error": "On this PC only."}), 403
+    try:
+        from agent_friday.services import reliability_metrics
+        resp = jsonify({"status": "ok", **reliability_metrics.metrics()})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "Reliability could not be measured.")
 
 
 @doctor_bp.route("/api/doctor/reports", methods=["GET"])
@@ -400,6 +419,69 @@ def repair_search_index():
     _threading.Thread(target=_run, name="doctor-search-index-repair", daemon=True).start()
     return jsonify({"status": "ok", "started": True,
                     "message": "Rebuilding the search index from your conversations. They are not changed."}), 202
+
+
+@doctor_bp.route("/api/doctor/repair/knowledge-graph", methods=["POST"])
+@login_required
+def repair_knowledge_graph():
+    """Keep the graph's damaged files aside and rebuild its wiki layer from the wiki pages
+    (BD-16; 32.5). Runs no model. The owner's press on this PC."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": _DESK_PROOF,
+                        "error": "Rebuild the knowledge graph on Friday's own page, on this PC."}), 403
+    from agent_friday.services import memory_store_repair as m
+    if not m.begin_kg_repair():
+        return jsonify({"status": "error", "error": "The knowledge graph is already being rebuilt."}), 409
+
+    def _run():
+        try:
+            m.repair_kg("owner:doctor", begun=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[doctor] knowledge graph rebuild failed: {type(e).__name__}")
+    _threading.Thread(target=_run, name="doctor-knowledge-graph-repair", daemon=True).start()
+    return jsonify({"status": "ok", "started": True,
+                    "message": "Rebuilding the knowledge graph's page layer from your wiki. Damaged "
+                               "files are kept, not deleted; facts a model found that were in them "
+                               "are in the kept copy, and re-finding them (which runs a model) is "
+                               "on the knowledge graph page."}), 202
+
+
+@doctor_bp.route("/api/doctor/repair/vector-memory", methods=["POST"])
+@login_required
+def repair_vector_memory():
+    """Rebuild the conversation memory from the transcripts beside the one in use, then switch
+    (BD-16 C2b; 32.5). Corrections are kept. The owner's press on this PC."""
+    if not _press_here():
+        return jsonify({"status": "error", "code": _DESK_PROOF,
+                        "error": "Rebuild the conversation memory on Friday's own page, on this PC."}), 403
+    from agent_friday.services import memory_store_repair as m
+    if m.vector_rebuild_running():
+        return jsonify({"status": "error", "error": "The conversation memory is already being rebuilt."}), 409
+    h = m.vector_health()
+    if h.get("state") not in ("damaged", "unreadable"):
+        return jsonify({"status": "error", "code": "not_damaged",
+                        "error": "The conversation memory is not damaged; there is nothing to rebuild."}), 409
+    accept = bool((request.get_json(silent=True) or {}).get("confirm_loss"))
+    if not accept and (h.get("why") not in ("quick_check", "unreadable")
+                       or m.LAST_VECTOR_REBUILD.get("needs_confirm")):
+        # The store does not open (or a rebuild found it unreadable): the transcripts are all there is.
+        return jsonify({"status": "error", "code": "confirm_loss",
+                        "error": "The conversation memory can't be read, so rebuilding it from your "
+                                 "conversations keeps only the most recent turns of each; older recall "
+                                 "is lost. Rebuild anyway?"}), 409
+    if not m.begin_vector_rebuild():
+        return jsonify({"status": "error", "error": "The conversation memory is already being rebuilt."}), 409
+
+    def _run():
+        try:
+            m.rebuild_vector("owner:doctor", begun=True, accept_loss=accept)
+        except Exception as e:  # noqa: BLE001
+            print(f"[doctor] conversation memory rebuild failed: {type(e).__name__}")
+    _threading.Thread(target=_run, name="doctor-vector-memory-repair", daemon=True).start()
+    return jsonify({"status": "ok", "started": True,
+                    "message": "Rebuilding the conversation memory from your conversations, beside "
+                               "the one in use. Your corrections are kept; your conversations are "
+                               "not changed."}), 202
 
 
 @doctor_bp.route("/api/restore/state", methods=["GET"])

@@ -77,8 +77,20 @@ class DiscordBridge(ChannelAdapter):
             chat_id = str(message.channel.id)
             if allowlist and chat_id not in allowlist:
                 return
-            reply = self._handler(self.name, chat_id, message.content or "") \
-                if self._handler else None
+            if not self._handler:
+                return
+            text = (message.content or "")[:8000]
+            if self.is_stop(text):
+                # "stop everything" (BD-13): at once, on a thread of its own, not behind a turn
+                # and without holding the gateway loop while the lanes are walked.
+                reply = await asyncio.to_thread(self._handler, self.name, chat_id, text)
+            else:
+                # Any other turn runs on the adapter's turn worker, so a stuck turn never blocks
+                # the gateway loop and the next message (perhaps a stop) is still read.
+                fut = self.submit_turn(self._handler, self.name, chat_id, text)
+                if fut is None:
+                    return
+                reply = await asyncio.wrap_future(fut)
             if reply:
                 # the same door as every other send: the egress gate and the
                 # action checkpoint's receipt (base.prepare_outbound), then the
@@ -146,8 +158,19 @@ class DiscordBridge(ChannelAdapter):
             req.add_header("Content-Type", "application/json")
             # egress: recorded by ChannelAdapter.send, the only caller
             with urllib.request.urlopen(req, timeout=15) as resp:
-                return {"ok": resp.status in (200, 201)}
+                ok = resp.status in (200, 201)
+                body = resp.read(65536) if ok else b""     # a message object; never more
+            # Discord answers a send with the message it made; its id is the confirmation
+            # (ChannelAdapter.send: verified). A body that names none is sent, not verified.
+            made = None
+            try:
+                made = json.loads(body.decode("utf-8")) if body else None
+            except (ValueError, UnicodeDecodeError):
+                made = None
+            mid = made.get("id") if isinstance(made, dict) else None
+            return {"ok": ok, **({"message_id": str(mid)} if ok and mid else {})}
         except Exception as e:
             self._last_error = exception_text(e)
+            self._note_send_error(e)
             from agent_friday.services.channels.base import send_unsure
             return {"ok": False, "error": exception_text(e), "unsure": send_unsure(e)}
