@@ -90,6 +90,35 @@ Changes under `src/agent_friday/privacy/`, `src/agent_friday/governance/`,
 touching authentication or session handling get extra review. Say so in the
 change description.
 
+### Device auth (paired TVs and other devices)
+
+`services/device_pairing.py` and `src/agent_friday/tv_gateway/` (`app.py`,
+`pairing.py`, `channels.py`, `turn.py`, `speech.py`) decide what a paired
+device may do on this PC. Changes here get a second reviewer, and the change
+description names the right, route or session path it touches. The reviewer
+checks that:
+
+- Every `/tv/v1/` route sits behind the `_gate` before-request check, so
+  `g.device` comes from a live device session. A new route is not added to the
+  public list without a written reason beside it.
+- A right is granted only by `pairing` after a screen-only card is approved on
+  this PC's own screen (`decided_by` is the screen label). No request body,
+  tool call, model output or other approval path calls `set_right(..., True)`.
+  Withdrawing a right needs no press. A new right is added to `RIGHTS` and
+  `RIGHT_CARDS` together, with the card text that tells the owner what it lets
+  the device do.
+- The principal and the sender come from the device session, never from a field
+  the device sent. Receipts name the device and the item, never the content.
+- Whatever a device sends is data: size-limited by reading `limit + 1` bytes
+  (not trusting `Content-Length`), validated against a fixed shape, stored, and
+  handed back. It is never run, rendered in the main app, or sent to a model,
+  and an id it supplies is checked against a strict pattern before it touches
+  a path.
+- A refusal is an HTTP status and a short message safe to show the device, with
+  no paths, tokens or internal errors.
+- Tests cover the denied case (right withheld: 403, and the card is raised at
+  most once an hour) as well as the allowed one.
+
 ## UI
 
 `index.html` is the served, authoritative UI. `ui_parts/app.html` is a
