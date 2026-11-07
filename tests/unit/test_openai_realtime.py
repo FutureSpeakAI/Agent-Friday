@@ -11,10 +11,17 @@ import pytest
 MOD = "agent_friday.services.openai_realtime"
 
 
+class _Module:
+    """The module, imported on first use, so a missing file fails the test on its assertion."""
+
+    def __getattr__(self, name):
+        assert importlib.util.find_spec(MOD) is not None, "services/openai_realtime.py does not exist"
+        return getattr(importlib.import_module(MOD), name)
+
+
 @pytest.fixture
 def orx():
-    assert importlib.util.find_spec(MOD) is not None, "services/openai_realtime.py does not exist"
-    return importlib.import_module(MOD)
+    return _Module()
 
 
 def test_the_model_is_gpt_realtime_2_1_with_gpt_realtime_to_try_once(orx):
