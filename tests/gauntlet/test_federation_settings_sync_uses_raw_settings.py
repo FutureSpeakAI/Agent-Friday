@@ -113,6 +113,11 @@ class TestSettingsSyncSendUsesRawSettings:
 
 class TestSettingsSyncReceiveUsesRawSettings:
     def test_receive_merges_onto_raw_settings_not_overlay(self, monkeypatch):
+        # the owner has approved the peer's push (the card is held by test_federation_economy_owner_decides)
+        from agent_friday.governance import action_gate
+        monkeypatch.setattr(
+            action_gate, "authorize_external",
+            lambda *a, **k: action_gate.Verdict("allow", action_gate.OUTWARD, "approved on a card"))
         import agent_friday.core as core
         import agent_friday.routes.federation as fedroutes
 
@@ -139,7 +144,7 @@ class TestSettingsSyncReceiveUsesRawSettings:
         # _save_settings merges it onto the file itself, so no local read
         # (overlaid, or degraded by a failed read) reaches the write.
         assert saved, "_save_settings() was never called"
-        assert saved == {"voice_engine": "piper"}, (
+        assert saved == {"voice_silence_ms": 900}, (
             f"SETTINGS_SYNC receive handler saved {saved!r} -- it persisted "
             "local settings it read (the transient offline overlay, or a "
             "failed read's defaults) alongside the peer's delta"
