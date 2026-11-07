@@ -1,0 +1,381 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "terms-v2",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": "asimov-terms/v2"
+    },
+    "realm": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+    },
+    "job": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+    },
+    "stage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "project": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "participants": {
+      "type": "object",
+      "properties": {
+        "requester": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "recorder": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "appeal": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "settlement": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "release": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "requester",
+        "provider",
+        "recorder",
+        "reviewer",
+        "appeal",
+        "settlement",
+        "release"
+      ],
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "digest": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "media_type": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 127,
+                "pattern": "^[A-Za-z0-9.+/-]+$"
+              },
+              "max_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "recipient": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "purpose": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+              }
+            },
+            "required": [
+              "digest",
+              "media_type",
+              "max_bytes",
+              "recipient",
+              "purpose"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 64
+        },
+        "readers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "minItems": 0,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "approved_tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "minItems": 0,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "allowed_models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "minItems": 0,
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "compute_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "storage_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "output_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "network": {
+          "enum": [
+            "none"
+          ]
+        },
+        "cloud": {
+          "const": false
+        },
+        "delegate": {
+          "const": false
+        },
+        "preview": {
+          "enum": [
+            "hold",
+            "send_to_requester"
+          ]
+        },
+        "final": {
+          "enum": [
+            "hold",
+            "send_to_requester"
+          ]
+        },
+        "publication": {
+          "enum": [
+            "private",
+            "signed_release_required"
+          ]
+        },
+        "review_human_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "minItems": 0,
+          "maxItems": 16,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "inputs",
+        "readers",
+        "approved_tools",
+        "allowed_models",
+        "compute_ms",
+        "memory_bytes",
+        "storage_bytes",
+        "output_bytes",
+        "network",
+        "cloud",
+        "delegate",
+        "preview",
+        "final",
+        "publication",
+        "review_human_keys"
+      ],
+      "additionalProperties": false
+    },
+    "deliverable_spec": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "acceptance_spec": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "review_spec": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "interruption_spec": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "rights_spec": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "governance_spec": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "issuer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+    },
+    "gross_units": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "shares": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "beneficiary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+          },
+          "role": {
+            "enum": [
+              "creator",
+              "improver",
+              "worker",
+              "compute",
+              "reviewer",
+              "operator",
+              "other"
+            ]
+          },
+          "units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "beneficiary",
+          "role",
+          "units"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 128
+    },
+    "valid_until": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 253402300799
+    }
+  },
+  "required": [
+    "protocol",
+    "realm",
+    "job",
+    "stage",
+    "revision",
+    "project",
+    "participants",
+    "scope",
+    "deliverable_spec",
+    "acceptance_spec",
+    "review_spec",
+    "interruption_spec",
+    "rights_spec",
+    "governance_spec",
+    "issuer",
+    "gross_units",
+    "shares",
+    "valid_until"
+  ],
+  "additionalProperties": false
+}

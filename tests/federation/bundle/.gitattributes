@@ -1,0 +1,4 @@
+# The Federation / Economy conformance bundle is pinned byte for byte (SHA256SUMS.txt here,
+# and the digest of that file in tests/federation/run_conformance.py). Never convert line
+# endings in it.
+* -text
