@@ -1,0 +1,54 @@
+name: federation-conformance
+
+# Federation / Economy conformance (F3): the public fixtures and reference verifiers from
+# the 2026-11-06 bundle (tests/federation/bundle, pinned by SHA256), run under `python -I`.
+# Its own job so the shared tests.yml steps stay as they are. These checks prove the
+# fixtures and the bundle's reference verifiers agree; they run no Friday code and move
+# nothing (no wallet, key or network).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tests/federation/**"
+      - ".github/workflows/federation-conformance.yml"
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "tests/federation/**"
+      - ".github/workflows/federation-conformance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    name: federation conformance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # The only dependencies the checks have (Ed25519; pytest for the pin tests);
+      # nothing from this repository is installed.
+      - name: Install cryptography and pytest
+        run: python -m pip install cryptography pytest
+
+      - name: Run the five conformance checks (isolated, hash-pinned)
+        run: python -I tests/federation/run_conformance.py
+
+      - name: Pinned-bundle tests
+        run: python -m pytest tests/federation -q -p no:cacheprovider -o addopts=
