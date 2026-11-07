@@ -339,10 +339,26 @@ def text_owner(body: str, *, reason: str = "alert") -> dict:
     # went past the cap; one at a time, the second sees the first.
     with _OWNER_TEXT_LOCK:
         decision = checkpoint("sms", owner)
+        _record_owner_text(reason, decision)
         return _send_sms_now(owner, _gate_text(body), detail=reason, decision=decision)
 
 
 _OWNER_TEXT_LOCK = threading.RLock()
+
+
+def _record_owner_text(reason: str, decision) -> None:
+    """NS-31.7-1: the text to the owner is in the event log before Twilio is asked. Channel, the
+    reason's label and the checkpoint's action id only, never the words (A20). The owner is told
+    either way: a record that cannot be written is logged and the text still goes; off the
+    record writes nothing."""
+    try:
+        from agent_friday.services import egress_gate as _eg
+        from agent_friday.services import events as _ev
+        _ev.record_critical("phone.owner_text", source="phone",
+                            payload={"channel": "sms", "reason": str(reason or "")[:40]},
+                            related_ids={"action": _eg.action_id_of(decision)})
+    except Exception:  # noqa: BLE001 - a record never stops the text
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
