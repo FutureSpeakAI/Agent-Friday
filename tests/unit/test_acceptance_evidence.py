@@ -34,6 +34,8 @@ RUNS = {
     "41094103402": ("tests on PR #444 13c3872b9 (== live), not main", False),
     "41094117529": ("clean-machine on PR #444 13c3872b9 (== live), not main", False),
     "41094103383": ("supply-chain on PR #444 13c3872b9 (== live), not main", False),
+    # 2026-11-06: the full tests run on main c772b1ccd (#732), all jobs green.
+    "42240289127": ("tests on main c772b1ccd", True),
 }
 
 

@@ -443,7 +443,9 @@ def add_publication(content_hash: str, info: Dict[str, Any]) -> Dict[str, Any]:
 def verify_manifest(manifest_or_path) -> Dict[str, Any]:
     """Verify a manifest: signature (Ed25519), payload hash (recompute against the
     file if present), ledger chain presence, and how many source edges resolve
-    locally. Returns {valid, checks:{...}, creator, license, created}."""
+    locally. Returns {valid, evidence, release_ok, release_missing, checks:{...}, creator,
+    license, created}. `valid` is what was found; a gate asks release_allowed(), which needs a
+    verified signature and a matching digest."""
     manifest = manifest_or_path
     if isinstance(manifest_or_path, (str, Path)):
         p = Path(manifest_or_path)
@@ -499,15 +501,46 @@ def verify_manifest(manifest_or_path) -> Dict[str, Any]:
     valid = all(v is True or isinstance(v, int) for v in
                 (checks["signature_ok"], checks["hash_ok"], checks["chain_ok"])
                 if v is not None)
+    # Positive evidence: a verdict needs a manifest and at least one check that came back True.
+    # An empty manifest, or one whose every check is unavailable, checked nothing (all() over no
+    # checks is True), so it is not valid.
+    positive = checks["signature_ok"] is True or checks["hash_ok"] is True
+    # The facts a gate can ask for, kept apart: a local record, a valid signature and a matching
+    # digest are not a trusted signer or a registry confirmation. The last two are not checked
+    # here yet, so they are always "missing".
+    evidence = {"local_record": _evidence_state(checks["chain_ok"]),
+                "signature": _evidence_state(checks["signature_ok"]),
+                "digest": _evidence_state(checks["hash_ok"]),
+                "trust": "missing",
+                "registry": "missing"}
+    release_missing = [k for k in ("signature", "digest") if evidence[k] != "verified"]
+    if not manifest:
+        release_missing.insert(0, "manifest")
     return {
-        "valid": bool(valid and checks["signature_ok"] is not False
+        "valid": bool(valid and positive and checks["signature_ok"] is not False
                       and checks["hash_ok"] is not False),
+        "evidence": evidence,
+        "release_ok": not release_missing,
+        "release_missing": release_missing,
         "checks": checks,
         "creator": manifest.get("creator"),
         "license": manifest.get("license"),
         "created": manifest.get("created"),
         "media_type": manifest.get("media_type"),
     }
+
+
+def _evidence_state(check: Any) -> str:
+    """verified (True), mismatch (False) or missing (None: not available to check)."""
+    return "verified" if check is True else "mismatch" if check is False else "missing"
+
+
+def release_allowed(verification: Any) -> bool:
+    """Whether a verification result may unlock publication, delivery or a payout that depends
+    on provenance. Only a result that says release_ok is True does: a missing key, an error
+    result, an empty manifest or any check that is not positively verified is a no. `valid` is
+    for showing what was found, never for deciding."""
+    return isinstance(verification, dict) and verification.get("release_ok") is True
 
 
 def _ledger_has(content_hash: str) -> bool:
