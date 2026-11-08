@@ -76,9 +76,8 @@ def test_a_result_the_writer_needs_whole_or_that_is_too_small_is_left_alone():
     assert not g.applies("browse_web", ui.FridaysWords(RAW), BG)
 
 
-def test_the_setting_and_the_environment_switch_it_off():
-    import agent_friday.core as core
-    core._load_settings = lambda: {g.SETTING: False}
+def test_the_setting_switches_it_off(monkeypatch):
+    monkeypatch.setattr("agent_friday.core._load_settings", lambda: {g.SETTING: False})
     assert not g.applies("read_email", RAW, BG)
 
 
