@@ -184,7 +184,10 @@ def test_health_reports_layer3_as_it_is_at_runtime(monkeypatch):
 
 
 def test_boot_preloads_the_ml_stack_before_the_warm_ups():
-    import inspect
-    from agent_friday import server
-    src = inspect.getsource(server)
+    # Read the source without importing it: importing server registers its
+    # blueprints on the shared app, which raises once an earlier test in the
+    # same process has sent a request through that app.
+    import importlib.util
+    from pathlib import Path
+    src = Path(importlib.util.find_spec("agent_friday.server").origin).read_text(encoding="utf-8")
     assert "ml_imports" in src and "preload" in src

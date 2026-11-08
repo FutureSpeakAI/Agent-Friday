@@ -436,8 +436,9 @@
    "id": "NS-34.6-7",
    "strength": "MUST",
    "requirement": "Egress tests: partial classifier failure / loading classifier",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "When the classifier is still loading or a layer fails, cloud egress holds instead of sending: tests/unit/test_ml_import_race.py::test_cloud_egress_fails_closed_while_layer3_is_expected_but_down, tests/unit/test_ml_import_race.py::test_a_failed_layer3_load_is_retried_not_cached_forever; tests/api/test_privacy_hold_notice.py::test_a_held_message_always_comes_back_with_the_notice, tests/api/test_privacy_hold_notice.py::test_send_anyway_sends_with_pattern_filters_only; tests/unit/test_egress_failures_and_providers.py::test_an_unreadable_never_send_list_stops_every_cloud_send, tests/unit/test_egress_failures_and_providers.py::test_background_work_is_told_what_was_sent_while_the_check_was_starting. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.6-8",
@@ -459,8 +460,9 @@
    "id": "NS-34.6-10",
    "strength": "MUST",
    "requirement": "Egress tests: connector tool results",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "What a connector read returns (mail, calendar, tasks, Drive and Docs, contacts, an add-on tool) is gated on the way to a cloud model in both wire shapes, the hold is logged under the tool's name, a local seat gets it whole: tests/unit/test_connector_results_egress.py::test_a_connectors_private_detail_is_held_and_the_rest_arrives, tests/unit/test_connector_results_egress.py::test_the_egress_log_names_the_tool_whose_result_was_held, tests/unit/test_connector_results_egress.py::test_a_result_withheld_whole_says_it_was_a_tool_result, tests/unit/test_connector_results_egress.py::test_a_local_seat_gets_the_result_as_it_is. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.6-11",
@@ -490,8 +492,9 @@
    "id": "NS-34.6-14",
    "strength": "MUST",
    "requirement": "Egress tests: all supported providers",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Every cloud provider wire shape is sealed before its request is posted: the OpenAI-compatible providers (one test per registry entry, and a test that fails when a provider is missing), Anthropic (system, text, tool_use, tool_result) and Google (systemInstruction in both spellings, contents, functionResponse): tests/unit/test_egress_failures_and_providers.py::test_every_cloud_provider_is_sealed_by_the_gate_before_its_request_is_posted, tests/unit/test_egress_failures_and_providers.py::test_the_registry_lists_the_cloud_providers_this_test_covers; tests/unit/test_egress_native_provider_shapes.py::test_a_private_detail_in_any_part_of_a_native_payload_does_not_leave, tests/unit/test_egress_native_provider_shapes.py::test_the_sdk_spelling_of_the_google_system_prompt_is_sealed_too; tests/api/test_egress_every_path.py::test_a_cloud_tagged_model_behind_the_local_daemon_is_gated. The Google test found and closed a real hole (systemInstruction was never scrubbed; red twin #746, fix #749). CI: tests run 42382862011, off main (PR #749 977e655ee; its tree is now on main e302c1f08).",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.7-1",
@@ -545,8 +548,9 @@
    "id": "NS-34.9-1",
    "strength": "MUST",
    "requirement": "Memory tests: cross-session recall",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "A fact from an earlier conversation is recalled in a new one with its date and source, through the real conversation memory and search index (the vector store is a small in-memory stand-in because CI installs no Chroma): tests/unit/test_memory_truth.py::test_a_fact_from_an_earlier_conversation_is_recalled_with_its_date_and_source. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.9-2",
@@ -809,15 +813,17 @@
    "id": "NS-34.16-2",
    "strength": "MUST",
    "requirement": "Chaos: kill during receipt write, file creation, migration",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Real os._exit kills during a receipt write (cut-off line holds outward actions and says so; kill before the head loses nothing), a file creation (the earlier file stays whole) and a migration (resumes at the next start): tests/unit/test_chaos_receipt_write.py::test_a_receipt_cut_off_half_way_holds_and_says_what_happened, tests/unit/test_chaos_receipt_write.py::test_a_kill_after_the_line_and_before_the_head_loses_nothing_and_holds_nothing; tests/unit/test_chaos_file_write.py::test_a_write_killed_part_way_leaves_the_earlier_file_whole; tests/unit/test_migrations.py::test_a_migration_stopped_part_way_resumes_at_the_next_start. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.16-3",
    "strength": "MUST",
    "requirement": "Chaos: kill during backup, restore, index rebuild, update, connector refresh",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Real os._exit kills during a backup (no torn backup), a restore (rolled back or finished, never neither), an index rebuild (old index whole, rebuild finished next time), an update (an update check keeps what it announced; a rollback killed mid-swap is repaired) and a connector token refresh write (a working token kept): tests/unit/test_chaos_backup_restore_update.py::test_a_full_backup_killed_while_writing_leaves_no_torn_backup, tests/unit/test_chaos_backup_restore_update.py::test_an_update_check_killed_mid_write_keeps_what_it_announced, tests/unit/test_chaos_backup_restore_update.py::test_a_rollback_killed_mid_swap_is_repaired_by_the_next_start, tests/unit/test_chaos_backup_restore_update.py::test_a_token_rewrite_killed_mid_write_keeps_a_working_token; tests/unit/test_restore_crash_safe.py::test_a_restore_stopped_before_its_swap_is_rolled_back, tests/unit/test_restore_crash_safe.py::test_a_restore_stopped_after_its_swap_is_finished_at_the_next_start; tests/unit/test_rebuild_chaos.py::test_a_rebuild_killed_part_way_leaves_the_old_index_and_is_finished_next_time. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.16-4",

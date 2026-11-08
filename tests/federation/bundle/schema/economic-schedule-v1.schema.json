@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "asimov-economic-schedule/v1",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": "asimov-economic-schedule/v1"
+    },
+    "issuer": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "work_order": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "job": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "stage": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+      "minLength": 1,
+      "maxLength": 96
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "operator_bps": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "awards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "milestone": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "gross_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "shares": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "beneficiary": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$",
+                  "minLength": 1,
+                  "maxLength": 96
+                },
+                "role": {
+                  "enum": [
+                    "creator",
+                    "improver",
+                    "worker",
+                    "compute",
+                    "reviewer",
+                    "operator",
+                    "other"
+                  ]
+                },
+                "units": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "beneficiary",
+                "role",
+                "units"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "maxItems": 128
+          }
+        },
+        "required": [
+          "milestone",
+          "gross_units",
+          "shares"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 65
+    }
+  },
+  "required": [
+    "protocol",
+    "issuer",
+    "work_order",
+    "job",
+    "stage",
+    "revision",
+    "operator_bps",
+    "awards"
+  ],
+  "additionalProperties": false
+}
