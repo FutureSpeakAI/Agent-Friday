@@ -19350,6 +19350,9 @@ def _oai_agentic_loop_run(convo, oai_tools, send_fn, *, provider, model,
                                                     if isinstance(resp, dict) else 0))
         except Exception:
             pass
+        # NS-29.2-1: the process row carries what this task has spent (the registry adds rounds up).
+        if isinstance(_round_cost, (int, float)) and _round_cost > 0:
+            _orb(cost_usd=_round_cost)
 
         choices = resp.get("choices", [])
         msg = (choices[0].get("message", {}) if choices else {}) or {}
