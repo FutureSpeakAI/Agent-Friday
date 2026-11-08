@@ -44,7 +44,9 @@ RECONFIRM_DAYS = 30
 #              (Higgsfield through the desktop connector, kie.ai, Gemini, ...). By the
 #              owner's ruling the PC's daily spend stop does not apply to TV-started Studio
 #              jobs; each still shows its cost and is receipted.
-RIGHTS = ("chat_read", "tv_brain", "studio")
+#   tv_channels  the TV may send a copy of its channels to this PC and fetch the ones kept here
+#              (tv_gateway/channels). A channel is data the PC stores and never runs.
+RIGHTS = ("chat_read", "tv_brain", "studio", "tv_channels")
 BASE_RIGHT = "chat_read"
 SESSION_CONTEXT = b"friday-tv-session-v1|"
 

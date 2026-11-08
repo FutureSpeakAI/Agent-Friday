@@ -51,6 +51,11 @@ RIGHT_CARDS = {
         "A press on the TV may start a Studio job on this PC's paid providers "
         "(Higgsfield, kie.ai, Gemini and others). Your daily spend stop does not apply "
         "to these jobs. Each one shows its cost first and leaves a receipt."),
+    "tv_channels": (
+        "Let the paired TV share channels with this PC?",
+        "The TV may send a copy of its channels (small web pages) to this PC and fetch the ones "
+        "kept here. The PC only stores them and never runs them. Nothing is added on the TV "
+        "without a yes on the TV, and no shared channel gets website access from here."),
 }
 PAIR_TTL_S = 300
 MAX_STARTS_PER_HOUR = 3
@@ -192,6 +197,32 @@ def _offer_rights(device_id: str) -> list:
     return out
 
 
+_OFFERED: dict = {}                    # "device:right" -> when its card was last raised
+OFFER_COOLDOWN_S = 3600
+
+
+def offer_right(device_id: str, right: str) -> Optional[str]:
+    """Raise the screen-only card for one wider right on an already-paired device, at most once
+    an hour per device and right, so a TV that asks again does not pile up cards. Returns the
+    card's id, or None when it is too soon or the right has no card."""
+    from agent_friday.services import approvals
+    if right not in RIGHT_CARDS:
+        return None
+    key = "%s:%s" % (device_id, right)
+    with _LOCK:
+        now = time.time()
+        if now - _OFFERED.get(key, 0.0) < OFFER_COOLDOWN_S:
+            return None
+        _OFFERED[key] = now
+    title, description = RIGHT_CARDS[right]
+    card = approvals.create_approval(
+        kind=RIGHT_KIND, subject_type="device_right", subject_id=key,
+        title=title, description=description, action_description=title,
+        payload={"device_id": device_id, "right": right, "origin": "tv_gateway"},
+        requested_by="tv_gateway", force_gate=True)
+    return card.get("approval_id")
+
+
 def _on_right_decision(rec: dict) -> None:
     from agent_friday.services.approvals import SCREEN_LABEL
     payload = rec.get("payload") or {}
@@ -214,6 +245,7 @@ def _reset_for_tests() -> None:
     with _LOCK:
         _PENDING.clear()
         _STARTS.clear()
+        _OFFERED.clear()
 
 
 def pending_card(pairing_id: str) -> Optional[str]:

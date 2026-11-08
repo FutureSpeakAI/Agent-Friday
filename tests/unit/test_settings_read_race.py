@@ -207,6 +207,11 @@ def test_a_delta_save_after_a_failed_read_is_kept(owned, monkeypatch):
 def test_the_whole_dict_callers_save_only_their_keys(owned, monkeypatch):
     """With every read returning factory defaults (what a failed read used to
     give), the converted callers still leave the owner's settings alone."""
+    # the owner has approved the peer's push (the card is held by test_federation_economy_owner_decides)
+    from agent_friday.governance import action_gate
+    monkeypatch.setattr(
+        action_gate, "authorize_external",
+        lambda *a, **k: action_gate.Verdict("allow", action_gate.OUTWARD, "approved on a card"))
     defaults = lambda: dict(core.DEFAULT_SETTINGS)  # noqa: E731
     monkeypatch.setattr(core, "_load_settings", defaults)
     monkeypatch.setattr(core, "_load_settings_raw", defaults)
