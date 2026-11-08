@@ -21461,6 +21461,9 @@ function SettingsTabPrivacy({s,save}){
       <PrivacyCloudConsent/>
     </StSection>
     <StSection title="What cloud models are sent"><CloudSlicingSettings/></StSection>
+    <StSection title="Quarantined background reading" desc="When she reads your email, web pages or messages on her own in the background (a digest, a summary, a triage note), a separate pass first pulls out the facts and checks them, so text that tries to give her orders never reaches the part of her that writes to you. Each read takes a few extra seconds on this PC. It is never used while you are chatting with her. Off, background reads go to her as they come.">
+      <StToggle label="Read outside text through a quarantine in the background" value={s.quarantine_background_reads!==false} onChange={()=>save({quarantine_background_reads:s.quarantine_background_reads===false})} desc="On, a separate pass checks what she reads before she writes to you. Off, she reads it as it comes."/>
+    </StSection>
     <StSection title="Privacy check" desc={("Which of " + fridayName() + "'s privacy layers are running on this PC right now. Text going to a cloud model passes every layer that is on.")}>
       <PrivacyCheckLayers/>
     </StSection>
