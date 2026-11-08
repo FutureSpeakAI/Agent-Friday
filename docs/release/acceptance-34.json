@@ -869,15 +869,17 @@
    "id": "NS-34.17-5",
    "strength": "MUST NOT",
    "requirement": "No reproducible arbitrary file escape",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Two layers, both tested. The model-facing file tools are confined by path_policy (tests/unit/test_file_confinement.py). The HTTP routes that return a file by a caller-chosen name (/static, /assets, /api/creations, /briefing, /api/content/drafts, /api/audio, /api/studio-files/raw) are swept by tests/api/test_no_file_escape_routes.py: 16 spellings (dotdot, backslash, encoded and double-encoded dots and separators, absolute, drive letter, null byte, trailing dot) must never return a planted file outside the folder, with a control that an in-folder file is still served. CI: tests run 42478970689 on PR #757 (all legs green after one rerun of unrelated flakes), off main; the same tree is in main since batch 46. A sweep of known spellings is evidence of no known escape, not a proof that none exists.",
+   "checked": "2026-11-08, against PR #757 tree, now in main 46b2e6573"
   },
   {
    "id": "NS-34.17-6",
    "strength": "MUST NOT",
    "requirement": "No unreviewed critical dependency exposure",
    "status": "open",
-   "evidence": ""
+   "evidence": "",
+   "missing": "supply-chain run 42480014080 on main e302c1f08 reports 8 unreviewed CRITICAL/HIGH findings on chromadb 1.5.9 (Chroma HTTP-server advisories; Friday uses only the embedded PersistentClient and no fixed chromadb exists) and an uncovered CPython 3.12.10. packaging/supply-chain/reviewed.json has no advisories entry and the CPython component entry has no reviewed_by. Only the owner may sign; the draft request is ftv/program/reference/supply_chain_review_request_2026-11-08.md."
   },
   {
    "id": "NS-34.17-7",
