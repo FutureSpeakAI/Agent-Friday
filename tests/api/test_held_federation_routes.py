@@ -43,6 +43,9 @@ def _federation(monkeypatch, on):
     def _load():
         s = dict(real() or {})
         s["held_features"] = {"federation": bool(on)}
+        if on:  # the federation switch with every releasable capability switch (fed_*) on too
+            s["held_features"].update(fed_offline_rehearsal=True, fed_invited_jobs=True,
+                                      fed_unattended_worker=True, fed_private_publish=True)
         return s
     monkeypatch.setattr(core, "_load_settings", _load)
 
