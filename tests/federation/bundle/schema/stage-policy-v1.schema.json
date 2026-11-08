@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "stage-policy-v1",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "const": "asimov-stage-policy/v1"
+    },
+    "economic_schedule_hash": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "approval": {
+      "enum": [
+        "requester",
+        "independent_reviewer"
+      ]
+    },
+    "acceptance_mode": {
+      "enum": [
+        "delivery",
+        "signed_acceptance",
+        "verified_tests",
+        "integration",
+        "review_determination"
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64,
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true
+    },
+    "stop_awards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "milestone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+          },
+          "cumulative_units": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "milestone",
+          "cumulative_units"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 64
+    },
+    "delivery_deadline": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 253402300799
+    },
+    "review_deadline": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 253402300799
+    },
+    "appeal_deadline": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 253402300799
+    },
+    "calendar_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"
+    },
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_+./-]+$"
+    },
+    "timeout_action": {
+      "enum": [
+        "refer_to_reviewer",
+        "hold_disputed",
+        "close_without_next_stage"
+      ]
+    },
+    "artifact_retention_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 315360000
+    }
+  },
+  "required": [
+    "protocol",
+    "economic_schedule_hash",
+    "approval",
+    "acceptance_mode",
+    "evidence",
+    "stop_awards",
+    "delivery_deadline",
+    "review_deadline",
+    "appeal_deadline",
+    "calendar_id",
+    "timezone",
+    "timeout_action",
+    "artifact_retention_seconds"
+  ],
+  "additionalProperties": false
+}
