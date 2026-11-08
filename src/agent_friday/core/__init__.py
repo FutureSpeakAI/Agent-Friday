@@ -2642,7 +2642,10 @@ DEFAULT_SETTINGS = {
     #                 Tier-1 CPU when no CUDA GPU / NeMo deps are present
     #   "gemini"    — Gemini Live cloud voice (most expressive; needs a key + network)
     #   "auto"      — GPU tier when ready, else CPU; local preferred over cloud
+    #   "openai"    — OpenAI Realtime cloud voice (the owner's own OpenAI key; about $0.10 a minute)
     "voice_engine": "local",
+    "voice_openai_monthly_cap_usd": None,   # owner's monthly limit for OpenAI voice, in USD; None = no limit set
+    "voice_openai_auto_failover": False,    # True: an OpenAI outage hands the press to the next voice, announced
     "local_voice_asr_model": "auto",       # faster-whisper size: auto (base on CPU, small on a GPU)|tiny|base|small|medium
     # The ear on the graphics card runs on CTranslate2, which loads cuBLAS 12 by
     # name from PATH. When nothing else provides it, borrow the copy the
