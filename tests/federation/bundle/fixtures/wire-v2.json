@@ -1,0 +1,931 @@
+{
+  "description": "PUBLIC TEST ONLY. All signatures verify only under these fictitious keys. No valid runtime or settlement evidence is supplied.",
+  "peer_keys": {
+    "owner": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+    "worker": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+    "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+    "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+    "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+    "bank": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+    "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+  },
+  "cases": [
+    {
+      "name": "signed_offer",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.offer",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-1",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000001,
+          "expires_at": 2000000000,
+          "payload": {
+            "terms": {
+              "protocol": "asimov-terms/v2",
+              "realm": "test-realm",
+              "job": "J-001",
+              "stage": "S-01",
+              "revision": 1,
+              "project": null,
+              "participants": {
+                "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+              },
+              "scope": {
+                "inputs": [],
+                "readers": [
+                  "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                ],
+                "approved_tools": [
+                  "341baa4f29381a0d77aab26adc13d66880e7942ae6c2ec69130c19261f98db05"
+                ],
+                "allowed_models": [],
+                "compute_ms": 30000,
+                "memory_bytes": 100000000,
+                "storage_bytes": 1000000,
+                "output_bytes": 100000,
+                "network": "none",
+                "cloud": false,
+                "delegate": false,
+                "preview": "hold",
+                "final": "send_to_requester",
+                "publication": "private",
+                "review_human_keys": []
+              },
+              "deliverable_spec": "e933d0805827b70daeeda2f2d03a367d0bab3f1643d90396e083c8981838769e",
+              "acceptance_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "review_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "interruption_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "rights_spec": "6e137de698bb4a3fd390f0d2746f64756d4e2303a7eb19e8811452e8aaeee453",
+              "governance_spec": "20ae9e421212c1f0b462b5e8a650988cbfea9d9b652bf5e60c84c097948e1b52",
+              "issuer": "test-issuer",
+              "gross_units": 100,
+              "shares": [
+                {
+                  "beneficiary": "maya",
+                  "role": "creator",
+                  "units": 99
+                },
+                {
+                  "beneficiary": "node",
+                  "role": "operator",
+                  "units": 1
+                }
+              ],
+              "valid_until": 2000000000
+            }
+          }
+        },
+        "signature": "d9f9b90eb83e92b982b328d559b9e6c21f3edf5532147287ebbf8bba0ef0b13270ace99cf461c1c8f5cca351e6165634edc9440d2f24bb5e44d50be79e74200f"
+      },
+      "expect": "verified_bytes",
+      "event_id": "6bb6d0d1b91308dcaeadb755ab89492fdd01dc62c54692348b1ccd6575927e82"
+    },
+    {
+      "name": "countersign",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.accept",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-2",
+          "actor": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "parents": [
+            "6bb6d0d1b91308dcaeadb755ab89492fdd01dc62c54692348b1ccd6575927e82"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000002,
+          "expires_at": 2000000000,
+          "payload": {
+            "offer": "6bb6d0d1b91308dcaeadb755ab89492fdd01dc62c54692348b1ccd6575927e82"
+          }
+        },
+        "signature": "d48810f60cdacbee5f883e7d49b623cf2920e948305a26bf2e64685e5a54209bf05e30e8adeab5bae87ca89e82d8c87b36a513e6dfacd5f61ba7af61590db20f"
+      },
+      "expect": "verified_bytes",
+      "event_id": "5661e95a3edaf6f95916d0b6af1aa3e5dacd66ca3237765a2fca1e4d03a05728"
+    },
+    {
+      "name": "payer_requests_exact_reservation",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "fund.reserve",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-3",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+          "parents": [
+            "5661e95a3edaf6f95916d0b6af1aa3e5dacd66ca3237765a2fca1e4d03a05728"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000003,
+          "expires_at": 2000000000,
+          "payload": {
+            "accept": "5661e95a3edaf6f95916d0b6af1aa3e5dacd66ca3237765a2fca1e4d03a05728",
+            "order": "O-1",
+            "reservation": "R-1",
+            "grant_hash": "f9d5ee6d57c621fa65d6629915913f0f22f2f7c4fe5062a894ed656c894f7464"
+          }
+        },
+        "signature": "4ac93e57cc98f80599d45e422f441ce4f28d71fce36d3dc44c40be61252194b835c9adecce45206c88d07784f78ddc41b2fe96a299a2e93b90a6a42c16edda03"
+      },
+      "expect": "verified_bytes",
+      "event_id": "5b1e0fd4803236d4b964c8820aa43d27ac99c452221d3cf44c1d8234ea8a16c3"
+    },
+    {
+      "name": "funding_reference_requires_separate_verification",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "fund.confirm",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-4",
+          "actor": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+          "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "parents": [
+            "5b1e0fd4803236d4b964c8820aa43d27ac99c452221d3cf44c1d8234ea8a16c3"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000004,
+          "expires_at": 2000000000,
+          "payload": {
+            "reserve": "5b1e0fd4803236d4b964c8820aa43d27ac99c452221d3cf44c1d8234ea8a16c3",
+            "record_hash": "2eb01a5aa5401880688625aa24db8b814734ce22e3a9870e4fe314a20dd0cdf5"
+          }
+        },
+        "signature": "e05f84b42093cc6038e96311352c226f22fbd418a6f3927fb1e464d7073319b12215ad5713ee93f0ac0b07ce83878d49a8fc36dca3bce35190b602a84b63910a"
+      },
+      "expect": "verified_bytes",
+      "event_id": "630b696025fdb492b49cf40c51c5293381faa14adc6520be2b010a5237b6593d"
+    },
+    {
+      "name": "explicit_start_authorization",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.authorize",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-authorization",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [
+            "5661e95a3edaf6f95916d0b6af1aa3e5dacd66ca3237765a2fca1e4d03a05728",
+            "630b696025fdb492b49cf40c51c5293381faa14adc6520be2b010a5237b6593d"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000004,
+          "expires_at": 2000000000,
+          "payload": {
+            "accept": "5661e95a3edaf6f95916d0b6af1aa3e5dacd66ca3237765a2fca1e4d03a05728",
+            "funding": "630b696025fdb492b49cf40c51c5293381faa14adc6520be2b010a5237b6593d",
+            "grant_hash": "714eddd5184b5f4f113b7a22d3539224d551cdb5bda8662e560d819fdaa4b7d9"
+          }
+        },
+        "signature": "d8363371a5cdd42b8a2c1c7a14354189326df490821333ee998b4b5f2e3c116db52022b027ea02d3d2644466de6d13b2707388f1d29777633ec6267eee826d0c"
+      },
+      "expect": "verified_bytes",
+      "event_id": "30ab0725aafb3be3f9930ccbe0aef073cd765d3ecb567690d42d3b061433df2b"
+    },
+    {
+      "name": "started_reference",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "work.start",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-5",
+          "actor": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "parents": [
+            "30ab0725aafb3be3f9930ccbe0aef073cd765d3ecb567690d42d3b061433df2b"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000005,
+          "expires_at": 2000000000,
+          "payload": {
+            "authorization": "30ab0725aafb3be3f9930ccbe0aef073cd765d3ecb567690d42d3b061433df2b",
+            "grant_hash": "714eddd5184b5f4f113b7a22d3539224d551cdb5bda8662e560d819fdaa4b7d9"
+          }
+        },
+        "signature": "31aeba02cbff8b448b1dfbbccdadd395c1f812a52c3dee0064fe6bc714dfbdee67b95125fa0635d4768902abc9cf48beae7a534ada9aeaffd29e3dfdd1850300"
+      },
+      "expect": "verified_bytes",
+      "event_id": "97bc64c403d272520cf84b5384ae205373066b361d6e2442c1885f030c2dc1f4"
+    },
+    {
+      "name": "candidate_for_private_review",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "work.candidate",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-6",
+          "actor": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "parents": [
+            "97bc64c403d272520cf84b5384ae205373066b361d6e2442c1885f030c2dc1f4"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000006,
+          "expires_at": 2000000000,
+          "payload": {
+            "start": "97bc64c403d272520cf84b5384ae205373066b361d6e2442c1885f030c2dc1f4",
+            "artifact": "319750e3aa5c67d3a914edc769bd7646306e71fd49d49eb3fcadc6dc2d768773",
+            "evidence": "8614c97b616c1d8daadf3e0e2128f564caadac950d2d92f4f13fe849a7e4c9d9"
+          }
+        },
+        "signature": "4ffd092fd5af165efbcde181945f23644b96ea15f549c79c4a9bbd5d9f61c254470a3c71883510da187ae0c6462fac35b9167ca124dc2f8e934c731aeb0c7405"
+      },
+      "expect": "verified_bytes",
+      "event_id": "22c698108ac3072a650d026870d93c1ccdbdc23c7e92ed13e028b981e23f3ef0"
+    },
+    {
+      "name": "scoped_delivery",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "output.release",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-7",
+          "actor": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "parents": [
+            "22c698108ac3072a650d026870d93c1ccdbdc23c7e92ed13e028b981e23f3ef0"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000007,
+          "expires_at": 2000000000,
+          "payload": {
+            "candidate": "22c698108ac3072a650d026870d93c1ccdbdc23c7e92ed13e028b981e23f3ef0",
+            "artifact": "319750e3aa5c67d3a914edc769bd7646306e71fd49d49eb3fcadc6dc2d768773",
+            "mode": "final",
+            "release_grant": "72aaa7ccaacd9acfd86f93f0d19d98f707c5c50b0059c83c71fdb2e4f55359c2"
+          }
+        },
+        "signature": "303b5961924d6ab26012991d8a339a82c5222dece2d2586bd40cc25440ff83077e60a6b41f508ba6d5c76b0242e276201e059724039a671da098984f82a5eb07"
+      },
+      "expect": "verified_bytes",
+      "event_id": "c61be01e9289a5e92f4b13c78b4851103098288bfad9ce464b8bdf9b44e8fe38"
+    },
+    {
+      "name": "milestone_accepted",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "review.accept",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-8",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [
+            "c61be01e9289a5e92f4b13c78b4851103098288bfad9ce464b8bdf9b44e8fe38"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000008,
+          "expires_at": 2000000000,
+          "payload": {
+            "delivery": "c61be01e9289a5e92f4b13c78b4851103098288bfad9ce464b8bdf9b44e8fe38",
+            "evidence": "f8364c7526665bdee57afe298f311a3a7eb6ddb63dd666b021c11ffdd74dedad"
+          }
+        },
+        "signature": "cbee1e8bc80e097c4755911af73eea1f7ced7871fc48a648c09a802e6f151b40f9a9889321dedff6065f10a31770a0c346d54252617effb7745fefc927e01104"
+      },
+      "expect": "verified_bytes",
+      "event_id": "addbebf1bdabb6adbc029eb83666f11d4924f7351141099b815f97eebe7d3e70"
+    },
+    {
+      "name": "repeat_signed_offer",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.offer",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-1",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000001,
+          "expires_at": 2000000000,
+          "payload": {
+            "terms": {
+              "protocol": "asimov-terms/v2",
+              "realm": "test-realm",
+              "job": "J-001",
+              "stage": "S-01",
+              "revision": 1,
+              "project": null,
+              "participants": {
+                "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+              },
+              "scope": {
+                "inputs": [],
+                "readers": [
+                  "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                ],
+                "approved_tools": [
+                  "341baa4f29381a0d77aab26adc13d66880e7942ae6c2ec69130c19261f98db05"
+                ],
+                "allowed_models": [],
+                "compute_ms": 30000,
+                "memory_bytes": 100000000,
+                "storage_bytes": 1000000,
+                "output_bytes": 100000,
+                "network": "none",
+                "cloud": false,
+                "delegate": false,
+                "preview": "hold",
+                "final": "send_to_requester",
+                "publication": "private",
+                "review_human_keys": []
+              },
+              "deliverable_spec": "e933d0805827b70daeeda2f2d03a367d0bab3f1643d90396e083c8981838769e",
+              "acceptance_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "review_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "interruption_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "rights_spec": "6e137de698bb4a3fd390f0d2746f64756d4e2303a7eb19e8811452e8aaeee453",
+              "governance_spec": "20ae9e421212c1f0b462b5e8a650988cbfea9d9b652bf5e60c84c097948e1b52",
+              "issuer": "test-issuer",
+              "gross_units": 100,
+              "shares": [
+                {
+                  "beneficiary": "maya",
+                  "role": "creator",
+                  "units": 99
+                },
+                {
+                  "beneficiary": "node",
+                  "role": "operator",
+                  "units": 1
+                }
+              ],
+              "valid_until": 2000000000
+            }
+          }
+        },
+        "signature": "d9f9b90eb83e92b982b328d559b9e6c21f3edf5532147287ebbf8bba0ef0b13270ace99cf461c1c8f5cca351e6165634edc9440d2f24bb5e44d50be79e74200f"
+      },
+      "expect": "replay",
+      "event_id": "6bb6d0d1b91308dcaeadb755ab89492fdd01dc62c54692348b1ccd6575927e82"
+    },
+    {
+      "name": "tampered_split",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.offer",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-1",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000001,
+          "expires_at": 2000000000,
+          "payload": {
+            "terms": {
+              "protocol": "asimov-terms/v2",
+              "realm": "test-realm",
+              "job": "J-001",
+              "stage": "S-01",
+              "revision": 1,
+              "project": null,
+              "participants": {
+                "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+              },
+              "scope": {
+                "inputs": [],
+                "readers": [
+                  "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                ],
+                "approved_tools": [
+                  "341baa4f29381a0d77aab26adc13d66880e7942ae6c2ec69130c19261f98db05"
+                ],
+                "allowed_models": [],
+                "compute_ms": 30000,
+                "memory_bytes": 100000000,
+                "storage_bytes": 1000000,
+                "output_bytes": 100000,
+                "network": "none",
+                "cloud": false,
+                "delegate": false,
+                "preview": "hold",
+                "final": "send_to_requester",
+                "publication": "private",
+                "review_human_keys": []
+              },
+              "deliverable_spec": "e933d0805827b70daeeda2f2d03a367d0bab3f1643d90396e083c8981838769e",
+              "acceptance_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "review_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "interruption_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "rights_spec": "6e137de698bb4a3fd390f0d2746f64756d4e2303a7eb19e8811452e8aaeee453",
+              "governance_spec": "20ae9e421212c1f0b462b5e8a650988cbfea9d9b652bf5e60c84c097948e1b52",
+              "issuer": "test-issuer",
+              "gross_units": 100,
+              "shares": [
+                {
+                  "beneficiary": "maya",
+                  "role": "creator",
+                  "units": 98
+                },
+                {
+                  "beneficiary": "node",
+                  "role": "operator",
+                  "units": 1
+                }
+              ],
+              "valid_until": 2000000000
+            }
+          }
+        },
+        "signature": "d9f9b90eb83e92b982b328d559b9e6c21f3edf5532147287ebbf8bba0ef0b13270ace99cf461c1c8f5cca351e6165634edc9440d2f24bb5e44d50be79e74200f"
+      },
+      "expect": "signature"
+    },
+    {
+      "name": "missing_commitment",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.offer",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-1",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "issued_at": 1900000001,
+          "expires_at": 2000000000,
+          "payload": {
+            "terms": {
+              "protocol": "asimov-terms/v2",
+              "realm": "test-realm",
+              "job": "J-001",
+              "stage": "S-01",
+              "revision": 1,
+              "project": null,
+              "participants": {
+                "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+              },
+              "scope": {
+                "inputs": [],
+                "readers": [
+                  "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                ],
+                "approved_tools": [
+                  "341baa4f29381a0d77aab26adc13d66880e7942ae6c2ec69130c19261f98db05"
+                ],
+                "allowed_models": [],
+                "compute_ms": 30000,
+                "memory_bytes": 100000000,
+                "storage_bytes": 1000000,
+                "output_bytes": 100000,
+                "network": "none",
+                "cloud": false,
+                "delegate": false,
+                "preview": "hold",
+                "final": "send_to_requester",
+                "publication": "private",
+                "review_human_keys": []
+              },
+              "deliverable_spec": "e933d0805827b70daeeda2f2d03a367d0bab3f1643d90396e083c8981838769e",
+              "acceptance_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "review_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "interruption_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "rights_spec": "6e137de698bb4a3fd390f0d2746f64756d4e2303a7eb19e8811452e8aaeee453",
+              "governance_spec": "20ae9e421212c1f0b462b5e8a650988cbfea9d9b652bf5e60c84c097948e1b52",
+              "issuer": "test-issuer",
+              "gross_units": 100,
+              "shares": [
+                {
+                  "beneficiary": "maya",
+                  "role": "creator",
+                  "units": 99
+                },
+                {
+                  "beneficiary": "node",
+                  "role": "operator",
+                  "units": 1
+                }
+              ],
+              "valid_until": 2000000000
+            }
+          }
+        },
+        "signature": "d9f9b90eb83e92b982b328d559b9e6c21f3edf5532147287ebbf8bba0ef0b13270ace99cf461c1c8f5cca351e6165634edc9440d2f24bb5e44d50be79e74200f"
+      },
+      "expect": "schema"
+    },
+    {
+      "name": "untrusted_origin",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "work.start",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-20",
+          "actor": "2f62db3936c10792566b160892fa10aee0e1908e9c366821be7e46ab2e9a24dc",
+          "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "parents": [
+            "30ab0725aafb3be3f9930ccbe0aef073cd765d3ecb567690d42d3b061433df2b"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000020,
+          "expires_at": 2000000000,
+          "payload": {
+            "authorization": "30ab0725aafb3be3f9930ccbe0aef073cd765d3ecb567690d42d3b061433df2b",
+            "grant_hash": "714eddd5184b5f4f113b7a22d3539224d551cdb5bda8662e560d819fdaa4b7d9"
+          }
+        },
+        "signature": "5ad290f889b36f0a57694c6089948e19f103e3c8e3a706a6d015c0d708167b9c139f8ba830820113f1add6990cc69e8dddc65f7f2b4163725fd1226b90cb6f0b"
+      },
+      "expect": "untrusted_key"
+    },
+    {
+      "name": "unknown_type",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "root.override",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-22",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000022,
+          "expires_at": 2000000000,
+          "payload": {}
+        },
+        "signature": "335890ef073bdbe596433e81f39e41b7b7ffb1e45b0838361563914f21ed148598fe436ce3589340f1ad1d1100fd5e166500b4e1bdb7c637c6cd51b94f09660f"
+      },
+      "expect": "schema"
+    },
+    {
+      "name": "signature_does_not_bypass_content_schema",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "review.accept",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-23",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [
+            "c61be01e9289a5e92f4b13c78b4851103098288bfad9ce464b8bdf9b44e8fe38"
+          ],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000023,
+          "expires_at": 2000000000,
+          "payload": {
+            "delivery": "c61be01e9289a5e92f4b13c78b4851103098288bfad9ce464b8bdf9b44e8fe38"
+          }
+        },
+        "signature": "7e7305b4ecb46e165ead08dbbeab8e792f47994c6c17e0590e112663084912ee2b800901ca0feaf500ebe1fd9de2cc51e005ee18c24afb62d86c978dcff8460b"
+      },
+      "expect": "schema"
+    },
+    {
+      "name": "new_bytes_same_action",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.offer",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-1",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000100,
+          "expires_at": 2000000000,
+          "payload": {
+            "terms": {
+              "protocol": "asimov-terms/v2",
+              "realm": "test-realm",
+              "job": "J-001",
+              "stage": "S-01",
+              "revision": 1,
+              "project": null,
+              "participants": {
+                "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+              },
+              "scope": {
+                "inputs": [],
+                "readers": [
+                  "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                ],
+                "approved_tools": [
+                  "341baa4f29381a0d77aab26adc13d66880e7942ae6c2ec69130c19261f98db05"
+                ],
+                "allowed_models": [],
+                "compute_ms": 30000,
+                "memory_bytes": 100000000,
+                "storage_bytes": 1000000,
+                "output_bytes": 100000,
+                "network": "none",
+                "cloud": false,
+                "delegate": false,
+                "preview": "hold",
+                "final": "send_to_requester",
+                "publication": "private",
+                "review_human_keys": []
+              },
+              "deliverable_spec": "e933d0805827b70daeeda2f2d03a367d0bab3f1643d90396e083c8981838769e",
+              "acceptance_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "review_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "interruption_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "rights_spec": "6e137de698bb4a3fd390f0d2746f64756d4e2303a7eb19e8811452e8aaeee453",
+              "governance_spec": "20ae9e421212c1f0b462b5e8a650988cbfea9d9b652bf5e60c84c097948e1b52",
+              "issuer": "test-issuer",
+              "gross_units": 100,
+              "shares": [
+                {
+                  "beneficiary": "maya",
+                  "role": "creator",
+                  "units": 99
+                },
+                {
+                  "beneficiary": "node",
+                  "role": "operator",
+                  "units": 1
+                }
+              ],
+              "valid_until": 2000000000
+            }
+          }
+        },
+        "signature": "1e7a5b4bb34197cf3c8dcf20f599e9218a56efdf42eb0321e5290f7273ca7f1382c8c1fdafd970afb4c6e398bff1df937dbc3825540f2a7dfc857a74f906da05"
+      },
+      "expect": "equivocation"
+    },
+    {
+      "name": "signed_invalid_split",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.offer",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-25",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "terms_hash": "df8cdd608f83196290be32c0445052cf344128b92d1a21a87bee9ae3181351c8",
+          "issued_at": 1900000025,
+          "expires_at": 2000000000,
+          "payload": {
+            "terms": {
+              "protocol": "asimov-terms/v2",
+              "realm": "test-realm",
+              "job": "J-001",
+              "stage": "S-01",
+              "revision": 1,
+              "project": null,
+              "participants": {
+                "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+              },
+              "scope": {
+                "inputs": [],
+                "readers": [
+                  "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                ],
+                "approved_tools": [
+                  "341baa4f29381a0d77aab26adc13d66880e7942ae6c2ec69130c19261f98db05"
+                ],
+                "allowed_models": [],
+                "compute_ms": 30000,
+                "memory_bytes": 100000000,
+                "storage_bytes": 1000000,
+                "output_bytes": 100000,
+                "network": "none",
+                "cloud": false,
+                "delegate": false,
+                "preview": "hold",
+                "final": "send_to_requester",
+                "publication": "private",
+                "review_human_keys": []
+              },
+              "deliverable_spec": "e933d0805827b70daeeda2f2d03a367d0bab3f1643d90396e083c8981838769e",
+              "acceptance_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "review_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "interruption_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "rights_spec": "6e137de698bb4a3fd390f0d2746f64756d4e2303a7eb19e8811452e8aaeee453",
+              "governance_spec": "20ae9e421212c1f0b462b5e8a650988cbfea9d9b652bf5e60c84c097948e1b52",
+              "issuer": "test-issuer",
+              "gross_units": 100,
+              "shares": [
+                {
+                  "beneficiary": "maya",
+                  "role": "creator",
+                  "units": 98
+                },
+                {
+                  "beneficiary": "node",
+                  "role": "operator",
+                  "units": 1
+                }
+              ],
+              "valid_until": 2000000000
+            }
+          }
+        },
+        "signature": "a26e396b161beff90ec6ad50d461089992e47403ac9fdc18bf4bce1e22828d19724ee537c6b26b71c22723aeb72aedbf3509e29ae08b32de621f6e5d795fbf0f"
+      },
+      "expect": "split"
+    },
+    {
+      "name": "terms_hash_substitution",
+      "envelope": {
+        "body": {
+          "protocol": "asimov-peer/v2",
+          "type": "job.offer",
+          "realm": "test-realm",
+          "job": "J-001",
+          "stage": "S-01",
+          "action_id": "act-26",
+          "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+          "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+          "parents": [],
+          "terms_hash": "e29776213076fb04b13b798b39283bc16a298a0bf63468b473b8f6afdc2dce06",
+          "issued_at": 1900000026,
+          "expires_at": 2000000000,
+          "payload": {
+            "terms": {
+              "protocol": "asimov-terms/v2",
+              "realm": "test-realm",
+              "job": "J-001",
+              "stage": "S-01",
+              "revision": 1,
+              "project": null,
+              "participants": {
+                "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+              },
+              "scope": {
+                "inputs": [],
+                "readers": [
+                  "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                ],
+                "approved_tools": [
+                  "341baa4f29381a0d77aab26adc13d66880e7942ae6c2ec69130c19261f98db05"
+                ],
+                "allowed_models": [],
+                "compute_ms": 30000,
+                "memory_bytes": 100000000,
+                "storage_bytes": 1000000,
+                "output_bytes": 100000,
+                "network": "none",
+                "cloud": false,
+                "delegate": false,
+                "preview": "hold",
+                "final": "send_to_requester",
+                "publication": "private",
+                "review_human_keys": []
+              },
+              "deliverable_spec": "e933d0805827b70daeeda2f2d03a367d0bab3f1643d90396e083c8981838769e",
+              "acceptance_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "review_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "interruption_spec": "66463deb0cb2b86a1e28ee9733d30669224974960e9d273592dfaa804f2bf570",
+              "rights_spec": "996ba7015608fda93426d0829d1a4bfc7086fb2d1a24b71678f326a1e39e892c",
+              "governance_spec": "20ae9e421212c1f0b462b5e8a650988cbfea9d9b652bf5e60c84c097948e1b52",
+              "issuer": "test-issuer",
+              "gross_units": 100,
+              "shares": [
+                {
+                  "beneficiary": "maya",
+                  "role": "creator",
+                  "units": 99
+                },
+                {
+                  "beneficiary": "node",
+                  "role": "operator",
+                  "units": 1
+                }
+              ],
+              "valid_until": 2000000000
+            }
+          }
+        },
+        "signature": "7e16b78cd1c8fef75de91cf16336fe6c5ebd1899010a168ef4e9558382665db81c6ad84be3f4af3d1f9ca0d6406e66fdacd55f2c3561988e91ee082b07eca40f"
+      },
+      "expect": "terms_mismatch"
+    },
+    {
+      "name": "duplicate_keys_rejected_before_signatures",
+      "raw_hex": "7b22626f6479223a312c22626f6479223a327d",
+      "expect": "duplicate_key"
+    },
+    {
+      "name": "transmitted_noncanonical_rejected",
+      "raw_hex": "7b2022626f6479223a317d",
+      "expect": "noncanonical"
+    },
+    {
+      "name": "fractional_units_rejected_during_parse",
+      "raw_hex": "7b2261223a312e32357d",
+      "expect": "number"
+    }
+  ],
+  "stage_policy": {
+    "protocol": "asimov-stage-policy/v1",
+    "economic_schedule_hash": "868dcf63919707e9c7c9c10e122d64ab852db137b12d92bcf35f4d3fd418ee28",
+    "approval": "requester",
+    "acceptance_mode": "verified_tests",
+    "evidence": [
+      "3f38ec36f4b219558b55c6cb1efd035aa85581edcd1d56c7cff1d900ad2a2550"
+    ],
+    "stop_awards": [
+      {
+        "milestone": "rehearsal",
+        "cumulative_units": 20
+      }
+    ],
+    "delivery_deadline": 1900001000,
+    "review_deadline": 1900173800,
+    "appeal_deadline": 1900605800,
+    "calendar_id": "test-calendar-v1",
+    "timezone": "UTC",
+    "timeout_action": "refer_to_reviewer",
+    "artifact_retention_seconds": 2592000
+  }
+}
