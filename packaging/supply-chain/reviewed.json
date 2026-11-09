@@ -84,7 +84,7 @@
   {
    "package": "pikepdf",
    "licence": "MPL-2.0",
-   "reason": "MPL-2.0 (weak copyleft), installed unmodified from PyPI. Also missing from THIRD_PARTY_LICENSES.md, so it needs a row there (version 10.18.0 in the wheelhouse); NOTICE section 3 now names it.",
+   "reason": "MPL-2.0 (weak copyleft), installed unmodified from PyPI. THIRD_PARTY_LICENSES.md now has its row (10.18.0, MPL-2.0, from the SBOM); NOTICE section 3 names it.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
    "reviewed_by": "",
    "until": ""
