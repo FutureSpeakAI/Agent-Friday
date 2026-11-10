@@ -32,8 +32,10 @@ def _raw(case):
 
 
 def test_the_runtime_schema_is_the_pinned_bundle_schema():
-    pinned = (BUNDLE / "schema" / "peer-event-v2.schema.json").read_bytes()
-    assert hashlib.sha256(RUNTIME_SCHEMA.read_bytes()).hexdigest() == hashlib.sha256(pinned).hexdigest()
+    # compared as parsed JSON: a Windows checkout may rewrite line endings in this copy, the
+    # bundle copy is byte-pinned (-text) by tests/federation
+    pinned = json.loads((BUNDLE / "schema" / "peer-event-v2.schema.json").read_text(encoding="utf-8"))
+    assert json.loads(RUNTIME_SCHEMA.read_text(encoding="utf-8")) == pinned
 
 
 def test_every_bundle_vector_gets_the_bundles_answer(tmp_path):
