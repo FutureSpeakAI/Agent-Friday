@@ -26,6 +26,23 @@ def _marker():
     return "offrec-" + uuid.uuid4().hex
 
 
+def _why(settings=None):
+    """What to read first when a turn that should be off the record reached the disk:
+    the settings the code saw (and whether that read was degraded), the keys in the
+    settings file, and which threads were alive (a stray writer shows up here)."""
+    import threading
+    s = settings if settings is not None else (core._load_settings() or {})
+    keys = ("off_record", "off_record_stops_storage", "context_logging_enabled")
+    try:
+        raw = json.loads(core.SETTINGS_FILE.read_text(encoding="utf-8-sig"))
+        on_disk = {k: raw.get(k, "<absent>") for k in keys}
+    except (OSError, ValueError) as e:
+        on_disk = "unreadable: %r" % (e,)
+    return ("seen=%r degraded=%r file=%r threads=%s"
+            % ({k: s.get(k, "<absent>") for k in keys}, core.DEGRADED_READ_KEY in s, on_disk,
+               sorted(t.name for t in threading.enumerate() if t is not threading.current_thread())))
+
+
 def _written_since(start, marker, root=None):
     """Files under `root` (the Friday home) changed since `start` holding `marker`."""
     root = Path(root or core.FRIDAY_DIR)
@@ -49,6 +66,8 @@ def off_record():
     prior = core._load_settings_raw() or {}
     core._save_settings({"off_record": True, "context_logging_enabled": True})
     start = time.time()
+    seen = core._load_settings() or {}
+    assert seen.get("off_record") is True, "off_record did not take effect after the save: " + _why(seen)
     yield start
     core._save_settings({"off_record": False,
                          "context_logging_enabled": bool(prior.get("context_logging_enabled"))})
@@ -82,8 +101,8 @@ def test_chat_turn_and_chat_history_stay_in_memory(off_record, monkeypatch):
              "timestamp": "2026-09-26T12:00:01"}
     chat._persist_turn(cid, user, reply)
     core._save_chat_history(core.CHAT_HISTORY)
-    assert m not in core.CHAT_HISTORY_FILE.read_text(encoding="utf-8")
-    assert not _written_since(off_record, m)
+    assert m not in core.CHAT_HISTORY_FILE.read_text(encoding="utf-8"), _why()
+    assert not _written_since(off_record, m), _why()
     # The conversation still works while it lasts: the model sees the turn.
     assert any(m in (x.get("text") or "") for x in cv.messages(cid))
     assert any(m in r["content"] for r in chat._conv_context(cid))

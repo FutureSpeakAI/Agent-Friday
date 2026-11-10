@@ -385,8 +385,15 @@ def federation_on(monkeypatch):
     from agent_friday.services import held_features
     real = held_features.enabled
 
+    capabilities = {"fed_" + c for c in held_features.CAPABILITIES} - {
+        "fed_" + c for c in held_features.NEVER_IN_THIS_RELEASE}
+
     def _enabled(feature, settings=None):
-        return True if feature == held_features.FEDERATION else real(feature, settings)
+        # the federation switch and each releasable capability switch; the kill switch and
+        # the two never-on capabilities stay as the settings say
+        if feature == held_features.FEDERATION or feature in capabilities:
+            return True
+        return real(feature, settings)
     monkeypatch.setattr(held_features, "enabled", _enabled)
     yield
 
