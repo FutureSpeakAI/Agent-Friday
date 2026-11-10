@@ -2841,6 +2841,8 @@ DEFAULT_SETTINGS = {
     # The most characters of the owner's documents one answer may send to a cloud model
     # (only when cloud answers are on); the Library trims to it and says so.
     "library_cloud_char_cap": 6000,
+    # Background reads of other people's text pass a quarantined reader first (services/quarantine_gate).
+    "quarantine_background_reads": True,
     "library_kg_learn": "",
     "studio_dazzle": "full",              # visual intensity of every 3D view: off | subtle | full
     "render_3d": True,                    # False: no 3D anywhere, no WebGL context (Settings > Appearance; NS-21.22-3)
