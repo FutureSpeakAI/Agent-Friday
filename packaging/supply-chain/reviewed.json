@@ -20,69 +20,206 @@
   {
    "package": "imageio-ffmpeg",
    "licence": "BSD-2-Clause AND GPL-3.0-or-later",
-   "reason": "THIRD_PARTY_LICENSES.md: BSD-2-Clause wrapper plus the GPL-3.0 ffmpeg.exe it bundles, run as a separate program.",
+   "reason": "THIRD_PARTY_LICENSES.md: BSD-2-Clause wrapper plus the GPL-3.0 ffmpeg.exe it bundles, run as a separate program. Owner review 2026-11-08: BSD-2-Clause wrapper plus a GPL-3.0 ffmpeg.exe that Friday runs only as a separate program (subprocess in timeline_engine), never linked in; installed from PyPI on the user's machine, not redistributed. NOTICE section 3 names it and now says where ffmpeg's source is.",
    "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-08"
   },
   {
    "package": "certifi",
    "licence": "MPL-2.0",
-   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), the CA bundle, shipped unmodified.",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), the CA bundle, shipped unmodified. Owner review 2026-11-08: MPL-2.0 (weak copyleft): installed unmodified from PyPI on the user's machine, not redistributed; its source is on PyPI; NOTICE section 3 names it.",
    "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-08"
   },
   {
    "package": "pyttsx3",
    "licence": "MPL-2.0",
-   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), recommended tier, shipped unmodified.",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 (weak copyleft), recommended tier, shipped unmodified. Owner review 2026-11-08: MPL-2.0 (weak copyleft): installed unmodified from PyPI on the user's machine, not redistributed; its source is on PyPI; NOTICE section 3 names it.",
    "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-08"
   },
   {
    "package": "tqdm",
    "licence": "MPL-2.0 AND MIT",
-   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 AND MIT, shipped unmodified.",
+   "reason": "THIRD_PARTY_LICENSES.md: MPL-2.0 AND MIT, shipped unmodified. Owner review 2026-11-08: MPL-2.0 AND MIT: installed unmodified from PyPI on the user's machine, not redistributed; its source is on PyPI; NOTICE section 3 names it.",
    "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-08"
   },
   {
    "package": "pypdfium2",
    "licence": "BSD-3-Clause, Apache-2.0, dependency licenses",
-   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0.",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0. Owner review 2026-11-08: Permissive (BSD-3-Clause or Apache-2.0 per THIRD_PARTY_LICENSES.md); attribution kept there.",
    "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-08"
   },
   {
    "package": "sherpa-onnx",
    "licence": "Apache licensed, as found in the LICENSE file",
-   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records Apache-2.0.",
+   "reason": "Metadata text is not SPDX; THIRD_PARTY_LICENSES.md records Apache-2.0. Owner review 2026-11-08: Apache-2.0; attribution kept in THIRD_PARTY_LICENSES.md.",
    "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-08"
   },
   {
    "package": "tiktoken",
    "licence": "(none found)",
-   "reason": "The wheel names no licence; THIRD_PARTY_LICENSES.md records MIT (Copyright (c) 2022 OpenAI, Shantanu Jain).",
+   "reason": "The wheel names no licence; THIRD_PARTY_LICENSES.md records MIT (Copyright (c) 2022 OpenAI, Shantanu Jain). Owner review 2026-11-08: MIT (Copyright (c) 2022 OpenAI, Shantanu Jain); attribution kept in THIRD_PARTY_LICENSES.md.",
    "proposed_by": "CM-2 builder, 2026-10-21, from THIRD_PARTY_LICENSES.md",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-08"
+  },
+  {
+   "package": "orjson",
+   "licence": "MPL-2.0 AND (Apache-2.0 OR MIT)",
+   "reason": "THIRD_PARTY_LICENSES.md records MPL-2.0 AND (Apache-2.0 OR MIT) (3.11.9; the wheelhouse has 3.13.0). Weak copyleft, installed unmodified from PyPI; NOTICE section 3 already names it.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pikepdf",
+   "licence": "MPL-2.0",
+   "reason": "MPL-2.0 (weak copyleft), installed unmodified from PyPI. THIRD_PARTY_LICENSES.md now has its row (10.18.0, MPL-2.0, from the SBOM); NOTICE section 3 names it.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "PyMsgBox",
+   "licence": "GPL-3.0-or-later",
+   "reason": "FLAG FOR OWNER: the licence the SBOM reads from the wheel metadata (GPL-3.0-or-later) disagrees with THIRD_PARTY_LICENSES.md and NOTICE, which record BSD-3-Clause (Al Sweigart; BSD 3-Clause or MIT). Someone must read the LICENSE file in the 2.0.1 wheel before this is signed; if it is BSD, record that here and fix the metadata reading, if it is GPL it is a new GPL dependency.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pynput",
+   "licence": "LGPL-3.0-only",
+   "reason": "FLAG FOR OWNER (LGPL): THIRD_PARTY_LICENSES.md and NOTICE record LGPL-3.0-or-later (core tier); the wheel metadata reads LGPL-3.0-only. Installed unmodified from PyPI on the user's machine, so the user can replace it, which is what the LGPL asks of an application that uses it. Recommend signing once the owner accepts an LGPL core dependency.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pypiwin32",
+   "licence": "UNKNOWN",
+   "reason": "THIRD_PARTY_LICENSES.md records PSF-2.0 for pypiwin32 223 (a shim that pulls in pywin32, PSF-2.0); the wheel names no licence, so the SBOM reads UNKNOWN. Permissive; confirm against the pywin32 licence and sign.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "pystray",
+   "licence": "LGPL-3.0-only",
+   "reason": "FLAG FOR OWNER (LGPL): as pynput; THIRD_PARTY_LICENSES.md and NOTICE record LGPL-3.0-or-later (core tier), the wheel metadata reads LGPL-3.0-only. Installed unmodified from PyPI, replaceable by the user. Recommend signing once the owner accepts an LGPL core dependency.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "transformers",
+   "licence": "Apache 2.0 License",
+   "reason": "Apache-2.0; the wheel metadata is free text, not an SPDX id. THIRD_PARTY_LICENSES.md records Apache-2.0 (5.9.0; the wheelhouse has 5.22.2). Permissive; sign.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
+   "reviewed_by": "",
+   "until": ""
+  },
+  {
+   "package": "uritemplate",
+   "licence": "BSD 3-Clause OR Apache-2.0",
+   "reason": "BSD-3-Clause OR Apache-2.0; free text, not an SPDX id. THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0. Permissive; sign.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
    "reviewed_by": "",
    "until": ""
   }
  ],
- "advisories": [],
+ "advisories": [
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-f4j7-r4q5-qw2c",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-311",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-36p7-vc44-83pf",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-3814",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-2wm9-hf6c-p5cr",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-3813",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-xph7-9rjv-w5fr",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-3815",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  }
+ ],
  "components": [
   {
    "package": "CPython",
    "version": "3.12.10",
    "reason": "The embeddable CPython the installer bundles (packaging/windows/sources.json). No advisory database is queried for it; 3.12.10 is the last 3.12 release with an embeddable build, and later 3.12 security fixes (3.12.11+) are source-only. Someone must read the CPython security advisories published since 3.12.10 and accept or act on them for this exact version.",
    "proposed_by": "CM-2 builder, 2026-10-21",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
   }
  ]
 }
