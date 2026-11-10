@@ -32,6 +32,9 @@ class _Mod:
 @pytest.fixture
 def ol(monkeypatch):
     m = _Mod()
+    if importlib.util.find_spec(MOD) is None:
+        yield m                 # each test then fails on its own first use of the module, by assertion
+        return
     from agent_friday.services import openai_realtime as orx
     monkeypatch.setattr(orx, "key_state", lambda: "connected")
     monkeypatch.setattr(orx, "api_key", lambda: "sk-test")
