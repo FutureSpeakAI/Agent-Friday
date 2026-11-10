@@ -88,7 +88,12 @@ def refusal(settings: dict, *, now: Optional[float] = None) -> Optional[Dict[str
         return None
     off = orx.failover(r["reason"], gemini_ready=_gemini_ready(settings), local_ready=_local_ready(),
                        auto=bool(settings.get("voice_openai_auto_failover")))
-    return {"error": r["reason"], "detail": r["say"], "offer": off}
+    return {"error": r["reason"], "detail": _with_offer(r["say"], off), "offer": off}
+
+
+def _with_offer(say: str, off: Optional[dict]) -> str:
+    """The page shows ``detail`` and nothing else of an error frame, so the offer is said in it too."""
+    return ("%s %s" % (say, off["say"])).strip() if off and off.get("say") else say
 
 
 def _gemini_ready(settings: dict) -> bool:
@@ -264,8 +269,8 @@ class Bridge:
             _BLOCKED_UNTIL[0] = self.clock() + orx.NO_CREDIT_BLOCK_S
             off = orx.failover(orx.NO_CREDIT, gemini_ready=_gemini_ready(self.settings), local_ready=_local_ready(),
                                auto=bool(self.settings.get("voice_openai_auto_failover")))
-            self.send({"type": "error", "error": orx.NO_CREDIT, "detail": orx.readiness(
-                key="x", blocked_until=_BLOCKED_UNTIL[0], now=self.clock())["say"], "offer": off})
+            self.send({"type": "error", "error": orx.NO_CREDIT, "detail": _with_offer(orx.readiness(
+                key="x", blocked_until=_BLOCKED_UNTIL[0], now=self.clock())["say"], off), "offer": off})
             self.done.set()
         else:
             self.send({"type": "error", "error": "openai_error", "detail": p["message"] or "OpenAI voice had a problem.",

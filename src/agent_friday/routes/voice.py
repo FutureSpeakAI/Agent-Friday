@@ -3651,7 +3651,11 @@ def voice_cloud_switch():
     data = request.get_json(silent=True) or {}
     try:
         from agent_friday.services import local_voice_readiness as _lvr
-        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"))
+        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"),
+                                    engine=str(data.get("engine") or "gemini"))
+        if res.get("not_connected") and data.get("engine") == "openai":
+            return jsonify({"status": "refused", "reason": res.get("reason") or "not_connected",
+                            "message": res.get("message"), **_lvr.panel_status()}), 409
         if res.get("refused"):
             return jsonify({"status": "refused", "reason": res.get("reason"),
                             "message": res.get("message"), **_lvr.panel_status()}), 409

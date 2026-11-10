@@ -75,7 +75,7 @@ def test_a_missing_key_is_said_not_hidden(ol, monkeypatch):
     from agent_friday.services import openai_realtime as orx
     monkeypatch.setattr(orx, "key_state", lambda: "missing")
     no = ol.refusal({})
-    assert no["error"] == "no_key" and no["detail"] == "Add an OpenAI key to use this."
+    assert no["error"] == "no_key" and no["detail"] == "Add an OpenAI key to use this. Switch to Gemini Live for this press?"
     assert no["offer"]["engine"] == "gemini" and no["offer"]["automatic"] is False
 
 
@@ -189,6 +189,7 @@ def test_out_of_credit_blocks_openai_ends_the_call_and_offers_the_next_voice(ol)
     b.from_upstream({"type": "error", "error": {"code": "insufficient_quota", "message": "quota"}})
     err = [o for o in out if o["type"] == "error"][0]
     assert err["error"] == "no_credit" and err["offer"]["engine"] == "gemini" and err["offer"]["automatic"] is False
+    assert "Switch to Gemini Live for this press?" in err["detail"] and "out of credit" in err["detail"]
     assert b.done.is_set() and ol._BLOCKED_UNTIL[0] == 1000.0 + 3600
     assert ol.refusal({}, now=1500.0)["error"] == "no_credit"
 
@@ -241,9 +242,25 @@ def test_the_engine_resolver_reports_why_openai_cannot_answer_and_never_picks_ge
     from agent_friday.services import openai_realtime as orx
     monkeypatch.setattr(orx, "key_state", lambda: "missing")
     info = V._resolve_voice_engine({"voice_engine": "openai"})
-    assert info["engine"] != "gemini" and info["reason"] == "Add an OpenAI key to use this."
+    assert info["engine"] != "gemini" and info["reason"].startswith("Add an OpenAI key to use this.")
     assert info["openai_refused"]["error"] == "no_key"
     monkeypatch.setattr(orx, "key_state", lambda: "connected")
     ok = V._resolve_voice_engine({"voice_engine": "openai"})
     assert ok["engine"] == "openai" and ok["ws_url"] == "/ws/openai-live" and "gpt-realtime-2.1" in ok["label"]
     assert ok["per_minute"] == "about $0.10 a minute"
+
+
+def test_the_voice_engine_list_always_has_an_openai_row_that_says_what_to_do(monkeypatch):
+    from agent_friday.services import model_catalog as mc
+    monkeypatch.setattr(orx_mod(), "key_state", lambda: "missing")
+    row = mc._openai_voice_row()
+    assert row["id"] == "openai" and row["available"] is False and row["hint"] == "Add an OpenAI key to use this."
+    assert row["per_minute"] == "about $0.10 a minute" and "gpt-realtime-2.1" in row["label"]
+    monkeypatch.setattr(orx_mod(), "key_state", lambda: "connected")
+    ok = mc._openai_voice_row()
+    assert ok["available"] is True and ok["hint"] is None
+
+
+def orx_mod():
+    from agent_friday.services import openai_realtime
+    return openai_realtime
