@@ -769,7 +769,7 @@ def _result_text(server: str, result: Any) -> str:
     (MCP: a dict whose "content" is a list). Something else (text, a number, no answer, a dict
     without content) is "[mcp:<server> malformed reply]": the call went out, and nothing in the
     answer says what happened (services/connector_outcome.tool_reply_kind: unconfirmed)."""
-    if not (isinstance(result, dict) and isinstance(result.get("content"), list)):
+    if not _is_tool_result(result):
         return (f"[mcp:{server} malformed reply] the server's answer was not a tool result "
                 f"({type(result).__name__})")
     return _flatten_tool_result(result)
@@ -792,8 +792,15 @@ def _reply(text: str, origin: str) -> "ToolReply":
     return r
 
 
+def _is_tool_result(result: Any) -> bool:
+    """MCP: a dict whose "content" is a list, or (newer servers) one that answers in
+    "structuredContent" alone, which is an object."""
+    return isinstance(result, dict) and (isinstance(result.get("content"), list)
+                                         or isinstance(result.get("structuredContent"), dict))
+
+
 def _result_origin(result: Any) -> str:
-    if not (isinstance(result, dict) and isinstance(result.get("content"), list)):
+    if not _is_tool_result(result):
         return "malformed"
     return "tool_error" if result.get("isError") else "result"
 
@@ -823,6 +830,14 @@ def _server_label(server: str) -> str:
     return str(server)
 
 
+def _holds_token(sp: Any) -> bool:
+    """Whether this server was given a credential (a non-empty value in its env). A server with
+    none cannot have its token refused: words like invalid_token in its error are its own, and
+    Settings must not ask for a new token it does not take."""
+    env = getattr(sp, "env", None)
+    return isinstance(env, dict) and any(str(v).strip() for v in env.values())
+
+
 def _settle_reply(server: str, sp: Any, tool: str, out: Any) -> Any:
     """A call's answer that is not a result (refused, revoked, not confirmed, malformed, an empty
     answer to a change, a server that is off) is noted as not done for the tool checkpoint
@@ -838,9 +853,13 @@ def _settle_reply(server: str, sp: Any, tool: str, out: Any) -> Any:
         from agent_friday.services import connector_outcome as _co
         kind = _co.tool_reply_kind(out, writes=_tool_writes(sp, tool))
         if not kind:
+            # An answer that is a result means the token works (or there is none to refuse):
+            # a refusal flagged earlier no longer stands.
+            if isinstance(sp, MCPServerProcess) and getattr(sp, "token_refused", False)                     and getattr(out, "origin", "result") == "result":
+                sp.token_refused = False
             return out
         label = _server_label(server)
-        if kind == "revoked" and isinstance(sp, MCPServerProcess):
+        if kind == "revoked" and isinstance(sp, MCPServerProcess) and _holds_token(sp):
             sp.token_refused = True
             sp.error = "the service refused its token (revoked or wrong): connect it with a new one"
         said = _co.not_done(kind, label, other_service=True)

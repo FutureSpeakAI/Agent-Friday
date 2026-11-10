@@ -161,8 +161,9 @@ TOOL_SERVERS: Dict[str, Dict[str, Any]] = {
         "windows_desktop", "Windows desktop", local=True,
         destinations=[{"host": "pypi.org", "for": "fetching the server program (uvx) when it starts"},
                       {"host": "files.pythonhosted.org", "for": "the server program's files"}],
-        receives=["nothing leaves this PC: it reads the screen and the window list, and acts on "
-                  "apps here"],
+        receives=["nothing is sent to a service by this connector: it reads the screen and the "
+                  "window list, and acts on apps here. What it reads goes to the model that is "
+                  "answering, which is a cloud model unless Friday's brain runs on this PC"],
         at_service="Nothing to revoke: it has no account.",
         limitations=["Not isolated: it acts on this PC's screen, which is why every press it makes "
                      "is checked again just before it acts.",

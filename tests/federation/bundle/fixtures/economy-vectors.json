@@ -1,0 +1,429 @@
+{
+  "format": "asimov-economic-examples/v1",
+  "test_only": true,
+  "work": [
+    {
+      "name": "ten-positron concept",
+      "gross_increments": [
+        10
+      ],
+      "operator_bps": 100,
+      "incremental_fees": [
+        0
+      ],
+      "contributors": 10
+    },
+    {
+      "name": "multi-node job and replay",
+      "gross_increments": [
+        99,
+        1,
+        400,
+        500
+      ],
+      "operator_bps": 100,
+      "incremental_fees": [
+        0,
+        1,
+        4,
+        5
+      ],
+      "contributors": 990
+    },
+    {
+      "name": "partial work-side waiver",
+      "gross_increments": [
+        1000
+      ],
+      "operator_bps": 60,
+      "incremental_fees": [
+        6
+      ],
+      "contributors": 994
+    },
+    {
+      "name": "full work-side waiver",
+      "gross_increments": [
+        300,
+        700
+      ],
+      "operator_bps": 0,
+      "incremental_fees": [
+        0,
+        0
+      ],
+      "contributors": 1000
+    }
+  ],
+  "cash": [
+    {
+      "name": "single USD 100",
+      "minor_increments": [
+        10000
+      ],
+      "incremental_fees": [
+        25
+      ],
+      "seller": 10000,
+      "buyer": 10025
+    },
+    {
+      "name": "split USD 100",
+      "minor_increments": [
+        5000,
+        5000
+      ],
+      "incremental_fees": [
+        13,
+        12
+      ],
+      "seller": 10000,
+      "buyer": 10025
+    },
+    {
+      "name": "half minor unit",
+      "minor_increments": [
+        199,
+        1,
+        1,
+        398,
+        1
+      ],
+      "incremental_fees": [
+        0,
+        1,
+        0,
+        0,
+        1
+      ],
+      "seller": 600,
+      "buyer": 602
+    },
+    {
+      "name": "unfilled",
+      "minor_increments": [],
+      "incremental_fees": [],
+      "seller": 0,
+      "buyer": 0
+    }
+  ],
+  "split": [
+    {
+      "name": "stable tie and prefix allocation",
+      "weights": {
+        "b": 1,
+        "a": 1
+      },
+      "released": 5,
+      "shares": {
+        "a": 3,
+        "b": 2
+      }
+    },
+    {
+      "name": "credited people and agent",
+      "weights": {
+        "agent": 1,
+        "editor": 4
+      },
+      "released": 17,
+      "shares": {
+        "agent": 3,
+        "editor": 14
+      }
+    }
+  ],
+  "market": [
+    {
+      "name": "funded resting ask",
+      "ask": 14,
+      "bid": 16,
+      "cash_available": 4500,
+      "buy_lots": 300,
+      "sell_lots": 350,
+      "p_per_lot": 2,
+      "resting": "ask",
+      "match_lots": 300,
+      "price_per_lot": 14,
+      "expected_seller": 4200,
+      "expected_fee": 11
+    },
+    {
+      "name": "funded resting bid",
+      "ask": 14,
+      "bid": 16,
+      "cash_available": 4500,
+      "buy_lots": 300,
+      "sell_lots": 350,
+      "p_per_lot": 2,
+      "resting": "bid",
+      "match_lots": 280,
+      "price_per_lot": 16,
+      "expected_seller": 4480,
+      "expected_fee": 11
+    },
+    {
+      "name": "noncrossing limits",
+      "ask": 17,
+      "bid": 16,
+      "cash_available": 10000,
+      "buy_lots": 5,
+      "sell_lots": 5,
+      "p_per_lot": 2,
+      "resting": "bid",
+      "match_lots": 0,
+      "price_per_lot": null,
+      "expected_seller": 0,
+      "expected_fee": 0
+    },
+    {
+      "name": "unfunded buyer",
+      "ask": 10,
+      "bid": 10,
+      "cash_available": 0,
+      "buy_lots": 10,
+      "sell_lots": 2,
+      "p_per_lot": 1,
+      "resting": "bid",
+      "match_lots": 0,
+      "price_per_lot": null,
+      "expected_seller": 0,
+      "expected_fee": 0
+    }
+  ],
+  "issuer": {
+    "id": "test.one",
+    "supply": 1000000,
+    "commands": [
+      {
+        "action": "seed",
+        "effect": "approved-treasury-purchase-a",
+        "issuer": "test.one",
+        "postings": {
+          "treasury": -1200,
+          "requester": 1200
+        },
+        "expect": "posted"
+      },
+      {
+        "action": "reserve",
+        "effect": "job7/hold",
+        "issuer": "test.one",
+        "postings": {
+          "requester": -1000,
+          "work:7": 1000
+        },
+        "expect": "posted"
+      },
+      {
+        "action": "reserveAgain",
+        "effect": "job7/hold",
+        "issuer": "test.one",
+        "postings": {
+          "requester": -1000,
+          "work:7": 1000
+        },
+        "expect": "duplicate"
+      },
+      {
+        "action": "reserveAgain",
+        "effect": "another-effect",
+        "issuer": "test.one",
+        "postings": {
+          "requester": -2,
+          "work:8": 2
+        },
+        "expect": "action-conflict"
+      },
+      {
+        "action": "new",
+        "effect": "job7/hold",
+        "issuer": "test.one",
+        "postings": {
+          "requester": -2,
+          "work:7": 2
+        },
+        "expect": "effect-conflict"
+      },
+      {
+        "action": "overspend",
+        "effect": "job8/hold",
+        "issuer": "test.one",
+        "postings": {
+          "requester": -250,
+          "work:8": 250
+        },
+        "expect": "insufficient"
+      },
+      {
+        "action": "pay",
+        "effect": "job7/settle-1",
+        "issuer": "test.one",
+        "postings": {
+          "work:7": -1000,
+          "editor": 990,
+          "operator": 10
+        },
+        "expect": "posted"
+      },
+      {
+        "action": "pay",
+        "effect": "job7/settle-1",
+        "issuer": "test.one",
+        "postings": {
+          "work:7": -1000,
+          "editor": 990,
+          "operator": 10
+        },
+        "expect": "duplicate"
+      },
+      {
+        "action": "reserveSale",
+        "effect": "exchange3/sell-hold",
+        "issuer": "test.one",
+        "postings": {
+          "editor": -400,
+          "exchange:3": 400
+        },
+        "expect": "posted"
+      },
+      {
+        "action": "foreign",
+        "effect": "exchange3/copy",
+        "issuer": "fork.two",
+        "postings": {
+          "exchange:3": -400,
+          "visitor": 400
+        },
+        "expect": "issuer"
+      },
+      {
+        "action": "inflation",
+        "effect": "mint-again",
+        "issuer": "test.one",
+        "postings": {
+          "editor": 10
+        },
+        "expect": "unbalanced"
+      },
+      {
+        "action": "fractional",
+        "effect": "bad",
+        "issuer": "test.one",
+        "postings": {
+          "requester": -1.5,
+          "operator": 1.5
+        },
+        "expect": "units"
+      },
+      {
+        "action": "truthy",
+        "effect": "bad-bool",
+        "issuer": "test.one",
+        "postings": {
+          "requester": true,
+          "operator": -1
+        },
+        "expect": "units"
+      },
+      {
+        "action": "fill",
+        "effect": "exchange3/fill1/release",
+        "issuer": "test.one",
+        "postings": {
+          "exchange:3": -400,
+          "cash_buyer": 400
+        },
+        "expect": "posted"
+      },
+      {
+        "action": "delivery2",
+        "effect": "exchange3/fill1/release",
+        "issuer": "test.one",
+        "postings": {
+          "exchange:3": -400,
+          "cash_buyer": 400
+        },
+        "expect": "duplicate"
+      }
+    ],
+    "balances": {
+      "treasury": 998800,
+      "requester": 200,
+      "work:7": 0,
+      "editor": 590,
+      "operator": 10,
+      "exchange:3": 0,
+      "cash_buyer": 400
+    }
+  },
+  "negatron": [
+    {
+      "profile": "N1:testGPU-a",
+      "reference_device_ms": 4000,
+      "job_device_ms": 10000,
+      "result_numerator": 5,
+      "result_denominator": 2,
+      "energy_wh": null
+    }
+  ],
+  "schedule": {
+    "protocol": "asimov-economic-schedule/v1",
+    "issuer": "test.one",
+    "work_order": "w.example",
+    "job": "j.example",
+    "stage": "design",
+    "revision": 1,
+    "operator_bps": 100,
+    "awards": [
+      {
+        "milestone": "concept",
+        "gross_units": 10,
+        "shares": [
+          {
+            "beneficiary": "editor",
+            "role": "creator",
+            "units": 10
+          },
+          {
+            "beneficiary": "operator",
+            "role": "operator",
+            "units": 0
+          }
+        ]
+      },
+      {
+        "milestone": "final",
+        "gross_units": 100,
+        "shares": [
+          {
+            "beneficiary": "editor",
+            "role": "creator",
+            "units": 99
+          },
+          {
+            "beneficiary": "operator",
+            "role": "operator",
+            "units": 1
+          }
+        ]
+      }
+    ]
+  },
+  "schedule_hash": "7935c15af8d7d582204ce9f6d210357de959a823045419924c874434a52d572e",
+  "detached_posting": {
+    "journal": [
+      {
+        "account": "alice",
+        "direction": "debit",
+        "amount": 9
+      },
+      {
+        "account": "bob",
+        "direction": "credit",
+        "amount": 9
+      }
+    ],
+    "expected_net": 0
+  }
+}

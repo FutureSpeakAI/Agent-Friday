@@ -196,10 +196,9 @@
    "id": "NS-34.3-6",
    "strength": "MUST",
    "requirement": "Upgrade from oldest supported and immediately prior version",
-   "status": "open",
-   "evidence": "",
-   "missing": "The upgrade matrix in .github/workflows/installer.yml stops at v1.2.0-beta.1; v1.2.0-beta.2 is the latest published release, and the upgrade jobs have not run on live code.",
-   "checked": "2026-10-30, against live c0853a0ab (tree == 13c3872b9, PR #444)"
+   "status": "pass",
+   "evidence": "scripts/check_upgrade_bases.py refuses a release whose upgrade matrix in .github/workflows/installer.yml misses the release before it or the oldest supported base (v5.14.3); the installer workflow's upgrade-bases job runs it before publish. Tests: tests/unit/test_upgrade_bases.py::test_the_matrix_proves_the_latest_published_release, tests/unit/test_upgrade_bases.py::test_a_release_whose_prior_has_no_leg_is_refused, tests/unit/test_upgrade_bases.py::test_the_oldest_supported_base_must_stay, tests/unit/test_upgrade_bases.py::test_the_release_waits_for_it. The upgrade legs themselves run on a release tag or a dispatch of installer.yml, not on every push to main. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.3-7",
@@ -237,8 +236,9 @@
    "id": "NS-34.4-3",
    "strength": "MUST",
    "requirement": "First-run: secure key creation",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Every key Friday mints on first use is random, created once when two first uses race, never half-written and restricted to the owner: tests/unit/test_first_run_keys.py::test_two_threads_get_one_root_key, tests/unit/test_first_run_keys.py::test_a_rival_keystore_created_first_is_adopted_not_overwritten, tests/unit/test_first_run_keys.py::test_create_exclusive_hardens_the_file, tests/unit/test_first_run_keys.py::test_a_new_vault_salt_is_random_and_kept, tests/unit/test_first_run_keys.py::test_two_threads_mint_one_file_grants_key. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.4-4",
@@ -331,15 +331,17 @@
    "id": "NS-34.5-5",
    "strength": "MUST",
    "requirement": "Tokens cannot replay",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "A decided approval card cannot be decided again or carried out twice, and a spent card put back unspent is not spent again: tests/unit/test_grants_cannot_be_replayed.py::test_a_decided_card_cannot_be_decided_again_or_carried_out_twice, tests/unit/test_approval_seal.py::test_a_spent_card_put_back_unspent_is_not_spent_again, tests/unit/test_approval_seal.py::test_the_executor_claims_once_and_its_call_spends_once, tests/unit/test_approval_executes.py::test_approving_twice_runs_once, tests/unit/test_approval_executes.py::test_two_surfaces_approving_at_once_run_once. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.5-6",
    "strength": "MUST",
    "requirement": "Grants expire and count usage",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "A grant counts its uses and stops, expires, and does not get uses back when an older file is put back: tests/unit/test_grants_cannot_be_replayed.py::test_a_grant_counts_its_uses_and_stops, tests/unit/test_grants_cannot_be_replayed.py::test_a_grant_expires, tests/unit/test_grants_cannot_be_replayed.py::test_putting_back_an_older_grants_file_does_not_give_uses_back, tests/unit/test_grant_records.py::test_concurrent_sends_cannot_take_more_uses_than_the_grant_has. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.5-7",
@@ -410,15 +412,17 @@
    "id": "NS-34.6-4",
    "strength": "MUST",
    "requirement": "Egress tests: vault content",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Vault content on every path a prompt takes to a cloud model, including the vault gate failing: tests/api/test_egress_every_path.py::test_cloud_prompt_withholds_the_tier2_section, tests/api/test_egress_every_path.py::test_a_failing_vault_gate_fails_closed_for_cloud, tests/api/test_egress_every_path.py::test_chat_to_a_cloud_model_carries_no_vault_task; boundary suite tests/security/test_kg_egress_adversarial.py runs in the security step of tests.yml. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.6-5",
    "strength": "MUST",
    "requirement": "Egress tests: file grants",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "A granted file's text passes with the grant named and stops the moment the grant is revoked, denied or expired: tests/api/test_egress_every_path.py::test_a_granted_paragraph_passes_with_its_grant_named, tests/api/test_egress_every_path.py::test_without_a_grant_it_is_withheld, tests/api/test_egress_every_path.py::test_revoking_the_grant_stops_it_at_once, tests/api/test_egress_every_path.py::test_an_expired_folder_grant_stops_it. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.6-6",
@@ -432,8 +436,9 @@
    "id": "NS-34.6-7",
    "strength": "MUST",
    "requirement": "Egress tests: partial classifier failure / loading classifier",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "When the classifier is still loading or a layer fails, cloud egress holds instead of sending: tests/unit/test_ml_import_race.py::test_cloud_egress_fails_closed_while_layer3_is_expected_but_down, tests/unit/test_ml_import_race.py::test_a_failed_layer3_load_is_retried_not_cached_forever; tests/api/test_privacy_hold_notice.py::test_a_held_message_always_comes_back_with_the_notice, tests/api/test_privacy_hold_notice.py::test_send_anyway_sends_with_pattern_filters_only; tests/unit/test_egress_failures_and_providers.py::test_an_unreadable_never_send_list_stops_every_cloud_send, tests/unit/test_egress_failures_and_providers.py::test_background_work_is_told_what_was_sent_while_the_check_was_starting. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.6-8",
@@ -455,43 +460,49 @@
    "id": "NS-34.6-10",
    "strength": "MUST",
    "requirement": "Egress tests: connector tool results",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "What a connector read returns (mail, calendar, tasks, Drive and Docs, contacts, an add-on tool) is gated on the way to a cloud model in both wire shapes, the hold is logged under the tool's name, a local seat gets it whole: tests/unit/test_connector_results_egress.py::test_a_connectors_private_detail_is_held_and_the_rest_arrives, tests/unit/test_connector_results_egress.py::test_the_egress_log_names_the_tool_whose_result_was_held, tests/unit/test_connector_results_egress.py::test_a_result_withheld_whole_says_it_was_a_tool_result, tests/unit/test_connector_results_egress.py::test_a_local_seat_gets_the_result_as_it_is. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.6-11",
    "strength": "MUST",
    "requirement": "Egress tests: voice transcripts",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "The session review that carries a voice transcript to a task model is sealed by the egress gate, and an off-record call is never reviewed: tests/api/test_egress_every_path.py::test_the_transcript_review_is_sealed_before_a_cloud_model, tests/api/test_egress_every_path.py::test_an_off_record_call_is_never_reviewed; voice egress suites tests/gauntlet/test_cloud_voice_egress_and_cost.py and tests/gauntlet/test_voice_local_only_privacy.py run in the security step of tests.yml. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.6-12",
    "strength": "MUST",
    "requirement": "Egress tests: images and image metadata",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Image metadata (EXIF, GPS, PNG text chunks) never leaves, and an image block in a cloud payload gets its own egress-ledger row: tests/api/test_egress_every_path.py::test_strip_removes_exif_and_keeps_the_picture_upright, tests/api/test_egress_every_path.py::test_png_text_and_exif_chunks_go, tests/api/test_egress_every_path.py::test_inspect_image_sends_no_metadata, tests/api/test_egress_every_path.py::test_an_image_block_in_a_cloud_payload_gets_a_ledger_row. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.6-13",
    "strength": "MUST",
    "requirement": "Egress tests: remote model substitution",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "A cloud-tagged model behind the local daemon is gated as cloud, and a fallback to another provider re-gates the prompt: tests/api/test_egress_every_path.py::test_a_cloud_tagged_model_behind_the_local_daemon_is_gated; tests/gauntlet/test_chat_send_regates_for_predicted_provider.py and tests/gauntlet/test_task_worker_fallback_regates_prompt.py run in the security step of tests.yml. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.6-14",
    "strength": "MUST",
    "requirement": "Egress tests: all supported providers",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Every cloud provider wire shape is sealed before its request is posted: the OpenAI-compatible providers (one test per registry entry, and a test that fails when a provider is missing), Anthropic (system, text, tool_use, tool_result) and Google (systemInstruction in both spellings, contents, functionResponse): tests/unit/test_egress_failures_and_providers.py::test_every_cloud_provider_is_sealed_by_the_gate_before_its_request_is_posted, tests/unit/test_egress_failures_and_providers.py::test_the_registry_lists_the_cloud_providers_this_test_covers; tests/unit/test_egress_native_provider_shapes.py::test_a_private_detail_in_any_part_of_a_native_payload_does_not_leave, tests/unit/test_egress_native_provider_shapes.py::test_the_sdk_spelling_of_the_google_system_prompt_is_sealed_too; tests/api/test_egress_every_path.py::test_a_cloud_tagged_model_behind_the_local_daemon_is_gated. The Google test found and closed a real hole (systemInstruction was never scrubbed; red twin #746, fix #749). CI: tests run 42382862011, off main (PR #749 977e655ee; its tree is now on main e302c1f08).",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.7-1",
    "strength": "MUST",
    "requirement": "Injection fixtures: email, HTML, PDF, images, calendar, spreadsheet, repo files, tool output, channel msgs, webhooks, screen text, model summaries",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "One injection fixture per medium (email, web page, PDF, image, calendar, spreadsheet, repo file, tool output, channel message, webhook, screen text, model summary), each reaching every model only inside the data envelope and unable to change a setting, grant or card: tests/unit/test_injection_fixtures_reach_models_as_data.py::test_there_is_a_fixture_for_every_medium_the_spec_names, tests/unit/test_injection_fixtures_reach_models_as_data.py::test_openai_compatible_loop, tests/unit/test_injection_fixtures_reach_models_as_data.py::test_anthropic_loop, tests/security/test_injection_fixtures.py::test_every_medium_has_a_fixture_carrying_the_whole_attack_family, tests/security/test_injection_fixtures.py::test_a_it_reaches_the_model_inside_the_envelope_and_is_recorded_as_content, tests/security/test_injection_fixtures.py::test_c_it_cannot_change_a_setting_save_a_rule_steer_a_task_answer_a_card_or_mint_a_grant. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.7-2",
@@ -521,8 +532,9 @@
    "id": "NS-34.7-5",
    "strength": "MUST",
    "requirement": "Tests verify content cannot escape sandboxes",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Content cannot escape the sandboxes: a network attempt fails inside the code sandbox, Friday's folder is not writable from it, a write outside the owner's folders writes nothing, and a memory hog is stopped: tests/unit/test_code_sandbox.py::test_a_network_attempt_fails_inside_python, tests/unit/test_code_sandbox.py::test_fridays_folder_is_not_writable_even_by_its_real_path, tests/unit/test_file_confinement.py::test_a_write_outside_the_home_folder_writes_nothing, tests/unit/test_run_command_is_sandboxed.py::test_a_memory_hog_is_stopped_by_the_job_limit. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.8-1",
@@ -536,8 +548,9 @@
    "id": "NS-34.9-1",
    "strength": "MUST",
    "requirement": "Memory tests: cross-session recall",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "A fact from an earlier conversation is recalled in a new one with its date and source, through the real conversation memory and search index (the vector store is a small in-memory stand-in because CI installs no Chroma): tests/unit/test_memory_truth.py::test_a_fact_from_an_earlier_conversation_is_recalled_with_its_date_and_source. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.9-2",
@@ -693,8 +706,9 @@
    "id": "NS-34.11-3",
    "strength": "MUST",
    "requirement": "Per-connector fixtures: revoked access, malformed content, receipt creation",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Revoked access, malformed content and receipt creation for Google, tool servers and message channels: tests/unit/test_connector_outcomes.py::test_revoked_access_is_named_and_the_account_is_marked, tests/unit/test_mcp_and_channel_outcomes.py::test_a_refused_token_is_not_done_and_asks_for_a_new_one, tests/unit/test_mcp_and_channel_outcomes.py::test_a_malformed_answer_is_never_success, tests/unit/test_mcp_and_channel_outcomes.py::test_an_answer_that_names_the_change_is_done, tests/unit/test_mcp_and_channel_outcomes.py::test_a_revoked_bot_token_is_named_on_the_channel. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.12-1",
@@ -732,15 +746,18 @@
    "id": "NS-34.13-3",
    "strength": "MUST",
    "requirement": "Persona goldens: action restraint, source integrity, error admission",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Each of action restraint, source integrity and error admission has at least two goldens with hard rules, and a reply that acts, invents or deflects fails: tests/unit/test_persona_restraint_and_parity.py::test_each_new_behaviour_has_at_least_two_goldens_with_hard_rules, tests/unit/test_persona_restraint_and_parity.py::test_a_reply_that_acts_invents_or_deflects_fails, tests/unit/test_persona_restraint_and_parity.py::test_every_recorded_provider_passes_the_new_goldens_in_its_own_words. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.13-4",
    "strength": "MUST",
    "requirement": "Persona goldens: multi-provider parity",
    "status": "open",
-   "evidence": ""
+   "evidence": "",
+   "missing": "The three provider fixtures in tests/persona/fixtures are reference answers written by hand in each provider's style, not answers any provider gave; tests/unit/test_persona_restraint_and_parity.py proves the scorer holds them to one persona, not that the providers agree. Scoring live recordings from each provider (persona_eval.run_live_eval, opt-in) has not been run.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.14-1",
@@ -796,29 +813,33 @@
    "id": "NS-34.16-2",
    "strength": "MUST",
    "requirement": "Chaos: kill during receipt write, file creation, migration",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Real os._exit kills during a receipt write (cut-off line holds outward actions and says so; kill before the head loses nothing), a file creation (the earlier file stays whole) and a migration (resumes at the next start): tests/unit/test_chaos_receipt_write.py::test_a_receipt_cut_off_half_way_holds_and_says_what_happened, tests/unit/test_chaos_receipt_write.py::test_a_kill_after_the_line_and_before_the_head_loses_nothing_and_holds_nothing; tests/unit/test_chaos_file_write.py::test_a_write_killed_part_way_leaves_the_earlier_file_whole; tests/unit/test_migrations.py::test_a_migration_stopped_part_way_resumes_at_the_next_start. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.16-3",
    "strength": "MUST",
    "requirement": "Chaos: kill during backup, restore, index rebuild, update, connector refresh",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Real os._exit kills during a backup (no torn backup), a restore (rolled back or finished, never neither), an index rebuild (old index whole, rebuild finished next time), an update (an update check keeps what it announced; a rollback killed mid-swap is repaired) and a connector token refresh write (a working token kept): tests/unit/test_chaos_backup_restore_update.py::test_a_full_backup_killed_while_writing_leaves_no_torn_backup, tests/unit/test_chaos_backup_restore_update.py::test_an_update_check_killed_mid_write_keeps_what_it_announced, tests/unit/test_chaos_backup_restore_update.py::test_a_rollback_killed_mid_swap_is_repaired_by_the_next_start, tests/unit/test_chaos_backup_restore_update.py::test_a_token_rewrite_killed_mid_write_keeps_a_working_token; tests/unit/test_restore_crash_safe.py::test_a_restore_stopped_before_its_swap_is_rolled_back, tests/unit/test_restore_crash_safe.py::test_a_restore_stopped_after_its_swap_is_finished_at_the_next_start; tests/unit/test_rebuild_chaos.py::test_a_rebuild_killed_part_way_leaves_the_old_index_and_is_finished_next_time. CI: tests run 42359332810 on main 11cf1fe62.",
+   "checked": "2026-11-07, against main e302c1f08 (tests on 11cf1fe62 green; 34.6-14 on PR #749 977e655ee)"
   },
   {
    "id": "NS-34.16-4",
    "strength": "MUST",
    "requirement": "System recovers without duplicate actions or false completion",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "Real os._exit kills at the riskiest points of five outward paths: the action is not run again, a send is never sent twice, and an unknown outcome ends outcome-unknown, never done: tests/unit/test_recovery_no_duplicates.py::test_an_approved_card_killed_mid_run_is_not_run_again_nor_its_task_done, tests/unit/test_recovery_no_duplicates.py::test_a_mail_send_killed_mid_send_is_never_sent_twice, tests/unit/test_recovery_no_duplicates.py::test_a_channel_reply_killed_mid_send_is_not_sent_again_by_the_next_poll, tests/unit/test_recovery_no_duplicates.py::test_a_waiting_task_whose_card_outcome_is_unknown_ends_outcome_unknown_not_failed. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.17-1",
    "strength": "MUST NOT",
    "requirement": "No release with known gate bypass",
-   "status": "open",
-   "evidence": ""
+   "status": "pass",
+   "evidence": "The gate-bypass review (GB) is held by tests: every action site outside the checkpoint is a reviewed one, a background task is scoped by its recorded schedule, and an allowlisted command that reaches further goes to a card: tests/unit/test_every_action_is_governed.py::test_every_registered_tool_passes_the_checkpoint_first, tests/unit/test_every_action_is_governed.py::test_no_executor_path_skips_the_checkpoint, tests/unit/test_every_action_is_governed.py::test_the_scanner_catches_a_planted_bypass, tests/unit/test_governance_off_chat_paths.py::test_the_worker_scopes_grants_by_the_recorded_schedule, tests/unit/test_gate_bypass_review.py::test_an_allowlisted_command_that_reaches_further_goes_to_a_card. CI: tests run 42240289127 on main c772b1ccd.",
+   "checked": "2026-11-06, against main c772b1ccd"
   },
   {
    "id": "NS-34.17-2",

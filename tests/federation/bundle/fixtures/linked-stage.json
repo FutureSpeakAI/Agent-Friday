@@ -1,0 +1,328 @@
+{
+  "test_only": true,
+  "description": "Public fixture. Checks only the agreement, required stage attachments and an asserted award amount. It contains no evidence of performed work, funding, registry consensus or paid money.",
+  "trusted_peers": {
+    "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+    "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+  },
+  "offer": {
+    "body": {
+      "protocol": "asimov-peer/v2",
+      "type": "job.offer",
+      "realm": "test-realm",
+      "job": "j.example",
+      "stage": "design",
+      "action_id": "act-1",
+      "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+      "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+      "parents": [],
+      "terms_hash": "1d118e5c47052f9a9fa8899a9b6598f98d05569271c6a35d380d753b8ae7e776",
+      "issued_at": 1900000001,
+      "expires_at": 2000000000,
+      "payload": {
+        "terms": {
+          "protocol": "asimov-terms/v2",
+          "realm": "test-realm",
+          "job": "j.example",
+          "stage": "design",
+          "revision": 1,
+          "project": null,
+          "participants": {
+            "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+            "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+            "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+            "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+            "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+            "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+            "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+          },
+          "scope": {
+            "inputs": [],
+            "readers": [
+              "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+            ],
+            "approved_tools": [
+              "bd810fd9b69d1b16c13d5e1b6a96f58f5c32c0b2674b349b43353e010f225237"
+            ],
+            "allowed_models": [],
+            "compute_ms": 30000,
+            "memory_bytes": 100000000,
+            "storage_bytes": 1000000,
+            "output_bytes": 100000,
+            "network": "none",
+            "cloud": false,
+            "delegate": false,
+            "preview": "hold",
+            "final": "send_to_requester",
+            "publication": "private",
+            "review_human_keys": []
+          },
+          "deliverable_spec": "b1768a8601569f8adc502a3acbbb222da6c939ffa8a6595360f7fb5b7eeca4fd",
+          "acceptance_spec": "6ba541b5419584325f2ae72e464fce2d9936c12b320a2822f53270e58734d9fe",
+          "review_spec": "6ba541b5419584325f2ae72e464fce2d9936c12b320a2822f53270e58734d9fe",
+          "interruption_spec": "6ba541b5419584325f2ae72e464fce2d9936c12b320a2822f53270e58734d9fe",
+          "rights_spec": "0b5b2d5b54819709aa6b196f90e46fac825e73274e19b4528fe72e342ec6d288",
+          "governance_spec": "d96c56d84443283500a1dea29fc30e86b6eeab7b622e2eb0bb0b92803b372fe1",
+          "issuer": "test.one",
+          "gross_units": 100,
+          "shares": [
+            {
+              "beneficiary": "editor",
+              "role": "creator",
+              "units": 99
+            },
+            {
+              "beneficiary": "operator",
+              "role": "operator",
+              "units": 1
+            }
+          ],
+          "valid_until": 2000000000
+        }
+      }
+    },
+    "signature": "f055f844118bf4d53203a6a9b4a84997ed4199bd25e3346da8db8d28940340c88cf48b19f7594a35919a037d4fa27e48c9fd4fe952541208165797f0a3829e02"
+  },
+  "acceptance": {
+    "body": {
+      "protocol": "asimov-peer/v2",
+      "type": "job.accept",
+      "realm": "test-realm",
+      "job": "j.example",
+      "stage": "design",
+      "action_id": "act-2",
+      "actor": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+      "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+      "parents": [
+        "9680e8ee0ef99b415f020e4c41aa5e70ae7ea13c66babcecff0e999b27ed1ba0"
+      ],
+      "terms_hash": "1d118e5c47052f9a9fa8899a9b6598f98d05569271c6a35d380d753b8ae7e776",
+      "issued_at": 1900000002,
+      "expires_at": 2000000000,
+      "payload": {
+        "offer": "9680e8ee0ef99b415f020e4c41aa5e70ae7ea13c66babcecff0e999b27ed1ba0"
+      }
+    },
+    "signature": "27d60a297b5a75dbe0415d5263840c7a9586c547fbf295f7f2f0fd9dc2136c63bbd0dccd824a037fbd0562374c7e63e2f7718c631f2b6b4cbbafa6c4012c7f0d"
+  },
+  "attachments_b64": {
+    "7935c15af8d7d582204ce9f6d210357de959a823045419924c874434a52d572e": "eyJhd2FyZHMiOlt7Imdyb3NzX3VuaXRzIjoxMCwibWlsZXN0b25lIjoiY29uY2VwdCIsInNoYXJlcyI6W3siYmVuZWZpY2lhcnkiOiJlZGl0b3IiLCJyb2xlIjoiY3JlYXRvciIsInVuaXRzIjoxMH0seyJiZW5lZmljaWFyeSI6Im9wZXJhdG9yIiwicm9sZSI6Im9wZXJhdG9yIiwidW5pdHMiOjB9XX0seyJncm9zc191bml0cyI6MTAwLCJtaWxlc3RvbmUiOiJmaW5hbCIsInNoYXJlcyI6W3siYmVuZWZpY2lhcnkiOiJlZGl0b3IiLCJyb2xlIjoiY3JlYXRvciIsInVuaXRzIjo5OX0seyJiZW5lZmljaWFyeSI6Im9wZXJhdG9yIiwicm9sZSI6Im9wZXJhdG9yIiwidW5pdHMiOjF9XX1dLCJpc3N1ZXIiOiJ0ZXN0Lm9uZSIsImpvYiI6ImouZXhhbXBsZSIsIm9wZXJhdG9yX2JwcyI6MTAwLCJwcm90b2NvbCI6ImFzaW1vdi1lY29ub21pYy1zY2hlZHVsZS92MSIsInJldmlzaW9uIjoxLCJzdGFnZSI6ImRlc2lnbiIsIndvcmtfb3JkZXIiOiJ3LmV4YW1wbGUifQ==",
+    "983994f21755a98ab498c657ae827872674d6ec5e0e1ad04edf8682f302d2147": "VEVTVCBGSVhUVVJFLiBEZWxpdmVyIG9uZSBza2V0Y2ggZmlsZSBhbmQgb25lIGRlc2NyaXB0aW9uIGFwcHJvdmVkIGZvciBwcml2YXRlIHJldmlldy4=",
+    "6ba541b5419584325f2ae72e464fce2d9936c12b320a2822f53270e58734d9fe": "eyJhY2NlcHRhbmNlX21vZGUiOiJ2ZXJpZmllZF90ZXN0cyIsImFwcGVhbF9kZWFkbGluZSI6MTkwMDYwNTgwMCwiYXBwcm92YWwiOiJyZXF1ZXN0ZXIiLCJhcnRpZmFjdF9yZXRlbnRpb25fc2Vjb25kcyI6MjU5MjAwMCwiY2FsZW5kYXJfaWQiOiJ0ZXN0LWNhbGVuZGFyLXYxIiwiZGVsaXZlcnlfZGVhZGxpbmUiOjE5MDAwMDEwMDAsImVjb25vbWljX3NjaGVkdWxlX2hhc2giOiI3OTM1YzE1YWY4ZDdkNTgyMjA0Y2U5ZjZkMjEwMzU3ZGU5NTlhODIzMDQ1NDE5OTI0Yzg3NDQzNGE1MmQ1NzJlIiwiZXZpZGVuY2UiOlsiOTgzOTk0ZjIxNzU1YTk4YWI0OThjNjU3YWU4Mjc4NzI2NzRkNmVjNWUwZTFhZDA0ZWRmODY4MmYzMDJkMjE0NyJdLCJwcm90b2NvbCI6ImFzaW1vdi1zdGFnZS1wb2xpY3kvdjEiLCJyZXZpZXdfZGVhZGxpbmUiOjE5MDAxNzM4MDAsInN0b3BfYXdhcmRzIjpbeyJjdW11bGF0aXZlX3VuaXRzIjoxMCwibWlsZXN0b25lIjoiY29uY2VwdCJ9LHsiY3VtdWxhdGl2ZV91bml0cyI6MTAwLCJtaWxlc3RvbmUiOiJmaW5hbCJ9XSwidGltZW91dF9hY3Rpb24iOiJyZWZlcl90b19yZXZpZXdlciIsInRpbWV6b25lIjoiVVRDIn0=",
+    "b1768a8601569f8adc502a3acbbb222da6c939ffa8a6595360f7fb5b7eeca4fd": "VEVTVCBPTkxZOiB0d28tc3RhZ2Ugc2tldGNoIGFuZCBmaW5hbCBjb21wb3NpdGlvbi4=",
+    "0b5b2d5b54819709aa6b196f90e46fac825e73274e19b4528fe72e342ec6d288": "VEVTVCBPTkxZOiByZXF1ZXN0ZXIgbWF5IHJldmlldyBhcnQgcHJpdmF0ZWx5LiBQdWJsaWNhdGlvbiByZXF1aXJlcyBhIHNlcGFyYXRlIGdyYW50Lg==",
+    "d96c56d84443283500a1dea29fc30e86b6eeab7b622e2eb0bb0b92803b372fe1": "VEVTVCBPTkxZOiBpbmRlcGVuZGVudGx5IHBpbm5lZCBwZWVycywgb2ZmbGluZSBldmlkZW5jZSBpbnNwZWN0aW9uLCBubyBleGVjdXRpb24u",
+    "bd810fd9b69d1b16c13d5e1b6a96f58f5c32c0b2674b349b43353e010f225237": "VEVTVCBPTkxZOiBtb2NrIGRyYXdpbmcgdG9vbCBpZGVudGl0eS4gVGhpcyBpcyBub3QgYSBydW5uYWJsZSB0b29sLg=="
+  },
+  "award_to_check": {
+    "milestone": "concept",
+    "gross_units": 10,
+    "shares": [
+      {
+        "beneficiary": "editor",
+        "role": "creator",
+        "units": 10
+      },
+      {
+        "beneficiary": "operator",
+        "role": "operator",
+        "units": 0
+      }
+    ]
+  },
+  "negative_cases": [
+    {
+      "name": "tampered_inputs",
+      "expect": "signature",
+      "edits": [
+        {
+          "op": "replace",
+          "path": [
+            "offer",
+            "body",
+            "payload",
+            "terms",
+            "scope",
+            "compute_ms"
+          ],
+          "value": 29999
+        }
+      ]
+    },
+    {
+      "name": "modified_schedule_bytes",
+      "expect": "attachment_hash",
+      "edits": [
+        {
+          "op": "replace",
+          "path": [
+            "attachments_b64",
+            "7935c15af8d7d582204ce9f6d210357de959a823045419924c874434a52d572e"
+          ],
+          "value": "e30="
+        }
+      ]
+    },
+    {
+      "name": "missing_schedule",
+      "expect": "unresolved_attachment",
+      "edits": [
+        {
+          "op": "remove",
+          "path": [
+            "attachments_b64",
+            "7935c15af8d7d582204ce9f6d210357de959a823045419924c874434a52d572e"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "false_early_earnings",
+      "expect": "unagreed_award",
+      "edits": [
+        {
+          "op": "replace",
+          "path": [
+            "award_to_check",
+            "gross_units"
+          ],
+          "value": 20
+        }
+      ]
+    },
+    {
+      "name": "changed_early_recipient",
+      "expect": "unagreed_award",
+      "edits": [
+        {
+          "op": "replace",
+          "path": [
+            "award_to_check",
+            "shares",
+            0,
+            "beneficiary"
+          ],
+          "value": "mallory"
+        }
+      ]
+    },
+    {
+      "name": "two_valid_signatures_wrong_issuer",
+      "expect": "economic_identity",
+      "edits": [
+        {
+          "op": "replace",
+          "path": [
+            "offer"
+          ],
+          "value": {
+            "body": {
+              "protocol": "asimov-peer/v2",
+              "type": "job.offer",
+              "realm": "test-realm",
+              "job": "j.example",
+              "stage": "design",
+              "action_id": "act-1",
+              "actor": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+              "recipient": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+              "parents": [],
+              "terms_hash": "2e149e5ffcd350c9cff9d5a8b32ef49d8892241351221fb75cffb4a3b4e27373",
+              "issued_at": 1900000001,
+              "expires_at": 2000000000,
+              "payload": {
+                "terms": {
+                  "protocol": "asimov-terms/v2",
+                  "realm": "test-realm",
+                  "job": "j.example",
+                  "stage": "design",
+                  "revision": 1,
+                  "project": null,
+                  "participants": {
+                    "requester": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+                    "provider": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+                    "recorder": "1903628df21b30408047d346e7bb644bd0a00a9f20f6cbb8a6fd9bcca1705769",
+                    "reviewer": "84a53964316929b76d2a4fc353ee4faf29be7192e463e737976dd67f780563f7",
+                    "appeal": "1bc5a543ab406f83bb7a270a404128cfc871b4f4a57819ba97e25ac897cf524c",
+                    "settlement": "de7b396adaead15c09fd36eaf709fd0783398424ef59b996a3c6102936fc5ee7",
+                    "release": "97dd2b2bca2cd5f2d0a3ec2fa458601221cfe197148c36875fb045460265ea9d"
+                  },
+                  "scope": {
+                    "inputs": [],
+                    "readers": [
+                      "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e"
+                    ],
+                    "approved_tools": [
+                      "bd810fd9b69d1b16c13d5e1b6a96f58f5c32c0b2674b349b43353e010f225237"
+                    ],
+                    "allowed_models": [],
+                    "compute_ms": 30000,
+                    "memory_bytes": 100000000,
+                    "storage_bytes": 1000000,
+                    "output_bytes": 100000,
+                    "network": "none",
+                    "cloud": false,
+                    "delegate": false,
+                    "preview": "hold",
+                    "final": "send_to_requester",
+                    "publication": "private",
+                    "review_human_keys": []
+                  },
+                  "deliverable_spec": "b1768a8601569f8adc502a3acbbb222da6c939ffa8a6595360f7fb5b7eeca4fd",
+                  "acceptance_spec": "6ba541b5419584325f2ae72e464fce2d9936c12b320a2822f53270e58734d9fe",
+                  "review_spec": "6ba541b5419584325f2ae72e464fce2d9936c12b320a2822f53270e58734d9fe",
+                  "interruption_spec": "6ba541b5419584325f2ae72e464fce2d9936c12b320a2822f53270e58734d9fe",
+                  "rights_spec": "0b5b2d5b54819709aa6b196f90e46fac825e73274e19b4528fe72e342ec6d288",
+                  "governance_spec": "d96c56d84443283500a1dea29fc30e86b6eeab7b622e2eb0bb0b92803b372fe1",
+                  "issuer": "test.other",
+                  "gross_units": 100,
+                  "shares": [
+                    {
+                      "beneficiary": "editor",
+                      "role": "creator",
+                      "units": 99
+                    },
+                    {
+                      "beneficiary": "operator",
+                      "role": "operator",
+                      "units": 1
+                    }
+                  ],
+                  "valid_until": 2000000000
+                }
+              }
+            },
+            "signature": "d947a6589e98fe979b7d672ddcf6c11fb82d6e57b01cc4ee7f68fa1576d5cd17d21ba3bdbe134ae60a3fd2aee8dc3d5aa4d493da922b789a37656bce923c5909"
+          }
+        },
+        {
+          "op": "replace",
+          "path": [
+            "acceptance"
+          ],
+          "value": {
+            "body": {
+              "protocol": "asimov-peer/v2",
+              "type": "job.accept",
+              "realm": "test-realm",
+              "job": "j.example",
+              "stage": "design",
+              "action_id": "act-2",
+              "actor": "11155b73a689b5a4d379a2ecadfe19a5cfecc4a361adbe78c36ce1fa3a6d208e",
+              "recipient": "6484227ea56d35cc94cd35f155e079fb5bb2665c44df0dba6bb8239f8ea2ea19",
+              "parents": [
+                "b6965449a7faffdc0bfa38f3efc2705f14be70fc8b870c1ecd923ca81656f099"
+              ],
+              "terms_hash": "2e149e5ffcd350c9cff9d5a8b32ef49d8892241351221fb75cffb4a3b4e27373",
+              "issued_at": 1900000002,
+              "expires_at": 2000000000,
+              "payload": {
+                "offer": "b6965449a7faffdc0bfa38f3efc2705f14be70fc8b870c1ecd923ca81656f099"
+              }
+            },
+            "signature": "c9cfdb9b12740dceb1f6c1b5232eb778492e2f8c3c89a8b03636881f6c2e5329f9d52194ca91016c3996a63572c75ab848630da4e6e707db67b5a87d84803006"
+          }
+        }
+      ]
+    }
+  ]
+}
