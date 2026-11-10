@@ -97,7 +97,9 @@ SWITCH_REASONS = {
     "local_voice_failed": "Local voice did not start",
     "your_choice": "Your choice",
 }
-CLOUD_ENGINES = ("gemini", "gemini-live")
+CLOUD_ENGINES = ("gemini", "gemini-live", "openai")
+#: The cloud voices the one switch question can move voice to.
+SWITCH_ENGINES = ("gemini", "openai")
 
 _LOCK = threading.RLock()
 _RUN_LOCK = threading.Lock()
@@ -784,6 +786,7 @@ def cloud_question_card(settings: Optional[dict] = None) -> Optional[dict]:
     if q is None or _is_cloud(s.get("voice_engine")) or _mode_of(s) == "local_only":
         return None
     return {"id": q.get("id"), "question": QUESTION, "choices": scope_choices(), "preselected": None,
+            "engine": _switch_engine(q.get("engine")),
             "reason": q.get("reason"), "reason_text": SWITCH_REASONS.get(q.get("reason"), ""),
             "source": q.get("source"), "asked_at": q.get("asked_at"),
             "expires_at": q.get("expires_at")}
@@ -826,7 +829,12 @@ def asked_in_these_words(words: str) -> bool:
     return bool(q is not None and d and q.get("words") == d)
 
 
-def ask_cloud_switch(source: str = "settings", words: str = "") -> dict:
+def _switch_engine(engine: Any) -> str:
+    e = str(engine or "gemini").strip().lower()
+    return "gemini" if e == "gemini-live" else (e if e in SWITCH_ENGINES else "gemini")
+
+
+def ask_cloud_switch(source: str = "settings", words: str = "", engine: str = "gemini") -> dict:
     """Start a switch to cloud voice: ask, do not switch. Whatever the source
     (Settings, the voice, the offer after a local voice failure) the answer is
     the owner's "just this call" or "always". Local-only mode refuses with its
@@ -842,7 +850,15 @@ def ask_cloud_switch(source: str = "settings", words: str = "") -> dict:
         return {"ok": True, "asked": False, "already": True,
                 "message": "Voice is already on the cloud."}
     src = source if source in ("settings", "voice", "failure") else "settings"
-    if src == "failure" and not _cloud_voice_connected():
+    engine = _switch_engine(engine)
+    if engine == "openai":
+        # No question without a working answer, and never silent: say what is missing.
+        from agent_friday.services import openai_realtime as _orx
+        _r = _orx.readiness(key_status=_orx.key_state())
+        if not _r["ok"]:
+            return {"ok": True, "asked": False, "not_connected": True, "reason": _r["reason"],
+                    "message": _r["say"]}
+    elif src == "failure" and not _cloud_voice_connected():
         # Offering cloud voice to someone who never connected it would be a
         # question with no working answer: say nothing, raise no card.
         return {"ok": True, "asked": False, "not_connected": True,
@@ -853,7 +869,7 @@ def ask_cloud_switch(source: str = "settings", words: str = "") -> dict:
     with _ANSWER_LOCK:
         with _LOCK:
             st = _load_state()
-            st["cloud_question"] = {"id": _new_id(), "source": src, "reason": why, "asked_at": now,
+            st["cloud_question"] = {"id": _new_id(), "source": src, "reason": why, "asked_at": now, "engine": engine,
                                     "expires_at": now + QUESTION_TTL_S, "words": _digest(words)}
             _save_state(st)
     if src != "settings":
@@ -881,7 +897,10 @@ def gate_settings_write(new_settings: dict) -> Optional[dict]:
     s = _settings()
     if not _is_cloud(new_settings.get("voice_engine")) or _is_cloud(s.get("voice_engine")):
         return None
-    out = ask_cloud_switch(source="settings")
+    out = ask_cloud_switch(source="settings", engine=new_settings.get("voice_engine"))
+    if out.get("asked") is False and out.get("not_connected"):
+        return {"http": 409, "body": {"status": "refused", "reason": out.get("reason") or "not_connected",
+                                      "message": out["message"]}}
     if out.get("refused"):
         return {"http": 409, "body": {"status": "refused", "reason": out["reason"],
                                       "message": out["message"]}}
@@ -923,9 +942,10 @@ def answer_cloud_switch(choice: str, question_id: Optional[str] = None,
         prev = str(s.get("voice_engine") or "local").strip() or "local"
         if _is_cloud(prev):
             prev = "local"
-        rec = {"scope": choice, "engine": "gemini", "previous": prev, "at": _now(),
+        engine = _switch_engine(q.get("engine"))
+        rec = {"scope": choice, "engine": engine, "previous": prev, "at": _now(),
                "reason": q.get("reason") or "your_choice", "source": q.get("source") or "settings"}
-        _save({"voice_engine": "gemini", CHOICE_KEY: rec, SWITCHBACK_KEY: {}})
+        _save({"voice_engine": engine, CHOICE_KEY: rec, SWITCHBACK_KEY: {}})
     if choice == SCOPE_CALL:
         msg = "Cloud voice for this call. I will go back to local voice when it ends."
     else:

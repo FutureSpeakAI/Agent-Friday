@@ -16,9 +16,17 @@ MOD = "agent_friday.routes.openai_live"
 
 
 class _Mod:
-    def __getattr__(self, name):
+    """The module, imported on first use so a missing file fails the test on an assertion; sets go through."""
+
+    def _real(self):
         assert importlib.util.find_spec(MOD) is not None, "routes/openai_live.py does not exist"
-        return getattr(importlib.import_module(MOD), name)
+        return importlib.import_module(MOD)
+
+    def __getattr__(self, name):
+        return getattr(self._real(), name)
+
+    def __setattr__(self, name, value):
+        setattr(self._real(), name, value)
 
 
 @pytest.fixture

@@ -335,6 +335,11 @@ def serve(ws, args: Dict[str, str], *, connect: Callable = None, settings: Optio
     finally:
         b.done.set()
         _mic_ledger("close", b.bytes_in)
+        try:                                                  # "just this call": voice goes back to what it was
+            from agent_friday.services import local_voice_readiness as lvr
+            lvr.call_ended()
+        except Exception:
+            pass
         try:
             up.close()
         except Exception:
