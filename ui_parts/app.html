@@ -8413,7 +8413,7 @@ function KnowledgePages({
     className: 'kw-locked'
   }, 'This page could not be read. It may have been moved or deleted.'), doc && doc.unreachable && h('div', {
     className: 'kw-locked'
-  }, 'Friday could not be reached, so this page could not be loaded. It has not been moved or deleted. ', h('button', {
+  }, fridayName() + ' could not be reached, so this page could not be loaded. It has not been moved or deleted. ', h('button', {
     className: 'kw-btn',
     onClick: () => setRetry(n => n + 1)
   }, 'Try again')), editing ? h('textarea', {
