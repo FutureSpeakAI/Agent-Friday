@@ -135,7 +135,28 @@ class KeyProxy:
         return {"requests": len(cap), "refused": sum(1 for e in cap if e.get("refused")), "hosts": hosts}
 
     # ── the relay ────────────────────────────────────────────────────────────
+    # A refused request's body is read and dropped (up to this many bytes) before
+    # the answer goes out. Closing a socket with unread bytes still queued makes
+    # Windows reset the connection, and the client then sees "connection aborted"
+    # instead of the refusal.
+    _DRAIN_LIMIT = 1 << 20
+
+    def _drain(self, h) -> None:
+        try:
+            left = min(int(h.headers.get("Content-Length") or 0), self._DRAIN_LIMIT)
+        except ValueError:
+            left = 0
+        try:
+            while left > 0:
+                chunk = h.rfile.read(min(left, 65536))
+                if not chunk:
+                    break
+                left -= len(chunk)
+        except OSError:
+            pass
+
     def _refuse(self, h, status: int, text: str, path: str, method: str, t0: float) -> None:
+        self._drain(h)
         body = json.dumps({"error": text}).encode("utf-8")
         h.send_response(status)
         h.send_header("Content-Type", "application/json")
