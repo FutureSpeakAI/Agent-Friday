@@ -12,14 +12,14 @@ import time
 
 import pytest
 
-MOD = "agent_friday.routes.openai_live"
+MOD = "agent_friday.services.openai_live_bridge"
 
 
 class _Mod:
     """The module, imported on first use so a missing file fails the test on an assertion; sets go through."""
 
     def _real(self):
-        assert importlib.util.find_spec(MOD) is not None, "routes/openai_live.py does not exist"
+        assert importlib.util.find_spec(MOD) is not None, "services/openai_live_bridge.py does not exist"
         return importlib.import_module(MOD)
 
     def __getattr__(self, name):
@@ -29,12 +29,22 @@ class _Mod:
         setattr(self._real(), name, value)
 
 
+@pytest.fixture(autouse=True)
+def _no_cost_database(monkeypatch):
+    """Nothing here may open the real cost database or read the spend guard: a connection left behind by one
+    test would be handed to the next test that expects a clean cost meter."""
+    from agent_friday.services import cost_meter, spend_guard
+    monkeypatch.setattr(cost_meter, "summary", lambda *a, **k: {})
+    monkeypatch.setattr(cost_meter, "record", lambda *a, **k: None)
+    monkeypatch.setattr(spend_guard, "check", lambda *a, **k: None)
+
+
 @pytest.fixture
 def ol(monkeypatch):
-    m = _Mod()
     if importlib.util.find_spec(MOD) is None:
-        yield m                 # each test then fails on its own first use of the module, by assertion
+        yield _Mod()            # each test then fails on its own first use of the module, by assertion
         return
+    m = importlib.import_module(MOD)
     from agent_friday.services import openai_realtime as orx
     monkeypatch.setattr(orx, "key_state", lambda: "connected")
     monkeypatch.setattr(orx, "api_key", lambda: "sk-test")
