@@ -1,4 +1,4 @@
-"""/ws/openai-live: the browser <-> OpenAI Realtime bridge, the third voice engine.
+"""/ws/openai-live (services/openai_live_bridge): the browser <-> OpenAI Realtime bridge, the third voice engine.
 
 Speaks the SAME browser contract as ``/ws/live`` and ``/ws/voice-local`` so the page's mic capture, the
 friday-pcm-player, barge-in and the audio-reactive avatar are reused unchanged:
@@ -29,7 +29,7 @@ from typing import Any, Callable, Dict, Optional
 
 from agent_friday.services import openai_realtime as orx
 
-_log = logging.getLogger("friday.routes.openai_live")
+_log = logging.getLogger("friday.openai_live_bridge")
 
 #: Process-wide: until when OpenAI is blocked because the account is out of credit.
 _BLOCKED_UNTIL = [0.0]

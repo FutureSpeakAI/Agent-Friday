@@ -1167,9 +1167,6 @@
   "providers": {
    "type": "object"
   },
-  "quarantine_background_reads": {
-   "type": "boolean"
-  },
   "publish_default_adapter": {
    "type": "string"
   },
@@ -1210,6 +1207,9 @@
     }
    },
    "type": "object"
+  },
+  "quarantine_background_reads": {
+   "type": "boolean"
   },
   "quiet_hours_enabled": {
    "type": "boolean"
@@ -1743,6 +1743,10 @@
    ],
    "type": "string"
   },
+  "voice_openai_auto_failover": {
+   "type": "boolean"
+  },
+  "voice_openai_monthly_cap_usd": {},
   "voice_proactive": {
    "type": "boolean"
   },
