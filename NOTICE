@@ -95,7 +95,6 @@ copyleft or weak-copyleft licenses:
   pynput, pystray ........ GNU LGPL v3 or later (core tier)
   piper-tts .............. GNU GPL v3 or later; embeds espeak-ng (GPL v3)
                            (recommended tier; the local text-to-speech engine)
-  mutagen ................ GNU GPL v2 or later (recommended tier)
   imageio-ffmpeg ......... BSD 2-Clause; the ffmpeg executable it contains
                            is a GPL v3 build (recommended tier)
   pyttsx3, certifi, tqdm,

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -30,7 +31,8 @@ import agent_friday.core as core
 from agent_friday.services import provenance as pv
 
 # ── optional heavy deps (lazy) ───────────────────────────────────────────────
-# mutagen (audio ID3), PIL/Pillow (image XMP), python-xmp-toolkit (full XMP).
+# PIL/Pillow (image XMP), python-xmp-toolkit (full XMP). Audio ID3 is written
+# in-house (standard library only; see the ID3v2 writer below).
 # If absent, embed_credential silently skips in-file embedding for that format;
 # the sidecar .jsonld is always present.
 
@@ -87,7 +89,7 @@ def embed_credential(artifact_path, manifest: Dict[str, Any]) -> bool:
     Embed the manifest in the artifact's own metadata so provenance survives
     download/re-share. Dispatches by MIME type:
       image (PNG/JPG/WebP) → XMP text chunk / EXIF comment
-      audio (MP3/WAV)      → ID3 TXXX frame (requires mutagen)
+      audio (MP3/WAV)      → ID3 TXXX frame (in-house writer, no extra package)
       text  (MD/HTML)      → YAML front-matter / <meta> tag
       video                → skipped (timeline_engine handles it at compose time)
 
@@ -259,32 +261,202 @@ def _embed_xmp(p: Path, manifest_json: str) -> bool:
         return False
 
 
-def _embed_id3(p: Path, manifest_json: str) -> bool:
-    """Embed manifest JSON into an audio file via ID3 TXXX frame (mutagen)."""
+# ── ID3v2 writer (standard library only) ─────────────────────────────────────
+# Friday only ever WRITES one thing into an audio file: a TXXX frame named
+# "ContentCredential" holding the manifest JSON. That is small enough to do here
+# directly, so no GPL tag library is needed. Existing frames are kept byte for
+# byte; an existing ContentCredential frame is replaced (as a tag library does for
+# a frame with the same description). Anything this writer does not understand
+# (ID3v2.2, an unsynchronised or extended-header tag, a truncated or non-RIFF file)
+# is refused and the file is left exactly as it was: the answer is False.
+
+_CC_DESC = "ContentCredential"
+
+
+def _ss_decode(b: bytes) -> int:
+    if len(b) != 4 or any(x & 0x80 for x in b):
+        raise ValueError("not a synchsafe integer")
+    return (b[0] << 21) | (b[1] << 14) | (b[2] << 7) | b[3]
+
+
+def _ss_encode(n: int) -> bytes:
+    if not 0 <= n < (1 << 28):
+        raise ValueError("ID3 tag too large")
+    return bytes([(n >> 21) & 0x7F, (n >> 14) & 0x7F, (n >> 7) & 0x7F, n & 0x7F])
+
+
+def _txxx_frame(version: int, desc: str, text: str) -> bytes:
+    if version == 4:
+        body = b"\x03" + desc.encode("utf-8") + b"\x00" + text.encode("utf-8")
+        size = _ss_encode(len(body))
+    else:   # ID3v2.3 has no UTF-8: use UTF-16 with a byte-order mark
+        bom = b"\xff\xfe"
+        body = (b"\x01" + bom + desc.encode("utf-16-le") + b"\x00\x00"
+                + bom + text.encode("utf-16-le"))
+        size = len(body).to_bytes(4, "big")
+    return b"TXXX" + size + b"\x00\x00" + body
+
+
+def _txxx_desc(payload: bytes) -> Optional[str]:
+    if not payload:
+        return None
+    enc, rest = payload[0], payload[1:]
     try:
-        from mutagen.id3 import ID3, TXXX, ID3NoHeaderError
+        if enc in (0, 3):
+            return rest.split(b"\x00", 1)[0].decode("latin-1" if enc == 0 else "utf-8")
+        if enc in (1, 2):
+            i = 0
+            while i + 1 < len(rest) and rest[i:i + 2] != b"\x00\x00":
+                i += 2
+            return rest[:i].decode("utf-16" if enc == 1 else "utf-16-be")
+    except UnicodeDecodeError:
+        return None
+    return None
+
+
+def _id3_frames(body: bytes, version: int):
+    """Yield (frame id, whole frame bytes, payload, flag bytes); stop at padding."""
+    pos = 0
+    while pos + 10 <= len(body):
+        fid = body[pos:pos + 4]
+        if fid[0] == 0:
+            break
+        if not re.fullmatch(rb"[A-Z0-9]{4}", fid):
+            raise ValueError("bad frame id")
+        raw_size = body[pos + 4:pos + 8]
+        size = _ss_decode(raw_size) if version == 4 else int.from_bytes(raw_size, "big")
+        end = pos + 10 + size
+        if end > len(body):
+            raise ValueError("frame runs past the tag")
+        yield fid, body[pos:end], body[pos + 10:end], body[pos + 8:pos + 10]
+        pos = end
+
+
+def _id3_span(head: bytes) -> int:
+    """Length of the ID3v2 tag that `head` (the file's first 10 bytes) announces; 0 if none."""
+    if head[:3] != b"ID3":
+        return 0
+    if len(head) < 10 or head[3] not in (3, 4):
+        raise ValueError("only ID3v2.3 and v2.4 are written")
+    if head[5] & 0xC0:
+        raise ValueError("unsynchronised or extended-header tags are not rewritten")
+    return 10 + _ss_decode(head[6:10]) + (10 if (head[3] == 4 and head[5] & 0x10) else 0)
+
+
+def _id3_with_credential(old: bytes, manifest_json: str) -> bytes:
+    """`old` is the whole existing tag (or b""). Returns the new whole tag."""
+    if old:
+        version, keep = old[3], old[5] & 0x20
+        size = _ss_decode(old[6:10])
+        if len(old) < 10 + size:
+            raise ValueError("tag runs past the data")
+        body = old[10:10 + size]
+    else:
+        version, keep, body = 4, 0, b""
+    frames = []
+    for fid, raw, payload, fl in _id3_frames(body, version):
+        if fid == b"TXXX" and fl == b"\x00\x00" and _txxx_desc(payload) == _CC_DESC:
+            continue
+        frames.append(raw)
+    frames.append(_txxx_frame(version, _CC_DESC, manifest_json))
+    new_body = b"".join(frames)
+    return b"ID3" + bytes([version, 0, keep]) + _ss_encode(len(new_body)) + new_body
+
+
+def _stage(p: Path, parts) -> Path:
+    """Write `parts` (bytes, or (open file, start, end) ranges) to a temp file beside `p`."""
+    import os
+    tmp = p.with_name(p.name + f".cc{os.getpid()}.tmp")
+    try:
+        with open(tmp, "wb") as out:
+            for part in parts:
+                if isinstance(part, bytes):
+                    out.write(part)
+                    continue
+                f, a, b = part
+                f.seek(a)
+                while a < b:
+                    chunk = f.read(min(1 << 20, b - a))
+                    if not chunk:
+                        raise ValueError("file shorter than its own headers say")
+                    out.write(chunk)
+                    a += len(chunk)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return tmp
+
+
+def _swap(p: Path, tmp: Path) -> None:
+    """Put the staged file in place of `p` (the original must be closed first on Windows)."""
+    import os
+    import shutil
+    try:
+        shutil.copymode(p, tmp)
+        os.replace(tmp, p)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _embed_mp3(p: Path, manifest_json: str) -> None:
+    with open(p, "rb") as f:
+        span = _id3_span(f.read(10))
+        f.seek(0)
+        old = f.read(span)
+        if len(old) < span:
+            raise ValueError("tag runs past the file")
+        tag = _id3_with_credential(old, manifest_json)
+        end = f.seek(0, 2)
+        tmp = _stage(p, [tag, (f, span, end)])
+    _swap(p, tmp)
+
+
+def _embed_wav(p: Path, manifest_json: str) -> None:
+    with open(p, "rb") as f:
+        head = f.read(12)
+        total = f.seek(0, 2)
+        if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+            raise ValueError("not a RIFF/WAVE file")
+        riff_end = 8 + int.from_bytes(head[4:8], "little")
+        if riff_end > total or total - riff_end > 1:
+            raise ValueError("RIFF size does not match the file")
+        kept, old_tag, pos = [], b"", 12
+        while pos + 8 <= riff_end:
+            f.seek(pos)
+            h = f.read(8)
+            sz = int.from_bytes(h[4:], "little")
+            if pos + 8 + sz > riff_end:
+                raise ValueError("chunk runs past the RIFF")
+            if h[:4] in (b"id3 ", b"ID3 "):
+                old_tag = f.read(sz)
+            else:
+                kept.append((pos, sz))
+            pos += 8 + sz + (sz & 1)
+        if old_tag and old_tag[:3] != b"ID3":
+            raise ValueError("the id3 chunk does not hold an ID3v2 tag")
+        tag = _id3_with_credential(old_tag[:_id3_span(old_tag[:10])] if old_tag else b"", manifest_json)
+        parts, size = [], 4
+        for cpos, sz in kept:
+            parts.append((f, cpos, cpos + 8 + sz))
+            if sz & 1:
+                parts.append(b"\x00")
+            size += 8 + sz + (sz & 1)
+        parts.append(b"id3 " + len(tag).to_bytes(4, "little") + tag + (b"\x00" if len(tag) & 1 else b""))
+        size += 8 + len(tag) + (len(tag) & 1)
+        tmp = _stage(p, [b"RIFF" + size.to_bytes(4, "little") + b"WAVE"] + parts)
+    _swap(p, tmp)
+
+
+def _embed_id3(p: Path, manifest_json: str) -> bool:
+    """Embed manifest JSON into an audio file as an ID3 TXXX frame (standard library only)."""
+    try:
         suffix = p.suffix.lower()
         if suffix == ".mp3":
-            try:
-                tags = ID3(str(p))
-            except ID3NoHeaderError:
-                tags = ID3()
-            tags.add(TXXX(encoding=3, desc="ContentCredential", text=manifest_json))
-            tags.save(str(p))
+            _embed_mp3(p, manifest_json)
             return True
         if suffix == ".wav":
-            try:
-                from mutagen.wave import WAVE
-                audio = WAVE(str(p))
-                if audio.tags is None:
-                    audio.add_tags()
-                audio.tags.add(TXXX(encoding=3, desc="ContentCredential", text=manifest_json))
-                audio.save()
-                return True
-            except Exception:
-                return False
-        return False
-    except ImportError:
+            _embed_wav(p, manifest_json)
+            return True
         return False
     except Exception:
         return False
