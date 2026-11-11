@@ -620,6 +620,20 @@ def _preset_loop(ctx: Ctx, spec: dict) -> dict:
 PRESETS["loop.no_progress"] = _preset_loop
 
 
+def _preset_quarantine_instruction(ctx: Ctx, spec: dict) -> dict:
+    """The quarantine instruction head (services/quarantine_head): a shadow reading of whether one
+    line is addressed to an assistant. Degraded when the module or the encoder is not available."""
+    try:
+        from agent_friday.services import quarantine_head
+    except ImportError:
+        return {"answer": _answer(None, abstain=True), "layer": "degraded", "verdict": None, "native": None,
+                "why": "the quarantine head is not part of this build"}
+    return quarantine_head.preset(ctx, spec)
+
+
+PRESETS["quarantine.instruction"] = _preset_quarantine_instruction
+
+
 def _preset_supports(ctx: Ctx, spec: dict) -> dict:
     """The citation support head (services/citation_heads, second wave): does
     each footnote's passage support its sentence, in shadow. Label only."""
