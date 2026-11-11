@@ -76,66 +76,66 @@
   {
    "package": "orjson",
    "licence": "MPL-2.0 AND (Apache-2.0 OR MIT)",
-   "reason": "THIRD_PARTY_LICENSES.md records MPL-2.0 AND (Apache-2.0 OR MIT) (3.11.9; the wheelhouse has 3.13.0). Weak copyleft, installed unmodified from PyPI; NOTICE section 3 already names it.",
+   "reason": "THIRD_PARTY_LICENSES.md records MPL-2.0 AND (Apache-2.0 OR MIT) (3.11.9; the wheelhouse has 3.13.0). Weak copyleft, installed unmodified from PyPI; NOTICE section 3 already names it. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): MPL-2.0 AND (Apache-2.0 OR MIT): weak copyleft, installed unmodified from PyPI; accepted.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   },
   {
    "package": "pikepdf",
    "licence": "MPL-2.0",
-   "reason": "MPL-2.0 (weak copyleft), installed unmodified from PyPI. THIRD_PARTY_LICENSES.md now has its row (10.18.0, MPL-2.0, from the SBOM); NOTICE section 3 names it.",
+   "reason": "MPL-2.0 (weak copyleft), installed unmodified from PyPI. THIRD_PARTY_LICENSES.md now has its row (10.18.0, MPL-2.0, from the SBOM); NOTICE section 3 names it. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): MPL-2.0: weak copyleft, installed unmodified from PyPI; accepted.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   },
   {
    "package": "PyMsgBox",
    "licence": "GPL-3.0-or-later",
-   "reason": "FLAG FOR OWNER: the licence the SBOM reads from the wheel metadata (GPL-3.0-or-later) disagrees with THIRD_PARTY_LICENSES.md and NOTICE, which record BSD-3-Clause (Al Sweigart; BSD 3-Clause or MIT). Someone must read the LICENSE file in the 2.0.1 wheel before this is signed; if it is BSD, record that here and fix the metadata reading, if it is GPL it is a new GPL dependency.",
+   "reason": "FLAG FOR OWNER: the licence the SBOM reads from the wheel metadata (GPL-3.0-or-later) disagrees with THIRD_PARTY_LICENSES.md and NOTICE, which record BSD-3-Clause (Al Sweigart; BSD 3-Clause or MIT). Someone must read the LICENSE file in the 2.0.1 wheel before this is signed; if it is BSD, record that here and fix the metadata reading, if it is GPL it is a new GPL dependency. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): Read from the 2.0.1 wheel and sdist (fetched into an isolated folder, nothing installed or run) on 2026-11-10: LICENSE.txt in both is the BSD 3-clause text (Copyright (c) 2014, Al Sweigart; the third clause still reads {organization}, an unfilled template slot upstream) and the License field says the same. The only GPL wording is a mislabelled Trove classifier (License :: OSI Approved :: GNU General Public License v3 or later) in upstream pyproject.toml, PKG-INFO and METADATA, which is why the SBOM reads GPL-3.0-or-later. The licence text governs: BSD-3-Clause, as THIRD_PARTY_LICENSES.md and NOTICE record. The entry keeps the SBOM's reading in `licence` so it matches; accepted as BSD-3-Clause.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   },
   {
    "package": "pynput",
    "licence": "LGPL-3.0-only",
-   "reason": "FLAG FOR OWNER (LGPL): THIRD_PARTY_LICENSES.md and NOTICE record LGPL-3.0-or-later (core tier); the wheel metadata reads LGPL-3.0-only. Installed unmodified from PyPI on the user's machine, so the user can replace it, which is what the LGPL asks of an application that uses it. Recommend signing once the owner accepts an LGPL core dependency.",
+   "reason": "FLAG FOR OWNER (LGPL): THIRD_PARTY_LICENSES.md and NOTICE record LGPL-3.0-or-later (core tier); the wheel metadata reads LGPL-3.0-only. Installed unmodified from PyPI on the user's machine, so the user can replace it, which is what the LGPL asks of an application that uses it. Recommend signing once the owner accepts an LGPL core dependency. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): LGPL-3.0, core tier, installed unmodified from PyPI so the user can replace it; the owner accepts an LGPL package in the core install.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   },
   {
    "package": "pypiwin32",
    "licence": "UNKNOWN",
-   "reason": "THIRD_PARTY_LICENSES.md records PSF-2.0 for pypiwin32 223 (a shim that pulls in pywin32, PSF-2.0); the wheel names no licence, so the SBOM reads UNKNOWN. Permissive; confirm against the pywin32 licence and sign.",
+   "reason": "THIRD_PARTY_LICENSES.md records PSF-2.0 for pypiwin32 223 (a shim that pulls in pywin32, PSF-2.0); the wheel names no licence, so the SBOM reads UNKNOWN. Permissive; confirm against the pywin32 licence and sign. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): Permissive (PSF-2.0, a shim for pywin32); the wheel names no licence, the record does; accepted.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   },
   {
    "package": "pystray",
    "licence": "LGPL-3.0-only",
-   "reason": "FLAG FOR OWNER (LGPL): as pynput; THIRD_PARTY_LICENSES.md and NOTICE record LGPL-3.0-or-later (core tier), the wheel metadata reads LGPL-3.0-only. Installed unmodified from PyPI, replaceable by the user. Recommend signing once the owner accepts an LGPL core dependency.",
+   "reason": "FLAG FOR OWNER (LGPL): as pynput; THIRD_PARTY_LICENSES.md and NOTICE record LGPL-3.0-or-later (core tier), the wheel metadata reads LGPL-3.0-only. Installed unmodified from PyPI, replaceable by the user. Recommend signing once the owner accepts an LGPL core dependency. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): LGPL-3.0, core tier, installed unmodified from PyPI so the user can replace it; the owner accepts an LGPL package in the core install.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   },
   {
    "package": "transformers",
    "licence": "Apache 2.0 License",
-   "reason": "Apache-2.0; the wheel metadata is free text, not an SPDX id. THIRD_PARTY_LICENSES.md records Apache-2.0 (5.9.0; the wheelhouse has 5.22.2). Permissive; sign.",
+   "reason": "Apache-2.0; the wheel metadata is free text, not an SPDX id. THIRD_PARTY_LICENSES.md records Apache-2.0 (5.9.0; the wheelhouse has 5.22.2). Permissive; sign. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): Apache-2.0; accepted.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   },
   {
    "package": "uritemplate",
    "licence": "BSD 3-Clause OR Apache-2.0",
-   "reason": "BSD-3-Clause OR Apache-2.0; free text, not an SPDX id. THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0. Permissive; sign.",
+   "reason": "BSD-3-Clause OR Apache-2.0; free text, not an SPDX id. THIRD_PARTY_LICENSES.md records BSD-3-Clause OR Apache-2.0. Permissive; sign. Owner review 2026-11-10, Stephen Webster: \"sign them\" (2026-11-10, via Dispatch): BSD-3-Clause OR Apache-2.0; accepted.",
    "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080 (draft, unsigned)",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-11-10"
   }
  ],
  "advisories": [
