@@ -36,6 +36,8 @@ RUNS = {
     "41094103383": ("supply-chain on PR #444 13c3872b9 (== live), not main", False),
     # 2026-11-06: the full tests run on main c772b1ccd (#732), all jobs green.
     "42240289127": ("tests on main c772b1ccd", True),
+    # 2026-11-08: the full tests run on PR #757 (file-escape sweep); its tree is in main since batch 46.
+    "42478970689": ("tests on PR #757, not main", False),
     # 2026-11-07: the tests run on main 11cf1fe62 (all green), and on PR #749 977e655ee (tree now on main).
     "42359332810": ("tests on main 11cf1fe62", True),
     "42382862011": ("tests on PR #749 977e655ee, not main", False),
