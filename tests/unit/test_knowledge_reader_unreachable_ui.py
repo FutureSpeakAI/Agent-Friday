@@ -17,8 +17,9 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-UNREACHABLE = ("Friday could not be reached, so this page could not be loaded. "
-               "It has not been moved or deleted.")
+# Her name is read through fridayName(), never written by hand (test_her_name.py).
+UNREACHABLE_FLAT = ("fridayName()+'couldnotbereached,sothispagecouldnotbeloaded."
+                    "Ithasnotbeenmovedordeleted.'")
 MISSING = "This page could not be read. It may have been moved or deleted."
 
 
@@ -27,7 +28,7 @@ def test_the_reader_distinguishes_unreachable_from_missing(ui):
     text = (REPO / ui).read_text(encoding="utf-8")
     flat = re.sub(r"\s+", "", text)
     assert MISSING in text, f"{ui}: the missing-page notice is gone"
-    assert UNREACHABLE in text, f"{ui}: no notice for a server that could not be reached"
+    assert UNREACHABLE_FLAT in flat, f"{ui}: no notice for a server that could not be reached"
     # A failed read becomes "missing" only after a 404; anything else is unreachable.
     assert "status===404?take(null):unreachable()" in flat, (
         f"{ui}: the path route's failure is not sorted by status")
