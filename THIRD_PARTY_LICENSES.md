@@ -113,6 +113,20 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | weasel | 1.0.0 | installed by installer (recommended) | MIT | Copyright (C) 2022 ExplosionAI GmbH |
 | wsproto | 1.3.2 | installed by installer (core) | MIT | Copyright (c) 2017 Benno Rice and contributors |
 | zipp | 4.1.0 | installed by installer (recommended) | MIT | Copyright (c) 2026 <copyright holders> |
+| aiohttp-retry | 2.9.1 | installed by installer (memory) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| asn1crypto | 1.5.1 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| fonttools | 4.68.0 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| h2 | 4.4.1 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| hpack | 4.2.0 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| hyperframe | 6.1.0 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| jmespath | 1.1.0 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| oscrypto | 1.3.0 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| pyclipper | 1.4.0 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| pyhanko-certvalidator | 0.33.0 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| tomlkit | 0.15.2 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| truststore | 0.10.5 | installed by installer (core/judgment/memory/recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| tzlocal | 5.4.5 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| uritools | 6.1.5 | installed by installer (recommended) | MIT | Holder named in the package's own LICENSE file (not captured in the SBOM) |
 
 ### Apache-2.0
 
@@ -167,6 +181,13 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | tzdata | 2026.2 | installed by installer (core) | Apache-2.0 | Copyright (c) 2020, Paul Ganssle (Google) |
 | websocket-client | 1.9.0 | installed by installer (memory) | Apache-2.0 | Copyright (c) liris (from package Author metadata) |
 | yarl | 1.24.2 | installed by installer (recommended/memory) | Apache-2.0 | Copyright 2016-2021, Andrew Svetlov and aio-libs team |
+| boto3 | 1.43.126 | installed by installer (recommended) | Apache-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| botocore | 1.43.126 | installed by installer (recommended) | Apache-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| opencv-python | 5.0.0.93 | installed by installer (recommended) | Apache-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| opentelemetry-exporter-otlp-common | 0.66b2 | installed by installer (memory) | Apache-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| s3transfer | 0.19.3 | installed by installer (recommended) | Apache-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| sherpa-onnx-core | 1.13.8 | installed by installer (recommended) | Apache-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| vegaml | 0.15.0 | installed by installer (judgment) | Apache-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
 
 ### BSD-3-Clause
 
@@ -210,6 +231,14 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | uvicorn | 0.49.0 | installed by installer (memory) | BSD-3-Clause | Copyright © 2017-present, [Encode OSS Ltd](https://www.encode.io/). |
 | websockets | 16.0 | installed by installer (core/memory) | BSD-3-Clause | Copyright (c) Aymeric Augustin and contributors |
 | werkzeug | 3.1.8 | installed by installer (core) | BSD-3-Clause | Copyright 2007 Pallets |
+| cloudpickle | 3.1.2 | installed by installer (memory) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| httpcore2 | 2.16.0 | installed by installer (core/judgment/memory/recommended) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| httpx2 | 2.16.0 | installed by installer (core/judgment/memory/recommended) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| lxml | 6.1.3 | installed by installer (recommended) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| Markdown | 3.11.3 | installed by installer (core) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| pypdf | 6.21.4 | installed by installer (recommended) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| reportlab | 5.1.0 | installed by installer (recommended) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
+| shapely | 2.2.0 | installed by installer (recommended) | BSD-3-Clause | Holder named in the package's own LICENSE file (not captured in the SBOM) |
 
 ### BSD-2-Clause
 
@@ -237,6 +266,7 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 | pypiwin32 | 223 | installed by installer (recommended) | PSF-2.0 | Copyright (c) UNKNOWN (from package Author metadata) |
 | pywin32 | 312 | installed by installer (recommended) | PSF-2.0 | Copyright (c) Mark Hammond and pywin32 contributors |
 | typing-extensions | 4.15.0 | installed by installer (core/recommended/memory/judgment) | PSF-2.0 | Copyright (c) Guido van Rossum, Jukka Lehtosalo, Łukasz Langa, Michael Lee (from package Author metadata) |
+| feedparser-sgmllib | 2.1.0 | installed by installer (core) | PSF-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
 
 ### MIT-CMU
 
@@ -250,6 +280,7 @@ Agent Friday itself is licensed under the MIT License (see `LICENSE`). Copyright
 |---|---|---|---|---|
 | certifi | 2026.2.25 | installed by installer (core/recommended/memory/judgment) | MPL-2.0 | Copyright (c) Kenneth Reitz (from package Author metadata) |
 | pyttsx3 | 2.99 | installed by installer (recommended) | MPL-2.0 | Copyright (c) Natesh M Bhat (from package Author metadata) |
+| pikepdf | 10.18.0 | installed by installer (recommended) | MPL-2.0 | Holder named in the package's own LICENSE file (not captured in the SBOM) |
 
 ### LGPL-3.0-or-later
 
