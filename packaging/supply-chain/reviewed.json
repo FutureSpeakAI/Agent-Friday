@@ -66,15 +66,88 @@
    "until": ""
   }
  ],
- "advisories": [],
+ "advisories": [
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-f4j7-r4q5-qw2c",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-311",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-36p7-vc44-83pf",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-3814",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-2wm9-hf6c-p5cr",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-3813",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "GHSA-xph7-9rjv-w5fr",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  },
+  {
+   "package": "chromadb",
+   "version": "1.5.9",
+   "id": "PYSEC-2026-3815",
+   "reason": "Embedded PersistentClient only (src/agent_friday/conversation_memory.py); Friday never runs the Chroma HTTP server, so the vulnerable endpoints and RBAC provider are not reachable. No fixed release exists (last_affected is 1.5.9). Re-review when a fixed version ships or if Friday ever starts a Chroma server. Owner note: embedded only, Chroma server never run, no fix exists.",
+   "proposed_by": "ASTRA-BURNDOWN lane, 2026-11-08, from supply-chain run 42480014080",
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
+  }
+ ],
  "components": [
   {
    "package": "CPython",
    "version": "3.12.10",
    "reason": "The embeddable CPython the installer bundles (packaging/windows/sources.json). No advisory database is queried for it; 3.12.10 is the last 3.12 release with an embeddable build, and later 3.12 security fixes (3.12.11+) are source-only. Someone must read the CPython security advisories published since 3.12.10 and accept or act on them for this exact version.",
    "proposed_by": "CM-2 builder, 2026-10-21",
-   "reviewed_by": "",
-   "until": ""
+   "reviewed_by": "Stephen Webster",
+   "until": "2027-02-08"
   }
  ]
 }
