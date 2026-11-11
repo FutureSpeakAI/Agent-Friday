@@ -25,6 +25,10 @@ PAGE = {"source": "app_page"}
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
     agent._PENDING_CONFIRMATIONS.clear()
+    # Its own Friday home: the gate reads the action ledger and the authority marker from the home, and a
+    # shared one can be unreadable for a moment (a write in flight), which holds the call with "the owner's
+    # revocation of authority could not be checked".
+    monkeypatch.setenv("FRIDAY_HOME", str(tmp_path))
     monkeypatch.setattr(approvals, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(approvals, "FRIDAY_DIR", tmp_path)
     monkeypatch.setattr(approvals, "_notify_pending", lambda rec: None)
