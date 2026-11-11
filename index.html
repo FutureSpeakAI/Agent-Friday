@@ -24207,7 +24207,8 @@ function KnowledgePages({
   const [recent, setRecent] = useState([]);
   const [pending, setPending] = useState([]);
   const [pendingOpen, setPendingOpen] = useState(true);
-  const [doc, setDoc] = useState(null); // {path, content, locked, missing}
+  const [doc, setDoc] = useState(null); // {path, content, locked, missing, unreachable}
+  const [retry, setRetry] = useState(0); // bumped by Try again after Friday could not be reached
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
@@ -24297,15 +24298,31 @@ function KnowledgePages({
         setEditing(true);
       }
     };
-    apiFetch('/api/wiki/page?path=' + encodeURIComponent(path)).then(r => r.ok ? r.json() : Promise.reject(r.status)).then(take).catch(() => {
+    // Only a 404 from Friday means there is no page at this path. A server
+    // that cannot be reached (a restart, a gate, a dropped connection), a
+    // 5xx or an unreadable answer says nothing about the page, so the reader
+    // must not tell the owner it was moved or deleted: it says Friday could
+    // not be reached and offers to try again.
+    const unreachable = () => {
+      if (!on) return;
+      setDoc({
+        path,
+        content: '',
+        locked: false,
+        missing: false,
+        unreachable: true
+      });
+    };
+    const read = r => r.ok ? r.json() : Promise.reject(r.status);
+    apiFetch('/api/wiki/page?path=' + encodeURIComponent(path)).then(read).then(take).catch(status => {
       const parts = path.split('/');
-      if (parts.length !== 2) return take(null);
-      apiFetch('/api/wiki/' + encodeURIComponent(parts[0]) + '/' + encodeURIComponent(parts[1])).then(r => r.ok ? r.json() : null).then(take).catch(() => take(null));
+      if (parts.length !== 2) return status === 404 ? take(null) : unreachable();
+      apiFetch('/api/wiki/' + encodeURIComponent(parts[0]) + '/' + encodeURIComponent(parts[1])).then(read).then(take).catch(status2 => status2 === 404 ? take(null) : unreachable());
     });
     return () => {
       on = false;
     };
-  }, [path, openOpts]);
+  }, [path, openOpts, retry]);
   const beginEdit = () => {
     if (!doc || doc.locked) return;
     setDraft(doc.content || '');
@@ -24674,7 +24691,7 @@ function KnowledgePages({
   }), !editing && h('button', {
     className: 'kw-btn',
     onClick: beginEdit,
-    disabled: !doc || doc.content == null || doc.locked || doc.missing,
+    disabled: !doc || doc.content == null || doc.locked || doc.missing || doc.unreachable,
     title: doc && doc.locked ? 'This page is encrypted and the vault is locked' : 'Edit this page'
   }, '✎ Edit'), !editing && path && h(PodcastButton, {
     sources: [{ kind: 'wiki', path: path }],
@@ -24692,7 +24709,7 @@ function KnowledgePages({
     }
   }, 'Cancel'), !editing && h('button', {
     className: 'kw-btn kw-danger',
-    disabled: !doc || doc.missing,
+    disabled: !doc || doc.missing || doc.unreachable,
     onClick: () => {
       setConfirmDelete(path);
       setConfirmText('');
@@ -24706,7 +24723,12 @@ function KnowledgePages({
     className: 'kw-locked'
   }, '🔒 This page is encrypted and the vault is locked. Unlock the vault to read or edit it.'), doc && doc.missing && h('div', {
     className: 'kw-locked'
-  }, 'This page could not be read. It may have been moved or deleted.'), editing ? h('textarea', {
+  }, 'This page could not be read. It may have been moved or deleted.'), doc && doc.unreachable && h('div', {
+    className: 'kw-locked'
+  }, fridayName() + ' could not be reached, so this page could not be loaded. It has not been moved or deleted. ', h('button', {
+    className: 'kw-btn',
+    onClick: () => setRetry(n => n + 1)
+  }, 'Try again')), editing ? h('textarea', {
     className: 'kw-editor',
     value: draft,
     onChange: e => setDraft(e.target.value),
