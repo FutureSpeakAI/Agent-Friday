@@ -54,9 +54,7 @@ def home():
 
 @pytest.fixture
 def client():
-    app = gateway.create_app()
-    inherit.register(app)
-    return app.test_client()
+    return gateway.create_app().test_client()      # create_app mounts inherit
 
 
 @pytest.fixture

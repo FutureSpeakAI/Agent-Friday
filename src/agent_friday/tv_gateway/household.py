@@ -31,7 +31,10 @@ from typing import Optional
 AREAS = {"profile": dict, "settings": dict, "model_defaults": dict, "chats": list,
          "arcade": dict, "creations": list}
 SHARED_AREAS = {"arcade": dict, "creations": list}
-ROLES = ("owner", "adult", "kid")
+ROLES = ("owner", "adult", "kid", "family")
+OWNER_ID, FAMILY_ID = "stephen", "family"
+PERSONAL_KINDS = ("tablet", "phone", "watch")
+DEVICE_KINDS = ("tv",) + PERSONAL_KINDS
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _SECRET_NAME = re.compile(r"(api[_-]?key|secret|password|passwd|credential|(access|auth|bearer)[_-]?token)",
@@ -140,6 +143,33 @@ def remove_member(member_id: str) -> bool:
         body["devices"] = {d: m for d, m in body["devices"].items() if m != member_id}
         _save(body)
         return True
+
+
+def ensure_default_members() -> None:
+    """The two members a household starts with: the owner (Stephen) and the shared family member
+    the living-room TV is signed in as. Created once; an existing member's name, role and data are kept."""
+    with _LOCK:
+        body = _load()
+        changed = False
+        for mid, name, role in ((OWNER_ID, "Stephen", "owner"), (FAMILY_ID, "Family", "family")):
+            if mid not in body["members"]:
+                body["members"][mid] = {"name": name, "role": role, "areas": {}}
+                changed = True
+        if changed:
+            _save(body)
+
+
+def member_for_kind(kind: str) -> str:
+    """Which member the PC signs a newly paired device in as, from its declared kind: a personal
+    device (tablet, phone, watch) is the owner's; the TV is the family's. The device never names a member."""
+    if kind not in DEVICE_KINDS:
+        raise ValueError("unknown device kind")
+    return FAMILY_ID if kind == "tv" else OWNER_ID
+
+
+def member_name(member_id: str) -> str:
+    with _LOCK:
+        return _load()["members"].get(member_id, {}).get("name") or member_id
 
 
 # ── data ────────────────────────────────────────────────────────────────────
