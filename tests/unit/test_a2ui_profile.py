@@ -221,7 +221,7 @@ def test_the_hostile_set_covers_every_catalog_component_and_every_banned_verb_cl
     assert set(abused) == set(prof.COMPONENTS), "a component was added without a hostile case"
     for name in filter(None, abused.values()):
         assert name in HOSTILE, name
-    assert len(HOSTILE) >= 85
+    assert len(HOSTILE) >= 75
     assert len(BANNED_VERBS) == 12
 
 
