@@ -6649,7 +6649,10 @@ window.addEventListener('DOMContentLoaded',function(){
                         float light = smoothstep(0.0, 0.18, behind) * (1.0 - smoothstep(0.25, 1.0, behind)) * uWave[i];
                         if (arrival >= 0.0) vPulse = max(vPulse, light);
                     }
-                    vBright = (0.42 + phase * 0.5 + uGlow * near + vPulse * 1.2)
+                    // No resting brightness: a star draws only when something real lights it (a cloud send's
+                    // constellation, or local work warming the stars nearest her). Idle, offline or reduced
+                    // motion, the field is dark, so it never reads as static pixels on the avatar home.
+                    vBright = (uGlow * near + vPulse * 1.2)
                         * smoothstep(0.0, 0.08, zf) * (1.0 - smoothstep(0.91, 1.0, zf));
                     vPhase = phase;
                     vec4 mv = modelViewMatrix * vec4(p, 1.0);
