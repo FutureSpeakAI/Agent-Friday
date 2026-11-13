@@ -256,8 +256,9 @@ def create_app() -> Flask:
         return jsonify({"ok": True, "device": device_pairing.public_view(dev),
                         "principal": device_pairing.principal(dev)})
 
-    from agent_friday.tv_gateway import inherit
+    from agent_friday.tv_gateway import inherit, seats
     inherit.register(app)
+    seats.register(app)
     return app
 
 

@@ -11,6 +11,7 @@ The list on screen uses Friday's name as you gave it.
 | **Ctrl+K** | The command palette: a workspace, a panel or an action |
 | **Ctrl+/** | Type to Friday: the chat field, brought back if it was hidden |
 | **Ctrl+Shift+Space** | Talk to Friday, or stop talking |
+| **Ctrl+Alt+M** | Switch the model: the top bar's model list opens with the current model selected. Then **1** to **9**, or the arrows and **Enter**, pick one; **Esc** closes it |
 | **Esc** | Interrupt Friday mid-sentence; close a menu, a panel or this list |
 | **?** | This list |
 
