@@ -98,12 +98,17 @@ def _expire(now: float) -> None:
             _PENDING.pop(pid, None)
 
 
-def start(device_spki: bytes, name: str) -> dict:
+def start(device_spki: bytes, name: str, kind: str = "tv") -> dict:
     now = time.time()
     try:
         device_pairing._load_pub(device_spki)
     except Exception:
         raise PairingRefused("the TV's key must be P-256")
+    from agent_friday.tv_gateway import household
+    try:
+        member = household.member_for_kind(kind)       # the PC picks the member; a device declares only its kind
+    except ValueError:
+        raise PairingRefused("unknown device kind")
     if device_pairing.get_device(device_pairing.spki_id(device_spki)) is not None:
         raise PairingRefused("this TV is already paired; remove it on the PC to pair again")
     with _LOCK:
@@ -120,6 +125,7 @@ def start(device_spki: bytes, name: str) -> dict:
         pin = _pin()
         _PENDING[pid] = {"state": "committed", "spki": device_spki, "name": str(name or "TV")[:60],
                          "nd": nd, "pin": pin, "expires": now + PAIR_TTL_S, "card_id": None,
+                         "kind": kind, "member": member,
                          "device_id": device_pairing.spki_id(device_spki)}
         return {"pairing_id": pid, "commit": commitment(pin, device_spki, nd), "ttl_s": PAIR_TTL_S}
 
@@ -136,15 +142,21 @@ def reveal(pairing_id: str, nt: bytes) -> bytes:
         code = sas(p["pin"], p["spki"], bytes(nt), p["nd"])
         nd = p["nd"]
     from agent_friday.services import approvals
+    from agent_friday.tv_gateway import household
+    who = household.member_name(p["member"])
+    what = "TV" if p["kind"] == "tv" else p["kind"]
     card = approvals.create_approval(
         kind=KIND, subject_type="device", subject_id=str(pairing_id),
-        title="Pair a TV: is it showing %s?" % spoken(code),
-        description=("Press Approve only if the TV in front of you shows %s. "
+        title="Pair a %s: is it showing %s?" % (what, spoken(code)),
+        description=("Press Approve only if the %s in front of you shows %s. "
                      "Paired, it may chat with Friday and read what she shares; "
-                     "what else it may do is your choice afterwards, under Paired devices." % spoken(code)),
-        action_description="Pair a TV with Friday",
+                     "what else it may do is your choice afterwards, under Paired devices. "
+                     "It will be signed in as %s (%s) and will receive %s's settings, model choices, "
+                     "chats, arcade and creations, plus the shared household ones. No keys are sent."
+                     % (what, spoken(code), who, p["member"], who)),
+        action_description="Pair a %s with Friday" % what,
         payload={"pairing_id": str(pairing_id), "device_id": p["device_id"], "sas": code,
-                 "origin": "tv_gateway"},
+                 "origin": "tv_gateway", "kind": p["kind"], "member": p["member"]},
         requested_by="tv_gateway", force_gate=True)
     with _LOCK:
         p["card_id"] = card.get("approval_id")
@@ -176,7 +188,10 @@ def _on_decision(rec: dict) -> None:
         if rec.get("status") != "approved" or rec.get("decided_by") != SCREEN_LABEL:
             p["state"] = "refused"
             return
-        dev = device_pairing.add_device(p["spki"], name=p["name"], rights=FIRST_RIGHTS)
+        dev = device_pairing.add_device(p["spki"], name=p["name"], rights=FIRST_RIGHTS, kind=p["kind"])
+        from agent_friday.tv_gateway import household
+        household.ensure_default_members()
+        household.bind_device(dev["id"], p["member"])
         p["state"] = "paired"
     device_pairing._receipt("device_paired", device_pairing.get_device(dev["id"]) or dev,
                             approval_id=rec.get("approval_id"), rights=FIRST_RIGHTS)
