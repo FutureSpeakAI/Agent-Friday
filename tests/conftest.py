@@ -814,15 +814,29 @@ def _forget_live_duplicates() -> None:
         ll.reset_idempotency()
 
 
+def _settle_loop_shadow() -> None:
+    """Wait for the loop head's shadow job (services/loop_heads, thread "loop-shadow").
+    A turn of WINDOW or more tools queues one after it ends; its job is the first thing in a
+    run to import services.laya, so a test that ends first leaves laya half-imported for the
+    teardown below (AttributeError: partially initialized module ... no attribute 'flush')
+    and its receipt lands in the next test's home. Wait for the queue before looking at laya."""
+    lh = sys.modules.get("agent_friday.services.loop_heads")
+    drain = getattr(lh, "drain", None)      # a test may stand a stub in for the module
+    if drain is not None:
+        drain(timeout=30.0)
+
+
 @pytest.fixture(autouse=True)
 def _laya_writes_finish_inside_their_test():
     """Laya's writer thread appends rows after the turn. A row an earlier test
     queued is written before this test starts, and this test's rows are written
     before it ends, so none lands in another test's home or fake writer."""
+    _settle_loop_shadow()
     laya = sys.modules.get("agent_friday.services.laya")
     if laya is not None:
         laya.flush()
     yield
+    _settle_loop_shadow()
     laya = sys.modules.get("agent_friday.services.laya")
     if laya is not None:
         laya.flush()
