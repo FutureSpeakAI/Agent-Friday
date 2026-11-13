@@ -17,7 +17,6 @@ from both scene files: plain rules, no Three.js and no page.
   progress never moves it. Completed orbs stay for at most five minutes.
 - A receipt carries what the server knows (what it did, model, time, cost)
   and a failed one names a fix; sources only when the server sends them.
-- The day's stars sit in the upper band, one fixed place per task.
 - Orbs keep out of the centre UI (the prompt row and the dock).
 - Sparks are rate-limited well inside the flash limit.
 - No identity colour is a status hue, and cloud work is a paler tint of the
@@ -109,12 +108,8 @@ out.rc_fail = L.receipt({ task_id: 't2', name: 'Write a report', status: 'failed
 out.rc_fail2 = L.receipt({ task_id: 't3', name: 'Fetch', status: 'error' }, {});
 out.rc_src = L.receipt({ task_id: 't4', status: 'completed' }, { sources: [{ title: 'A' }] });
 
-// stars
-const W = 1280, H = 800, st = ['t1', 't2', 't3', 't1'].map(id => L.starAt(id, W, H));
-out.stars = { same: st[0].x === st[3].x && st[0].y === st[3].y, distinct: st[0].x !== st[1].x || st[0].y !== st[1].y,
-              upper: st.every(s => s.y >= 40 && s.y <= H * 0.32 && s.x > 0 && s.x < W) };
-
 // keep-out
+const W = 1280, H = 800;
 out.keep = { prompt: L.inKeepOut(640, 650, W, H), dock: L.inKeepOut(100, 760, W, H), topbar: L.inKeepOut(640, 10, W, H),
              side: L.inKeepOut(150, 300, W, H), lift: L.liftFor(640, 650, W, H), noLift: L.liftFor(150, 300, W, H),
              below: L.liftFor(640, 880, W, H) };
@@ -214,10 +209,6 @@ def test_a_receipt_says_what_the_server_knows_and_a_failure_names_a_fix(o):
     assert o["rc_fail"]["failed"] is True and o["rc_fail"]["fix"]["action"] == "resume"
     assert o["rc_fail2"]["fix"]["action"] == "rerun"
     assert o["rc_src"]["sources"] == [{"title": "A"}]
-
-
-def test_the_days_stars_sit_in_the_upper_band(o):
-    assert o["stars"] == {"same": True, "distinct": True, "upper": True}
 
 
 def test_orbs_keep_out_of_the_centre_ui(o):
