@@ -301,6 +301,11 @@ def _local_round(provider: str, model: Optional[str], provider_name: Optional[st
 def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
     """Validate, route and run one TV turn. Raises TurnRefused before the
     first event; after that the stream is the turn."""
+    # A phone or tablet the PC bound to the OWNER is the owner's Friday (knowledge graph, wiki, vault,
+    # the owner's seat), not the household TV's. The TV, bound to the family member, never is.
+    from agent_friday.tv_gateway import owner_turn
+    if owner_turn.is_owner_device(dev):
+        return owner_turn.run(dev, body)
     from agent_friday.services import global_stop
     try:
         global_stop.raise_if_stopped("a TV turn")

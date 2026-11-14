@@ -63,6 +63,15 @@ SAS_CONTEXT = b"friday-tv-pair-v1|"
 COMMIT_CONTEXT = b"friday-tv-pair-commit-v1|"
 FIRST_RIGHTS = "chat_read"
 
+
+def owner_grant(kind: str, member: str) -> bool:
+    """True for the owner's own personal device (phone, tablet, watch signed in as the owner).
+    Owner decision, 2026-11-13: the six-digit press at the PC IS the grant of every right, so such a
+    device is paired with all of them and no second press is asked. The family member's devices (the TV)
+    keep the tiered rights: chat_read first, each wider right its own screen-only card."""
+    from agent_friday.tv_gateway import household
+    return member == household.OWNER_ID and kind in household.PERSONAL_KINDS
+
 _LOCK = threading.RLock()
 _PENDING: dict = {}
 _STARTS: deque = deque()
@@ -145,15 +154,21 @@ def reveal(pairing_id: str, nt: bytes) -> bytes:
     from agent_friday.tv_gateway import household
     who = household.member_name(p["member"])
     what = "TV" if p["kind"] == "tv" else p["kind"]
+    if owner_grant(p["kind"], p["member"]):
+        grant = ("Approving pairs it as YOUR device with all of your rights: Friday's memory, knowledge graph "
+                 "and models, her tools (each side effect still needs a press here), Studio jobs that spend "
+                 "money, and channels. There is no second press. ")
+    else:
+        grant = ("Paired, it may chat with Friday and read what she shares; "
+                 "what else it may do is your choice afterwards, under Paired devices. ")
     card = approvals.create_approval(
         kind=KIND, subject_type="device", subject_id=str(pairing_id),
         title="Pair a %s: is it showing %s?" % (what, spoken(code)),
         description=("Press Approve only if the %s in front of you shows %s. "
-                     "Paired, it may chat with Friday and read what she shares; "
-                     "what else it may do is your choice afterwards, under Paired devices. "
-                     "It will be signed in as %s (%s) and will receive %s's settings, model choices, "
+                     % (what, spoken(code))) + grant +
+                    ("It will be signed in as %s (%s) and will receive %s's settings, model choices, "
                      "chats, arcade and creations, plus the shared household ones. No keys are sent."
-                     % (what, spoken(code), who, p["member"], who)),
+                     % (who, p["member"], who)),
         action_description="Pair a %s with Friday" % what,
         payload={"pairing_id": str(pairing_id), "device_id": p["device_id"], "sas": code,
                  "origin": "tv_gateway", "kind": p["kind"], "member": p["member"]},
@@ -188,14 +203,17 @@ def _on_decision(rec: dict) -> None:
         if rec.get("status") != "approved" or rec.get("decided_by") != SCREEN_LABEL:
             p["state"] = "refused"
             return
-        dev = device_pairing.add_device(p["spki"], name=p["name"], rights=FIRST_RIGHTS, kind=p["kind"])
+        full = owner_grant(p["kind"], p["member"])
+        granted = list(device_pairing.RIGHTS) if full else FIRST_RIGHTS
+        dev = device_pairing.add_device(p["spki"], name=p["name"], rights=granted, kind=p["kind"])
         from agent_friday.tv_gateway import household
         household.ensure_default_members()
         household.bind_device(dev["id"], p["member"])
         p["state"] = "paired"
     device_pairing._receipt("device_paired", device_pairing.get_device(dev["id"]) or dev,
-                            approval_id=rec.get("approval_id"), rights=FIRST_RIGHTS)
-    _offer_rights(dev["id"])
+                            approval_id=rec.get("approval_id"), rights=granted)
+    if not full:                         # the owner's own device already holds every right
+        _offer_rights(dev["id"])
 
 
 def _offer_rights(device_id: str) -> list:
