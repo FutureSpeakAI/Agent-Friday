@@ -1976,17 +1976,8 @@ def chat():
                     _topk = _prune_cfg.get('top_k', 10)
                     print(f"Context pruned: {_orig_count} turns → "
                           f"{_pruned_count} turns ({_topk} semantic matches)")
-                    # Brief process orb so the user can see pruning happen.
-                    _prune_pid = f"prune-{uuid.uuid4().hex[:8]}"
-                    try:
-                        process_register(
-                            _prune_pid, name="Context Pruning",
-                            label="Context Pruning", category="monitoring",
-                            icon="🧠",
-                        )
-                        threading.Timer(2.0, process_remove, args=(_prune_pid,)).start()
-                    except Exception:
-                        pass
+                    # No orb for pruning: a two-second "Context Pruning" label drawn beside "Compressing Context"
+                    # and "Reasoning (step N)" overlapped them on the stage. The work stays; the noise does not.
             except Exception as _pe:
                 # Pruning is best-effort — never block a chat on it.
                 print(f"  [PRUNE] skipped: {_pe}")
@@ -2002,17 +1993,6 @@ def chat():
                 compressor = _get_context_compressor(_compress_cfg)
                 if compressor.should_compress(messages):
                     _selected_model = settings.get('orchestrator_model') or ANTHROPIC_MODEL_DEFAULT
-                    # Brief process orb so the user can see compression happen.
-                    _comp_pid = f"compress-{uuid.uuid4().hex[:8]}"
-                    try:
-                        process_register(
-                            _comp_pid, name="Compressing Context",
-                            label="Compressing Context", category="monitoring",
-                            icon="📦",
-                        )
-                        threading.Timer(2.0, process_remove, args=(_comp_pid,)).start()
-                    except Exception:
-                        pass
                     from agent_friday.services.completion_receipts import (
                         compress_keeping_receipts)
                     messages = compress_keeping_receipts(
