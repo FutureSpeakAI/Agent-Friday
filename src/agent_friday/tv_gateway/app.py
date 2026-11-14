@@ -48,8 +48,8 @@ class _Bucket:
 _BUCKET = _Bucket()
 
 
-def _refuse(status: int, reason: str) -> Response:
-    resp = jsonify({"ok": False, "error": reason})
+def _refuse(status: int, reason: str, **extra) -> Response:
+    resp = jsonify({"ok": False, "error": reason, **extra})
     resp.status_code = status
     return resp
 
@@ -74,7 +74,9 @@ def create_app() -> Flask:
             return None
         dev = device_pairing.check_session(_bearer())
         if dev is None:
-            return _refuse(401, "device session required")
+            # NOT "unpaired": the device may be paired fine and only lack a live session (a restart, a
+            # day gone by). Open a new one (challenge, then open); only a refusal THERE means unpaired.
+            return _refuse(401, "device session required", code="session_required", action="open_session")
         g.device = dev
         return None
 
@@ -111,7 +113,7 @@ def create_app() -> Flask:
         token = device_pairing.open_session(str(body.get("device_id", "")),
                                             str(body.get("nonce", "")), sig)
         if token is None:
-            return _refuse(401, "not paired, or the challenge was wrong or used")
+            return _refuse(401, "not paired, or the challenge was wrong or used", code="not_paired_or_bad_challenge")
         return jsonify({"ok": True, "session": token, "ttl_s": device_pairing.SESSION_TTL_S})
 
     @app.post("/tv/v1/pair/start")

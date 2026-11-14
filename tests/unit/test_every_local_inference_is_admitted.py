@@ -25,7 +25,7 @@ SENDERS = {"post", "request", "urlopen", "Request", "_post"}
 
 #: (path under src/agent_friday, function) -> why it is not admitted.
 EXEMPT = {
-    ("tv_gateway/owner_turn.py", "_post"):
+    ("tv_gateway/owner_turn.py", "_call_desktop"):
         "runs the owner's own chat turn in process (POST /api/chat/stream on this PC's app), not a model transport: the turn reaches model_router, whose Claude and OpenAI legs call cloud_intent.require (_call_claude, _call_openai) and whose _call_ollama is @admitted, so intent and admission are checked where the model is called",
     ("services/residency_arbiter.py", "OllamaBackend.load"):
         "loads a model into the daemon (an empty prompt): the swap itself, not work for it",

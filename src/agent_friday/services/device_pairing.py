@@ -53,6 +53,52 @@ SESSION_CONTEXT = b"friday-tv-session-v1|"
 _LOCK = threading.RLock()
 _SESSIONS: dict = {}                         # sha256(token) -> (device_id, expires_at)
 _CHALLENGES: dict = {}                       # nonce hex -> expires_at
+_RESTORED = False                            # this process has read the persisted sessions once
+
+
+def _sessions_path() -> Path:
+    from agent_friday.paths import friday_home
+    return friday_home() / "security" / "device_sessions.json"
+
+
+def _persist_sessions() -> None:
+    """Write the live sessions (hashes only, never a token) so a restart or a deploy does not log a
+    paired device out: the phone holds a session for up to SESSION_TTL_S and must not be told it is
+    unpaired because this PC restarted. Signed like the device store; best effort."""
+    try:
+        now = time.time()
+        body = {"sessions": {h: [did, exp] for h, (did, exp) in _SESSIONS.items() if exp > now}}
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        sig = hmac.new(_key(), b"friday-device-sessions-v1|" + raw, hashlib.sha256).hexdigest()
+        p = _sessions_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps({"body": body, "sig": sig}, sort_keys=True), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        pass
+
+
+def _restore_sessions() -> None:
+    """Once per process: read the persisted sessions back (a bad signature or file restores nothing).
+    A device removed since has no record, so check_session still refuses its session."""
+    global _RESTORED
+    if _RESTORED:
+        return
+    _RESTORED = True
+    try:
+        doc = json.loads(_sessions_path().read_text(encoding="utf-8"))
+        body, sig = doc["body"], str(doc["sig"])
+        raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        want = hmac.new(_key(), b"friday-device-sessions-v1|" + raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(want, sig):
+            return
+        now = time.time()
+        for h, (did, exp) in (body.get("sessions") or {}).items():
+            if exp > now:
+                _SESSIONS.setdefault(h, (did, exp))
+    except Exception:
+        pass
 
 
 def _path() -> Path:
@@ -110,6 +156,7 @@ def set_gateway(enabled: bool, port: int = 0) -> dict:
         _save(body)
         if not enabled:
             _SESSIONS.clear()
+            _persist_sessions()
         return dict(body["gateway"])
 
 
@@ -206,6 +253,7 @@ def remove_device(device_id: str) -> bool:
         for h, (did, _exp) in list(_SESSIONS.items()):
             if did == device_id:
                 _SESSIONS.pop(h, None)
+        _persist_sessions()
         return gone
 
 
@@ -216,6 +264,7 @@ def stop_all() -> int:
         body["devices"] = {}
         _save(body)
         _SESSIONS.clear()
+        _persist_sessions()
         return n
 
 
@@ -257,7 +306,9 @@ def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[s
         return None
     token = SESSION_PREFIX + secrets.token_urlsafe(32)
     with _LOCK:
+        _restore_sessions()
         _SESSIONS[hashlib.sha256(token.encode()).hexdigest()] = (dev["id"], time.time() + SESSION_TTL_S)
+        _persist_sessions()
     _touch(dev["id"])
     _receipt("device_session_opened", dev)
     return token
@@ -279,6 +330,7 @@ def check_session(token: str) -> Optional[dict]:
         return None
     h = hashlib.sha256(token.encode()).hexdigest()
     with _LOCK:
+        _restore_sessions()
         hit = _SESSIONS.get(h)
         if hit is None:
             return None
@@ -307,6 +359,12 @@ def _touch(device_id: str) -> None:
 
 
 def _reset_for_tests() -> None:
+    global _RESTORED
     with _LOCK:
         _SESSIONS.clear()
         _CHALLENGES.clear()
+        _RESTORED = False
+        try:
+            _sessions_path().unlink(missing_ok=True)
+        except Exception:
+            pass

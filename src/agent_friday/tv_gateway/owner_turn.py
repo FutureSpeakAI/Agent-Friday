@@ -28,6 +28,10 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import re
+import threading
+import time
 from typing import Iterator, Optional
 
 _log = logging.getLogger(__name__)
@@ -77,8 +81,12 @@ def _frames(response) -> Iterator[dict]:
                         continue
 
 
-def _post(text: str, conversation_id: Optional[str]):
-    """Run the owner's chat turn on this PC's own app, in process."""
+#: How often the phone hears that the turn is alive while the model is thinking (an SSE `ping`).
+STATUS_EVERY_S = 4.0
+
+
+def _call_desktop(text: str, conversation_id: Optional[str]):
+    """The owner's chat turn on this PC's own app, in process, with this PC's own session token."""
     from agent_friday import core
     body = {"message": text}
     if conversation_id:
@@ -86,6 +94,86 @@ def _post(text: str, conversation_id: Optional[str]):
     return core.app.test_client().post(
         "/api/chat/stream", json=body, buffered=False,
         headers={"X-Friday-Token": core._current_api_token()})
+
+
+class _DesktopTurn:
+    """The owner's chat turn, run on THIS PC's own app on its own thread, its frames handed over a queue.
+
+    Why a thread: the desktop's stream is a Flask generator bound to its own request context. Read
+    lazily from inside the gateway's request (as this used to be), the two contexts interleave and
+    Flask raises "Popped wrong app context" at the first read: the desktop finished the turn and
+    the phone got an HTTP 500 and no answer (2026-11-13 19:51, 19:53, 20:08). On its own thread the
+    turn's whole context lives and dies there, and the gateway only reads dicts.
+    """
+
+    def __init__(self, text: str, conversation_id: Optional[str]):
+        self.status_code = None
+        self.q: "queue.Queue" = queue.Queue()
+        ready = threading.Event()
+
+        def work():
+            try:
+                r = _call_desktop(text, conversation_id)
+                self.status_code = r.status_code
+                ready.set()
+                if r.status_code == 200:
+                    for f in _frames(r):
+                        self.q.put(f)
+            except Exception as e:  # noqa: BLE001
+                _log.info("owner turn thread failed: %s", type(e).__name__)
+                if self.status_code is None:
+                    self.status_code = 599
+                ready.set()
+                self.q.put({"error": "this computer's chat turn failed (%s)" % type(e).__name__})
+            finally:
+                ready.set()
+                self.q.put(None)
+
+        threading.Thread(target=work, name="owner-turn", daemon=True).start()
+        ready.wait(60.0)
+        if self.status_code is None:
+            self.status_code = 504
+
+    def frames(self, idle_s: Optional[float] = None) -> Iterator[Optional[dict]]:
+        """Each desktop frame as a dict; None whenever ``idle_s`` passes with nothing (a tick for the phone)."""
+        while True:
+            try:
+                f = self.q.get(timeout=idle_s or STATUS_EVERY_S)
+            except queue.Empty:
+                yield None
+                continue
+            if f is None:
+                return
+            yield f
+
+
+def _post(text: str, conversation_id: Optional[str]):
+    """Start the owner's chat turn on this PC's own app, in process, and return it (status_code + frames)."""
+    return _DesktopTurn(text, conversation_id)
+
+
+_THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+def answer_only(text: str) -> str:
+    """The reply without a reasoning scratchpad: a phone gets the answer, never the thinking."""
+    t = _THINK.sub("", text or "")
+    if "</think>" in t:
+        t = t.split("</think>", 1)[1]
+    elif "<think>" in t:
+        t = t.split("<think>", 1)[0]
+    return t.strip()
+
+
+def _tool_label(val) -> str:
+    """A few words for what the desktop is doing ("Searching the wiki"), never an argument or a result."""
+    if isinstance(val, dict):
+        val = val.get("label") or val.get("name") or val.get("tool") or ""
+    return str(val or "")[:60]
+
+
+def _frames_of(response, idle_s: Optional[float] = None) -> Iterator[Optional[dict]]:
+    return response.frames(idle_s) if hasattr(response, "frames") else _frames(response)
 
 
 def _api(method: str, path: str, body: Optional[dict] = None):
@@ -186,35 +274,52 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     return _stream(response, dev, requested, cid)
 
 
+def _status(status: str, started: float, detail: str = "") -> str:
+    """An SSE `ping` that carries what the desktop is doing. Anthropic's stream defines `ping`, so a
+    reader that knows nothing of it ignores it; one that does shows "thinking" instead of silence."""
+    return _event({"type": "ping", "friday": {"status": status, "detail": detail,
+                                              "elapsed_s": int(time.time() - started)}})
+
+
 def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None) -> Iterator[str]:
+    """The phone's stream: progress while the desktop works, then the FINAL answer only.
+
+    The desktop's own deltas are not relayed as they arrive: they can carry a tool round's narration,
+    and a local reasoning model's scratchpad is not an answer. What the phone gets is the turn's
+    final reply (the same text the desktop saves), after `ping` events that say it is working."""
+    started = time.time()
     yield _event({"type": "message_start", "message": {"role": "assistant", "model": "", "content": []}})
     yield _event({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
-    streamed = False
+    yield _status("thinking", started)
+    spoken = []
     final = ""
     failed = None
     payload: dict = {}
-    for f in _frames(response):
-        if "delta" in f:
-            streamed = True
-            yield _event({"type": "content_block_delta", "index": 0,
-                          "delta": {"type": "text_delta", "text": str(f["delta"])}})
+    for f in _frames_of(response):
+        if f is None:
+            yield _status("thinking", started)
+        elif "tool" in f:
+            yield _status("working", started, _tool_label(f["tool"]))
+        elif "delta" in f:
+            spoken.append(str(f["delta"]))
         elif "error" in f:
             failed = str(f["error"])
         elif f.get("done"):
             payload = f.get("payload") or {}
             final = str(payload.get("response") or "")
-    if failed and not streamed:
+    text = answer_only(final) or answer_only("".join(spoken))
+    if failed and not text:
         yield _event({"type": "error", "error": {"type": "api_error", "message": failed[:300]},
                       "friday": served({}, requested, cid)})
         return
-    if not streamed and final:
-        yield _event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": final}})
-    yield _event({"type": "content_block_stop", "index": 0})
     truth = served(payload, requested, cid)
     if dev is not None:
         from agent_friday.tv_gateway import turn
         turn.device_pairing._receipt("device_turn_served", dev, watching="owner", provider=truth["provider"],
                                      model=truth["model"], requested=truth["requested"] or "",
                                      seat=truth["seat"], substituted=truth["substituted"])
+    if text:
+        yield _event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}})
+    yield _event({"type": "content_block_stop", "index": 0})
     yield _event({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "friday": truth})
     yield _event({"type": "message_stop"})

@@ -173,8 +173,11 @@ def test_the_owner_turn_reaches_the_real_chat_route_with_this_pcs_own_token(monk
     class C:
         def post(self, path, json=None, headers=None, buffered=None):
             seen.update(path=path, body=json, token=(headers or {}).get("X-Friday-Token"), buffered=buffered)
-            return "response"
+            return type("R", (), {"status_code": 200,
+                                  "response": iter([b'data: {"done": true, "payload": {}}\n\n'])})()
     monkeypatch.setattr(core.app, "test_client", lambda: C())
-    assert owner_turn._post("Who is Griff Jay?", None) == "response"
+    turn = owner_turn._post("Who is Griff Jay?", None)             # runs on its own thread (see test_owner_turn_stream)
+    assert turn.status_code == 200
+    assert [f for f in turn.frames(0.5) if f is not None] == [{"done": True, "payload": {}}]
     assert seen["path"] == "/api/chat/stream" and seen["body"] == {"message": "Who is Griff Jay?"}
     assert seen["token"] == core._current_api_token() and seen["buffered"] is False
