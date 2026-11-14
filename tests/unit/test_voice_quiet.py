@@ -229,8 +229,8 @@ def test_the_first_ping_says_what_is_happening_in_words(client, wire):
 
 # ── the fast default for a voice turn ────────────────────────────────────────
 
-ROWS = [{"id": "claude-haiku-5-5", "label": "Claude Haiku 5.5", "available": True},
-        {"id": "bonsai2:27b", "label": "Bonsai", "available": True}]
+ROWS = [{"id": "claude-haiku-5-5", "name": "Claude Haiku 5.5", "available": True},
+        {"id": "bonsai2:27b", "name": "Bonsai", "available": True}]
 
 
 class _Resp:
@@ -245,8 +245,7 @@ class _Resp:
 def fast(monkeypatch):
     """Records the seats bound; the PC lists Haiku; no conversation has a seat yet."""
     bound = []
-    from agent_friday.services import model_catalog
-    monkeypatch.setattr(model_catalog, "build_catalog", lambda **k: {"roles": {"orchestrator": ROWS}})
+    monkeypatch.setattr(owner_turn, "_slate", lambda dev: ROWS)
     monkeypatch.setattr(owner_turn, "_api", lambda *a, **k: _Resp({}))
     monkeypatch.setattr(owner_turn, "bind_seat", lambda cid, m: (bound.append(m), cid or "conv-1")[1])
     return bound
@@ -264,8 +263,7 @@ def test_an_existing_seat_is_never_overridden(fast, monkeypatch):
 
 
 def test_no_fast_model_listed_leaves_the_chat_alone(fast, monkeypatch):
-    from agent_friday.services import model_catalog
-    monkeypatch.setattr(model_catalog, "build_catalog", lambda **k: {"roles": {"orchestrator": [ROWS[1]]}})
+    monkeypatch.setattr(owner_turn, "_slate", lambda dev: [ROWS[1]])
     assert owner_turn.fast_voice_default(None) == (None, None) and fast == []
 
 
@@ -279,10 +277,10 @@ def test_a_seat_the_pc_refuses_leaves_the_chat_alone(fast, monkeypatch):
 
 
 def test_a_device_pick_is_honoured_and_the_default_is_not_applied(client, wire, monkeypatch):
-    monkeypatch.setattr(owner_turn, "_listed", lambda m: True)
+    monkeypatch.setattr(owner_turn, "_slate", lambda dev: ROWS)
     bound = []
     monkeypatch.setattr(owner_turn, "bind_seat", lambda cid, m: (bound.append(m), "c")[1])
-    monkeypatch.setattr(owner_turn, "fast_voice_default", lambda cid: pytest.fail("a pick must win"))
+    monkeypatch.setattr(owner_turn, "fast_voice_default", lambda cid, dev=None: pytest.fail("a pick must win"))
     wire([_done("ok")])
     _stream(ask(client, phone(), voice=True, model="bonsai2:27b"))
     assert bound == ["bonsai2:27b"]

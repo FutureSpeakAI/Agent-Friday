@@ -55,9 +55,11 @@ class TurnRefused(Exception):
     """The turn cannot run; `status` is the HTTP code the TV acts on (503 means
     "answer with your own brain")."""
 
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, code: str = "", **extra):
         super().__init__(message)
         self.status = status
+        self.code = code                     # a stable word a client can act on ("unknown_model", "model_unavailable")
+        self.extra = extra
 
 
 def principal_from(header: Optional[str]) -> str:
