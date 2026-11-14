@@ -592,6 +592,16 @@ def _model_entries_for(provider: dict, registry) -> list:
     return entries
 
 
+def _openai_voice_row() -> dict:
+    """OpenAI Realtime, the third voice engine. Never hidden: with no key the row is there, greyed, and says
+    what to do. The key state is a cheap local read, so it is not part of the slow dependency probe."""
+    from agent_friday.services import openai_realtime as _orx
+    ok = _orx.key_state() == "connected"
+    return {"id": "openai", "label": "OpenAI Realtime (cloud, %s)" % _orx.MODEL, "short": "OpenAI Realtime",
+            "available": ok, "hint": None if ok else _orx.readiness(key_status=_orx.key_state())["say"],
+            "per_minute": _orx.per_minute_line()}
+
+
 def _voice_engines(registry) -> list:
     """The voice MODE choices (settings key `voice_engine`), with live
     availability.
@@ -632,6 +642,7 @@ def _voice_engines(registry) -> list:
             {"id": "gemini", "label": "Gemini Live (cloud)",
              "short": "Gemini Live", "available": False,
              "reading": _mp.STATE_UNKNOWN, "hint": _unread},
+            _openai_voice_row(),
         ]
     local_ok, gpu_ok, gemini_ok = _av["local"], _av["gpu"], _av["gemini"]
     return [
@@ -647,6 +658,7 @@ def _voice_engines(registry) -> list:
          "short": "Gemini Live", "available": gemini_ok,
          "hint": None if gemini_ok else
          "Add GEMINI_API_KEY in Settings → Connections"},
+        _openai_voice_row(),
     ]
 
 
