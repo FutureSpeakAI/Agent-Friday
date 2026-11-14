@@ -355,3 +355,35 @@ def test_the_shells_own_card_strings_extend_the_reserved_list():
     with pytest.raises(prof.ProfileError) as e:
         prof.check(page(btn(label="Needed from you now")), ctx(extra_reserved=["Needed from you now"]))
     assert e.value.rule == "V11"
+
+
+# --- shared fixtures for the other renderers (phone core-a2ui, TV, tablet) -------------------------
+# The phone's pure-Java core-a2ui must reject exactly these documents with these rules and accept
+# the good one. The file may only grow; a drift test keeps it equal to the set above.
+import json
+import os
+import pathlib
+
+_FIXTURE = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "a2ui" / "profile_cases_v1.json"
+
+
+def _fixture_payload():
+    return {
+        "format": 1,
+        "subject": SUBJECT,
+        "catalog": CAT,
+        "model_authored": True,
+        "verbs": VERBS,
+        "good": [GOOD],
+        "hostile": [{"name": name, "rule": rule, "document": d} for name, (d, rule) in HOSTILE.items()],
+    }
+
+
+def test_the_shared_fixture_file_equals_the_hostile_set_and_never_shrinks():
+    payload = json.loads(json.dumps(_fixture_payload(), sort_keys=True))
+    if os.environ.get("A2UI_REGEN_FIXTURE") == "1":
+        _FIXTURE.parent.mkdir(parents=True, exist_ok=True)
+        _FIXTURE.write_text(json.dumps(payload, indent=1, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+    on_disk = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    assert on_disk == payload, "tests/fixtures/a2ui/profile_cases_v1.json is out of date: run with A2UI_REGEN_FIXTURE=1"
+    assert len(on_disk["hostile"]) >= 75
