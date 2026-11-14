@@ -107,6 +107,28 @@ def _expire(now: float) -> None:
             _PENDING.pop(pid, None)
 
 
+def _norm_name(name: str) -> str:
+    """A device's name with the app's own prefix ("Agent Friday on Pixel 10" and "Friday on Pixel 10" are one phone)."""
+    n = " ".join(str(name or "").lower().split())
+    return n[len("agent "):] if n.startswith("agent ") else n
+
+
+def stale_rows(spki: bytes, name: str, kind: str, member: str) -> list:
+    """Rows this pairing replaces, by id: the same key already in the store, or another row of the same kind,
+    for the same household member, with the same device name (the same phone paired again after its key
+    changed). Never a row of another kind, member or name."""
+    from agent_friday.tv_gateway import household
+    me = device_pairing.spki_id(spki)
+    out = []
+    for d in device_pairing.list_devices():
+        if d.get("id") == me:
+            out.append(d)
+        elif (d.get("kind") == kind and household.member_for_device(str(d.get("id"))) == member
+              and _norm_name(d.get("name")) == _norm_name(name)):
+            out.append(d)
+    return out
+
+
 def start(device_spki: bytes, name: str, kind: str = "tv") -> dict:
     now = time.time()
     try:
@@ -118,8 +140,9 @@ def start(device_spki: bytes, name: str, kind: str = "tv") -> dict:
         member = household.member_for_kind(kind)       # the PC picks the member; a device declares only its kind
     except ValueError:
         raise PairingRefused("unknown device kind")
-    if device_pairing.get_device(device_pairing.spki_id(device_spki)) is not None:
-        raise PairingRefused("this TV is already paired; remove it on the PC to pair again")
+    # A key that is already in the store is NOT a dead end (2026-11-13: a TV with no valid token was told
+    # "already paired; remove it on the PC" and could never recover). It pairs again like any device: the
+    # owner's screen press is the confirmation, and the new pairing replaces the stale row (see _on_decision).
     with _LOCK:
         _expire(now)
         while _STARTS and now - _STARTS[0] > 3600:
@@ -161,6 +184,15 @@ def reveal(pairing_id: str, nt: bytes) -> bytes:
     else:
         grant = ("Paired, it may chat with Friday and read what she shares; "
                  "what else it may do is your choice afterwards, under Paired devices. ")
+    again = stale_rows(p["spki"], p["name"], p["kind"], p["member"])
+    with _LOCK:
+        p["replaces"] = [d["id"] for d in again]
+    if again:
+        replaced = "; ".join("%s (paired %s, last seen %s)" % (
+            d.get("name") or "device", time.strftime("%H:%M", time.localtime(d.get("paired_at") or 0)),
+            time.strftime("%H:%M", time.localtime(d["last_seen"])) if d.get("last_seen") else "never")
+            for d in again)
+        grant += "This replaces the old pairing of the same %s: %s. " % (what, replaced)
     card = approvals.create_approval(
         kind=KIND, subject_type="device", subject_id=str(pairing_id),
         title="Pair a %s: is it showing %s?" % (what, spoken(code)),
@@ -209,6 +241,9 @@ def _on_decision(rec: dict) -> None:
         from agent_friday.tv_gateway import household
         household.ensure_default_members()
         household.bind_device(dev["id"], p["member"])
+        for old_id in p.get("replaces") or []:
+            if old_id != dev["id"] and device_pairing.get_device(old_id) is not None:
+                device_pairing.remove_device(old_id)           # sessions of the old row die with it
         p["state"] = "paired"
     device_pairing._receipt("device_paired", device_pairing.get_device(dev["id"]) or dev,
                             approval_id=rec.get("approval_id"), rights=granted)
