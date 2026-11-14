@@ -166,12 +166,15 @@ def test_a_press_after_five_minutes_pairs_nothing(client, monkeypatch):
     assert tv.state()["state"] == "expired"
 
 
-def test_an_already_paired_tv_must_be_removed_before_pairing_again(client):
+def test_an_already_paired_tv_can_pair_again_and_the_owners_press_replaces_its_row(client):
+    """Was: refused with "remove it on the PC" (a TV that lost its token could never recover; TV lane 2026-11-13).
+    Now the owner's verified press is the confirmation. Detail: test_pairing_replaces_stale_rows.py."""
     tv = TvSide(client).run()
     with pressed():
         ap.decide_with_outcome(tv.card()["approval_id"], "approve", decided_by="owner:ui")
-    with pytest.raises(pairing.PairingRefused):
-        pairing.start(tv.spki, "TV")
+    assert len(device_pairing.list_devices()) == 1
+    st = pairing.start(tv.spki, "TV")                                 # no PairingRefused
+    assert st["pairing_id"] and len(device_pairing.list_devices()) == 1   # nothing replaced before the press
 
 
 def test_a_short_nonce_is_refused(client):
