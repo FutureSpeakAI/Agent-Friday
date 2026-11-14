@@ -85,6 +85,7 @@ DIRECTIONS: Dict[str, str] = {
     "evidence.holds": "label_only",
     "evidence.supports": "label_only",
     "loop.no_progress": "stop_only",
+    "quarantine.instruction": "label_only",
 }
 DIRECTION_NAMES = ("add_only", "stop_only", "label_only")
 
