@@ -428,6 +428,18 @@ def _confirmed_action_response(message, session_ctx):
                                  "Couldn't resume the approved action"))
 
 
+def _served_by_no_model(kind):
+    """`served_by` for a reply no model wrote (a rule, a refusal, a held turn).
+
+    Every reply says who answered it. The turns that never reach a model used to say nothing,
+    which a client cannot tell from "the server did not record it"; this says it: no model,
+    and why (`kind`). `answered_by` stays absent on purpose, so nothing reads a model id out
+    of it. A remote's status line shows "no model" for it, never a guessed one.
+    """
+    return {"model": None, "provider": "none", "local": True, "answered": False,
+            "no_model": True, "kind": kind}
+
+
 def _instant_response(message, result, conversation_id):
     """Answer a turn that a rule or the item resolver settled without a model.
 
@@ -453,6 +465,7 @@ def _instant_response(message, result, conversation_id):
                                   "sources": [], "tool_trace": result.get("tool_trace") or [],
                                   "actions": result.get("actions") or [],
                                   "instant": True,
+                                  "served_by": _served_by_no_model("rule"),
                                   "laya": result.get("laya")},
                                  "Couldn't finish that without a model"))
 
@@ -1757,6 +1770,7 @@ def chat():
                 "tool_trace": [{"name": "navigate", "input": {"workspace": _nav_ws},
                                 "result": _nav_reply}],
                 "actions": [{"type": "navigate", "workspace": _nav_ws}],
+                "served_by": _served_by_no_model("navigate"),
                 "seat_events": _seat_events,
             })
 
@@ -1789,6 +1803,7 @@ def chat():
             return jsonify(public_result({
                 "response": _open_reply, "user_msg": _u, "friday_msg": _f,
                 "sources": [], "tool_trace": [{"tool": "open_path", "result": _open_reply}],
+                "served_by": _served_by_no_model("open_path"),
                 "seat_events": _seat_events,
             }, "Couldn't open that"))
 
@@ -1937,6 +1952,7 @@ def chat():
                     pass
                 return jsonify({"response": _dr, "user_msg": _u, "friday_msg": _f,
                                 "sources": [], "demo_mode": True, "tool_trace": [],
+                                "served_by": _served_by_no_model("demo"),
                                 "seat_events": _seat_events})
         except Exception as _de:
             print(f"  [DEMO] skipped: {_de}")
@@ -2167,6 +2183,7 @@ def chat():
                         "friday_msg": friday_msg, "sources": [], "tool_trace": [],
                         "seat_missing": {"model": _want,
                                          "conversation_id": _conversation_id},
+                        "served_by": _served_by_no_model("seat_missing"),
                         "seat_events": _seat_events,
                     })
 
@@ -2328,6 +2345,7 @@ def chat():
                 "sources": [], "tool_trace": [], "vault_blocked": _vault_access,
                 "offer_cloud_switch": _offer_cloud_switch,
                 "local_fallback": _refuse_offer,
+                "served_by": _served_by_no_model("vault_refused"),
                 # The seat change that caused this refusal is exactly the one
                 # the user most needs to see; it rides every turn response.
                 "seat_events": _seat_events,
@@ -2833,6 +2851,7 @@ def chat():
                     "friday_msg": friday_msg, "sources": [], "tool_trace": [],
                     "model": None, "seat": "cloud",
                     "cloud_only_no_key": True,
+                    "served_by": _served_by_no_model("cloud_only_no_key"),
                     "seat_events": _seat_events,
                 })
             try:
@@ -3673,7 +3692,8 @@ def chat():
             return jsonify({"status": "ok", "response": _offer["text"], "local_fallback": _offer,
                             "model": "", "seat": "cloud",
                             "served_by": {"provider": "anthropic", "answered": False}})
-        return jsonify({"response": "[Friday offline] " + error_text(e, "Couldn't answer that message")})
+        return jsonify({"response": "[Friday offline] " + error_text(e, "Couldn't answer that message"),
+                        "served_by": _served_by_no_model("error")})
     finally:
         _settle_accepted_turn()
         _pilot_call(_pilot, "finish", error=_pilot_error,
