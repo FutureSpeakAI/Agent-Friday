@@ -121,7 +121,7 @@ _FACTORY_HOMES = {
 
 #: Not a model call the routing mode governs. (relpath, function) -> why.
 EXEMPT = {
-    ("tv_gateway/owner_turn.py", "_post"):
+    ("tv_gateway/owner_turn.py", "_call_desktop"):
         "runs the owner's own chat turn in process (POST /api/chat/stream on this PC's app), not a model transport: the turn reaches model_router, whose Claude and OpenAI legs call cloud_intent.require (_call_claude, _call_openai) and whose _call_ollama is @admitted, so intent and admission are checked where the model is called",
     ("core/__init__.py", "get_genai_client"):
         "client getter: builds an object and sends nothing; every send is a method call this test also guards",
