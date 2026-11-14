@@ -811,7 +811,7 @@ def test_both_ui_files_ask_call_or_always_and_offer_the_switch_back():
     assert c.count("(Recommended)") >= 3
     assert "'active'" not in c and "settings-btn active" not in c, "no choice is preselected"
     for html in (idx, app):
-        assert "pending.id === 'gemini' ? 'Continue: just this call or always?'" in html
+        assert "(pending.id === 'gemini' || pending.id === 'openai') ? 'Continue: just this call or always?'" in html
         assert "'/api/voice/cloud-switch'" in html
         assert "save({ voice_engine: pending.id }); setPending(null);" not in html, "gemini is no longer a plain save"
 
