@@ -6992,8 +6992,8 @@ window.addEventListener('DOMContentLoaded',function(){
                     } else o.finishedAt = null;
                 }
                 if (upd.label !== undefined) { o.label = upd.label; o.labelEl.querySelector('.orb-text').textContent = upd.label.slice(0,20); }
-                if (FridayOrbLife.statusOf(upd) === 'completed') { o.sphere.material.color.setHex(0x00ff80); o.glow.material.color.setHex(0x00ff80); }
-                else if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
+                // No completion colour: a finished orb is not turned green (Stephen: no completion markers).
+                if (upd.status === 'error') { o.sphere.material.color.setHex(0xff0080); o.glow.material.color.setHex(0xff0080); }
             }
             removeOrb(id) {
                 // Clear and expiry remove the orb without a completion animation.
@@ -51020,15 +51020,12 @@ function TaskCard({
       color: '#888',
       fontWeight: 700
     }
-  }, "\u25A0"), "STOPPED"), status === 'complete' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-    className: "task-card-check"
-  }, "\u2713"), "COMPLETE", task.evaluation && /*#__PURE__*/React.createElement("span", {
+  }, "\u25A0"), "STOPPED"), status === 'complete' && task.evaluation && /*#__PURE__*/React.createElement("span", {
     style: {
-      marginLeft: 6,
       fontSize: '0.75em',
       opacity: 0.7
     }
-  }, (task.evaluation.match(/GRADE:\s*(\w+)/) || [])[1] || '')), status === 'completed_unverified' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }, (task.evaluation.match(/GRADE:\s*(\w+)/) || [])[1] || ''), status === 'completed_unverified' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     style: {
       color: '#f59e0b',
       fontWeight: 700
