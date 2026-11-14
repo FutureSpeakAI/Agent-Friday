@@ -183,13 +183,16 @@ def test_the_review_files_need_the_owners_approval_on_github():
         assert rules.get(path) == ["@FutureSpeakAI"], path
 
 
-def test_the_shipped_reviews_file_is_well_formed_and_signs_nothing_on_the_builders_behalf(sc):
+def test_the_shipped_reviews_file_is_well_formed_and_is_signed_only_by_the_owner(sc):
     data = json.loads(REVIEWED.read_text(encoding="utf-8"))
     for kind in ("licences", "advisories", "components"):
         for e in data[kind]:
             assert e.get("package") and e.get("reason"), e
-            assert not str(e.get("reviewed_by") or "").strip(), \
-                "only a named reviewer signs an entry; the builder proposes"
+            who = str(e.get("reviewed_by") or "").strip()
+            assert not who or who in sc.REVIEW_SIGNERS, \
+                "only the owner signs an entry; the builder proposes"
+            if who:
+                assert e.get("until"), "a signed review carries an end date"
     assert any(e["package"] == "CPython" for e in data["components"])
 
 

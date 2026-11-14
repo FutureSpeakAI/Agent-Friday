@@ -40,7 +40,6 @@ rapidocr-onnxruntime>=1.2.3
 
 # --- Creative trimmings ----------------------------------------------------
 imageio-ffmpeg>=0.5
-mutagen>=1.47
 
 # --- Context compression. Degrades to passthrough if absent. --------------
 #

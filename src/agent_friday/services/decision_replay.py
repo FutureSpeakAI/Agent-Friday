@@ -77,6 +77,7 @@ HEADS: Dict[str, dict] = {
                           "action": "does_not_address", "action_gold": ("does_not_address", "contradicts")},
     "evidence.holds": {"kind": "noul", "action": True},
     "loop.no_progress": {"kind": "rules", "action": "stalled"},
+    "quarantine.instruction": {"kind": "noul", "action": True},
 }
 
 
@@ -577,6 +578,7 @@ HEAD_NAMES = {
     "triage.memory": "Memory proposals", "evidence.sufficient": "Is the found memory enough?",
     "evidence.holds": "Does a passage hold the answer?", "evidence.supports": "Does a source support its sentence?",
     "loop.no_progress": "Is a task stuck?",
+    "quarantine.instruction": "Is this line an instruction to an assistant?",
 }
 
 

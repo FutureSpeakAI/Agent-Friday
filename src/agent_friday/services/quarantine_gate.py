@@ -149,8 +149,21 @@ def read_through(tool_name: str, tool_input, result, session_ctx: Optional[dict]
         _log.warning("quarantine gate failed, wrapping as before: %s", e)
         return result
     trace = out["trace"]
-    _record(tool_name, session_ctx, {"quarantined": True, "chars_in": len(result), **trace})
+    _record(tool_name, session_ctx, {"quarantined": True, "chars_in": len(result), **trace,
+                                     **_instruction_head(result)})
     return out["text"]
+
+
+def _instruction_head(result: str) -> dict:
+    """Counts from the shadow ``quarantine.instruction`` head, beside the phrase list. Counts only, and
+    it never changes the text: a head that is off, errors or has no encoder adds nothing."""
+    try:
+        from agent_friday.services import quarantine_head
+        got = quarantine_head.observe(result, _q._looks_like_instruction)
+        return {"instruction_head": got} if got else {}
+    except Exception as e:  # noqa: BLE001
+        _log.debug("instruction head skipped: %s", e)
+        return {}
 
 
 def wrap_result(tool_name: str, tool_input, result, session_ctx: Optional[dict] = None, ask=None):

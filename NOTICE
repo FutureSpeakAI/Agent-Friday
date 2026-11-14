@@ -95,11 +95,14 @@ copyleft or weak-copyleft licenses:
   pynput, pystray ........ GNU LGPL v3 or later (core tier)
   piper-tts .............. GNU GPL v3 or later; embeds espeak-ng (GPL v3)
                            (recommended tier; the local text-to-speech engine)
-  mutagen ................ GNU GPL v2 or later (recommended tier)
   imageio-ffmpeg ......... BSD 2-Clause; the ffmpeg executable it contains
                            is a GPL v3 build (recommended tier)
+                           Agent Friday runs it only as a separate program, never
+                           linked in. ffmpeg's source: https://ffmpeg.org/ and
+                           https://github.com/imageio/imageio-ffmpeg
   pyttsx3, certifi, tqdm,
-  orjson ................. contain Mozilla Public License 2.0 code
+  orjson, pikepdf ........ contain Mozilla Public License 2.0 code; installed
+                           unmodified from PyPI, whose pages carry their source
 
 These Apache License 2.0 components include NOTICE files, reproduced here:
 

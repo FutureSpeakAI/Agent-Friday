@@ -137,8 +137,23 @@ class FridaysWords(str):
     type, and any copy or slice of it is a plain string again."""
 
 
+#: A ten-digit run in the id: the outbound PII scrub (core._PHONE_RE) reads it as a US phone
+#: number and rewrites it to ``[PII:phone:...]``, which breaks the envelope's header and close
+#: for the model (about one envelope in a hundred).
+_PHONE_LIKE_ID = re.compile(r"(?<!\d)[2-9]\d{9}(?!\d)")
+
+
 def _envelope_id(inner: str) -> str:
-    return hashlib.sha256(inner.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    """The first 16 hex digits of SHA-256 of the output. If those digits hold a ten-digit
+    run the scrub would read as a phone number, the hash is taken again with a counter
+    added, so the id is still a pure function of the output and every other id is unchanged."""
+    data = inner.encode("utf-8", "surrogatepass")
+    eid = hashlib.sha256(data).hexdigest()[:16]
+    n = 0
+    while _PHONE_LIKE_ID.search(eid):
+        n += 1
+        eid = hashlib.sha256(data + b"\x00" + str(n).encode()).hexdigest()[:16]
+    return eid
 
 
 def split(text):

@@ -120,9 +120,10 @@ def create_app() -> Flask:
         body = request.get_json(silent=True) or {}
         try:
             spki = base64.b64decode(str(body.get("device_spki", "")), validate=True)
-            return jsonify({"ok": True, **pairing.start(spki, str(body.get("name", "TV")))})
+            return jsonify({"ok": True, **pairing.start(spki, str(body.get("name", "TV")),
+                                                        str(body.get("kind") or "tv"))})
         except pairing.PairingRefused as e:
-            return _refuse(409, str(e))
+            return _refuse(400 if str(e) == "unknown device kind" else 409, str(e))
         except ValueError:
             return _refuse(400, "bad key encoding")
 
@@ -255,6 +256,8 @@ def create_app() -> Flask:
         return jsonify({"ok": True, "device": device_pairing.public_view(dev),
                         "principal": device_pairing.principal(dev)})
 
+    from agent_friday.tv_gateway import inherit
+    inherit.register(app)
     return app
 
 

@@ -72,10 +72,10 @@ creative = ["pillow>=12.3.0"]            # image post-processing / thumbnails
 # clean `pip install agent-friday[compose]` "just works" on Windows with no system
 # install; timeline_engine falls back to a system ffmpeg on PATH when present.
 compose = ["imageio-ffmpeg>=0.5"]
-# Provenance embedding (Layer 2 Â§8) â€” write the signed C2PA manifest INTO the
-# file (ID3/XMP). The signed sidecar + hash-chained ledger work without this; the
-# extra just makes the credential travel inside the artifact too.
-provenance = ["mutagen>=1.47"]
+# Provenance embedding (Layer 2 Â§8): the signed manifest travels INSIDE the file
+# (ID3 for audio is written in-house with the standard library, so this extra
+# installs nothing; it is kept so `pip install agent-friday[provenance]` still works).
+provenance = []
 google = ["google-api-python-client>=2.0", "google-auth-oauthlib>=1.0"]  # Gmail/Calendar/Drive
 local = ["sentence-transformers>=2.2", "chromadb>=0.5"]  # on-device embeddings + memory (Ollama itself is an external binary)
 compression = ["headroom-ai==0.38.0"]  # context compression; reports itself unavailable when its native core is missing
@@ -110,7 +110,6 @@ all = [
     "pyttsx3>=2.90",
     "pillow>=12.3.0",
     "imageio-ffmpeg>=0.5",
-    "mutagen>=1.47",
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
     "sentence-transformers>=2.2",
@@ -166,4 +165,4 @@ where = ["src"]
 # is only for the non-code files (config.yaml, SKILL.md) that packages.find
 # does not pick up on its own. See agent_friday/seed/__init__.py.
 [tool.setuptools.package-data]
-agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md", "SELF.md", "VOICE_DEMO.md", "resources/*.wav", "resources/*.json", "resources/laya_manifests/*.json", "resources/instructions/*.md", "resources/instructions/*.json", "resources/instructions/policy/*.md", "resources/decision_heads/*.json","task_eval/packs/*/*.json", "task_eval_grader/answers/*/*.json"]
+agent_friday = ["seed/skills/*/*.yaml", "seed/skills/*/SKILL.md", "SELF.md", "VOICE_DEMO.md", "resources/*.wav", "resources/*.json", "resources/laya_manifests/*.json", "resources/instructions/*.md", "resources/instructions/*.json", "resources/instructions/policy/*.md", "resources/decision_heads/*.json","resources/federation/*.json","task_eval/packs/*/*.json", "task_eval_grader/answers/*/*.json"]
