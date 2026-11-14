@@ -98,7 +98,8 @@ class Desk:
 def desk(monkeypatch):
     d = Desk()
     monkeypatch.setattr(owner_turn, "_api", d.api, raising=False)
-    monkeypatch.setattr(owner_turn, "_listed", lambda m: m in d.listed, raising=False)
+    monkeypatch.setattr(owner_turn, "_slate", lambda dev: [{"id": m, "name": m, "available": True, "reason": None}
+                                                           for m in sorted(d.listed)])
     monkeypatch.setattr(owner_turn, "_post", d.post)
     return d
 
@@ -153,10 +154,12 @@ def test_a_seat_the_pc_refuses_is_a_409_with_its_reason_and_no_turn_runs(client,
     assert desk.turns == []
 
 
-def test_no_model_or_an_unlisted_one_binds_nothing(client, desk):
+def test_no_model_binds_nothing_and_an_unknown_one_is_refused_loudly_not_quietly_answered(client, desk):
     ask(client, phone())
-    ask(client, phone(), model="some-placeholder")
-    assert desk.api_calls == [] and len(desk.turns) == 2
+    r = ask(client, phone(), model="some-placeholder")
+    assert desk.api_calls == [] and len(desk.turns) == 1                 # the unknown pick ran nothing
+    b = r.get_json()
+    assert r.status_code == 400 and b["code"] == "unknown_model" and "some-placeholder" in b["error"]
 
 
 # ---- (b) the reply carries the backend's id ----------------------------------------------------------------

@@ -98,6 +98,20 @@ def _call_desktop(text: str, conversation_id: Optional[str]):
         headers={"X-Friday-Token": core._current_api_token()})
 
 
+_CTX = threading.local()
+
+
+def _activity(act):
+    """The desktop shows a remote turn as ONE activity named for the device and carrying the model
+    ("Tablet chat · claude-opus-5-5"). The chat route's own jobs run inside it as steps."""
+    import contextlib
+    if not act:
+        return contextlib.nullcontext()
+    from agent_friday.services.visible_jobs import visible_job
+    label, model = act
+    return visible_job(label, kind="remote_turn", label=label, model=model or None)
+
+
 class _DesktopTurn:
     """The owner's chat turn, run on THIS PC's own app on its own thread, its frames handed over a queue.
 
@@ -112,15 +126,17 @@ class _DesktopTurn:
         self.status_code = None
         self.q: "queue.Queue" = queue.Queue()
         ready = threading.Event()
+        act = getattr(_CTX, "activity", None)           # (label, model) set by run(): ONE activity per remote turn
 
         def work():
             try:
-                r = _call_desktop(text, conversation_id)
-                self.status_code = r.status_code
-                ready.set()
-                if r.status_code == 200:
-                    for f in _frames(r):
-                        self.q.put(f)
+                with _activity(act):
+                    r = _call_desktop(text, conversation_id)
+                    self.status_code = r.status_code
+                    ready.set()
+                    if r.status_code == 200:
+                        for f in _frames(r):
+                            self.q.put(f)
             except Exception as e:  # noqa: BLE001
                 _log.info("owner turn thread failed: %s", type(e).__name__)
                 if self.status_code is None:
@@ -190,14 +206,10 @@ def requested_model(body: dict) -> str:
     return m.strip() if isinstance(m, str) else ""
 
 
-def _listed(model_id: str) -> bool:
-    """True when this PC lists the id as an orchestrator seat it can use now (the pill's own list)."""
-    try:
-        from agent_friday.services.model_catalog import build_catalog
-        rows = (build_catalog(include_engines=False).get("roles") or {}).get("orchestrator") or []
-    except Exception:
-        return False
-    return any(isinstance(r, dict) and r.get("id") == model_id and r.get("available") is not False for r in rows)
+def _slate(dev: Optional[dict]) -> list:
+    """The PC's slate for this device (tv_gateway/models), from the same warm catalog the desktop picker reads."""
+    from agent_friday.tv_gateway import models
+    return models.rows(dev)
 
 
 def _json(resp) -> dict:
@@ -217,7 +229,7 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
         conv = d.get("conversation") or {}
         cid = conv.get("id")
         if not cid:
-            raise turn.TurnRefused(503, "this computer could not start that chat")
+            raise turn.TurnRefused(503, "this computer could not start that chat", "chat_unavailable")
     else:
         d = _json(_api("GET", "/api/conversations/" + cid))
         conv = d.get("conversation") or {}
@@ -226,7 +238,8 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
         d = _json(_api("PATCH", "/api/conversations/" + cid, {"seat": seat}))
         conv = d.get("conversation") or {}
     if (conv.get("seat") or {}).get("model") != model_id:
-        raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240])
+        raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
+                               "seat_refused", model=model_id)
     return cid
 
 
@@ -256,7 +269,7 @@ def is_voice_turn(dev: Optional[dict], body: dict) -> bool:
     return speech.recently_heard(str((dev or {}).get("id") or ""))
 
 
-def fast_voice_default(cid: Optional[str]):
+def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
     """(conversation id, what was chosen) for a voice turn whose device picked no model.
 
     Only when the chat has no seat of its own yet: a pick made at the PC or on the device is never
@@ -269,9 +282,7 @@ def fast_voice_default(cid: Optional[str]):
             conv = _json(_api("GET", "/api/conversations/" + cid)).get("conversation") or {}
             if (conv.get("seat") or {}).get("model"):
                 return cid, None
-        from agent_friday.services.model_catalog import build_catalog
-        rows = (build_catalog(include_engines=False).get("roles") or {}).get("orchestrator") or []
-        row = voice_reply.fast_voice_model(rows)
+        row = voice_reply.fast_voice_model(_slate(dev))
         if not row:
             return cid, None
         cid = bind_seat(cid, row["id"])
@@ -279,7 +290,7 @@ def fast_voice_default(cid: Optional[str]):
         return cid, None
     except Exception:
         return cid, None
-    return cid, {"model": row["id"], "label": row.get("label") or row["id"], "recommended": True,
+    return cid, {"model": row["id"], "label": row.get("name") or row["id"], "recommended": True,
                  "why": "faster for voice; pick another model on this device to use it instead"}
 
 
@@ -297,23 +308,46 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     cid = body.get("conversation_id")
     cid = cid.strip() if isinstance(cid, str) and cid.strip() else None
     requested = requested_model(body)
+    asked = requested
     voice = is_voice_turn(dev, body)
     default = None
-    if requested and _listed(requested):
+    if requested:
+        # A pick is honoured or refused loudly, with the reason, before anything runs: never a quiet
+        # other model (Stephen, 2026-11-14: "I selected opus ... no response at all").
+        from agent_friday.tv_gateway import models
+        try:
+            row = models.resolve(requested, _slate(dev))
+        except models.ModelRefused as e:
+            turn.device_pairing._receipt("device_turn_refused", dev, watching="owner", requested=requested,
+                                         code=e.code, reason=e.reason[:160])
+            raise turn.TurnRefused(e.status, e.reason, e.code, **e.extra)
+        except turn.TurnRefused:
+            raise
+        except Exception as e:
+            _log.warning("model slate failed for an owner turn: %s", type(e).__name__)
+            raise turn.TurnRefused(503, "this computer could not check that model right now; try again",
+                                   "slate_unavailable", requested=requested)
+        requested = row["id"]                   # a family word or a display name means this one id
         cid = bind_seat(cid, requested)
-    elif voice and not requested:
-        cid, default = fast_voice_default(cid)
+    elif voice:
+        cid, default = fast_voice_default(cid, dev)
     turn.device_pairing._receipt("device_turn", dev, watching="owner", provider="owner-agent",
                                  model=requested, tools_offered=0)
+    kind = str((dev or {}).get("kind") or "").strip().lower()
+    word = {"tablet": "Tablet", "phone": "Phone", "watch": "Watch"}.get(kind, "Remote")
+    shown = requested or (default or {}).get("model") or ""
+    _CTX.activity = ("%s %s" % (word, "voice chat" if voice else "chat"), shown)
     try:
         response = _post(text, cid)
     except Exception as e:
         _log.info("owner turn not started: %s", type(e).__name__)
         raise turn.TurnRefused(503, "this computer can't answer that right now")
+    finally:
+        _CTX.activity = None
     if response.status_code != 200:
         raise turn.TurnRefused(503 if response.status_code >= 500 else response.status_code,
                                "this computer did not take the turn")
-    return _stream(response, dev, requested, cid, voice=voice, voice_default=default)
+    return _stream(response, dev, requested, cid, voice=voice, voice_default=default, asked=asked)
 
 
 def _status(status: str, started: float, detail: str = "") -> str:
@@ -324,7 +358,7 @@ def _status(status: str, started: float, detail: str = "") -> str:
 
 
 def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None,
-            voice: bool = False, voice_default: Optional[dict] = None) -> Iterator[str]:
+            voice: bool = False, voice_default: Optional[dict] = None, asked: str = "") -> Iterator[str]:
     """The phone's stream: progress while the desktop works, then the FINAL answer only.
 
     The desktop's own deltas are not relayed as they arrive: they can carry a tool round's narration,
@@ -361,6 +395,8 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
         turn.device_pairing._receipt("device_turn_served", dev, watching="owner", provider=truth["provider"],
                                      model=truth["model"], requested=truth["requested"] or "",
                                      seat=truth["seat"], substituted=truth["substituted"])
+    if asked and asked != requested:
+        truth["asked"] = asked                                  # the word the device sent ("opus"), beside the id it meant
     truth["voice"] = bool(voice)
     truth["voice_default"] = voice_default
     truth["speech"] = voice_reply.speech_text(text)             # for TTS: no markdown, ever
