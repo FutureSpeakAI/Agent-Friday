@@ -34,6 +34,8 @@ import threading
 import time
 from typing import Iterator, Optional
 
+from agent_friday.tv_gateway import voice_reply
+
 _log = logging.getLogger(__name__)
 
 
@@ -245,6 +247,42 @@ def served(payload: dict, requested: str, cid: Optional[str]) -> dict:
             "notice": payload.get("seat_notice") or None, "conversation_id": cid}
 
 
+def is_voice_turn(dev: Optional[dict], body: dict) -> bool:
+    """A turn that will be SPOKEN: the device says so (``voice: true``), or it sent audio for dictation
+    in the last two minutes (so a device that has not been updated still gets a speech-safe reply)."""
+    from agent_friday.tv_gateway import speech
+    if (body or {}).get("voice") is True or str((body or {}).get("modality") or "").lower() == "voice":
+        return True
+    return speech.recently_heard(str((dev or {}).get("id") or ""))
+
+
+def fast_voice_default(cid: Optional[str]):
+    """(conversation id, what was chosen) for a voice turn whose device picked no model.
+
+    Only when the chat has no seat of its own yet: a pick made at the PC or on the device is never
+    overridden. The choice is the fastest listed cloud model (voice_reply.FAST_VOICE_PREFERENCE), bound
+    the same validated way a picker binds one, and reported to the device as a recommendation it can
+    change. A seat the PC will not bind, or no such model, leaves the chat on its own seat, quietly."""
+    from agent_friday.tv_gateway import turn, voice_reply
+    try:
+        if cid:
+            conv = _json(_api("GET", "/api/conversations/" + cid)).get("conversation") or {}
+            if (conv.get("seat") or {}).get("model"):
+                return cid, None
+        from agent_friday.services.model_catalog import build_catalog
+        rows = (build_catalog(include_engines=False).get("roles") or {}).get("orchestrator") or []
+        row = voice_reply.fast_voice_model(rows)
+        if not row:
+            return cid, None
+        cid = bind_seat(cid, row["id"])
+    except turn.TurnRefused:
+        return cid, None
+    except Exception:
+        return cid, None
+    return cid, {"model": row["id"], "label": row.get("label") or row["id"], "recommended": True,
+                 "why": "faster for voice; pick another model on this device to use it instead"}
+
+
 def run(dev: dict, body: dict) -> Iterator[str]:
     """Validate, then stream the owner's turn. Raises turn.TurnRefused before the first event."""
     from agent_friday.services import global_stop
@@ -259,8 +297,12 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     cid = body.get("conversation_id")
     cid = cid.strip() if isinstance(cid, str) and cid.strip() else None
     requested = requested_model(body)
+    voice = is_voice_turn(dev, body)
+    default = None
     if requested and _listed(requested):
         cid = bind_seat(cid, requested)
+    elif voice and not requested:
+        cid, default = fast_voice_default(cid)
     turn.device_pairing._receipt("device_turn", dev, watching="owner", provider="owner-agent",
                                  model=requested, tools_offered=0)
     try:
@@ -271,7 +313,7 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     if response.status_code != 200:
         raise turn.TurnRefused(503 if response.status_code >= 500 else response.status_code,
                                "this computer did not take the turn")
-    return _stream(response, dev, requested, cid)
+    return _stream(response, dev, requested, cid, voice=voice, voice_default=default)
 
 
 def _status(status: str, started: float, detail: str = "") -> str:
@@ -281,7 +323,8 @@ def _status(status: str, started: float, detail: str = "") -> str:
                                               "elapsed_s": int(time.time() - started)}})
 
 
-def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None) -> Iterator[str]:
+def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None,
+            voice: bool = False, voice_default: Optional[dict] = None) -> Iterator[str]:
     """The phone's stream: progress while the desktop works, then the FINAL answer only.
 
     The desktop's own deltas are not relayed as they arrive: they can carry a tool round's narration,
@@ -290,16 +333,16 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     started = time.time()
     yield _event({"type": "message_start", "message": {"role": "assistant", "model": "", "content": []}})
     yield _event({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
-    yield _status("thinking", started)
+    yield _status("thinking", started, voice_reply.THINKING)
     spoken = []
     final = ""
     failed = None
     payload: dict = {}
     for f in _frames_of(response):
         if f is None:
-            yield _status("thinking", started)
+            yield _status("thinking", started, voice_reply.THINKING)
         elif "tool" in f:
-            yield _status("working", started, _tool_label(f["tool"]))
+            yield _status("working", started, voice_reply.progress_words(f["tool"]))
         elif "delta" in f:
             spoken.append(str(f["delta"]))
         elif "error" in f:
@@ -318,6 +361,12 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
         turn.device_pairing._receipt("device_turn_served", dev, watching="owner", provider=truth["provider"],
                                      model=truth["model"], requested=truth["requested"] or "",
                                      seat=truth["seat"], substituted=truth["substituted"])
+    truth["voice"] = bool(voice)
+    truth["voice_default"] = voice_default
+    truth["speech"] = voice_reply.speech_text(text)             # for TTS: no markdown, ever
+    if voice:
+        truth["formatted"] = text                               # the screen's copy; the stream text is what is spoken
+        text = truth["speech"]
     if text:
         yield _event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}})
     yield _event({"type": "content_block_stop", "index": 0})

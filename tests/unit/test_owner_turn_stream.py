@@ -114,7 +114,7 @@ def test_a_tool_frame_becomes_a_few_words_never_the_arguments(client, wire):
     wire([{"started": True}, {"tool": {"name": "Searching the wiki", "args": {"q": "SECRET QUERY"}}}, DONE])
     r = ask(client, phone())
     working = [e for e in events(r) if e["type"] == "ping" and e["friday"]["status"] == "working"]
-    assert working and working[0]["friday"]["detail"] == "Searching the wiki"
+    assert working and working[0]["friday"]["detail"] == "Looking in your notes…"
     assert "SECRET QUERY" not in r.get_data(as_text=True)
 
 
