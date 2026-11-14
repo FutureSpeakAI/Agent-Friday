@@ -1649,8 +1649,11 @@
                     const t = await fetch('/api/tasks/' + encodeURIComponent(id)).then(r => (r.ok ? r.json() : null));
                     const d = await fetch('/api/tasks/' + encodeURIComponent(id) + '/digest').then(r => (r.ok ? r.json() : null)).catch(() => null);
                     const rc = FridayOrbLife.receipt(t || { task_id: id, status: 'completed' }, d);
+                    // A routine helper finishing is not news: no toast unless it cost something or ran long,
+                    // and never a "$0.0000" (Stephen, 2026-11-14: a flood of them while he talked to the tablet).
+                    if (!(rc.cost_usd > 0) && !(rc.duration_s != null && rc.duration_s >= 60)) return;
                     const bits = [rc.did || 'Done', rc.model, rc.duration_s != null ? fridayDuration(rc.duration_s) : null,
-                                  rc.cost_usd != null ? '$' + rc.cost_usd.toFixed(rc.cost_usd < 0.01 ? 4 : 2) : null].filter(Boolean);
+                                  rc.cost_usd > 0 ? '$' + rc.cost_usd.toFixed(rc.cost_usd < 0.01 ? 4 : 2) : null].filter(Boolean);
                     const who = FridayOrbLife.speakable(Object.assign({}, s, { kind: s.kind }));
                     FridayOrbHands.note('receipt:' + o.id, who.charAt(0).toUpperCase() + who.slice(1) + ': ' + bits.join(' · '),
                         { ms: 12000, onClick: () => fridayNavigate({ workspace: 'system', tab: 'task', task: id }) });
