@@ -332,7 +332,7 @@ or Windows credential protection.
 
 The application is MIT-licensed. The Windows installer's default tiers install
 some copyleft packages on your machine (`piper-tts` and its espeak-ng, GPLv3;
-`mutagen`, GPLv2+; the `ffmpeg` binary inside `imageio-ffmpeg`, a GPLv3 build;
+the `ffmpeg` binary inside `imageio-ffmpeg`, a GPLv3 build;
 `pynput` and `pystray`, LGPLv3). [NOTICE](NOTICE) and
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) list every component, how it
 is delivered, and its license, including model licenses (Gemma, Stable

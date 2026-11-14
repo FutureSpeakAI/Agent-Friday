@@ -44,12 +44,12 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "chromadb" },
+    { name = "comtypes", marker = "sys_platform == 'win32'" },
     { name = "faster-whisper" },
     { name = "google-api-python-client" },
     { name = "google-auth-oauthlib" },
     { name = "headroom-ai" },
     { name = "imageio-ffmpeg" },
-    { name = "mutagen" },
     { name = "num2words" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -82,6 +82,7 @@ creative = [
     { name = "pillow" },
 ]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
@@ -120,9 +121,6 @@ podcast = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-provenance = [
-    { name = "mutagen" },
-]
 voice = [
     { name = "pyttsx3" },
 ]
@@ -146,6 +144,7 @@ requires-dist = [
     { name = "chromadb", marker = "extra == 'all'", specifier = ">=0.5" },
     { name = "chromadb", marker = "extra == 'local'", specifier = ">=0.5" },
     { name = "colorama", specifier = ">=0.4" },
+    { name = "comtypes", marker = "sys_platform == 'win32' and extra == 'all'", specifier = ">=1.4.16,<1.5" },
     { name = "cryptography", specifier = ">=44" },
     { name = "faster-whisper", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "faster-whisper", marker = "extra == 'voice-local-lite'", specifier = ">=1.0" },
@@ -159,12 +158,11 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.0" },
     { name = "headroom-ai", marker = "extra == 'all'", specifier = "==0.38.0" },
     { name = "headroom-ai", marker = "extra == 'compression'", specifier = "==0.38.0" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.25" },
     { name = "imageio-ffmpeg", marker = "extra == 'all'", specifier = ">=0.5" },
     { name = "imageio-ffmpeg", marker = "extra == 'compose'", specifier = ">=0.5" },
     { name = "keyring", marker = "extra == 'keyring'", specifier = ">=24.0" },
     { name = "markdown", specifier = ">=3.5" },
-    { name = "mutagen", marker = "extra == 'all'", specifier = ">=1.47" },
-    { name = "mutagen", marker = "extra == 'provenance'", specifier = ">=1.47" },
     { name = "num2words", marker = "extra == 'all'", specifier = ">=0.5.13" },
     { name = "num2words", marker = "extra == 'podcast'", specifier = ">=0.5.13" },
     { name = "numpy", marker = "extra == 'all'", specifier = ">=1.26" },
@@ -3238,15 +3236,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2d/f9/8e360bdfc3c44e267e7e046f0e0b9922766da92da26959a6963f597e6bb5/murmurhash-1.0.15-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:4fd8189ee293a09f30f4931408f40c28ccd42d9de4f66595f8814879339378bc", size = 161811, upload-time = "2025-11-14T09:51:01.289Z" },
     { url = "https://files.pythonhosted.org/packages/f9/31/97649680595b1096803d877ababb9a67c07f4378f177ec885eea28b9db6d/murmurhash-1.0.15-cp314-cp314t-win_amd64.whl", hash = "sha256:66395b1388f7daa5103db92debe06842ae3be4c0749ef6db68b444518666cdcc", size = 29817, upload-time = "2025-11-14T09:51:02.493Z" },
     { url = "https://files.pythonhosted.org/packages/76/66/4fce8755f25d77324401886c00017c556be7ca3039575b94037aff905385/murmurhash-1.0.15-cp314-cp314t-win_arm64.whl", hash = "sha256:c22e56c6a0b70598a66e456de5272f76088bc623688da84ef403148a6d41851d", size = 26219, upload-time = "2025-11-14T09:51:03.563Z" },
-]
-
-[[package]]
-name = "mutagen"
-version = "1.48.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/df/70/1675da133ea92227da41bf5b24e1c66be597ff736a1533ade41da986852f/mutagen-1.48.1.tar.gz", hash = "sha256:8f95637ab9f6f305cec6bd1294e197debe207998e3e068596563c74f86b0a173", size = 1276978, upload-time = "2026-06-25T09:47:32.443Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/d8/a29e4e3991765e7ce4ed1f7e4074fe1ba9da03e0048639734de60f9cadb9/mutagen-1.48.1-py3-none-any.whl", hash = "sha256:4f077fe87d3fc7fba259aa63d8c026b18382ca6a42ef37c61e16f1b1b5b82fe7", size = 195706, upload-time = "2026-06-25T09:47:30.296Z" },
 ]
 
 [[package]]

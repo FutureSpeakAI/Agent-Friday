@@ -151,3 +151,12 @@ def test_no_key_available_means_a_plain_refusal_not_a_call(upstream):
         assert not _Upstream.seen
     finally:
         px.stop()
+
+
+def test_a_refused_request_with_a_large_body_still_gets_its_refusal(proxy):
+    # The proxy reads and drops the body before answering; otherwise Windows
+    # resets the connection and the caller sees "connection aborted", not 403.
+    big = {"pad": "x" * 512 * 1024}
+    for _ in range(5):
+        status, body, _ = _call(proxy.url + "/admin/keys", body=big)
+        assert status == 403 and b"refused" in body.lower()
