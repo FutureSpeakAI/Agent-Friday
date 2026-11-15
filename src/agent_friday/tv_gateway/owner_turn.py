@@ -331,8 +331,9 @@ def run(dev: dict, body: dict) -> Iterator[str]:
         cid = bind_seat(cid, requested)
     elif voice:
         cid, default = fast_voice_default(cid, dev)
+    from agent_friday.tv_gateway import tailnet
     turn.device_pairing._receipt("device_turn", dev, watching="owner", provider="owner-agent",
-                                 model=requested, tools_offered=0)
+                                 model=requested, tools_offered=0, via=tailnet.via())
     kind = str((dev or {}).get("kind") or "").strip().lower()
     word = {"tablet": "Tablet", "phone": "Phone", "watch": "Watch"}.get(kind, "Remote")
     shown = requested or (default or {}).get("model") or ""
@@ -392,9 +393,11 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     truth = served(payload, requested, cid)
     if dev is not None:
         from agent_friday.tv_gateway import turn
+        from agent_friday.tv_gateway.tailnet import via as tailnet_via
         turn.device_pairing._receipt("device_turn_served", dev, watching="owner", provider=truth["provider"],
                                      model=truth["model"], requested=truth["requested"] or "",
-                                     seat=truth["seat"], substituted=truth["substituted"])
+                                     seat=truth["seat"], substituted=truth["substituted"],
+                                     via=tailnet_via())
     if asked and asked != requested:
         truth["asked"] = asked                                  # the word the device sent ("opus"), beside the id it meant
     truth["voice"] = bool(voice)

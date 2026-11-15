@@ -203,9 +203,10 @@ def transcribe(dev: dict, pcm: bytes, cleanup: bool = False, *, principal: str =
     finally:
         _BUSY.release()
     _HEARD[str((dev or {}).get("id") or "")] = time.time()
+    from agent_friday.tv_gateway.tailnet import via as _via
     device_pairing._receipt("device_speech", dev, seconds=round(seconds, 1), model=used,
                             on=getattr(asr, "_device", "?"), cleaned=cleaned, speaker=speaker,
-                            ms=int((time.time() - t0) * 1000))
+                            ms=int((time.time() - t0) * 1000), via=_via())
     return {"text": text, "raw": raw if cleaned else None, "cleaned": cleaned, "model": used,
             "ms": int((time.time() - t0) * 1000),
             "on": getattr(asr, "_device", None), "confidence": getattr(asr, "last_confidence", None)}
