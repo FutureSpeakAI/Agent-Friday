@@ -298,6 +298,8 @@ def create_app(tailnet: bool = False) -> Flask:
 
     from agent_friday.tv_gateway import inherit
     inherit.register(app)
+    from agent_friday.tv_gateway import pc_read
+    pc_read.register(app)                    # the owner phone/tablet read door (chats, workspaces, jobs, media)
     return app
 
 

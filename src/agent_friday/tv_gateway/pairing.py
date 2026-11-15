@@ -56,6 +56,12 @@ RIGHT_CARDS = {
         "The TV may send a copy of its channels (small web pages) to this PC and fetch the ones "
         "kept here. The PC only stores them and never runs them. Nothing is added on the TV "
         "without a yes on the TV, and no shared channel gets website access from here."),
+    "pc_read": (
+        "Let this phone or tablet read what is on this PC?",
+        "The device may read your chat list and chats, workspaces, jobs and their journals, and the media "
+        "index on this PC, from home or over your private link. It can only read: it cannot change anything, "
+        "run an action or approve a card. Each kind of reading is listed in the PC's receipts, and removing "
+        "the device here ends it."),
 }
 PAIR_TTL_S = 300
 MAX_STARTS_PER_HOUR = 3
@@ -256,6 +262,8 @@ def _offer_rights(device_id: str) -> list:
     from agent_friday.services import approvals
     out = []
     for right, (title, description) in RIGHT_CARDS.items():
+        if right not in device_pairing.RIGHTS:
+            continue                       # the PC rights (pc_read ...) are asked for by the device that needs them
         card = approvals.create_approval(
             kind=RIGHT_KIND, subject_type="device_right", subject_id="%s:%s" % (device_id, right),
             title=title, description=description, action_description=title,
