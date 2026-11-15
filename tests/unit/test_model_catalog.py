@@ -229,7 +229,7 @@ def test_voice_engines_reported():
     engines = {e["id"]: e for e in cat["voice_engines"]}
     # `auto` is not in the picker (clean-sheet §8.1 A): it is a synonym
     # for local and is still accepted on write, never offered as a choice.
-    assert set(engines) == {"local", "local-gpu", "gemini"}
+    assert set(engines) == {"local", "local-gpu", "gemini", "openai"}
     for e in engines.values():
         assert "label" in e and "available" in e and "short" in e
 

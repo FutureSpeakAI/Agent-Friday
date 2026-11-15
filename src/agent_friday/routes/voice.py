@@ -2574,9 +2574,25 @@ def _resolve_voice_engine(settings=None):
             return {"engine": "gemini", "ws_url": "/ws/live",
                     "label": "Cloud (Gemini Live)", "models_ready": True,
                     "context_reach": _voice_context_reach("gemini")}
+        if engine == "openai":
+            from agent_friday.services import openai_realtime as _orx
+            return {"engine": "openai", "ws_url": "/ws/openai-live",
+                    "label": "Cloud (OpenAI Realtime, %s)" % _orx.MODEL, "models_ready": True,
+                    "per_minute": _orx.per_minute_line(),
+                    "context_reach": _voice_context_reach("gemini")}
         return {"engine": "demo", "ws_url": None,
                 "label": "Text only", "models_ready": False,
                 "context_reach": _voice_context_reach("demo")}
+
+    # Explicit opt-in to OpenAI voice. When it cannot answer, the owner is told why and what is offered;
+    # the other cloud voice is never chosen for them (cloud-voice-providers.md C2).
+    if pref == "openai":
+        from agent_friday.services import openai_live_bridge as _openai_live
+        _no = _openai_live.refusal(settings)
+        if _no is None:
+            return {**_pick("openai"), "reason": "user selected OpenAI voice"}
+        _alt = _pick("local") if local_ok else _pick("demo")
+        return {**_alt, "reason": _no["detail"], "openai_refused": _no}
 
     # Explicit opt-in to cloud.
     if pref == "gemini":
@@ -3635,7 +3651,11 @@ def voice_cloud_switch():
     data = request.get_json(silent=True) or {}
     try:
         from agent_friday.services import local_voice_readiness as _lvr
-        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"))
+        res = _lvr.ask_cloud_switch(source=str(data.get("source") or "settings"),
+                                    engine=str(data.get("engine") or "gemini"))
+        if res.get("not_connected") and data.get("engine") == "openai":
+            return jsonify({"status": "refused", "reason": res.get("reason") or "not_connected",
+                            "message": res.get("message"), **_lvr.panel_status()}), 409
         if res.get("refused"):
             return jsonify({"status": "refused", "reason": res.get("reason"),
                             "message": res.get("message"), **_lvr.panel_status()}), 409
@@ -4940,6 +4960,8 @@ if sock is not None:
     ws_voice_local = _rt_session.traced("voice", "Local voice session")(ws_voice_local)
     sock.route('/ws/voice-local', endpoint='ws_voice_local')(ws_voice_local)
     sock.route('/ws/voice', endpoint='ws_voice')(ws_voice_local)
+    from agent_friday.services import openai_live_bridge as _openai_live
+    _openai_live.register(sock)       # the third voice engine; only reached when the owner chose OpenAI
 
     @sock.route('/ws/live')
     @_rt_session.traced("voice", "Live voice session")
