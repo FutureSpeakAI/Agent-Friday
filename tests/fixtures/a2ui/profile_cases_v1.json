@@ -1,0 +1,2405 @@
+{
+ "catalog": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+ "format": 1,
+ "good": [
+  [
+   {
+    "createSurface": {
+     "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+     "components": [
+      {
+       "children": [
+        "t1",
+        "b1",
+        "s1"
+       ],
+       "component": "column",
+       "id": "root"
+      },
+      {
+       "component": "text_block",
+       "id": "t1",
+       "text": "Hello"
+      },
+      {
+       "action": {
+        "event": {
+         "name": "open_run"
+        }
+       },
+       "component": "verb_button",
+       "id": "b1",
+       "label": "Open the run",
+       "verb": "open_run"
+      },
+      {
+       "component": "approval_slot",
+       "filter": {
+        "subject": "run:media-1"
+       },
+       "id": "s1"
+      }
+     ],
+     "sendDataModel": false,
+     "surfaceId": "s1"
+    },
+    "version": "1.0"
+   }
+  ]
+ ],
+ "hostile": [
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "action": {
+         "event": {
+          "name": "approve"
+         }
+        },
+        "child": "x",
+        "component": "Button",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "basic-catalog Button labelled Approve",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [],
+        "component": "Card",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "unknown component Card",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "Modal",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "Modal",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "Tabs",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "Tabs",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "TextField",
+        "id": "root",
+        "label": "Card number"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "TextField (card number)",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "CheckBox",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "CheckBox",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "Slider",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "Slider (cap amount)",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "ChoicePicker",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "ChoicePicker",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "DateTimeInput",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "DateTimeInput",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "Image",
+        "id": "root",
+        "url": "https://x.example/a.png?d=secret"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "remote Image",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "McpApp",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "McpApp",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "@catalogId": "https://a2ui.org/specification/v1_0/basic_catalog.json",
+        "component": "text_block",
+        "id": "root",
+        "text": "x"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "non-Friday component catalog",
+   "rule": "V3"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://a2ui.org/specification/v1_0/basic_catalog.json",
+      "components": [
+       {
+        "component": "text_block",
+        "id": "root",
+        "text": "x"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "basic catalog as the surface default",
+   "rule": "V3"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "text_block",
+        "id": "root",
+        "text": "x"
+       }
+      ],
+      "sendDataModel": true,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "sendDataModel true",
+   "rule": "V7"
+  },
+  {
+   "document": [
+    {
+     "callRendererFunction": {
+      "callFunction": {
+       "@call": "spend"
+      },
+      "functionCallId": "f"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "callAgentFunction to a spend function (wrong direction)",
+   "rule": "V2"
+  },
+  {
+   "document": [
+    {
+     "agentFunctionResponse": {
+      "functionCallId": "f",
+      "value": 1
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "agentFunctionResponse",
+   "rule": "V2"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": {
+         "@call": "openUrl",
+         "args": {
+          "value": "x"
+         }
+        }
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "openUrl function",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": {
+         "callFunction": {
+          "@call": "formatString"
+         }
+        }
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "callFunction in a component",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": {
+         "@call": "formatString",
+         "args": {},
+         "catalogId": "https://a2ui.org/specification/v1_0/basic_catalog.json"
+        }
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "cross-catalog @call",
+   "rule": "V3"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "go to https://pay.example/checkout"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "URL in text",
+   "rule": "V8"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "javascript:alert(1)"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "javascript URL in text",
+   "rule": "V8"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "see pay.example/now"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "bare domain with a path",
+   "rule": "V8"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "n1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "nav_link",
+        "destination": "https://x.example",
+        "id": "n1",
+        "label": "Go"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "URL in a nav destination",
+   "rule": "V8"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "s1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "approval_id": "ap-1",
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s1"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "approval_slot with a literal approval id",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "s1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s1",
+        "text": "Allow it?"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "approval_slot with text",
+   "rule": "V4"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "s1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:other"
+        },
+        "id": "s1"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "approval_slot with another subject",
+   "rule": "V12"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "s1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "@accessibility": {
+         "label": "Card"
+        },
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s1"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "approval_slot with an accessibility label",
+   "rule": "V12"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "s0",
+         "s1",
+         "s2"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s0"
+       },
+       {
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s1"
+       },
+       {
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s2"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "three approval_slots",
+   "rule": "V5"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "s1"
+        ],
+        "component": "row",
+        "id": "root"
+       },
+       {
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s1"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "approval_slot inside a row",
+   "rule": "V5"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": {
+         "componentId": "s1",
+         "path": "/rows"
+        },
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "approval_slot",
+        "filter": {
+         "subject": "run:media-1"
+        },
+        "id": "s1"
+       }
+      ],
+      "dataModel": {
+       "rows": [
+        1
+       ]
+      },
+      "metadata": {
+       "friday": {
+        "bindings": {
+         "r": {
+          "path": "/rows"
+         }
+        }
+       }
+      },
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "approval_slot inside a template",
+   "rule": "V5"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "h"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "status_block",
+        "id": "h",
+        "title": "Friday needs you"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "look-alike card: heading Friday needs you",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "Friday wants to spend $20 on the media crew"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "look-alike card text: wants to spend",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "Waiting for you"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "look-alike card text: waiting for you",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "Hello"
+       },
+       {
+        "component": "text_block",
+        "id": "t2",
+        "text": "Hello"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "unreachable component",
+   "rule": "V5"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "root"
+        ],
+        "component": "column",
+        "id": "root"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "cycle",
+   "rule": "V5"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "Hello"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "no root",
+   "rule": "V5"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": "Hello"
+       }
+      ],
+      "dataModel": {
+       "x": 1
+      },
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "model-authored data",
+   "rule": "V7"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "component": "text_block",
+        "id": "t1",
+        "text": {
+         "@path": "/secrets/key"
+        }
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "path outside a declared binding",
+   "rule": "V7"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "@accessibility": {
+         "live": "assertive"
+        },
+        "component": "text_block",
+        "id": "t1",
+        "text": "Hello"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "accessibility live assertive",
+   "rule": "V13"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "@accessibility": {
+         "hidden": true
+        },
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open the run",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "hidden verb_button",
+   "rule": "V13"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "t1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "@accessibility": {
+         "label": "Approve"
+        },
+        "component": "text_block",
+        "id": "t1",
+        "text": "Hello"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "accessibility label says Approve",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "approval_decide"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "approval_decide"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb approval_decide",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "connection_grant"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "connection_grant"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb connection_grant",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "cap_raise"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "cap_raise"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb cap_raise",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "purchase_credits"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "purchase_credits"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb purchase_credits",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "key_write"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "key_write"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb key_write",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "set_setting"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "set_setting"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb set_setting",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "send_mail"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "send_mail"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb send_mail",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "publish_site"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "publish_site"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb publish_site",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "device_set_right"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "device_set_right"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb device_set_right",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "owner_toggle"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "owner_toggle"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb owner_toggle",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "by_design_toggle"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "by_design_toggle"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb by_design_toggle",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "loud_thing"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "loud_thing"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button bound to banned verb loud_thing",
+   "rule": "V10"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "invented"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open",
+        "verb": "invented"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button with an unknown verb",
+   "rule": "V9"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "approve"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open the run",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button whose event name differs from its verb",
+   "rule": "V9"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "context": {
+           "amount": "20"
+          },
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Open the run",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "verb_button with an unlisted context key",
+   "rule": "V9"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Confirm",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Confirm'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Pay $4.99",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Pay $4.99'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Allow",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Allow'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Approve",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Approve'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Аpprove",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Аpprove'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "A p p r o v e",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'A p p r o v e'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Ap​pro‍ve",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Ap\\u200bpro\\u200dve'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Aprobar",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Aprobar'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Autoriser",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Autoriser'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Bestätigen",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Bestätigen'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Ａllow",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Ａllow'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Buy now",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Buy now'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Top up",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Top up'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Sign in",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Sign in'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Grant access",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Grant access'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Unlock",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Unlock'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Enter your PIN",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Enter your PIN'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "承認",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label '承認'",
+   "rule": "V11"
+  },
+  {
+   "document": [
+    {
+     "createSurface": {
+      "catalogId": "https://agentfriday.ai/a2ui/catalogs/core/v1",
+      "components": [
+       {
+        "children": [
+         "b1"
+        ],
+        "component": "column",
+        "id": "root"
+       },
+       {
+        "action": {
+         "event": {
+          "name": "open_run"
+         }
+        },
+        "component": "verb_button",
+        "id": "b1",
+        "label": "Paу",
+        "verb": "open_run"
+       }
+      ],
+      "sendDataModel": false,
+      "surfaceId": "s1"
+     },
+     "version": "1.0"
+    }
+   ],
+   "name": "reserved label 'Paу'",
+   "rule": "V11"
+  }
+ ],
+ "model_authored": true,
+ "subject": "run:media-1",
+ "verbs": {
+  "approval_decide": {
+   "args": [
+    "id"
+   ],
+   "effects": [
+    "decides_card"
+   ],
+   "gate_class": "outward"
+  },
+  "by_design_toggle": {
+   "args": [],
+   "effects": [],
+   "gate_class": "by_design"
+  },
+  "cap_raise": {
+   "args": [],
+   "effects": [
+    "cap_raise"
+   ],
+   "gate_class": "outward"
+  },
+  "connection_grant": {
+   "args": [],
+   "effects": [
+    "grants"
+   ],
+   "gate_class": "outward"
+  },
+  "device_set_right": {
+   "args": [],
+   "effects": [
+    "set_right"
+   ],
+   "gate_class": "outward"
+  },
+  "key_write": {
+   "args": [],
+   "effects": [
+    "key_write"
+   ],
+   "gate_class": "outward"
+  },
+  "loud_thing": {
+   "args": [],
+   "effects": [],
+   "gate_class": "loud"
+  },
+  "open_run": {
+   "args": [
+    "run_id"
+   ],
+   "effects": [],
+   "gate_class": "internal"
+  },
+  "owner_toggle": {
+   "args": [],
+   "effects": [],
+   "gate_class": "owner_only"
+  },
+  "pause_crew": {
+   "args": [],
+   "effects": [],
+   "gate_class": "internal"
+  },
+  "publish_site": {
+   "args": [],
+   "effects": [
+    "publishes"
+   ],
+   "gate_class": "outward"
+  },
+  "purchase_credits": {
+   "args": [],
+   "effects": [
+    "purchase"
+   ],
+   "gate_class": "outward"
+  },
+  "send_mail": {
+   "args": [],
+   "effects": [
+    "sends_as_owner"
+   ],
+   "gate_class": "outward"
+  },
+  "set_setting": {
+   "args": [],
+   "effects": [
+    "set_setting"
+   ],
+   "gate_class": "outward"
+  }
+ }
+}

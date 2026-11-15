@@ -1542,7 +1542,7 @@ def api_setup_complete():
 #: other than what was written -- a control that reports success and does
 #: something else. Rejecting the write is how the setting keeps its meaning.
 _VOICE_ENUMS = {
-    "voice_engine": ("local", "local-gpu", "gemini", "auto"),
+    "voice_engine": ("local", "local-gpu", "gemini", "openai", "auto"),
     "local_voice_tts_engine": ("piper", "kokoro"),
     # Clean-sheet §8.1: per-stage GPU policy, read by voice_manifest.
     "voice_ear_gpu": ("never", "preferred", "if_free", "required"),
@@ -1612,7 +1612,7 @@ def _check_cloud_voice_switch(new_settings):
     except Exception:
         # Fail CLOSED: a gate that cannot run must not let voice move to the cloud unasked.
         eng = str((new_settings or {}).get("voice_engine") or "").strip().lower() if isinstance(new_settings, dict) else ""
-        if eng in ("gemini", "gemini-live"):
+        if eng in ("gemini", "gemini-live", "openai"):
             return {"http": 409, "body": {"status": "error",
                                           "message": "Cloud voice could not be asked about just now, so nothing "
                                                      "was changed. Try again in Settings, Voice."}}
