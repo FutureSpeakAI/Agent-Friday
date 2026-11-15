@@ -37,7 +37,7 @@ _NOT_LAN = re.compile(r"pia|wintun|openvpn|tailscale|wireguard|vpn|tap-|vetherne
                       r"loopback|bluetooth|wsl|docker|utun|zerotier|tun\d", re.I)
 
 _state: dict = {"server": None, "address": None, "port": None, "name": None}
-_lock = threading.Lock()
+_lock = threading.RLock()                # serve() reads info() while holding it
 
 
 # ── who is on the tailnet ────────────────────────────────────────────────────

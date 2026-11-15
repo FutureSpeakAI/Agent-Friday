@@ -174,7 +174,9 @@ def test_a_peer_that_is_not_on_the_tailnet_is_refused_before_anything(tn, peer):
     dev = phone()
     r = tn.post("/tv/v1/session/challenge", environ_overrides={"REMOTE_ADDR": peer})
     assert r.status_code == 403 and r.get_json()["code"] == "not_tailnet"
-    assert session(tn, dev, REMOTE_ADDR=peer).status_code == 403
+    r = tn.post("/tv/v1/session/open", environ_overrides={"REMOTE_ADDR": peer},
+                json={"device_id": dev.id, "nonce": "x", "sig": "AA=="})
+    assert r.status_code == 403 and r.get_json()["code"] == "not_tailnet"
 
 
 def test_a_tailnet_peer_with_no_session_gets_nothing(tn):
