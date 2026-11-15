@@ -277,3 +277,25 @@ def test_the_voice_engine_list_always_has_an_openai_row_that_says_what_to_do(mon
 def orx_mod():
     from agent_friday.services import openai_realtime
     return openai_realtime
+
+
+def test_an_answer_that_never_starts_is_a_stall_and_a_started_one_is_not(ol):
+    t = [0.0]
+    b, _, _ = _bridge(ol, clock=lambda: t[0])
+    assert not b.stalled()                                    # nothing asked yet
+    b.from_upstream({"type": "conversation.item.input_audio_transcription.completed", "transcript": "hi"})
+    t[0] = 10.0
+    assert not b.stalled()
+    t[0] = ol.RESPONSE_STALL_S + 1.0
+    assert b.stalled()                                        # a half-open socket: asked, nothing came back
+    b.from_upstream({"type": "response.output_audio_transcript.delta", "delta": "Hello", "item_id": "i1"})
+    assert not b.stalled()                                    # the answer started, so the socket is alive
+
+
+def test_a_stalled_call_ends_with_a_visible_sentence_and_an_offer_never_a_silent_switch(ol):
+    b, up, out = _bridge(ol, settings={"voice_openai_auto_failover": True}, clock=lambda: 0.0)
+    b.stall()
+    err = [o for o in out if o["type"] == "error"][0]
+    assert err["error"] == "stalled" and "OpenAI voice stopped answering" in err["detail"]
+    assert err["offer"]["automatic"] is False and "Switch to Gemini Live for this press?" in err["detail"]
+    assert b.done.is_set() and ol._BLOCKED_UNTIL[0] == 0.0    # one stall does not lock OpenAI out
