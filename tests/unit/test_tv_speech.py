@@ -90,6 +90,7 @@ def test_a_transcript_comes_back_and_the_receipt_has_no_words(asr):
 def test_without_the_model_installed_it_is_a_503_naming_where_to_install(monkeypatch):
     from agent_friday.services.feature_models import FeatureModelMissing
     monkeypatch.setattr(speech, "_ASR", FakeASR(fail=FeatureModelMissing("dictation", [], "missing")))
+    monkeypatch.setitem(speech._ASRS, "small", FakeASR(fail=FeatureModelMissing("dictation", [], "missing")))
     _, dev = _dev()
     with pytest.raises(speech.SpeechRefused) as e:
         speech.transcribe(dev, ONE_SECOND, principal="family")
