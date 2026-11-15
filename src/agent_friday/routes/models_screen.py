@@ -175,6 +175,19 @@ def catalog():
         return api_error(e, "Couldn't build the model catalogue", shape="bare")
 
 
+@models_screen_bp.route("/api/models/slate", methods=["GET"])
+@login_required
+def slate():
+    """The model slate every device reads (services/model_slate): the desktop picker's models, each
+    with where it runs, whether its key is present, warm or cold, and whether it can serve now."""
+    try:
+        from agent_friday.services import model_slate
+        return jsonify(public_result(dict(model_slate.slate(), status="ok"),
+                                     "Couldn't read the model slate"))
+    except Exception as e:
+        return api_error(e, "Couldn't read the model slate", shape="bare")
+
+
 @models_screen_bp.route("/api/models/whatif", methods=["POST"])
 @login_required
 def whatif():
