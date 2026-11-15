@@ -48,8 +48,8 @@ class _Bucket:
 _BUCKET = _Bucket()
 
 
-def _refuse(status: int, reason: str) -> Response:
-    resp = jsonify({"ok": False, "error": reason})
+def _refuse(status: int, reason: str, **extra) -> Response:
+    resp = jsonify({"ok": False, "error": reason, **extra})
     resp.status_code = status
     return resp
 
@@ -74,7 +74,9 @@ def create_app() -> Flask:
             return None
         dev = device_pairing.check_session(_bearer())
         if dev is None:
-            return _refuse(401, "device session required")
+            # NOT "unpaired": the device may be paired fine and only lack a live session (a restart, a
+            # day gone by). Open a new one (challenge, then open); only a refusal THERE means unpaired.
+            return _refuse(401, "device session required", code="session_required", action="open_session")
         g.device = dev
         return None
 
@@ -111,7 +113,7 @@ def create_app() -> Flask:
         token = device_pairing.open_session(str(body.get("device_id", "")),
                                             str(body.get("nonce", "")), sig)
         if token is None:
-            return _refuse(401, "not paired, or the challenge was wrong or used")
+            return _refuse(401, "not paired, or the challenge was wrong or used", code="not_paired_or_bad_challenge")
         return jsonify({"ok": True, "session": token, "ttl_s": device_pairing.SESSION_TTL_S})
 
     @app.post("/tv/v1/pair/start")
@@ -157,7 +159,7 @@ def create_app() -> Flask:
             events = turn.run(g.device, request.get_json(silent=True) or {}, principal)
             first = next(events, None)
         except turn.TurnRefused as e:
-            return _refuse(e.status, str(e))
+            return _refuse(e.status, str(e), **({"code": e.code} if e.code else {}), **e.extra)
         except Exception as e:                       # the routing mode, a local-only run, a provider down:
             _log.info("TV turn not started: %s", type(e).__name__)
             return _refuse(503, "this computer can't answer that right now")
@@ -174,6 +176,30 @@ def create_app() -> Flask:
 
         return Response(stream_with_context(stream()), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    @app.get("/tv/v1/models")
+    def models_slate():
+        """The PC's whole chat slate for this device (tv_gateway/models): same source as the desktop
+        selector, scoped by the device's rights, each model with whether it can be used now and why not."""
+        from agent_friday.tv_gateway import models, owner_turn
+        try:
+            cat = models.raw_catalog()
+            slate = models.rows(g.device, cat)
+        except Exception as e:
+            _log.warning("model slate failed: %s", type(e).__name__)
+            return _refuse(503, "this computer could not list its models right now", code="slate_unavailable")
+        owner = owner_turn.is_owner_device(g.device)
+        q = (request.args.get("q") or "").strip().lower()
+        prov = (request.args.get("provider") or "").strip().lower()
+        shown = [r for r in slate if (not q or q in (r["id"] + " " + r["name"]).lower())
+                 and (not prov or prov == str(r["provider"]).lower())]
+        return jsonify({"ok": True, "scope": "owner" if owner else "household", "count": len(shown),
+                        "total": len(slate), "selected": next((r["id"] for r in slate if r["selected"]), None),
+                        "voice_default": next((r["id"] for r in slate if r["available"] and r["voice"]["suitable"]
+                                               and r["speed"] == "fast" and r["kind"] == "cloud"), None),
+                        "providers": [{"name": p.get("name"), "label": p.get("label"),
+                                       "available": p.get("available")} for p in cat.get("providers") or []],
+                        "models": shown})
 
     @app.get("/tv/v1/stt")
     def stt_ready():
