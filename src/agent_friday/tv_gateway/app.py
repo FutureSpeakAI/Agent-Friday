@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import threading
 import time
 from collections import defaultdict, deque
@@ -59,15 +60,25 @@ def _bearer() -> str:
     return h[len(AUTH_SCHEME):].strip() if h.startswith(AUTH_SCHEME) else ""
 
 
-def create_app() -> Flask:
+def create_app(tailnet: bool = False) -> Flask:
+    """``tailnet=True`` is the second listener on the Tailscale address (tv_gateway/tailnet): same door,
+    same device-session checks, but no pairing and only tailnet peers."""
     app = Flask("agent_friday.tv_gateway")
     app.config["SESSION_COOKIE_NAME"] = "__tv_gateway_unused"
+    app.config["TAILNET"] = bool(tailnet)
 
     @app.before_request
     def _gate():
         if any(request.headers.get(h) for h in MAIN_APP_HEADERS):
             return _refuse(401, "main-app credentials are not accepted here")
         g.device = None
+        g.via = "tailnet" if tailnet else "lan"
+        if tailnet:
+            from agent_friday.tv_gateway import tailnet as tn
+            if request.path.startswith("/tv/v1/pair/"):
+                return _refuse(403, "pairing is only done from your home network", code="pairing_lan_only")
+            if not tn.is_tailnet_address(request.remote_addr or ""):
+                return _refuse(403, "this door is only for devices on your tailnet", code="not_tailnet")
         if request.path in OPEN_PATHS:
             if not _BUCKET.allow(request.remote_addr or "?"):
                 return _refuse(429, "slow down")
@@ -114,7 +125,9 @@ def create_app() -> Flask:
                                             str(body.get("nonce", "")), sig)
         if token is None:
             return _refuse(401, "not paired, or the challenge was wrong or used", code="not_paired_or_bad_challenge")
-        return jsonify({"ok": True, "session": token, "ttl_s": device_pairing.SESSION_TTL_S})
+        from agent_friday.tv_gateway import tailnet as tn
+        return jsonify({"ok": True, "session": token, "ttl_s": device_pairing.SESSION_TTL_S,
+                        "tailnet": tn.info()})                  # where to fail over to away from home, or null
 
     @app.post("/tv/v1/pair/start")
     def pair_start():
@@ -279,8 +292,9 @@ def create_app() -> Flask:
     @app.get("/tv/v1/whoami")
     def whoami():
         dev = g.device
+        from agent_friday.tv_gateway import tailnet as tn
         return jsonify({"ok": True, "device": device_pairing.public_view(dev),
-                        "principal": device_pairing.principal(dev)})
+                        "principal": device_pairing.principal(dev), "via": tn.via(), "tailnet": tn.info()})
 
     from agent_friday.tv_gateway import inherit
     inherit.register(app)
@@ -342,9 +356,14 @@ def stop() -> None:
 
 def lan_address() -> Optional[str]:
     """This PC's IPv4 on the home network: the source address of a route to a
-    private address. No packet is sent (UDP connect only picks a route)."""
+    private address. Chosen from the adapters (tv_gateway/tailnet.lan_address), so a VPN that takes the
+    default route (PIA) cannot make its tunnel address "the LAN". Only when the adapters cannot be listed
+    does it fall back to the route's source address (no packet is sent: UDP connect only picks a route)."""
     import ipaddress
     import socket
+    from agent_friday.tv_gateway import tailnet as tn
+    if tn._nics():
+        return tn.lan_address()
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("192.168.255.255", 9))
@@ -377,4 +396,12 @@ def boot() -> Optional[dict]:
         _DISCOVERY = discovery.Responder(host, info["port"], tls.spki_sha256()).start()
     except OSError as e:
         _log.warning("TV discovery did not start: %s", e)
+    # Off-LAN reach for already-paired devices: a second listener on the Tailscale address only (never
+    # pairing, never discovery), opened now if Tailscale is up and followed if it comes up later.
+    from agent_friday.tv_gateway import tailnet
+    tn_info = tailnet.ensure(info["port"])
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        tailnet.watch(info["port"])
+    if tn_info:
+        info = dict(info, tailnet=tn_info)
     return info

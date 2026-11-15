@@ -329,5 +329,6 @@ def run(dev: dict, body: dict, principal: str) -> Iterator[str]:
 
 
 def _row(dev: dict, principal: str, provider: str, model, tools: list) -> None:
+    from agent_friday.tv_gateway import tailnet
     device_pairing._receipt("device_turn", dev, watching=principal, provider=provider,
-                            model=str(model or ""), tools_offered=len(tools))
+                            model=str(model or ""), tools_offered=len(tools), via=tailnet.via())
