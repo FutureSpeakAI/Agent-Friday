@@ -214,6 +214,9 @@ def create_app(tailnet: bool = False) -> Flask:
                                        "available": p.get("available")} for p in cat.get("providers") or []],
                         "models": shown})
 
+    from agent_friday.tv_gateway import voices as _voices
+    _voices.register(app, _refuse)               # GET /tv/v1/voices, POST /tv/v1/voice/switch
+
     @app.get("/tv/v1/stt")
     def stt_ready():
         """The TV's probe: is dictation offered here, and with which model."""
