@@ -308,3 +308,99 @@ def test_a_right_without_a_key_cannot_approve(client):
     body["devices"][dev.id].pop("approval_spki")
     device_pairing._save(body)
     assert not device_pairing.can_approve(device_pairing.get_device(dev.id))
+
+
+def test_the_same_key_and_choice_again_after_its_card_was_replaced_raises_a_new_card(client):
+    dev = paired()
+    first_key = new_key()
+    register(client, dev, spki=first_key)
+    register(client, dev)                                   # a second key replaces the first card
+    answer = register(client, dev, spki=first_key).get_json()
+    assert answer["status"] == "staged" and len(cards()) == 1
+    press(cards()[0])
+    assert device_pairing.approval_key(device_pairing.get_device(dev.id)).key_id == answer["key_id"]
+
+
+def test_the_same_key_after_the_owner_declined_its_card_can_be_offered_again(client):
+    dev = paired()
+    spki = new_key()
+    register(client, dev, spki=spki)
+    ap.decide(cards()[0]["approval_id"], "deny", decided_by="owner")
+    register(client, dev, spki=spki)
+    assert len(cards()) == 1
+
+
+def test_the_same_key_after_the_right_was_withdrawn_can_be_granted_again(client):
+    dev = paired()
+    spki = new_key()
+    register(client, dev, spki=spki)
+    press(cards()[0])
+    device_pairing.set_right(dev.id, "pc_approve", False)
+    register(client, dev, spki=spki)
+    press(cards()[0])
+    assert device_pairing.can_approve(device_pairing.get_device(dev.id))
+
+
+def test_the_fingerprint_choice_flipped_back_raises_a_card(client):
+    dev = paired()
+    spki = new_key()
+    for choice in (True, False, True):
+        register(client, dev, spki=spki, biometric=choice)
+    [card] = cards()
+    assert card["payload"]["biometric"] is True
+
+
+def test_an_older_key_registering_late_raises_no_card(client):
+    dev = paired()
+    older = new_key()
+    register(client, dev, spki=older)
+    newer_id = register(client, dev).get_json()["key_id"]
+    late = device_pairing.spki_id(device_pairing.canonical_spki(older))
+    assert pairing.offer_right(dev.id, "pc_approve", key_id=late, biometric=True, detail="x") is None
+    [card] = cards()
+    assert card["payload"]["key_id"] == newer_id
+
+
+def test_removing_the_device_takes_its_pending_card_away(client):
+    dev = paired()
+    register(client, dev)
+    device_pairing.remove_device(dev.id)
+    assert cards() == []
+
+
+def test_a_registered_key_always_has_a_card_on_the_screen(client, monkeypatch):
+    dev = paired()
+    register(client, dev)
+    assert pairing.key_card_in_step(dev.id)
+    ap.expire_matching(lambda rec: rec.get("kind") == pairing.RIGHT_KIND, "test", "gone")
+    assert not pairing.key_card_in_step(dev.id)
+    monkeypatch.setattr(pairing, "offer_right", lambda *a, **k: None)
+    answer = register(client, dev)
+    assert answer.status_code == 503 and answer.get_json()["code"] == "card_not_raised"
+    assert device_pairing.pending_approval_key(dev.id) is None
+
+
+def test_the_services_pairing_module_does_not_import_the_gateway():
+    import pathlib
+    source = pathlib.Path(device_pairing.__file__).read_text(encoding="utf-8")
+    assert "tv_gateway import" not in source and "import agent_friday.tv_gateway" not in source
+
+
+def test_two_registrations_at_once_leave_one_live_card(client):
+    import threading
+    for _ in range(8):
+        dev = paired()
+        keys = [new_key(), new_key()]
+        barrier = threading.Barrier(2)
+        answers = []
+
+        def go(spki):
+            barrier.wait()
+            answers.append(register(client, dev, spki=spki))
+        threads = [threading.Thread(target=go, args=(k,)) for k in keys]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        staged = device_pairing.pending_approval_key(dev.id)
+        live = [c for c in cards() if c["payload"]["device_id"] == dev.id]
+        assert all(a.status_code == 200 for a in answers)
+        assert len(live) == 1 and live[0]["payload"]["key_id"] == staged.key_id
