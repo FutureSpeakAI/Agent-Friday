@@ -59,7 +59,10 @@ def register(app: Flask) -> None:
             device_pairing.expire_pending_key_cards(dev["id"], "the active key was registered again")
             return {"ok": True, "status": stage.value, "key_id": key_id, "biometric": biometric, "attested": False}
         pairing.offer_right(dev["id"], device_pairing.APPROVAL_RIGHT, key_id=key_id, biometric=biometric,
-                           detail=ASKED[biometric])
+                            detail=ASKED[biometric])
+        if not pairing.key_card_in_step(dev["id"]):
+            device_pairing.clear_pending_key(dev["id"])
+            return refuse(503, "the PC could not raise its card; try again", code="card_not_raised")
         device_pairing._receipt("device_approval_key_staged", dev, key_id=key_id, biometric=biometric,
                                 via=tailnet.via())
         return {"ok": True, "status": stage.value, "key_id": key_id, "biometric": biometric, "attested": False,

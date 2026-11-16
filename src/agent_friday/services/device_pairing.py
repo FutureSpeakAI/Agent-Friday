@@ -248,6 +248,7 @@ def set_right(device_id: str, right: str, granted: bool) -> Optional[dict]:
 # ── the approval key (pc_approve) ───────────────────────────────────────────
 
 APPROVAL_RIGHT = "pc_approve"
+RIGHT_CARD_KIND = "device_right"      # the kind of the screen-only card that grants a wider right (tv_gateway/pairing)
 APPROVAL_FIELDS = ("approval_spki", "approval_biometric", "approval_attested", "approval_fail_count")
 
 
@@ -338,16 +339,24 @@ def can_approve(dev: Optional[dict]) -> bool:
     return bool(dev) and has_right(dev, APPROVAL_RIGHT) and approval_key(dev) is not None
 
 
+def clear_pending_key(device_id: str) -> None:
+    """Drop a staged key that has no card to press. Guarded by test_a_staged_key_always_has_a_card_on_the_screen."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is not None and dev.pop("approval_pending", None) is not None:
+            _save(body)
+
+
 def expire_pending_key_cards(device_id: str, note: str) -> int:
     """Take the device's unpressed pc_approve key cards off the screen (never approves one). Guarded by
     test_a_new_key_replaces_the_pending_card, test_the_active_key_registered_again_takes_a_pending_card_away and
     test_withdrawing_the_right_takes_its_pending_card_away."""
     from agent_friday.services import approvals
-    from agent_friday.tv_gateway.pairing import RIGHT_KIND
 
     def key_card(rec: dict) -> bool:
         payload = rec.get("payload") or {}
-        return (rec.get("kind") == RIGHT_KIND and payload.get("device_id") == str(device_id)
+        return (rec.get("kind") == RIGHT_CARD_KIND and payload.get("device_id") == str(device_id)
                 and payload.get("right") == APPROVAL_RIGHT and "key_id" in payload)
     return approvals.expire_matching(key_card, "tv_gateway", note)
 
@@ -398,7 +407,9 @@ def remove_device(device_id: str) -> bool:
             if did == device_id:
                 _SESSIONS.pop(h, None)
         _persist_sessions()
-        return gone
+    if gone:
+        expire_pending_key_cards(device_id, "the device was removed")
+    return gone
 
 
 def stop_all() -> int:
