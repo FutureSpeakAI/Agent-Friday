@@ -11,7 +11,7 @@ test.use({ viewport: { width: 1440, height: 900 } });
 const CAP = '[data-openai-voice-cap="1"] input';
 
 async function savedCap(page: Page) {
-  return page.evaluate(async () => (await (await (window as any).apiFetch('/api/settings')).json()).voice_openai_monthly_cap_usd);
+  return page.evaluate(async () => (await (await (window as any).apiFetch('/api/settings')).json()).settings.voice_openai_monthly_cap_usd);
 }
 
 async function openVoice(page: Page) {
