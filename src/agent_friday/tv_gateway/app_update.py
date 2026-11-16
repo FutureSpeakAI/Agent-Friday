@@ -21,8 +21,10 @@ bad name or hash: ``test_no_record_means_no_apk_even_with_files_in_the_folder``,
 ``test_a_record_that_is_not_a_clear_acceptance_serves_nothing``; changed bytes:
 ``test_a_build_changed_after_acceptance_is_refused`` and ``test_a_same_size_swap_with_the_same_mtime_is_refused``;
 only an owner-bound phone or tablet: ``test_only_an_owner_phone_or_tablet_is_answered``; Range and If-Range:
-``test_a_range_resumes_and_is_not_a_second_download`` and ``test_if_range_with_a_stale_validator_sends_the_whole_file``; one receipt per download, not per resumed piece:
-``test_a_range_resumes_and_is_not_a_second_download``.
+``test_a_range_resumes_and_is_not_a_second_download`` and
+``test_if_range_with_a_stale_validator_sends_the_whole_file``; one receipt per download that starts at byte 0 (a whole
+file, or a range from 0), none for a resumed piece: ``test_a_range_resumes_and_is_not_a_second_download``,
+``test_a_range_from_byte_zero_is_a_download`` and ``test_a_stale_if_range_whole_file_is_a_download``.
 """
 from __future__ import annotations
 
@@ -137,6 +139,11 @@ def _audit(what: str, build: AcceptedBuild) -> None:
                             sha256=build.sha256, via=tailnet.via())
 
 
+def _starts_at_byte_zero(resp: Response) -> bool:
+    """A download starts when the bytes sent begin at the first byte: a whole 200, or a 206 from byte 0."""
+    return resp.status_code == 200 or resp.headers.get("Content-Range", "").startswith("bytes 0-")
+
+
 def register(app: Flask) -> None:
     @app.get("/tv/v1/app/latest")
     def app_latest():
@@ -161,10 +168,10 @@ def register(app: Flask) -> None:
         build, refusal = accepted_build()
         if refusal is not None:
             return refusal
-        if not request.headers.get("Range"):
-            _audit("device_app_download", build)
         resp = send_file(build.path, mimetype="application/vnd.android.package-archive", conditional=True,
                          as_attachment=True, download_name=build.file, max_age=0)
+        if _starts_at_byte_zero(resp):
+            _audit("device_app_download", build)
         resp.headers["X-Friday-SHA256"] = build.sha256
         resp.headers["X-Friday-Version"] = build.version
         resp.headers["Cache-Control"] = "no-store"

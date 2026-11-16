@@ -174,6 +174,19 @@ def test_if_range_with_a_stale_validator_sends_the_whole_file(client, apks):
     assert response.status_code == 200 and response.data == BYTES
 
 
+def test_a_range_from_byte_zero_is_a_download(client, apks):
+    accept(apks)
+    response = get(client, paired(), "/tv/v1/app/apk", headers={"Range": "bytes=0-"})
+    assert response.data == BYTES
+    assert len(rows("device_app_download")) == 1
+
+
+def test_a_stale_if_range_whole_file_is_a_download(client, apks):
+    accept(apks)
+    get(client, paired(), "/tv/v1/app/apk", headers={"Range": "bytes=100-199", "If-Range": '"stale"'})
+    assert len(rows("device_app_download")) == 1
+
+
 def test_the_named_file_must_exist(client, apks):
     accept(apks)
     (apks / "agent-friday-0.12.0-accept-abc1234.apk").unlink()
