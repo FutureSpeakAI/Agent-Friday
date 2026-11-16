@@ -233,3 +233,12 @@ def test_a_turn_with_no_conversation_id_sends_none_so_it_never_lands_in_an_exist
     client.post("/tv/v1/messages", headers=auth(open_session(client, paired())),
                 json={"messages": [{"role": "user", "content": "hello"}]})
     assert seen == [{"message": "hello"}] and len(store["c1"]) == 2        # the existing chat is untouched
+
+
+def test_a_page_too_big_for_a_phone_is_refused_not_sent(client, desk, monkeypatch):
+    monkeypatch.setattr(pc_read, "MAX_JSON", 2000)
+    desk.chats = [{"id": "c%d" % i, "title": "t" * 200, "last_active_at": 1.0} for i in range(30)]
+    r = get(client, paired(), "/tv/v1/chats")
+    assert r.status_code == 413 and r.get_json()["code"] == "too_big"
+    desk.msgs["c1"] = [{"id": "m%d" % i, "content": "x" * 200} for i in range(1, 30)]
+    assert get(client, paired(), "/tv/v1/chats/c1/messages?after=m1").status_code == 413

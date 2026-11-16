@@ -87,19 +87,53 @@ def _desk(path: str, params: Optional[dict] = None) -> Tuple[int, bytes, str]:
     return r.status_code, r.get_data(), r.headers.get("Content-Type", "application/json")
 
 
+CHATS_PAGE, CHATS_PAGE_MAX = 30, 100
+MESSAGES_PAGE, MESSAGES_PAGE_MAX = 200, 500
+
+
+def _unavailable(area: str, e: Optional[Exception] = None) -> Response:
+    if e is not None:
+        _log.warning("pc_read %s failed: %s", area, type(e).__name__)
+    return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
+
+
+def _stamped(resp: Response) -> Response:
+    resp.headers["X-Friday-As-Of"] = str(int(time.time()))
+    return resp
+
+
 def _json_from_desk(path: str, params: Optional[dict] = None, area: str = "") -> Response:
     try:
         status, body, ctype = _desk(path, params)
     except Exception as e:
-        _log.warning("pc_read %s failed: %s", area, type(e).__name__)
-        return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
+        return _unavailable(area, e)
     if len(body) > MAX_JSON:
         return _refuse(413, "that is too big to send to a phone; ask for a smaller page", code="too_big")
     if status >= 500:
-        return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
-    resp = Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
-    resp.headers["X-Friday-As-Of"] = str(int(time.time()))
-    return resp
+        return _unavailable(area)
+    return _stamped(Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json"))
+
+
+def _desk_object(path: str, params: dict, area: str, key: str) -> Tuple[Optional[dict], Optional[Response]]:
+    """The desktop's answer as a dict holding a list under ``key``, or the response to send instead (a 503 when
+    the desktop failed, its own answer when it refused, e.g. a 404 for a chat that is not there)."""
+    try:
+        status, body, ctype = _desk(path, params)
+        data = json.loads(body) if status < 500 else None
+    except Exception as e:
+        return None, _unavailable(area, e)
+    if status >= 500:
+        return None, _unavailable(area)
+    if status >= 300 or not isinstance(data, dict) or not isinstance(data.get(key), list):
+        return None, Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
+    return data, None
+
+
+def _page_out(payload: dict) -> Response:
+    resp = jsonify(payload)
+    if resp.content_length is not None and resp.content_length > MAX_JSON:
+        return _refuse(413, "that is too big to send to a phone; ask for a smaller page", code="too_big")
+    return _stamped(resp)
 
 
 def _float(name: str) -> Optional[float]:
@@ -123,7 +157,8 @@ def register(app: Flask) -> None:
         """The chat list, paged. ``q`` searches every chat's text (the desktop's own search); otherwise the
         list is newest first, ``limit`` (default 30, at most 100) from ``offset``, only chats active after
         ``since`` (epoch seconds) when that is given. The desktop sends its whole list and its projects in one
-        answer; the phone gets one page and a ``next_offset``, never the lot."""
+        answer; the phone gets one page and a ``next_offset``, never the lot.
+        Held by tests/unit/test_tv_pc_chats.py (paging, since, search, owner-only forms)."""
         denied = _guard("chats")
         if denied is not None:
             return denied
@@ -131,27 +166,17 @@ def register(app: Flask) -> None:
         if q:
             return _json_from_desk("/api/conversations/search", {"q": q}, "chats")
         params = {"archived": "1"} if request.args.get("archived") in ("1", "true", "yes") else {}
-        try:
-            status, body, ctype = _desk("/api/conversations", params)
-            data = json.loads(body)
-        except Exception as e:
-            _log.warning("pc_read chats failed: %s", type(e).__name__)
-            return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
-        if status >= 500:
-            return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
-        if status >= 300 or not isinstance(data, dict) or not isinstance(data.get("conversations"), list):
-            return Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
+        data, other = _desk_object("/api/conversations", params, "chats", "conversations")
+        if other is not None:
+            return other
         rows = [c for c in data["conversations"] if isinstance(c, dict)]
         since = _float("since")
         if since is not None:
             rows = [c for c in rows if (c.get("last_active_at") or 0) > since]
-        limit, offset = _int("limit", 30, 100) or 30, _int("offset", 0, 1_000_000)
-        page = rows[offset:offset + limit]
+        limit, offset = _int("limit", CHATS_PAGE, CHATS_PAGE_MAX) or CHATS_PAGE, _int("offset", 0, 1_000_000)
         nxt = offset + limit if offset + limit < len(rows) else None
-        resp = jsonify({"status": "ok", "conversations": page, "total": len(rows), "offset": offset,
-                        "next_offset": nxt, "main_id": data.get("main_id")})
-        resp.headers["X-Friday-As-Of"] = str(int(time.time()))
-        return resp
+        return _page_out({"status": "ok", "conversations": rows[offset:offset + limit], "total": len(rows),
+                          "offset": offset, "next_offset": nxt, "main_id": data.get("main_id")})
 
     @app.get("/tv/v1/chats/<cid>")
     def pc_chat(cid):
@@ -166,8 +191,9 @@ def register(app: Flask) -> None:
     def pc_chat_messages(cid):
         """A chat's messages: the last ``limit`` (default 200, at most 500), or with ``after=<message id>`` only
         the ones written after that message, which is the cheap live update (the phone polls with the last id
-        it holds). With a cursor, ``has_more`` says there were more than ``limit`` (read again with the last id). An ``after`` id the chat does not hold
-        gets ``reset: true`` and the last page, so a deleted message never strands the phone."""
+        it holds). With a cursor, ``has_more`` says there were more than ``limit`` (read again with the last
+        id). An ``after`` id the chat does not hold gets ``reset: true`` and the last page, so a deleted message
+        never strands the phone. Held by the cursor tests in tests/unit/test_tv_pc_chats.py."""
         denied = _guard("chats")
         if denied is not None:
             return denied
@@ -176,37 +202,19 @@ def register(app: Flask) -> None:
         after = (request.args.get("after") or "").strip()
         if after and not _ID.match(after):
             return _refuse(400, "not a message id", code="bad_id")
-        limit = _int("limit", 200, 500) or 200
-        try:
-            status, body, ctype = _desk("/api/conversations/%s/messages" % cid, {} if after else {"limit": limit})
-        except Exception as e:
-            _log.warning("pc_read chat_messages failed: %s", type(e).__name__)
-            return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
-        if status >= 500:
-            return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
-        try:
-            data = json.loads(body)
-        except ValueError:
-            return _refuse(503, "the PC could not answer that right now", code="pc_unavailable")
-        if status >= 300 or not isinstance(data, dict) or not isinstance(data.get("messages"), list):
-            resp = Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
-            return resp
+        limit = _int("limit", MESSAGES_PAGE, MESSAGES_PAGE_MAX) or MESSAGES_PAGE
+        data, other = _desk_object("/api/conversations/%s/messages" % cid, {} if after else {"limit": limit},
+                                   "chat_messages", "messages")
+        if other is not None:
+            return other
         msgs = [m for m in data["messages"] if isinstance(m, dict)]
-        reset = False
-        if after:
-            ids = [m.get("id") for m in msgs]
-            if after in ids:
-                msgs = msgs[ids.index(after) + 1:]
-            else:
-                reset = True
-        out = {"status": "ok", "messages": msgs[-limit:] if reset or not after else msgs[:limit]}
-        if after:                                   # only a cursor read can say there is more; a plain read is the tail
-            out["has_more"] = len(msgs) > limit and not reset
-        if reset:
-            out["reset"] = True
-        resp = jsonify(out)
-        resp.headers["X-Friday-As-Of"] = str(int(time.time()))
-        return resp
+        if not after:
+            return _page_out({"status": "ok", "messages": msgs[-limit:]})
+        ids = [m.get("id") for m in msgs]
+        if after not in ids:
+            return _page_out({"status": "ok", "messages": msgs[-limit:], "has_more": False, "reset": True})
+        newer = msgs[ids.index(after) + 1:]
+        return _page_out({"status": "ok", "messages": newer[:limit], "has_more": len(newer) > limit})
 
     # ── 2. workspaces ───────────────────────────────────────────────────────
     @app.get("/tv/v1/workspaces")
