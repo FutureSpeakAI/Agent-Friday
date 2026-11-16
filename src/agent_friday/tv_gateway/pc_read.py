@@ -32,7 +32,7 @@ RIGHT = "pc_read"
 MAX_JSON = 4 * 1024 * 1024
 MAX_PREVIEW = 3 * 1024 * 1024
 MAX_FILE_CHUNK = 8 * 1024 * 1024
-_RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
+_RANGE = re.compile(r"^bytes=(\d{0,19})-(\d{0,19})$")
 AUDIT_EVERY_S = 3600.0
 _MEDIA_ARGS = ("view", "q", "kind", "type", "project", "status", "tag", "source", "from", "to", "limit",
                "offset", "sort", "collection")
@@ -91,7 +91,7 @@ def _json_from_desk(path: str, params: Optional[dict] = None, area: str = "", sh
         try:
             body = json.dumps(shape(json.loads(body))).encode("utf-8")
         except ValueError:
-            pass
+            return _refuse(503, "the PC's answer could not be read safely", code="pc_unavailable")
     resp = Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
     resp.headers["X-Friday-As-Of"] = str(int(time.time()))
     return resp
@@ -279,11 +279,20 @@ def register(app: Flask) -> None:
         except Exception as e:
             _log.warning("pc_read file failed: %s", type(e).__name__)
             return _refuse(503, "the PC could not send that file right now", code="pc_unavailable")
+        if status == 416:
+            out_of_range = _refuse(416, "that range is outside the file", code="range_not_satisfiable")
+            out_of_range.headers["Content-Range"] = content_range
+            return out_of_range
         if status not in (200, 206):
             return _refuse(404 if status == 404 else 503, "no file for that item", code="no_file")
-        resp = Response(body, status=status, mimetype=(ctype.split(";")[0] or "application/octet-stream"))
+        if len(body) > MAX_FILE_CHUNK:
+            return _refuse(413, "the PC sent more than one chunk; ask for a range", code="too_big")
+        mimetype = ctype.split(";")[0] or "application/octet-stream"
+        resp = Response(body, status=status, mimetype=mimetype)
         resp.headers.update({"Accept-Ranges": "bytes", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
                              "X-Friday-Chunk-Cap": str(MAX_FILE_CHUNK)})
+        if not mimetype.startswith(("image/", "audio/", "video/")):
+            resp.headers["Content-Disposition"] = "attachment"
         if content_range:
             resp.headers["Content-Range"] = content_range
         return resp
@@ -307,19 +316,24 @@ def register(app: Flask) -> None:
 
 
 def _capped_range(header: str) -> str:
-    """The Range to ask the desktop for: the device's single range, never longer than MAX_FILE_CHUNK, and a first
-    chunk when it sent none. Guarded by test_a_file_is_sent_in_capped_ranges."""
+    """The Range to ask the desktop for: the device's single range, never longer than MAX_FILE_CHUNK; a suffix range
+    (``bytes=-N``) keeps its meaning with N capped; a first chunk when it sent none or sent something else.
+    Guarded by test_a_file_is_sent_in_capped_ranges."""
     match = _RANGE.match(header or "")
-    start = int(match.group(1)) if match and match.group(1) else 0
-    end = int(match.group(2)) if match and match.group(2) else start + MAX_FILE_CHUNK - 1
+    first, last = (match.group(1), match.group(2)) if match else ("", "")
+    if match and not first and last:
+        return "bytes=-%d" % min(int(last), MAX_FILE_CHUNK)
+    start = int(first) if first else 0
+    end = int(last) if last else start + MAX_FILE_CHUNK - 1
     return "bytes=%d-%d" % (start, min(end, start + MAX_FILE_CHUNK - 1))
 
 
 def _desk_range(path: str, byte_range: str):
     from agent_friday import core
-    reply = core.app.test_client().get(path, headers={"X-Friday-Token": core._current_api_token(),
-                                                      "Range": byte_range})
-    return reply.status_code, reply.get_data(), reply.headers.get("Content-Type", ""), reply.headers.get("Content-Range", "")
+    headers = {"X-Friday-Token": core._current_api_token(), "Range": byte_range}
+    reply = core.app.test_client().get(path, headers=headers)
+    return (reply.status_code, reply.get_data(), reply.headers.get("Content-Type", ""),
+            reply.headers.get("Content-Range", ""))
 
 
 def _ws_entry(w: dict) -> dict:
