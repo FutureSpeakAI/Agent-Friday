@@ -111,7 +111,8 @@ def without_secret_names(env: dict) -> dict:
     """A copy of ``env`` without any variable whose NAME says it holds a secret (API key, token, passphrase,
     password, credential). For Friday's own worker processes, which need the rest of the environment (CUDA, model
     folders, thread counts), so an allow-list would break them; a child that runs someone else's commands uses
-    ``sanitize_env_for_mcp`` instead. Guarded by tests/unit/test_worker_env_scrub.py."""
+    ``sanitize_env_for_mcp`` instead. (This is the deliberate exception to "never the inverse" in the comment at the
+    top of this file: a deny-by-name pattern, used only where an allow-list would break the worker.) Guarded by tests/unit/test_worker_env_scrub.py."""
     return {name: value for name, value in env.items() if not _SECRET_NAME.search(name)}
 
 
