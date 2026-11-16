@@ -15,6 +15,8 @@ tests/unit/test_tv_pc_act_media.py.
 """
 from __future__ import annotations
 
+import enum
+import json
 import logging
 import re
 from typing import Optional, Tuple
@@ -78,16 +80,27 @@ def _act(action: str, media_id: str, method: str, path: str, body: Optional[dict
     return shaped
 
 
-def _is_post_card(media_id: str) -> Optional[bool]:
-    """True for a post card, False for anything else, None when the desktop does not know the card."""
-    import json
+class DeleteCheck(enum.Enum):
+    UNKNOWN_CARD = "unknown_card"
+    ALLOWED = "allowed"
+    REFUSED = "refused"
+
+
+def _delete_check(media_id: str) -> DeleteCheck:
+    """Delete only a card the desktop plainly says is not a post: a post is deleted in the content store and that
+    cannot be undone. Anything else (a post, an answer that is not a card, an unreadable answer) is refused.
+    Guarded by test_a_card_the_pc_does_not_plainly_describe_is_never_deleted and the post-card tests."""
+    if media_id.startswith("post:"):
+        return DeleteCheck.REFUSED
     status, body, _ = pc_read._desk("/api/media/%s" % media_id)
     if status == 404:
-        return None
+        return DeleteCheck.UNKNOWN_CARD
     try:
-        return (json.loads(body).get("card") or {}).get("source_kind") == "post"
-    except ValueError:
-        return True
+        card = json.loads(body).get("card") if status == 200 else None
+    except (ValueError, AttributeError):
+        return DeleteCheck.REFUSED
+    kind = card.get("source_kind") if isinstance(card, dict) else None
+    return DeleteCheck.ALLOWED if isinstance(kind, str) and kind and kind != "post" else DeleteCheck.REFUSED
 
 
 def register(app: Flask) -> None:
@@ -124,14 +137,15 @@ def register(app: Flask) -> None:
         if not ID_PATTERN.match(mid):
             return refuse(400, "not a media id", code="bad_id")
         try:
-            is_post = _is_post_card(mid)
+            check = _delete_check(mid)
         except Exception as e:
             _log.warning("pc_act media delete check failed: %s", type(e).__name__)
             return refuse(503, "the PC could not do that right now", code="pc_unavailable")
-        if is_post is None:
+        if check is DeleteCheck.UNKNOWN_CARD:
             return refuse(404, "this PC has no media card %r" % mid, code="unknown_media")
-        if is_post:
-            return refuse(409, "a post is deleted on the PC, where it cannot be undone", code="delete_on_pc")
+        if check is DeleteCheck.REFUSED:
+            return refuse(409, "this card is deleted on the PC, where it can be undone or checked",
+                          code="delete_on_pc")
         return _act("media_delete", mid, "DELETE", "/api/media/%s" % mid)
 
     @app.get("/tv/v1/media/trash")

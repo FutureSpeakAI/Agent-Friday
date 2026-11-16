@@ -126,6 +126,22 @@ def test_a_post_card_is_never_deleted_from_a_device(client, desk):
     assert answer.status_code == 409 and answer.get_json()["code"] == "delete_on_pc" and desk.sent == []
 
 
+@pytest.mark.parametrize("status,body", [
+    (200, b'{"status":"ok","entries":[]}'), (200, b'{"card":[]}'), (200, b'{"card":{}}'),
+    (200, b'{"card":{"source_kind":""}}'),
+    (200, b'<html>'), (200, b'[1]'), (403, b'{"status":"denied"}'), (429, b'{"error":"slow down"}'),
+    (500, b'{"error":"boom"}')])
+def test_a_card_the_pc_does_not_plainly_describe_is_never_deleted(client, desk, monkeypatch, status, body):
+    monkeypatch.setattr(pc_read, "_desk", lambda path, params=None: (status, body, "application/json"))
+    answer = send(client, device(), "DELETE", "/tv/v1/media/m1")
+    assert answer.status_code == 409 and answer.get_json()["code"] == "delete_on_pc" and desk.sent == []
+
+
+def test_a_post_id_is_refused_without_asking_the_desktop(client, desk, monkeypatch):
+    monkeypatch.setattr(pc_read, "_desk", lambda path, params=None: pytest.fail("the desktop must not be asked"))
+    assert send(client, device(), "DELETE", "/tv/v1/media/post:abc").status_code == 409 and desk.sent == []
+
+
 def test_deleting_a_card_the_pc_does_not_know_is_a_plain_404(client, desk, monkeypatch):
     monkeypatch.setattr(pc_read, "_desk", lambda path, params=None: (404, b"{}", "application/json"))
     assert send(client, device(), "DELETE", "/tv/v1/media/m1").status_code == 404 and desk.sent == []
@@ -169,7 +185,8 @@ def test_a_watch_a_tv_a_family_or_unbound_device_cannot_change_media(client, des
 def test_each_action_writes_one_receipt(client, desk):
     send(client, device(), "POST", "/tv/v1/media/m1/publish")
     [receipt] = rows("device_act")
-    assert (receipt["action"], receipt["media"], receipt["via"], receipt["right"]) == ("media_publish", "m1", "lan", "pc_act")
+    fields = (receipt["action"], receipt["media"], receipt["via"], receipt["right"])
+    assert fields == ("media_publish", "m1", "lan", "pc_act")
 
 
 @pytest.mark.parametrize("path", ["/tv/v1/media/.hidden/publish", "/tv/v1/media/trash/.x/restore"])
