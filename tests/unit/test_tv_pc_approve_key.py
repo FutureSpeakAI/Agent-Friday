@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from agent_friday.services import approvals as ap
 from agent_friday.services import device_pairing
 from agent_friday.tv_gateway import app as gateway
-from agent_friday.tv_gateway import household, pairing
+from agent_friday.tv_gateway import household, pairing, pc_approve
 from tests.desk_press_support import pressed
 from tests.ledger_support import rows
 from tests.unit.test_tv_gateway import FakeTv, auth, open_session
@@ -27,6 +27,7 @@ ROUTE = "/tv/v1/approvals/key"
 
 @pytest.fixture(autouse=True)
 def _clean(tmp_path, monkeypatch):
+    monkeypatch.setattr(pc_approve, "_STAGED_AT", {})
     monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
     monkeypatch.setattr(ap, "_feed", lambda *a, **k: None)
     monkeypatch.setattr(ap, "_notify_pending", lambda rec: None)
@@ -174,7 +175,7 @@ def test_a_new_key_replaces_the_pending_card(client):
     dev = paired()
     register(client, dev)
     [first] = cards()
-    register(client, dev)                                   # a second, different key replaces the staged one
+    register(client, dev)
     [second] = cards()
     assert second["approval_id"] != first["approval_id"]
     press(first)                                            # the older card is gone: nothing activates
@@ -269,3 +270,41 @@ def test_the_tailnet_listener_serves_the_route_and_the_receipt_says_so():
     r = c.post(ROUTE, environ_overrides=env, headers=auth(tok),
                json={"spki": base64.b64encode(new_key()).decode(), "biometric": True})
     assert r.status_code == 200 and rows("device_approval_key_staged")[-1]["via"] == "tailnet"
+
+
+def test_a_device_may_register_three_keys_an_hour(client):
+    dev = paired()
+    codes = [register(client, dev).status_code for _ in range(4)]
+    assert codes == [200, 200, 200, 429]
+    assert register(client, dev).get_json()["code"] == "too_many_keys"
+    assert len(cards()) == 1
+
+
+def test_the_active_key_registered_again_takes_a_pending_card_away(client):
+    dev = paired()
+    spki = new_key()
+    register(client, dev, spki=spki)
+    press(cards()[0])
+    register(client, dev)
+    assert len(cards()) == 1
+    register(client, dev, spki=spki)
+    assert cards() == []
+
+
+def test_withdrawing_the_right_takes_its_pending_card_away(client):
+    dev = paired()
+    register(client, dev)
+    device_pairing.set_right(dev.id, "pc_approve", False)
+    assert cards() == []
+
+
+def test_a_right_without_a_key_cannot_approve(client):
+    dev = paired()
+    register(client, dev)
+    assert not device_pairing.can_approve(device_pairing.get_device(dev.id))
+    press(cards()[0])
+    assert device_pairing.can_approve(device_pairing.get_device(dev.id))
+    body = device_pairing._load()
+    body["devices"][dev.id].pop("approval_spki")
+    device_pairing._save(body)
+    assert not device_pairing.can_approve(device_pairing.get_device(dev.id))
