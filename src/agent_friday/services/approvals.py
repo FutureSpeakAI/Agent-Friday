@@ -582,7 +582,8 @@ _DEVICE_OF_SOURCE = {"desktop_press": "this_pc", "typed": "this_pc", "voice": "t
                      "page_not_on_this_pc": "another_device", "page_without_desk_key": "another_device",
                      "text_message": "owner_phone", "sms": "owner_phone", "text": "owner_phone",
                      "google_tasks_tick": "google_tasks", "standing_grant": "pre_approved_in_settings",
-                     "auto_policy": "policy", "law1_block": "policy", "system": "friday"}
+                     "auto_policy": "policy", "law1_block": "policy", "system": "friday",
+                     "device_signed": "owner_device", "device": "owner_device"}
 
 
 def decided_device(source: Optional[str]) -> str:
@@ -1193,6 +1194,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     if decided_by == SCREEN_LABEL and not _press_granted(approval_id):
         decided_by = "owner"
     named = source if source in _CALLER_SOURCES else ""
+    if named in _DEVICE_SOURCES and not decided_by.startswith(DEVICE_LABEL):
+        named = ""                  # only a decision labelled as a device's may say it was one
     source, check = decision_source(decided_by, approval_id)
     if named and source != "desktop_press":
         # The caller knows the channel better than the label does (a typed "no" in chat is
@@ -1273,7 +1276,13 @@ _TYPED_SURFACES = frozenset({"chat", "typed", "app", "palette", "reflex"})
 _MESSAGE_SURFACES = frozenset({"sms", "text", "telegram", "discord", "channel", "whatsapp", "phone", "email"})
 #: Sources a caller may name for its own decision (decide(source=...)). Never desktop_press:
 #: that one is only ever worked out from a verified press.
-_CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday"})
+_CALLER_SOURCES = frozenset({"typed", "voice", "text_message", "in_process", "system", "friday",
+                             "device_signed", "device"})
+
+#: The decided_by prefix of an owner's phone or tablet (tv_gateway/pc_approve), and the sources only it may name.
+#: Guarded by test_a_device_source_needs_a_device_label.
+DEVICE_LABEL = "device:"
+_DEVICE_SOURCES = frozenset({"device_signed", "device"})
 
 
 def voice_on_this_desk() -> bool:
@@ -1354,6 +1363,8 @@ def decision_source(decided_by: str, approval_id=None) -> tuple:
         return "system", None
     if label.startswith("friday:"):
         return "friday", None
+    if label.startswith(DEVICE_LABEL):
+        return "device", None
     if "voice" in low:
         return "voice", None
     surface = low.split(":", 1)[1] if low.startswith("owner:") else ""

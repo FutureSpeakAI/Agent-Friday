@@ -35,6 +35,8 @@ def _within_key_budget(device_id: str) -> bool:
 
 
 def register(app: Flask) -> None:
+    from agent_friday.tv_gateway import pc_approve_decide
+    pc_approve_decide.register(app)
     @app.post("/tv/v1/approvals/key")
     def pc_approval_key():
         dev = getattr(g, "device", None)
