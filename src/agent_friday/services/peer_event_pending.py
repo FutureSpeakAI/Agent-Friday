@@ -1,33 +1,85 @@
 """Pending queue for out-of-order peer events (Federation / Economy spec, protocol section;
 roadmap F4b, row NS-40.2-11).
 
-An authenticated event whose `parents` have not all arrived is parked here instead of being
-acted on or dropped. Pure and in memory: nothing here opens a socket, fetches anything, runs
-an effect or grants a permission. It only decides whether an event may wait, and which waiting
-events became ready when another one arrived. The caller fetches missing parents from approved
-sources itself and, on release, runs the whole local path again (grants, key status, time,
-budget): a released event is still only a request.
+An authenticated event whose parents have not all arrived waits here. The queue decides two
+things only: whether an event may wait, and which waiting events are ready once another one
+is recorded. The caller fetches missing parents itself and runs the whole local path again on
+every released event (grants, key status, time, budget): a released event is still a request.
 
-  * only subscribed scopes (realm, job) may park; anything else is refused at once;
-  * the queue is capped overall and per scope, and every entry expires at the event's own
-    `expires_at` (a parked event is never kept past it); a full queue refuses, never evicts;
-  * a cycle among parked events, a parent that is the event itself, and a parent already known
-    under a different realm (a cross-realm chain) are refused;
-  * release order is deterministic: by event id, never by arrival time.
+Each rule names the test that fails when the rule is broken.
+
+  Pure and in memory: standard library and the wire types only.
+      test_the_module_imports_nothing_that_can_reach_out
+  Only subscribed scopes (realm, job) may wait.
+      test_only_subscribed_scopes_may_park
+  Capped overall and per scope; a full queue refuses and never evicts.
+      test_a_refused_event_never_changes_the_queue
+  No event waits past its own `expires_at`.
+      test_nothing_is_released_at_or_after_its_expiry
+  No self-parent, no cycle, no cross-realm chain.
+      test_a_cycle_a_self_parent_and_a_duplicate_are_refused
+  Refusals are a closed vocabulary that carries no peer data.
+      test_refusal_codes_are_a_closed_vocabulary_that_carries_no_peer_data
+  Release order depends on event ids, never on arrival order.
+      test_release_order_is_the_same_for_every_arrival_order
+  An event is released once, after all of its parents.
+      test_every_release_follows_all_of_its_parents
 """
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+from enum import Enum
 from typing import Callable
 
 from agent_friday.services.peer_wire_v2 import Verified
 
 MAX_PENDING = 256
 MAX_PER_SCOPE = 32
+PARKED = "parked"
 
-# refusal codes: a closed vocabulary, none of them carries peer data
-UNSUBSCRIBED, EXPIRED, FULL, SCOPE_FULL, SELF_PARENT, CYCLE, CROSS_REALM, DUPLICATE = (
-    "unsubscribed", "expired", "full", "scope_full", "self_parent", "cycle", "cross_realm", "duplicate")
+
+class Refusal(str, Enum):
+    UNSUBSCRIBED = "unsubscribed"
+    EXPIRED = "expired"
+    FULL = "full"
+    SCOPE_FULL = "scope_full"
+    SELF_PARENT = "self_parent"
+    CYCLE = "cycle"
+    CROSS_REALM = "cross_realm"
+    DUPLICATE = "duplicate"
+
+
+UNSUBSCRIBED = Refusal.UNSUBSCRIBED.value
+EXPIRED = Refusal.EXPIRED.value
+FULL = Refusal.FULL.value
+SCOPE_FULL = Refusal.SCOPE_FULL.value
+SELF_PARENT = Refusal.SELF_PARENT.value
+CYCLE = Refusal.CYCLE.value
+CROSS_REALM = Refusal.CROSS_REALM.value
+DUPLICATE = Refusal.DUPLICATE.value
+
+Scope = tuple[str, str]
+
+
+@dataclass(frozen=True)
+class _Waiting:
+    """One parked event, with the four body fields the queue reads taken out once."""
+
+    event: Verified
+    scope: Scope
+    parents: frozenset[str]
+    expires_at: float
+
+    @classmethod
+    def of(cls, event: Verified) -> _Waiting:
+        body = event.body
+        scope = (body["realm"], body["job"])
+        return cls(event, scope, frozenset(body["parents"]), body["expires_at"])
+
+    @property
+    def realm(self) -> str:
+        return self.scope[0]
 
 
 class PendingQueue:
@@ -36,10 +88,11 @@ class PendingQueue:
                  now: Callable[[], float] = time.time,
                  max_pending: int = MAX_PENDING, max_per_scope: int = MAX_PER_SCOPE):
         self._subscribed = subscribed
-        self._known_realm = known_realm        # event id -> realm of an event already recorded, or None
+        self._known_realm = known_realm
         self._now = now
-        self._max, self._max_scope = max_pending, max_per_scope
-        self._waiting: dict[str, Verified] = {}
+        self._max_pending = max_pending
+        self._max_per_scope = max_per_scope
+        self._waiting: dict[str, _Waiting] = {}
 
     def __len__(self) -> int:
         self.purge()
@@ -47,75 +100,94 @@ class PendingQueue:
 
     def purge(self) -> int:
         """Drop every parked event past its own expiry; returns how many."""
-        t = self._now()
-        dead = [i for i, v in self._waiting.items() if t >= v.body["expires_at"]]
-        for i in dead:
-            del self._waiting[i]
-        return len(dead)
+        now = self._now()
+        expired = [event_id for event_id, entry in self._waiting.items()
+                   if now >= entry.expires_at]
+        for event_id in expired:
+            del self._waiting[event_id]
+        return len(expired)
 
-    def _reaches(self, start: str, target: str) -> bool:
-        """True if `target` is an ancestor of `start` through parked events only."""
-        seen, todo = set(), [start]
-        while todo:
-            cur = todo.pop()
-            if cur == target:
-                return True
-            if cur in seen or cur not in self._waiting:
-                continue
-            seen.add(cur)
-            todo.extend(self._waiting[cur].body["parents"])
-        return False
-
-    def park(self, v: Verified) -> tuple[bool, str]:
-        """(True, "parked") or (False, code). Never raises on peer data."""
-        b = v.body
-        if v.event_id in self._waiting:
-            return False, DUPLICATE
-        if not self._subscribed(b["realm"], b["job"]):
-            return False, UNSUBSCRIBED
-        if self._now() >= b["expires_at"]:
-            return False, EXPIRED
-        self.purge()
-        if v.event_id in b["parents"]:
-            return False, SELF_PARENT
-        for p in b["parents"]:
-            known = self._known_realm(p)
-            if known is not None and known != b["realm"]:
-                return False, CROSS_REALM
-            if p in self._waiting and self._waiting[p].body["realm"] != b["realm"]:
-                return False, CROSS_REALM
-        if any(self._reaches(p, v.event_id) for p in b["parents"]):
-            return False, CYCLE
-        if len(self._waiting) >= self._max:
-            return False, FULL
-        if sum(1 for w in self._waiting.values() if (w.body["realm"], w.body["job"]) == (b["realm"], b["job"])) >= self._max_scope:
-            return False, SCOPE_FULL
-        self._waiting[v.event_id] = v
-        return True, "parked"
+    def park(self, event: Verified) -> tuple[bool, str]:
+        """(True, "parked") or (False, refusal code)."""
+        entry = _Waiting.of(event)
+        refusal = self._refused_on_sight(event.event_id, entry)
+        if refusal is None:
+            self.purge()
+            refusal = (self._refused_by_ancestry(event.event_id, entry)
+                       or self._refused_by_capacity(entry))
+        if refusal is not None:
+            return False, refusal.value
+        self._waiting[event.event_id] = entry
+        return True, PARKED
 
     def arrived(self, event_id: str | None, have: Callable[[str], bool]) -> list[Verified]:
-        """An event `event_id` was just recorded (or None: re-check everything now). `have(id)` says whether an event is recorded.
-        Returns the parked events whose parents are now all recorded, removed from the queue, in
-        event-id order, and repeats for the events those release in turn. The caller re-evaluates
-        each one in full before anything is acted on."""
+        """Release what became ready now that `event_id` is recorded (None: re-check everything).
+
+        `have(id)` says whether an event is recorded. A released event counts as arrived for the
+        events waiting on it, so a whole chain can leave in one call, lowest ready id first.
+        """
+        arrived = {event_id} if event_id else set()
         released: list[Verified] = []
-        recorded = {event_id} if event_id else set()
-        progress = True
-        while progress:
-            progress = False
+        while True:
             self.purge()
-            for i in sorted(self._waiting):
-                v = self._waiting[i]
-                if all(p in recorded or have(p) for p in v.body["parents"]):
-                    del self._waiting[i]
-                    released.append(v)
-                    recorded.add(i)
-                    progress = True
-                    break
-        return released
+            ready = min(
+                (waiting_id for waiting_id, entry in self._waiting.items()
+                 if all(parent in arrived or have(parent) for parent in entry.parents)),
+                default=None)
+            if ready is None:
+                return released
+            released.append(self._waiting.pop(ready).event)
+            arrived.add(ready)
 
     def waiting_on(self) -> set[str]:
-        """The parent ids parked events are still missing: what the caller may ask approved sources for."""
+        """The parent ids no parked event supplies: what the caller may ask approved sources for."""
         self.purge()
-        need = {p for v in self._waiting.values() for p in v.body["parents"]}
-        return {p for p in need if p not in self._waiting}
+        wanted = {parent for entry in self._waiting.values() for parent in entry.parents}
+        return wanted - self._waiting.keys()
+
+    def _refused_on_sight(self, event_id: str, entry: _Waiting) -> Refusal | None:
+        if event_id in self._waiting:
+            return Refusal.DUPLICATE
+        if not self._subscribed(*entry.scope):
+            return Refusal.UNSUBSCRIBED
+        if self._now() >= entry.expires_at:
+            return Refusal.EXPIRED
+        return None
+
+    def _refused_by_ancestry(self, event_id: str, entry: _Waiting) -> Refusal | None:
+        if event_id in entry.parents:
+            return Refusal.SELF_PARENT
+        if any(self._realms_of(parent) - {entry.realm} for parent in entry.parents):
+            return Refusal.CROSS_REALM
+        if any(self._descends_from(parent, event_id) for parent in entry.parents):
+            return Refusal.CYCLE
+        return None
+
+    def _refused_by_capacity(self, entry: _Waiting) -> Refusal | None:
+        if len(self._waiting) >= self._max_pending:
+            return Refusal.FULL
+        in_scope = sum(1 for other in self._waiting.values() if other.scope == entry.scope)
+        if in_scope >= self._max_per_scope:
+            return Refusal.SCOPE_FULL
+        return None
+
+    def _realms_of(self, event_id: str) -> set[str]:
+        """Every realm an event is already known under, recorded or parked."""
+        recorded = self._known_realm(event_id)
+        parked = self._waiting.get(event_id)
+        realms = {recorded, parked.realm if parked else None}
+        return realms - {None}
+
+    def _descends_from(self, start: str, ancestor: str) -> bool:
+        """True if `ancestor` is reachable from `start` through parked events only."""
+        seen: set[str] = set()
+        frontier = [start]
+        while frontier:
+            current = frontier.pop()
+            if current == ancestor:
+                return True
+            if current in seen or current not in self._waiting:
+                continue
+            seen.add(current)
+            frontier.extend(self._waiting[current].parents)
+        return False
