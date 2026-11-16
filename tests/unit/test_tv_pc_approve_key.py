@@ -107,6 +107,16 @@ def test_the_session_key_cannot_be_the_approval_key(client):
     assert r.status_code == 422 and r.get_json()["code"] == "session_key_reused" and cards() == []
 
 
+def test_the_session_key_in_another_encoding_is_still_the_session_key(client):
+    dev = paired()
+    pub = serialization.load_der_public_key(dev.spki)
+    point = pub.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.CompressedPoint)
+    der = bytes.fromhex("3039301306072a8648ce3d020106082a8648ce3d030107032200") + point
+    assert der != dev.spki
+    r = register(client, dev, spki=der)
+    assert r.status_code == 422 and r.get_json()["code"] == "session_key_reused"
+
+
 def test_a_tablet_key_must_ask_for_the_fingerprint(client):
     dev = paired("tablet")
     r = register(client, dev, biometric=False)
@@ -160,16 +170,59 @@ def test_declining_the_card_leaves_the_device_without_the_right(client):
     assert not device_pairing.has_right(device_pairing.get_device(dev.id), "pc_approve")
 
 
-def test_a_card_for_an_older_key_activates_nothing(client):
+def test_a_new_key_replaces_the_pending_card(client):
     dev = paired()
     register(client, dev)
     [first] = cards()
     register(client, dev)                                   # a second, different key replaces the staged one
-    assert len(cards()) == 2
-    press(first)
+    [second] = cards()
+    assert second["approval_id"] != first["approval_id"]
+    press(first)                                            # the older card is gone: nothing activates
     assert device_pairing.approval_key(device_pairing.get_device(dev.id)) is None
-    press([c for c in cards() if c["approval_id"] != first["approval_id"]][0])
+    press(second)
     assert device_pairing.approval_key(device_pairing.get_device(dev.id)) is not None
+
+
+def test_a_flood_of_new_keys_leaves_one_card_on_the_screen(client):
+    dev = paired()
+    for _ in range(6):
+        register(client, dev)
+    assert len(cards()) == 1
+
+
+def test_the_same_key_twice_before_the_press_raises_one_card(client):
+    dev = paired()
+    spki = new_key()
+    register(client, dev, spki=spki)
+    register(client, dev, spki=spki)
+    assert len(cards()) == 1
+
+
+def test_a_stale_fingerprint_card_cannot_activate_a_no_fingerprint_key(client):
+    dev = paired()
+    spki = new_key()
+    register(client, dev, spki=spki, biometric=True)
+    [with_fingerprint] = cards()
+    register(client, dev, spki=spki, biometric=False)
+    press(with_fingerprint)
+    assert device_pairing.approval_key(device_pairing.get_device(dev.id)) is None
+    press(cards()[0])
+    assert device_pairing.approval_key(device_pairing.get_device(dev.id)).biometric is False
+
+
+def test_activation_itself_refuses_a_different_fingerprint_choice(client):
+    dev = paired()
+    j = register(client, dev, biometric=False).get_json()
+    assert device_pairing.activate_approval_key(dev.id, j["key_id"], True) is False
+    assert device_pairing.activate_approval_key(dev.id, j["key_id"], False) is True
+
+
+def test_only_the_card_hook_activates_a_key():
+    import pathlib
+    root = pathlib.Path(device_pairing.__file__).resolve().parents[1]
+    callers = [p.relative_to(root).as_posix() for p in root.rglob("*.py")
+               if "activate_approval_key(" in p.read_text(encoding="utf-8") and p.name != "device_pairing.py"]
+    assert callers == ["tv_gateway/pairing.py"]
 
 
 def test_the_same_key_again_after_activation_raises_no_card(client):
