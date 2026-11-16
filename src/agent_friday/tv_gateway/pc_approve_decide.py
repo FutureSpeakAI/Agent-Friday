@@ -144,10 +144,15 @@ def _approve(dev: dict, approval_id: str, body: dict):
     device_pairing.clear_bad_signatures(dev["id"])
     rec, won = approvals.decide_with_outcome(approval_id, "approve", decided_by=av.device_label(dev["id"]),
                                              note="approved on the device", source="device_signed",
-                                             expect_fp=signed.action_fp)
+                                             expect_fp=signed.action_fp,
+                                             proof={"action_fp": signed.action_fp, "nonce": signed.nonce,
+                                                    "signed_time": signed.signed_time,
+                                                    "signature": signed.signature_b64})
     if won:
         _receipt("device_approved", dev, rec, action_fp=signed.action_fp, nonce=signed.nonce,
                  signed_time=signed.signed_time, signature=signed.signature_b64, outcome=rec.get("status"))
+    elif rec is None:
+        return _refusal_response(Rejected(Refusal.UNKNOWN_CARD))
     elif (rec or {}).get("status") == "pending":
         _receipt("device_approval_refused", dev, rec, reason=Refusal.NOT_APPROVED.value)
         return _refusal_response(Rejected(Refusal.NOT_APPROVED, "the PC did not approve it; try again or use the PC"))

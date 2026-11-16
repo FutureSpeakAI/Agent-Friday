@@ -1175,7 +1175,8 @@ def _everything_stopped() -> bool:
 
 
 def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
-                        note: str = "", source: str = "", expect_fp: str = "") -> tuple:
+                        note: str = "", source: str = "", expect_fp: str = "",
+                        proof: Optional[Dict[str, Any]] = None) -> tuple:
     """`decide()`, also saying whether THIS call made the decision.
 
     Returns (record, won). `won` is True for exactly one caller per card: the
@@ -1184,7 +1185,9 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     once cannot both act; every other caller gets the card as it now stands
     and won=False. (None, False) for an unknown id. ``expect_fp``, when given, is the action fingerprint the
     decider saw and signed: an approve of a card that no longer has it is not made (under the same lock).
-    Guarded by test_the_signed_fingerprint_is_checked_under_the_decision_lock.
+    ``proof`` (a device's signature, nonce and signed time) is kept on the decision record as ``decided_proof`` so the
+    approval can be checked later. Guarded by test_the_signed_fingerprint_is_checked_under_the_decision_lock and
+    test_the_signature_is_kept_on_the_decision_record.
     """
     if decision not in ("approve", "deny"):
         raise ValueError("decision must be 'approve' or 'deny'")
@@ -1251,11 +1254,13 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if check is not None:
             rec["decided_check"] = check
         rec["decision_note"] = note
+        if proof:
+            rec["decided_proof"] = dict(proof)
         rec.pop("approval_seal", None)
         if decision == "approve" and not _seal_approval(rec):
             # the decision cannot be made a token (no governance key): it stays undecided
             for k in ("decided_at", "decided_by", "decided_source", "decided_policy_version",
-                      "decided_device", "decided_check", "decision_note"):
+                      "decided_device", "decided_check", "decision_note", "decided_proof"):
                 rec.pop(k, None)
             rec["status"] = "pending"
             return dict(rec), False

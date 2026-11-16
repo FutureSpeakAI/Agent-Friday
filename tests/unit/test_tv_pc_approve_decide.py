@@ -519,3 +519,15 @@ def test_the_receipt_names_the_device_and_its_key(client):
     receipt = rows("device_approved")[-1]
     assert receipt["device_name"] == "Stephen's phone" and receipt["key_id"] == device_pairing.approval_key(
         device_pairing.get_device(phone.id)).key_id
+
+
+def test_the_signature_is_kept_on_the_decision_record(client):
+    phone = Enrolled(client)
+    pending = card()
+    got = phone.challenge(pending["approval_id"]).get_json()
+    when = int(time.time())
+    signature = phone.sign(got, when)
+    phone.post("/tv/v1/approvals/%s/decide" % pending["approval_id"],
+               {"decision": "approve", "nonce": got["nonce"], "time": when, "sig": signature})
+    assert ap.get_approval(pending["approval_id"])["decided_proof"] == {
+        "action_fp": got["action_fp"], "nonce": got["nonce"], "signed_time": when, "signature": signature}
