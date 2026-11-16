@@ -294,6 +294,16 @@ def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
                  "why": "faster for voice; pick another model on this device to use it instead"}
 
 
+def bound_voice(cid: Optional[str]) -> Optional[dict]:
+    """The voice a phone or tablet bound to this conversation, or None. A no-op until tv_gateway.voices exists
+    (CORE-MODELS fills it); a failure here never touches the turn."""
+    try:
+        from agent_friday.tv_gateway import voices
+        return voices.bound_voice(cid) if cid else None
+    except Exception:
+        return None
+
+
 def run(dev: dict, body: dict) -> Iterator[str]:
     """Validate, then stream the owner's turn. Raises turn.TurnRefused before the first event."""
     from agent_friday.services import global_stop
@@ -403,6 +413,7 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     truth["voice"] = bool(voice)
     truth["voice_default"] = voice_default
     truth["speech"] = voice_reply.speech_text(text)             # for TTS: no markdown, ever
+    truth["voice_bound"] = bound_voice(cid) if voice else None   # a voice chosen for this chat; None until voices.py (CORE-MODELS) fills the hook
     if voice:
         truth["formatted"] = text                               # the screen's copy; the stream text is what is spoken
         text = truth["speech"]
