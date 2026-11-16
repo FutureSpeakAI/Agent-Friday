@@ -1,4 +1,4 @@
-"""Controlling jobs from an owner's phone or tablet (``pc_act``; wider brief step 3). Reading a job's steps needs ``pc_read``.
+"""Controlling jobs from an owner phone or tablet (``pc_act``; wider brief step 3). Reads need ``pc_read``.
 
 Rules guarded here, each with a case that fails if the check is removed:
 * only an owner-bound phone or tablet that holds ``pc_act`` may act; without it the device raises its own screen-only
@@ -165,7 +165,6 @@ def test_the_tailnet_listener_acts_the_same_way_and_says_so(desk):
     assert rows("device_act")[-1]["via"] == "tailnet"
 
 
-
 def test_steps_and_resumable_are_reads_for_pc_read(client, monkeypatch):
     seen = []
 
@@ -190,7 +189,6 @@ def test_every_desktop_path_the_job_routes_call_is_still_a_desktop_route():
     for path in ("/api/tasks/<x>/steps", "/api/tasks/<x>/resumable", "/api/tasks/<x>/stop-after-step",
                  "/api/tasks/<x>/resume", "/api/tasks/<x>/rerun", "/api/tasks/<x>/events"):
         assert path in declared, path
-
 
 
 class Stream:
@@ -266,4 +264,4 @@ def test_a_quiet_job_still_ends_the_stream_when_the_right_is_withdrawn(client, j
         return iter(())
     monkeypatch.setattr(pc_act, "_desk_stream", quiet)
     status, text = read_stream(client, tv)
-    assert text.endswith("event: revoked\ndata: {}\n\n") and len(rounds) == 2 and ": keepalive" in text
+    assert text == ": keepalive\n\nevent: revoked\ndata: {}\n\n" and len(rounds) == 2
