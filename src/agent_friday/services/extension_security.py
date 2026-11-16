@@ -104,6 +104,17 @@ def sanitize_env_for_mcp(env: dict = None, trust_level: str = "sandboxed") -> di
     return {k: v for k, v in base.items() if k.upper() in allowed}
 
 
+_SECRET_NAME = re.compile(r"(^|_)(API_?KEY|KEY|TOKEN|SECRET|PASSPHRASE|PASSWORD|CREDENTIALS?)($|_)", re.I)
+
+
+def without_secret_names(env: dict) -> dict:
+    """A copy of ``env`` without any variable whose NAME says it holds a secret (API key, token, passphrase,
+    password, credential). For Friday's own worker processes, which need the rest of the environment (CUDA, model
+    folders, thread counts), so an allow-list would break them; a child that runs someone else's commands uses
+    ``sanitize_env_for_mcp`` instead. Guarded by tests/unit/test_worker_env_scrub.py."""
+    return {name: value for name, value in env.items() if not _SECRET_NAME.search(name)}
+
+
 def sanitize_unicode(text: str) -> str:
     """Strip invisible Unicode control characters that could be used for injection."""
     if not text:
