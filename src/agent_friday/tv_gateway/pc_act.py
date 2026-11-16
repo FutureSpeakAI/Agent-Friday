@@ -5,16 +5,18 @@ of the pairing bundle; a device that asks without it raises that card (once an h
 What: three actions on a job, each one fixed desktop POST with no body from the device, so the PC applies the same
 checks it applies to its own button: stop after the current step, resume an interrupted job, run a finished one again.
 A resume that needs the owner's word about a tool that was mid-flight is refused with the desktop's reason; the device
-cannot give that word (``confirm_pending`` is never sent). Reading a job's steps and whether it can resume needs only
-``pc_read``. Every action writes a ``device_act`` receipt (device, right, action, job, ``via``, outcome).
+cannot give that word (``confirm_pending`` is never sent). Reading a job's steps, whether it can resume, and its live event stream needs only
+``pc_read``; the stream re-checks the device and the right before every frame and every heartbeat. Every action writes a ``device_act`` receipt (device, right, action, job, ``via``, outcome).
 Each rule is held by a test in tests/unit/test_tv_pc_act.py.
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Optional, Tuple
 
-from flask import Flask, Response, g, jsonify
+from flask import Flask, Response, g, jsonify, stream_with_context
 
 from agent_friday.services import device_pairing
 from agent_friday.tv_gateway import pc_read, tailnet
@@ -23,6 +25,8 @@ from agent_friday.tv_gateway.pc_common import ID_PATTERN, allowed, refuse
 _log = logging.getLogger(__name__)
 
 RIGHT = "pc_act"
+HEARTBEAT_S = 20
+_FRAME_ID = re.compile(r"^id: (\d+)$", re.M)
 _KEEP = ("ok", "error", "reason", "status", "stop_requested", "task_id", "rerun_of", "resuming", "resumable",
          "needs_confirmation")
 
@@ -33,6 +37,48 @@ def _desk_post(path: str) -> Tuple[int, dict]:
     reply = core.app.test_client().post(path, json={}, headers={"X-Friday-Token": core._current_api_token()})
     body = reply.get_json(silent=True)
     return reply.status_code, body if isinstance(body, dict) else {}
+
+
+def _desk_stream(path: str, since: int):
+    """The desktop's own event stream for one job, in process, ending after HEARTBEAT_S seconds so the caller can
+    look at the device again. Yields text frames."""
+    from agent_friday import core
+    reply = core.app.test_client().get(path, query_string={"stream": "1", "since": since, "max_wait": HEARTBEAT_S},
+                                       headers={"X-Friday-Token": core._current_api_token()}, buffered=False)
+    try:
+        if reply.status_code != 200:
+            yield "event: error\ndata: %s\n\n" % json.dumps({"status": reply.status_code})
+            return
+        for chunk in reply.response:
+            yield chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else str(chunk)
+    finally:
+        reply.close()
+
+
+def _may_still_read(device_id: str) -> bool:
+    dev = device_pairing.get_device(device_id)
+    return allowed(dev) and device_pairing.has_right(dev, pc_read.RIGHT)
+
+
+def _job_frames(device_id: str, job_id: str, since: int):
+    """Follow a job until it ends, reconnecting to the desktop from the last frame id every heartbeat. The device
+    is checked before every frame; the stream ends with ``revoked`` the moment it may not read.
+    Guarded by test_the_event_stream_ends_when_the_right_is_withdrawn."""
+    cursor, finished = since, False
+    while not finished:
+        if not _may_still_read(device_id):
+            yield 'event: revoked\ndata: {}\n\n'
+            return
+        for frame in _desk_stream("/api/tasks/%s/events" % job_id, cursor):
+            if not _may_still_read(device_id):
+                yield 'event: revoked\ndata: {}\n\n'
+                return
+            seen = _FRAME_ID.findall(frame)
+            cursor = int(seen[-1]) if seen else cursor
+            finished = finished or frame.startswith("event: end") or frame.startswith("event: error")
+            yield frame
+        if not finished:
+            yield ": keepalive\n\n"
 
 
 def _guard() -> Optional[Response]:
@@ -86,6 +132,24 @@ def register(app: Flask) -> None:
         if not ID_PATTERN.match(jid):
             return refuse(400, "not a job id", code="bad_id")
         return pc_read._json_from_desk("/api/tasks/%s/resumable" % jid, None, "job_resumable")
+
+    @app.get("/tv/v1/jobs/<jid>/events")
+    def pc_job_events(jid):
+        denied = pc_read._guard("jobs")
+        if denied is not None:
+            return denied
+        if not ID_PATTERN.match(jid):
+            return refuse(400, "not a job id", code="bad_id")
+        try:
+            status, _, _ = pc_read._desk("/api/tasks/%s" % jid)
+        except Exception as e:
+            _log.warning("pc_act events failed: %s", type(e).__name__)
+            return refuse(503, "the PC could not answer that right now", code="pc_unavailable")
+        if status == 404:
+            return refuse(404, "this PC has no job called %r" % jid, code="unknown_job")
+        since = pc_read._int("since", 0, 2 ** 31)
+        return Response(stream_with_context(_job_frames(g.device["id"], jid, since)), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.post("/tv/v1/jobs/<jid>/stop-after-step")
     def pc_job_stop_after_step(jid):

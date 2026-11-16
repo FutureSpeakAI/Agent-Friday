@@ -184,5 +184,67 @@ def test_every_desktop_path_the_job_routes_call_is_still_a_desktop_route():
     src = "\n".join(p.read_text(encoding="utf-8") for p in root.glob("*.py"))
     declared = {re.sub(r"<[^>]+>", "<x>", m) for m in re.findall(r"route\(\s*[\"'](/api/[^\"']+)[\"']", src)}
     for path in ("/api/tasks/<x>/steps", "/api/tasks/<x>/resumable", "/api/tasks/<x>/stop-after-step",
-                 "/api/tasks/<x>/resume", "/api/tasks/<x>/rerun"):
+                 "/api/tasks/<x>/resume", "/api/tasks/<x>/rerun", "/api/tasks/<x>/events"):
         assert path in declared, path
+
+
+# ── the live event stream: pc_read, right re-checked on every frame ────────
+
+class Stream:
+    """Stands in for the desktop's own event stream; each call is one heartbeat's worth of frames."""
+
+    def __init__(self, *rounds):
+        self.rounds, self.calls = list(rounds), []
+
+    def __call__(self, path, since):
+        self.calls.append((path, since))
+        yield from (self.rounds.pop(0) if self.rounds else ())
+
+
+@pytest.fixture
+def job_exists(monkeypatch):
+    monkeypatch.setattr(pc_read, "_desk", lambda path, params=None: (200, b"{}", "application/json"))
+
+
+def read_stream(client, tv, path="/tv/v1/jobs/j1/events"):
+    response = client.get(path, headers=auth(open_session(client, tv)))
+    return response.status_code, response.get_data(as_text=True)
+
+
+def test_the_event_stream_follows_the_job_and_resumes_from_the_last_frame(client, job_exists, monkeypatch):
+    stream = Stream(["id: 1\nevent: step\ndata: {}\n\n", "id: 2\nevent: step\ndata: {}\n\n"],
+                    ["id: 3\nevent: step\ndata: {}\n\n", "event: end\ndata: {}\n\n"])
+    monkeypatch.setattr(pc_act, "_desk_stream", stream)
+    status, text = read_stream(client, device(rights=("pc_read",)))
+    assert status == 200 and text.count("event: step") == 3 and text.endswith("event: end\ndata: {}\n\n")
+    assert [since for _, since in stream.calls] == [0, 2]
+
+
+def test_the_event_stream_needs_the_read_right_and_a_real_job(client, monkeypatch):
+    monkeypatch.setattr(pc_act, "_desk_stream", Stream())
+    assert read_stream(client, device(rights=()))[0] == 403
+    monkeypatch.setattr(pc_read, "_desk", lambda path, params=None: (404, b"{}", "application/json"))
+    status, _ = read_stream(client, device(rights=("pc_read",)))
+    assert status == 404
+
+
+def test_the_event_stream_ends_when_the_right_is_withdrawn(client, job_exists, monkeypatch):
+    tv = device(rights=("pc_read",))
+
+    def withdrawing(path, since):
+        yield "id: 1\nevent: step\ndata: {}\n\n"
+        device_pairing.set_right(tv.id, "pc_read", False)
+        yield "id: 2\nevent: step\ndata: {}\n\n"
+    monkeypatch.setattr(pc_act, "_desk_stream", withdrawing)
+    status, text = read_stream(client, tv)
+    assert "id: 1" in text and "id: 2" not in text and text.endswith("event: revoked\ndata: {}\n\n")
+
+
+def test_the_event_stream_ends_when_the_device_is_removed(client, job_exists, monkeypatch):
+    tv = device(rights=("pc_read",))
+
+    def removing(path, since):
+        device_pairing.remove_device(tv.id)
+        yield "id: 1\nevent: step\ndata: {}\n\n"
+    monkeypatch.setattr(pc_act, "_desk_stream", removing)
+    assert read_stream(client, tv)[1].endswith("event: revoked\ndata: {}\n\n")
