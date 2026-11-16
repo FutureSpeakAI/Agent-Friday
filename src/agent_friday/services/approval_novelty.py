@@ -4,7 +4,7 @@ Every decided card gets one label: ``never_seen``, ``new_target``, ``new_sequenc
 The label is written to its own file and read by nothing that decides. Nothing here can change a
 card, raise one, quiet one or fail a decision: ``note_decision`` never raises.
 
-The counts are keyed by what a card already holds (its kind, its target class, who raised it, where
+The counts are keyed by what a card already holds (its kind, its target class (the tool, for a tool card), who raised it, where
 it came from, and the kind decided just before it in the same task). They hold labels only; no card
 text, subject id or payload is kept.
 
@@ -30,6 +30,7 @@ from enum import Enum
 from typing import Any, Dict, NamedTuple, Optional
 
 from agent_friday.paths import friday_home
+from agent_friday.services import action_pattern
 
 _log = logging.getLogger("friday.approval_novelty")
 
@@ -61,9 +62,9 @@ def shape_of(card: Dict[str, Any], prior_kind: str = "") -> Shape:
     payload = card.get("payload") if isinstance(card.get("payload"), dict) else {}
     return Shape(
         kind=str(card.get("kind") or "")[:60],
-        target_class=str(card.get("subject_type") or "")[:60],
+        target_class=str(payload.get("tool") or card.get("subject_type") or "")[:60],
         principal=str(card.get("principal") or "owner")[:60],
-        origin=str(payload.get("origin") or "")[:60],
+        origin=str(payload.get("origin") or card.get("requested_by") or "")[:60],
         prior_kind=prior_kind[:60],
     )
 
@@ -140,7 +141,9 @@ def note_decision(card: Dict[str, Any]) -> Optional[Novelty]:
                 while len(tasks) > _TASKS_REMEMBERED:
                     tasks.pop(next(iter(tasks)))
             _save_state(state)
-            line = {"t": time.time(), "approval_id": str(card.get("approval_id") or ""),
+            pattern = action_pattern.from_card(card)
+            line = {"t": time.time(), "pattern": pattern.fingerprint() if pattern else "",
+                    "approval_id": str(card.get("approval_id") or ""),
                     "label": label.value, "decision": str(card.get("status") or ""),
                     "kind": shape.kind, "target_class": shape.target_class,
                     "principal": shape.principal, "origin": shape.origin,
@@ -151,3 +154,20 @@ def note_decision(card: Dict[str, Any]) -> Optional[Novelty]:
     except Exception as exc:  # noqa: BLE001
         _log.warning("approval novelty not recorded: %s", exc)
         return None
+
+
+def decided_rows() -> list:
+    """Every label row written so far, oldest first. Unreadable lines are skipped."""
+    try:
+        lines = LABELS_FILE.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
