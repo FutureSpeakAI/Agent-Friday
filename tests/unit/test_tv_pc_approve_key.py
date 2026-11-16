@@ -368,7 +368,7 @@ def test_removing_the_device_takes_its_pending_card_away(client):
     assert cards() == []
 
 
-def test_a_staged_key_always_has_a_card_on_the_screen(client, monkeypatch):
+def test_a_registered_key_always_has_a_card_on_the_screen(client, monkeypatch):
     dev = paired()
     register(client, dev)
     assert pairing.key_card_in_step(dev.id)
@@ -384,3 +384,23 @@ def test_the_services_pairing_module_does_not_import_the_gateway():
     import pathlib
     source = pathlib.Path(device_pairing.__file__).read_text(encoding="utf-8")
     assert "tv_gateway import" not in source and "import agent_friday.tv_gateway" not in source
+
+
+def test_two_registrations_at_once_leave_one_live_card(client):
+    import threading
+    for _ in range(8):
+        dev = paired()
+        keys = [new_key(), new_key()]
+        barrier = threading.Barrier(2)
+        answers = []
+
+        def go(spki):
+            barrier.wait()
+            answers.append(register(client, dev, spki=spki))
+        threads = [threading.Thread(target=go, args=(k,)) for k in keys]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        staged = device_pairing.pending_approval_key(dev.id)
+        live = [c for c in cards() if c["payload"]["device_id"] == dev.id]
+        assert all(a.status_code == 200 for a in answers)
+        assert len(live) == 1 and live[0]["payload"]["key_id"] == staged.key_id
