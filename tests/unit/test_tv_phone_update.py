@@ -209,14 +209,16 @@ DOC_EXAMPLE = (
 DOC_NOTHING_STAGED = '{"ok":true,"available":false}'
 
 
-def _phone_doc():
-    """The phone repo's doc: FRIDAY_PHONE_DOCS, else ~/Projects/friday-phone/docs next to the checkout's home (the
-    tests move HOME, so the home folder is found from this file's own location, a worktree under ~/ftv/wt)."""
-    here = pathlib.Path(__file__).resolve()
-    homes = [pathlib.Path.home()] + ([here.parents[5]] if len(here.parents) > 5 else [])
+def _doc_folders() -> list:
+    """Where the phone repo's docs may be: FRIDAY_PHONE_DOCS, else ~/Projects/friday-phone/docs under the real home
+    (the tests move HOME; tests/conftest.py keeps the real one in FRIDAY_REAL_HOME)."""
+    real_home = pathlib.Path(os.environ.get("FRIDAY_REAL_HOME") or pathlib.Path.home())
     folders = [pathlib.Path(os.environ["FRIDAY_PHONE_DOCS"])] if os.environ.get("FRIDAY_PHONE_DOCS") else []
-    folders += [home / "Projects" / "friday-phone" / "docs" for home in homes]
-    for folder in folders:
+    return folders + [real_home / "Projects" / "friday-phone" / "docs"]
+
+
+def _phone_doc():
+    for folder in _doc_folders():
         if (folder / "PC-UPDATE.md").is_file():
             return (folder / "PC-UPDATE.md").read_text(encoding="utf-8")
     return None
@@ -229,7 +231,7 @@ def _squash(text: str) -> str:
 def test_the_example_copied_here_is_the_one_in_the_phone_doc():
     doc = _phone_doc()
     if doc is None:
-        pytest.skip("the friday-phone repo is not checked out here")
+        pytest.skip("PC-UPDATE.md not found in: " + ", ".join(str(folder) for folder in _doc_folders()))
     assert _squash(DOC_EXAMPLE) in _squash(doc) and _squash(DOC_NOTHING_STAGED) in _squash(doc)
 
 
