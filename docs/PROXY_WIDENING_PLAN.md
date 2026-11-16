@@ -7,8 +7,8 @@ release lead assigns; the BURN-DOWN lane wrote the plan.
 
 - `services/salon_proxy.py` (`KeyProxy`) is the one working proxy. Loopback only, provider API paths only, the key is
   read at request time and never leaves the process, standard library only. Used by `claude_engine.py` for Anthropic.
-- Today 43 modules read a raw key (the list is `scripts/raw_key_readers.allow.json`, held down by
-  `scripts/check_raw_key_readers.py`), through the environment, `get_provider_key` or `provider_api_key`. Keys are decrypted into the environment at boot.
+- Today 54 modules read a raw key (the list is `scripts/raw_key_readers.allow.json`, held down by
+  `scripts/check_raw_key_readers.py`), through the environment, `get_provider_key`, `provider_api_key`, or a getter such as `api_key()` or a channel's `token()` (a few may be false positives; the list is a ceiling, not a verdict). Keys are decrypted into the environment at boot.
 - The interactive-session child no longer inherits the environment (A1, PR `lane/burndown-child-env`).
   Other spawn sites that still copy the whole environment: `voice_workers.py`, `media_convert.py`, `podcast_render.py`,
   `g2p_fallback.py` (the first four are PR #861), `cli.py` (two), `setup_wizard.py`, and the ones that pass the

@@ -66,6 +66,16 @@
       "expires": "2027-03-31",
       "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
+    "src/agent_friday/services/channels/discord_bridge.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/channels/telegram_bridge.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
     "src/agent_friday/services/claude_engine.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
@@ -176,12 +186,57 @@
       "expires": "2027-03-31",
       "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
+    "src/agent_friday/services/openai_live_bridge.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
     "src/agent_friday/services/openai_realtime.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
       "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/platforms/base.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/bluesky.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/instagram.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/linkedin.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/mastodon.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/medium.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/reddit.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/tiktok.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/platforms/x_twitter.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
       "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
