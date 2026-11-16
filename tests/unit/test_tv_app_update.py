@@ -139,6 +139,14 @@ def test_a_record_that_is_not_a_clear_acceptance_serves_nothing(client, apks, ba
     assert get(client, paired(), "/tv/v1/app/apk").status_code == 404
 
 
+@pytest.mark.parametrize("text", ["[]", '"x"', "7", "null", "{not json"])
+def test_a_record_that_is_not_an_object_is_no_build_not_a_crash(client, apks, text):
+    (apks / "LATEST.json").write_text(text, encoding="utf-8")
+    for p in PATHS:
+        r = get(client, paired(), p)
+        assert r.status_code == 404 and r.get_json()["code"] == "no_accepted_build"
+
+
 def test_a_build_changed_after_acceptance_is_refused(client, apks):
     accept(apks)
     (apks / "agent-friday-0.12.0-accept-abc1234.apk").write_bytes(BYTES + b"tampered")

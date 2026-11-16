@@ -14,6 +14,13 @@ longer match the recorded hash is refused (503 ``apk_changed``) instead of being
 Folder: ``FRIDAY_PHONE_APK_DIR``, else ``<friday home>/phone_apk``. Only an owner-bound phone or tablet is answered
 (same binding as the read door; a watch, TV, family or unbound device is refused). Nothing is installed by this route,
 and an APK is only ever bytes: Android's own installer and signature check still decide.
+
+Each rule above is held by a test in tests/unit/test_tv_app_update.py: no record, a record that is not an object, a
+bad name or hash: ``test_no_record_means_no_apk_even_with_files_in_the_folder``,
+``test_a_record_that_is_not_an_object_is_no_build_not_a_crash`` and
+``test_a_record_that_is_not_a_clear_acceptance_serves_nothing``; changed bytes:
+``test_a_build_changed_after_acceptance_is_refused``; one receipt per download, not per resumed piece:
+``test_a_range_resumes_and_is_not_a_second_download``.
 """
 from __future__ import annotations
 
@@ -23,8 +30,9 @@ import logging
 import os
 import re
 import threading
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request, send_file
 
@@ -33,7 +41,7 @@ _log = logging.getLogger(__name__)
 MANIFEST = "LATEST.json"
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.apk$")
 _HEX = re.compile(r"^[0-9a-fA-F]{64}$")
-_HASHED: dict = {}                      # (path, size, mtime_ns) -> sha256
+_HASHED: Dict[Tuple[str, int, int], str] = {}
 _LOCK = threading.Lock()
 
 
@@ -67,38 +75,59 @@ def _sha256(p: Path) -> str:
     return _HASHED[key]
 
 
-def accepted_build() -> Tuple[Optional[dict], Optional[Response]]:
+@dataclass(frozen=True)
+class AcceptedBuild:
+    file: str
+    path: Path
+    version: str
+    version_code: Optional[int]
+    sha256: str
+    size: int
+    accepted_by: str
+    accepted_at: str
+    accepted_commit: str
+
+    def accepted(self) -> dict:
+        return {"by": self.accepted_by, "at": self.accepted_at, "commit": self.accepted_commit}
+
+
+def _no_build(reason: str = "this PC has no accepted phone build to offer") -> Tuple[None, Response]:
+    return None, _refuse(404, reason, code="no_accepted_build")
+
+
+def accepted_build() -> Tuple[Optional[AcceptedBuild], Optional[Response]]:
     """(the accepted build, None) or (None, the refusal to send)."""
-    d = folder()
+    folder_path = folder()
     try:
-        rec = json.loads((d / MANIFEST).read_text(encoding="utf-8"))
+        record = json.loads((folder_path / MANIFEST).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return None, _refuse(404, "this PC has no accepted phone build to offer", code="no_accepted_build")
-    acc = rec.get("accepted") if isinstance(rec, dict) else None
-    name, want = str(rec.get("file") or ""), str(rec.get("sha256") or "")
-    ok_acc = isinstance(acc, dict) and acc.get("by") and acc.get("at")
-    if not (ok_acc and _NAME.match(name) and _HEX.match(want) and rec.get("version")):
-        return None, _refuse(404, "this PC has no accepted phone build to offer", code="no_accepted_build")
-    p = (d / name)
+        return _no_build()
+    if not isinstance(record, dict):
+        return _no_build()
+    acceptance = record.get("accepted")
+    name, wanted_hash = str(record.get("file") or ""), str(record.get("sha256") or "")
+    acceptance_ok = isinstance(acceptance, dict) and acceptance.get("by") and acceptance.get("at")
+    if not (acceptance_ok and _NAME.match(name) and _HEX.match(wanted_hash) and record.get("version")):
+        return _no_build()
     try:
-        real = p.resolve()
-        if real.parent != d.resolve() or not real.is_file():
+        real = (folder_path / name).resolve()
+        if real.parent != folder_path.resolve() or not real.is_file():
             raise OSError("outside")
         got = _sha256(real)
     except OSError:
-        return None, _refuse(404, "the accepted phone build is not on this PC", code="no_accepted_build")
-    if got.lower() != want.lower():
+        return _no_build("the accepted phone build is not on this PC")
+    if got.lower() != wanted_hash.lower():
         _log.warning("phone apk %s no longer matches its accepted hash", name)
         return None, _refuse(503, "the build on this PC changed after it was accepted; it will not be sent",
                              code="apk_changed")
     try:
-        vc = int(rec.get("version_code"))
+        version_code = int(record.get("version_code"))
     except (TypeError, ValueError):
-        vc = None
-    return {"file": name, "path": real, "version": str(rec["version"])[:40], "version_code": vc,
-            "sha256": got.lower(), "size": real.stat().st_size,
-            "accepted": {"by": str(acc["by"])[:80], "at": str(acc["at"])[:40],
-                         "commit": str(acc.get("commit") or "")[:40]}}, None
+        version_code = None
+    return AcceptedBuild(file=name, path=real, version=str(record["version"])[:40], version_code=version_code,
+                         sha256=got.lower(), size=real.stat().st_size, accepted_by=str(acceptance["by"])[:80],
+                         accepted_at=str(acceptance["at"])[:40],
+                         accepted_commit=str(acceptance.get("commit") or "")[:40]), None
 
 
 def _guard() -> Optional[Response]:
@@ -108,11 +137,11 @@ def _guard() -> Optional[Response]:
     return None
 
 
-def _audit(what: str, build: dict) -> None:
+def _audit(what: str, build: AcceptedBuild) -> None:
     from agent_friday.services import device_pairing
     from agent_friday.tv_gateway import tailnet
-    device_pairing._receipt(what, g.device, version=build["version"], version_code=build["version_code"],
-                            sha256=build["sha256"], via=tailnet.via())
+    device_pairing._receipt(what, g.device, version=build.version, version_code=build.version_code,
+                            sha256=build.sha256, via=tailnet.via())
 
 
 def register(app: Flask) -> None:
@@ -121,14 +150,14 @@ def register(app: Flask) -> None:
         denied = _guard()
         if denied is not None:
             return denied
-        b, refusal = accepted_build()
+        build, refusal = accepted_build()
         if refusal is not None:
             return refusal
-        out = {"ok": True, "version": b["version"], "version_code": b["version_code"], "sha256": b["sha256"],
-               "size": b["size"], "accepted": b["accepted"], "apk": "/tv/v1/app/apk"}
+        out = {"ok": True, "version": build.version, "version_code": build.version_code, "sha256": build.sha256,
+               "size": build.size, "accepted": build.accepted(), "apk": "/tv/v1/app/apk"}
         have = request.args.get("have", "")
-        if have.isdigit() and b["version_code"] is not None:
-            out["up_to_date"] = int(have) >= b["version_code"]
+        if have.isdigit() and build.version_code is not None:
+            out["up_to_date"] = int(have) >= build.version_code
         return jsonify(out)
 
     @app.get("/tv/v1/app/apk")
@@ -136,14 +165,14 @@ def register(app: Flask) -> None:
         denied = _guard()
         if denied is not None:
             return denied
-        b, refusal = accepted_build()
+        build, refusal = accepted_build()
         if refusal is not None:
             return refusal
         if not request.headers.get("Range"):
-            _audit("device_app_download", b)             # one row per download, not per resumed piece
-        resp = send_file(b["path"], mimetype="application/vnd.android.package-archive", conditional=True,
-                         as_attachment=True, download_name=b["file"], max_age=0)
-        resp.headers["X-Friday-SHA256"] = b["sha256"]
-        resp.headers["X-Friday-Version"] = b["version"]
+            _audit("device_app_download", build)
+        resp = send_file(build.path, mimetype="application/vnd.android.package-archive", conditional=True,
+                         as_attachment=True, download_name=build.file, max_age=0)
+        resp.headers["X-Friday-SHA256"] = build.sha256
+        resp.headers["X-Friday-Version"] = build.version
         resp.headers["Cache-Control"] = "no-store"
         return resp
