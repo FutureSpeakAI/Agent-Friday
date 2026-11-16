@@ -64,12 +64,19 @@ const card = (id) => ({ approval_id: id, title: 'T ' + id });
   r = await render(html, { subject: 'crew:c1' }, [card('a')], ok({ ok: true, ids: ['zzz'] }));
   assert.equal(r.out, null);
 
-  // Refused, malformed, unreachable: an empty slot.
-  r = await render(html, { subject: 'bad' }, [card('a')], ok({ ok: false, error: 'bad_subject' }));
-  assert.equal(r.out, null);
-  r = await render(html, { subject: 'crew:c1' }, [card('a')], ok({ ok: true, ids: 'a' }));
-  assert.equal(r.out, null);
-  r = await render(html, { subject: 'crew:c1' }, [card('a')], () => Promise.reject(new Error('down')));
+  // Nothing waiting: the shell's own line. Refused, malformed or unreachable: a line that says it could
+  // not check, never "nothing is waiting" and never a card.
+  const line = (o) => o.children[0].children[0];
+  r = await render(html, { subject: 'crew:c1' }, [card('a')], ok({ ok: true, ids: [] }));
+  assert.equal(r.out.props['data-testid'], 'approval-slot');
+  assert.equal(line(r.out), 'Nothing is waiting here.');
+  for (const answer of [ok({ ok: false, error: 'bad_subject' }), ok({ ok: true, ids: 'a' }), () => Promise.reject(new Error('down'))]) {
+    r = await render(html, { subject: 'crew:c1' }, [card('a')], answer);
+    assert.equal(line(r.out), 'Could not check what is waiting.');
+    assert.ok(!JSON.stringify(r.out).includes('"a"'), 'no card on a failed ask');
+  }
+  // Still asking: nothing yet, so a slow answer never flashes "nothing is waiting".
+  r = await render(html, { subject: 'crew:c1' }, [card('a')], () => new Promise(() => {}));
   assert.equal(r.out, null);
 
   // The document's own extras never reach the output (V12): no id, text, style, children or label.
