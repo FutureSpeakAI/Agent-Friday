@@ -21,8 +21,8 @@ release lead assigns; the BURN-DOWN lane wrote the plan.
 1. The header is fixed: it always sets `x-api-key`. Other providers name it differently (a subscription-token header,
    a bearer `Authorization`, a vendor header). The key placement must come from a table row, not from code.
 2. One upstream per instance. A table of providers needs one listener per provider (simplest, keeps each listener's
-   allow-list tiny) or one listener that routes by a path prefix it owns (`/p/<provider>/...`). Recommendation: one
-   listener, prefix routing, because callers then need one loopback port.
+   allow-list tiny) or one listener that routes by a path prefix it owns (`/p/<provider>/...`). Chosen: one
+   listener per provider (see Built so far).
 3. The prefixes and methods are constructor parameters already (default `/v1/`, GET and POST), so a row only supplies its own.
 4. Streaming works (chunked relay). WebSocket upgrade does not: `upgrade` is stripped. The realtime voice engines
    (`openai_realtime.py`, `voice_engine.py` for Gemini live) use sockets, so they are a separate slice.
@@ -76,7 +76,8 @@ last raw reader is off the allow-list.
 
 ## Open questions for the release lead
 
-- One listener with prefix routing (recommended) or a listener per provider?
+- Decided in `key_gateway.py`: one listener per provider (each listener's allow-list stays tiny). Say so if you want prefix routing instead.
+- The gateway's hop to the provider uses `http.client`, which ignores `HTTPS_PROXY` and a custom CA bundle that `requests` honoured. Do we add CONNECT tunnelling and a CA option, or keep the direct hop and document it?
 - Who owns the provider table, and does a new row need a card the owner presses (a new provider can spend money)?
 - Settings that hold a key today (the `*_api_key` settings) are read by the UI; the settings schema is a hot file.
   Confirm the order before touching it.
