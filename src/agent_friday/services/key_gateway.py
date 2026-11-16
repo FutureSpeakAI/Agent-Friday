@@ -20,7 +20,7 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
-from agent_friday.services.salon_proxy import DUMMY_KEY, KeyProxy
+from agent_friday.services.salon_proxy import DUMMY_KEY, NO_KEY_HEADER, KeyProxy
 
 
 class UnknownProvider(KeyError):
@@ -38,6 +38,7 @@ class Provider:
     env_names: tuple
     store_names: tuple
     settings_names: tuple = ()
+    timeout_s: int = 60
 
 
 PROVIDERS = {
@@ -118,12 +119,18 @@ def stand_in(name: str) -> str:
     return DUMMY_KEY if available(name) else ""
 
 
+def no_key(response) -> bool:
+    """True when this answer is the gateway's own "no key" refusal, not the provider's."""
+    return getattr(response, "status_code", 0) == 401 and response.headers.get(NO_KEY_HEADER) == "no-key"
+
+
 def _keep_loopback_direct() -> None:
-    """A system HTTP proxy must never be asked to carry a request to our own loopback listener."""
+    """A system HTTP proxy must never be asked to carry a request to our own loopback listener. An existing "*" already
+    means "bypass everything" and is left alone; otherwise 127.0.0.1 is added as a whole entry."""
     for var in ("NO_PROXY", "no_proxy"):
-        current = os.environ.get(var, "")
-        if "127.0.0.1" not in current:
-            os.environ[var] = (current + "," if current else "") + "127.0.0.1"
+        entries = [part.strip() for part in os.environ.get(var, "").split(",") if part.strip()]
+        if "*" not in entries and "127.0.0.1" not in entries:
+            os.environ[var] = ",".join(entries + ["127.0.0.1"])
 
 
 def url(name: str) -> str:
@@ -134,7 +141,7 @@ def url(name: str) -> str:
         if proxy is None:
             proxy = KeyProxy(upstream=row.upstream, key_provider=lambda: _find_key(row) or None,
                              allowed_prefixes=row.prefixes, allowed_methods=row.methods,
-                             key_header=row.key_header, key_format=row.key_format)
+                             key_header=row.key_header, key_format=row.key_format, upstream_timeout=row.timeout_s)
             proxy.start()
             _keep_loopback_direct()
             _PROXIES[name] = proxy

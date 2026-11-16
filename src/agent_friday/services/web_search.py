@@ -185,7 +185,11 @@ def verify_key(key: str | None = None) -> dict:
                 "summary": _held, "route_not_chosen": True}
 
     # A key typed on the key screen is checked directly (it is not stored yet); the stored key goes through the gateway.
-    base = "https://api.search.brave.com" if k else key_gateway.url("brave")
+    try:
+        base = "https://api.search.brave.com" if k else key_gateway.url("brave")
+    except Exception:
+        return {"configured": True, "valid": None, "endpoints": {}, "limits": {},
+                "summary": "The local key gateway could not start, so the stored key was not checked."}
     k = k or brave_key()
     endpoints = {"web": base + "/res/v1/web/search", "news": base + "/res/v1/news/search"}
     out: dict = {"configured": True, "endpoints": {}, "limits": {}}
@@ -196,6 +200,9 @@ def verify_key(key: str | None = None) -> dict:
                                       "X-Subscription-Token": k}, timeout=20)
         except Exception as e:
             out["endpoints"][name] = {"ok": False, "error": ExceptionText(f"{type(e).__name__}: {e}")}
+            continue
+        if key_gateway.no_key(r):
+            out["endpoints"][name] = {"ok": False, "no_key": True}
             continue
         entry = {"ok": r.status_code == 200, "http": r.status_code}
         if r.status_code != 200:
@@ -209,6 +216,8 @@ def verify_key(key: str | None = None) -> dict:
                 out["limits"][hk] = hv
         out["endpoints"][name] = entry
 
+    if out["endpoints"] and all(entry.get("no_key") for entry in out["endpoints"].values()):
+        return {"configured": False, "valid": None, "summary": "No Brave key is configured."}
     web_ok = out["endpoints"].get("web", {}).get("ok")
     news_ok = out["endpoints"].get("news", {}).get("ok")
     out["valid"] = bool(web_ok or news_ok)
@@ -399,6 +408,8 @@ def _brave(query: str, count: int) -> dict:
         headers={"Accept": "application/json", "X-Subscription-Token": key},
         timeout=20,
     )
+    if key_gateway.no_key(r):
+        return {"status": SearchStatus.BACKEND_BROKEN, "detail": "no Brave key is configured"}
     if r.status_code == 401:
         return {"status": SearchStatus.BACKEND_BROKEN,
                 "detail": "Brave rejected the API key (HTTP 401)"}
