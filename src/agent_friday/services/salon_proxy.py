@@ -43,6 +43,10 @@ _STRIP_REQUEST = {"host", "connection", "keep-alive", "proxy-authorization", "pr
                   "transfer-encoding", "upgrade", "x-api-key", "authorization", "content-length"}
 _STRIP_RESPONSE = {"connection", "keep-alive", "transfer-encoding", "content-length", "trailer", "upgrade"}
 _CHUNK = 8192
+#: The record keeps the newest entries only: a listener that lives as long as the app must not grow without bound.
+CAPTURE_CAP = 1000
+#: Sent on the proxy's own "no key" refusal so a caller can tell it from the provider's 401.
+NO_KEY_HEADER = "X-Friday-Gateway"
 
 
 class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -53,7 +57,7 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 class KeyProxy:
     def __init__(self, upstream: str = DEFAULT_UPSTREAM, key_provider: Optional[Callable[[], Optional[str]]] = None,
                  allowed_prefixes=("/v1/",), allowed_methods=("POST", "GET"), host: str = "127.0.0.1",
-                 key_header: str = "x-api-key", key_format: str = "{key}"):
+                 key_header: str = "x-api-key", key_format: str = "{key}", upstream_timeout: int = 600):
         if host not in ("127.0.0.1", "localhost", "::1"):
             raise ValueError("the salon proxy listens on loopback only")
         u = urlsplit(upstream)
@@ -67,6 +71,7 @@ class KeyProxy:
         #: Where the key goes on the way out (``key_format`` is filled with the key). Whatever the caller sent under
         #: this name is dropped first. Guarded by tests/unit/test_key_gateway.py.
         self.key_header, self.key_format = key_header, key_format
+        self.upstream_timeout = upstream_timeout
         self._host = "127.0.0.1"
         self._server: Optional[_Server] = None
         self._thread: Optional[threading.Thread] = None
@@ -119,6 +124,7 @@ class KeyProxy:
     def _record(self, **entry) -> None:
         with self._lock:
             self._capture.append(entry)
+            del self._capture[:-CAPTURE_CAP]
 
     def capture(self) -> list:
         with self._lock:
@@ -159,12 +165,14 @@ class KeyProxy:
         except OSError:
             pass
 
-    def _refuse(self, h, status: int, text: str, path: str, method: str, t0: float) -> None:
+    def _refuse(self, h, status: int, text: str, path: str, method: str, t0: float, extra: Optional[dict] = None) -> None:
         self._drain(h)
         body = json.dumps({"error": text}).encode("utf-8")
         h.send_response(status)
         h.send_header("Content-Type", "application/json")
         h.send_header("Content-Length", str(len(body)))
+        for name, value in (extra or {}).items():
+            h.send_header(name, value)
         h.send_header("Connection", "close")
         h.end_headers()
         h.wfile.write(body)
@@ -186,7 +194,8 @@ class KeyProxy:
         except Exception:
             key = None
         if not key:
-            self._refuse(h, 401, "no key available for this codebase; nothing was sent", path, method, t0)
+            self._refuse(h, 401, "no key available for this codebase; nothing was sent", path, method, t0,
+                         extra={NO_KEY_HEADER: "no-key"})
             return
         length = int(h.headers.get("Content-Length") or 0)
         body = h.rfile.read(length) if length else b""
@@ -198,7 +207,7 @@ class KeyProxy:
         if body:
             headers["Content-Length"] = str(len(body))
         conn_cls = http.client.HTTPSConnection if self._scheme == "https" else http.client.HTTPConnection
-        conn = conn_cls(self._netloc, timeout=600)
+        conn = conn_cls(self._netloc, timeout=self.upstream_timeout)
         bytes_out = 0
         status = 0
         try:
