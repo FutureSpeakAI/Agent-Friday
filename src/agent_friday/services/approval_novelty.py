@@ -122,6 +122,14 @@ def _task_of(card: Dict[str, Any]) -> str:
     return str(payload.get("task_id") or "")[:80]
 
 
+def peek(card: Dict[str, Any]) -> Novelty:
+    """The label this card would get now, without counting it."""
+    with _LOCK:
+        state = _load_state()
+    task = _task_of(card)
+    return classify(shape_of(card, state["last_kind_by_task"].get(task, "") if task else ""), state)
+
+
 def note_decision(card: Dict[str, Any]) -> Optional[Novelty]:
     """Label and count one decided card. Returns the label, or None when nothing was recorded
     (an off-the-record card, or a failure; a failure is logged and never raised)."""

@@ -24,6 +24,7 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(an, "COUNTS_FILE", tmp_path / "counts.json")
     monkeypatch.setattr(an, "LABELS_FILE", tmp_path / "labels.jsonl")
     monkeypatch.setattr(so, "STATE_FILE", tmp_path / "offers.json")
+    monkeypatch.setattr(approvals, "_offer_standing_grant", lambda card: None)
     from agent_friday.services import dissent_gate as dg
     monkeypatch.setattr(dg, "EVENTS_PATH", tmp_path / "dissent_events.jsonl")
 
