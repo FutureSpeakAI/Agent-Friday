@@ -1,4 +1,4 @@
-"""The check a signed approval from an owner's phone or tablet must pass (brief: approvals from the owner's phone, 3.3-3.4).
+"""The check a signed approval from an owner's phone or tablet must pass (approvals-from-the-phone brief, 3.3-3.4).
 
 Pure rules and in-memory nonces; the routes are in pc_approve.py. Each rule is held by a test in
 tests/unit/test_tv_pc_approve_decide.py, named at the rule.
@@ -79,7 +79,8 @@ def reset_for_tests() -> None:
 
 
 def signing_message(approval_id: str, action_fp: str, nonce: str, device_id: str, signed_time: int) -> bytes:
-    return SIGN_PREFIX + "|".join([approval_id, "approve", action_fp, nonce, device_id, str(signed_time)]).encode("utf-8")
+    fields = [approval_id, "approve", action_fp, nonce, device_id, str(signed_time)]
+    return SIGN_PREFIX + "|".join(fields).encode("utf-8")
 
 
 def mint(device_id: str, approval_id: str, action_fp: str, now: Optional[float] = None) -> Challenge:

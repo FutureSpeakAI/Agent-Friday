@@ -530,4 +530,14 @@ def test_the_signature_is_kept_on_the_decision_record(client):
     phone.post("/tv/v1/approvals/%s/decide" % pending["approval_id"],
                {"decision": "approve", "nonce": got["nonce"], "time": when, "sig": signature})
     assert ap.get_approval(pending["approval_id"])["decided_proof"] == {
-        "action_fp": got["action_fp"], "nonce": got["nonce"], "signed_time": when, "signature": signature}
+        "approval_id": pending["approval_id"], "action_fp": got["action_fp"], "nonce": got["nonce"],
+        "signed_time": when, "signature_b64": signature,
+        "key_id": device_pairing.approval_key(device_pairing.get_device(phone.id)).key_id}
+
+
+def test_a_card_that_vanishes_after_verification_is_a_404_not_already_decided(client, monkeypatch):
+    phone = Enrolled(client)
+    pending = card()
+    monkeypatch.setattr(ap, "decide_with_outcome", lambda *args, **kwargs: (None, False))
+    answer = phone.approve(pending["approval_id"])
+    assert answer.status_code == 404 and answer.get_json()["code"] == "unknown_card"
