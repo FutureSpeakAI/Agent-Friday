@@ -19,7 +19,9 @@ Each rule above is held by a test in tests/unit/test_tv_app_update.py: no record
 bad name or hash: ``test_no_record_means_no_apk_even_with_files_in_the_folder``,
 ``test_a_record_that_is_not_an_object_is_no_build_not_a_crash`` and
 ``test_a_record_that_is_not_a_clear_acceptance_serves_nothing``; changed bytes:
-``test_a_build_changed_after_acceptance_is_refused``; one receipt per download, not per resumed piece:
+``test_a_build_changed_after_acceptance_is_refused`` and ``test_a_same_size_swap_with_the_same_mtime_is_refused``;
+only an owner-bound phone or tablet: ``test_only_an_owner_phone_or_tablet_is_answered``; Range and If-Range:
+``test_a_range_resumes_and_is_not_a_second_download`` and ``test_if_range_with_a_stale_validator_sends_the_whole_file``; one receipt per download, not per resumed piece:
 ``test_a_range_resumes_and_is_not_a_second_download``.
 """
 from __future__ import annotations
@@ -29,10 +31,9 @@ import json
 import logging
 import os
 import re
-import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request, send_file
 
@@ -41,8 +42,6 @@ _log = logging.getLogger(__name__)
 MANIFEST = "LATEST.json"
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.apk$")
 _HEX = re.compile(r"^[0-9a-fA-F]{64}$")
-_HASHED: Dict[Tuple[str, int, int], str] = {}
-_LOCK = threading.Lock()
 
 
 def _refuse(status: int, reason: str, **extra) -> Response:
@@ -59,20 +58,14 @@ def folder() -> Path:
     return friday_home() / "phone_apk"
 
 
-def _sha256(p: Path) -> str:
-    st = p.stat()
-    key = (str(p), st.st_size, st.st_mtime_ns)
-    with _LOCK:
-        if key in _HASHED:
-            return _HASHED[key]
-    h = hashlib.sha256()
-    with open(p, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    with _LOCK:
-        _HASHED.clear()
-        _HASHED[key] = h.hexdigest()
-    return _HASHED[key]
+def _sha256(apk_path: Path) -> str:
+    """The file's SHA-256, read on every request: a cache keyed on size and mtime would serve swapped bytes under
+    the old hash. Guarded by test_a_same_size_swap_with_the_same_mtime_is_refused."""
+    digest = hashlib.sha256()
+    with open(apk_path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
