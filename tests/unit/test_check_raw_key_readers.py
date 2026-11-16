@@ -39,6 +39,12 @@ def tree(tmp_path, files):
     'from x import provider_api_key\nkey = provider_api_key(prov)\n',
     'from os import getenv\nkey = getenv("ACME_API_KEY")\n',
     'from x import core\nkey = getattr(core, "ACME_API_KEY", "")\n',
+    'from x import firecrawl\nkey = firecrawl.api_key()\n',
+    'import x\nkey = x.simple_secret(1)\n',
+    'class A:\n    def f(self):\n        return self.token()\n',
+    'from os import environ as e\nkey = e.get("ACME_API_KEY")\n',
+    'import os as o\nkey = o.environ.get("ACME_API_KEY")\n',
+    'from os import getenv as g\nkey = g("ACME_API_KEY")\n',
 ])
 def test_each_way_of_reading_a_key_is_found(tmp_path, code):
     found = guard.readers_in(tree(tmp_path, {"m.py": code}))
@@ -51,6 +57,8 @@ def test_each_way_of_reading_a_key_is_found(tmp_path, code):
     'ACME_API_KEY = "name only"\n',
     'import os\nos.environ.pop("ACME_API_KEY", None)\n',
     'import os\nos.environ.setdefault("ACME_API_KEY", "x")\n',
+    'import x\nkey = x.token(1)\n',
+    'from os import environ as e\nhome = e.get("FRIDAY_HOME")\n',
 ])
 def test_reading_other_things_or_writing_a_key_is_not_a_read(tmp_path, code):
     assert guard.readers_in(tree(tmp_path, {"m.py": code})) == {}
