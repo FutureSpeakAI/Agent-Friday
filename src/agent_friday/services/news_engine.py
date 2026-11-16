@@ -724,7 +724,7 @@ def _brave_results(query, limit=8):
         from agent_friday.services.web_search import brave_key as _bk
         key = _bk()
     except Exception:
-        key = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
+        key = ""
     if not key:
         return []
     # The query is gated like a web search's (NS-34.6-14): a beat can carry the owner's own words.
@@ -739,8 +739,9 @@ def _brave_results(query, limit=8):
         return []
     try:
         import requests as _req
+        from agent_friday.services import key_gateway
         resp = _req.get(
-            "https://api.search.brave.com/res/v1/news/search",
+            key_gateway.url("brave") + "/res/v1/news/search",
             params={"q": query, "count": max(limit, 5), "freshness": "pd"},
             headers={"Accept": "application/json",
                      "X-Subscription-Token": key},

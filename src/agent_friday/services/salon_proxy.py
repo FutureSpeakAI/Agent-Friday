@@ -52,7 +52,8 @@ class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 class KeyProxy:
     def __init__(self, upstream: str = DEFAULT_UPSTREAM, key_provider: Optional[Callable[[], Optional[str]]] = None,
-                 allowed_prefixes=("/v1/",), allowed_methods=("POST", "GET"), host: str = "127.0.0.1"):
+                 allowed_prefixes=("/v1/",), allowed_methods=("POST", "GET"), host: str = "127.0.0.1",
+                 key_header: str = "x-api-key", key_format: str = "{key}"):
         if host not in ("127.0.0.1", "localhost", "::1"):
             raise ValueError("the salon proxy listens on loopback only")
         u = urlsplit(upstream)
@@ -63,6 +64,9 @@ class KeyProxy:
         self.key_provider = key_provider or (lambda: None)
         self.allowed_prefixes = tuple(allowed_prefixes)
         self.allowed_methods = tuple(m.upper() for m in allowed_methods)
+        #: Where the key goes on the way out (``key_format`` is filled with the key). Whatever the caller sent under
+        #: this name is dropped first. Guarded by tests/unit/test_key_gateway.py.
+        self.key_header, self.key_format = key_header, key_format
         self._host = "127.0.0.1"
         self._server: Optional[_Server] = None
         self._thread: Optional[threading.Thread] = None
@@ -186,9 +190,10 @@ class KeyProxy:
             return
         length = int(h.headers.get("Content-Length") or 0)
         body = h.rfile.read(length) if length else b""
-        headers = {k: v for k, v in h.headers.items() if k.lower() not in _STRIP_REQUEST}
+        headers = {k: v for k, v in h.headers.items()
+                   if k.lower() not in _STRIP_REQUEST and k.lower() != self.key_header.lower()}
         headers["Host"] = self._netloc
-        headers["x-api-key"] = key
+        headers[self.key_header] = self.key_format.format(key=key)
         headers["Connection"] = "close"
         if body:
             headers["Content-Length"] = str(len(body))

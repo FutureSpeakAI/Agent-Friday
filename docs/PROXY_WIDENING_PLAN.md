@@ -46,6 +46,14 @@ headers are stripped and replaced; no body or header value is recorded; the key 
 header (a test greps the capture, the logs and the response). A redirect is never followed (`http.client` does not follow one); keep a test
 that says so, so a later change of client cannot make a key follow a redirect.
 
+## Built so far
+
+- `services/key_gateway.py`: the provider table (`PROVIDERS`), one `KeyProxy` listener per provider (chosen over one
+  prefix-routed listener: each listener's allow-list stays tiny and the proxy's invariants carry over unchanged),
+  `url()`, `available()`, `sources()`, `stand_in()`. `KeyProxy` gained `key_header` / `key_format`.
+- Brave search (`web_search.py`, `news_engine.py`, `routes/news.py`) is migrated and off the allow-list. `brave_key()`
+  now returns the stand-in, never the key.
+
 ## Order of work
 
 1. **Brave search first** (`web_search.py`, `news_engine.py`, `routes/news.py`): a plain GET, no streaming, three
