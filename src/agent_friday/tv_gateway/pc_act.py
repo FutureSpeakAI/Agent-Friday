@@ -2,11 +2,12 @@
 
 Who: an owner-bound phone or tablet that holds ``pc_act``. The right is its own screen-only card at the PC, never part
 of the pairing bundle; a device that asks without it raises that card (once an hour) and gets 403 ``needs_right``.
-What: three actions on a job, each one fixed desktop POST with no body from the device, so the PC applies the same
-checks it applies to its own button: stop after the current step, resume an interrupted job, run a finished one again.
-A resume that needs the owner's word about a tool that was mid-flight is refused with the desktop's reason; the device
-cannot give that word (``confirm_pending`` is never sent). Reading a job's steps, whether it can resume, and its live event stream needs only
-``pc_read``; the stream re-checks the device and the right before every frame and every heartbeat. Every action writes a ``device_act`` receipt (device, right, action, job, ``via``, outcome).
+What: three actions on a job, each one fixed desktop POST with no body from the device, so the PC applies the
+same checks as its own button: stop after the current step, resume an interrupted job, run a finished one again.
+A resume that needs the owner's word about a tool that was mid-flight is refused with the desktop's reason; the
+device cannot give that word (``confirm_pending`` is never sent). Reading a job's steps, whether it can resume, and its live event stream needs only
+``pc_read``; the stream re-checks the device and the right before every frame and every heartbeat. Every action that reached the desktop writes a ``device_act`` receipt (device, right, action, job, ``via``, outcome;
+503 when the desktop failed, since it may already have acted), also when the answer is a refusal.
 Each rule is held by a test in tests/unit/test_tv_pc_act.py.
 """
 from __future__ import annotations
@@ -77,7 +78,7 @@ def _job_frames(device_id: str, job_id: str, since: int):
             cursor = int(seen[-1]) if seen else cursor
             finished = finished or frame.startswith("event: end") or frame.startswith("event: error")
             yield frame
-        if not finished:
+        if not finished and _may_still_read(device_id):
             yield ": keepalive\n\n"
 
 
@@ -103,11 +104,11 @@ def _act(action: str, job_id: str, path: str) -> Response:
         status, body = _desk_post(path % job_id)
     except Exception as e:
         _log.warning("pc_act %s failed: %s", action, type(e).__name__)
-        return refuse(503, "the PC could not do that right now", code="pc_unavailable")
-    if status >= 500:
-        return refuse(503, "the PC could not do that right now", code="pc_unavailable")
+        status, body = 503, {}
     device_pairing._receipt("device_act", g.device, right=RIGHT, action=action, job=job_id, outcome=status,
                             via=tailnet.via())
+    if status >= 500:
+        return refuse(503, "the PC could not do that right now", code="pc_unavailable")
     answer = jsonify({k: body[k] for k in _KEEP if k in body})
     answer.status_code = status
     return answer
