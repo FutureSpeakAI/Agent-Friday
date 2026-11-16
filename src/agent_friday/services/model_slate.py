@@ -116,6 +116,15 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
             "basis": "last load measured on this PC" if secs is not None else "not loaded on this PC yet"}
 
 
+def _measured(model_id) -> Optional[dict]:
+    """First-token wait as measured on this PC from answered calls, or None when none have been timed."""
+    try:
+        from agent_friday.services import ttft_stats
+        return ttft_stats.summary(model_id)
+    except Exception:
+        return None
+
+
 def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
     local = bool(m.get("local"))
     out = {
@@ -133,6 +142,7 @@ def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
         "hint": m.get("hint"),
     }
     out["switch"] = _switch_cost(m.get("id"), local, out["warm"])
+    out["measured"] = _measured(m.get("id"))
     why = _blocked(m, mode)
     out["can_serve"] = why is None
     out["blocked"] = ({"code": why[0], "reason": why[1]} if why else None)
