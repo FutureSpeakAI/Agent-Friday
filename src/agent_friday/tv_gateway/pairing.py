@@ -62,6 +62,11 @@ RIGHT_CARDS = {
         "index on this PC, from home or over your private link. It can only read: it cannot change anything, "
         "run an action or approve a card. Each kind of reading is listed in the PC's receipts, and removing "
         "the device here ends it."),
+    "pc_approve": (
+        "Let this phone or tablet approve cards for this PC?",
+        "The device may approve one card at a time, from home or over your private link. Each approval is "
+        "signed on the device, which must be unlocked. Every approval from a device is listed in the PC's "
+        "receipts and shown on this screen. Removing the device here ends it."),
 }
 PAIR_TTL_S = 300
 MAX_STARTS_PER_HOUR = 3
@@ -277,14 +282,16 @@ _OFFERED: dict = {}                    # "device:right" -> when its card was las
 OFFER_COOLDOWN_S = 3600
 
 
-def offer_right(device_id: str, right: str) -> Optional[str]:
+def offer_right(device_id: str, right: str, *, key_id: str = "", detail: str = "") -> Optional[str]:
     """Raise the screen-only card for one wider right on an already-paired device, at most once
-    an hour per device and right, so a TV that asks again does not pile up cards. Returns the
-    card's id, or None when it is too soon or the right has no card."""
+    an hour per device, right and key, so a device that asks again does not pile up cards. ``key_id`` and
+    ``detail`` are for the approval right: the card names the key it will activate and the fingerprint
+    choice the device asked for. Returns the card's id, or None when it is too soon or the right has no card."""
     from agent_friday.services import approvals
     if right not in RIGHT_CARDS:
         return None
-    key = "%s:%s" % (device_id, right)
+    asked = hashlib.sha256(detail.encode()).hexdigest()[:8] if detail else ""   # a changed choice is a new card
+    key = ":".join(part for part in (device_id, right, key_id, asked) if part)
     with _LOCK:
         now = time.time()
         if now - _OFFERED.get(key, 0.0) < OFFER_COOLDOWN_S:
@@ -293,8 +300,9 @@ def offer_right(device_id: str, right: str) -> Optional[str]:
     title, description = RIGHT_CARDS[right]
     card = approvals.create_approval(
         kind=RIGHT_KIND, subject_type="device_right", subject_id=key,
-        title=title, description=description, action_description=title,
-        payload={"device_id": device_id, "right": right, "origin": "tv_gateway"},
+        title=title, description=" ".join(part for part in (description, detail) if part),
+        action_description=title,
+        payload={"device_id": device_id, "right": right, "origin": "tv_gateway", **({"key_id": key_id} if key_id else {})},
         requested_by="tv_gateway", force_gate=True)
     return card.get("approval_id")
 
@@ -305,6 +313,9 @@ def _on_right_decision(rec: dict) -> None:
     right, device_id = payload.get("right"), payload.get("device_id")
     if right not in RIGHT_CARDS or rec.get("status") != "approved" or rec.get("decided_by") != SCREEN_LABEL:
         return
+    if right == device_pairing.APPROVAL_RIGHT and not device_pairing.activate_approval_key(
+            str(device_id), str(payload.get("key_id") or "")):
+        return                          # the key this card named is gone or was replaced: grant nothing
     device_pairing.set_right(str(device_id), right, True)
 
 
