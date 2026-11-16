@@ -9,6 +9,9 @@ Rules guarded here, each with a case that fails if the check is removed:
   with Content-Length and the SHA-256, one receipt per download; no host path in any answer.
 """
 import hashlib
+import os
+import pathlib
+import re
 
 import pytest
 
@@ -195,3 +198,72 @@ def test_the_tailnet_door_offers_it_and_the_receipt_says_so(apks):
                       json={"device_id": tv.id, "nonce": nonce, "sig": tv.sign(nonce)}).get_json()["session"]
     assert tail.get("/tv/v1/phone/update/apk?vc=40", environ_overrides=env, headers=auth(token)).status_code == 200
     assert rows("device_app_download")[-1]["via"] == "tailnet"
+
+
+# The phone app's own description of the offer (friday-phone docs/PC-UPDATE.md). The copy below keeps its shape under
+# test where that repo is not checked out; where it is, the first test fails if the phone's doc and this copy drift.
+DOC_EXAMPLE = (
+    '{"ok":true,"available":true,"package":"ai.futurespeak.friday.phone.flagship","form":"phone","version_code":33,'
+    '"version_name":"0.12.0","sha256":"<64 hex>","size":<bytes>,"cert_sha256":"<64 hex>","acceptance":"passed",'
+    '"built_at":<epoch s>}')
+DOC_NOTHING_STAGED = '{"ok":true,"available":false}'
+
+
+def _phone_doc():
+    """The phone repo's doc: FRIDAY_PHONE_DOCS, else ~/Projects/friday-phone/docs next to the checkout's home (the
+    tests move HOME, so the home folder is found from this file's own location, a worktree under ~/ftv/wt)."""
+    here = pathlib.Path(__file__).resolve()
+    homes = [pathlib.Path.home()] + ([here.parents[5]] if len(here.parents) > 5 else [])
+    folders = [pathlib.Path(os.environ["FRIDAY_PHONE_DOCS"])] if os.environ.get("FRIDAY_PHONE_DOCS") else []
+    folders += [home / "Projects" / "friday-phone" / "docs" for home in homes]
+    for folder in folders:
+        if (folder / "PC-UPDATE.md").is_file():
+            return (folder / "PC-UPDATE.md").read_text(encoding="utf-8")
+    return None
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def test_the_example_copied_here_is_the_one_in_the_phone_doc():
+    doc = _phone_doc()
+    if doc is None:
+        pytest.skip("the friday-phone repo is not checked out here")
+    assert _squash(DOC_EXAMPLE) in _squash(doc) and _squash(DOC_NOTHING_STAGED) in _squash(doc)
+
+
+def _kinds(example: str) -> dict:
+    """Each field of the doc's example as what it must be: a literal, 'hex64', or 'int' (a placeholder)."""
+    kinds = {}
+    for key, raw in re.findall(r'"(\w+)":\s*("(?:[^"]*)"|[^,}\s]+)', example):
+        if raw == '"<64 hex>"':
+            kinds[key] = "hex64"
+        elif raw in ("<bytes>", "<epoch s>"):
+            kinds[key] = "int"
+        elif raw.startswith('"'):
+            kinds[key] = raw.strip('"')
+        elif raw in ("true", "false"):
+            kinds[key] = raw == "true"
+        else:
+            kinds[key] = "int"
+    return kinds
+
+
+def test_the_offer_has_the_docs_fields_and_kinds_and_nothing_else(client, apks):
+    accept(apks, **PHONE)
+    offer = get(client, reader(), "/tv/v1/phone/update").get_json()
+    expected = _kinds(DOC_EXAMPLE)
+    assert set(offer) == set(expected)
+    for key, kind in expected.items():
+        if kind == "hex64":
+            assert re.fullmatch(r"[0-9a-f]{64}", offer[key]), key
+        elif kind == "int":
+            assert isinstance(offer[key], int) and not isinstance(offer[key], bool), key
+        elif key in ("ok", "available", "acceptance", "package", "form"):
+            assert offer[key] == kind, key
+
+
+def test_nothing_staged_is_exactly_the_docs_answer(client, apks):
+    import json
+    assert get(client, reader(), "/tv/v1/phone/update").get_json() == json.loads(DOC_NOTHING_STAGED)
