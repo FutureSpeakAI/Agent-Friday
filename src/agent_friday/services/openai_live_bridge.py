@@ -148,6 +148,10 @@ def build_tools() -> list:
     return build_voice_tool_contract(full=False, compact=False)["tools"]
 
 
+STALLED = "stalled"
+RESPONSE_STALL_S = 25.0       # asked, and nothing at all came back: the socket is half-open
+
+
 class Bridge:
     """One voice session. ``up`` is the upstream socket (send/receive/close); ``send`` writes a frame to the page."""
 
@@ -164,6 +168,7 @@ class Bridge:
         self.audio_ms = 0.0
         self.first_audio_at = 0.0
         self.last_heard_at = self.clock()
+        self.asked_at: Optional[float] = None     # set when the owner's words land; cleared when any answer starts
         self._lock = threading.Lock()
 
     # page -> OpenAI
@@ -205,6 +210,8 @@ class Bridge:
         if not p:
             return
         k = p["kind"]
+        if k in ("audio", "transcript", "done", "error"):
+            self.asked_at = None
         if k == "audio":
             if p.get("item_id") and p["item_id"] != self.item_id:
                 self.item_id, self.audio_ms, self.first_audio_at = p["item_id"], 0.0, self.clock()
@@ -217,6 +224,7 @@ class Bridge:
             self.send({"type": "text", "text": p["text"]})
         elif k == "heard":
             self.last_heard_at = self.clock()
+            self.asked_at = self.clock()
             self.session["owner_text"] = p["text"]
             self.send({"type": "input_transcript", "text": p["text"]})
         elif k == "speech_started":
@@ -276,6 +284,17 @@ class Bridge:
             self.send({"type": "error", "error": "openai_error", "detail": p["message"] or "OpenAI voice had a problem.",
                        "offer": None})
 
+    def stalled(self) -> bool:
+        return self.asked_at is not None and self.clock() - self.asked_at > RESPONSE_STALL_S
+
+    def stall(self) -> None:
+        """The answer never started. Say so, offer the next voice (never switch by itself), end the call."""
+        off = orx.failover(STALLED, gemini_ready=_gemini_ready(self.settings), local_ready=_local_ready(),
+                           auto=bool(self.settings.get("voice_openai_auto_failover")))
+        self.send({"type": "error", "error": STALLED,
+                   "detail": _with_offer("OpenAI voice stopped answering.", off), "offer": off})
+        self.done.set()
+
     def silent_too_long(self) -> bool:
         return self.clock() - self.last_heard_at > orx.SILENCE_END_S
 
@@ -333,6 +352,9 @@ def serve(ws, args: Dict[str, str], *, connect: Callable = None, settings: Optio
                     b.to_upstream(json.loads(raw))
                 except Exception:
                     _log.debug("OpenAI voice dropped a bad frame")
+            if b.stalled():
+                b.stall()
+                break
             if b.silent_too_long():
                 send({"type": "status", "text": "Ended after %d seconds of silence (OpenAI bills quiet audio too)."
                       % orx.SILENCE_END_S})
