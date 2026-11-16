@@ -13,8 +13,11 @@ engine inside one conversation (Addendum H, 2026-11-15; the companion of tv_gate
   owner to answer on the PC. Local only, an engine that is off, an unknown engine or voice: a coded refusal in
   words. Nothing is switched quietly and nothing answers with another voice.
 
-The binding is held in this process only (it is a per-conversation choice, not a setting) and is reported with
+The binding is a per-conversation choice, not a setting, saved so a restart keeps it, and is reported with
 ``applies`` so a device never believes it changed more than it did.
+
+Enforced by tests/unit/test_tv_voices_contract.py: the cloud 409 and "nothing bound" cases, the owner-only
+403, the restart round-trip and the Local-only re-check.
 """
 from __future__ import annotations
 
