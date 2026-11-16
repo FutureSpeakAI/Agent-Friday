@@ -187,6 +187,17 @@ def test_a_stale_if_range_whole_file_is_a_download(client, apks):
     assert len(rows("device_app_download")) == 1
 
 
+def test_a_head_or_a_one_byte_probe_is_not_a_download(client, apks):
+    accept(apks)
+    device = paired()
+    headers = auth(open_session(client, device))
+    assert client.head("/tv/v1/app/apk", headers=headers).status_code == 200
+    assert client.get("/tv/v1/app/apk", headers={**headers, "Range": "bytes=0-0"}).status_code == 206
+    assert rows("device_app_download") == []
+    assert client.get("/tv/v1/app/apk", headers=headers).status_code == 200
+    assert len(rows("device_app_download")) == 1
+
+
 def test_the_named_file_must_exist(client, apks):
     accept(apks)
     (apks / "agent-friday-0.12.0-accept-abc1234.apk").unlink()

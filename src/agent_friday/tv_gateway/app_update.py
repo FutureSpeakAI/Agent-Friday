@@ -24,7 +24,8 @@ only an owner-bound phone or tablet: ``test_only_an_owner_phone_or_tablet_is_ans
 ``test_a_range_resumes_and_is_not_a_second_download`` and
 ``test_if_range_with_a_stale_validator_sends_the_whole_file``; one receipt per download that starts at byte 0 (a whole
 file, or a range from 0), none for a resumed piece: ``test_a_range_resumes_and_is_not_a_second_download``,
-``test_a_range_from_byte_zero_is_a_download`` and ``test_a_stale_if_range_whole_file_is_a_download``.
+``test_a_range_from_byte_zero_is_a_download``, ``test_a_stale_if_range_whole_file_is_a_download``,
+``test_a_head_or_a_one_byte_probe_is_not_a_download``.
 """
 from __future__ import annotations
 
@@ -139,9 +140,13 @@ def _audit(what: str, build: AcceptedBuild) -> None:
                             sha256=build.sha256, via=tailnet.via())
 
 
-def _starts_at_byte_zero(resp: Response) -> bool:
-    """A download starts when the bytes sent begin at the first byte: a whole 200, or a 206 from byte 0."""
-    return resp.status_code == 200 or resp.headers.get("Content-Range", "").startswith("bytes 0-")
+def _is_download_start(resp: Response) -> bool:
+    """A download starts with a GET whose bytes begin at the first byte: a whole 200, or a 206 from byte 0. A HEAD
+    sends nothing and a one-byte probe (``bytes=0-0``) only asks the size, so neither counts."""
+    if request.method != "GET":
+        return False
+    return resp.status_code == 200 or (resp.headers.get("Content-Range", "").startswith("bytes 0-")
+                                       and not resp.headers.get("Content-Range", "").startswith("bytes 0-0/"))
 
 
 def register(app: Flask) -> None:
@@ -170,7 +175,7 @@ def register(app: Flask) -> None:
             return refusal
         resp = send_file(build.path, mimetype="application/vnd.android.package-archive", conditional=True,
                          as_attachment=True, download_name=build.file, max_age=0)
-        if _starts_at_byte_zero(resp):
+        if _is_download_start(resp):
             _audit("device_app_download", build)
         resp.headers["X-Friday-SHA256"] = build.sha256
         resp.headers["X-Friday-Version"] = build.version
