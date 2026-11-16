@@ -20,6 +20,8 @@ Rules, each with the test that enforces it (tests/unit/test_stage_escrow.py):
       test_a_reserve_beyond_available_is_refused
   an earned share is credited once at the gate, from escrow:
       test_an_earned_share_is_credited_once_from_escrow
+  two payees of one stage are both paid, each once:
+      test_two_payees_of_one_stage_are_both_paid
   a disputed share is held, not paid:
       test_a_disputed_share_is_held_not_paid
   unused escrow returns to available on cancellation:
