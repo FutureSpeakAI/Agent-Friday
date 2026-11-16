@@ -32,17 +32,21 @@ def test_a_stored_key_is_read_from_the_credential_store(clean, monkeypatch):
 
 
 def test_elevenlabs_tools_resolves_the_same_way(clean, monkeypatch):
-    monkeypatch.setattr(cloud_voice, "_settings", dict)
+    from agent_friday.services import key_gateway
+    monkeypatch.setattr(key_gateway, "_from_settings", lambda row: "")
     cs.set_provider_key("elevenlabs", "stored-eleven-value")
-    assert elevenlabs_tools._api_key() == "stored-eleven-value"
+    # The tools hold only a stand-in; the gateway is what finds the stored key.
+    assert elevenlabs_tools._key_stand_in() == key_gateway.DUMMY_KEY
+    assert key_gateway._find_key(key_gateway.PROVIDERS["elevenlabs"]) == "stored-eleven-value"
 
 
 def test_a_plaintext_settings_key_is_migrated_into_the_store(clean, monkeypatch):
     written = []
-    monkeypatch.setattr(cloud_voice, "_settings",
-                        lambda: {"elevenlabs_api_key": "legacy-plain-value"})
+    from agent_friday.services import key_gateway
+    monkeypatch.setattr(key_gateway, "_from_settings", lambda row: "legacy-plain-value")
     monkeypatch.setattr(core, "_save_settings", lambda d: written.append(d))
-    assert cloud_voice._api_key("elevenlabs") == "legacy-plain-value"
+    assert cloud_voice._api_key("elevenlabs") == key_gateway.DUMMY_KEY
+    assert key_gateway._find_key(key_gateway.PROVIDERS["elevenlabs"]) == "legacy-plain-value"
     assert cs.get_provider_key("elevenlabs") == "legacy-plain-value"
     assert written == [{"elevenlabs_api_key": ""}], "the plaintext copy was not blanked"
 

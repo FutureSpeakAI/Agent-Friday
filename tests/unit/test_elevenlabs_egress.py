@@ -23,7 +23,7 @@ class TestSpeakTextQuestionFailsClosed:
         # either way) rather than evidence the gate actually blocked it.
         monkeypatch.delenv("FRIDAY_TESTING", raising=False)
         calls = {"request": 0}
-        monkeypatch.setattr(el, "_api_key", lambda: "fake-key")
+        monkeypatch.setattr(el, "_key_stand_in", lambda: "fake-key")
         monkeypatch.setattr(el, "_request",
                             lambda *a, **k: calls.__setitem__("request", calls["request"] + 1) or (None, "should not be called"))
         monkeypatch.setattr(
@@ -41,7 +41,7 @@ class TestSpeakTextQuestionFailsClosed:
     def test_generic_gate_failure_prevents_the_tts_call(self, monkeypatch):
         monkeypatch.delenv("FRIDAY_TESTING", raising=False)
         calls = {"request": 0}
-        monkeypatch.setattr(el, "_api_key", lambda: "fake-key")
+        monkeypatch.setattr(el, "_key_stand_in", lambda: "fake-key")
         monkeypatch.setattr(el, "_request",
                             lambda *a, **k: calls.__setitem__("request", calls["request"] + 1) or (None, "should not be called"))
         monkeypatch.setattr(egress_gate, "_gate_text",
