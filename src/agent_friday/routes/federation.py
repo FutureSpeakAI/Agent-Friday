@@ -295,6 +295,61 @@ def send_federation_message():
     return jsonify(public_result({"ok": result.get("ok", False), "result": result}, "Couldn't send the peer message"))
 
 
+# ── Federation: signed peer events v2 (evidence intake; invited_jobs capability) ──────
+
+_V2_STORE = None
+
+
+def _v2_store():
+    """The durable (realm, actor, action_id) store, opened on first use under the Friday dir."""
+    global _V2_STORE
+    if _V2_STORE is None:
+        from agent_friday.core import FRIDAY_DIR
+        from agent_friday.services import peer_wire_v2
+        FRIDAY_DIR.mkdir(parents=True, exist_ok=True)
+        _V2_STORE = peer_wire_v2.PeerEventStore(FRIDAY_DIR / "peer_events_v2.db")
+    return _V2_STORE
+
+
+def _v2_trusted_keys() -> set:
+    """Signing keys this owner has explicitly allowed: known peers whose preference is 'allow'
+    and whose id is a 64-hex Ed25519 key. A peer that was merely discovered (pref 'ask') or
+    blocked is not trusted for v2 events."""
+    keys = set()
+    for peer in fed.get_peers():
+        agent_id = str(peer.get("agent_id") or "")
+        if peer.get("fed_pref") == "allow" and len(agent_id) == 64 and all(
+                c in "0123456789abcdef" for c in agent_id):
+            keys.add(agent_id)
+    return keys
+
+
+@federation_bp.route("/api/federation/v2/events", methods=["POST"])
+def federation_v2_events():
+    """Authenticate and record ONE signed peer event (raw canonical JSON body).
+
+    202 recorded, 200 a known retry (the recorded result), 409 a different event under an
+    already-recorded (realm, actor, action_id), 413 over 65,536 bytes, 422 malformed,
+    unsupported or untrusted, 429 over budget. The answer acknowledges receipt of bytes only:
+    it authorizes nothing, runs nothing and moves no credits; any effect still passes the
+    local approval path. Held by the invited_jobs switch and the kill switch."""
+    from agent_friday.services import peer_wire_v2 as wire
+    if request.content_length is not None and request.content_length > wire.MAX_BYTES:
+        return jsonify({"ok": False, "error": "size"}), 413
+    raw = request.get_data(cache=False)
+    if len(raw) > wire.MAX_BYTES:
+        return jsonify({"ok": False, "error": "size"}), 413
+    if not transport.check_rate_limit("v2:" + str(request.remote_addr or "?")):
+        return jsonify({"ok": False, "error": "rate_limited"}), 429
+    try:
+        disposition, event_id = wire.receive(raw, _v2_trusted_keys(), _v2_store())
+    except wire.WireError as e:
+        return jsonify({"ok": False, "error": e.code}), 422
+    status = {"enqueued": 202, "replay": 200, "equivocation": 409}[disposition]
+    return jsonify({"ok": disposition != "equivocation", "event_id": event_id,
+                    "disposition": disposition}), status
+
+
 # ── Federation: Well-known endpoint (for discovery by peers) ─────────────────
 
 @federation_bp.route("/.well-known/friday-agent.json", methods=["GET"])

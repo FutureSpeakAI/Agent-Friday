@@ -263,6 +263,17 @@ def _run_whisper(p: Path) -> Dict[str, Any]:
             "language": getattr(info, "language", "en"), "duration_s": round(float(getattr(info, "duration", 0) or 0), 2)}
 
 
+def has_audio_track(p: Path) -> bool:
+    """False only when the container opens and holds no audio stream. A file PyAV cannot open at all
+    is left to the recogniser (its own error, reported as before): this never hides a real failure."""
+    try:
+        import av
+        with av.open(str(p)) as c:
+            return len(c.streams.audio) > 0
+    except Exception:
+        return True
+
+
 def transcribe(card: Dict[str, Any]) -> Dict[str, Any]:
     """Transcribe one card's file, cache it, fold it into the index. Returns the record."""
     p = _path_for(card)
@@ -281,9 +292,15 @@ def transcribe(card: Dict[str, Any]) -> Dict[str, Any]:
             # is refused by name (and logged), not discovered per file.
             from agent_friday.services import feature_models as fm
             fm.require(FEATURE, who="media transcripts")
-        fn = transcriber or _run_whisper
-        rec = fn(p) or {"text": "", "segments": []}
-        rec.setdefault("engine", "local")
+        if transcriber is None and not has_audio_track(p):
+            # A silent clip (a generated video, a screen recording) has nothing to hear. PyAV raises
+            # IndexError on it, which used to show as a red "Failed" orb for every such file on every
+            # sweep (1,670 times in friday.log). It is a finished answer: no words, no job, no retry.
+            rec = {"text": "", "segments": [], "engine": "skipped", "note": "no audio track"}
+        else:
+            fn = transcriber or _run_whisper
+            rec = fn(p) or {"text": "", "segments": []}
+            rec.setdefault("engine", "local")
     rec.update({"id": card.get("id"), "version": VERSION, "built": time.time()})
     jp.parent.mkdir(parents=True, exist_ok=True)
     tmp = jp.with_suffix(".json.tmp")
