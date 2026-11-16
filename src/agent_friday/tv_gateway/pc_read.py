@@ -321,10 +321,12 @@ def _capped_range(header: str) -> str:
     Guarded by test_a_file_is_sent_in_capped_ranges."""
     match = _RANGE.match(header or "")
     first, last = (match.group(1), match.group(2)) if match else ("", "")
-    if match and not first and last:
+    if match and not first and last and int(last) > 0:
         return "bytes=-%d" % min(int(last), MAX_FILE_CHUNK)
     start = int(first) if first else 0
-    end = int(last) if last else start + MAX_FILE_CHUNK - 1
+    end = int(last) if last and first else start + MAX_FILE_CHUNK - 1
+    if end < start:
+        start, end = 0, MAX_FILE_CHUNK - 1          # a range the desktop would read as "the whole file"
     return "bytes=%d-%d" % (start, min(end, start + MAX_FILE_CHUNK - 1))
 
 

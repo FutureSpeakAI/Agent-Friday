@@ -145,6 +145,8 @@ CAP = pc_read.MAX_FILE_CHUNK
     ("bytes=0-1,5-9", "bytes=0-%d" % (CAP - 1)),
     ("items=0-9", "bytes=0-%d" % (CAP - 1)),
     ("bytes=-500", "bytes=-500"),
+    ("bytes=200-100", "bytes=0-%d" % (CAP - 1)),
+    ("bytes=-0", "bytes=0-%d" % (CAP - 1)),
     ("bytes=-99999999999", "bytes=-%d" % CAP),
     ("bytes=" + "9" * 5000 + "-", "bytes=0-%d" % (CAP - 1)),
 ])
@@ -221,3 +223,19 @@ def test_an_unreadable_desktop_answer_is_refused_not_forwarded_unscrubbed(client
     desk.body = b"<html>C:\\secret</html>"
     answer = get(client, reader(), "/tv/v1/media/m1")
     assert answer.status_code == 503 and b"secret" not in answer.data
+
+
+BACKSLASH = chr(92)
+SPACED_PATHS = [
+    ("cannot find C:{b}Users{b}Some Person{b}Videos{b}Secret Project{b}a.mp4 sorry", ["cannot find", "sorry"]),
+    ('cannot find "C:{b}Program Files{b}Friday{b}x"', ["cannot find"]),
+    ("saved to /home/someone/My Videos/a.mp4 and 1 of 2 done", ["saved to", "and 1 of 2 done"]),
+]
+
+
+@pytest.mark.parametrize("text,kept", [(template.format(b=BACKSLASH), kept) for template, kept in SPACED_PATHS])
+def test_a_host_path_with_spaces_is_replaced_whole(text, kept):
+    cleaned = pc_common.hide_host_paths({"reason": text})["reason"]
+    for leftover in ("Person", "Videos", "Secret", "Program", "Friday", "My ", "a.mp4"):
+        assert leftover not in cleaned
+    assert "[a path on the PC]" in cleaned and all(word in cleaned for word in kept)
