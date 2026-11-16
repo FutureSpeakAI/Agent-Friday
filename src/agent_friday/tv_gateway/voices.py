@@ -29,11 +29,35 @@ _LOCK = threading.Lock()
 _BOUND: "OrderedDict[str, dict]" = OrderedDict()
 
 
-def bound_voice(conversation_id: Optional[str]) -> Optional[dict]:
-    """What this conversation is bound to (``engine``, ``voice``), or None."""
+def _raw_bound(conversation_id: Optional[str]) -> Optional[dict]:
     with _LOCK:
         got = _BOUND.get(str(conversation_id or ""))
         return dict(got) if got else None
+
+
+def bound_voice(conversation_id: Optional[str]) -> Optional[dict]:
+    """What this conversation is bound to, as true NOW, or None when nothing is bound.
+
+    The binding (``engine``, ``voice``) is checked again against the live slate every time it is read, because
+    the PC can change after the pick (Local only turned on, a key removed, an engine gone). The result carries
+    ``still_valid``, what leaves the house, the latency class and, when it is no longer valid, ``notice`` in
+    words: a device is told the voice it asked for cannot be used, never handed another one quietly."""
+    rec = _raw_bound(conversation_id)
+    if rec is None:
+        return None
+    out = dict(rec, still_valid=None, notice=None)
+    try:
+        from agent_friday.services import voice_slate
+        row = voice_slate.find(rec["engine"])
+        if row is None:
+            out.update(still_valid=False, notice="That voice engine is no longer on this PC.")
+        else:
+            out.update(local=row["local"], latency_class=row["latency_class"], what_leaves=row["what_leaves"],
+                       still_valid=not row["blocked"],
+                       notice=(row["blocked"]["reason"] if row["blocked"] else None))
+    except Exception as e:
+        _log.info("bound voice could not be re-checked: %s", type(e).__name__)
+    return out
 
 
 def _bind(conversation_id: str, engine: str, voice: Optional[str]) -> dict:
