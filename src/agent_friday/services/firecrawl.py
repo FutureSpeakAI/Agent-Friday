@@ -38,11 +38,11 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any
+from agent_friday.services import key_gateway
 from agent_friday.user_errors import ExceptionText, exception_text
 
 _log = logging.getLogger("friday.firecrawl")
 
-BASE = "https://api.firecrawl.dev"
 API_VERSION = "v2"          # the documented base; v1 also answers, v2 is current
 DEFAULT_TIMEOUT_S = 120
 SEARCH_TIMEOUT_S = 180
@@ -107,38 +107,19 @@ def _meter(op: str, credits_used: int) -> None:
 # toolchain is added to the user's machine.
 
 
-def api_key() -> str:
-    """The Firecrawl key, from wherever it was put — same order as Brave's."""
-    import os
-    env = (os.environ.get("FIRECRAWL_API_KEY") or "").strip()
-    if env:
-        return env
-    try:
-        from agent_friday.services import credential_store
-        k = credential_store.get_provider_key("firecrawl")
-        if k and k.strip():
-            return k.strip()
-    except Exception:
-        pass
-    try:
-        from agent_friday.core import _load_settings
-        s = _load_settings() or {}
-        for holder in (s, s.get("api_keys") or {}, s.get("search") or {}):
-            if isinstance(holder, dict):
-                v = holder.get("firecrawl_api_key")
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
-    except Exception:
-        pass
-    return ""
+def key_stand_in() -> str:
+    """A stand-in for the Firecrawl key: the proxy's dummy when a key exists (environment, encrypted store or settings,
+    found by ``key_gateway``), else an empty string. The real key is never returned here; the gateway puts it on
+    the request. Guarded by tests/unit/test_key_gateway.py::test_firecrawl_callers_never_hold_the_real_key."""
+    return key_gateway.stand_in("firecrawl")
 
 
 def configured() -> bool:
-    return bool(api_key())
+    return bool(key_stand_in())
 
 
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {api_key()}",
+    return {"Authorization": f"Bearer {key_stand_in()}",
             "Content-Type": "application/json"}
 
 
@@ -215,7 +196,7 @@ def _post(path: str, body: dict, timeout: int) -> tuple[dict | None, str]:
         if type(e).__name__ == "SpendCapReached":
             return None, exception_text(e)
     try:
-        r = requests.post(f"{BASE}{path}", headers=_headers(), json=body,
+        r = requests.post(f"{key_gateway.url('firecrawl')}{path}", headers=_headers(), json=body,
                           timeout=timeout)
     except Exception as e:
         return None, ExceptionText(f"{type(e).__name__}: {e}")
@@ -330,8 +311,8 @@ def credits() -> dict:
     if _held:
         return {"ok": False, "error": _held, "route_not_chosen": True}
     try:
-        r = requests.get(f"{BASE}/{API_VERSION}/team/credit-usage",
-                         headers={"Authorization": f"Bearer {api_key()}"},
+        r = requests.get(f"{key_gateway.url('firecrawl')}/{API_VERSION}/team/credit-usage",
+                         headers={"Authorization": f"Bearer {key_stand_in()}"},
                          timeout=30)
         if r.status_code >= 400:
             return {"ok": False, "error": f"HTTP {r.status_code}"}

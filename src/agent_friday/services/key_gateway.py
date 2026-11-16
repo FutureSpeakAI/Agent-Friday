@@ -46,6 +46,10 @@ PROVIDERS = {
         key_header="X-Subscription-Token", key_format="{key}", env_names=("BRAVE_SEARCH_API_KEY",),
         # "brave-search" is the name the first-run key screen used to store it under.
         store_names=("brave", "brave-search"), settings_names=("brave_search_api_key", "brave_api_key")),
+    "firecrawl": Provider(
+        name="firecrawl", upstream="https://api.firecrawl.dev", prefixes=("/v1/", "/v2/"), methods=("GET", "POST"),
+        key_header="Authorization", key_format="Bearer {key}", env_names=("FIRECRAWL_API_KEY",),
+        store_names=("firecrawl",), settings_names=("firecrawl_api_key",)),
 }
 
 _LOCK = threading.Lock()

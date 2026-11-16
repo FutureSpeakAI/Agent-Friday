@@ -682,7 +682,7 @@ def search(query: str, count: int = 10) -> dict:
     return last
 
 
-#: Where the key goes. Read by firecrawl.api_key() in this order: the
+#: Where the key goes. Read by services/key_gateway.py in this order: the
 #: FIRECRAWL_API_KEY environment variable (start.bat sets Friday's keys),
 #: the credential store, then `firecrawl_api_key` in settings.json.
 FIRECRAWL_KEY_HOWTO = (
