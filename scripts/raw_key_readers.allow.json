@@ -4,172 +4,217 @@
     "src/agent_friday/cli.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/core/__init__.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/routes/chat.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/routes/core_routes.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/routes/intelligence.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/routes/news.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/routes/platform.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/routes/voice.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/routes/work_plan.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/routing/provider_descriptors.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/backup_schedule.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/calendar_engine.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/channels/base.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/claude_engine.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/cloud_voice.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/codebases.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/connections_setup.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/creative_engine.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/credential_store.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/domain_accounts.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/elevenlabs_tools.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/firecrawl.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/google_oauth_client.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/health_check.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/hosted_catalog.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/key_verdict.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/kie_generate.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/launch_script_keys.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/legacy_key_files.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/media_tools.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/model_discovery.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/model_router.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/music_engine.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/news_engine.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/one_key.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/openai_realtime.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/platforms/base.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
+    },
+    "src/agent_friday/services/provider_health.py": {
+      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
+      "expires": "2027-03-31",
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/site_hosting.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/voice_engine.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/services/web_search.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/setup_brain.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
     "src/agent_friday/setup_wizard.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order); release lead to confirm"
+      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     }
   }
 }

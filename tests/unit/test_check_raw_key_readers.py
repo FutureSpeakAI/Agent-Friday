@@ -36,6 +36,9 @@ def tree(tmp_path, files):
     'import os\nkey = os.environ.get("VAULT_PASSPHRASE")\n',
     'from x import credential_store\nkey = credential_store.get_provider_key("acme")\n',
     'from x import core\nkey = core.ANTHROPIC_API_KEY\n',
+    'from x import provider_api_key\nkey = provider_api_key(prov)\n',
+    'from os import getenv\nkey = getenv("ACME_API_KEY")\n',
+    'from x import core\nkey = getattr(core, "ACME_API_KEY", "")\n',
 ])
 def test_each_way_of_reading_a_key_is_found(tmp_path, code):
     found = guard.readers_in(tree(tmp_path, {"m.py": code}))
@@ -46,6 +49,8 @@ def test_each_way_of_reading_a_key_is_found(tmp_path, code):
     'import os\nhome = os.environ.get("FRIDAY_HOME")\n',
     'import os\nos.environ["ACME_API_KEY"] = "x"\n',
     'ACME_API_KEY = "name only"\n',
+    'import os\nos.environ.pop("ACME_API_KEY", None)\n',
+    'import os\nos.environ.setdefault("ACME_API_KEY", "x")\n',
 ])
 def test_reading_other_things_or_writing_a_key_is_not_a_read(tmp_path, code):
     assert guard.readers_in(tree(tmp_path, {"m.py": code})) == {}

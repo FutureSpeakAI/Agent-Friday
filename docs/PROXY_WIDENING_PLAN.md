@@ -7,11 +7,13 @@ release lead assigns; the BURN-DOWN lane wrote the plan.
 
 - `services/salon_proxy.py` (`KeyProxy`) is the one working proxy. Loopback only, provider API paths only, the key is
   read at request time and never leaves the process, standard library only. Used by `claude_engine.py` for Anthropic.
-- Today about thirty modules read a raw key (the list is `scripts/raw_key_readers.allow.json`, held down by
-  `scripts/check_raw_key_readers.py`). Keys are decrypted into the environment at boot.
+- Today 43 modules read a raw key (the list is `scripts/raw_key_readers.allow.json`, held down by
+  `scripts/check_raw_key_readers.py`), through the environment, `get_provider_key` or `provider_api_key`. Keys are decrypted into the environment at boot.
 - The interactive-session child no longer inherits the environment (A1, PR `lane/burndown-child-env`).
   Other spawn sites that still copy the whole environment: `voice_workers.py`, `media_convert.py`, `podcast_render.py`,
-  `g2p_fallback.py`, `cli.py` (two), `setup_wizard.py`. Each is a separate small PR: first decide whether the child
+  `g2p_fallback.py` (the first four are PR #861), `cli.py` (two), `setup_wizard.py`, and the ones that pass the
+  environment minus a few names: `repo_intake.py` (git, minus GIT_*), `career_ops.py` and `task_eval/runner.py`
+  (deny-list shaped; an allow-list is the safer form). Each is a separate small PR: first decide whether the child
   needs any key; if not, use `sanitize_env_for_mcp(..., "sandboxed")`.
 
 ## What the proxy cannot do yet (found while reading it)
@@ -21,7 +23,7 @@ release lead assigns; the BURN-DOWN lane wrote the plan.
 2. One upstream per instance. A table of providers needs one listener per provider (simplest, keeps each listener's
    allow-list tiny) or one listener that routes by a path prefix it owns (`/p/<provider>/...`). Recommendation: one
    listener, prefix routing, because callers then need one loopback port.
-3. The allowed path prefix is `/v1/` for everyone. Each provider needs its own prefixes and methods.
+3. The prefixes and methods are constructor parameters already (default `/v1/`, GET and POST), so a row only supplies its own.
 4. Streaming works (chunked relay). WebSocket upgrade does not: `upgrade` is stripped. The realtime voice engines
    (`openai_realtime.py`, `voice_engine.py` for Gemini live) use sockets, so they are a separate slice.
 
@@ -41,8 +43,8 @@ One row per provider, in code, reviewed like a settings schema:
 Invariants kept from `salon_proxy.py`, each with a test per provider: loopback only; unknown provider is 404; path
 outside the prefixes is 403 and never sent upstream; no key means 401 and nothing sent; the caller's own credential
 headers are stripped and replaced; no body or header value is recorded; the key appears nowhere but the outgoing
-header (a test greps the capture, the logs and the response). New: a redirect to another host is refused (a key must
-not follow a redirect), and the dummy key a caller holds is useless anywhere else.
+header (a test greps the capture, the logs and the response). A redirect is never followed (`http.client` does not follow one); keep a test
+that says so, so a later change of client cannot make a key follow a redirect.
 
 ## Order of work
 

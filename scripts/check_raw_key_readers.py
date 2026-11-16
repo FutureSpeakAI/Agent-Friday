@@ -13,8 +13,10 @@ What it checks
 A "raw read" in a file under src/agent_friday is any of:
   * ``os.environ.get / os.getenv / os.environ[...]`` of a literal name ending in API_KEY, APIKEY, _TOKEN,
     _SECRET, PASSPHRASE or ACCESS_KEY;
-  * a call to ``get_provider_key(...)`` (the credential store's getter);
-  * a read of an attribute or name that ends in API_KEY (for example ``core.ANTHROPIC_API_KEY``).
+  * a call to ``get_provider_key(...)`` or ``provider_api_key(...)`` (the two getters that return a key);
+  * a read of an attribute that ends in API_KEY (``core.ANTHROPIC_API_KEY``, ``getattr(core, "X_API_KEY")``).
+Writing, popping or setting a variable (scrubbing code) is not a read. NOT seen: a name built at run time, a
+whole-environment copy (``dict(os.environ)``; the plan lists those), and settings reads by lowercase name.
 Every file with a raw read must be listed in scripts/raw_key_readers.allow.json with a reason, an expiry date and
 who approved it (CODE_QUALITY Q3, Q5). The list can only shrink:
   1. a file with a raw read that is not listed fails;
@@ -38,9 +40,9 @@ ALLOWLIST = Path(__file__).resolve().parent / "raw_key_readers.allow.json"
 
 _ENV_NAME = re.compile(r"(API_?KEY|_TOKEN|_SECRET|PASSPHRASE|ACCESS_KEY)$", re.I)
 _KEY_ATTRIBUTE = re.compile(r"^[A-Z0-9_]*API_?KEY$")
-_ENV_CALLS = ("os.environ.get", "os.getenv", "environ.get", "os.environ.pop", "os.environ.setdefault")
+_ENV_CALLS = ("os.environ.get", "os.getenv", "environ.get", "getenv")
 _ENV_MAPS = ("os.environ", "environ")
-_STORE_GETTER = "get_provider_key"
+_STORE_GETTERS = ("get_provider_key", "provider_api_key")
 
 
 def _literal(node: ast.AST):
@@ -56,8 +58,10 @@ def raw_reads(tree: ast.AST) -> list:
             name = _literal(node.args[0]) if node.args else None
             if callee in _ENV_CALLS and name and _ENV_NAME.search(name):
                 found.append((node.lineno, f"environment read of {name}"))
-            elif callee.split(".")[-1] == _STORE_GETTER:
-                found.append((node.lineno, f"call to {_STORE_GETTER}"))
+            elif callee.split(".")[-1] in _STORE_GETTERS:
+                found.append((node.lineno, f"call to {callee.split('.')[-1]}"))
+            elif callee == "getattr" and len(node.args) > 1 and _KEY_ATTRIBUTE.match(_literal(node.args[1]) or ""):
+                found.append((node.lineno, f"getattr of {_literal(node.args[1])}"))
         elif isinstance(node, ast.Subscript) and ast.unparse(node.value) in _ENV_MAPS:
             name = _literal(node.slice)
             if name and _ENV_NAME.search(name) and isinstance(node.ctx, ast.Load):
