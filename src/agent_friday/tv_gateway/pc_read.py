@@ -16,7 +16,6 @@ Nothing here runs a verb, changes a setting or decides an approval; those wait f
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
 from typing import Optional, Tuple
