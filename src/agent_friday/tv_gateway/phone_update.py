@@ -14,6 +14,8 @@ Each rule is held by a test in tests/unit/test_tv_phone_update.py.
 """
 from __future__ import annotations
 
+import re
+
 from flask import Flask, jsonify, request, send_file
 
 from agent_friday.tv_gateway import app_update, pc_read
@@ -22,6 +24,7 @@ refuse = pc_read._refuse
 
 MAX_APK_BYTES = 200 * 1024 * 1024
 APK_MIME = "application/vnd.android.package-archive"
+_VERSION_CODE = re.compile(r"[0-9]{1,10}")
 
 
 def _staged() -> tuple:
@@ -60,7 +63,7 @@ def register(app: Flask) -> None:
         if refusal is not None:
             return refusal
         wanted = request.args.get("vc", "")
-        if build is None or not wanted.isdigit() or int(wanted) != build.version_code:
+        if build is None or not _VERSION_CODE.fullmatch(wanted) or int(wanted) != build.version_code:
             return refuse(404, "that is not the build this PC has staged", code="not_the_staged_build")
         resp = send_file(build.path, mimetype=APK_MIME, conditional=True, as_attachment=True,
                          download_name=build.file, max_age=0)

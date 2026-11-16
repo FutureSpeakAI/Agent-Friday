@@ -1,4 +1,4 @@
-"""The phone's own update contract: GET /tv/v1/phone/update and /tv/v1/phone/update/apk?vc=N (friday-phone docs/PC-UPDATE.md).
+"""The phone's update contract: GET /tv/v1/phone/update and /apk?vc=N (friday-phone docs/PC-UPDATE.md).
 
 Rules guarded here, each with a case that fails if the check is removed:
 * only an owner phone or tablet holding ``pc_read`` is answered; without it the device raises that card and is told so;
@@ -87,11 +87,17 @@ def test_a_record_without_a_field_the_phone_checks_is_not_offered(client, apks, 
 
 
 @pytest.mark.parametrize("over", [{"form": "watch"}, {"form": ""}, {"cert_sha256": "nothex"}, {"package": "nodots"},
-                                  {"built_at": "yesterday"}, {"built_at": True}, {"version_code": "x"}, {"version_code": 0},
-                                  {"version_code": -3}])
+                                  {"built_at": "yesterday"}, {"built_at": True}, {"version_code": "x"},
+                                  {"version_code": 0}, {"version_code": -3}])
 def test_a_malformed_field_is_not_offered(client, apks, over):
     accept(apks, **{**PHONE, **over})
     assert get(client, reader(), "/tv/v1/phone/update").get_json()["available"] is False
+
+
+def test_an_empty_apk_is_not_offered(client, apks):
+    accept(apks, data=b"", **PHONE)
+    assert get(client, reader(), "/tv/v1/phone/update").get_json() == {"ok": True, "available": False}
+    assert get(client, reader(), "/tv/v1/phone/update/apk?vc=40").status_code == 404
 
 
 def test_a_build_over_200_mb_is_not_offered(client, apks, monkeypatch):
@@ -117,7 +123,8 @@ def test_the_apk_is_sent_for_the_staged_version_code_with_its_length_and_one_rec
     assert len(rows("device_app_download")) == 1
 
 
-@pytest.mark.parametrize("query", ["", "?vc=39", "?vc=41", "?vc=x", "?vc=-40", "?vc=040x"])
+@pytest.mark.parametrize("query", ["", "?vc=39", "?vc=41", "?vc=x", "?vc=-40", "?vc=040x", "?vc=%C2%B2",
+                                   "?vc=%D9%A4%D9%A0", "?vc=" + "9" * 11])
 def test_any_other_version_code_is_a_404(client, apks, query):
     accept(apks, **PHONE)
     answer = get(client, reader(), "/tv/v1/phone/update/apk" + query)
