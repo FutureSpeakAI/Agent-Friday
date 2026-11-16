@@ -233,7 +233,7 @@ def why_cloud(*, engine: Optional[str] = None, settings: Optional[dict] = None,
     eng = str(engine or s.get("voice_engine") or "local").strip().lower()
     if not engine and str((s.get("model_routing") or {}).get("mode") or "").strip().lower() == "local_only":
         eng = "local"
-    if eng not in ("gemini", "gemini-live"):
+    if eng not in CLOUD_ENGINES:
         return {"on_cloud": False, "reason": None, "text": "", "action": None}
     state = voice_state(snapshot)
     if state == CAPABLE:
@@ -572,7 +572,7 @@ def offer_card(settings: Optional[dict] = None) -> Optional[dict]:
     s = settings if settings is not None else _settings()
     if str(s.get(OFFER_KEY) or "") != OFFER_PENDING:
         return None
-    if str(s.get("voice_engine") or "local").strip().lower() not in ("gemini", "gemini-live"):
+    if str(s.get("voice_engine") or "local").strip().lower() not in CLOUD_ENGINES:
         return None
     nums = measured_numbers()
     return {"title": "Local voice now runs well on this PC",
@@ -603,7 +603,7 @@ def maybe_offer_switch(snapshot: Optional[dict] = None) -> bool:
                 return False
             if _record(s):
                 return False        # a cloud choice was recorded: its own switch-back offer owns this
-            if str(s.get("voice_engine") or "local").strip().lower() not in ("gemini", "gemini-live"):
+            if str(s.get("voice_engine") or "local").strip().lower() not in CLOUD_ENGINES:
                 return False
             if voice_state(snapshot) != CAPABLE:
                 return False
