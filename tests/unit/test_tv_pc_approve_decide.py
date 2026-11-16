@@ -483,3 +483,61 @@ def test_the_feed_starts_with_the_list_and_ends_when_the_right_is_withdrawn(clie
     ended = json.loads(next(response.response).decode().split("data: ", 1)[1])
     assert ended["type"] == "revoked"
     response.close()
+
+
+def test_a_card_resealed_between_challenge_and_decide_is_refused_by_the_signed_fingerprint(client):
+    phone = Enrolled(client)
+    pending = card()
+    got = phone.challenge(pending["approval_id"]).get_json()
+    ap._patch(pending["approval_id"], payload={"edited": True})          # edited by this module: seal and fingerprint hold
+    when = int(time.time())
+    answer = phone.post("/tv/v1/approvals/%s/decide" % pending["approval_id"],
+                        {"decision": "approve", "nonce": got["nonce"], "time": when, "sig": phone.sign(got, when)})
+    assert answer.status_code == 409 and answer.get_json()["code"] == "card_changed"
+    assert status(pending["approval_id"]) == "pending"
+
+
+def test_the_signed_fingerprint_is_checked_under_the_decision_lock():
+    pending = card()
+    rec, won = ap.decide_with_outcome(pending["approval_id"], "approve", decided_by="owner", expect_fp="0" * 32)
+    assert won is False and rec["status"] == "pending"
+
+
+def test_a_decision_the_pc_declines_is_not_reported_as_already_decided(client, monkeypatch):
+    phone = Enrolled(client)
+    pending = card()
+    monkeypatch.setattr(ap, "_everything_stopped", lambda: True)
+    answer = phone.approve(pending["approval_id"])
+    assert answer.status_code == 409 and answer.get_json()["code"] == "not_approved"
+    assert status(pending["approval_id"]) == "pending" and rows("device_approval_refused")[-1]["reason"] == "not_approved"
+
+
+def test_the_receipt_names_the_device_and_its_key(client):
+    phone = Enrolled(client)
+    pending = card()
+    phone.approve(pending["approval_id"])
+    receipt = rows("device_approved")[-1]
+    assert receipt["device_name"] == "Stephen's phone" and receipt["key_id"] == device_pairing.approval_key(
+        device_pairing.get_device(phone.id)).key_id
+
+
+def test_the_signature_is_kept_on_the_decision_record(client):
+    phone = Enrolled(client)
+    pending = card()
+    got = phone.challenge(pending["approval_id"]).get_json()
+    when = int(time.time())
+    signature = phone.sign(got, when)
+    phone.post("/tv/v1/approvals/%s/decide" % pending["approval_id"],
+               {"decision": "approve", "nonce": got["nonce"], "time": when, "sig": signature})
+    assert ap.get_approval(pending["approval_id"])["decided_proof"] == {
+        "approval_id": pending["approval_id"], "action_fp": got["action_fp"], "nonce": got["nonce"],
+        "signed_time": when, "signature_b64": signature,
+        "key_id": device_pairing.approval_key(device_pairing.get_device(phone.id)).key_id}
+
+
+def test_a_card_that_vanishes_after_verification_is_a_404_not_already_decided(client, monkeypatch):
+    phone = Enrolled(client)
+    pending = card()
+    monkeypatch.setattr(ap, "decide_with_outcome", lambda *args, **kwargs: (None, False))
+    answer = phone.approve(pending["approval_id"])
+    assert answer.status_code == 404 and answer.get_json()["code"] == "unknown_card"
