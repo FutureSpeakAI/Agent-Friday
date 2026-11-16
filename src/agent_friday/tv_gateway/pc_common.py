@@ -18,6 +18,22 @@ def allowed(dev: Optional[dict]) -> bool:
     return bool(dev) and owner_turn.is_owner_device(dev) and str(dev.get("kind") or "").lower() in OWNER_KINDS
 
 
+HOST_PATH_KEYS = frozenset({"path", "abs_path", "source_path", "folder", "dir", "directory", "root"})
+_HOST_PATH_VALUE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|var|tmp|opt|etc|root)/)")
+
+
+def hide_host_paths(value):
+    """A copy of a desktop answer with every host file path left out: any key that names one, and any text that is
+    an absolute Windows, UNC or Unix path. A phone never needs where a file lives on the PC.
+    Guarded by test_no_host_path_reaches_the_phone in tests/unit/test_tv_pc_media.py."""
+    if isinstance(value, dict):
+        return {key: hide_host_paths(item) for key, item in value.items()
+                if key not in HOST_PATH_KEYS and not (isinstance(item, str) and _HOST_PATH_VALUE.match(item))}
+    if isinstance(value, list):
+        return [hide_host_paths(item) for item in value if not (isinstance(item, str) and _HOST_PATH_VALUE.match(item))]
+    return value
+
+
 def refuse(status: int, reason: str, **extra) -> Response:
     resp = jsonify({"ok": False, "error": reason, **extra})
     resp.status_code = status
