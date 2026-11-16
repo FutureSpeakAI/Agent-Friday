@@ -354,8 +354,13 @@ def register_approval_key(device_id: str, spki_der: bytes, biometric: bool, deta
         if stage is device_pairing.KeyStage.ALREADY_ACTIVE:
             device_pairing.expire_pending_key_cards(device_id, "the active key was registered again")
             return stage, key_id
-        offer_right(device_id, device_pairing.APPROVAL_RIGHT, key_id=key_id, biometric=biometric, detail=detail)
-        if not key_card_in_step(device_id):
+        try:
+            offer_right(device_id, device_pairing.APPROVAL_RIGHT, key_id=key_id, biometric=biometric, detail=detail)
+            raised = key_card_in_step(device_id)
+        except Exception as error:
+            device_pairing.clear_pending_key(device_id)
+            raise CardNotRaised() from error
+        if not raised:
             device_pairing.clear_pending_key(device_id)
             raise CardNotRaised()
         return stage, key_id
