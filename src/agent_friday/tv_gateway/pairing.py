@@ -314,7 +314,7 @@ def offer_right(device_id: str, right: str, *, key_id: str = "", biometric: Opti
     return card.get("approval_id")
 
 
-_KEY_CARD_LOCK = threading.Lock()
+_KEY_CARD_LOCK = threading.RLock()
 
 
 def _staged_key_card(device_id: str, key_id: str, biometric: bool) -> Optional[dict]:
@@ -329,10 +329,30 @@ def _staged_key_card(device_id: str, key_id: str, biometric: bool) -> Optional[d
 
 
 def key_card_in_step(device_id: str) -> bool:
-    """A device has a staged key exactly when a pending card names that key and its fingerprint choice.
-    Guarded by test_a_staged_key_always_has_a_card_on_the_screen."""
+    """True when the device has no staged key, or a pending card names the staged key and its fingerprint choice.
+    Guarded by test_a_registered_key_always_has_a_card_on_the_screen."""
     staged = device_pairing.pending_approval_key(device_id)
     return staged is None or _staged_key_card(device_id, staged.key_id, staged.biometric) is not None
+
+
+class CardNotRaised(Exception):
+    """The PC could not put the card for a staged key on its screen."""
+
+
+def register_approval_key(device_id: str, spki_der: bytes, biometric: bool, detail: str):
+    """Stage a device's approval key and raise its card as ONE step, so two registrations from one device cannot
+    interleave and leave a card nobody can use. Returns (KeyStage, key_id); raises device_pairing.ApprovalKeyRefused
+    or CardNotRaised (the key is then not staged). Guarded by test_two_registrations_at_once_leave_one_live_card."""
+    with _KEY_CARD_LOCK:
+        stage, key_id = device_pairing.stage_approval_key(device_id, spki_der, biometric)
+        if stage is device_pairing.KeyStage.ALREADY_ACTIVE:
+            device_pairing.expire_pending_key_cards(device_id, "the active key was registered again")
+            return stage, key_id
+        offer_right(device_id, device_pairing.APPROVAL_RIGHT, key_id=key_id, biometric=biometric, detail=detail)
+        if not key_card_in_step(device_id):
+            device_pairing.clear_pending_key(device_id)
+            raise CardNotRaised()
+        return stage, key_id
 
 
 def _raise_key_card(device_id: str, right: str, key_id: str, biometric: bool, detail: str) -> Optional[str]:
@@ -340,7 +360,7 @@ def _raise_key_card(device_id: str, right: str, key_id: str, biometric: bool, de
     with _KEY_CARD_LOCK:
         staged = device_pairing.pending_approval_key(device_id)
         if staged is None or staged.key_id != key_id or staged.biometric is not biometric:
-            return None                                       # a newer key was staged meanwhile: its request raises the card
+            return None                                       # not the staged key and choice (any more): no card
         if _staged_key_card(device_id, key_id, biometric) is not None:
             return None
         device_pairing.expire_pending_key_cards(device_id, "a newer key was registered")
