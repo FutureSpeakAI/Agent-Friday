@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import threading
 import time
 from typing import Dict, List
 
@@ -20,6 +21,7 @@ from agent_friday.tv_gateway.pc_common import allowed, refuse
 MAX_SPKI_B64 = 400
 MAX_KEYS_PER_HOUR = 3
 _STAGED_AT: Dict[str, List[float]] = {}
+_BUDGET_LOCK = threading.Lock()
 ASKED = {True: "The device asked for the fingerprint on every approval.",
          False: "The device asked for NO fingerprint: any use while it is unlocked approves."}
 
@@ -27,11 +29,12 @@ ASKED = {True: "The device asked for the fingerprint on every approval.",
 def _within_key_budget(device_id: str) -> bool:
     """At most MAX_KEYS_PER_HOUR registrations per device an hour. Guarded by test_a_device_may_register_three_keys_an_hour."""
     now = time.time()
-    recent = [t for t in _STAGED_AT.get(device_id, []) if now - t < 3600]
-    if len(recent) >= MAX_KEYS_PER_HOUR:
-        return False
-    _STAGED_AT[device_id] = recent + [now]
-    return True
+    with _BUDGET_LOCK:
+        recent = [t for t in _STAGED_AT.get(device_id, []) if now - t < 3600]
+        if len(recent) >= MAX_KEYS_PER_HOUR:
+            return False
+        _STAGED_AT[device_id] = recent + [now]
+        return True
 
 
 def register(app: Flask) -> None:
