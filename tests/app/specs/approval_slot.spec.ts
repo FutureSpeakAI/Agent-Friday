@@ -88,3 +88,22 @@ test('the slot mounts only the named card in a frame the document cannot restyle
   await expect(slot.getByText('Approve all')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('approval-slot.png') });
 });
+
+test('an empty slot shows the shell\'s own line, and an unreachable one says it could not check', async ({ page }) => {
+  let answer: any = { status: 200, body: { ok: true, ids: [] } };
+  await page.route('**/api/liquid/approval-slot**', route => route.fulfill({
+    status: answer.status, contentType: 'application/json', body: JSON.stringify(answer.body) }));
+  await bootApp(page);
+  const mount = (subject: string) => page.evaluate((s) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    (window as any).ReactDOM.createRoot(host).render(
+      (window as any).React.createElement((window as any).FridayApprovalSlot, { subject: s }));
+  }, subject);
+  await mount('crew:empty');
+  await expect(page.getByTestId('approval-slot-empty').first()).toHaveText('Nothing is waiting here.', { timeout: 15000 });
+  answer = { status: 400, body: { ok: false, error: 'bad_subject' } };
+  await mount('crew:refused');
+  await expect(page.getByTestId('approval-slot-empty').last()).toHaveText('Could not check what is waiting.', { timeout: 15000 });
+  await expect(page.getByTestId('approval-card')).toHaveCount(0);
+});

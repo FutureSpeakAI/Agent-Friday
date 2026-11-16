@@ -28320,19 +28320,20 @@ function ExperienceApprovals() {
 // uses shell tokens only. Rules are held by tests/app/specs/approval_slot.spec.ts.
 function ApprovalSlot({ subject, kind }) {
   const items = useApprovalFeed();
-  const [ids, setIds] = useState([]);
+  const [ids, setIds] = useState(null);
   const [busy, setBusy] = useState('');
   const waiting = items.map(a => a.approval_id).join(',');
   useEffect(() => {
     let live = true;
     const q = 'subject=' + encodeURIComponent(subject || '') + (kind ? '&kind=' + encodeURIComponent(kind) : '');
     fetch('/api/liquid/approval-slot?' + q).then(r => r.json())
-      .then(d => { if (live) setIds(d && d.ok && Array.isArray(d.ids) ? d.ids : []); })
-      .catch(() => { if (live) setIds([]); });
+      .then(d => { if (live) setIds(d && d.ok && Array.isArray(d.ids) ? d.ids : 'unavailable'); })
+      .catch(() => { if (live) setIds('unavailable'); });
     return () => { live = false; };
   }, [subject, kind, waiting]);
-  const mine = ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean);
-  if (!mine.length) return null;
+  if (ids === null) return null;
+  const mine = Array.isArray(ids) ? ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean) : [];
+  if (Array.isArray(ids) && ids.length && !mine.length) return null;
   const decide = (id, decision) => {
     if (busy) return;
     setBusy(id);
@@ -28341,7 +28342,9 @@ function ApprovalSlot({ subject, kind }) {
   return React.createElement('div', {
     'data-testid': 'approval-slot', role: 'group', 'aria-label': 'Waiting for your decision',
     style: { margin: '8px 0', padding: 8, border: '1px solid var(--fr-glass-edge)', borderRadius: 8, background: 'var(--fr-glass)', color: 'var(--fr-text)' }
-  }, mine.map(a => React.createElement(ApprovalCardBody, { key: a.approval_id, a, busy, onDecide: decide })));
+  }, mine.length ? mine.map(a => React.createElement(ApprovalCardBody, { key: a.approval_id, a, busy, onDecide: decide }))
+    : React.createElement('div', { 'data-testid': 'approval-slot-empty', style: { fontSize: 11, color: 'var(--fr-dim)' } },
+        ids === 'unavailable' ? 'Could not check what is waiting.' : 'Nothing is waiting here.'));
 }
 window.FridayApprovalSlot = ApprovalSlot;
 function App(){
