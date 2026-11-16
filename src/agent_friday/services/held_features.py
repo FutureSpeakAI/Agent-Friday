@@ -103,6 +103,7 @@ def not_enabled_body(feature: str) -> dict:
 # held by the federation switch and the kill switch alone.
 _CAPABILITY_BY_PREFIX = (
     ("/api/federation/compute/", UNATTENDED_WORKER),
+    ("/api/federation/v2/", INVITED_JOBS),
     ("/api/compute/", UNATTENDED_WORKER),
     ("/api/economy/", OFFLINE_REHEARSAL),
     ("/api/marketplace/", PRIVATE_PUBLISH),

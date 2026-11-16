@@ -47,6 +47,10 @@ RECONFIRM_DAYS = 30
 #   tv_channels  the TV may send a copy of its channels to this PC and fetch the ones kept here
 #              (tv_gateway/channels). A channel is data the PC stores and never runs.
 RIGHTS = ("chat_read", "tv_brain", "studio", "tv_channels")
+# The owner's phone/tablet control rights (Mobile v3, Addendum B). They are NOT part of the pairing bundle above:
+# each is its own screen-only press at the PC, never preselected. Only pc_read exists so far (read-only routes).
+PC_RIGHTS = ("pc_read",)
+ALL_RIGHTS = RIGHTS + PC_RIGHTS
 BASE_RIGHT = "chat_read"
 SESSION_CONTEXT = b"friday-tv-session-v1|"
 
@@ -178,7 +182,7 @@ def _load_pub(spki_der: bytes):
 
 def _rights(rights) -> list:
     names = [rights] if isinstance(rights, str) else list(rights or ())
-    if any(r not in RIGHTS for r in names):
+    if any(r not in ALL_RIGHTS for r in names):
         raise ValueError("unknown right")
     return sorted(set(names) | {BASE_RIGHT})
 
@@ -217,7 +221,7 @@ def set_right(device_id: str, right: str, granted: bool) -> Optional[dict]:
     """Grant or withdraw one named right. Granting is only ever called from a
     screen-only card's decision hook (tv_gateway/pairing); withdrawing may come
     from anywhere the owner asks, because narrowing never needs a press."""
-    if right not in RIGHTS or right == BASE_RIGHT:
+    if right not in ALL_RIGHTS or right == BASE_RIGHT:
         raise ValueError("not a grantable right")
     with _LOCK:
         body = _load()

@@ -294,6 +294,16 @@ def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
                  "why": "faster for voice; pick another model on this device to use it instead"}
 
 
+def bound_voice(cid: Optional[str]) -> Optional[dict]:
+    """The voice a phone or tablet bound to this conversation, or None. A no-op until tv_gateway.voices exists
+    (CORE-MODELS fills it); a failure here never touches the turn."""
+    try:
+        from agent_friday.tv_gateway import voices
+        return voices.bound_voice(cid) if cid else None
+    except Exception:
+        return None
+
+
 def run(dev: dict, body: dict) -> Iterator[str]:
     """Validate, then stream the owner's turn. Raises turn.TurnRefused before the first event."""
     from agent_friday.services import global_stop
@@ -331,8 +341,9 @@ def run(dev: dict, body: dict) -> Iterator[str]:
         cid = bind_seat(cid, requested)
     elif voice:
         cid, default = fast_voice_default(cid, dev)
+    from agent_friday.tv_gateway import tailnet
     turn.device_pairing._receipt("device_turn", dev, watching="owner", provider="owner-agent",
-                                 model=requested, tools_offered=0)
+                                 model=requested, tools_offered=0, via=tailnet.via())
     kind = str((dev or {}).get("kind") or "").strip().lower()
     word = {"tablet": "Tablet", "phone": "Phone", "watch": "Watch"}.get(kind, "Remote")
     shown = requested or (default or {}).get("model") or ""
@@ -392,14 +403,17 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     truth = served(payload, requested, cid)
     if dev is not None:
         from agent_friday.tv_gateway import turn
+        from agent_friday.tv_gateway.tailnet import via as tailnet_via
         turn.device_pairing._receipt("device_turn_served", dev, watching="owner", provider=truth["provider"],
                                      model=truth["model"], requested=truth["requested"] or "",
-                                     seat=truth["seat"], substituted=truth["substituted"])
+                                     seat=truth["seat"], substituted=truth["substituted"],
+                                     via=tailnet_via())
     if asked and asked != requested:
         truth["asked"] = asked                                  # the word the device sent ("opus"), beside the id it meant
     truth["voice"] = bool(voice)
     truth["voice_default"] = voice_default
     truth["speech"] = voice_reply.speech_text(text)             # for TTS: no markdown, ever
+    truth["voice_bound"] = bound_voice(cid) if voice else None   # a voice chosen for this chat; None until voices.py (CORE-MODELS) fills the hook
     if voice:
         truth["formatted"] = text                               # the screen's copy; the stream text is what is spoken
         text = truth["speech"]
