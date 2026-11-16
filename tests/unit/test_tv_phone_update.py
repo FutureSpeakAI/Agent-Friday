@@ -312,3 +312,9 @@ def test_the_single_latest_record_is_offered_only_to_its_own_form(client, apks):
 def test_a_per_form_record_naming_the_other_form_is_not_offered(client, apks):
     accept(apks, name="wrong.apk", manifest="LATEST-tablet.json", **PHONE)
     assert get(client, reader("tablet"), "/tv/v1/phone/update").get_json() == {"ok": True, "available": False}
+
+
+def test_a_broken_per_form_record_offers_nothing_not_the_older_generic_build(client, apks):
+    accept(apks, **PHONE)
+    (apks / "LATEST-phone.json").write_text("{not json", encoding="utf-8")
+    assert get(client, reader("phone"), "/tv/v1/phone/update").get_json() == {"ok": True, "available": False}

@@ -128,10 +128,13 @@ def _record_for(folder_path: Path, form: Optional[str]):
         names = [MANIFEST]
     for name in names:
         try:
-            record = json.loads((folder_path / name).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        return record
+            text = (folder_path / name).read_text(encoding="utf-8")
+        except OSError:
+            continue                      # no such file: try the next name
+        try:
+            return json.loads(text)
+        except ValueError:
+            return None                   # a record that is there but unreadable offers nothing, not an older build
     return None
 
 
