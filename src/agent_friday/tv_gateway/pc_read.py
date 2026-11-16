@@ -250,6 +250,9 @@ def register(app: Flask) -> None:
             return _refuse(413, "that preview is too big for a phone", code="too_big")
         return Response(body, mimetype=ctype.split(";")[0])
 
+    from agent_friday.tv_gateway import app_update           # update the phone app from this PC (same owner gate)
+    app_update.register(app)
+
 
 def _ws_entry(w: dict) -> dict:
     out = {k: w[k] for k in _WS_FIELDS if k in w}
