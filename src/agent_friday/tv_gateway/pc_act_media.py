@@ -63,11 +63,11 @@ def _act(action: str, media_id: str, method: str, path: str, body: Optional[dict
         status, answer = _desk_send(method, path, body or {})
     except Exception as e:
         _log.warning("pc_act media %s failed: %s", action, type(e).__name__)
-        return refuse(503, "the PC could not do that right now", code="pc_unavailable")
-    if status >= 500:
-        return refuse(503, "the PC could not do that right now", code="pc_unavailable")
+        status, answer = 503, {}
     device_pairing._receipt("device_act", g.device, right=pc_act.RIGHT, action=action, media=media_id, outcome=status,
                             via=tailnet.via())
+    if status >= 500:
+        return refuse(503, "the PC could not do that right now", code="pc_unavailable")
     shaped = jsonify(hide_host_paths(answer))
     shaped.status_code = status
     return shaped
