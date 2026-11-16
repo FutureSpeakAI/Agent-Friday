@@ -1,12 +1,18 @@
 """Controlling jobs on the PC from the owner's phone or tablet (Mobile v3; wider brief step 3, ``pc_act``).
 
-Who: an owner-bound phone or tablet that holds ``pc_act``. The right is its own screen-only card at the PC, never part
-of the pairing bundle; a device that asks without it raises that card (once an hour) and gets 403 ``needs_right``.
-What: three actions on a job, each one fixed desktop POST with no body from the device, so the PC applies the
-same checks as its own button: stop after the current step, resume an interrupted job, run a finished one again.
-A resume that needs the owner's word about a tool that was mid-flight is refused with the desktop's reason; the
-device cannot give that word (``confirm_pending`` is never sent). Reading a job's steps, whether it can resume, and its live event stream needs only
-``pc_read``; the stream re-checks the device and the right before every frame and every heartbeat. Every action that reached the desktop writes a ``device_act`` receipt (device, right, action, job, ``via``, outcome;
+Who: an owner-bound phone or tablet that holds ``pc_act``. The right is its own screen-only card at the PC, never
+part of the pairing bundle; a device that asks without it raises that card (once an hour) and gets 403
+``needs_right``.
+
+What: three actions on a job, each one fixed desktop POST with no body from the device, so the PC applies the same
+checks as its own button: stop after the current step, resume an interrupted job, run a finished one again. A resume
+that needs the owner's word about a tool that was mid-flight is refused with the desktop's reason; the device cannot
+give that word (``confirm_pending`` is never sent).
+
+Reading a job's steps, whether it can resume, and its live event stream needs only ``pc_read``; the stream re-checks
+the device and the right before every frame and every heartbeat.
+
+Every action that reached the desktop writes a ``device_act`` receipt (device, right, action, job, ``via``, outcome;
 503 when the desktop failed, since it may already have acted), also when the answer is a refusal.
 Each rule is held by a test in tests/unit/test_tv_pc_act.py.
 """
