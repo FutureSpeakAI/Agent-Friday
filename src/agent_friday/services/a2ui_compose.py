@@ -16,6 +16,14 @@ Blocks (plain dicts; every value is a literal, a composer document carries no da
 
 It never writes an approve, pay or allow control: a button's verb is judged by its manifest in the
 validator, and the approval card is only ever the shell-owned slot.
+
+Rules and the tests that enforce them (tests/unit/test_a2ui_compose.py):
+  same blocks, same bytes ........ test_the_same_blocks_always_give_the_same_document
+  output passes the profile ...... test_a_composed_view_passes_the_profile_and_draws_only_the_shells_card_marker
+  no banned or unknown verb ...... test_the_composer_cannot_emit_a_button_for_a_banned_or_unknown_verb
+  no reserved label .............. test_the_composer_cannot_emit_a_reserved_label
+  no URL in text, internal links . test_a_url_in_composed_text_is_refused_and_a_link_destination_is_internal_only
+  slot is for this view's subject  test_the_slot_is_always_for_this_views_subject_never_another
 """
 from __future__ import annotations
 
@@ -41,7 +49,7 @@ class _Builder:
         kind = block["kind"]
         cid = self._id()
         slot_index = len(self.comps)
-        self.comps.append({})            # reserve the position so ids follow document order
+        self.comps.append({})
         if kind in ("heading", "text"):
             comp = {"id": cid, "component": "text_block", "text": block.get("text", ""),
                     "style": "heading" if kind == "heading" else block.get("style", "body")}
