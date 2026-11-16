@@ -1,4 +1,4 @@
-"""Controlling jobs from an owner's phone or tablet (``pc_act``; wider brief step 3). Reading a job's steps needs ``pc_read``.
+"""Controlling jobs from an owner phone or tablet (``pc_act``; wider brief step 3). Reads need ``pc_read``.
 
 Rules guarded here, each with a case that fails if the check is removed:
 * only an owner-bound phone or tablet that holds ``pc_act`` may act; without it the device raises its own screen-only
@@ -135,10 +135,15 @@ def test_the_desktops_refusal_and_reason_are_passed_on_and_not_a_receipt_of_succ
     assert rows("device_act")[-1]["outcome"] == 409
 
 
-def test_a_desktop_that_fails_is_a_plain_503(client, desk):
-    desk.boom = RuntimeError("down")
-    answer = post(client, device(), "/tv/v1/jobs/j1/stop-after-step")
+@pytest.mark.parametrize("failure,recorded", [("raises", 503), ("answers_5xx", 500)])
+def test_a_desktop_that_fails_is_a_plain_503_and_still_a_receipt(client, desk, failure, recorded):
+    if failure == "raises":
+        desk.boom = RuntimeError("down")
+    else:
+        desk.status, desk.body = 500, {}
+    answer = post(client, device(), "/tv/v1/jobs/j1/rerun")
     assert answer.status_code == 503 and answer.get_json()["code"] == "pc_unavailable"
+    assert rows("device_act")[-1]["outcome"] == recorded and rows("device_act")[-1]["action"] == "rerun"
 
 
 def test_each_action_writes_one_receipt(client, desk):
@@ -159,8 +164,6 @@ def test_the_tailnet_listener_acts_the_same_way_and_says_so(desk):
                      json={}).status_code == 200
     assert rows("device_act")[-1]["via"] == "tailnet"
 
-
-# ── reading steps and resumability: pc_read only ───────────────────────────
 
 def test_steps_and_resumable_are_reads_for_pc_read(client, monkeypatch):
     seen = []
@@ -187,8 +190,6 @@ def test_every_desktop_path_the_job_routes_call_is_still_a_desktop_route():
                  "/api/tasks/<x>/resume", "/api/tasks/<x>/rerun", "/api/tasks/<x>/events"):
         assert path in declared, path
 
-
-# ── the live event stream: pc_read, right re-checked on every frame ────────
 
 class Stream:
     """Stands in for the desktop's own event stream; each call is one heartbeat's worth of frames."""
@@ -248,3 +249,19 @@ def test_the_event_stream_ends_when_the_device_is_removed(client, job_exists, mo
         yield "id: 1\nevent: step\ndata: {}\n\n"
     monkeypatch.setattr(pc_act, "_desk_stream", removing)
     assert read_stream(client, tv)[1].endswith("event: revoked\ndata: {}\n\n")
+
+
+def test_a_quiet_job_still_ends_the_stream_when_the_right_is_withdrawn(client, job_exists, monkeypatch):
+    tv = device(rights=("pc_read",))
+    rounds = []
+
+    def quiet(path, since):
+        rounds.append(since)
+        if len(rounds) > 4:
+            raise RuntimeError("the stream never ended")
+        if len(rounds) == 2:
+            device_pairing.set_right(tv.id, "pc_read", False)
+        return iter(())
+    monkeypatch.setattr(pc_act, "_desk_stream", quiet)
+    status, text = read_stream(client, tv)
+    assert text == ": keepalive\n\nevent: revoked\ndata: {}\n\n" and len(rounds) == 2
