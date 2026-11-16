@@ -299,7 +299,10 @@ def spawn(command: str, cwd: str | None = None) -> dict:
                          f"folder: {cwd!r}"}
 
     session_id = uuid.uuid4().hex[:12]
-    child_env = dict(os.environ)
+    # Only the allow-listed names cross (PATH, temp, Windows system folders); no provider key, vault passphrase
+    # or token. Guarded by test_a_spawned_child_gets_no_provider_key_or_secret.
+    from agent_friday.services.extension_security import sanitize_env_for_mcp
+    child_env = sanitize_env_for_mcp(dict(os.environ), "sandboxed")
     child_env["FRIDAY_SESSION_DEPTH"] = "1"
     child_env["FRIDAY_SESSION_ID"] = session_id
 
