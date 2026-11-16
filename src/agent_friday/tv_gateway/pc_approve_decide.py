@@ -54,6 +54,7 @@ def _why_not_here(rec: dict, dev: dict) -> Optional[str]:
 def _receipt(kind: str, dev: dict, rec: dict, **extra) -> None:
     key = device_pairing.approval_key(dev)
     device_pairing._receipt(kind, dev, approval_id=rec.get("approval_id"), card_kind=rec.get("kind"),
+                            device_name=dev.get("name"), key_id=key.key_id if key else None,
                             biometric=bool(key and key.biometric), attested=False, via=tailnet.via(), **extra)
 
 
@@ -95,30 +96,30 @@ def _signed_approval(approval_id: str, body: dict) -> av.SignedApproval:
 
 
 def verify(dev: dict, approval_id: str, body: dict, now: Optional[float] = None) -> av.SignedApproval:
-    """The brief's order (3.4). Raises Rejected; returns what was signed. Each step has its own test."""
+    """The brief's order (3.4). Raises Rejected; returns what was signed. Each step's test is named beside it."""
     now = time.time() if now is None else now
-    dev = _approving_device(dev)                                         # 1
+    dev = _approving_device(dev)                                         # 1  test_a_device_without_the_right_cannot_get_a_challenge_or_approve
     rec = _card(approval_id)
-    why = av.device_may_not_decide(rec, dev["id"])                       # 2
+    why = av.device_may_not_decide(rec, dev["id"])                       # 2  test_a_device_right_card_is_never_approved_from_a_device
     if why:
         raise Rejected(Refusal.CARD_NOT_FOR_DEVICES, why)
     signed = _signed_approval(approval_id, body)
-    challenge = av.consume(dev["id"], approval_id, signed.nonce, now)    # 3: spent before the signature is looked at
-    if abs(now - signed.signed_time) > av.TIME_WINDOW_S:                 # 4
+    challenge = av.consume(dev["id"], approval_id, signed.nonce, now)    # 3  test_a_replayed_nonce_is_refused, test_a_bad_signature_still_spends_the_nonce
+    if abs(now - signed.signed_time) > av.TIME_WINDOW_S:                 # 4  test_a_time_outside_the_window_is_refused
         raise Rejected(Refusal.BAD_TIME)
     key = device_pairing.approval_key(dev)
     message = av.signing_message(approval_id, challenge.action_fp, challenge.nonce, dev["id"], signed.signed_time)
-    if not av.signature_holds(key.spki, message, signed.signature_b64):  # 5
+    if not av.signature_holds(key.spki, message, signed.signature_b64):  # 5  test_the_session_key_cannot_sign_an_approval
         count = device_pairing.note_bad_signature(dev["id"])
         _receipt("device_approval_refused", dev, rec, reason="bad_signature", count=count)
         raise Rejected(Refusal.BAD_SIGNATURE)
-    rec = _card(approval_id)                                     # 6: the card as it is now
+    rec = _card(approval_id)                                     # 6  test_a_card_resealed_between_challenge_and_decide_is_refused_by_the_signed_fingerprint
     if rec.get("status") != "pending":
         raise Rejected(Refusal.ALREADY_DECIDED)
     if not (approvals.card_seal_holds(rec) and approvals.fingerprint_holds(rec)
             and approvals._action_fp(rec) == challenge.action_fp):
         raise Rejected(Refusal.CARD_CHANGED)
-    why = av.device_may_not_decide(rec, dev["id"])                       # 7
+    why = av.device_may_not_decide(rec, dev["id"])                       # 7  test_the_cards_the_pc_keeps_to_their_own_button_are_not_approved_from_a_device
     if why:
         raise Rejected(Refusal.CARD_NOT_FOR_DEVICES, why)
     return av.SignedApproval(approval_id, challenge.action_fp, challenge.nonce, signed.signed_time,
@@ -141,19 +142,24 @@ def _approve(dev: dict, approval_id: str, body: dict):
             _receipt("device_approval_refused", dev, card, reason=rejected.refusal.value)
         return _refusal_response(rejected)
     device_pairing.clear_bad_signatures(dev["id"])
-    rec, won = approvals.decide_with_outcome(approval_id, "approve", decided_by="device:%s" % dev["id"],
-                                             note="approved on the device", source="device_signed")
+    rec, won = approvals.decide_with_outcome(approval_id, "approve", decided_by=av.device_label(dev["id"]),
+                                             note="approved on the device", source="device_signed",
+                                             expect_fp=signed.action_fp)
     if won:
         _receipt("device_approved", dev, rec, action_fp=signed.action_fp, nonce=signed.nonce,
                  signed_time=signed.signed_time, signature=signed.signature_b64, outcome=rec.get("status"))
+    elif (rec or {}).get("status") == "pending":
+        _receipt("device_approval_refused", dev, rec, reason=Refusal.NOT_APPROVED.value)
+        return _refusal_response(Rejected(Refusal.NOT_APPROVED, "the PC did not approve it; try again or use the PC"))
     return _decision_answer(rec, won)
 
 
 def _deny(dev: dict, approval_id: str):
+    """Narrowing needs no signature (brief 3.2). Guarded by test_deny_needs_only_an_owner_phone_with_no_extra_right."""
     rec = approvals.get_approval(approval_id)
     if rec is None:
         return _refusal_response(Rejected(Refusal.UNKNOWN_CARD))
-    rec, won = approvals.decide_with_outcome(approval_id, "deny", decided_by="device:%s" % dev["id"],
+    rec, won = approvals.decide_with_outcome(approval_id, "deny", decided_by=av.device_label(dev["id"]),
                                              note="declined on the device", source="device")
     if won:
         _receipt("device_denied", dev, rec, outcome=rec.get("status"))

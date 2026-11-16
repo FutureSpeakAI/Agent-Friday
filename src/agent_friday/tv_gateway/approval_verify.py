@@ -24,6 +24,7 @@ TIME_WINDOW_S = 120
 
 
 class Refusal(enum.Enum):
+    NOT_APPROVED = "not_approved"
     NOT_FOR_DEVICE = "pc_approve_not_for_this_device"
     NEEDS_RIGHT = "needs_right"
     BAD_REQUEST = "bad_request"
@@ -39,7 +40,7 @@ class Refusal(enum.Enum):
 
 HTTP_STATUS = {Refusal.NOT_FOR_DEVICE: 403, Refusal.NEEDS_RIGHT: 403, Refusal.BAD_REQUEST: 400,
                Refusal.UNKNOWN_CARD: 404, Refusal.ALREADY_DECIDED: 200, Refusal.CARD_NOT_FOR_DEVICES: 422,
-               Refusal.CARD_CHANGED: 409, Refusal.BAD_NONCE: 403, Refusal.BAD_TIME: 403,
+               Refusal.CARD_CHANGED: 409, Refusal.NOT_APPROVED: 409, Refusal.BAD_NONCE: 403, Refusal.BAD_TIME: 403,
                Refusal.BAD_SIGNATURE: 403, Refusal.TOO_MANY_CHALLENGES: 429}
 
 
@@ -118,6 +119,12 @@ def signature_holds(approval_spki_b64: str, message: bytes, signature_b64: str) 
         return False
 
 
+def device_label(device_id: str) -> str:
+    """The decided_by of a decision made on this device (approvals.DEVICE_LABEL + its id)."""
+    from agent_friday.services import approvals
+    return approvals.DEVICE_LABEL + str(device_id)
+
+
 def device_may_not_decide(rec: dict, device_id: str) -> Optional[str]:
     """Why this card is never approved from a device, in words for the phone; None when it may be. A device
     never grants a right (device_right and pairing cards: test_a_device_right_card_is_never_approved_from_a_device,
@@ -127,7 +134,7 @@ def device_may_not_decide(rec: dict, device_id: str) -> Optional[str]:
     from agent_friday.tv_gateway import pairing
     if rec.get("kind") in (pairing.RIGHT_KIND, pairing.KIND):
         return "A device cannot give rights to a device. Approve this one on your PC."
-    label = "device:%s" % device_id
+    label = device_label(device_id)
     screen_only = approvals.SCREEN_ONLY_KINDS.get(rec.get("kind"))
     if screen_only is not None and label not in screen_only:
         return "This card is approved only with a press on your PC's screen."

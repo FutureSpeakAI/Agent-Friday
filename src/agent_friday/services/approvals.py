@@ -1175,14 +1175,16 @@ def _everything_stopped() -> bool:
 
 
 def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "owner",
-                        note: str = "", source: str = "") -> tuple:
+                        note: str = "", source: str = "", expect_fp: str = "") -> tuple:
     """`decide()`, also saying whether THIS call made the decision.
 
     Returns (record, won). `won` is True for exactly one caller per card: the
     check that the card is still pending and the write that decides it happen
     under one lock, so two pages (or a page and a voice command) deciding at
     once cannot both act; every other caller gets the card as it now stands
-    and won=False. (None, False) for an unknown id.
+    and won=False. (None, False) for an unknown id. ``expect_fp``, when given, is the action fingerprint the
+    decider saw and signed: an approve of a card that no longer has it is not made (under the same lock).
+    Guarded by test_the_signed_fingerprint_is_checked_under_the_decision_lock.
     """
     if decision not in ("approve", "deny"):
         raise ValueError("decision must be 'approve' or 'deny'")
@@ -1232,6 +1234,8 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         if decision == "approve" and _is_cloud_release_card(rec) and not _cloud_release_send(approval_id):
             # Send on a card that lets private text leave the PC is its own button on screen (or the
             # owner's own words after a read-back), never another approvals route (cloud_release.decide).
+            return dict(rec), False
+        if decision == "approve" and expect_fp and _action_fp(rec) != expect_fp:
             return dict(rec), False
         if decision == "approve" and not card_seal_holds(rec):
             # changed since it was raised (or not raised by this module): never approved as is
