@@ -33,9 +33,14 @@ MAX_TITLE, MAX_TAGS, MAX_TAG, MAX_PROJECT = 200, 20, 40, 100
 
 def _desk_send(method: str, path: str, body: dict) -> Tuple[int, dict]:
     from agent_friday import core
-    reply = core.app.test_client().open(path, method=method, json=body, headers={"X-Friday-Token": core._current_api_token()})
+    token = {"X-Friday-Token": core._current_api_token()}
+    reply = core.app.test_client().open(path, method=method, json=body, headers=token)
     answer = reply.get_json(silent=True)
     return reply.status_code, answer if isinstance(answer, dict) else {}
+
+
+def _is_tag(tag) -> bool:
+    return isinstance(tag, str) and 0 < len(tag) <= MAX_TAG
 
 
 def _checked_patch(body: dict) -> Optional[dict]:
@@ -44,7 +49,7 @@ def _checked_patch(body: dict) -> Optional[dict]:
     title, tags, favorite, project = body.get("title"), body.get("tags"), body.get("favorite"), body.get("project")
     if isinstance(title, str) and 0 < len(title.strip()) <= MAX_TITLE:
         out["title"] = title.strip()
-    if isinstance(tags, list) and len(tags) <= MAX_TAGS and all(isinstance(t, str) and 0 < len(t) <= MAX_TAG for t in tags):
+    if isinstance(tags, list) and len(tags) <= MAX_TAGS and all(_is_tag(tag) for tag in tags):
         out["tags"] = tags
     if isinstance(favorite, bool):
         out["favorite"] = favorite
@@ -91,7 +96,8 @@ def register(app: Flask) -> None:
         changes = _checked_patch(request.get_json(silent=True) or {})
         if changes is None:
             denied = pc_act._guard()
-            return denied if denied is not None else refuse(400, "send title, tags, favorite or project", code="bad_request")
+            return denied if denied is not None else refuse(
+                400, "send title, tags, favorite or project", code="bad_request")
         return _act("media_patch", mid, "PATCH", "/api/media/%s" % mid, changes)
 
     @app.post("/tv/v1/media/<mid>/turn-into")
