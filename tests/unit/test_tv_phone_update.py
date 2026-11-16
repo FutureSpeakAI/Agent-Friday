@@ -12,16 +12,40 @@ import hashlib
 
 import pytest
 
+from agent_friday.services import approvals as ap
 from agent_friday.services import device_pairing
 from agent_friday.tv_gateway import app as gateway
-from agent_friday.tv_gateway import app_update, household, phone_update
+from agent_friday.tv_gateway import household, pairing, phone_update
 from tests.ledger_support import rows
-from tests.unit.test_tv_app_update import BYTES, _clean, accept, apks  # noqa: F401  (the app-update fixtures)
+from tests.unit.test_tv_app_update import BYTES, accept
 from tests.unit.test_tv_gateway import FakeTv, auth, open_session
 
 CERT = "ab" * 32
 PHONE = {"package": "ai.futurespeak.friday.phone.flagship", "form": "phone", "version_name": "0.12.0",
          "cert_sha256": CERT, "built_at": 1795000000}
+
+
+@pytest.fixture(autouse=True)
+def _clean(tmp_path, monkeypatch):
+    monkeypatch.setattr(ap, "APPROVALS_FILE", tmp_path / "approvals.json")
+    monkeypatch.setattr(ap, "_feed", lambda *a, **k: None)
+    monkeypatch.setattr(ap, "_notify_pending", lambda rec: None)
+    monkeypatch.setattr(household, "_path", lambda: tmp_path / "household.json")
+    monkeypatch.setattr(gateway, "_BUCKET", gateway._Bucket())
+    monkeypatch.setattr(pairing, "_OFFERED", {})
+    apk_dir = tmp_path / "apks"
+    apk_dir.mkdir()
+    monkeypatch.setenv("FRIDAY_PHONE_APK_DIR", str(apk_dir))
+    device_pairing._path().unlink(missing_ok=True)
+    device_pairing._reset_for_tests()
+    household.ensure_default_members()
+    yield
+    device_pairing._reset_for_tests()
+
+
+@pytest.fixture
+def apks(tmp_path):
+    return tmp_path / "apks"
 
 
 @pytest.fixture
@@ -63,7 +87,8 @@ def test_a_record_without_a_field_the_phone_checks_is_not_offered(client, apks, 
 
 
 @pytest.mark.parametrize("over", [{"form": "watch"}, {"form": ""}, {"cert_sha256": "nothex"}, {"package": "nodots"},
-                                  {"built_at": "yesterday"}, {"built_at": True}, {"version_code": "x"}])
+                                  {"built_at": "yesterday"}, {"built_at": True}, {"version_code": "x"}, {"version_code": 0},
+                                  {"version_code": -3}])
 def test_a_malformed_field_is_not_offered(client, apks, over):
     accept(apks, **{**PHONE, **over})
     assert get(client, reader(), "/tv/v1/phone/update").get_json()["available"] is False
@@ -115,6 +140,15 @@ def test_a_range_resumes_and_is_not_a_second_download(client, apks):
     accept(apks, **PHONE)
     answer = get(client, reader(), "/tv/v1/phone/update/apk?vc=40", headers={"Range": "bytes=100-199"})
     assert answer.status_code == 206 and answer.data == BYTES[100:200] and rows("device_app_download") == []
+
+
+def test_a_head_or_a_one_byte_probe_is_not_a_download(client, apks):
+    accept(apks, **PHONE)
+    tv = reader()
+    headers = auth(open_session(client, tv))
+    assert client.head("/tv/v1/phone/update/apk?vc=40", headers=headers).status_code == 200
+    assert client.get("/tv/v1/phone/update/apk?vc=40", headers={**headers, "Range": "bytes=0-0"}).status_code == 206
+    assert rows("device_app_download") == []
 
 
 @pytest.mark.parametrize("path", ["/tv/v1/phone/update", "/tv/v1/phone/update/apk?vc=40"])

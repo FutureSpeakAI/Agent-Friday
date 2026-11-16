@@ -29,7 +29,7 @@ def _staged() -> tuple:
     build, refusal = app_update.accepted_build()
     if refusal is not None:
         return None, (refusal if refusal.status_code == 503 else None)
-    if build.phone is None or build.version_code is None or build.size > MAX_APK_BYTES:
+    if build.phone is None or build.version_code is None or not 0 < build.size <= MAX_APK_BYTES:
         return None, None
     return build, None
 

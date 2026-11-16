@@ -144,6 +144,8 @@ def accepted_build() -> Tuple[Optional[AcceptedBuild], Optional[Response]]:
         version_code = int(record.get("version_code"))
     except (TypeError, ValueError):
         version_code = None
+    if version_code is not None and version_code <= 0:
+        version_code = None
     return AcceptedBuild(file=name, path=real, version=str(record["version"])[:40], version_code=version_code,
                          sha256=got.lower(), size=real.stat().st_size, accepted_by=str(acceptance["by"])[:80],
                          accepted_at=str(acceptance["at"])[:40],
