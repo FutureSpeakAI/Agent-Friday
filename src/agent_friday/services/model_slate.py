@@ -100,6 +100,22 @@ def _blocked(m: dict, mode: str):
     return None
 
 
+def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
+    """What picking this model costs the first time: nothing for a cloud model or a resident seat; for a cold
+    local seat the last measured load on this PC (None when it has not loaded since timing began)."""
+    if not local or warm:
+        return {"cold": False, "expected_seconds": 0.0, "basis": "already available"}
+    if warm is None:
+        return {"cold": None, "expected_seconds": None, "basis": "residency not known right now"}
+    try:
+        from agent_friday.services import seat_timing
+        secs = seat_timing.last_load_seconds(model_id)
+    except Exception:
+        secs = None
+    return {"cold": True, "expected_seconds": secs,
+            "basis": "last load measured on this PC" if secs is not None else "not loaded on this PC yet"}
+
+
 def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
     local = bool(m.get("local"))
     out = {
@@ -116,6 +132,7 @@ def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
         "context_window": m.get("context_window"),
         "hint": m.get("hint"),
     }
+    out["switch"] = _switch_cost(m.get("id"), local, out["warm"])
     why = _blocked(m, mode)
     out["can_serve"] = why is None
     out["blocked"] = ({"code": why[0], "reason": why[1]} if why else None)
