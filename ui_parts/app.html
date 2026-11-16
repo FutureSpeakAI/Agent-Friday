@@ -22079,7 +22079,9 @@ function grantRecordWords(r){
 function GovernanceGrantsPanel(){
   const[grants,setGrants]=useState([]);const[jobs,setJobs]=useState([]);const[tools,setTools]=useState([]);const[records,setRecords]=useState([]);
   const[job,setJob]=useState('');const[picked,setPicked]=useState([]);const[days,setDays]=useState(7);const[uses,setUses]=useState(10);const[msg,setMsg]=useState('');
-  const load=()=>apiFetch('/api/governance/grants').then(r=>r.json()).then(d=>{setGrants(Array.isArray(d&&d.grants)?d.grants:[]);setRecords(Array.isArray(d&&d.records)?d.records:[]);}).catch(()=>{});
+  const[standing,setStanding]=useState({grants:[],declined:[],stopped:[]});
+  const load=()=>{apiFetch('/api/governance/grants').then(r=>r.json()).then(d=>{setGrants(Array.isArray(d&&d.grants)?d.grants:[]);setRecords(Array.isArray(d&&d.records)?d.records:[]);}).catch(()=>{});
+    apiFetch('/api/governance/standing-grants').then(r=>r.json()).then(d=>setStanding({grants:Array.isArray(d&&d.grants)?d.grants:[],declined:Array.isArray(d&&d.declined)?d.declined:[],stopped:Array.isArray(d&&d.stopped)?d.stopped:[]})).catch(()=>{});};
   useEffect(()=>{
     load();
     apiFetch('/api/schedules').then(r=>r.json()).then(d=>setJobs(Array.isArray(d&&d.schedules)?d.schedules:[])).catch(()=>{});
@@ -22103,11 +22105,28 @@ function GovernanceGrantsPanel(){
     <div style={{...muted,marginBottom:10}}>A scheduled job can't send, post, change your calendar or run a command on its own: with nobody watching, each of those waits on an approval card. To let a job do one of them unattended, give it a grant here. A grant names the job, the actions, how long it lasts and how many times it can be used. Email is not covered here: it has its own Pre-approved sends section below, for named recipients only.</div>
     {grants.length===0
       ?<div style={{...muted,marginBottom:10}}>No grants. Every outward action by a scheduled job waits for you.</div>
-      :grants.map(g=><div key={g.grant_id} className="card" style={{padding:8,marginBottom:6,display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+      :grants.filter(g=>String(g.scope).indexOf('pattern:')!==0).map(g=><div key={g.grant_id} className="card" style={{padding:8,marginBottom:6,display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
         <div style={{fontSize:12,color:'#ddd',lineHeight:1.5}}><b>{jobName(g.scope)}</b> may {(g.tools||[]).map(labelOf).join(', ').toLowerCase()}
           <div style={{fontSize:11,color:'rgba(255,255,255,0.45)'}}>{'until '+new Date(g.expires_at*1000).toLocaleString()+' \xB7 '+g.uses_left+' use(s) left'}</div></div>
         <button className="settings-btn" style={{fontSize:11,color:'#ff8080'}} onClick={()=>revoke(g.grant_id)}>Revoke</button>
       </div>)}
+    <div data-testid="standing-grants" style={{marginTop:10}}>
+      <div style={{fontSize:12,color:'#ccc'}}>Standing grants</div>
+      <div style={{...muted,marginBottom:6}}>After you approve the same action five times, {fridayName()} may offer to stop asking for that one action. Only your press on that offer makes one. Each lasts at most 30 days or 50 uses, and you can take it back here at any time.</div>
+      {standing.grants.length===0
+        ?<div style={{...muted,marginBottom:6}}>None. Every approval still waits for you.</div>
+        :standing.grants.map(g=><div key={g.grant_id} className="card" data-testid="standing-grant" style={{padding:8,marginBottom:6,display:'flex',justifyContent:'space-between',alignItems:'center',gap:8}}>
+          <div style={{fontSize:12,color:'#ddd',lineHeight:1.5}}><b>{labelOf(g.tool)}</b>{g.to?' \xB7 '+g.to:''}
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.45)'}}>{'Pressed by '+(g.pressed_by==='owner:ui'?'you on this PC':g.pressed_by)+(g.device?' ('+String(g.device).replace(/_/g,' ')+')':'')+' on '+new Date(g.made_at*1000).toLocaleString()}</div>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.45)'}}>{'Used '+g.uses_used+' of '+g.uses_max+' \xB7 ends '+new Date(g.ends_at*1000).toLocaleString()}</div></div>
+          <button className="settings-btn" style={{fontSize:11,color:'#ff8080'}} aria-label={'Revoke the standing grant for '+labelOf(g.tool)} onClick={()=>revoke(g.grant_id)}>Revoke</button>
+        </div>)}
+      {standing.declined.map(o=><div key={o.pattern} data-testid="declined-offer" style={{...muted,display:'flex',justifyContent:'space-between',gap:8,marginBottom:4}}>
+        <span>{'You declined an offer for '+labelOf(o.tool)+'. It may be offered again after 30 days.'}</span>
+        <button className="settings-btn" style={{fontSize:11}} onClick={()=>apiFetch('/api/governance/standing-grants/stop-offering',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pattern:o.pattern})}).then(()=>load()).catch(()=>{})}>Don't offer again</button>
+      </div>)}
+      {standing.stopped.map(o=><div key={o.pattern} data-testid="stopped-offer" style={{...muted,marginBottom:4}}>{'Never offered again: '+labelOf(o.tool)}</div>)}
+    </div>
     <div style={{marginTop:10,fontSize:12,color:'#ccc'}}>New grant</div>
     <select aria-label="Scheduled job" value={job} onChange={e=>setJob(e.target.value)} style={{marginTop:6,width:'100%',fontSize:12}}>
       <option value="">Choose a scheduled job…</option>

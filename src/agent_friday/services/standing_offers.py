@@ -33,7 +33,7 @@ _LOCK = threading.Lock()
 
 
 def _empty() -> Dict[str, Any]:
-    return {"declined_at": {}, "never_again": [], "pending": "", "last_offer_at": 0.0}
+    return {"declined_at": {}, "never_again": [], "pending": "", "last_offer_at": 0.0, "tools": {}}
 
 
 def _load() -> Dict[str, Any]:
@@ -107,9 +107,10 @@ def still_earned(fingerprint: str, now: Optional[float] = None) -> bool:
             and not _denied_recently(fingerprint, now))
 
 
-def record_offer_raised(fingerprint: str, now: Optional[float] = None) -> None:
+def record_offer_raised(fingerprint: str, now: Optional[float] = None, tool: str = "") -> None:
     with _LOCK:
         state = _load()
+        state["tools"][fingerprint] = tool[:80]
         state["pending"] = fingerprint
         state["last_offer_at"] = time.time() if now is None else now
         _save(state)
@@ -128,3 +129,25 @@ def record_offer_closed(fingerprint: str, *, declined: bool, never_again: bool =
         if never_again and fingerprint not in state["never_again"]:
             state["never_again"].append(fingerprint)
         _save(state)
+
+
+def stop_offering(fingerprint: str) -> bool:
+    """"Don't offer this again", for good. False when the pattern was never offered."""
+    with _LOCK:
+        state = _load()
+        if fingerprint not in state["tools"]:
+            return False
+        if fingerprint not in state["never_again"]:
+            state["never_again"].append(fingerprint)
+        _save(state)
+        return True
+
+
+def declined_and_stopped() -> Dict[str, list]:
+    """What Settings lists: offers the owner declined (still stoppable) and offers stopped for good."""
+    with _LOCK:
+        state = _load()
+    named = lambda fp: {"pattern": fp, "tool": state["tools"].get(fp, "")}
+    stopped = set(state["never_again"])
+    return {"declined": [dict(named(fp), at=t) for fp, t in state["declined_at"].items() if fp not in stopped],
+            "stopped": [named(fp) for fp in state["never_again"]]}
