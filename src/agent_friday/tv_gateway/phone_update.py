@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, g, jsonify, request, send_file
 
 from agent_friday.tv_gateway import app_update, pc_read
 
@@ -28,11 +28,15 @@ _VERSION_CODE = re.compile(r"[0-9]{1,10}")
 
 
 def _staged() -> tuple:
-    """(build, None) for an offerable build, (None, None) for nothing to offer, (None, refusal) for apk_changed."""
-    build, refusal = app_update.accepted_build()
+    """(build, None) for an offerable build, (None, None) for nothing to offer, (None, refusal) for apk_changed.
+    The record is the one for the asking device's own form (phone or tablet)."""
+    kind = str(g.device.get("kind") or "").lower()
+    build, refusal = app_update.accepted_build(kind)
     if refusal is not None:
         return None, (refusal if refusal.status_code == 503 else None)
     if build.phone is None or build.version_code is None or not 0 < build.size <= MAX_APK_BYTES:
+        return None, None
+    if build.phone.form != kind:      # a record for the other form is never offered (the phone would refuse it)
         return None, None
     return build, None
 

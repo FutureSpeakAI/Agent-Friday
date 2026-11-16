@@ -269,3 +269,46 @@ def test_the_offer_has_the_docs_fields_and_kinds_and_nothing_else(client, apks):
 def test_nothing_staged_is_exactly_the_docs_answer(client, apks):
     import json
     assert get(client, reader(), "/tv/v1/phone/update").get_json() == json.loads(DOC_NOTHING_STAGED)
+
+
+# -- one record per form ------------------------------------------------------------------------------------------
+
+TABLET = {**PHONE, "form": "tablet", "version_name": "0.12.0-tablet"}
+
+
+def both_staged(apks):
+    accept(apks, name="phone-build.apk", manifest="LATEST-phone.json", version_code=41, **PHONE)
+    accept(apks, name="tablet-build.apk", manifest="LATEST-tablet.json", version_code=42, **TABLET)
+
+
+def test_a_phone_and_a_tablet_are_each_offered_their_own_build(client, apks):
+    both_staged(apks)
+    phone = get(client, reader("phone"), "/tv/v1/phone/update").get_json()
+    tablet = get(client, reader("tablet"), "/tv/v1/phone/update").get_json()
+    assert (phone["form"], phone["version_code"]) == ("phone", 41)
+    assert (tablet["form"], tablet["version_code"]) == ("tablet", 42)
+
+
+def test_each_form_downloads_only_its_own_version_code(client, apks):
+    both_staged(apks)
+    phone, tablet = reader("phone"), reader("tablet")
+    assert get(client, phone, "/tv/v1/phone/update/apk?vc=41").status_code == 200
+    assert get(client, phone, "/tv/v1/phone/update/apk?vc=42").status_code == 404
+    assert get(client, tablet, "/tv/v1/phone/update/apk?vc=42").status_code == 200
+    assert get(client, tablet, "/tv/v1/phone/update/apk?vc=41").status_code == 404
+
+
+def test_a_form_with_no_record_is_offered_nothing_not_the_other_forms_build(client, apks):
+    accept(apks, name="phone-build.apk", manifest="LATEST-phone.json", **PHONE)
+    assert get(client, reader("tablet"), "/tv/v1/phone/update").get_json() == {"ok": True, "available": False}
+
+
+def test_the_single_latest_record_is_offered_only_to_its_own_form(client, apks):
+    accept(apks, **PHONE)
+    assert get(client, reader("phone"), "/tv/v1/phone/update").get_json()["available"] is True
+    assert get(client, reader("tablet"), "/tv/v1/phone/update").get_json() == {"ok": True, "available": False}
+
+
+def test_a_per_form_record_naming_the_other_form_is_not_offered(client, apks):
+    accept(apks, name="wrong.apk", manifest="LATEST-tablet.json", **PHONE)
+    assert get(client, reader("tablet"), "/tv/v1/phone/update").get_json() == {"ok": True, "available": False}

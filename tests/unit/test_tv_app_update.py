@@ -43,12 +43,12 @@ def apks(tmp_path):
     return tmp_path / "apks"
 
 
-def accept(apks, data=BYTES, name="agent-friday-0.12.0-accept-abc1234.apk", **over):
+def accept(apks, data=BYTES, name="agent-friday-0.12.0-accept-abc1234.apk", manifest="LATEST.json", **over):
     (apks / name).write_bytes(data)
     rec = {"file": name, "version": "0.12.0-accept", "version_code": 40, "sha256": hashlib.sha256(data).hexdigest(),
            "accepted": {"by": "phone lane critic", "at": "2026-11-15T20:00", "commit": "abc1234"}}
     rec.update(over)
-    (apks / "LATEST.json").write_text(json.dumps(rec), encoding="utf-8")
+    (apks / manifest).write_text(json.dumps(rec), encoding="utf-8")
     return rec
 
 

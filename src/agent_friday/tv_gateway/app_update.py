@@ -43,6 +43,9 @@ from flask import Flask, Response, g, jsonify, request, send_file
 _log = logging.getLogger(__name__)
 
 MANIFEST = "LATEST.json"
+#: One record per form, so a phone build and a tablet build can both be staged: ``LATEST-phone.json``,
+#: ``LATEST-tablet.json``. A device is offered the record for its own kind (phone or tablet), never the other's.
+FORM_MANIFEST = "LATEST-{form}.json"
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.apk$")
 _HEX = re.compile(r"^[0-9a-fA-F]{64}$")
 _PACKAGE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$")
@@ -115,12 +118,28 @@ def _no_build(reason: str = "this PC has no accepted phone build to offer") -> T
     return None, _refuse(404, reason, code="no_accepted_build")
 
 
-def accepted_build() -> Tuple[Optional[AcceptedBuild], Optional[Response]]:
-    """(the accepted build, None) or (None, the refusal to send)."""
+def _record_for(folder_path: Path, form: Optional[str]):
+    """The parsed record a device of this form is offered, or None. With a form: LATEST-<form>.json when it exists,
+    else LATEST.json (the phone route then offers it only if it names the device's own form). Without a form (the
+    app/ alias routes): LATEST.json. Guarded by tests/unit/test_tv_phone_update.py (the per-form cases)."""
+    if form in FORMS:
+        names = [FORM_MANIFEST.format(form=form), MANIFEST]
+    else:
+        names = [MANIFEST]
+    for name in names:
+        try:
+            record = json.loads((folder_path / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        return record
+    return None
+
+
+def accepted_build(form: Optional[str] = None) -> Tuple[Optional[AcceptedBuild], Optional[Response]]:
+    """(the accepted build, None) or (None, the refusal to send). ``form`` is the asking device's kind."""
     folder_path = folder()
-    try:
-        record = json.loads((folder_path / MANIFEST).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    record = _record_for(folder_path, form)
+    if record is None:
         return _no_build()
     if not isinstance(record, dict):
         return _no_build()
