@@ -1,7 +1,6 @@
 """Approving cards from the owner's phone or tablet (Mobile v3, Addendum B; brief BURNDOWN_BUILD_BRIEF_approvals_from_phone).
 
-This module so far holds the first half: the device registers its approval key. Nothing here approves anything.
-The key stays staged until the owner presses the ``pc_approve`` card on this PC's own screen; that press, in the
+A device registers its approval key here. The key stays staged until the owner presses the ``pc_approve`` card on this PC's own screen; that press, in the
 card's decision hook (pairing._on_right_decision), activates the key and grants the right in one step.
 """
 from __future__ import annotations
@@ -41,7 +40,8 @@ def register(app: Flask) -> None:
             return refuse(422, "the PC will not take that key", code=e.code)
         if stage is device_pairing.KeyStage.ALREADY_ACTIVE:
             return {"ok": True, "status": stage.value, "key_id": key_id, "biometric": biometric, "attested": False}
-        pairing.offer_right(dev["id"], device_pairing.APPROVAL_RIGHT, key_id=key_id, detail=ASKED[biometric])
+        pairing.offer_right(dev["id"], device_pairing.APPROVAL_RIGHT, key_id=key_id, biometric=biometric,
+                           detail=ASKED[biometric])
         device_pairing._receipt("device_approval_key_staged", dev, key_id=key_id, biometric=biometric,
                                 via=tailnet.via())
         return {"ok": True, "status": stage.value, "key_id": key_id, "biometric": biometric, "attested": False,

@@ -282,7 +282,8 @@ _OFFERED: dict = {}                    # "device:right" -> when its card was las
 OFFER_COOLDOWN_S = 3600
 
 
-def offer_right(device_id: str, right: str, *, key_id: str = "", detail: str = "") -> Optional[str]:
+def offer_right(device_id: str, right: str, *, key_id: str = "", biometric: Optional[bool] = None,
+                detail: str = "") -> Optional[str]:
     """Raise the screen-only card for one wider right on an already-paired device, at most once
     an hour per device, right and key, so a device that asks again does not pile up cards. ``key_id`` and
     ``detail`` are for the approval right: the card names the key it will activate and the fingerprint
@@ -290,21 +291,47 @@ def offer_right(device_id: str, right: str, *, key_id: str = "", detail: str = "
     from agent_friday.services import approvals
     if right not in RIGHT_CARDS:
         return None
-    asked = hashlib.sha256(detail.encode()).hexdigest()[:8] if detail else ""   # a changed choice is a new card
+    asked = hashlib.sha256(detail.encode()).hexdigest()[:8] if detail else ""
     key = ":".join(part for part in (device_id, right, key_id, asked) if part)
-    with _LOCK:
-        now = time.time()
-        if now - _OFFERED.get(key, 0.0) < OFFER_COOLDOWN_S:
+    if key_id:
+        if _pending_key_card(device_id, right, key_id, biometric):
             return None
-        _OFFERED[key] = now
+    else:
+        with _LOCK:
+            now = time.time()
+            if now - _OFFERED.get(key, 0.0) < OFFER_COOLDOWN_S:
+                return None
+            _OFFERED[key] = now
     title, description = RIGHT_CARDS[right]
+    if key_id:
+        _expire_older_key_cards(device_id, right)
+    named = {"key_id": key_id, "biometric": biometric} if key_id else {}
     card = approvals.create_approval(
         kind=RIGHT_KIND, subject_type="device_right", subject_id=key,
         title=title, description=" ".join(part for part in (description, detail) if part),
         action_description=title,
-        payload={"device_id": device_id, "right": right, "origin": "tv_gateway", **({"key_id": key_id} if key_id else {})},
+        payload={"device_id": device_id, "right": right, "origin": "tv_gateway", **named},
         requested_by="tv_gateway", force_gate=True)
     return card.get("approval_id")
+
+
+def _pending_key_card(device_id: str, right: str, key_id: str, biometric: Optional[bool]) -> bool:
+    from agent_friday.services import approvals
+    return any((c.get("payload") or {}).get("device_id") == device_id and (c.get("payload") or {}).get("right") == right
+               and (c.get("payload") or {}).get("key_id") == key_id and (c.get("payload") or {}).get("biometric") == biometric
+               for c in approvals.list_approvals(status="pending") if c.get("kind") == RIGHT_KIND)
+
+
+def _expire_older_key_cards(device_id: str, right: str) -> None:
+    """A device has one pending card per key right: a new key replaces the older card, so a press can only ever
+    answer the latest key and fingerprint choice. Guarded by test_a_new_key_replaces_the_pending_card."""
+    from agent_friday.services import approvals
+
+    def older(rec: dict) -> bool:
+        payload = rec.get("payload") or {}
+        return (rec.get("kind") == RIGHT_KIND and payload.get("device_id") == device_id
+                and payload.get("right") == right and "key_id" in payload)
+    approvals.expire_matching(older, "tv_gateway", "a newer key was registered")
 
 
 def _on_right_decision(rec: dict) -> None:
@@ -314,7 +341,7 @@ def _on_right_decision(rec: dict) -> None:
     if right not in RIGHT_CARDS or rec.get("status") != "approved" or rec.get("decided_by") != SCREEN_LABEL:
         return
     if right == device_pairing.APPROVAL_RIGHT and not device_pairing.activate_approval_key(
-            str(device_id), str(payload.get("key_id") or "")):
+            str(device_id), str(payload.get("key_id") or ""), bool(payload.get("biometric"))):
         return                          # the key this card named is gone or was replaced: grant nothing
     device_pairing.set_right(str(device_id), right, True)
 

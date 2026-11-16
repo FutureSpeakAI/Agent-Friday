@@ -249,12 +249,19 @@ APPROVAL_RIGHT = "pc_approve"
 APPROVAL_FIELDS = ("approval_spki", "approval_biometric", "approval_attested", "approval_fail_count")
 
 
+class KeyRefusal(enum.Enum):
+    BAD_KEY = "bad_key"
+    UNKNOWN_DEVICE = "unknown_device"
+    SESSION_KEY_REUSED = "session_key_reused"
+    TABLET_NEEDS_BIOMETRIC = "tablet_needs_biometric"
+
+
 class ApprovalKeyRefused(ValueError):
     """The PC will not take this approval key; ``code`` is the plain reason the route sends back."""
 
-    def __init__(self, code: str):
-        super().__init__(code)
-        self.code = code
+    def __init__(self, refusal: KeyRefusal):
+        super().__init__(refusal.value)
+        self.code = refusal.value
 
 
 class KeyStage(enum.Enum):
@@ -275,8 +282,11 @@ class ApprovalKey:
         return spki_id(base64.b64decode(self.spki))
 
 
-def key_id_of(spki_der: bytes) -> str:
-    return spki_id(spki_der)
+def canonical_spki(spki_der: bytes) -> bytes:
+    """The one DER form of a P-256 public key (uncompressed point), whatever encoding it arrived in, so the same
+    key always has the same bytes and the same id. Raises ValueError for anything that is not a P-256 key."""
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    return _load_pub(spki_der).public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
 
 
 def approval_key(dev: Optional[dict]) -> Optional[ApprovalKey]:
@@ -293,30 +303,29 @@ def _clear_approval_key(dev: dict) -> None:
 
 def stage_approval_key(device_id: str, spki_der: bytes, biometric: bool) -> Tuple[KeyStage, str]:
     """Hold a device's approval key until the owner presses its card at the PC (``activate_approval_key``).
-    Returns what happened and the key's id. Refused: a key that is not P-256, the session key itself (a signature
-    from it must never count as an approval), and a tablet key that does not ask for the fingerprint.
-    Guarded by tests/unit/test_tv_pc_approve_key.py."""
+    Returns what happened and the key's id. Refused: a key that is not P-256, the session key itself in any
+    encoding (a signature from it must never count as an approval), and a tablet key that does not ask for the
+    fingerprint. Guarded by tests/unit/test_tv_pc_approve_key.py."""
     try:
-        _load_pub(spki_der)
+        canonical = canonical_spki(spki_der)
     except Exception:
-        raise ApprovalKeyRefused("bad_key")
+        raise ApprovalKeyRefused(KeyRefusal.BAD_KEY)
     with _LOCK:
         body = _load()
         dev = body["devices"].get(str(device_id))
         if dev is None:
-            raise ApprovalKeyRefused("unknown_device")
-        if base64.b64decode(dev["spki"]) == spki_der:
-            raise ApprovalKeyRefused("session_key_reused")
+            raise ApprovalKeyRefused(KeyRefusal.UNKNOWN_DEVICE)
+        if canonical_spki(base64.b64decode(dev["spki"])) == canonical:
+            raise ApprovalKeyRefused(KeyRefusal.SESSION_KEY_REUSED)
         if dev.get("kind") == "tablet" and not biometric:
-            raise ApprovalKeyRefused("tablet_needs_biometric")
-        key_id = key_id_of(spki_der)
+            raise ApprovalKeyRefused(KeyRefusal.TABLET_NEEDS_BIOMETRIC)
+        key_id = spki_id(canonical)
         active = approval_key(dev)
         if active and active.key_id == key_id and active.biometric == bool(biometric):
             dev.pop("approval_pending", None)
             _save(body)
             return KeyStage.ALREADY_ACTIVE, key_id
-        dev["approval_pending"] = {"spki": base64.b64encode(spki_der).decode("ascii"),
-                                   "biometric": bool(biometric), "at": time.time()}
+        dev["approval_pending"] = {"spki": base64.b64encode(canonical).decode("ascii"), "biometric": bool(biometric)}
         _save(body)
     return KeyStage.STAGED, key_id
 
@@ -327,14 +336,16 @@ def pending_approval_key(device_id: str) -> Optional[ApprovalKey]:
     return ApprovalKey(pend["spki"], bool(pend["biometric"]), False) if pend else None
 
 
-def activate_approval_key(device_id: str, key_id: str) -> bool:
-    """Make the staged key active, only if it is still the one the owner's card named. The caller is the card's
-    decision hook; nothing else may call this. Guarded by tests/unit/test_tv_pc_approve_key.py."""
+def activate_approval_key(device_id: str, key_id: str, biometric: bool) -> bool:
+    """Make the staged key active, only if it is still the key AND the fingerprint choice the owner's card named.
+    The caller is the card's decision hook (pairing._on_right_decision); guarded by
+    tests/unit/test_tv_pc_approve_key.py, which also pins who calls it."""
     with _LOCK:
         body = _load()
         dev = body["devices"].get(str(device_id))
         pend = (dev or {}).get("approval_pending")
-        if not pend or key_id_of(base64.b64decode(pend["spki"])) != key_id:
+        if (not pend or spki_id(base64.b64decode(pend["spki"])) != key_id
+                or bool(pend["biometric"]) != bool(biometric)):
             return False
         dev.update(approval_spki=pend["spki"], approval_biometric=pend["biometric"], approval_attested=False,
                    approval_fail_count=0)
