@@ -119,7 +119,8 @@ def test_a_strip_is_an_image_or_a_plain_refusal(client, desk):
 
 class RangeDesk:
     def __init__(self):
-        self.asked, self.status, self.body, self.ctype, self.content_range = [], 206, b"x" * 10, "video/mp4", "bytes 0-9/100"
+        self.asked, self.status, self.body = [], 206, b"x" * 10
+        self.ctype, self.content_range = "video/mp4", "bytes 0-9/100"
 
     def __call__(self, path, byte_range):
         self.asked.append((path, byte_range))
@@ -143,6 +144,9 @@ CAP = pc_read.MAX_FILE_CHUNK
     ("bytes=0-999999999", "bytes=0-%d" % (CAP - 1)),
     ("bytes=0-1,5-9", "bytes=0-%d" % (CAP - 1)),
     ("items=0-9", "bytes=0-%d" % (CAP - 1)),
+    ("bytes=-500", "bytes=-500"),
+    ("bytes=-99999999999", "bytes=-%d" % CAP),
+    ("bytes=" + "9" * 5000 + "-", "bytes=0-%d" % (CAP - 1)),
 ])
 def test_a_file_is_sent_in_capped_ranges(client, files, sent, asked):
     headers = {"Range": sent} if sent else {}
@@ -167,7 +171,8 @@ def test_every_new_media_read_needs_the_read_right(client, desk, files, path):
     assert answer.status_code == 403 and answer.get_json()["code"] == "needs_right"
 
 
-@pytest.mark.parametrize("path", ["/tv/v1/media/..%2Fx/file", "/tv/v1/media/.hidden/strip", "/tv/v1/media/collections/.x"])
+@pytest.mark.parametrize("path", ["/tv/v1/media/..%2Fx/file", "/tv/v1/media/.hidden/strip",
+                                  "/tv/v1/media/collections/.x"])
 def test_a_bad_id_never_reaches_the_desktop(client, desk, files, path):
     assert get(client, reader(), path).status_code in (400, 404)
     assert desk.calls == [] and files.asked == []
@@ -181,3 +186,38 @@ def test_every_desktop_path_the_media_reads_call_is_still_a_desktop_route():
     declared = {re.sub(r"<[^>]+>", "<x>", m) for m in re.findall(r"route\(\s*[\"'](/api/[^\"']+)[\"']", src)}
     for path in ("/api/media/<x>/strip", "/api/media/<x>/file", "/api/media/collections", "/api/media/collections/<x>"):
         assert path in declared, path
+
+
+def test_a_range_the_desktop_cannot_satisfy_is_a_416_with_its_content_range(client, files):
+    files.status, files.content_range = 416, "bytes */100"
+    answer = get(client, reader(), "/tv/v1/media/m1/file", headers={"Range": "bytes=999999-"})
+    assert answer.status_code == 416 and answer.headers["Content-Range"] == "bytes */100"
+
+
+def test_a_full_answer_over_the_chunk_cap_is_refused_not_forwarded(client, files):
+    files.status, files.body = 200, b"x" * (CAP + 1)
+    assert get(client, reader(), "/tv/v1/media/m1/file").status_code == 413
+
+
+@pytest.mark.parametrize("ctype,disposition", [("video/mp4", None), ("image/png", None), ("text/html", "attachment"),
+                                               ("image/svg+xml", None), ("application/json", "attachment")])
+def test_only_media_types_are_shown_inline(client, files, ctype, disposition):
+    files.ctype = ctype
+    assert get(client, reader(), "/tv/v1/media/m1/file").headers.get("Content-Disposition") == disposition
+
+
+def test_a_path_inside_a_sentence_is_replaced(client, desk):
+    reason = "The local voice is not installed ([WinError 3] cannot find 'E:\\\\Voices\\\\x') and /home/someone/v too."
+    desk.body = json.dumps({"turns": {"backends": {"voice": {"reason": reason, "ready": False}}},
+                            "cards": [{"id": "m1", "title": "Visit file:///E:/Photos/a.png today"}]}).encode()
+    answer = get(client, reader(), "/tv/v1/media")
+    text = answer.get_data(as_text=True)
+    assert "E:" not in text and "/home/" not in text and "file:///" not in text
+    assert answer.get_json()["turns"]["backends"]["voice"]["ready"] is False
+    assert "The local voice is not installed" in text and "[a path on the PC]" in text
+
+
+def test_an_unreadable_desktop_answer_is_refused_not_forwarded_unscrubbed(client, desk):
+    desk.body = b"<html>C:\\secret</html>"
+    answer = get(client, reader(), "/tv/v1/media/m1")
+    assert answer.status_code == 503 and b"secret" not in answer.data
