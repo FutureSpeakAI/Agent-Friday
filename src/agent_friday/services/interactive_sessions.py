@@ -97,6 +97,7 @@ import uuid
 from pathlib import Path
 
 from agent_friday.core import FRIDAY_DIR, HOME, _POPEN_FLAGS, blocked_command_token, _safe_under_home
+from agent_friday.services.extension_security import sanitize_env_for_mcp
 
 MAX_CONCURRENT_SESSIONS = 3
 SESSION_BUFFER_CAP = 65536  # 64 KiB retained per session; oldest bytes drop first
@@ -301,7 +302,6 @@ def spawn(command: str, cwd: str | None = None) -> dict:
     session_id = uuid.uuid4().hex[:12]
     # Only the allow-listed names cross (PATH, temp, Windows system folders); no provider key, vault passphrase
     # or token. Guarded by test_a_spawned_child_gets_no_provider_key_or_secret.
-    from agent_friday.services.extension_security import sanitize_env_for_mcp
     child_env = sanitize_env_for_mcp(dict(os.environ), "sandboxed")
     child_env["FRIDAY_SESSION_DEPTH"] = "1"
     child_env["FRIDAY_SESSION_ID"] = session_id

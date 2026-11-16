@@ -352,6 +352,7 @@ def test_a_spawned_child_gets_no_provider_key_or_secret(monkeypatch):
     """Guards the rule 'no agent holds a key' for the interactive-session spawn path (K2 of the Compressor eval).
     The allow-list is the one the MCP sandbox uses; a name that is not on it never crosses, including names
     that do not exist yet."""
+    monkeypatch.delenv("FRIDAY_SESSION_DEPTH", raising=False)  # the suite may itself run inside a Friday session
     for name in SECRET_NAMES:
         monkeypatch.setenv(name, "sk-test-" + name)
     captured = _CapturedEnv()
@@ -366,6 +367,7 @@ def test_a_spawned_child_gets_no_provider_key_or_secret(monkeypatch):
 
 
 def test_a_spawned_child_still_gets_what_it_needs_to_start(monkeypatch):
+    monkeypatch.delenv("FRIDAY_SESSION_DEPTH", raising=False)
     monkeypatch.setenv("PATH", "somewhere")
     captured = _CapturedEnv()
     monkeypatch.setattr(isess.subprocess, "Popen", captured)
