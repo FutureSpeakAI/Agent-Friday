@@ -340,7 +340,7 @@ def can_approve(dev: Optional[dict]) -> bool:
 
 
 def clear_pending_key(device_id: str) -> None:
-    """Drop a staged key that has no card to press. Guarded by test_a_staged_key_always_has_a_card_on_the_screen."""
+    """Drop a staged key that has no card to press. Guarded by test_a_registered_key_always_has_a_card_on_the_screen."""
     with _LOCK:
         body = _load()
         dev = body["devices"].get(str(device_id))

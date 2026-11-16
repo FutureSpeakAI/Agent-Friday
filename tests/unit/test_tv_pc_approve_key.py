@@ -386,21 +386,39 @@ def test_the_services_pairing_module_does_not_import_the_gateway():
     assert "tv_gateway import" not in source and "import agent_friday.tv_gateway" not in source
 
 
-def test_two_registrations_at_once_leave_one_live_card(client):
+def test_two_registrations_at_once_leave_one_live_card(client, monkeypatch):
     import threading
-    for _ in range(8):
-        dev = paired()
-        keys = [new_key(), new_key()]
-        barrier = threading.Barrier(2)
-        answers = []
+    dev = paired()
+    real_offer = pairing.offer_right
+    second_started, second_done, answers, raced = threading.Event(), threading.Event(), [], []
 
-        def go(spki):
-            barrier.wait()
-            answers.append(register(client, dev, spki=spki))
-        threads = [threading.Thread(target=go, args=(k,)) for k in keys]
-        [t.start() for t in threads]
-        [t.join() for t in threads]
-        staged = device_pairing.pending_approval_key(dev.id)
-        live = [c for c in cards() if c["payload"]["device_id"] == dev.id]
-        assert all(a.status_code == 200 for a in answers)
-        assert len(live) == 1 and live[0]["payload"]["key_id"] == staged.key_id
+    def second_registration():
+        second_started.set()
+        answers.append(register(client, dev))
+        second_done.set()
+
+    def offer_while_the_other_registers(*args, **kwargs):
+        if not raced:
+            raced.append(True)
+            threading.Thread(target=second_registration).start()
+            assert second_started.wait(5)
+            assert not second_done.wait(0.5), "the second registration finished while the first held the step"
+        return real_offer(*args, **kwargs)
+    monkeypatch.setattr(pairing, "offer_right", offer_while_the_other_registers)
+    first = register(client, dev)
+    assert second_done.wait(10)
+    staged = device_pairing.pending_approval_key(dev.id)
+    live = [c for c in cards() if c["payload"]["device_id"] == dev.id]
+    assert first.status_code == 200 and answers[0].status_code == 200
+    assert len(live) == 1 and live[0]["payload"]["key_id"] == staged.key_id
+
+
+def test_a_card_that_cannot_be_raised_leaves_no_staged_key(client, monkeypatch):
+    dev = paired()
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+    monkeypatch.setattr(ap, "create_approval", boom)
+    answer = register(client, dev)
+    assert answer.status_code == 503 and answer.get_json()["code"] == "card_not_raised"
+    assert device_pairing.pending_approval_key(dev.id) is None
