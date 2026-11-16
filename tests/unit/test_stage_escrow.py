@@ -48,6 +48,14 @@ def test_an_earned_share_is_credited_once_from_escrow(journal):
     assert b[se.avail("bob")] == 80 and b[se.escrow("s1", "alice")] == 120
 
 
+def test_two_payees_of_one_stage_are_both_paid(journal):
+    journal.execute(se.reserve(ISSUER, "s1", "alice", 200, "a1"))
+    assert journal.execute(se.pay_out(ISSUER, "s1", "alice", "bob", 80, "a2")) == "posted"
+    assert journal.execute(se.pay_out(ISSUER, "s1", "alice", "carol", 70, "a3")) == "posted"
+    b = journal.balances()
+    assert b[se.avail("bob")] == 80 and b[se.avail("carol")] == 70
+
+
 def test_a_disputed_share_is_held_not_paid(journal):
     journal.execute(se.reserve(ISSUER, "s1", "alice", 200, "a1"))
     assert journal.execute(se.hold_disputed(ISSUER, "s1", "alice", "bob", 50, "a2")) == "posted"
@@ -100,4 +108,4 @@ def test_every_rule_in_the_docstring_names_a_test_that_exists():
     named = set(found) - {own.stem}
     body = ast.parse(own.read_text(encoding="utf-8")).body
     here = {n.name for n in body if isinstance(n, ast.FunctionDef)}
-    assert len(named) == 9 and named <= here
+    assert len(named) == 10 and named <= here
