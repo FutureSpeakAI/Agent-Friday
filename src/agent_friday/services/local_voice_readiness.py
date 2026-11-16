@@ -60,6 +60,9 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent_friday.services.voice_engines import CLOUD_ENGINES, SWITCH_ENGINES
+from agent_friday.services.voice_engines import is_cloud as _is_cloud
+
 _log = logging.getLogger("friday.local_voice_readiness")
 
 WEEK_S = 7 * 24 * 3600.0
@@ -97,9 +100,6 @@ SWITCH_REASONS = {
     "local_voice_failed": "Local voice did not start",
     "your_choice": "Your choice",
 }
-CLOUD_ENGINES = ("gemini", "gemini-live", "openai")
-#: The cloud voices the one switch question can move voice to.
-SWITCH_ENGINES = ("gemini", "openai")
 
 _LOCK = threading.RLock()
 _RUN_LOCK = threading.Lock()
@@ -667,10 +667,6 @@ FLAP_READINGS = 2
 #: Reads the question and applies its answer as one step, so a card click and a spoken
 #: answer racing each other cannot both apply.
 _ANSWER_LOCK = threading.RLock()
-
-
-def _is_cloud(engine: Any) -> bool:
-    return str(engine or "").strip().lower() in CLOUD_ENGINES
 
 
 def _cloud_voice_connected() -> bool:
