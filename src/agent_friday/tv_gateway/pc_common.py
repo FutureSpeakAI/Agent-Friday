@@ -25,7 +25,8 @@ _HOST_PATH_VALUE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|var|t
 _HOST_PATH_IN_TEXT = re.compile(
     r"(?:file:///?)?"
     r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\|/(?:Users|home|mnt|var|tmp|opt|etc|root|Volumes|srv)/)"
-    r"[^\s'\"<>)]*")
+    r"[^\s'\"<>)]*"
+    r"(?:[ ]+[^\s'\"<>)\\/]*[\\/][^\s'\"<>)]*)*")
 PATH_REPLACEMENT = "[a path on the PC]"
 
 
