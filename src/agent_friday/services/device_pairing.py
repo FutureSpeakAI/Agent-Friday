@@ -239,6 +239,8 @@ def set_right(device_id: str, right: str, granted: bool) -> Optional[dict]:
         if right == APPROVAL_RIGHT and not granted:
             _clear_approval_key(dev)
         _save(body)
+    if right == APPROVAL_RIGHT and not granted:
+        expire_pending_key_cards(device_id, "the right was withdrawn")
     _receipt("device_right_granted" if granted else "device_right_withdrawn", dev, right=right)
     return public_view(dev)
 
@@ -328,6 +330,26 @@ def stage_approval_key(device_id: str, spki_der: bytes, biometric: bool) -> Tupl
         dev["approval_pending"] = {"spki": base64.b64encode(canonical).decode("ascii"), "biometric": bool(biometric)}
         _save(body)
     return KeyStage.STAGED, key_id
+
+
+def can_approve(dev: Optional[dict]) -> bool:
+    """A device approves only with the right AND an active key: a right without a key never approves.
+    Guarded by test_a_right_without_a_key_cannot_approve."""
+    return bool(dev) and has_right(dev, APPROVAL_RIGHT) and approval_key(dev) is not None
+
+
+def expire_pending_key_cards(device_id: str, note: str) -> int:
+    """Take the device's unpressed pc_approve key cards off the screen (never approves one). Guarded by
+    test_a_new_key_replaces_the_pending_card, test_the_active_key_registered_again_takes_a_pending_card_away and
+    test_withdrawing_the_right_takes_its_pending_card_away."""
+    from agent_friday.services import approvals
+    from agent_friday.tv_gateway.pairing import RIGHT_KIND
+
+    def key_card(rec: dict) -> bool:
+        payload = rec.get("payload") or {}
+        return (rec.get("kind") == RIGHT_KIND and payload.get("device_id") == str(device_id)
+                and payload.get("right") == APPROVAL_RIGHT and "key_id" in payload)
+    return approvals.expire_matching(key_card, "tv_gateway", note)
 
 
 def pending_approval_key(device_id: str) -> Optional[ApprovalKey]:

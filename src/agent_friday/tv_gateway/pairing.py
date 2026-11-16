@@ -284,15 +284,18 @@ OFFER_COOLDOWN_S = 3600
 
 def offer_right(device_id: str, right: str, *, key_id: str = "", biometric: Optional[bool] = None,
                 detail: str = "") -> Optional[str]:
-    """Raise the screen-only card for one wider right on an already-paired device, at most once
-    an hour per device, right and key, so a device that asks again does not pile up cards. ``key_id`` and
-    ``detail`` are for the approval right: the card names the key it will activate and the fingerprint
-    choice the device asked for. Returns the card's id, or None when it is too soon or the right has no card."""
+    """Raise the screen-only card for one wider right on an already-paired device. Returns the card's id, or None
+    when nothing new is needed or the right has no card.
+
+    Plain rights: at most one card an hour per device and right (the cooldown tests in test_tv_pc_read.py).
+    The approval right is raised for a key: ``key_id`` and ``biometric`` are bound into the card, a newer key
+    replaces the device's older pending card, and the same key and choice already pending raises none
+    (test_a_new_key_replaces_the_pending_card, test_the_same_key_twice_before_the_press_raises_one_card)."""
     from agent_friday.services import approvals
     if right not in RIGHT_CARDS:
         return None
-    asked = hashlib.sha256(detail.encode()).hexdigest()[:8] if detail else ""
-    key = ":".join(part for part in (device_id, right, key_id, asked) if part)
+    choice = "" if biometric is None else ("fingerprint" if biometric else "no_fingerprint")
+    key = ":".join(part for part in (device_id, right, key_id, choice) if part)
     if key_id:
         if _pending_key_card(device_id, right, key_id, biometric):
             return None
@@ -304,7 +307,7 @@ def offer_right(device_id: str, right: str, *, key_id: str = "", biometric: Opti
             _OFFERED[key] = now
     title, description = RIGHT_CARDS[right]
     if key_id:
-        _expire_older_key_cards(device_id, right)
+        device_pairing.expire_pending_key_cards(device_id, "a newer key was registered")
     named = {"key_id": key_id, "biometric": biometric} if key_id else {}
     card = approvals.create_approval(
         kind=RIGHT_KIND, subject_type="device_right", subject_id=key,
@@ -320,18 +323,6 @@ def _pending_key_card(device_id: str, right: str, key_id: str, biometric: Option
     return any((c.get("payload") or {}).get("device_id") == device_id and (c.get("payload") or {}).get("right") == right
                and (c.get("payload") or {}).get("key_id") == key_id and (c.get("payload") or {}).get("biometric") == biometric
                for c in approvals.list_approvals(status="pending") if c.get("kind") == RIGHT_KIND)
-
-
-def _expire_older_key_cards(device_id: str, right: str) -> None:
-    """A device has one pending card per key right: a new key replaces the older card, so a press can only ever
-    answer the latest key and fingerprint choice. Guarded by test_a_new_key_replaces_the_pending_card."""
-    from agent_friday.services import approvals
-
-    def older(rec: dict) -> bool:
-        payload = rec.get("payload") or {}
-        return (rec.get("kind") == RIGHT_KIND and payload.get("device_id") == device_id
-                and payload.get("right") == right and "key_id" in payload)
-    approvals.expire_matching(older, "tv_gateway", "a newer key was registered")
 
 
 def _on_right_decision(rec: dict) -> None:

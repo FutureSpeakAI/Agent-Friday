@@ -9,7 +9,8 @@ OWNER_KINDS = ("phone", "tablet")
 
 
 def allowed(dev: Optional[dict]) -> bool:
-    """An owner-bound phone or tablet. Never a watch, a TV, a family device or an unbound one."""
+    """An owner-bound phone or tablet. Never a watch, a TV, a family device or an unbound one.
+    Guarded by test_only_an_owner_phone_or_tablet_may_register_a_key (test_tv_pc_approve_key.py)."""
     from agent_friday.tv_gateway import owner_turn
     return bool(dev) and owner_turn.is_owner_device(dev) and str(dev.get("kind") or "").lower() in OWNER_KINDS
 
