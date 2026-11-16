@@ -54,7 +54,7 @@ def test_cloud_voice_holds_only_the_stand_in(upstream):
     assert cloud_voice.key_problem("elevenlabs", cloud_voice._api_key("elevenlabs")) is None
 
 
-def test_a_key_id_with_the_wrong_shape_is_refused_by_the_gateway_not_forwarded(upstream, monkeypatch):
+def test_a_key_id_with_the_wrong_shape_is_named_by_key_problem_without_the_key_leaving_the_gateway(upstream, monkeypatch):
     monkeypatch.setenv("ELEVENLABS_API_KEY", "a1b2c3d4e5f60718")  # pragma: allowlist secret
     problem = cloud_voice.key_problem("elevenlabs", cloud_voice._api_key("elevenlabs"))
     assert problem and "key *id*" in problem and "a1b2c3d4e5f60718" not in problem
@@ -74,3 +74,30 @@ def test_a_key_found_only_in_plaintext_settings_is_moved_into_the_store(upstream
     monkeypatch.setattr("agent_friday.core._save_settings", lambda data: written.append(data))
     assert gw._find_key(gw.PROVIDERS["elevenlabs"]) == "sk_legacy_plain"
     assert saved == {"elevenlabs": "sk_legacy_plain"} and written == [{"elevenlabs_api_key": ""}]
+
+
+def test_the_connections_screen_test_button_checks_through_the_gateway(upstream):
+    from agent_friday.services import connections_setup
+    result = connections_setup._test_elevenlabs()
+    assert upstream.seen[-1][0] == "/v1/models" and upstream.header("xi-api-key") == REAL
+    assert result["state"] != "fail"
+
+
+def test_the_test_button_says_no_key_when_the_gateway_has_none(upstream, monkeypatch):
+    from agent_friday.services import connections_setup
+    monkeypatch.setattr(gw, "_find_key", lambda row: "")
+    monkeypatch.setattr(cloud_voice, "_api_key", lambda provider: gw.DUMMY_KEY)   # the key vanished mid-check
+    assert connections_setup._test_elevenlabs()["state"] == "not_connected" and upstream.seen == []
+
+
+def test_a_gateway_that_cannot_start_is_cloud_voice_unavailable_not_a_crash(upstream, monkeypatch):
+    monkeypatch.setattr(gw, "url", lambda name: (_ for _ in ()).throw(OSError("bind failed")))
+    with pytest.raises(cloud_voice.CloudVoiceUnavailable):
+        cloud_voice._synth_elevenlabs("hi", gw.DUMMY_KEY, "m", "v")
+
+
+def test_the_gateways_own_no_key_refusal_is_not_reported_as_a_rejected_key(upstream, monkeypatch):
+    monkeypatch.setattr(gw, "_find_key", lambda row: "")
+    with pytest.raises(cloud_voice.CloudVoiceUnavailable) as caught:
+        cloud_voice._synth_elevenlabs("hi", gw.DUMMY_KEY, "m", "v")
+    assert caught.value.code == "cloud_voice_no_key" and "rejected" not in str(caught.value)

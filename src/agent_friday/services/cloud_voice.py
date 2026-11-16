@@ -819,11 +819,11 @@ def _synth_elevenlabs(text: str, key: str, model: str, voice: str, *, speed=None
     """POST /text-to-speech/{voice_id}. HTTP client imported lazily (C3)."""
     _require_engine("elevenlabs", "ElevenLabs")
     import requests
-    url = "%s/v1/text-to-speech/%s" % (key_gateway.url("elevenlabs"), voice)
     payload = {"text": text, "model_id": model}
     if speed is not None:
         payload["voice_settings"] = {"speed": speed}
     try:
+        url = "%s/v1/text-to-speech/%s" % (key_gateway.url("elevenlabs"), voice)
         resp = requests.post(
             url, headers={"xi-api-key": key, "accept": "audio/mpeg"},
             json=payload, timeout=_TIMEOUT)
@@ -886,6 +886,10 @@ def _raise_for_status(resp, provider: str, label: str) -> None:
     """
     if resp.status_code < 400:
         return
+    if provider in key_gateway.PROVIDERS and key_gateway.no_key(resp):
+        raise CloudVoiceUnavailable(
+            "%s cannot be used: needs an API key" % label, code="cloud_voice_no_key",
+            offer=("Add a key in Settings then Voice, or use Friday's local voice."), requested=provider)
     detail = ""
     try:
         body = resp.json().get("detail") or resp.json().get("error")

@@ -193,18 +193,21 @@ def _test_firecrawl() -> dict:
 
 
 def _test_elevenlabs() -> dict:
-    from agent_friday.services import cloud_voice
+    from agent_friday.services import cloud_voice, key_gateway
     import requests
-    key = cloud_voice._api_key("elevenlabs")  # pragma: allowlist secret
+    key = cloud_voice._api_key("elevenlabs")  # a stand-in: the gateway adds the real key  # pragma: allowlist secret
     if not key:
         return _out(NOT_CONNECTED, "No ElevenLabs key is saved yet.",
                     "Paste a key in the secure field and press Save securely.")
     try:
-        r = requests.get("https://api.elevenlabs.io/v1/models",
+        r = requests.get(key_gateway.url("elevenlabs") + "/v1/models",
                          headers={"xi-api-key": key}, timeout=20)
     except Exception:
         return _out(UNKNOWN, "Couldn't reach ElevenLabs to check.",
                     "Check the internet connection and try again.")
+    if key_gateway.no_key(r):
+        return _out(NOT_CONNECTED, "No ElevenLabs key is saved yet.",
+                    "Paste a key in the secure field and press Save securely.")
     from agent_friday.services import key_verdict as kv
     return _verdict_out(kv.verdict_for(r.status_code, r.text), "ElevenLabs",
                         "https://elevenlabs.io/app/settings/api-keys")
