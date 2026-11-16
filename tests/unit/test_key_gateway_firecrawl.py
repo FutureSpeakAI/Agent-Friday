@@ -19,6 +19,8 @@ def upstream(monkeypatch):
     row = gw.PROVIDERS["firecrawl"]
     monkeypatch.setitem(gw.PROVIDERS, "firecrawl", gw.Provider(**{**row.__dict__, "upstream": fake.origin}))
     monkeypatch.setenv("FIRECRAWL_API_KEY", REAL)
+    monkeypatch.setenv("NO_PROXY", "example.com")   # registered so the test's change to it is undone
+    monkeypatch.delenv("no_proxy", raising=False)
     monkeypatch.setattr(gw, "_from_settings", lambda row: "")
     monkeypatch.setattr("agent_friday.services.cloud_intent.outbound_held", lambda *a, **k: None)
     gw.stop_all()
@@ -54,3 +56,20 @@ def test_without_a_key_nothing_is_sent_and_it_says_so(upstream, monkeypatch):
     monkeypatch.setattr(gw, "_find_key", lambda row: "")
     payload, error = firecrawl._post("/v2/search", {"query": "x"}, 10)
     assert payload is None and "no Firecrawl API key" in error and upstream.seen == []
+
+
+def test_the_rows_upstream_wait_covers_the_longest_wait_the_module_allows():
+    longest = max(firecrawl.DEFAULT_TIMEOUT_S, firecrawl.SEARCH_TIMEOUT_S)
+    assert gw.PROVIDERS["firecrawl"].timeout_s >= longest
+
+
+def test_a_callers_authorization_in_another_spelling_is_not_forwarded(upstream):
+    requests.get(gw.url("firecrawl") + "/v2/team/credit-usage", headers={"AUTHORIZATION": "Bearer caller"}, timeout=10)
+    assert upstream.names[-1].count("authorization") == 1 and upstream.header("Authorization") == "Bearer " + REAL
+
+
+def test_the_gateways_own_no_key_refusal_is_not_reported_as_a_rejected_key(upstream, monkeypatch):
+    monkeypatch.setattr(firecrawl, "configured", lambda: True)
+    monkeypatch.setattr(gw, "_find_key", lambda row: "")
+    payload, error = firecrawl._post("/v2/search", {"query": "x"}, 10)
+    assert payload is None and "rejected" not in error and "no Firecrawl API key" in error

@@ -50,7 +50,8 @@ PROVIDERS = {
     "firecrawl": Provider(
         name="firecrawl", upstream="https://api.firecrawl.dev", prefixes=("/v1/", "/v2/"), methods=("GET", "POST"),
         key_header="Authorization", key_format="Bearer {key}", env_names=("FIRECRAWL_API_KEY",),
-        store_names=("firecrawl",), settings_names=("firecrawl_api_key",)),
+        store_names=("firecrawl",), settings_names=("firecrawl_api_key",),
+        timeout_s=180),   # search with page content waits up to firecrawl.SEARCH_TIMEOUT_S
 }
 
 _LOCK = threading.Lock()

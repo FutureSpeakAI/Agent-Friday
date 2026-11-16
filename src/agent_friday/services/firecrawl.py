@@ -110,7 +110,7 @@ def _meter(op: str, credits_used: int) -> None:
 def key_stand_in() -> str:
     """A stand-in for the Firecrawl key: the proxy's dummy when a key exists (environment, encrypted store or settings,
     found by ``key_gateway``), else an empty string. The real key is never returned here; the gateway puts it on
-    the request. Guarded by tests/unit/test_key_gateway.py::test_firecrawl_callers_never_hold_the_real_key."""
+    the request. Guarded by tests/unit/test_key_gateway_firecrawl.py::test_firecrawl_callers_never_hold_the_real_key."""
     return key_gateway.stand_in("firecrawl")
 
 
@@ -200,6 +200,8 @@ def _post(path: str, body: dict, timeout: int) -> tuple[dict | None, str]:
                           timeout=timeout)
     except Exception as e:
         return None, ExceptionText(f"{type(e).__name__}: {e}")
+    if key_gateway.no_key(r):
+        return None, "no Firecrawl API key configured"
     if r.status_code == 401:
         return None, "Firecrawl rejected the API key (HTTP 401)"
     if r.status_code == 402:
