@@ -89,6 +89,11 @@ def _desk(path: str, params: Optional[dict] = None) -> Tuple[int, bytes, str]:
 
 CHATS_PAGE, CHATS_PAGE_MAX = 30, 100
 MESSAGES_PAGE, MESSAGES_PAGE_MAX = 200, 500
+JOBS_PAGE, JOBS_PAGE_MAX = 50, 200
+JOB_FIELDS = ("task_id", "name", "status", "state", "progress", "step_n", "step_total", "icon", "model",
+              "category", "created", "started", "ended", "elapsed", "off_record", "process", "conversation_id",
+              "last_seen", "stalled", "cost_usd", "now", "stop_requested", "queue_state", "queue_position",
+              "queue_total", "resumable", "resume_reason")
 
 
 def _unavailable(area: str, e: Optional[Exception] = None) -> Response:
@@ -127,6 +132,10 @@ def _desk_object(path: str, params: dict, area: str, key: str) -> Tuple[Optional
     if status >= 300 or not isinstance(data, dict) or not isinstance(data.get(key), list):
         return None, Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
     return data, None
+
+
+def _job_row(task: dict) -> dict:
+    return {k: task[k] for k in JOB_FIELDS if k in task}
 
 
 def _page_out(payload: dict) -> Response:
