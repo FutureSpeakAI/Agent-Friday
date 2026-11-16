@@ -293,3 +293,9 @@ def test_every_desktop_path_the_door_calls_is_still_a_desktop_route():
                  "/api/tasks/<x>", "/api/tasks/<x>/journal", "/api/media", "/api/media/status", "/api/media/<x>",
                  "/api/media/<x>/preview"):
         assert path in declared, path
+
+
+def test_bound_voice_hook_is_a_quiet_no_op_without_voices_module():
+    from agent_friday.tv_gateway import owner_turn
+    assert owner_turn.bound_voice("c1") is None
+    assert owner_turn.bound_voice(None) is None
