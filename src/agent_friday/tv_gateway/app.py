@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import threading
 import time
 from collections import defaultdict, deque
@@ -48,8 +49,8 @@ class _Bucket:
 _BUCKET = _Bucket()
 
 
-def _refuse(status: int, reason: str) -> Response:
-    resp = jsonify({"ok": False, "error": reason})
+def _refuse(status: int, reason: str, **extra) -> Response:
+    resp = jsonify({"ok": False, "error": reason, **extra})
     resp.status_code = status
     return resp
 
@@ -59,22 +60,34 @@ def _bearer() -> str:
     return h[len(AUTH_SCHEME):].strip() if h.startswith(AUTH_SCHEME) else ""
 
 
-def create_app() -> Flask:
+def create_app(tailnet: bool = False) -> Flask:
+    """``tailnet=True`` is the second listener on the Tailscale address (tv_gateway/tailnet): same door,
+    same device-session checks, but no pairing and only tailnet peers."""
     app = Flask("agent_friday.tv_gateway")
     app.config["SESSION_COOKIE_NAME"] = "__tv_gateway_unused"
+    app.config["TAILNET"] = bool(tailnet)
 
     @app.before_request
     def _gate():
         if any(request.headers.get(h) for h in MAIN_APP_HEADERS):
             return _refuse(401, "main-app credentials are not accepted here")
         g.device = None
+        g.via = "tailnet" if tailnet else "lan"
+        if tailnet:
+            from agent_friday.tv_gateway import tailnet as tn
+            if request.path.startswith("/tv/v1/pair/"):
+                return _refuse(403, "pairing is only done from your home network", code="pairing_lan_only")
+            if not tn.is_tailnet_address(request.remote_addr or ""):
+                return _refuse(403, "this door is only for devices on your tailnet", code="not_tailnet")
         if request.path in OPEN_PATHS:
             if not _BUCKET.allow(request.remote_addr or "?"):
                 return _refuse(429, "slow down")
             return None
         dev = device_pairing.check_session(_bearer())
         if dev is None:
-            return _refuse(401, "device session required")
+            # NOT "unpaired": the device may be paired fine and only lack a live session (a restart, a
+            # day gone by). Open a new one (challenge, then open); only a refusal THERE means unpaired.
+            return _refuse(401, "device session required", code="session_required", action="open_session")
         g.device = dev
         return None
 
@@ -111,8 +124,10 @@ def create_app() -> Flask:
         token = device_pairing.open_session(str(body.get("device_id", "")),
                                             str(body.get("nonce", "")), sig)
         if token is None:
-            return _refuse(401, "not paired, or the challenge was wrong or used")
-        return jsonify({"ok": True, "session": token, "ttl_s": device_pairing.SESSION_TTL_S})
+            return _refuse(401, "not paired, or the challenge was wrong or used", code="not_paired_or_bad_challenge")
+        from agent_friday.tv_gateway import tailnet as tn
+        return jsonify({"ok": True, "session": token, "ttl_s": device_pairing.SESSION_TTL_S,
+                        "tailnet": tn.info()})                  # where to fail over to away from home, or null
 
     @app.post("/tv/v1/pair/start")
     def pair_start():
@@ -157,7 +172,7 @@ def create_app() -> Flask:
             events = turn.run(g.device, request.get_json(silent=True) or {}, principal)
             first = next(events, None)
         except turn.TurnRefused as e:
-            return _refuse(e.status, str(e))
+            return _refuse(e.status, str(e), **({"code": e.code} if e.code else {}), **e.extra)
         except Exception as e:                       # the routing mode, a local-only run, a provider down:
             _log.info("TV turn not started: %s", type(e).__name__)
             return _refuse(503, "this computer can't answer that right now")
@@ -174,6 +189,33 @@ def create_app() -> Flask:
 
         return Response(stream_with_context(stream()), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    @app.get("/tv/v1/models")
+    def models_slate():
+        """The PC's whole chat slate for this device (tv_gateway/models): same source as the desktop
+        selector, scoped by the device's rights, each model with whether it can be used now and why not."""
+        from agent_friday.tv_gateway import models, owner_turn
+        try:
+            cat = models.raw_catalog()
+            slate = models.rows(g.device, cat)
+        except Exception as e:
+            _log.warning("model slate failed: %s", type(e).__name__)
+            return _refuse(503, "this computer could not list its models right now", code="slate_unavailable")
+        owner = owner_turn.is_owner_device(g.device)
+        q = (request.args.get("q") or "").strip().lower()
+        prov = (request.args.get("provider") or "").strip().lower()
+        shown = [r for r in slate if (not q or q in (r["id"] + " " + r["name"]).lower())
+                 and (not prov or prov == str(r["provider"]).lower())]
+        return jsonify({"ok": True, "scope": "owner" if owner else "household", "count": len(shown),
+                        "total": len(slate), "selected": next((r["id"] for r in slate if r["selected"]), None),
+                        "voice_default": next((r["id"] for r in slate if r["available"] and r["voice"]["suitable"]
+                                               and r["speed"] == "fast" and r["kind"] == "cloud"), None),
+                        "providers": [{"name": p.get("name"), "label": p.get("label"),
+                                       "available": p.get("available")} for p in cat.get("providers") or []],
+                        "models": shown})
+
+    from agent_friday.tv_gateway import voices as _voices
+    _voices.register(app, _refuse)               # GET /tv/v1/voices, POST /tv/v1/voice/switch
 
     @app.get("/tv/v1/stt")
     def stt_ready():
@@ -253,11 +295,14 @@ def create_app() -> Flask:
     @app.get("/tv/v1/whoami")
     def whoami():
         dev = g.device
+        from agent_friday.tv_gateway import tailnet as tn
         return jsonify({"ok": True, "device": device_pairing.public_view(dev),
-                        "principal": device_pairing.principal(dev)})
+                        "principal": device_pairing.principal(dev), "via": tn.via(), "tailnet": tn.info()})
 
     from agent_friday.tv_gateway import inherit
     inherit.register(app)
+    from agent_friday.tv_gateway import pc_read
+    pc_read.register(app)                    # the owner phone/tablet read door (chats, workspaces, jobs, media)
     return app
 
 
@@ -316,9 +361,14 @@ def stop() -> None:
 
 def lan_address() -> Optional[str]:
     """This PC's IPv4 on the home network: the source address of a route to a
-    private address. No packet is sent (UDP connect only picks a route)."""
+    private address. Chosen from the adapters (tv_gateway/tailnet.lan_address), so a VPN that takes the
+    default route (PIA) cannot make its tunnel address "the LAN". Only when the adapters cannot be listed
+    does it fall back to the route's source address (no packet is sent: UDP connect only picks a route)."""
     import ipaddress
     import socket
+    from agent_friday.tv_gateway import tailnet as tn
+    if tn._nics():
+        return tn.lan_address()
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("192.168.255.255", 9))
@@ -351,4 +401,12 @@ def boot() -> Optional[dict]:
         _DISCOVERY = discovery.Responder(host, info["port"], tls.spki_sha256()).start()
     except OSError as e:
         _log.warning("TV discovery did not start: %s", e)
+    # Off-LAN reach for already-paired devices: a second listener on the Tailscale address only (never
+    # pairing, never discovery), opened now if Tailscale is up and followed if it comes up later.
+    from agent_friday.tv_gateway import tailnet
+    tn_info = tailnet.ensure(info["port"])
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        tailnet.watch(info["port"])
+    if tn_info:
+        info = dict(info, tailnet=tn_info)
     return info

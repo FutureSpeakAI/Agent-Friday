@@ -175,6 +175,19 @@ def catalog():
         return api_error(e, "Couldn't build the model catalogue", shape="bare")
 
 
+@models_screen_bp.route("/api/models/slate", methods=["GET"])
+@login_required
+def slate():
+    """The model slate every device reads (services/model_slate): the desktop picker's models, each
+    with where it runs, whether its key is present, warm or cold, and whether it can serve now."""
+    try:
+        from agent_friday.services import model_slate
+        return jsonify(public_result(dict(model_slate.slate(), status="ok"),
+                                     "Couldn't read the model slate"))
+    except Exception as e:
+        return api_error(e, "Couldn't read the model slate", shape="bare")
+
+
 @models_screen_bp.route("/api/models/whatif", methods=["POST"])
 @login_required
 def whatif():
@@ -367,6 +380,19 @@ def previous_route(model_id):
 # The order is a pre-approval to move from one cloud provider to another, so it
 # is set only by a press on Friday's own page (screen_click.screen_session); the
 # general settings save drops the key (core._save_settings_locked).
+
+@models_screen_bp.route("/api/voices/slate", methods=["GET"])
+@login_required
+def voices_slate():
+    """The voice slate every device reads (services/voice_slate): each voice engine with where it runs,
+    whether its key is present, a latency class, what leaves the house, and its voices."""
+    try:
+        from agent_friday.services import voice_slate
+        return jsonify(public_result(dict(voice_slate.slate(), status="ok"),
+                                     "Couldn't read the voice slate"))
+    except Exception as e:
+        return api_error(e, "Couldn't read the voice slate", shape="bare")
+
 
 @models_screen_bp.route("/api/models/cloud-fallback-order", methods=["GET"])
 @login_required

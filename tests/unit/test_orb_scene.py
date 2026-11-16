@@ -29,7 +29,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCENES = [ROOT / "index.html", ROOT / "ui_parts" / "styles_and_scene.html"]
 THREE = ROOT / "static" / "vendor" / "three-r128.min.js"
 node = shutil.which("node")
-BLOCKS = ["orb-life", "orb-forms", "orb-sky", "orb-hands", "orb-scene"]
+BLOCKS = ["orb-life", "orb-forms", "orb-hands", "orb-scene"]
 MANAGER = re.compile(r"(        class ProcessOrbManager \{.*?\n        \}\n)", re.S)
 
 HARNESS = r"""
