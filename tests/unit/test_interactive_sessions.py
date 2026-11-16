@@ -376,3 +376,20 @@ def test_a_spawned_child_still_gets_what_it_needs_to_start(monkeypatch):
     result = isess.spawn(command="cmd.exe /c echo hi")
     assert captured.env["PATH"] == "somewhere"
     assert captured.env["FRIDAY_SESSION_DEPTH"] == "1" and captured.env["FRIDAY_SESSION_ID"] == result["session_id"]
+
+
+def test_a_spawned_child_keeps_the_shell_basics_but_no_secret(monkeypatch):
+    monkeypatch.delenv("FRIDAY_SESSION_DEPTH", raising=False)
+    monkeypatch.setenv("PSModulePath", "modules")
+    monkeypatch.setenv("USERNAME", "someone")
+    monkeypatch.setenv("SSL_CERT_FILE", "ca.pem")
+    monkeypatch.setenv("HTTPS_PROXY", "http://user:pw@proxy")  # a proxy URL can carry a password
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+    captured = _CapturedEnv()
+    monkeypatch.setattr(isess.subprocess, "Popen", captured)
+    monkeypatch.setattr(isess, "_os_process_start_iso", lambda pid: None)
+    monkeypatch.setattr(isess, "_persist_all", lambda: None)
+    assert isess.spawn(command="cmd.exe /c echo hi").get("session_id")
+    names = {name.upper() for name in captured.env}
+    assert {"PSMODULEPATH", "USERNAME", "SSL_CERT_FILE"} <= names
+    assert "HTTPS_PROXY" not in names and "ANTHROPIC_API_KEY" not in names

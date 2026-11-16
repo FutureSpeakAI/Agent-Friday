@@ -268,6 +268,18 @@ def _pump_output(session_id: str, proc: subprocess.Popen, buf: _Buffer) -> None:
 
 
 # ── public API ───────────────────────────────────────────────────────────────
+#: Names a shell needs to start quickly and behave (PowerShell rebuilds its module path without PSModulePath), plus
+#: certificate-bundle paths. None holds a secret; proxy variables are left out because a proxy URL can carry a password.
+#: Guarded by tests/unit/test_interactive_sessions.py::test_a_spawned_child_keeps_the_shell_basics_but_no_secret.
+_SESSION_EXTRAS = ("PSMODULEPATH", "USERNAME", "USERDOMAIN", "COMPUTERNAME", "ALLUSERSPROFILE", "PUBLIC", "OS",
+                   "PROCESSOR_IDENTIFIER", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432",
+                   "LOGONSERVER", "SESSIONNAME", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS")
+
+
+def _session_extras(environ) -> dict:
+    return {name: value for name, value in environ.items() if name.upper() in _SESSION_EXTRAS}
+
+
 def spawn(command: str, cwd: str | None = None) -> dict:
     """Start a persistent interactive subprocess. No shell is invoked — on
     Windows, passing `command` as a string to Popen without shell=True hands
@@ -303,6 +315,7 @@ def spawn(command: str, cwd: str | None = None) -> dict:
     # Only the allow-listed names cross (PATH, temp, Windows system folders); no provider key, vault passphrase
     # or token. Guarded by test_a_spawned_child_gets_no_provider_key_or_secret.
     child_env = sanitize_env_for_mcp(dict(os.environ), "sandboxed")
+    child_env.update(_session_extras(os.environ))
     child_env["FRIDAY_SESSION_DEPTH"] = "1"
     child_env["FRIDAY_SESSION_ID"] = session_id
 
