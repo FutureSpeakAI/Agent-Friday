@@ -1879,8 +1879,9 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
             and adapter_of(prov) in LOCAL_CAPABLE_ADAPTERS
             and is_private_host(base_url)
         )
-        # A cloud provider's key stays in the key gateway: this call holds a stand-in and the gateway puts the real key
-        # on the outgoing request, only to this descriptor's own host. A local or private provider is called directly.
+        # A cloud provider's key goes out through the key gateway: this call sends a stand-in and the gateway puts the
+        # real key on the outgoing request, only to this descriptor's own host. A local provider, and any provider the
+        # gateway will not serve (plain http, a private host not classified local), is called directly as before.
         # Guarded by tests/unit/test_key_gateway_chat.py.
         if not local_bypass and auth_required and api_key:
             try:
