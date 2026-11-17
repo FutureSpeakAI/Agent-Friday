@@ -1,6 +1,8 @@
 """The payment-provider interface and its result types, with no implementation (design D.4).
 
-TEST CREDITS AND SYNTHETIC CASH ONLY. Every reference is an opaque string. No type here has a field
+TEST CREDITS AND SYNTHETIC CASH ONLY. `test_only` on a descriptor is the provider's OWN word: the import guard in
+scripts/check_exchange_imports.py (no network under services/exchange) is the other half of the rule that no live
+provider is reachable. Every reference is an opaque string. No type here has a field
 for a card number, a bank account, a routing number or a name on an account (spec A08), held by
 tests/unit/test_exchange_guards.py. A provider whose descriptor says it is not a test double cannot
 be registered while live cash is held, and no setting changes that.
@@ -85,7 +87,9 @@ def register_provider(descriptor: ProviderDescriptor, registry: dict) -> None:
 
 @dataclass(frozen=True)
 class BuyingPower:
-    """Independently verified, expiring cash a buyer may spend. Only a provider builds one."""
+    """Independently verified, expiring cash a buyer may spend, from ONE provider (an order for another provider
+    refuses it). Only a provider builds one."""
+    provider_id: str
     provider_ref: str
     payer: str
     currency: str
@@ -94,6 +98,7 @@ class BuyingPower:
     verified_at: int
 
     def __post_init__(self):
+        opaque(self.provider_id, "provider id")
         opaque(self.provider_ref, "provider ref")
         opaque(self.payer, "payer")
         if not _CURRENCY.fullmatch(self.currency or ""):
@@ -202,7 +207,7 @@ class Provider(Protocol):
 
     def release(self, key: str, reservation_ref: str, amount_minor: int) -> "Released | Refused | Uncertain": ...
 
-    def payout(self, key: str, seller_ref: str, amount_minor: int) -> "PayoutPending | Refused | Uncertain": ...
+    def payout(self, key: str, capture_ref: str, seller_ref: str, amount_minor: int) -> "PayoutPending | Refused | Uncertain": ...
 
     def refund(self, key: str, capture_ref: str, amount_minor: int, reason: str
                ) -> "Refunded | Refused | Uncertain": ...

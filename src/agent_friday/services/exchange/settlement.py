@@ -1,26 +1,51 @@
-"""The durable settlement workflow for one fill (NS-40.4-13, design D.5). SYNTHETIC CASH AND TEST
-CREDITS ONLY. No provider is named here: it works against the Provider protocol.
+"""The durable settlement workflow for one fill (NS-40.4-13, design D.5 as corrected by section 10). SYNTHETIC CASH AND
+TEST CREDITS ONLY. No provider is named here: it works against the Provider protocol.
 
-One row per fill in a SQLite file, moved one transaction per step. Provider calls go out through an
-outbox row with a stable idempotency key; provider events come in through an inbox that
-authenticates them first. Nothing is held in memory between calls, so a node that is killed after
-any step reopens the file and carries on.
+One row per fill in a SQLite file, moved one transaction per step. P moves through the issuer's Authority (never a bare
+journal). Provider calls go out through an outbox row with a stable idempotency key; provider events come in through an
+inbox that authenticates them first. Nothing is held in memory between calls, so a node that is killed after any step
+reopens the file and carries on.
+
+Opening a fill reserves both sides, P first (design 10.6): a local INTENT row, then the seller's P is posted from the
+sale's reserve into the fill's own account (P_HELD), then the buyer's cash is reserved through the outbox (MATCHED).
+No provider call is made before a local row exists, and no cash is touched for a fill whose P was refused.
 
 States and the one table of allowed moves are below; anything not in the table is refused.
 
 Invariants and the tests that hold them (tests/unit/test_exchange_settlement.py):
-- S-1 a fill's P ends in exactly one place, buyer or seller:
-  test_every_crash_point_under_every_fault_converges_and_keeps_the_invariants.
-- S-2 a fill's cash reservation ends captured or released, never both or neither: same test.
-- S-3 the P transfer and the fee each happen at most once per fill: same test, and
+- S-1 a fill's P ends in exactly one place, buyer or seller's reserve:
+  test_every_crash_point_under_every_fault_converges_and_keeps_the_invariants and
+  test_the_crash_matrix_with_two_fills_on_one_order_converges.
+- S-2 a fill's cash reservation ends captured or released, never both or neither: the same tests.
+- S-3 the P transfer and the fee each happen at most once per fill: the same tests, and
   test_the_fee_is_charged_at_one_place_only.
 - S-4 a payout in flight, returned or held is shown as an outstanding liability: test_outstanding_liabilities_are_shown.
 - S-5 a refund is its own record and never edits the fill: test_a_refund_is_its_own_leg_and_returns_p_once.
 - S-8 cash is never a balance in the P journal: test_cash_never_appears_in_the_p_journal.
+- S-9 no cash is captured for a fill whose P is not in its own fill account:
+  test_no_capture_is_sent_for_a_fill_whose_p_is_not_in_its_own_account.
+- S-10 a refund posts the P back first and sends the cash only if that posted:
+  test_a_refund_returns_the_p_first_and_sends_no_cash_while_it_is_unrecovered.
+- S-11 a reversed capture is never refunded: test_a_reversed_capture_needs_only_the_p_back_and_no_refund_is_sent.
+- S-12 the fee check is on the cumulative total in any confirmation order:
+  test_two_planned_fills_confirm_in_either_order_and_the_fee_total_is_the_one_order_fee.
+- S-13 settled principal for the fee excludes refunded and reversed fills:
+  test_a_refunded_fills_principal_no_longer_counts_toward_the_fee_check.
+- S-14 a payout returned after it was confirmed holds the fill and lists it:
+  test_a_payout_returned_after_confirmation_holds_the_fill_and_lists_it.
+- S-15 an inbox event is `applied` only if it changed something, else `ignored` with a reason:
+  test_an_event_that_changes_nothing_is_recorded_as_ignored_with_its_reason.
+- S-16 settled() is true for a terminal state, or a HELD fill with no refund pressed:
+  test_settled_is_false_for_a_held_fill_whose_refund_is_pressed_but_not_complete.
+- S-17 a refund needs a typed press: test_a_refund_needs_a_typed_press.
+- The opening order and its crash cases: test_every_opening_step_leaves_a_local_row_before_any_provider_call,
+  test_a_second_fill_against_one_reservation_is_refused_at_open_and_touches_no_cash.
 - Uncertain is never failure or success: test_an_uncertain_capture_is_looked_up_never_released.
 - A forged or unauthenticated event changes nothing and is recorded as refused:
   test_a_forged_event_changes_nothing_and_is_recorded.
 - A copied signed receipt replayed on another node pays nothing: test_a_replayed_fill_on_another_node_pays_nothing.
+- The owner's kill switch stops opening and lets committed settlement finish (NS-40.1-18): tests/unit/test_exchange_kill_switch.py.
+- Settlement is handed an Authority, never a bare journal: test_a_bare_journal_is_not_accepted.
 - Fee accrual has one call site: test_the_fee_is_charged_at_one_place_only.
 """
 from __future__ import annotations
@@ -36,10 +61,12 @@ from typing import Callable
 from agent_friday.services.exchange import fees
 from agent_friday.services.exchange import provider as p
 from agent_friday.services.exchange.orders import ExchangeId, Fill, FillId, _need
-from agent_friday.services.issuer_journal import Outcome
+from agent_friday.services.issuer_journal import IssuerJournal, Outcome
 
 
 class State(str, Enum):
+    INTENT = "intent"
+    P_HELD = "p-held"
     MATCHED = "matched"
     CAPTURE_REQUESTED = "capture-requested"
     CASH_CONFIRMED = "cash-confirmed"
@@ -48,12 +75,15 @@ class State(str, Enum):
     PAYOUT_CONFIRMED = "payout-confirmed"
     PAYOUT_RETURNED = "payout-returned"
     RELEASED = "released"
+    REFUSED = "refused"
     HELD = "held"
     REFUNDED = "refunded"
 
 
 S = State
 TRANSITIONS = {
+    S.INTENT: {S.P_HELD, S.REFUSED},
+    S.P_HELD: {S.MATCHED, S.REFUSED},
     S.MATCHED: {S.CAPTURE_REQUESTED, S.RELEASED},
     S.CAPTURE_REQUESTED: {S.CASH_CONFIRMED, S.RELEASED, S.HELD},
     S.CASH_CONFIRMED: {S.P_TRANSFERRED, S.HELD},
@@ -63,10 +93,15 @@ TRANSITIONS = {
     S.PAYOUT_CONFIRMED: {S.HELD},
     S.HELD: {S.REFUNDED},
     S.RELEASED: {S.HELD},
+    S.REFUSED: set(),
     S.REFUNDED: set(),
 }
-TERMINAL = frozenset({S.PAYOUT_CONFIRMED, S.RELEASED, S.REFUNDED})
+TERMINAL = frozenset({S.PAYOUT_CONFIRMED, S.RELEASED, S.REFUSED, S.REFUNDED})
 FEE_ACCRUES_AT = S.CASH_CONFIRMED
+OPENING = (S.INTENT, S.P_HELD)
+
+# where a fill's P is (the `p_at` column): in the sale's reserve, in the fill's own account, or with the buyer
+AT_RESERVE, AT_FILL, AT_BUYER = "reserve", "fill", "buyer"
 
 
 class IllegalTransition(RuntimeError):
@@ -88,10 +123,20 @@ class CancelResult(str, Enum):
 
 
 @dataclass(frozen=True)
+class RefundPress:
+    """Proof that a refund was a press on this PC's own screen, as accepting an issuer is. A boolean is not one."""
+    _made_here: bool = True
+
+    @classmethod
+    def from_request(cls, request) -> "RefundPress | None":
+        from agent_friday.services import screen_click
+        return cls() if screen_click.screen_session(request) else None
+
+
+@dataclass(frozen=True)
 class Accounts:
-    """The journal accounts one fill moves P between."""
-    reserve: str
-    seller: str
+    """The journal accounts one fill moves P between. The fill's own account is derived, not passed."""
+    reserve: str      # the seller's sale reserve: where the units wait, and where they go back to
     buyer: str
 
 
@@ -102,39 +147,50 @@ class Parties:
     currency: str
 
 
-def _effect(fill_id: str, what: str) -> str:
-    return f"fill:{fill_id}:{what}"
+def fill_account(exchange_id: str, fill_id: str) -> str:
+    return f"fill:{exchange_id}:{fill_id}"
+
+
+def _effect(exchange_id: str, fill_id: str, what: str) -> str:
+    return f"fill:{exchange_id}:{fill_id}:{what}"
 
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fills (
     fill_id TEXT PRIMARY KEY, exchange_id TEXT NOT NULL, state TEXT NOT NULL, quote_hash TEXT NOT NULL,
     p_units INTEGER NOT NULL, principal INTEGER NOT NULL, fee_increment INTEGER NOT NULL,
-    fee_charged INTEGER NOT NULL DEFAULT 0, reserve_account TEXT, seller_account TEXT, buyer_account TEXT,
+    fee_charged INTEGER NOT NULL DEFAULT 0, reserve_account TEXT, buyer_account TEXT,
     buying_power_ref TEXT, seller_ref TEXT, currency TEXT, cash_reservation_ref TEXT, capture_ref TEXT,
-    p_at TEXT NOT NULL DEFAULT 'reserve', cash_amount INTEGER NOT NULL);
+    p_at TEXT NOT NULL DEFAULT 'reserve', cash_amount INTEGER NOT NULL,
+    capture_reversed INTEGER NOT NULL DEFAULT 0, refund_pressed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS legs (
     key TEXT PRIMARY KEY, fill_id TEXT NOT NULL, leg TEXT NOT NULL, status TEXT NOT NULL, answer TEXT);
 CREATE TABLE IF NOT EXISTS inbox (
-    message_id TEXT PRIMARY KEY, key TEXT, outcome TEXT NOT NULL);
+    message_id TEXT PRIMARY KEY, key TEXT, outcome TEXT NOT NULL, reason TEXT);
 CREATE TABLE IF NOT EXISTS history (
     n INTEGER PRIMARY KEY AUTOINCREMENT, fill_id TEXT NOT NULL, from_state TEXT, to_state TEXT NOT NULL);
 """
 
+_REFUSING = frozenset({Outcome.INSUFFICIENT, Outcome.UNITS, Outcome.ISSUER, Outcome.UNBALANCED, Outcome.ACTION_CONFLICT,
+                       Outcome.EFFECT_CONFLICT, Outcome.CORRECTION_INVALID})
+
 
 class Settlement:
-    """The workflow over one store, one P journal and one provider."""
+    """The workflow over one store, one issuer authority and one provider."""
 
-    def __init__(self, path, journal, provider, *, synchronous: str = "FULL",
+    def __init__(self, path, authority, provider, *, synchronous: str = "FULL",
                  new_effects_allowed: Callable[[], bool] | None = None):
         if synchronous not in ("FULL", "NORMAL", "OFF"):
             raise ValueError("synchronous is FULL, NORMAL or OFF")
+        if isinstance(authority, IssuerJournal) or not hasattr(authority, "execute") or not hasattr(authority, "issuer"):
+            raise TypeError("settlement posts P through the issuer's Authority, not a bare journal")
         self._synchronous = synchronous
         self._new_effects_allowed = new_effects_allowed or (lambda: True)
         self._path = str(path)
-        self._journal = journal
+        self._authority = authority
         self._provider = provider
         self._point = lambda name: None
+        self._opened_here: set = set()
         with contextlib.closing(sqlite3.connect(self._path, timeout=30)) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript(SCHEMA)
@@ -184,63 +240,99 @@ class Settlement:
         return p.idempotency_key(row["exchange_id"], row["fill_id"], leg, scope)
 
     def _post(self, command: dict) -> Outcome:
-        outcome = self._journal.execute(command)
+        outcome = self._authority.execute(command)
         return outcome[0] if isinstance(outcome, tuple) else outcome
 
-    def _move_p(self, row, what: str, source: str, target: str, to_where: str) -> bool:
-        """One journal posting of this fill's P, once. True when P is now where it should be."""
-        if row["p_units"] == 0:
-            return True
-        effect = _effect(row["fill_id"], what)
-        outcome = self._post({"issuer": self._journal.issuer, "effect": effect, "action": effect,
-                              "postings": {source: -row["p_units"], target: row["p_units"]}})
+    def _move_p(self, row, what: str, source: str, target: str) -> Outcome:
+        """One journal posting of this fill's P, once, through the authority."""
+        effect = _effect(row["exchange_id"], row["fill_id"], what)
+        return self._post({"issuer": self._authority.issuer, "effect": effect, "action": effect,
+                           "postings": {source: -row["p_units"], target: row["p_units"]}})
+
+    @staticmethod
+    def _landed(outcome: Outcome) -> bool:
         return outcome in (Outcome.POSTED, Outcome.DUPLICATE)
 
-    # -- opening ----------------------------------------------------------------------------
+    # -- opening (design 10.6) --------------------------------------------------------------
 
-    def open_fill(self, fill: Fill, accounts: Accounts, parties: Parties, p_units: int) -> OpenResult:
-        """Reserve the buyer's cash for this fill and commit the fill. Idempotent on the fill id: the
-        reserve call carries a stable key, so a retry after a crash gets the stored answer."""
+    def open_fill(self, fill: Fill, accounts: Accounts, parties: Parties) -> OpenResult:
+        """Store the fill locally, hold the seller's P in the fill's own account, then reserve the buyer's cash.
+        Idempotent on the fill id and safe to call again after a crash or a PENDING answer: it carries on from the
+        state the fill is in. The fill's P is derived from its lots and lot size."""
         _need(fill.fill_id, FillId)
         _need(fill.exchange_id, ExchangeId)
+        if type(fill.lots) is not int or type(fill.lot_units) is not int or fill.lots < 1 or fill.lot_units < 1:
+            raise ValueError("a fill has whole lots of a whole lot size")
+        units = fill.lots * fill.lot_units
+        fill_id = fill.fill_id.value
+        self._opened_here.discard(fill_id)
         with self._tx() as db:
-            if self._row(db, fill.fill_id.value):
-                return OpenResult.ALREADY
-        if not self._allowed_now():
+            row = self._row(db, fill_id)
+        if (row is None or State(row["state"]) in OPENING) and not self._allowed_now():
             return OpenResult.HALTED
-        cash = fill.principal_minor + fill.fee_increment_minor
-        key = p.idempotency_key(fill.exchange_id.value, fill.fill_id.value, p.Leg.RESERVE)
-        answer = self._provider.reserve_cash(key, parties.buying_power_ref, cash, parties.currency)
-        if isinstance(answer, p.Uncertain) or (isinstance(answer, p.Refused) and answer.code is p.RefusalCode.OUTAGE):
-            if self._provider.lookup(key) is not p.ProviderStatus.RESERVED:
-                return OpenResult.PENDING
-            answer = self._provider.reserve_cash(key, parties.buying_power_ref, cash, parties.currency)
-        if isinstance(answer, p.Refused):
-            return OpenResult.REFUSED if answer.code is not p.RefusalCode.OUTAGE else OpenResult.PENDING
-        if not isinstance(answer, p.CashReserved):
-            return OpenResult.PENDING
-        self._point("reserved")
         with self._tx() as db:
-            if self._row(db, fill.fill_id.value):
-                return OpenResult.ALREADY    # another opener got there first; the reserve key made its call the same call
-            db.execute("INSERT INTO fills (fill_id, exchange_id, state, quote_hash, p_units, principal, fee_increment,"
-                       " reserve_account, seller_account, buyer_account, buying_power_ref, seller_ref, currency,"
-                       " cash_reservation_ref, cash_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                       (fill.fill_id.value, fill.exchange_id.value, State.MATCHED.value, fill.quote_hash, p_units,
-                        fill.principal_minor, fill.fee_increment_minor, accounts.reserve, accounts.seller,
-                        accounts.buyer, parties.buying_power_ref, parties.seller_ref, parties.currency,
-                        answer.reservation_ref, cash))
-            db.execute("INSERT INTO history (fill_id, from_state, to_state) VALUES (?,NULL,?)",
-                       (fill.fill_id.value, State.MATCHED.value))
-        self._point("opened")
-        return OpenResult.OPENED
+            if self._row(db, fill_id) is None:
+                db.execute("INSERT INTO fills (fill_id, exchange_id, state, quote_hash, p_units, principal, fee_increment,"
+                           " reserve_account, buyer_account, buying_power_ref, seller_ref, currency, cash_amount)"
+                           " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (fill_id, fill.exchange_id.value, State.INTENT.value, fill.quote_hash, units,
+                            fill.principal_minor, fill.fee_increment_minor, accounts.reserve, accounts.buyer,
+                            parties.buying_power_ref, parties.seller_ref, parties.currency,
+                            fill.principal_minor + fill.fee_increment_minor))
+                db.execute("INSERT INTO history (fill_id, from_state, to_state) VALUES (?,NULL,?)",
+                           (fill_id, State.INTENT.value))
+        self._point("intent")
+        for _ in range(12):
+            if not self._opening(fill_id):
+                break
+        if self.state(fill_id) is State.REFUSED:
+            self._finish_release(fill_id)        # a refused cash reservation: the P goes back to the sale's reserve
+        state = self.state(fill_id)
+        mine = fill_id in self._opened_here       # this call is the one that moved the fill to MATCHED
+        self._opened_here.discard(fill_id)
+        if state is State.REFUSED:
+            return OpenResult.REFUSED
+        if state in OPENING:
+            return OpenResult.PENDING
+        return OpenResult.OPENED if mine else OpenResult.ALREADY
+
+    def _opening(self, fill_id: str) -> bool:
+        """One opening step, if the fill is still opening. True when something moved."""
+        with self._tx() as db:
+            row = self._row(db, fill_id)
+        if row is None or State(row["state"]) not in OPENING or not self._allowed_now():
+            return False
+        if State(row["state"]) is State.INTENT:
+            return self._hold_p(row)
+        with self._tx() as db:
+            self._enqueue(db, fill_id, p.Leg.RESERVE)
+        sent = self.dispatch(fill_id)
+        self.reconcile(fill_id)
+        return sent or self.state(fill_id) not in OPENING
+
+    def _hold_p(self, row) -> bool:
+        fill_id = row["fill_id"]
+        outcome = self._move_p(row, "p-hold", row["reserve_account"], fill_account(row["exchange_id"], fill_id))
+        self._point("p-hold-posted")
+        if outcome is Outcome.HALTED:
+            return False                       # nothing is known: nothing changes, and no cash was touched
+        with self._tx() as db:
+            if State(self._row(db, fill_id)["state"]) is not State.INTENT:
+                return True
+            if self._landed(outcome):
+                db.execute("UPDATE fills SET p_at=? WHERE fill_id=?", (AT_FILL, fill_id))
+                self._move(db, fill_id, State.P_HELD)
+            else:
+                self._move(db, fill_id, State.REFUSED)    # the journal refused: no cash is touched
+        self._point("p-held")
+        return True
 
     def _allowed_now(self) -> bool:
-        """The kill switch stops NEW side effects only: opening a fill. Everything already committed carries on
-        (confirming, paying out, releasing, refunding) and the history is kept (NS-40.1-18). A gate that cannot
-        answer counts as halted."""
+        """The kill switch stops NEW side effects only: opening a fill, which holds P and reserves cash. Everything
+        already committed carries on (confirming, paying out, releasing, refunding) and the history is kept
+        (NS-40.1-18). A gate that cannot answer counts as halted."""
         try:
-            return bool(self._new_effects_allowed())
+            return self._new_effects_allowed() is True
         except Exception:  # noqa: BLE001
             return False
 
@@ -253,7 +345,9 @@ class Settlement:
             if row is None:
                 return False
             state = State(row["state"])
-            if state is State.MATCHED:
+            if state in OPENING:
+                pass
+            elif state is State.MATCHED:
                 self._enqueue(db, fill_id, p.Leg.CAPTURE)
                 self._move(db, fill_id, State.CAPTURE_REQUESTED)
             elif state is State.P_TRANSFERRED:
@@ -267,6 +361,8 @@ class Settlement:
                 pass
             else:
                 return False
+        if state in OPENING:
+            return self._opening(fill_id)
         if state is State.CASH_CONFIRMED:
             return self._transfer_p(fill_id)
         self._point(f"moved:{state.value}")
@@ -275,11 +371,12 @@ class Settlement:
     def _transfer_p(self, fill_id: str) -> bool:
         with self._tx() as db:
             row = self._row(db, fill_id)
-        moved = self._move_p(row, "p-transfer", row["reserve_account"], row["buyer_account"], "buyer")
+        outcome = self._move_p(row, "p-transfer", fill_account(row["exchange_id"], fill_id), row["buyer_account"])
         self._point("p-posted")
+        moved = self._landed(outcome)
         with self._tx() as db:
             if moved:
-                db.execute("UPDATE fills SET p_at='buyer' WHERE fill_id=?", (fill_id,))   # where the journal put it
+                db.execute("UPDATE fills SET p_at=? WHERE fill_id=?", (AT_BUYER, fill_id))   # where the journal put it
             if State(self._row(db, fill_id)["state"]) is not State.CASH_CONFIRMED:
                 return False
             self._move(db, fill_id, State.P_TRANSFERRED if moved else State.HELD)
@@ -287,42 +384,55 @@ class Settlement:
         return True
 
     def _confirm_cash(self, db, fill_id: str):
-        """CAPTURE_REQUESTED -> CASH_CONFIRMED, and the only place the buyer's fee is charged."""
+        """CAPTURE_REQUESTED -> CASH_CONFIRMED, and the only place the buyer's fee is charged (S-12, S-13).
+
+        The fee is the increment planned at match time. The check is on the order's cumulative total: what was charged
+        on the other confirmed fills plus this one must not exceed the fee on their cumulative principal, in any
+        confirmation order. Fills that were refunded or whose capture was reversed no longer count."""
         row = self._row(db, fill_id)
         if State(row["state"]) is not State.CAPTURE_REQUESTED:
             return
-        charged = fees.fee_increment(self._settled_principal(db, row), row["principal"])
-        if charged != row["fee_increment"]:
-            self._move(db, fill_id, State.HELD)    # the fee captured is not the fee owed: a person must settle it
+        others = db.execute(
+            "SELECT f.fee_charged, f.principal FROM fills f WHERE f.exchange_id=? AND f.fill_id<>? AND f.state<>? "
+            "AND f.capture_reversed=0 AND EXISTS (SELECT 1 FROM history h WHERE h.fill_id=f.fill_id AND h.to_state=?)",
+            (row["exchange_id"], fill_id, State.REFUNDED.value, FEE_ACCRUES_AT.value)).fetchall()
+        charged = [r[0] for r in others] + [row["fee_increment"]]
+        principals = [r[1] for r in others] + [row["principal"]]
+        if not fees.within_cumulative(charged, principals):
+            self._move(db, fill_id, State.HELD)    # the fee captured would exceed the order's fee: a person must settle it
             return
-        db.execute("UPDATE fills SET fee_charged=? WHERE fill_id=?", (charged, fill_id))
+        db.execute("UPDATE fills SET fee_charged=? WHERE fill_id=?", (row["fee_increment"], fill_id))
         self._move(db, fill_id, FEE_ACCRUES_AT)
-
-    @staticmethod
-    def _settled_principal(db, row) -> int:
-        return db.execute(
-            "SELECT COALESCE(SUM(f.principal), 0) FROM fills f WHERE f.exchange_id=? AND f.fill_id<>? AND EXISTS "
-            "(SELECT 1 FROM history h WHERE h.fill_id=f.fill_id AND h.to_state=?)",
-            (row["exchange_id"], row["fill_id"], FEE_ACCRUES_AT.value)).fetchone()[0]
 
     # -- the outbox -------------------------------------------------------------------------
 
+    def _capture_ref(self, row):
+        """The capture's reference: stored, or asked for again under the capture's own key (an idempotent call)."""
+        if row["capture_ref"] is not None:
+            return row["capture_ref"]
+        again = self._provider.capture(self._key(row, p.Leg.CAPTURE), row["cash_reservation_ref"],
+                                       row["principal"], row["fee_increment"])
+        return again.capture_ref if isinstance(again, p.Captured) else again
+
     def _send(self, row, leg: str, key: str):
         provider = self._provider
+        if leg == p.Leg.RESERVE.value:
+            return provider.reserve_cash(key, row["buying_power_ref"], row["cash_amount"], row["currency"])
         if leg == p.Leg.CAPTURE.value:
+            if row["p_at"] != AT_FILL:
+                return p.Refused(p.RefusalCode.INVALID)      # S-9: no cash for a fill whose P is not held in its own account
             return provider.capture(key, row["cash_reservation_ref"], row["principal"], row["fee_increment"])
         if leg == p.Leg.RELEASE.value:
             return provider.release(key, row["cash_reservation_ref"], row["cash_amount"])
         if leg == p.Leg.PAYOUT.value:
-            return provider.payout(key, row["seller_ref"], row["principal"])
+            ref = self._capture_ref(row)
+            if not isinstance(ref, str):
+                return ref
+            return provider.payout(key, ref, row["seller_ref"], row["principal"])
         if leg == p.Leg.REFUND.value:
-            ref = row["capture_ref"]
-            if ref is None:
-                again = provider.capture(self._key(row, p.Leg.CAPTURE), row["cash_reservation_ref"],
-                                         row["principal"], row["fee_increment"])
-                if not isinstance(again, p.Captured):
-                    return again
-                ref = again.capture_ref
+            ref = self._capture_ref(row)
+            if not isinstance(ref, str):
+                return ref
             return provider.refund(key, ref, row["principal"] + row["fee_increment"], "refund")
         raise ValueError(leg)
 
@@ -356,11 +466,23 @@ class Settlement:
                        (json.dumps(getattr(answer, "__dict__", {}), sort_keys=True), leg["key"]))
             if isinstance(answer, p.Captured):
                 db.execute("UPDATE fills SET capture_ref=? WHERE fill_id=?", (answer.capture_ref, fill_id))
+            elif isinstance(answer, p.CashReserved):
+                self._cash_reserved(db, fill_id, answer.reservation_ref)
         return True
+
+    def _cash_reserved(self, db, fill_id: str, reservation_ref: str):
+        """P_HELD -> MATCHED, and only now: the cash reservation's reference is stored with the move."""
+        if State(self._row(db, fill_id)["state"]) is not State.P_HELD:
+            return
+        db.execute("UPDATE fills SET cash_reservation_ref=? WHERE fill_id=?", (reservation_ref, fill_id))
+        self._move(db, fill_id, State.MATCHED)
+        self._opened_here.add(fill_id)
 
     def _known_failure(self, db, fill_id: str, leg: str):
         state = State(self._row(db, fill_id)["state"])
-        if leg == p.Leg.CAPTURE.value and state in (State.MATCHED, State.CAPTURE_REQUESTED):
+        if leg == p.Leg.RESERVE.value and state is State.P_HELD:
+            self._move(db, fill_id, State.REFUSED)       # the buyer's cash was refused: the P goes back, below
+        elif leg == p.Leg.CAPTURE.value and state in (State.MATCHED, State.CAPTURE_REQUESTED):
             self._begin_release(db, fill_id)
         elif leg in (p.Leg.PAYOUT.value, p.Leg.REFUND.value) and State.HELD in TRANSITIONS[state]:
             self._move(db, fill_id, State.HELD)
@@ -403,6 +525,9 @@ class Settlement:
         if status is p.ProviderStatus.UNKNOWN:
             if leg["status"] == "sent":
                 db.execute("UPDATE legs SET status='pending' WHERE key=?", (key,))
+        elif kind == p.Leg.RESERVE.value:
+            if status is p.ProviderStatus.RESERVED and leg["status"] == "sent":
+                db.execute("UPDATE legs SET status='pending' WHERE key=?", (key,))   # asking again returns the stored answer
         elif kind == p.Leg.CAPTURE.value and status is p.ProviderStatus.CAPTURED:
             db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
             if state is State.RELEASED:
@@ -410,6 +535,7 @@ class Settlement:
             else:
                 self._confirm_cash(db, fill_id)
         elif kind == p.Leg.CAPTURE.value and status is p.ProviderStatus.REVERSED:
+            db.execute("UPDATE fills SET capture_reversed=1 WHERE fill_id=?", (fill_id,))
             if State.HELD in TRANSITIONS[state]:
                 self._move(db, fill_id, State.HELD)
         elif kind == p.Leg.RELEASE.value and status is p.ProviderStatus.RELEASED:
@@ -425,29 +551,43 @@ class Settlement:
             elif status is p.ProviderStatus.PAYOUT_RETURNED and state is State.PAYOUT_REQUESTED:
                 db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
                 self._move(db, fill_id, State.PAYOUT_RETURNED)
+            elif status is p.ProviderStatus.PAYOUT_RETURNED and state is State.PAYOUT_CONFIRMED:
+                self._move(db, fill_id, State.HELD)    # S-14: returned after it was confirmed: the seller was not paid
         elif kind == p.Leg.REFUND.value and status is p.ProviderStatus.REFUNDED:
             db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
 
+    @staticmethod
+    def _snapshot(db, fill_id: str):
+        return (tuple(db.execute("SELECT * FROM fills WHERE fill_id=?", (fill_id,)).fetchone()),
+                tuple(tuple(r) for r in db.execute("SELECT key, status FROM legs WHERE fill_id=? ORDER BY key", (fill_id,))))
+
     def pump(self, raw_events) -> dict:
-        """Authenticate each provider event, drop duplicates, and let the rest nudge the matching leg.
-        A forged or unknown event changes nothing and is recorded as refused."""
-        counts = {"applied": 0, "duplicate": 0, "refused": 0}
+        """Authenticate each provider event, drop duplicates, and let the rest nudge the matching leg. A forged or
+        unknown event changes nothing and is recorded as refused; an event that changes nothing is `ignored` with its
+        reason, and only one that changed something is `applied` (S-15)."""
+        counts = {"applied": 0, "ignored": 0, "duplicate": 0, "refused": 0}
         for raw in raw_events:
             event = self._provider.authenticate_event(raw)
             with self._tx() as db:
                 if not isinstance(event, p.ProviderEvent):
-                    db.execute("INSERT OR IGNORE INTO inbox VALUES (?,?,?)",
-                               ("unauthenticated:" + hashlib.sha256(bytes(raw)).hexdigest(), None, "refused"))
+                    db.execute("INSERT OR IGNORE INTO inbox VALUES (?,?,?,?)",
+                               ("unauthenticated:" + hashlib.sha256(bytes(raw)).hexdigest(), None, "refused",
+                                "not authentic"))
                     counts["refused"] += 1
                     continue
                 if db.execute("SELECT 1 FROM inbox WHERE message_id=?", (event.message_id,)).fetchone():
                     counts["duplicate"] += 1
                     continue
                 leg = db.execute("SELECT * FROM legs WHERE key=?", (event.key,)).fetchone()
-                outcome = "applied" if leg is not None else "refused"
-                db.execute("INSERT INTO inbox VALUES (?,?,?)", (event.message_id, event.key, outcome))
-                if leg is not None:
+                if leg is None:
+                    outcome, reason = "refused", "no leg has this key"
+                else:
+                    before = self._snapshot(db, leg["fill_id"])
                     self._apply_status(db, leg["fill_id"], dict(leg), event.status)
+                    changed = self._snapshot(db, leg["fill_id"]) != before
+                    outcome = "applied" if changed else "ignored"
+                    reason = None if changed else f"{event.status.value} changes nothing for the {leg['leg']} leg"
+                db.execute("INSERT INTO inbox VALUES (?,?,?,?)", (event.message_id, event.key, outcome, reason))
                 counts[outcome] += 1
         return counts
 
@@ -460,20 +600,22 @@ class Settlement:
             progressed = self.dispatch(fill_id)
             progressed = self.advance(fill_id) or progressed
             progressed = self._finish_release(fill_id) or progressed
-            progressed = self._finish_refund(fill_id) or progressed
+            progressed = self._progress_refund(fill_id) or progressed
             if not progressed:
                 break
         return self.state(fill_id)
 
     def _finish_release(self, fill_id: str) -> bool:
+        """After a release or a refusal, the P goes from the fill's account back to the seller's sale reserve."""
         with self._tx() as db:
             row = self._row(db, fill_id)
-        if row is None or State(row["state"]) is not State.RELEASED or row["p_at"] != "reserve":
+        if row is None or State(row["state"]) not in (State.RELEASED, State.REFUSED) or row["p_at"] != AT_FILL:
             return False
-        if not self._move_p(row, "p-release", row["reserve_account"], row["seller_account"], "seller"):
+        outcome = self._move_p(row, "p-release", fill_account(row["exchange_id"], fill_id), row["reserve_account"])
+        if not self._landed(outcome):
             return False
         with self._tx() as db:
-            db.execute("UPDATE fills SET p_at='seller' WHERE fill_id=?", (fill_id,))
+            db.execute("UPDATE fills SET p_at=? WHERE fill_id=?", (AT_RESERVE, fill_id))
         self._point("p-released")
         return True
 
@@ -492,34 +634,49 @@ class Settlement:
         self.tick(fill_id)
         return CancelResult.CANCELLED
 
-    def refund(self, fill_id: str, authorized: bool) -> State | None:
-        """HELD -> REFUNDED: the cash goes back to the buyer and the P to the seller, once. The caller
-        holds the authorization (a press); without it nothing happens."""
-        if authorized is not True:
+    # -- refund (S-10, S-11, S-17) ----------------------------------------------------------
+
+    def refund(self, fill_id: str, press) -> State | None:
+        """Press a refund on a HELD fill. Only a RefundPress counts (S-17). The P is recovered first and the cash
+        refund is sent only once it is (S-10); a capture the provider reversed needs no cash refund (S-11)."""
+        if not isinstance(press, RefundPress):
             return self.state(fill_id)
         with self._tx() as db:
             row = self._row(db, fill_id)
             held = row is not None and State(row["state"]) is State.HELD
             if held:
-                self._enqueue(db, fill_id, p.Leg.REFUND)
+                db.execute("UPDATE fills SET refund_pressed=1 WHERE fill_id=?", (fill_id,))
                 db.execute("UPDATE legs SET status='pending' WHERE fill_id=? AND leg=? AND status='refused'",
                            (fill_id, p.Leg.REFUND.value))
         return self.tick(fill_id) if held else self.state(fill_id)
 
-    def _finish_refund(self, fill_id: str) -> bool:
+    def _progress_refund(self, fill_id: str) -> bool:
         with self._tx() as db:
             row = self._row(db, fill_id)
-            if row is None or State(row["state"]) is not State.HELD:
-                return False
-            leg = db.execute("SELECT status FROM legs WHERE key=?", (self._key(row, p.Leg.REFUND),)).fetchone()
-        if leg is None or leg["status"] != "done":
+        if row is None or State(row["state"]) is not State.HELD or not row["refund_pressed"]:
             return False
-        source = {"reserve": row["reserve_account"], "buyer": row["buyer_account"]}.get(row["p_at"])
-        if source is not None and row["p_at"] != "seller" and not self._move_p(
-                row, "p-return", source, row["seller_account"], "seller"):
-            return False
+        if row["p_at"] != AT_RESERVE:
+            source = {AT_BUYER: row["buyer_account"], AT_FILL: fill_account(row["exchange_id"], fill_id)}[row["p_at"]]
+            outcome = self._move_p(row, "p-return", source, row["reserve_account"])
+            if not self._landed(outcome):
+                return False        # the P is not recoverable yet: no cash moves, and the fill stays held and listed
+            with self._tx() as db:
+                db.execute("UPDATE fills SET p_at=? WHERE fill_id=?", (AT_RESERVE, fill_id))
+            self._point("p-returned")
+            return True
+        if row["capture_reversed"]:
+            with self._tx() as db:
+                if State(self._row(db, fill_id)["state"]) is State.HELD:
+                    self._move(db, fill_id, State.REFUNDED)
+            self._point("refunded")
+            return True
         with self._tx() as db:
-            db.execute("UPDATE fills SET p_at='seller' WHERE fill_id=?", (fill_id,))
+            leg = db.execute("SELECT status FROM legs WHERE key=?", (self._key(row, p.Leg.REFUND),)).fetchone()
+            if leg is None:
+                self._enqueue(db, fill_id, p.Leg.REFUND)
+                return True                 # queued: the next round sends it
+            if leg["status"] != "done":
+                return False
             self._move(db, fill_id, State.REFUNDED)
         self._point("refunded")
         return True
@@ -527,8 +684,9 @@ class Settlement:
     # -- views ------------------------------------------------------------------------------
 
     def settled(self, fill_id: str) -> bool:
-        """True when the fill is in a state that ends or holds, with no leg left to send or look up and
-        its P back where the state says it belongs."""
+        """True when nothing is left to send or look up and the state is final (S-16): a terminal state with its P where
+        it belongs, or a HELD fill that nobody has pressed a refund for. A HELD fill whose refund is pressed and not
+        complete is not settled."""
         with self._tx() as db:
             row = self._row(db, fill_id)
             open_legs = db.execute("SELECT COUNT(*) FROM legs WHERE fill_id=? AND status IN ('pending','sent')",
@@ -536,13 +694,15 @@ class Settlement:
         if row is None or open_legs:
             return False
         state = State(row["state"])
-        if state in (State.RELEASED, State.REFUNDED):
-            return row["p_at"] == "seller"
-        return state in TERMINAL or state is State.HELD
+        if state in (State.RELEASED, State.REFUNDED, State.REFUSED):
+            return row["p_at"] == AT_RESERVE
+        if state is State.HELD:
+            return not row["refund_pressed"]
+        return state in TERMINAL
 
     def liabilities(self) -> list[dict]:
-        """Payouts in flight, returned or held: money the exchange still owes (S-4)."""
-        owed = (State.PAYOUT_REQUESTED, State.PAYOUT_RETURNED, State.HELD, State.P_TRANSFERRED)
+        """Cash captured, or a payout in flight, returned or held: money the exchange still owes (S-4)."""
+        owed = (State.CASH_CONFIRMED, State.PAYOUT_REQUESTED, State.PAYOUT_RETURNED, State.HELD, State.P_TRANSFERRED)
         with self._tx() as db:
             return [{"fill_id": r["fill_id"], "state": r["state"], "owed_minor": r["principal"]}
                     for r in db.execute("SELECT * FROM fills ORDER BY fill_id") if State(r["state"]) in owed]
@@ -552,15 +712,17 @@ class Settlement:
             return self._row(db, fill_id)["fee_charged"]
 
     def view(self, fill_id: str) -> dict:
-        """The stages kept apart (S-7): earned, reserved for sale, matched, processor funds reserved,
-        payout pending, payout confirmed."""
+        """The stages kept apart (S-7), in the spec's words (design 10.7): matched, processor funds reserved, payout
+        pending, payout confirmed. "Earned" belongs to the work order and is never shown for a sale."""
         with self._tx() as db:
             row = self._row(db, fill_id)
         state = State(row["state"])
-        stage = {State.MATCHED: "matched", State.CAPTURE_REQUESTED: "processor funds reserved",
-                 State.CASH_CONFIRMED: "earned", State.P_TRANSFERRED: "earned", State.PAYOUT_REQUESTED: "payout pending",
-                 State.PAYOUT_RETURNED: "payout pending", State.PAYOUT_CONFIRMED: "payout confirmed",
-                 State.RELEASED: "released", State.HELD: "held", State.REFUNDED: "refunded"}[state]
+        stage = {State.INTENT: "matched", State.P_HELD: "matched", State.MATCHED: "matched",
+                 State.CAPTURE_REQUESTED: "processor funds reserved",
+                 State.CASH_CONFIRMED: "payout pending", State.P_TRANSFERRED: "payout pending",
+                 State.PAYOUT_REQUESTED: "payout pending", State.PAYOUT_RETURNED: "payout pending",
+                 State.PAYOUT_CONFIRMED: "payout confirmed", State.RELEASED: "released", State.REFUSED: "refused",
+                 State.HELD: "held", State.REFUNDED: "refunded"}[state]
         return {"state": state.value, "stage": stage, "p_at": row["p_at"]}
 
 
@@ -575,4 +737,3 @@ def kill_switch_gate() -> Callable[[], bool]:
             return False
         return not held_features.kill_switch_engaged(settings)
     return allowed
-

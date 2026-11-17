@@ -19,7 +19,7 @@ def env_factory(tmp_path):
         folder.mkdir()
         env = base.Env(folder)
         if gate is not None:
-            env.settlement = st.Settlement(folder / "s.sqlite", env.journal, env.provider, synchronous="OFF",
+            env.settlement = st.Settlement(folder / "s.sqlite", env.authority, env.provider, synchronous="OFF",
                                            new_effects_allowed=gate)
         return env
     return make
@@ -43,7 +43,7 @@ def test_a_halted_node_opens_no_new_fill_and_touches_nothing(env_factory):
     assert env.open() is OpenResult.HALTED
     assert env.settlement.state("f1") is None
     assert env.provider.books()["ops"] == {} and env.provider.books()["power"]["bp-1"]["reserved"] == 0
-    assert env.balances() == {"treasury": base.SUPPLY - base.UNITS, "sale:x1": base.UNITS}
+    assert env.balances() == {"treasury": base.SUPPLY - base.UNITS, base.SALE: base.UNITS}
     assert env.open_retry() is OpenResult.HALTED, "a retry is halted too"
 
 
@@ -64,7 +64,7 @@ def test_a_committed_fill_can_still_be_cancelled_and_a_held_one_refunded_while_h
     env.open()
     gate.allowed = False
     assert env.settlement.cancel("f1") is st.CancelResult.CANCELLED
-    assert env.settlement.state("f1") is State.RELEASED and env.balances()["seller"] == base.UNITS
+    assert env.settlement.state("f1") is State.RELEASED and env.balances()[base.SALE] == base.UNITS
     other = env_factory(gate)
     gate.allowed = True
     other.open()
@@ -72,7 +72,7 @@ def test_a_committed_fill_can_still_be_cancelled_and_a_held_one_refunded_while_h
     other.provider.chargeback("x1/f1/capture/once")
     other.settlement.pump(other.provider.deliver())
     gate.allowed = False
-    assert other.settlement.refund("f1", authorized=True) is State.REFUNDED
+    assert other.settlement.refund("f1", press=base.PRESS) is State.REFUNDED
 
 
 def test_the_history_is_kept_and_only_grows_while_halted(env_factory):
@@ -84,6 +84,24 @@ def test_the_history_is_kept_and_only_grows_while_halted(env_factory):
     env.drive()
     after = history(env)
     assert after[:len(before)] == before and len(after) > len(before)
+
+
+def test_a_fill_that_was_still_opening_waits_while_halted_and_no_cash_is_reserved(env_factory):
+    gate = Gate(True)
+    env = env_factory(gate)
+
+    def crash_after_the_p_is_held(point):
+        if point == "p-held":
+            raise base.Crash(point)
+    env.settlement._point = crash_after_the_p_is_held
+    with pytest.raises(base.Crash):
+        env.open()
+    env.settlement._point = lambda name: None
+    gate.allowed = False
+    assert env.open() is OpenResult.HALTED and env.settlement.tick("f1") is State.P_HELD
+    assert env.ops("reserve") == [], "opening is a new effect: the cash is not reserved while halted"
+    gate.allowed = True
+    assert env.open() is OpenResult.OPENED and env.settlement.state("f1") is State.MATCHED
 
 
 def test_turning_the_switch_off_again_lets_new_fills_open(env_factory):
