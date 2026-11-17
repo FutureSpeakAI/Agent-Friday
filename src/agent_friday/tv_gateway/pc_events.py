@@ -75,6 +75,20 @@ def _deliver(subscriber: "queue.Queue", item: tuple) -> None:
             pass
 
 
+def _evict(subscriber: "queue.Queue") -> None:
+    """Ends a stream even when its queue is full (a half-open connection is blocked writing, so its queue fills): the
+    queue is emptied first, so the ``superseded`` marker always gets in and the stream's thread always ends."""
+    try:
+        while True:
+            subscriber.get_nowait()
+    except queue.Empty:
+        pass
+    try:
+        subscriber.put_nowait((0, "superseded", {}))
+    except queue.Full:
+        pass
+
+
 def publish(source: str, raw: dict) -> int:
     """Number and keep one event, and hand it to every connected stream. Never raises. Returns its number (0 if the source
     has no shaper, so nothing is kept for devices). Numbering, the ring and delivery happen under one lock, so every stream
@@ -139,7 +153,7 @@ def _parse_id(header: Optional[str]) -> Tuple[Optional[int], bool]:
     if not header:
         return None, True
     boot, _, number = header.partition("-")
-    if boot != _BOOT or not number.isdigit() or len(number) > 15:
+    if boot != _BOOT or not (number.isascii() and number.isdecimal()) or len(number) > 15:
         return None, False
     return int(number), True
 
@@ -180,7 +194,7 @@ def register(app: Flask) -> None:
         with _LOCK:
             streams = _STREAMS.setdefault(device_id, [])
             while len(streams) >= MAX_STREAMS_PER_DEVICE:
-                _deliver(streams.pop(0), (0, "superseded", {}))      # the oldest may be half-open: end it, keep the new one
+                _evict(streams.pop(0))                       # the oldest may be half-open: end it, keep the new one
             streams.append(mine)
             _SUBSCRIBERS.add(mine)                         # subscribe BEFORE reading the ring: a duplicate beats a gap
             at_subscribe = _LAST
