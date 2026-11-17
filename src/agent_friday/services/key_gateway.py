@@ -128,12 +128,24 @@ def no_key(response) -> bool:
 _PROXY_VARS = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
 
 
+def _system_proxy_configured() -> bool:
+    """Whether requests would use a proxy: an environment variable, or (Windows, macOS) the system's own setting,
+    which ``urllib.request.getproxies()`` reads too."""
+    if any(os.environ.get(var) for var in _PROXY_VARS):
+        return True
+    try:
+        import urllib.request
+        return any(urllib.request.getproxies().get(scheme) for scheme in ("http", "https", "all"))
+    except Exception:
+        return True    # cannot tell: keep loopback direct, as before
+
+
 def _keep_loopback_direct() -> None:
     """A system HTTP proxy must never be asked to carry a request to our own loopback listener. An existing "*" already
     means "bypass everything" and is left alone; otherwise 127.0.0.1 is added as a whole entry. Nothing is changed
     when no proxy is configured, so the process environment (and every child that inherits it) stays as it was.
     Guarded by tests/unit/test_key_gateway.py."""
-    if not any(os.environ.get(var) for var in _PROXY_VARS):
+    if not _system_proxy_configured():
         return
     for var in ("NO_PROXY", "no_proxy"):
         entries = [part.strip() for part in os.environ.get(var, "").split(",") if part.strip()]
@@ -144,6 +156,7 @@ def _keep_loopback_direct() -> None:
 def url(name: str) -> str:
     """The loopback base URL for a provider (started on first use). Append the provider's path."""
     row = _row(name)
+    _keep_loopback_direct()
     with _LOCK:
         proxy = _PROXIES.get(name)
         if proxy is None:
