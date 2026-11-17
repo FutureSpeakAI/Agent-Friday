@@ -181,9 +181,30 @@ def test_no_proxy_gets_loopback_as_a_whole_entry_and_a_wildcard_is_left_alone(mo
     assert __import__("os").environ["NO_PROXY"] == after
 
 
+def test_a_proxy_set_only_in_the_system_settings_is_told_to_leave_loopback_alone(monkeypatch):
+    for var in gw._PROXY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("urllib.request.getproxies", lambda: {"https": "http://corp-proxy.example.com:3128"})
+    monkeypatch.setenv("NO_PROXY", "example.com")
+    gw._keep_loopback_direct()
+    assert "127.0.0.1" in __import__("os").environ["NO_PROXY"]
+
+
+def test_a_proxy_that_appears_after_the_first_listener_still_gets_the_loopback_entry(upstream, monkeypatch):
+    for var in gw._PROXY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("urllib.request.getproxies", lambda: {})
+    monkeypatch.setenv("NO_PROXY", "example.com")
+    gw.url("brave")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:8080")
+    gw.url("brave")
+    assert "127.0.0.1" in __import__("os").environ["NO_PROXY"]
+
+
 def test_with_no_system_proxy_the_environment_is_left_alone(monkeypatch):
     for var in gw._PROXY_VARS:
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("urllib.request.getproxies", lambda: {})
     monkeypatch.setenv("NO_PROXY", "example.com")
     gw._keep_loopback_direct()
     assert __import__("os").environ["NO_PROXY"] == "example.com"
