@@ -37,6 +37,7 @@ def _clean(tmp_path, monkeypatch):
     device_pairing._path().unlink(missing_ok=True)
     device_pairing._reset_for_tests()
     household.ensure_default_members()
+    monkeypatch.setattr(voices, "_path", lambda: tmp_path / "voice_bindings.json")
     voices._reset_for_tests()
     yield st
     device_pairing._reset_for_tests()
@@ -147,3 +148,13 @@ def test_a_bound_cloud_synthesis_voice_turns_invalid_loudly_when_local_only_is_s
     _clean["s"]["model_routing"]["mode"] = "local_only"
     b = voices.bound_voice("c8")
     assert b["still_valid"] is False and "Local only" in b["notice"] and b["engine"] == "cloud:elevenlabs"
+
+
+def test_a_binding_survives_a_restart_and_a_damaged_file_starts_empty_not_broken(client, tmp_path):
+    switch(client, paired("phone", "stephen"), engine="local", voice="en_US-amy-medium", conversation_id="keep")
+    voices._forget_memory_only()
+    b = voices.bound_voice("keep")
+    assert b["engine"] == "local" and b["voice"] == "en_US-amy-medium" and b["still_valid"] is True
+    (tmp_path / "voice_bindings.json").write_text("{not json", encoding="utf-8")
+    voices._forget_memory_only()
+    assert voices.bound_voice("keep") is None
