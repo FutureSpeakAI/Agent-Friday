@@ -59250,7 +59250,7 @@ function OpenAIVoiceCap({ s, save }) {
   };
   return /*#__PURE__*/React.createElement("div", { 'data-openai-voice-cap': '1', style: { marginTop: 8, fontSize: 12, lineHeight: 1.45 } },
     /*#__PURE__*/React.createElement("label", null, "Monthly limit for OpenAI voice (USD) ",
-      /*#__PURE__*/React.createElement("input", { type: "number", min: "0", step: "1", value: text, placeholder: "No limit", 'aria-label': 'Monthly limit for OpenAI voice in US dollars',
+      /*#__PURE__*/React.createElement("input", { type: "number", className: "input", min: "0", step: "1", value: text, placeholder: "No limit", 'aria-label': 'Monthly limit for OpenAI voice in US dollars',
         style: { width: 90, marginLeft: 6 }, onChange: e => setText(e.target.value), onBlur: commit })),
     /*#__PURE__*/React.createElement("div", { style: { opacity: 0.7, marginTop: 2 } }, "Blank means no limit. When this month's OpenAI voice spend reaches it, a call ends and " + fridayName() + " says why; nothing switches voice on its own."));
 }
