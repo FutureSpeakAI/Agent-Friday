@@ -1714,6 +1714,14 @@ def _openai_leg_is_local(bound):
 
 
 @_sched_admitted("model_router.openai", local=_openai_leg_is_local)
+def _legacy_openai_key() -> str:
+    """The key of the legacy single OpenAI-compatible slot, read fresh on every call: the saved setting, then the
+    environment. The key gateway calls this to place the key on the outgoing request."""
+    cfg = (_load_settings() or {}).get('model_routing') or {}
+    return (cfg.get('openai_api_key') or os.environ.get('OPENAI_API_KEY')  # pragma: allowlist secret
+            or os.environ.get('OPENROUTER_API_KEY') or '')
+
+
 def _call_openai(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None,
@@ -1903,8 +1911,19 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
                 "No OpenAI-compatible API key set (model_routing.openai_api_key or "
                 "env OPENAI_API_KEY / OPENROUTER_API_KEY)."
             )
+        # The legacy single slot goes through the key gateway too when it points at a public https host (OpenAI,
+        # OpenRouter); a local base_url is called directly. Guarded by tests/unit/test_key_gateway_chat.py.
+        outgoing_key = api_key
+        try:
+            gateway_base = key_gateway.descriptor_url(
+                {"name": "openrouter" if "openrouter.ai" in base_url else "openai", "base_url": base_url,
+                 "auth": {"type": "env_var", "key": "OPENAI_API_KEY"}}, key_source=_legacy_openai_key)
+        except Exception as error:
+            raise RuntimeError(f"The key gateway could not start for the OpenAI-compatible provider: {error}") from error
+        if gateway_base:
+            base_url, outgoing_key = gateway_base, key_gateway.DUMMY_KEY
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {outgoing_key}",
             "Content-Type": "application/json",
             # OpenRouter etiquette headers; ignored by other providers.
             "HTTP-Referer": "https://futurespeak.ai",
