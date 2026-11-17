@@ -111,6 +111,17 @@ class ResourceVector:
     def to_wire(self) -> dict:
         return {f.name: getattr(self, f.name).to_wire() for f in fields(self)}
 
+    def merged(self, other: "ResourceVector") -> "ResourceVector":
+        """One vector from two meters that read different things. A field both meters filled is refused,
+        never added or averaged: unlike readings are not combined (C-4)."""
+        out = {}
+        for f in fields(self):
+            mine, theirs = getattr(self, f.name), getattr(other, f.name)
+            if not isinstance(mine, Unavailable) and not isinstance(theirs, Unavailable):
+                raise ValueError(f"{f.name} was read by both meters")
+            out[f.name] = theirs if isinstance(mine, Unavailable) else mine
+        return ResourceVector(**out)
+
 
 class MixedProfiles(ArithmeticError):
     """N1 quantities of two profiles were added or compared (C-4)."""
