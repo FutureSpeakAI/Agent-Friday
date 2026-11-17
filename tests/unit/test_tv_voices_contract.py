@@ -125,3 +125,25 @@ def test_local_only_refuses_a_cloud_switch_loudly(client, _clean):
 def test_a_tv_cannot_switch_voice_and_a_bad_request_is_400(client):
     assert switch(client, paired("tv", None), engine="local", conversation_id="c1").status_code == 403
     assert switch(client, paired("phone", "stephen"), engine="local").status_code == 400
+
+
+def test_a_bound_voice_is_rechecked_when_read_and_says_what_leaves(client, _clean):
+    dev = paired("phone", "stephen")
+    switch(client, dev, engine="local", voice="en_US-amy-medium", conversation_id="c9")
+    b = voices.bound_voice("c9")
+    assert b["still_valid"] is True and b["notice"] is None and b["engine"] == "local"
+    assert b["what_leaves"] == voice_slate.LEAVES_NOTHING and b["latency_class"] and b["local"] is True
+    assert voices.bound_voice("never-bound") is None
+
+
+def test_a_bound_cloud_synthesis_voice_turns_invalid_loudly_when_local_only_is_switched_on(client, _clean, monkeypatch):
+    monkeypatch.setattr(voice_slate, "_cloud_providers", lambda: [
+        {"name": "elevenlabs", "label": "ElevenLabs (cloud)", "selectable": True, "reason": None,
+         "models": [], "durable_output": True}])
+    monkeypatch.setattr(voice_slate, "_cloud_egress", lambda n: "Only the reply text, after the privacy gate.")
+    dev = paired("tablet", "stephen")
+    assert switch(client, dev, engine="cloud:elevenlabs", conversation_id="c8").status_code == 200
+    assert voices.bound_voice("c8")["still_valid"] is True
+    _clean["s"]["model_routing"]["mode"] = "local_only"
+    b = voices.bound_voice("c8")
+    assert b["still_valid"] is False and "Local only" in b["notice"] and b["engine"] == "cloud:elevenlabs"
