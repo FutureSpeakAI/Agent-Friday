@@ -86,7 +86,8 @@ class _Helper:
         self.unavailable = ""         # why the helper cannot be used, if it cannot
 
     def _start(self):
-        env = dict(os.environ)
+        from agent_friday.services.extension_security import without_secret_names
+        env = without_secret_names(dict(os.environ))
         env.update({"PYTHONUNBUFFERED": "1", "HF_HUB_OFFLINE": "1",
                     "HF_HUB_DISABLE_TELEMETRY": "1"})
         p = subprocess.Popen(
