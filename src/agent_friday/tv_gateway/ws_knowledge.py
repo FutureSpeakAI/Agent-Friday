@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Optional
@@ -21,6 +22,8 @@ REF = re.compile(r"^page:(?P<path>[^\x00-\x1f\\:*?\"<>|]{1,200}\.(?:md|txt))$", 
 VAULT_LOCKED = "[vault-encrypted file"
 MAX_SOURCE = 1_000_000          # characters of one page parsed; the real wiki holds a 20 MB page
 PARSED_KEPT = 8
+PAGES_TTL_S = 5.0
+_LIST: dict = {"key": None, "at": 0.0, "rows": []}
 _PARSED: "OrderedDict" = OrderedDict()
 _LOCK = threading.Lock()
 
@@ -56,14 +59,20 @@ def _row(section: str, f: dict, sensitivity: str) -> dict:
 
 
 def pages(sensitivity: str) -> list[dict]:
-    """Every page the PC shows, newest first (the wiki's own tree, one row per file)."""
+    """Every page the PC shows, newest first (the wiki's own tree, one row per file). The real wiki is 6,359 pages
+    and one scan takes 1.3 s, so the list is kept for PAGES_TTL_S seconds and a phone paging through it scans once."""
+    with _LOCK:
+        if _LIST["key"] == sensitivity and time.monotonic() - _LIST["at"] < PAGES_TTL_S:
+            return list(_LIST["rows"])
     structure = _desk("/api/wiki/structure").get("structure")
     if not isinstance(structure, dict):
         raise Unavailable("structure")
     rows = [_row(section, f, sensitivity) for section, files in structure.items() if isinstance(files, list)
             for f in files if isinstance(f, dict) and f.get("filename")]
     rows.sort(key=lambda r: (r["when"] or "", r["ref"]), reverse=True)
-    return rows
+    with _LOCK:
+        _LIST.update(key=sensitivity, at=time.monotonic(), rows=rows)
+    return list(rows)
 
 
 def facets(rows: list[dict]) -> list[dict]:
