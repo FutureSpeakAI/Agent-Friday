@@ -195,7 +195,7 @@ def register(app: Flask) -> None:
         if not ID_PATTERN.match(cid):
             return _refuse(400, "not a chat id", code="bad_id")
         after = (request.args.get("after") or "").strip()
-        if after and not _ID.match(after):
+        if after and not ID_PATTERN.match(after):
             return _refuse(400, "not a message id", code="bad_id")
         limit = _int("limit", MESSAGES_PAGE, MESSAGES_PAGE_MAX) or MESSAGES_PAGE
         data, other = _desk_object("/api/conversations/%s/messages" % cid, {} if after else {"limit": limit},
