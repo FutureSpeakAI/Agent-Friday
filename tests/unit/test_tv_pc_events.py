@@ -292,6 +292,25 @@ def test_a_device_at_the_cap_ends_its_oldest_stream_instead_of_being_refused(cli
     fresh.close()
 
 
+def test_a_stream_whose_queue_is_full_is_still_ended_when_it_is_evicted(client):
+    import queue
+    tv = device()
+    full = queue.Queue(maxsize=2)
+    full.put((5, "needs_you", {}))
+    full.put((6, "needs_you", {}))
+    pc_events._STREAMS[tv.id] = [full] + [queue.Queue(maxsize=10) for _ in range(pc_events.MAX_STREAMS_PER_DEVICE - 1)]
+    fresh = open_stream(client, tv)
+    assert fresh.status_code == 200
+    assert full.get_nowait() == (0, "superseded", {})
+    fresh.close()
+
+
+@pytest.mark.parametrize("number", ["²", "٣", "１"])
+def test_an_id_with_a_digit_that_is_not_an_ascii_digit_is_a_reset_not_a_server_error(client, number):
+    answer = open_stream(client, device(), last_event_id="%s-%s" % (pc_events._BOOT, number))
+    assert answer.status_code == 200 and frame(answer)[2]["resume"] == "reset"
+
+
 def queue_stub():
     import queue
     return queue.Queue(maxsize=10)
