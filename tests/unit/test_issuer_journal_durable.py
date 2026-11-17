@@ -166,6 +166,27 @@ def test_two_threads_cannot_both_spend_the_same_balance(tmp_path):
     assert journal.balances()["treasury"] == 1 and journal.head() == 3
 
 
+def test_threads_of_one_journal_are_never_told_another_writer_holds_it(tmp_path):
+    """Found by a test that failed about one run in two: each write probes the authority's lock, and two threads probing
+    at once refused each other, so a thread raised AuthorityHeld when no authority existed. Rule: the writer lock is
+    probed one thread at a time, so only a real holder can refuse a write."""
+    errors = []
+    for round_ in range(20):
+        journal = make(tmp_path / f"r{round_}.sqlite", supply=100)
+
+        def spend(n):
+            try:
+                journal.execute(cmd(f"e{n}", treasury=-1, **{f"acct{n}": 1}))
+            except ij.AuthorityHeld as err:
+                errors.append(err)
+        threads = [threading.Thread(target=spend, args=(n,)) for n in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    assert errors == []
+
+
 RACE = textwrap.dedent("""
     import sys
     sys.path.insert(0, {src!r})
