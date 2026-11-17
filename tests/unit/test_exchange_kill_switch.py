@@ -118,6 +118,7 @@ def test_a_gate_that_cannot_answer_counts_as_halted(env_factory):
     env = env_factory(broken)
     assert env.open() is OpenResult.HALTED
     assert env_factory(lambda: None).open() is OpenResult.HALTED, "no answer is not a yes"
+    assert env_factory(lambda: "yes").open() is OpenResult.HALTED, "only exactly True opens a fill"
 
 
 def test_the_default_gate_changes_nothing_for_callers_that_pass_none(env_factory):
