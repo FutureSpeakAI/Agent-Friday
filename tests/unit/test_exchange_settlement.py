@@ -630,3 +630,18 @@ def test_a_reversal_while_the_capture_is_still_being_confirmed_holds_the_fill(en
     env.settlement.pump(reversal)
     assert env.settlement.state("f1") is st.State.HELD
 
+
+def test_two_openers_of_one_fill_get_opened_and_already_never_an_error(env_factory):
+    env = env_factory()
+    other = st.Settlement(env.tmp / "s.sqlite", env.journal, env.provider, synchronous="OFF")
+    results = []
+
+    def second_opener_wins_the_race(point):
+        if point == "reserved" and not results:
+            results.append(other.open_fill(env.fill(), ACCOUNTS, PARTIES, UNITS))
+    env.settlement._point = second_opener_wins_the_race
+    assert env.open() is st.OpenResult.ALREADY and results == [st.OpenResult.OPENED]
+    reserves = [k for k, (kind, _) in env.provider.books()["ops"].items() if kind == "reserve"]
+    assert reserves == ["x1/f1/reserve/once"], "one reservation, because both used the same key"
+    assert env.settlement.state("f1") is st.State.MATCHED
+

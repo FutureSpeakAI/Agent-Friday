@@ -215,6 +215,8 @@ class Settlement:
             return OpenResult.PENDING
         self._point("reserved")
         with self._tx() as db:
+            if self._row(db, fill.fill_id.value):
+                return OpenResult.ALREADY    # another opener got there first; the reserve key made its call the same call
             db.execute("INSERT INTO fills (fill_id, exchange_id, state, quote_hash, p_units, principal, fee_increment,"
                        " reserve_account, seller_account, buyer_account, buying_power_ref, seller_ref, currency,"
                        " cash_reservation_ref, cash_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
