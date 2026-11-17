@@ -31,6 +31,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from enum import Enum
+from typing import Callable
 
 from agent_friday.services.exchange import fees
 from agent_friday.services.exchange import provider as p
@@ -77,6 +78,7 @@ class OpenResult(str, Enum):
     ALREADY = "already"
     REFUSED = "refused"
     PENDING = "pending"
+    HALTED = "halted"          # the owner's kill switch is on: no new fill is opened
 
 
 class CancelResult(str, Enum):
@@ -123,10 +125,12 @@ CREATE TABLE IF NOT EXISTS history (
 class Settlement:
     """The workflow over one store, one P journal and one provider."""
 
-    def __init__(self, path, journal, provider, *, synchronous: str = "FULL"):
+    def __init__(self, path, journal, provider, *, synchronous: str = "FULL",
+                 new_effects_allowed: Callable[[], bool] | None = None):
         if synchronous not in ("FULL", "NORMAL", "OFF"):
             raise ValueError("synchronous is FULL, NORMAL or OFF")
         self._synchronous = synchronous
+        self._new_effects_allowed = new_effects_allowed or (lambda: True)
         self._path = str(path)
         self._journal = journal
         self._provider = provider
@@ -202,6 +206,8 @@ class Settlement:
         with self._tx() as db:
             if self._row(db, fill.fill_id.value):
                 return OpenResult.ALREADY
+        if not self._allowed_now():
+            return OpenResult.HALTED
         cash = fill.principal_minor + fill.fee_increment_minor
         key = p.idempotency_key(fill.exchange_id.value, fill.fill_id.value, p.Leg.RESERVE)
         answer = self._provider.reserve_cash(key, parties.buying_power_ref, cash, parties.currency)
@@ -228,6 +234,15 @@ class Settlement:
                        (fill.fill_id.value, State.MATCHED.value))
         self._point("opened")
         return OpenResult.OPENED
+
+    def _allowed_now(self) -> bool:
+        """The kill switch stops NEW side effects only: opening a fill. Everything already committed carries on
+        (confirming, paying out, releasing, refunding) and the history is kept (NS-40.1-18). A gate that cannot
+        answer counts as halted."""
+        try:
+            return bool(self._new_effects_allowed())
+        except Exception:  # noqa: BLE001
+            return False
 
     # -- the step functions -----------------------------------------------------------------
 
@@ -547,3 +562,17 @@ class Settlement:
                  State.PAYOUT_RETURNED: "payout pending", State.PAYOUT_CONFIRMED: "payout confirmed",
                  State.RELEASED: "released", State.HELD: "held", State.REFUNDED: "refunded"}[state]
         return {"state": state.value, "stage": stage, "p_at": row["p_at"]}
+
+
+def kill_switch_gate() -> Callable[[], bool]:
+    """The gate for `new_effects_allowed`: true unless the owner has stopped all Federation and Economy activity."""
+    def allowed() -> bool:
+        from agent_friday.core import _load_settings
+        from agent_friday.services import held_features
+        try:
+            settings = _load_settings()
+        except Exception:  # noqa: BLE001 - settings that cannot be read cannot say the switch is off
+            return False
+        return not held_features.kill_switch_engaged(settings)
+    return allowed
+
