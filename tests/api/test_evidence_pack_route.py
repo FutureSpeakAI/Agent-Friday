@@ -109,9 +109,15 @@ def test_an_unreadable_archive_writes_nothing(client, monkeypatch):
 def test_a_break_in_range_still_gives_a_pack_with_the_break_first(client, monkeypatch):
     _seed()
 
-    def refuses(*a, **k):
-        raise L.LedgerError("the chain has a break")
+    real_append = L.append
 
+    def refuses(kind, rec, **k):
+        if kind == "export":
+            raise L.LedgerError("the chain has a break")
+        return real_append(kind, rec, **k)    # everything else the request does still writes
+
+    from agent_friday.governance import action_gate
+    monkeypatch.setattr(action_gate, "ledger_grant_rows", lambda: [])   # no grants, whatever an earlier test left
     monkeypatch.setattr(L, "verify", lambda **k: {"ok": False, "first_break": "seq 2 was changed"})
     monkeypatch.setattr(L, "append", refuses)
     r = _export(client)
@@ -146,3 +152,18 @@ def test_a_real_approval_is_listed_by_id_and_its_text_never_reaches_the_pack(cli
     rows = [json.loads(line) for line in files["approvals.jsonl"].splitlines()]
     assert [r["approval_id"] for r in rows] == [card["approval_id"]]
     assert all(canary.encode() not in data for data in files.values())
+
+
+def test_grants_that_cannot_be_read_refuse_the_pack_rather_than_leave_them_out(client, monkeypatch):
+    from agent_friday.governance import action_gate
+
+    def unreadable():
+        raise L.LedgerError("the ledger has a break to review")
+    _seed()
+    monkeypatch.setattr(action_gate, "ledger_grant_rows", unreadable)
+    before = len(L.entries(["export"]))
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 409 and r.get_json()["code"] == "pack_refused"
+    assert "nothing was exported" in r.get_json()["error"] and len(L.entries(["export"])) == before
+
