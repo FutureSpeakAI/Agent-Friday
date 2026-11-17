@@ -129,3 +129,11 @@ def test_an_event_that_names_no_issuer_is_not_stopped_by_this_check(client):
                 "issuer_not_accepted"
             return
     pytest.skip("every vector names an issuer")
+
+
+def test_a_list_that_cannot_be_signed_answers_a_named_503_not_a_500(client, _isolated, monkeypatch):
+    from agent_friday.routes import federation as routes
+    cannot = acc.AcceptedIssuers(_isolated._path, lambda data: "", PUBLIC)
+    monkeypatch.setattr(routes, "_ACCEPTED", cannot)
+    r = client.post(URL, json={"issuer_id": "test-issuer"}, headers=_press())
+    assert r.status_code == 503 and r.get_json() == {"ok": False, "outcome": "cannot-sign"}

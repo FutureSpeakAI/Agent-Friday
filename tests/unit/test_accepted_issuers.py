@@ -83,8 +83,7 @@ def test_a_list_signed_by_another_key_is_not_trusted(tmp_path):
 
 def test_a_list_that_cannot_be_signed_is_not_written(tmp_path):
     s = acc.AcceptedIssuers(tmp_path / "a.json", lambda data: "", PUBLIC)
-    with pytest.raises(RuntimeError):
-        s.accept(REF, acc.Press(), 1)
+    assert s.accept(REF, acc.Press(), 1) is acc.AcceptOutcome.CANNOT_SIGN
     assert not (tmp_path / "a.json").exists()
 
 
@@ -111,3 +110,27 @@ def test_only_a_request_on_this_pcs_screen_makes_a_press_and_only_this_module_bu
             if isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")) == "Press" \
                     and (isinstance(node.func, ast.Name) or getattr(node.func.value, "id", "") == "accepted_issuers"):
                 pytest.fail(f"{path} builds a Press itself")
+
+
+# ── second-review notes (PR #915), written red first ──────────────────────────────────────────────
+
+def test_a_list_that_cannot_be_signed_is_a_named_refusal_not_an_exception(tmp_path):
+    s = acc.AcceptedIssuers(tmp_path / "a.json", lambda data: "", PUBLIC)
+    assert s.accept(REF, acc.Press(), 1) is acc.AcceptOutcome.CANNOT_SIGN
+    assert not (tmp_path / "a.json").exists() and s.refs() == []
+    broken = acc.AcceptedIssuers(tmp_path / "b.json", lambda data: (_ for _ in ()).throw(OSError("no key")), PUBLIC)
+    assert broken.accept(REF, acc.Press(), 1) is acc.AcceptOutcome.CANNOT_SIGN
+
+
+def test_press_is_built_only_by_from_request_inside_its_own_module():
+    tree = ast.parse(Path(acc.__file__).read_text(encoding="utf-8"))
+    builders = []
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for call in [c for c in ast.walk(fn) if isinstance(c, ast.Call)]:
+            if getattr(call.func, "id", "") in ("cls", "Press") and fn.name != "from_request":
+                builders.append(fn.name)
+    assert builders == [], builders
+
+
+def test_the_ingest_check_says_it_matches_the_issuer_id_only():
+    assert "issuer id only" in acc.__doc__ and "charter digest" in acc.__doc__
