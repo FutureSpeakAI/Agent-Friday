@@ -59,6 +59,19 @@ def test_the_slate_lists_every_provider_the_picker_does_with_the_facts(pc):
     assert [r["id"] for r in s["models"][:2]] == ["claude-opus-5-5", "bonsai2:27b"]  # picker first
 
 
+def test_every_row_carries_declared_capabilities_and_says_they_are_not_measured(pc, monkeypatch):
+    cat = dict(CAT, models=[dict(CAT["models"][0], modalities=["text", "vision"], supports_tools=True,
+                                 context_window=200000, price_in=15.0, price_out=75.0)] + CAT["models"][1:])
+    monkeypatch.setattr(ms, "_catalog", lambda: cat)
+    rows = _by_id(ms.slate())
+    c = rows["claude-opus-5-5"]["capabilities"]
+    assert c["modalities"] == ["text", "vision"] and c["supports_tools"] is True and c["context_window"] == 200000
+    assert c["price_in_per_1m"] == 15.0 and "not measured" in c["basis"]
+    for r in rows.values():
+        assert set(r["capabilities"]) == set(c) and r["capabilities"]["modalities"]
+    assert rows["bonsai2:27b"]["capabilities"]["supports_tools"] is None  # unknown stays unknown, never guessed
+
+
 def test_warm_is_unknown_not_guessed_when_the_seats_cannot_be_surveyed(pc):
     pc["live"] = None
     assert _by_id(ms.slate())["bonsai2:27b"]["warm"] is None

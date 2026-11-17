@@ -163,6 +163,15 @@ def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
     out["switch"] = _switch_cost(m.get("id"), local, out["warm"])
     out["measured"] = _measured(m.get("id"))
     out["benchmark"] = _benchmark(m.get("id")) if local else None
+    out["capabilities"] = {
+        "modalities": list(m.get("modalities") or ["text"]),
+        "supports_tools": m.get("supports_tools"),
+        "context_window": m.get("context_window"),
+        "max_output": m.get("max_output"),
+        "price_in_per_1m": m.get("price_in"), "price_out_per_1m": m.get("price_out"),
+        "free": bool(m.get("free")),
+        "basis": "declared by the provider's catalog, not measured on this PC",
+    }
     why = _blocked(m, mode)
     out["can_serve"] = why is None
     out["blocked"] = ({"code": why[0], "reason": why[1]} if why else None)
