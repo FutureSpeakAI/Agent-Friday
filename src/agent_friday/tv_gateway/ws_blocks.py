@@ -52,6 +52,14 @@ def page_ref(folder: str, target: str) -> Optional[str]:
     return "page:" + joined
 
 
+_BARE_URL = re.compile(r"\b(?:https?|ftp|file)://\S+|\bwww\.\S+", re.I)
+
+
+def line(text, limit: int = 200) -> str:
+    """One line of plain words: no markup, no URL, one space between words, capped."""
+    return " ".join(_clean(_BARE_URL.sub("", str(text or ""))).split())[:limit]
+
+
 def _clean(text: str) -> str:
     text = _TAG.sub("", _IMAGE.sub("", text))
     text = _WIKILINK.sub(lambda m: m.group(2) or m.group(1), text)
