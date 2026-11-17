@@ -32,6 +32,10 @@ class ProviderContract:
     def fund(self, provider, ref, payer, currency, amount_minor, expires_at):
         raise NotImplementedError
 
+    def make_unreachable(self, provider):
+        """Make the provider unable to answer (its sandbox's way of simulating an outage)."""
+        raise NotImplementedError
+
     def ready(self, tmp_path, amount=10_000):
         provider = self.new_provider(tmp_path)
         self.fund(provider, "bp-1", "buyer-1", "USD", amount, LATER)
@@ -126,3 +130,13 @@ class ProviderContract:
         assert isinstance(provider.authenticate_event(flipped), p.Forged), "one changed signature digit"
         assert isinstance(provider.authenticate_event(b"not an event"), p.Forged)
         assert isinstance(provider.authenticate_event(b""), p.Forged)
+
+    def test_a_provider_that_cannot_be_asked_says_unreachable_never_unknown(self, tmp_path):
+        provider = self.ready(tmp_path)
+        reservation = self.reserved(provider, "k-res", 500)
+        self.make_unreachable(provider)
+        assert provider.lookup("k-res") is p.ProviderStatus.UNREACHABLE, "an outage is not 'never heard of it'"
+        assert provider.lookup("never-sent") is p.ProviderStatus.UNREACHABLE
+        answer = provider.capture("k-cap", reservation.reservation_ref, 400, 1)
+        assert isinstance(answer, (p.Refused, p.Uncertain)) and not isinstance(answer, p.Captured)
+

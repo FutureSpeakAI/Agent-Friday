@@ -26,6 +26,9 @@ class TestFakeProviderContract(contract.ProviderContract):
     def fund(self, provider, ref, payer, currency, amount_minor, expires_at):
         provider.fund(ref, payer, currency, amount_minor, expires_at)
 
+    def make_unreachable(self, provider):
+        provider.arm(fp.Fault.OUTAGE, until=contract.LATER * 10)
+
 
 def made(tmp_path, amount=10_000, clock=None):
     provider = fp.FakeProvider(tmp_path / "fake.sqlite", SEED, clock or Clock())
