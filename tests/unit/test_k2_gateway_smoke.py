@@ -4,6 +4,7 @@ Rules guarded here: a configured provider that answers 200 is PASS; one that ans
 a provider with no key is SKIP and does not fail the run; no key ever appears in the output.
 """
 import http.server
+import json
 import importlib.util
 import pathlib
 import threading
@@ -27,6 +28,7 @@ def load_script():
 class Provider:
     def __init__(self, status=200):
         self.status = status
+        self.seen = []
         outer = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -34,12 +36,34 @@ class Provider:
                 pass
 
             def do_GET(self):
-                body = b'{"data": []}'
+                outer.seen.append((self.path, dict(self.headers)))
+                # the body echoes every request header, as a hostile or careless provider might
+                body = json.dumps({"data": [], "echo": dict(self.headers)}).encode()
                 self.send_response(outer.status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                outer.seen.append((self.path, dict(self.headers)))
+                events = [{"model": "m", "choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}],
+                           "usage": {"prompt_tokens": 1, "completion_tokens": 1}}]
+                if body.get("stream"):
+                    data = "".join("data: %s\n\n" % json.dumps(e) for e in events) + "data: [DONE]\n\n"
+                    kind = "text/event-stream"
+                else:
+                    data = json.dumps({"model": "m", "choices": [{"message": {"role": "assistant", "content": "ok"},
+                                                                  "finish_reason": "stop"}],
+                                       "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+                    kind = "application/json"
+                payload = data.encode()
+                self.send_response(outer.status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -79,6 +103,8 @@ def test_configured_providers_that_answer_200_pass(world, monkeypatch, capsys):
     code, out = run(monkeypatch, capsys)
     assert code == 0 and out.count(" PASS ") == 3 and "gateway firecrawl" in out and " SKIP " in out
     assert REAL not in out
+    sent = " ".join(str(headers) for _, headers in world.seen)
+    assert REAL in sent, "the provider must really have received the key through the gateway"
 
 
 def test_a_provider_that_refuses_the_key_fails_the_run(world, monkeypatch, capsys):
@@ -88,6 +114,49 @@ def test_a_provider_that_refuses_the_key_fails_the_run(world, monkeypatch, capsy
     assert code == 1 and " FAIL " in out and "HTTP 401" in out and REAL not in out
 
 
-def test_with_no_keys_everything_is_skipped_and_the_run_passes(world, monkeypatch, capsys):
+def test_with_no_keys_nothing_was_tested_and_that_is_not_a_pass(world, monkeypatch, capsys):
     code, out = run(monkeypatch, capsys)
-    assert code == 0 and " PASS " not in out and out.count(" SKIP ") >= 4
+    assert code == 2 and " PASS " not in out and out.count(" SKIP ") >= 4 and "NOTHING WAS TESTED" in out
+    assert "ALL CONFIGURED PROVIDERS PASSED" not in out
+
+
+def test_an_openrouter_key_is_checked_on_its_authenticated_endpoint_not_the_public_one(world, monkeypatch, capsys):
+    monkeypatch.setenv("OPENROUTER_API_KEY", REAL)
+    monkeypatch.setattr(smr, "_load_settings", lambda: {"model_routing": {"openai_base_url": world.origin + "/openrouter.ai/v1"}})
+    code, out = run(monkeypatch, capsys)
+    assert code == 0 and "gateway key check (legacy-openrouter)" in out
+    assert world.seen[-1][0] == "/openrouter.ai/v1/key"
+
+
+def test_a_provider_that_echoes_the_key_back_in_an_error_never_gets_it_printed(world, monkeypatch, capsys):
+    monkeypatch.setenv("FIRECRAWL_API_KEY", REAL)
+    world.status = 403
+    code, out = run(monkeypatch, capsys)
+    assert code == 1 and "HTTP 403" in out and REAL not in out and "Bearer" not in out
+
+
+def test_an_exception_whose_message_holds_the_key_is_reported_by_type_only(world, monkeypatch, capsys):
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", REAL)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("the key was " + REAL)
+    monkeypatch.setattr("requests.get", boom)
+    code, out = run(monkeypatch, capsys)
+    assert code == 1 and "RuntimeError" in out and REAL not in out
+
+
+def test_the_chat_flag_makes_one_streamed_call_through_the_gateway_and_names_the_model(world, monkeypatch, capsys):
+    monkeypatch.setenv("OPENAI_API_KEY", REAL)
+    monkeypatch.setattr(smr, "_seal_or_block", lambda payload, provider_name, model="": payload)
+    monkeypatch.setattr(smr, "_load_settings", lambda: {"model_routing": {"openai_base_url": world.origin + "/v1",
+                                                                          "openai_model": "tiny-model"}})
+    code, out = run(monkeypatch, capsys, "--chat")
+    assert code == 0 and "chat through gateway (stream)" in out and "PASS" in out and "model tiny-model" in out
+    posts = [headers for path, headers in world.seen if path.endswith("/chat/completions")]
+    assert posts and posts[0].get("Authorization") == "Bearer " + REAL and REAL not in out
+
+
+def test_without_the_chat_flag_no_chat_call_is_made(world, monkeypatch, capsys):
+    monkeypatch.setenv("OPENAI_API_KEY", REAL)
+    run(monkeypatch, capsys)
+    assert not [path for path, _ in world.seen if path.endswith("/chat/completions")]

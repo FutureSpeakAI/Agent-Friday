@@ -8,9 +8,11 @@ It never prints a key: callers hold only the stand-in, and the output is a statu
 Run on the PC where the keys are saved (Settings -> Connections):
 
     py -3.14 scripts/k2_gateway_smoke.py            # models/credit/search calls only (free or near free)
-    py -3.14 scripts/k2_gateway_smoke.py --chat     # also one 1-token streamed chat call per configured chat key
+    py -3.14 scripts/k2_gateway_smoke.py --chat     # also one short streamed chat call for the configured chat key
 
-Exit 0 when every configured provider passed; 1 when one failed; providers with no key are SKIP, not failures.
+Exit 0 when every configured provider passed; 1 when one failed; 2 when nothing was tested (every provider SKIP: that is
+not a pass). Providers with no key are SKIP, not failures. The OpenRouter check asks its authenticated /key (its /models is
+public). The chat call caps the reply at 5 tokens; a reasoning model may spend more, and the model is printed.
 A SKIP for a provider you did save a key for usually means the credential store is locked or the key sits in a place
 the gateway does not read; say so in the LEDGER. Not covered: Gemini (its upload and Live voice are not on the gateway).
 """
@@ -25,8 +27,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
+SUMMARY = {"passed": 0}
+
+
 def report(name: str, outcome: str, detail: str = "") -> bool:
     print("%-28s %-5s %s" % (name, outcome, detail))
+    if outcome == "PASS":
+        SUMMARY["passed"] += 1
     return outcome != "FAIL"
 
 
@@ -71,21 +78,24 @@ def chat_rows(requests, key_gateway, with_chat: bool) -> list:
         return [report("gateway chat (legacy slot)", "FAIL", "the gateway could not start: " + type(error).__name__)]
     if not gateway_base:
         return [report("gateway chat (legacy slot)", "SKIP", "base URL is not a public https host (called directly)")]
+    # OpenRouter's /models is public (200 with no key at all), so it would prove nothing: ask its authenticated /key.
+    check = "/key" if "openrouter.ai" in base else "/models"
     try:
-        response = requests.get(gateway_base + "/models", headers={"Authorization": "Bearer " + key_gateway.DUMMY_KEY},
+        response = requests.get(gateway_base + check, headers={"Authorization": "Bearer " + key_gateway.DUMMY_KEY},
                                 timeout=30)
     except Exception as error:
-        return [report("gateway models (" + descriptor["name"] + ")", "FAIL", type(error).__name__)]
-    results.append(judge("gateway models (%s)" % descriptor["name"], response, key_gateway))
+        return [report("gateway key check (" + descriptor["name"] + ")", "FAIL", type(error).__name__)]
+    results.append(judge("gateway key check (%s)" % descriptor["name"], response, key_gateway))
     if not with_chat or not results[-1] or response.status_code != 200:
         return results
     started = time.time()
+    model = (model_router._load_settings().get("model_routing") or {}).get("openai_model") or "gpt-4o-mini"
     try:
         answer = model_router._call_openai([{"role": "user", "content": "Reply with the single word: ok"}],
                                            tools=None, max_tokens=5, stream=True)
         text = answer[0] if isinstance(answer, tuple) else answer
         results.append(report("chat through gateway (stream)", "PASS" if str(text).strip() else "FAIL",
-                              "%.1fs, %d characters" % (time.time() - started, len(str(text)))))
+                              "model %s, %.1fs, %d characters" % (model, time.time() - started, len(str(text)))))
     except Exception as error:
         results.append(report("chat through gateway (stream)", "FAIL", type(error).__name__))
     return results
@@ -93,14 +103,24 @@ def chat_rows(requests, key_gateway, with_chat: bool) -> list:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--chat", action="store_true", help="also make one 1-token streamed chat call")
+    parser.add_argument("--chat", action="store_true",
+                        help="also make one streamed chat call with a 5-token reply cap (a reasoning model may spend more)")
     arguments = parser.parse_args()
     import requests
     from agent_friday.services import key_gateway
-    results = fixed_rows(requests, key_gateway) + chat_rows(requests, key_gateway, arguments.chat)
-    key_gateway.stop_all()
-    print("\n%s" % ("ALL CONFIGURED PROVIDERS PASSED" if all(results) else "AT LEAST ONE PROVIDER FAILED"))
-    return 0 if all(results) else 1
+    try:
+        results = fixed_rows(requests, key_gateway) + chat_rows(requests, key_gateway, arguments.chat)
+    finally:
+        key_gateway.stop_all()
+    if not all(results):
+        print("\nAT LEAST ONE PROVIDER FAILED")
+        return 1
+    if SUMMARY["passed"] == 0:
+        print("\nNOTHING WAS TESTED: every provider was skipped (no key found). If you saved keys, the credential store may "
+              "be locked; this is not a pass.")
+        return 2
+    print("\nALL CONFIGURED PROVIDERS PASSED")
+    return 0
 
 
 if __name__ == "__main__":
