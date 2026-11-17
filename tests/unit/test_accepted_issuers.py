@@ -1,0 +1,113 @@
+"""The owner's list of accepted issuers (NS-40.4-1, design A-5 and A-6, PR 4). Test credits only."""
+import ast
+import json
+from pathlib import Path
+
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from agent_friday.services import accepted_issuers as acc
+from agent_friday.services import peer_wire_v2 as wire
+from agent_friday.services.issuer_registry import IssuerRef
+
+OWNER = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+PUBLIC = OWNER.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
+REF = IssuerRef("test.one", "d" * 64, "TESTP")
+SOURCE = Path(acc.__file__).resolve().parents[2]
+
+
+def store(tmp_path, name="a.json"):
+    return acc.AcceptedIssuers(tmp_path / name, lambda data: OWNER.sign(data).hex(), PUBLIC)
+
+
+def test_by_default_no_issuer_is_accepted(tmp_path):
+    s = store(tmp_path)
+    assert s.refs() == [] and not s.is_accepted(REF) and not s.is_accepted_id("test.one")
+
+
+def test_accepting_needs_a_press_and_nothing_else_counts(tmp_path):
+    s = store(tmp_path)
+    for not_a_press in (None, "owner", "voice", "owner:text", True, {"press": True}, object()):
+        assert s.accept(REF, not_a_press, 1) is acc.AcceptOutcome.PRESS_REQUIRED
+    assert s.refs() == [] and not (tmp_path / "a.json").exists()
+    assert s.accept(REF, acc.Press(), 5) is acc.AcceptOutcome.ACCEPTED
+    assert s.is_accepted(REF) and s.is_accepted_id("test.one")
+    assert s.accept(REF, acc.Press(), 6) is acc.AcceptOutcome.ALREADY
+
+
+def test_who_accepted_is_recorded_as_the_press_never_as_a_caller_supplied_label(tmp_path):
+    s = store(tmp_path)
+    s.accept(REF, acc.Press(), 5)
+    entry = json.loads((tmp_path / "a.json").read_text())["entries"][0]
+    assert entry["accepted_by"] == "owner:press" and entry["accepted_at"] == 5
+
+
+def test_withdrawing_needs_no_press_and_works_from_anywhere(tmp_path):
+    s = store(tmp_path)
+    s.accept(REF, acc.Press(), 5)
+    assert s.withdraw("test.one") is True and s.refs() == []
+    assert s.withdraw("test.one") is False
+
+
+def test_the_same_id_with_another_charter_is_not_accepted(tmp_path):
+    s = store(tmp_path)
+    s.accept(REF, acc.Press(), 5)
+    other = IssuerRef("test.one", "e" * 64, "TESTP")
+    assert not s.is_accepted(other) and s.is_accepted(REF)
+    assert s.accept(other, acc.Press(), 6) is acc.AcceptOutcome.OTHER_CHARTER
+    assert s.refs() == [REF]
+
+
+def test_a_hand_edited_list_reads_as_empty(tmp_path):
+    s = store(tmp_path)
+    s.accept(REF, acc.Press(), 5)
+    path = tmp_path / "a.json"
+    doc = json.loads(path.read_text())
+    doc["entries"].append({"issuer_id": "rogue", "charter_digest": "f" * 64, "unit_code": "BAD",
+                           "accepted_by": "owner:press", "accepted_at": 1})
+    path.write_text(json.dumps(doc))
+    assert s.refs() == [] and not s.is_accepted_id("rogue") and not s.is_accepted(REF)
+    path.write_text("not json")
+    assert s.refs() == []
+    other_key = acc.AcceptedIssuers(path, lambda data: "00" * 64, PUBLIC)
+    assert other_key.refs() == []
+
+
+def test_a_list_signed_by_another_key_is_not_trusted(tmp_path):
+    mallory = Ed25519PrivateKey.from_private_bytes(bytes([9] * 32))
+    forged = acc.AcceptedIssuers(tmp_path / "a.json", lambda data: mallory.sign(data).hex(), PUBLIC)
+    forged.accept(REF, acc.Press(), 1)
+    assert store(tmp_path).refs() == []
+
+
+def test_a_list_that_cannot_be_signed_is_not_written(tmp_path):
+    s = acc.AcceptedIssuers(tmp_path / "a.json", lambda data: "", PUBLIC)
+    with pytest.raises(RuntimeError):
+        s.accept(REF, acc.Press(), 1)
+    assert not (tmp_path / "a.json").exists()
+
+
+def offer(issuer):
+    return wire.canonical({"body": {"payload": {"terms": {"issuer": issuer}}}, "signature": "x"})
+
+
+def test_named_issuer_reads_only_the_issuer_field():
+    assert acc.named_issuer(offer("test-issuer")) == "test-issuer"
+    for raw in (b"", b"{}", b"[1]", b"not json", wire.canonical({"body": {"payload": {}}}),
+                wire.canonical({"body": {"payload": {"terms": {"issuer": 5}}}}),
+                wire.canonical({"body": {"payload": {"terms": {}}}}), b'{"a":1,"a":2}'):
+        assert acc.named_issuer(raw) is None
+
+
+def test_only_a_request_on_this_pcs_screen_makes_a_press_and_only_this_module_builds_one():
+    class Stub:
+        pass
+    assert acc.Press.from_request(Stub()) is None
+    for path in (SOURCE / "agent_friday").rglob("*.py"):
+        if path.name == "accepted_issuers.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")) == "Press" \
+                    and (isinstance(node.func, ast.Name) or getattr(node.func.value, "id", "") == "accepted_issuers"):
+                pytest.fail(f"{path} builds a Press itself")
