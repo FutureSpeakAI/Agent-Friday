@@ -1,5 +1,7 @@
 """One serialized authority, signed heads, equivocation (NS-40.4-3, design Part B, PR 3). Test credits only."""
 import hashlib
+import itertools
+import json
 import shutil
 import sqlite3
 import subprocess
@@ -245,3 +247,161 @@ def test_the_key_is_never_written_to_the_journal_file(tmp_path):
     for name in tmp_path.iterdir():
         data = name.read_bytes()
         assert SEED not in data and SEED.hex().encode() not in data, name.name
+
+
+# ── second-review findings (PR #901) and design 10.1-10.4, written red first ──────────────────────
+
+def test_a_receipt_whose_effect_or_hash_was_changed_fails_under_the_genuine_head(tmp_path):
+    """Finding 1 / T1: the head did not commit to the receipt, so a forged receipt verified."""
+    with open_authority(tmp_path / "j.sqlite") as a:
+        _, signed = a.execute(cmd("pay-alice", treasury=-5, alice=5))
+    digest = reg.charter_digest(charter())
+    body = wire.decode(signed.receipt)
+    for change in ({"effect": "pay-mallory"}, {"request_hash": "f" * 64}, {"corrects": "x", "reason": "y"},
+                   {"issuer": "other"}):
+        forged = auth.SignedReceipt(wire.canonical({**body, **change}), signed.head, signed.signature)
+        with pytest.raises(auth.HeadError):
+            auth.verify_receipt(forged, key().public_key, digest)
+    assert auth.Head.parse(signed.head).receipt_hash == hashlib.sha256(signed.receipt).hexdigest()
+
+
+def test_after_a_crash_that_skipped_heads_the_next_open_signs_every_missing_one_with_the_right_state(tmp_path):
+    """T2: heads for every sequence number, each rebuilt from the effects up to it."""
+    path = tmp_path / "j.sqlite"
+    with open_authority(path) as a:
+        for n in range(4):
+            a.execute(cmd(f"e{n}", treasury=-(n + 1), **{f"p{n}": n + 1}))
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM journal_heads WHERE seq IN (2, 3)")
+    with open_authority(path) as a:
+        heads = a.heads()
+        assert [auth.Head.parse(h).seq for h, _ in heads] == [1, 2, 3, 4]
+        auth.verify_chain(heads, key().public_key, reg.charter_digest(charter()))
+        for h, _ in heads:
+            head = auth.Head.parse(h)
+            assert head.state_hash == auth.state_hash(a.journal.balances_at(head.seq)), head.seq
+        assert auth.Head.parse(heads[1][0]).state_hash != auth.Head.parse(heads[3][0]).state_hash
+
+
+def test_an_old_duplicate_returns_its_receipt_with_its_own_head_even_after_a_gap(tmp_path):
+    path = tmp_path / "j.sqlite"
+    with open_authority(path) as a:
+        _, first = a.execute(cmd("e1", treasury=-1, a1=1))
+        a.execute(cmd("e2", treasury=-1, a2=1))
+        a.execute(cmd("e3", treasury=-1, a3=1))
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM journal_heads WHERE seq=1")
+    with open_authority(path) as a:
+        again_command = cmd("e1", treasury=-1, a1=1)
+        again_command["action"] = "fresh"
+        outcome, again = a.execute(again_command)
+        assert outcome is ij.Outcome.DUPLICATE and again.head is not None
+        auth.verify_receipt(again, key().public_key, reg.charter_digest(charter()))
+        assert again.receipt == first.receipt
+
+
+def _heads_for_pins(tmp_path):
+    with open_authority(tmp_path / "j.sqlite") as a:
+        for n in range(3):
+            a.execute(cmd(f"e{n}", treasury=-1, **{f"p{n}": 1}))
+        return a.heads(), reg.charter_digest(charter())
+
+
+def _unlinked_third(heads):
+    third = auth.Head.parse(heads[2][0])
+    rival = auth.Head(third.issuer_id, third.charter_digest, 0, 3, third.state_hash, third.receipt_hash, "e" * 64)
+    return rival.canonical_bytes(), key().sign(auth.HEAD_PREFIX + rival.canonical_bytes())
+
+
+def test_a_head_that_does_not_link_to_its_pinned_neighbour_is_equivocation_in_every_arrival_order(tmp_path):
+    """Finding 4 / T3: two histories that never reuse a sequence number passed."""
+    heads, digest = _heads_for_pins(tmp_path)
+    pub = key().public_key
+    bad = _unlinked_third(heads)
+    for order in itertools.permutations(range(3)):
+        pins = auth.HeadPins()
+        seen = []
+        for index in order:
+            item = bad if index == 2 else heads[index]
+            seen.append(pins.accept(*item, pub, digest))
+        assert auth.PinOutcome.EQUIVOCATION in seen, (order, seen)
+        assert pins.stopped("test.one") and len(pins.reports) == 1, order
+    pins = auth.HeadPins()
+    assert [pins.accept(*h, pub, digest) for h in heads] == [auth.PinOutcome.ACCEPTED] * 3
+    assert not pins.stopped("test.one")
+
+
+def test_a_head_whose_neighbours_are_not_pinned_yet_is_accepted_unlinked_and_checked_later(tmp_path):
+    heads, digest = _heads_for_pins(tmp_path)
+    pins = auth.HeadPins()
+    assert pins.accept(*heads[2], key().public_key, digest) is auth.PinOutcome.ACCEPTED
+    assert pins.accept(*heads[0], key().public_key, digest) is auth.PinOutcome.ACCEPTED
+    assert pins.accept(*heads[1], key().public_key, digest) is auth.PinOutcome.ACCEPTED, "the middle links both sides"
+    assert not pins.stopped("test.one")
+
+
+def test_a_deep_tamper_that_re_hashes_everything_is_caught_by_the_last_head_on_open(tmp_path):
+    """Finding 2 / T4 with an authority: the journal's own checks pass a tamper that rewrites the effect, its hash,
+    its receipt and the balances together; the signed head's state hash does not."""
+    path = tmp_path / "j.sqlite"
+    with open_authority(path) as a:
+        a.execute(cmd("e1", treasury=-5, alice=5))
+    postings = {"treasury": -5, "mallory": 5}
+    digest = ij.request_hash("test.one", "e1", postings, None, None)
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE journal_effects SET postings=?, request_hash=? WHERE effect='e1'",
+                   (json.dumps(sorted(postings.items()), separators=(",", ":")), digest))
+        db.execute("UPDATE journal_receipts SET receipt=? WHERE effect='e1'",
+                   (ij._receipt("test.one", "e1", 1, digest, None, None),))
+        db.execute("DELETE FROM journal_balances WHERE account='alice'")
+        db.execute("INSERT INTO journal_balances VALUES ('mallory', 5)")
+    plain = ij.IssuerJournal(path, charter=charter())
+    assert plain.halted is None, "the journal alone cannot tell"
+    del plain
+    with open_authority(path) as a:
+        assert a.journal.halted, "the signed head's state hash differs from the rebuilt balances"
+        outcome, signed = a.execute(cmd("e2", treasury=-1, bob=1))
+        assert outcome is ij.Outcome.HALTED and signed is None
+
+
+SNEAK = textwrap.dedent("""
+    import sys
+    sys.path.insert(0, {src!r})
+    from agent_friday.services import issuer_authority as a, issuer_journal as j, issuer_registry as r
+    k = a.Ed25519Key(bytes(range(32)))
+    c = r.IssuerCharter(issuer_id="test.one", unit_code="TESTP", precision=0, genesis_supply=100,
+        treasury_account="treasury", cash_claim=False, genesis_authority=k.public_key, created="2026-11-16T00:00:00Z")
+    try:
+        j.IssuerJournal({path!r}, charter=c).execute({{"issuer": "test.one", "effect": "sneak", "action": "sneak",
+                                                         "postings": {{"treasury": -1, "mallory": 1}}}})
+        print("POSTED")
+    except a.AuthorityHeld:
+        print("AuthorityHeld")
+""")
+
+
+def test_while_an_authority_holds_an_issuer_no_other_object_can_post_to_it(tmp_path):
+    """Finding 3 / T6: a bare IssuerJournal posted while an Authority held the lock."""
+    path = tmp_path / "j.sqlite"
+    with open_authority(path) as a:
+        a.execute(cmd("e1", treasury=-1, a1=1))
+        with pytest.raises(auth.AuthorityHeld):
+            ij.IssuerJournal(path, charter=charter()).execute(cmd("sneak", treasury=-1, mallory=1))
+        other = subprocess.run([sys.executable, "-c", SNEAK.format(src=SRC, path=str(path))],
+                               capture_output=True, text=True, timeout=60)
+        assert "AuthorityHeld" in other.stdout, other.stdout + other.stderr
+        assert a.journal.head() == 1 and "mallory" not in a.journal.balances()
+    ij.IssuerJournal(path, charter=charter()).execute(cmd("fine", treasury=-1, bob=1))
+
+
+def test_the_writing_journal_is_constructed_only_where_the_guard_allows():
+    import importlib.util
+    guard_path = Path(__file__).resolve().parents[2] / "scripts" / "check_journal_writers.py"
+    spec = importlib.util.spec_from_file_location("check_journal_writers", guard_path)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    assert guard.run() == []
+    assert guard.findings("src/agent_friday/services/other.py", "j = IssuerJournal(p, charter=c)")
+    assert guard.findings("src/agent_friday/services/other.py", "j = ij.IssuerJournal(p, charter=c)")
+    assert not guard.findings("src/agent_friday/services/issuer_authority.py", "j = IssuerJournal(p, charter=c)")
+    assert not guard.findings("src/agent_friday/services/other.py", "x = 1  # IssuerJournal is mentioned here")
