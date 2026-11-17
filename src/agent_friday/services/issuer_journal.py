@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -98,6 +99,41 @@ class Outcome(str, Enum):
     HALTED = "halted"
 
 
+class AuthorityHeld(RuntimeError):
+    """An authority holds this issuer: no other object may write to its journal (design 10.4)."""
+
+
+#: the lock file an Authority holds for its whole life; every other writer checks it before it writes
+AUTHORITY_LOCK_SUFFIX = ".authority"
+
+
+@contextlib.contextmanager
+def exclusive_lock(path):
+    """An exclusive, non-blocking OS lock on `path` for the duration of the block; AuthorityHeld if it is held."""
+    handle = open(path, "a+b")
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as err:
+            raise AuthorityHeld("another writer holds this issuer's journal") from err
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        handle.close()
+
+
 RECEIPT_PROTOCOL = "asimov-journal-receipt/v1"
 REQUEST_PREFIX = b"asimov-journal-request/v1" + bytes([0])
 _NAME = re.compile(r"[ -~]{1,200}")
@@ -156,7 +192,7 @@ class IssuerJournal:
     """
 
     def __init__(self, path, issuer: str | None = None, supply: int | None = None,
-                 treasury: str = "treasury", *, charter=None):
+                 treasury: str = "treasury", *, charter=None, authority_held: bool = False):
         # The (issuer, supply) form is kept only because the bundle's issuer vector builds a journal that way
         # (test_the_issuer_vector_gives_the_oracles_answer_for_every_command) and #842 and #852 still call it; new
         # code passes a charter.
@@ -169,9 +205,11 @@ class IssuerJournal:
         if type(supply) is not int or not 0 <= supply <= MAX_UNITS:
             raise ValueError("supply must be a whole number of units")
         self._path = str(path)
+        self._authority_held = authority_held      # only issuer_authority.Authority passes True, after taking the lock
         self.issuer = issuer
         self.supply = supply
         self._lock = threading.Lock()
+        self._guard_writes()
         self._point = lambda name: None
         self.halted: str | None = None
         with contextlib.closing(self._connect()) as db:
@@ -214,6 +252,30 @@ class IssuerJournal:
             self._backfill(db)
             db.commit()
         self.recover()
+
+    def _guard_writes(self) -> None:
+        """Every write path starts here: while an Authority holds the issuer, nothing else may write (design 10.4).
+        The check is made before each write; a writer already inside its one transaction when the Authority starts
+        finishes that transaction, which the Authority's own recovery then checks."""
+        if not self._authority_held:
+            with exclusive_lock(self._path + AUTHORITY_LOCK_SUFFIX):
+                pass
+
+    def balances_at(self, seq: int) -> dict:
+        """The balances as they stood after effect number `seq`, rebuilt by replaying the effects up to it."""
+        with contextlib.closing(self._connect()) as db:
+            treasury = (db.execute("SELECT treasury FROM journal_meta WHERE issuer=?", (self.issuer,)).fetchone() or [None])[0]
+            rebuilt = {treasury or "treasury": self.supply}
+            for postings, in db.execute("SELECT postings FROM journal_effects WHERE seq<=? ORDER BY seq", (seq,)):
+                for account, amount in json.loads(postings):
+                    rebuilt[account] = rebuilt.get(account, 0) + amount
+        return {a: v for a, v in rebuilt.items() if v}
+
+    def receipt_at(self, seq: int) -> bytes | None:
+        """The stored receipt bytes of the effect at `seq`, or None."""
+        with contextlib.closing(self._connect()) as db:
+            row = db.execute("SELECT receipt FROM journal_receipts WHERE seq=?", (seq,)).fetchone()
+        return None if row is None else bytes(row[0])
 
     @staticmethod
     def _add_columns(db, table, columns):
@@ -317,6 +379,7 @@ class IssuerJournal:
     def outbox_delivered(self, effect: str) -> None:
         if self.halted:
             return                  # a halted journal writes nothing, not even a delivery mark
+        self._guard_writes()
         with self._transaction() as db:
             db.execute("UPDATE journal_outbox SET delivered_at=strftime('%s','now') WHERE effect=? "
                        "AND delivered_at IS NULL", (effect,))
@@ -327,6 +390,7 @@ class IssuerJournal:
     def execute_receipt(self, command: dict) -> tuple[Outcome, bytes | None]:
         """One command {issuer, effect, action, postings[, corrects, reason]}. Returns the outcome and,
         for posted and duplicate, the stored receipt bytes."""
+        self._guard_writes()
         if self.halted:
             return Outcome.HALTED, None
         if not isinstance(command, dict) or command.get("issuer") != self.issuer:

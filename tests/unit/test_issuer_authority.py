@@ -82,7 +82,7 @@ def test_only_the_charters_own_key_can_be_the_authority(tmp_path):
         auth.Authority(tmp_path / "j.sqlite", charter(), key(OTHER_SEED))
     with pytest.raises(ValueError):
         auth.Authority(tmp_path / "k.sqlite", charter(), key(SEED, generation=1))
-    assert not (tmp_path / "j.sqlite.lock").exists() or open_authority(tmp_path / "j.sqlite")
+    assert not (tmp_path / "j.sqlite.authority").exists() or open_authority(tmp_path / "j.sqlite")
 
 
 def test_each_head_links_to_the_one_before(tmp_path):
@@ -123,7 +123,7 @@ def test_a_changed_receipt_head_or_signature_fails(tmp_path):
     other_receipt = wire.canonical({**wire.decode(signed.receipt), "seq": 1})
     forged_head = auth.Head.parse(signed.head)
     forged = wire.canonical({"issuer_id": forged_head.issuer_id, "charter_digest": forged_head.charter_digest,
-                             "generation": 0, "seq": 2, "state_hash": "0" * 64,
+                             "generation": 0, "seq": 2, "state_hash": "0" * 64, "receipt_hash": forged_head.receipt_hash,
                              "prev_head_hash": forged_head.prev_head_hash})
     cases = [auth.SignedReceipt(other_receipt, signed.head, signed.signature),
              auth.SignedReceipt(signed.receipt, forged, signed.signature),
@@ -207,7 +207,8 @@ def test_two_heads_at_one_sequence_refuse_the_issuer_and_report_once(tmp_path):
     assert pins.accept(*heads[0], pub, digest) is auth.PinOutcome.ACCEPTED
     assert pins.accept(*heads[0], pub, digest) is auth.PinOutcome.KNOWN
     parsed = auth.Head.parse(heads[0][0])
-    rival = auth.Head(parsed.issuer_id, parsed.charter_digest, 0, parsed.seq, "f" * 64, parsed.prev_head_hash)
+    rival = auth.Head(parsed.issuer_id, parsed.charter_digest, 0, parsed.seq, "f" * 64, parsed.receipt_hash,
+                      parsed.prev_head_hash)
     signed_rival = (rival.canonical_bytes(), key().sign(auth.HEAD_PREFIX + rival.canonical_bytes()))
     assert pins.accept(*signed_rival, pub, digest) is auth.PinOutcome.EQUIVOCATION
     assert pins.stopped("test.one") and len(pins.reports) == 1
@@ -224,7 +225,8 @@ def test_a_pinned_head_survives_a_restart_and_so_does_the_stop(tmp_path):
     pins.accept(*heads[0], pub, digest)
     assert auth.HeadPins(file).highest("test.one") == 1
     parsed = auth.Head.parse(heads[0][0])
-    rival = auth.Head(parsed.issuer_id, parsed.charter_digest, 0, parsed.seq, "f" * 64, parsed.prev_head_hash)
+    rival = auth.Head(parsed.issuer_id, parsed.charter_digest, 0, parsed.seq, "f" * 64, parsed.receipt_hash,
+                      parsed.prev_head_hash)
     pins.accept(rival.canonical_bytes(), key().sign(auth.HEAD_PREFIX + rival.canonical_bytes()), pub, digest)
     again = auth.HeadPins(file)
     assert again.stopped("test.one") and len(again.reports) == 1
@@ -272,7 +274,7 @@ def test_after_a_crash_that_skipped_heads_the_next_open_signs_every_missing_one_
         for n in range(4):
             a.execute(cmd(f"e{n}", treasury=-(n + 1), **{f"p{n}": n + 1}))
     with sqlite3.connect(path) as db:
-        db.execute("DELETE FROM journal_heads WHERE seq IN (2, 3)")
+        db.execute("DELETE FROM journal_heads WHERE seq IN (3, 4)")      # a crash loses the trailing heads
     with open_authority(path) as a:
         heads = a.heads()
         assert [auth.Head.parse(h).seq for h, _ in heads] == [1, 2, 3, 4]
@@ -290,14 +292,14 @@ def test_an_old_duplicate_returns_its_receipt_with_its_own_head_even_after_a_gap
         a.execute(cmd("e2", treasury=-1, a2=1))
         a.execute(cmd("e3", treasury=-1, a3=1))
     with sqlite3.connect(path) as db:
-        db.execute("DELETE FROM journal_heads WHERE seq=1")
+        db.execute("DELETE FROM journal_heads WHERE seq IN (2, 3)")
     with open_authority(path) as a:
-        again_command = cmd("e1", treasury=-1, a1=1)
+        again_command = cmd("e2", treasury=-1, a2=1)
         again_command["action"] = "fresh"
         outcome, again = a.execute(again_command)
         assert outcome is ij.Outcome.DUPLICATE and again.head is not None
         auth.verify_receipt(again, key().public_key, reg.charter_digest(charter()))
-        assert again.receipt == first.receipt
+        assert auth.Head.parse(again.head).seq == 2 and again.receipt != first.receipt
 
 
 def _heads_for_pins(tmp_path):
@@ -405,3 +407,30 @@ def test_the_writing_journal_is_constructed_only_where_the_guard_allows():
     assert guard.findings("src/agent_friday/services/other.py", "j = ij.IssuerJournal(p, charter=c)")
     assert not guard.findings("src/agent_friday/services/issuer_authority.py", "j = IssuerJournal(p, charter=c)")
     assert not guard.findings("src/agent_friday/services/other.py", "x = 1  # IssuerJournal is mentioned here")
+
+
+def test_a_missing_head_in_the_middle_of_the_chain_is_tampering_and_halts_the_journal(tmp_path):
+    path = tmp_path / "j.sqlite"
+    with open_authority(path) as a:
+        for n in range(3):
+            a.execute(cmd(f"e{n}", treasury=-1, **{f"p{n}": 1}))
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM journal_heads WHERE seq=2")
+    with open_authority(path) as a:
+        assert a.journal.halted
+        assert a.execute(cmd("e9", treasury=-1, z=1))[0] is ij.Outcome.HALTED
+
+
+def test_a_head_that_names_a_sequence_beyond_the_journal_halts_it(tmp_path):
+    path = tmp_path / "j.sqlite"
+    with open_authority(path) as a:
+        a.execute(cmd("e1", treasury=-1, a1=1))
+        a.execute(cmd("e2", treasury=-1, a2=1))
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM journal_effects WHERE seq=2")
+        db.execute("DELETE FROM journal_receipts WHERE seq=2")
+        db.execute("UPDATE journal_balances SET amount=99 WHERE account='treasury'")
+        db.execute("DELETE FROM journal_balances WHERE account='a2'")
+    with open_authority(path) as a:
+        assert a.journal.halted
+
