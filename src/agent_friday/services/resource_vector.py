@@ -39,8 +39,8 @@ def _whole(value, what, low=0):
     return value
 
 
-def _text(value, what):
-    if not isinstance(value, str) or not value or len(value) > 120 or not value.isascii() or not value.isprintable():
+def _text(value, what, limit=120):
+    if not isinstance(value, str) or not value or len(value) > limit or not value.isascii() or not value.isprintable():
         raise ValueError(f"{what} must be short printable ASCII text")
     return value
 
@@ -69,7 +69,7 @@ class Estimated:
 
     def __post_init__(self):
         _whole(self.value, "value")
-        _text(self.basis, "basis")
+        _text(self.basis, "basis", limit=400)
 
     def to_wire(self) -> dict:
         return {"v": self.value, "basis": self.basis}
