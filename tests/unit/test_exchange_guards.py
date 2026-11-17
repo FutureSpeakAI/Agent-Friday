@@ -59,3 +59,34 @@ def test_only_provider_code_builds_buying_power():
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
             if isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "BuyingPower":
                 assert path.name in allowed and path.parent.name == "exchange", f"{path} builds BuyingPower"
+
+
+# ── second-review notes (PR #903), written red first ──────────────────────────────────────────────
+
+def test_an_order_is_built_only_by_place_buy_and_place_sell():
+    """D-8: Order( may be called in src only inside orders.place_buy and orders.place_sell."""
+    allowed = {("orders.py", "place_buy"), ("orders.py", "place_sell")}
+    for path in (ROOT / "src").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            for call in [c for c in ast.walk(fn) if isinstance(c, ast.Call)]:
+                if getattr(call.func, "id", getattr(call.func, "attr", "")) == "Order":
+                    assert (path.name, fn.name) in allowed, f"{path}:{fn.name} builds an Order directly"
+
+
+def test_the_import_guard_also_catches_dynamic_imports_and_process_and_foreign_function_modules(tmp_path):
+    for line in ("import importlib", "from importlib import import_module", "import subprocess", "import ctypes",
+                 "x = __import__('socket')", "import importlib.util", "from subprocess import run"):
+        (tmp_path / "bad.py").write_text(line + "\n", encoding="utf-8")
+        assert guard.run(tmp_path), line
+    (tmp_path / "bad.py").write_text("name = 'subprocess'  # only a word\nimport json\n", encoding="utf-8")
+    assert guard.run(tmp_path) == []
+
+
+def test_the_guard_states_its_limit_and_the_providers_own_word_is_called_the_other_half():
+    assert "limit" in guard.__doc__ and "test_only" in provider_doc()
+
+
+def provider_doc():
+    from agent_friday.services.exchange import provider
+    return provider.__doc__
