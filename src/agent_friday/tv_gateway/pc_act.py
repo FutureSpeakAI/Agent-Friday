@@ -123,6 +123,8 @@ def _act(action: str, job_id: str, path: str) -> Response:
 def register(app: Flask) -> None:
     from agent_friday.tv_gateway import pc_act_media
     pc_act_media.register(app)
+    from agent_friday.tv_gateway import pc_wiki
+    pc_wiki.register(app)
     @app.get("/tv/v1/jobs/<jid>/steps")
     def pc_job_steps(jid):
         denied = pc_read._guard("jobs")
