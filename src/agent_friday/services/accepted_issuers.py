@@ -6,7 +6,9 @@ checked on every read: a list that was edited by hand reads as empty (fail close
 whatever it says".
 
 A peer event that names an issuer this node has not accepted is declined before any of its content
-is read: `named_issuer` looks only at the one field where an issuer appears.
+is read: `named_issuer` looks only at the one field where an issuer appears. The wire terms carry no charter digest,
+so the ingest check matches on the issuer id only: the charter digest is checked where a journal or a list entry
+binds it, not at ingest.
 
 Rules and the tests that hold them (tests/unit/test_accepted_issuers.py):
 - Default none: test_by_default_no_issuer_is_accepted.
@@ -54,6 +56,7 @@ class AcceptOutcome(str, Enum):
     ALREADY = "already"
     PRESS_REQUIRED = "press-required"
     OTHER_CHARTER = "other-charter"
+    CANNOT_SIGN = "cannot-sign"
 
 
 def named_issuer(raw: bytes) -> str | None:
@@ -113,7 +116,10 @@ class AcceptedIssuers:
                 return AcceptOutcome.ALREADY if same else AcceptOutcome.OTHER_CHARTER
         entries.append({"issuer_id": ref.issuer_id, "charter_digest": ref.charter_digest,
                         "unit_code": ref.unit_code, "accepted_by": ACCEPTED_BY, "accepted_at": accepted_at})
-        self._write(entries)
+        try:
+            self._write(entries)
+        except (RuntimeError, OSError):
+            return AcceptOutcome.CANNOT_SIGN        # nothing was written: the list stays as it was
         return AcceptOutcome.ACCEPTED
 
     def withdraw(self, issuer_id: str) -> bool:

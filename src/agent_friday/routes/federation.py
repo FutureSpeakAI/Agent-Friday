@@ -403,7 +403,7 @@ def federation_accept_issuer():
     if ref is None:
         return jsonify({"ok": False, "error": "unknown_issuer"}), 404
     outcome = _accepted_issuers().accept(ref, _issuers.Press.from_request(request), int(time.time()))
-    status = {"accepted": 201, "already": 200}.get(outcome.value, 409)
+    status = {"accepted": 201, "already": 200, "cannot-sign": 503}.get(outcome.value, 409)
     return jsonify({"ok": status < 300, "outcome": outcome.value}), status
 
 

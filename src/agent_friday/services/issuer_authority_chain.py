@@ -81,6 +81,8 @@ def verify_authority_chain(charter: IssuerCharter, records: list) -> list:
     first = ordered[0]
     if first.public_key != charter.genesis_authority or first.signed_by_previous is not None:
         raise ChainError("generation 0 is not the charter's key")
+    if first.valid_from_seq != 1:
+        raise ChainError("generation 0 starts at sequence 1")
     for previous, record in zip(ordered, ordered[1:]):
         if record.generation != previous.generation + 1:
             raise ChainError("a generation is missing or used twice")

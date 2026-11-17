@@ -83,8 +83,7 @@ def test_a_list_signed_by_another_key_is_not_trusted(tmp_path):
 
 def test_a_list_that_cannot_be_signed_is_not_written(tmp_path):
     s = acc.AcceptedIssuers(tmp_path / "a.json", lambda data: "", PUBLIC)
-    with pytest.raises(RuntimeError):
-        s.accept(REF, acc.Press(), 1)
+    assert s.accept(REF, acc.Press(), 1) is acc.AcceptOutcome.CANNOT_SIGN
     assert not (tmp_path / "a.json").exists()
 
 
