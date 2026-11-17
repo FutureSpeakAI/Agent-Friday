@@ -265,6 +265,53 @@
     ],
     "new_verb": "calendar.quick_add"
    }
+  },
+  "verb_args": {
+   "calendar.quick_add": [
+    {
+     "name": "text",
+     "type": "string",
+     "max": 500
+    }
+   ],
+   "calendar.meeting_prep": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "event",
+     "from": "item"
+    }
+   ],
+   "calendar.move_event": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "event",
+     "from": "item"
+    },
+    {
+     "name": "start",
+     "type": "datetime"
+    },
+    {
+     "name": "end",
+     "type": "datetime"
+    }
+   ],
+   "calendar.delete_event": [
+    {
+     "name": "ref",
+     "type": "ref",
+     "kind": "event",
+     "from": "item"
+    },
+    {
+     "name": "notify_guests",
+     "type": "bool",
+     "required": false,
+     "default": false
+    }
+   ]
   }
  }
 }
