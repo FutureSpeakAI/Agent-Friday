@@ -87,6 +87,63 @@ def test_a_list_that_cannot_be_signed_is_not_written(tmp_path):
     assert not (tmp_path / "a.json").exists()
 
 
+SECOND = IssuerRef("test.two", "c" * 64, "TWOP")
+
+
+def test_an_older_signed_list_put_back_is_not_trusted(tmp_path):
+    """Owed from the #915 review: a withdrawn issuer must not come back because someone restored an older list that
+    was validly signed. Each write carries a version; the highest version this PC has written is kept beside the list."""
+    s = store(tmp_path)
+    path = tmp_path / "a.json"
+    s.accept(REF, acc.Press(), 1)
+    old = path.read_bytes()
+    assert s.withdraw("test.one") is True and s.refs() == []
+    path.write_bytes(old)                                   # the owner's own earlier, validly signed list
+    assert s.refs() == [] and not s.is_accepted(REF), "a rolled-back list reads as empty"
+    assert store(tmp_path).refs() == [], "and so does a fresh object over the same files"
+    s2 = store(tmp_path, "b.json")
+    s2.accept(REF, acc.Press(), 1)
+    older = (tmp_path / "b.json").read_bytes()
+    s2.accept(SECOND, acc.Press(), 2)
+    (tmp_path / "b.json").write_bytes(older)
+    assert s2.refs() == [] and not s2.is_accepted(REF)
+
+
+def test_a_mark_that_does_not_verify_fails_closed_and_the_list_keeps_counting_up(tmp_path):
+    s = store(tmp_path)
+    s.accept(REF, acc.Press(), 1)
+    s.accept(SECOND, acc.Press(), 2)
+    versions = []
+    for _ in range(2):
+        versions.append(json.loads((tmp_path / "a.json").read_text())["version"])
+        s.withdraw("test.two") if len(versions) == 1 else s.accept(SECOND, acc.Press(), 3)
+    versions.append(json.loads((tmp_path / "a.json").read_text())["version"])
+    assert versions == sorted(set(versions)) and len(versions) == 3, versions
+    mark = tmp_path / "a.json.mark"
+    mark.write_text(json.dumps({"version": 1, "signature": "00" * 64}))
+    assert s.refs() == [], "a mark that does not verify cannot be trusted, so nothing is"
+
+
+def test_two_threads_accepting_different_issuers_lose_neither(tmp_path):
+    """Owed from the #915 review: accept and withdraw are read-modify-write and need a lock."""
+    import threading
+    lost = []
+    for round_ in range(15):
+        s = store(tmp_path, f"r{round_}.json")
+
+        def one(ref):
+            acc.AcceptedIssuers(tmp_path / f"r{round_}.json", lambda data: OWNER.sign(data).hex(), PUBLIC).accept(
+                ref, acc.Press(), 1)
+        threads = [threading.Thread(target=one, args=(r,)) for r in (REF, SECOND)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        if {r.issuer_id for r in s.refs()} != {"test.one", "test.two"}:
+            lost.append(round_)
+    assert lost == []
+
+
 def offer(issuer):
     return wire.canonical({"body": {"payload": {"terms": {"issuer": issuer}}}, "signature": "x"})
 
