@@ -34,7 +34,7 @@ def quote(**over):
 def test_the_bundle_negatron_vector_is_exactly_five_halves():
     case = VECTORS["negatron"][0]
     cal = calibration(profile=case["profile"], median_device_active_ms=case["reference_device_ms"])
-    n1 = rv.n1_for(cal, "cfg-1", case["job_device_ms"])
+    n1 = rv.n1_for(cal, "cfg-1", rv.Measured(case["job_device_ms"], 0, "m", "c"))
     assert (n1.numerator, n1.denominator) == (case["result_numerator"], case["result_denominator"]) == (5, 2)
     assert n1.shown(1) == "2.5 N1 (to 1 place)"
     assert case["energy_wh"] is None
@@ -89,13 +89,20 @@ def test_an_n1_quantity_is_kept_exact_and_reduced():
 
 def test_another_configuration_gets_no_n1():
     cal = calibration()
-    assert rv.n1_for(cal, "cfg-1", 10000) is not None
-    assert rv.n1_for(cal, "cfg-2", 10000) is None
+    reading = rv.Measured(10000, 0, "m", "c")
+    assert rv.n1_for(cal, "cfg-1", reading) is not None
+    assert rv.n1_for(cal, "cfg-2", reading) is None
+
+
+def _good_receipt_fields():
+    reading = rv.Measured(10000, 15, "m", "c")
+    cal = calibration(median_device_active_ms=4000)
+    return dict(task_id="t1", profile="N1:testGPU-a", vector=rv.ResourceVector(gpu_active_ms=reading),
+                n1=rv.n1_for(cal, "cfg-1", reading), status=rv.ReceiptStatus.MEASURED, calibration=cal)
 
 
 def test_a_receipt_cannot_be_built_without_a_quote_hash():
-    ok = dict(task_id="t1", profile="N1:testGPU-a", vector=rv.ResourceVector(),
-              n1=rv.N1Quantity("N1:testGPU-a", 5, 2), status="measured")
+    ok = _good_receipt_fields()
     assert rv.MeasuredReceipt(quote_hash=rv.quote_hash(quote()), **ok).to_wire()["quote_hash"]
     for bad in (None, "", "short", "g" * 64, "A" * 64, 5, b"x" * 64):
         with pytest.raises(ValueError):
@@ -107,10 +114,10 @@ def test_a_receipt_cannot_be_built_without_a_quote_hash():
 def test_a_receipt_states_its_calibration_honestly():
     base = dict(quote_hash=HASH, task_id="t1", profile="N1:testGPU-a", vector=rv.ResourceVector())
     with pytest.raises(ValueError):
-        rv.MeasuredReceipt(**base, n1=None, status="measured")
-    assert rv.MeasuredReceipt(**base, n1=None, status="uncalibrated").to_wire()["n1"] is None
+        rv.MeasuredReceipt(**base, n1=None, status=rv.ReceiptStatus.MEASURED)
+    assert rv.MeasuredReceipt(**base, n1=None, status=rv.ReceiptStatus.UNCALIBRATED).to_wire()["n1"] is None
     with pytest.raises(ValueError):
-        rv.MeasuredReceipt(**base, n1=rv.N1Quantity("N1:other", 1, 1), status="measured")
+        rv.MeasuredReceipt(**base, n1=rv.N1Quantity("N1:other", 1, 1), status=rv.ReceiptStatus.MEASURED)
     with pytest.raises(ValueError):
         rv.MeasuredReceipt(**base, n1=None, status="paid")
 

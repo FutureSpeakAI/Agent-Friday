@@ -89,16 +89,18 @@ def test_calibration_takes_the_median_and_states_the_spread():
 
 
 def _receipt(task="t1"):
+    cal = rv.Calibration("N1:a", "bench", "cfg", 5, 4000, 20, "m", "2026-11-16T00:00:00Z")
+    reading = rv.Measured(10000, 15, "m", "none")
     return rv.MeasuredReceipt(quote_hash=HASH, task_id=task, profile="N1:a",
-                              vector=rv.ResourceVector(duration_ms=rv.Measured(5, 0, "m", "none")),
-                              n1=rv.N1Quantity("N1:a", 5, 2), status="measured")
+                              vector=rv.ResourceVector(gpu_active_ms=reading),
+                              n1=rv.n1_for(cal, "cfg", reading), status=rv.ReceiptStatus.MEASURED, calibration=cal)
 
 
 def test_a_measured_receipt_is_one_chained_ledger_entry(friday_dir):
     before = len(L.entries(None))
     entry = rm.record_measured(_receipt())
     assert entry["kind"] == rm.KIND and len(L.entries(None)) == before + 1
-    assert entry["rec"]["quote_hash"] == HASH and entry["rec"]["n1"] == {"n": 5, "d": 2}
+    assert entry["rec"]["quote_hash"] == HASH and entry["rec"]["n1"] == {"n": 5, "d": 2, "estimated": False}
     assert L.verify(force=True)["ok"] is True
     assert not {"prompt", "result", "message", "text", "content"} & set(entry["rec"])
 
