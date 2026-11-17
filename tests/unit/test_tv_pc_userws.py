@@ -127,7 +127,7 @@ def test_a_stale_base_rev_is_a_conflict_carrying_the_pcs_version(client, tmp_pat
 
 def test_a_new_workspace_must_start_at_rev_zero_and_a_deleted_one_is_gone(client):
     tv = device()
-    assert save(client, tv, manifest(), base_rev=4).status_code == 410
+    assert save(client, tv, manifest(), base_rev=4).status_code == 404       # never existed
     save(client, tv, manifest())
     assert call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden").status_code == 200
     gone = save(client, tv, manifest(label="Again"), base_rev=1)
@@ -139,7 +139,8 @@ def test_delete_goes_to_the_trash_not_to_nowhere(client, tmp_path):
     save(client, tv, manifest())
     call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden")
     assert call(client, tv, "GET", "/tv/v1/workspaces/user/garden").status_code == 404
-    assert len(list((tmp_path / "workspaces" / "user" / ".trash").glob("garden-*.json"))) == 1
+    [entry] = list((tmp_path / "workspaces" / "user" / ".trash").glob("garden-*"))
+    assert (entry / "workspace.json").is_file() and (entry / "versions" / "000001.json").is_file()
 
 
 def test_every_version_is_kept_and_a_rollback_is_a_new_version(client):
@@ -263,3 +264,109 @@ def test_the_receipt_names_the_workspace_and_never_its_words(client):
     [receipt] = rows("device_act")
     assert (receipt["action"], receipt["workspace"], receipt["outcome"]) == ("userws_save", "garden", 200)
     assert "Private thoughts" not in json.dumps(receipt)
+
+
+def test_deleting_and_recreating_a_workspace_never_mixes_the_two_histories(client, tmp_path):
+    tv = device()
+    save(client, tv, manifest(label="First life"))
+    save(client, tv, manifest(label="First life two"), base_rev=1)
+    call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden")
+    fresh = save(client, tv, manifest(label="Second life"))
+    assert fresh.status_code == 200 and fresh.get_json()["rev"] == 1
+    versions = call(client, tv, "GET", "/tv/v1/workspaces/user/garden/versions").get_json()["versions"]
+    assert [v["label"] for v in versions] == ["Second life"]
+    assert call(client, tv, "POST", "/tv/v1/workspaces/user/garden/rollback", {"rev": 2, "base_rev": 1}).status_code == 404
+
+
+def test_a_deleted_workspace_comes_back_with_its_history_when_its_id_is_free(client):
+    tv = device()
+    save(client, tv, manifest(label="First life"))
+    save(client, tv, manifest(label="First life two"), base_rev=1)
+    call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden")
+    back = call(client, tv, "POST", "/tv/v1/workspaces/user/garden/restore")
+    assert back.status_code == 200 and back.get_json()["rev"] == 2
+    assert [v["rev"] for v in call(client, tv, "GET", "/tv/v1/workspaces/user/garden/versions").get_json()["versions"]] == [1, 2]
+    assert call(client, tv, "POST", "/tv/v1/workspaces/user/garden/restore").status_code == 409     # now in use
+
+
+def test_two_deletes_in_the_same_second_keep_both_trash_entries(client, tmp_path, monkeypatch):
+    tv = device()
+    monkeypatch.setattr("time.time", lambda: 1_800_000_000.0)
+    for label in ("One", "Two"):
+        save(client, tv, manifest(label=label))
+        call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden")
+    assert len(list((tmp_path / "workspaces" / "user" / ".trash").glob("garden-*"))) == 2
+
+
+def test_a_delete_that_names_a_stale_rev_is_a_conflict_and_deletes_nothing(client, tmp_path):
+    tv = device()
+    save(client, tv, manifest())
+    stale = call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden", {"base_rev": 7})
+    assert stale.status_code == 409 and files(tmp_path) == ["garden.json"]
+
+
+@pytest.mark.parametrize("wid", ["con", "nul", "aux", "prn", "com1", "lpt9"])
+def test_a_name_windows_treats_as_a_device_is_refused(client, tmp_path, wid):
+    answer = call(client, device(), "PUT", "/tv/v1/workspaces/user/" + wid, {"base_rev": 0, "manifest": manifest(id=wid)})
+    assert answer.status_code == 400 and files(tmp_path) == []
+
+
+@pytest.mark.parametrize("bad", [
+    {"ws": [], "kind": "media"}, {"ws": {}, "kind": "media"}, {"ws": "media", "kind": ["media"]},
+    {"ws": "media", "kind": "media", "facet": {"a": ["x"]}}])
+def test_input_that_makes_a_rule_itself_fail_is_a_422_not_a_server_error(client, tmp_path, bad):
+    answer = save(client, device(), manifest(sections=[section(source=bad)]))
+    assert answer.status_code == 422 and files(tmp_path) == []
+
+
+def test_nesting_too_deep_for_the_validator_is_a_422(client, tmp_path):
+    deep = []
+    for _ in range(3000):
+        deep = [deep]
+    answer = save(client, device(), manifest(sections=[{"id": "b", "label": "B", "view": "board", "a2ui": deep}]))
+    assert answer.status_code in (413, 422) and files(tmp_path) == []
+
+
+@pytest.mark.parametrize("text", ["line\nbreak", "tab\there", "zero​width", "bidi‮evil", "nul\x00byte", "bom﻿"])
+def test_names_and_queries_with_control_or_hidden_characters_are_refused(client, tmp_path, text):
+    assert save(client, device(), manifest(label=text)).status_code == 422
+    assert save(client, device(), manifest(sections=[section(source={"ws": "media", "kind": "media", "query": text})])).status_code == 422
+    assert files(tmp_path) == []
+
+
+def test_a_body_far_over_the_cap_is_refused_before_it_is_parsed(client, tmp_path):
+    big = {"base_rev": 0, "manifest": manifest(sections=[{"id": "b", "label": "B", "view": "board",
+                                                          "a2ui": [{"pad": "x" * (300 * 1024)}]}])}
+    assert call(client, device(), "PUT", "/tv/v1/workspaces/user/garden", big).status_code == 413 and files(tmp_path) == []
+
+
+def test_a_rollback_to_a_version_that_no_longer_validates_says_why(client, tmp_path):
+    tv = device()
+    save(client, tv, manifest())
+    save(client, tv, manifest(label="Two"), base_rev=1)
+    old = tmp_path / "workspaces" / "user" / ".versions" / "garden" / "000001.json"
+    data = json.loads(old.read_text(encoding="utf-8"))
+    data["sections"][0]["source"]["kind"] = "gone-kind"
+    old.write_text(json.dumps(data), encoding="utf-8")
+    answer = call(client, tv, "POST", "/tv/v1/workspaces/user/garden/rollback", {"rev": 1, "base_rev": 2})
+    assert answer.status_code == 422 and answer.get_json()["code"] == "invalid"
+
+
+def test_a_rollback_conflict_carries_the_pcs_version(client):
+    tv = device()
+    save(client, tv, manifest())
+    answer = call(client, tv, "POST", "/tv/v1/workspaces/user/garden/rollback", {"rev": 1, "base_rev": 5})
+    assert answer.status_code == 409 and answer.get_json()["current"]["rev"] == 1
+
+
+def test_one_unreadable_version_does_not_hide_the_others(client, tmp_path):
+    tv = device()
+    save(client, tv, manifest())
+    save(client, tv, manifest(label="Two"), base_rev=1)
+    (tmp_path / "workspaces" / "user" / ".versions" / "garden" / "000001.json").write_text("{not json", encoding="utf-8")
+    versions = call(client, tv, "GET", "/tv/v1/workspaces/user/garden/versions")
+    assert versions.status_code == 200 and [v["rev"] for v in versions.get_json()["versions"]] == [2]
+
+
+def test_a_save_against_an_id_that_never_existed_is_a_plain_404(client):
+    assert save(client, device(), manifest(), base_rev=3).status_code == 404
