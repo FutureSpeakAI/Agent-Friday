@@ -84,6 +84,9 @@ class IssuerJournal:
 
     def __init__(self, path, issuer: str | None = None, supply: int | None = None,
                  treasury: str = "treasury", *, charter=None):
+        # The (issuer, supply) form is kept only because the bundle's issuer vector builds a journal that way
+        # (test_the_issuer_vector_gives_the_oracles_answer_for_every_command) and #842 and #852 still call it; new
+        # code passes a charter.
         digest = None
         if charter is not None:
             if issuer is not None or supply is not None:
