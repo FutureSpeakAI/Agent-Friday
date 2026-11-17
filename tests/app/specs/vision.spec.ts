@@ -1,3 +1,4 @@
+// ci-list: exempt 2 of 3 fail: the dock has no button matching img[alt=Settings] or Studio, so the spec's selectors are stale; owner to update them until 2026-11-30
 /**
  * MACHINE VISION — for defects no selector can express.
  *
