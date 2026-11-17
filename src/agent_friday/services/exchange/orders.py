@@ -328,6 +328,7 @@ class Fill:
     price_per_lot_minor: int
     principal_minor: int
     fee_increment_minor: int
+    lot_units: int          # the order's lot size: a fill's units are lots * lot_units, derived and never passed beside it
 
 
 def plan_fill(exchange_id: ExchangeId, fill_id: FillId, quote: Quote, settled_principal_before: int) -> Fill:
@@ -337,4 +338,4 @@ def plan_fill(exchange_id: ExchangeId, fill_id: FillId, quote: Quote, settled_pr
     _need(fill_id, FillId)
     principal = quote.lots * quote.price_per_lot_minor
     return Fill(fill_id, exchange_id, quote_hash(quote), quote.lots, quote.price_per_lot_minor, principal,
-                fees.fee_increment(settled_principal_before, principal))
+                fees.fee_increment(settled_principal_before, principal), quote.lot_units)

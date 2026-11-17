@@ -326,6 +326,7 @@ def test_a_fill_names_its_quote_and_planning_accrues_nothing():
     second = orders.plan_fill(orders.ExchangeId("x1"), orders.FillId("f2"), q, 5000)
     assert (first.fee_increment_minor, second.fee_increment_minor) == (13, 12)
     assert first.quote_hash == orders.quote_hash(q) and first.principal_minor == 5000
+    assert first.lot_units == q.lot_units, "the fill carries the lot size its units are derived from"
 
 
 def test_a_work_order_id_is_not_an_exchange_id():
