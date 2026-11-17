@@ -4,6 +4,8 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_friday.services import economic_schedule as es
 from agent_friday.services import issuer_journal as ij
 
@@ -40,15 +42,15 @@ def test_each_kind_of_broken_schedule_is_named():
         "unsorted": (lambda s: s["awards"][1]["shares"].reverse(), "sorted"),
         "duplicate": (lambda s: s["awards"][0]["shares"].append(dict(s["awards"][0]["shares"][0])), "once"),
         "loses units": (lose_units, "loses units"),
-        "gross falls": (lambda s: s["awards"][1].update(gross_units=5), "gross falls"),
+        "gross falls": (lambda s: s["awards"][1].update(gross_units=5), "strictly increase"),
         "other beneficiaries": (lambda s: s["awards"][1]["shares"].append(
             {"beneficiary": "zed", "role": "creator", "units": 0}), "beneficiaries differ"),
-        "negative": (lambda s: s["awards"][0]["shares"][0].update(units=-1), "never negative"),
-        "float": (lambda s: s["awards"][0]["shares"][0].update(units=10.0), "whole numbers"),
-        "bool": (lambda s: s["awards"][0]["shares"][1].update(units=False), "whole numbers"),
-        "no rows": (lambda s: s["awards"][0].update(shares=[]), "whole numbers and a list"),
-        "missing field": (lambda s: s["awards"][0]["shares"][0].pop("role"), "needs a beneficiary"),
-        "no awards": (lambda s: s.update(awards=[]), "at least one award"),
+        "negative": (lambda s: s["awards"][0]["shares"][0].update(units=-1), "whole units"),
+        "float": (lambda s: s["awards"][0]["shares"][0].update(units=10.0), "whole units"),
+        "bool": (lambda s: s["awards"][0]["shares"][1].update(units=False), "whole units"),
+        "no rows": (lambda s: s["awards"][0].update(shares=[]), "add up to 0"),
+        "missing field": (lambda s: s["awards"][0]["shares"][0].pop("role"), "every row needs"),
+        "no awards": (lambda s: s.update(awards=[]), "from 1 to"),
         "bad bps": (lambda s: s.update(operator_bps=101), "basis points"),
         "string bps": (lambda s: s.update(operator_bps="100"), "basis points"),
         "wrong protocol": (lambda s: s.update(protocol="other"), "not an economic schedule"),
@@ -117,3 +119,106 @@ def test_a_later_revision_never_takes_a_unit_from_a_signed_row():
     other["job"] = "other"
     assert any("job changed" in p for p in es.verify_revision(first, other))
     assert es.verify_revision({"protocol": "x"}, second)
+
+
+# ── second-review findings (PR #920), written red first ───────────────────────────────────────────
+
+def award(milestone, gross, *rows):
+    return {"milestone": milestone, "gross_units": gross, "shares": [
+        {"beneficiary": b, "role": r, "units": u} for b, r, u in rows]}
+
+
+def test_a_zero_price_volunteer_stage_is_valid():
+    """Finding 1: the spec defines empty shares and one terminal award totalling zero."""
+    volunteer = schedule()
+    volunteer["awards"] = [award("done", 0)]
+    assert es.verify_schedule(volunteer) == []
+    for bad in ([award("done", 0), award("more", 5, ("editor", "creator", 5))],
+                [award("a", 5, ("editor", "creator", 5)), award("done", 0)],
+                [award("done", 0, ("editor", "creator", 0))]):
+        broken = schedule()
+        broken["awards"] = bad
+        assert es.verify_schedule(broken), bad
+
+
+def test_the_spec_rules_that_were_not_checked_are_checked():
+    """Finding 2: cumulative gross strictly increases, milestone ids are unique, and the schedule names itself."""
+    same_gross = schedule()
+    same_gross["awards"].append(copy.deepcopy(same_gross["awards"][-1]))
+    same_gross["awards"][-1]["milestone"] = "other"
+    assert any("strictly" in p for p in es.verify_schedule(same_gross)), es.verify_schedule(same_gross)
+    duplicate = schedule()
+    duplicate["awards"][1]["milestone"] = duplicate["awards"][0]["milestone"]
+    assert any("milestone" in p for p in es.verify_schedule(duplicate))
+    for field in ("milestone",):
+        missing = schedule()
+        del missing["awards"][0][field]
+        assert es.verify_schedule(missing)
+    for field in ("issuer", "work_order", "job", "stage", "revision", "protocol"):
+        gone = schedule()
+        del gone[field]
+        assert es.verify_schedule(gone), field
+    for field, value in (("issuer", ""), ("job", "a b"), ("stage", 5), ("work_order", None), ("revision", -1),
+                         ("revision", True), ("revision", 1.5)):
+        bad = schedule()
+        bad[field] = value
+        assert es.verify_schedule(bad), (field, value)
+    extra = schedule()
+    extra["note"] = "x"
+    assert es.verify_schedule(extra), "the schema is closed"
+    bad_role = schedule()
+    bad_role["awards"][0]["shares"][0]["role"] = "boss"
+    assert es.verify_schedule(bad_role)
+    too_many = schedule()
+    too_many["awards"] = [award(f"m{i}", i + 1, ("a", "creator", i + 1)) for i in range(66)]
+    assert es.verify_schedule(too_many)
+
+
+def test_a_verifier_of_signed_peer_data_never_raises():
+    """Finding 3: a missing revision and a beneficiary that is a number beside text both raised."""
+    first = schedule()
+    no_revision = schedule()
+    del no_revision["revision"]
+    assert es.verify_revision(first, no_revision) and es.verify_revision(no_revision, first)
+    mixed = schedule()
+    mixed["awards"][0]["shares"][0]["beneficiary"] = 7
+    assert es.verify_schedule(mixed)
+    import random
+    rng = random.Random(920)
+    garbage = [None, 0, -1, 2 ** 70, 1.5, True, [], {}, "", "x" * 300, [None], {"a": [1]}, ["a", 1]]
+    for _ in range(600):
+        s = schedule()
+        target = rng.choice([s, s["awards"], s["awards"][0], s["awards"][0]["shares"], s["awards"][0]["shares"][0]])
+        if isinstance(target, dict) and target:
+            target[rng.choice(list(target))] = rng.choice(garbage)
+        elif isinstance(target, list) and target:
+            target[rng.randrange(len(target))] = rng.choice(garbage)
+        assert isinstance(es.verify_schedule(s), list)
+        assert isinstance(es.verify_revision(schedule(), s), list)
+        assert isinstance(es.verify_revision(s, schedule()), list)
+    for hostile in (None, [], "x", 5, {"awards": 5}, {"awards": [5]}, {"awards": [{"shares": 5}]}):
+        assert es.verify_schedule(hostile) and es.verify_revision(hostile, hostile)
+
+
+def test_the_hash_is_over_the_federation_canonical_bytes_not_a_serializer_of_its_own(monkeypatch):
+    """Finding 4: a float hashed here where the canonical form raises."""
+    import hashlib
+    from agent_friday.services import peer_wire_v2 as wire
+    seen = []
+    real = wire.canonical
+    monkeypatch.setattr(wire, "canonical", lambda item: seen.append(item) or real(item))
+    assert es.schedule_hash(schedule()) == hashlib.sha256(real(schedule())).hexdigest() == VECTORS["schedule_hash"]
+    assert seen, "schedule_hash must call the Federation canonical function"
+    monkeypatch.undo()
+    floaty = schedule()
+    floaty["operator_bps"] = 1.0
+    with pytest.raises(wire.WireError):
+        es.schedule_hash(floaty)
+    negative = schedule()
+    negative["revision"] = -1
+    with pytest.raises(wire.WireError):
+        es.schedule_hash(negative)
+
+
+def test_roles_are_a_closed_set():
+    assert {r.value for r in es.Role} == {"creator", "improver", "worker", "compute", "reviewer", "operator", "other"}
