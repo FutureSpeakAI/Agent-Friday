@@ -1713,7 +1713,6 @@ def _openai_leg_is_local(bound):
         return False
 
 
-@_sched_admitted("model_router.openai", local=_openai_leg_is_local)
 def _legacy_openai_key() -> str:
     """The key of the legacy single OpenAI-compatible slot, read fresh on every call: the saved setting, then the
     environment. The key gateway calls this to place the key on the outgoing request."""
@@ -1722,6 +1721,7 @@ def _legacy_openai_key() -> str:
             or os.environ.get('OPENROUTER_API_KEY') or '')
 
 
+@_sched_admitted("model_router.openai", local=_openai_leg_is_local)
 def _call_openai(messages, system=None, model=None, max_tokens=None,
                  temperature=None, orb_label=None, orb_icon='☁️',
                  tools=None, pii_lookup=None, session_ctx=None,
