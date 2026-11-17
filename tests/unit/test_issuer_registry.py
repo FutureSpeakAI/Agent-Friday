@@ -186,3 +186,73 @@ def test_no_public_function_takes_a_bare_amount_integer():
 def test_the_bare_integer_guard_can_fail():
     assert bare_amount_params("def pay(units: int): pass") == ["pay(units: int)"]
     assert bare_amount_params("def pay(units): pass" + chr(10) + "def _p(amount: int): pass") == []
+
+
+# ── second-review findings (PR #889), written red first ───────────────────────────────────────────
+
+def test_two_racing_registrations_of_one_id_answer_registered_exactly_once(tmp_path, monkeypatch):
+    """Finding 1 / T7: both callers passed the exists() check and both were told REGISTERED; the second write won."""
+    import threading
+    registry = reg.IssuerRegistry(tmp_path)
+    target = tmp_path / "issuers" / "race.one" / "charter.json"
+    gate = threading.Barrier(2, timeout=5)
+    real_exists = Path.exists
+
+    def exists(self):
+        found = real_exists(self)
+        if self == target and not found:
+            try:
+                gate.wait()                      # hold both callers at the check, as the reviewer did
+            except threading.BrokenBarrierError:
+                pass
+        return found
+    monkeypatch.setattr(Path, "exists", exists)
+    answers = {}
+
+    def register(name, supply):
+        answers[name] = registry.register(pilot(issuer_id="race.one", genesis_supply=supply))
+    threads = [threading.Thread(target=register, args=("a", 1000)), threading.Thread(target=register, args=("b", 2000))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    monkeypatch.undo()
+    assert sorted(a.value for a in answers.values()).count("registered") == 1, answers
+    stored = registry.get("race.one")
+    winner = "a" if answers["a"] is reg.IssuerOutcome.REGISTERED else "b"
+    assert stored.genesis_supply == {"a": 1000, "b": 2000}[winner], "the stored charter is the winner's"
+    assert answers["b" if winner == "a" else "a"] in (reg.IssuerOutcome.CHARTER_MISMATCH, reg.IssuerOutcome.ALREADY_REGISTERED)
+
+
+def test_many_rounds_of_racing_registrations_never_report_two_winners(tmp_path):
+    import threading
+    for round_ in range(25):
+        registry = reg.IssuerRegistry(tmp_path / f"r{round_}")
+        gate = threading.Barrier(4)
+        answers = []
+
+        def go(n):
+            gate.wait()
+            answers.append(registry.register(pilot(issuer_id="x.one", genesis_supply=100 + n)))
+        threads = [threading.Thread(target=go, args=(n,)) for n in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert answers.count(reg.IssuerOutcome.REGISTERED) == 1, answers
+
+
+def test_a_registration_leaves_no_temporary_file_behind(tmp_path):
+    registry = reg.IssuerRegistry(tmp_path)
+    registry.register(pilot())
+    registry.register(pilot(genesis_supply=5))
+    assert sorted(p.name for p in (tmp_path / "issuers" / "test.one").iterdir()) == ["charter.json"]
+
+
+def test_an_issuer_id_cannot_end_in_a_dot_where_windows_folds_it_away(tmp_path):
+    for bad in ("a.", "test.", "a..", "x-."):
+        with pytest.raises(reg.CharterError):
+            pilot(issuer_id=bad)
+        with pytest.raises(reg.CharterError):
+            reg.IssuerRegistry(tmp_path).get(bad)
+    assert pilot(issuer_id="a.b").issuer_id == "a.b" and pilot(issuer_id="a-").issuer_id == "a-"
