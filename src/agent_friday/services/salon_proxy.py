@@ -31,7 +31,7 @@ import socketserver
 import threading
 import time
 from typing import Callable, Optional
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 _log = logging.getLogger(__name__)
 
@@ -52,6 +52,15 @@ NO_KEY_HEADER = "X-Friday-Gateway"
 class _Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+
+def _escapes_its_path(path: str) -> bool:
+    """True for a path that could climb out of its prefix once the provider normalises it: a ``.`` or ``..`` segment
+    (raw or percent-encoded, even twice), a backslash or a ``;``. Guarded by tests/unit/test_key_gateway_descriptor.py."""
+    decoded = path
+    for _ in range(3):
+        decoded = unquote(decoded)
+    return (any(part in (".", "..") for part in decoded.split("/")) or "\\" in decoded or ";" in decoded)
 
 
 class KeyProxy:
@@ -184,7 +193,8 @@ class KeyProxy:
         t0 = time.time()
         method = h.command.upper()
         path = h.path.split("?", 1)[0]
-        if method not in self.allowed_methods or not any(path.startswith(p) for p in self.allowed_prefixes):
+        if (method not in self.allowed_methods or not any(path.startswith(p) for p in self.allowed_prefixes)
+                or _escapes_its_path(path)):
             self._refuse(h, 403, "refused: the salon proxy forwards only the provider API (%s)" % ", ".join(self.allowed_prefixes),
                          path, method, t0)
             return

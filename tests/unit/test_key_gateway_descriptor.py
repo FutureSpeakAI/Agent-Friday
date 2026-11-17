@@ -6,6 +6,8 @@ Rules guarded here: the real key replaces whatever the caller sent, on the heade
 private, plain-http or key-less descriptor gets no listener (it is called directly); two descriptors never share a
 listener; the key is read at call time.
 """
+import http.client
+
 import pytest
 import requests
 
@@ -94,3 +96,35 @@ def test_without_a_key_the_gateway_answers_for_itself(upstream, monkeypatch):
     monkeypatch.delenv("TEST_CHAT_KEY")
     answer = call(gw.descriptor_url(descriptor(upstream)))
     assert gw.no_key(answer) and upstream.seen == []
+
+
+@pytest.mark.parametrize("tail", ["/v1/../admin/keys", "/v1/%2e%2e/admin/keys", "/v1/%2E%2E/admin", "/v1/./x",
+                                  "/v1/%252e%252e/admin", "/v1/a%5c..%5cb", "/v1/a;x=../b", "/v1/a/../../b"])
+def test_a_path_that_climbs_out_of_the_prefix_is_refused(upstream, tail):
+    base = gw.descriptor_url(descriptor(upstream))
+    port = int(base.rsplit(":", 1)[1].split("/")[0])
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)   # requests would tidy the dots away
+    connection.request("POST", tail, body=b"{}", headers={"Content-Type": "application/json"})
+    answer = connection.getresponse()
+    connection.close()
+    assert answer.status == 403 and upstream.seen == []
+
+
+def test_a_descriptor_whose_key_variable_changed_reads_the_new_variable(upstream, monkeypatch):
+    monkeypatch.setenv("TEST_CHAT_KEY_NEW", "sk-new-variable")  # pragma: allowlist secret
+    call(gw.descriptor_url(descriptor(upstream)))
+    edited = descriptor(upstream, auth={"type": "env_var", "key": "TEST_CHAT_KEY_NEW"})
+    call(gw.descriptor_url(edited))
+    assert upstream.header("authorization") == "Bearer sk-new-variable"
+
+
+def test_an_edited_descriptor_replaces_its_old_listener(upstream):
+    gw.descriptor_url(descriptor(upstream))
+    gw.descriptor_url(descriptor(upstream, auth={"type": "env_var", "key": "TEST_CHAT_KEY_NEW"}))
+    assert len([k for k in gw._PROXIES if isinstance(k, tuple)]) == 1
+
+
+def test_braces_in_a_descriptors_scheme_do_not_break_the_request(upstream):
+    prov = descriptor(upstream, auth={"type": "env_var", "key": "TEST_CHAT_KEY", "scheme": "Token{x}"})
+    assert call(gw.descriptor_url(prov)).status_code == 200
+    assert upstream.header("authorization") == "Token{x} " + REAL

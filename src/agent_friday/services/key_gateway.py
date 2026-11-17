@@ -216,7 +216,7 @@ def _auth_shape(prov: dict) -> Optional[tuple]:
     marker = "<<key>>"
     for header, value in auth_headers(prov, marker).items():
         if marker in value:
-            return header, value.replace(marker, "{key}")
+            return header, value.replace("{", "{{").replace("}", "}}").replace(marker, "{key}")
     return None
 
 
@@ -235,7 +235,8 @@ def descriptor_url(prov: dict) -> Optional[str]:
     origin = "%s://%s" % (parts.scheme, parts.netloc)
     path = parts.path.rstrip("/")
     name = str(prov.get("name") or parts.netloc)
-    identity = (name, origin, path, header, key_format)
+    from agent_friday.routing.provider_descriptors import provider_env_keys
+    identity = (name, origin, path, header, key_format, tuple(provider_env_keys(prov)))
 
     def key_now() -> Optional[str]:
         from agent_friday.routing.provider_descriptors import provider_api_key
@@ -244,6 +245,9 @@ def descriptor_url(prov: dict) -> Optional[str]:
     with _LOCK:
         proxy = _PROXIES.get(identity)
         if proxy is None:
+            # an edited descriptor replaces its old listener instead of leaving it running
+            for old in [k for k in _PROXIES if isinstance(k, tuple) and k[0] == name]:
+                _PROXIES.pop(old).stop()
             proxy = KeyProxy(upstream=origin, key_provider=key_now, allowed_prefixes=(path + "/",),
                              allowed_methods=("GET", "POST"), key_header=header, key_format=key_format,
                              upstream_timeout=180)
