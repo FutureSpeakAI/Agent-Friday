@@ -546,6 +546,7 @@ def api_ledger_evidence_pack():
     resp = Response(done.zip_bytes, content_type="application/zip")
     resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % done.filename
     resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Friday-Export-Recorded"] = "yes" if done.recorded else "no"
     return resp
 
 
