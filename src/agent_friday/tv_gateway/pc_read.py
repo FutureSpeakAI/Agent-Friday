@@ -21,7 +21,9 @@ import threading
 import time
 from typing import Optional, Tuple
 
-from flask import Flask, Response, g, jsonify, request
+from flask import Flask, Response, current_app, g, jsonify, request
+
+from agent_friday.tv_gateway import ws_device
 
 _log = logging.getLogger(__name__)
 
@@ -173,7 +175,7 @@ def register(app: Flask) -> None:
             _log.warning("pc_read workspace failed: %s", type(e).__name__)
             return _refuse(503, "the PC could not read that workspace right now", code="pc_unavailable")
         return jsonify({"ok": True, "as_of": int(time.time()), "workspace": _ws_entry(entry),
-                        "actions_here": False, **detail})
+                        "actions_here": detail["device"] is not None and _acts_live(), **detail})
 
     # ── 3. jobs and their journals ──────────────────────────────────────────
     @app.get("/tv/v1/jobs")
@@ -250,10 +252,18 @@ def register(app: Flask) -> None:
         return Response(body, mimetype=ctype.split(";")[0])
 
 
+def _acts_live() -> bool:
+    """Whether this PC serves the device act route; until it does no verb button may be drawn."""
+    return any(r.rule.startswith("/tv/v1/verbs/") for r in current_app.url_map.iter_rules())
+
+
 def _ws_detail(lm, ws: str) -> dict:
     """What the phone draws a workspace from, read from the workspace's Laya manifest."""
+    manifest = lm.get(ws)
+    block = ws_device.device_block(manifest)
     return {
-        "verbs": [_verb_entry(v) for v in lm.verbs(ws)],
+        "device": block,
+        "verbs": [_verb_entry(v, block) for v in lm.verbs(ws)],
         "objects": [{"kind": o.get("kind"), "noun": o.get("noun")} for o in lm.objects(ws)],
         "jobs": [{"id": j.get("id"), "label": j.get("activity_label") or j.get("id")} for j in lm.jobs(ws)],
         "owner_only": [{"action": n.get("action"), "why": n.get("reason")}
@@ -261,10 +271,11 @@ def _ws_detail(lm, ws: str) -> dict:
     }
 
 
-def _verb_entry(v: dict) -> dict:
+def _verb_entry(v: dict, block: Optional[dict]) -> dict:
     gate = v.get("gate") or {}
     return {"id": v.get("id"), "label": (v.get("ui") or {}).get("control") or v.get("id"), "group": v.get("group"),
-            "gate_class": gate.get("class") or "outward", "card": gate.get("card") or "required"}
+            "gate_class": gate.get("class") or "outward", "card": gate.get("card") or "required",
+            "placed": ws_device.placement(v.get("id"), block)}
 
 
 def _ws_entry(w: dict) -> dict:
