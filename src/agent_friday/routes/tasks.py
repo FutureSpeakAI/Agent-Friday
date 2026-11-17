@@ -862,6 +862,20 @@ def rerun_task(task_id):
     return jsonify({"ok": True, "task_id": new_id, "rerun_of": task_id})
 
 
+@tasks_bp.route('/api/tasks/start', methods=['POST'])
+@login_required
+def start_task():
+    """Start a background task from a prompt the owner wrote (PW-G12: from a paired phone or tablet).
+    The task is an ordinary one: it shows as an orb, gets receipts, every tool stays behind the action gate.
+    The body is {prompt, origin: "pc" | "device:<id>", conversation_id?}. User-only."""
+    from agent_friday.services import task_start
+    body = request.get_json(silent=True) or {}
+    try:
+        task_id = task_start.start(body.get('prompt'), body.get('origin'), body.get('conversation_id'))
+    except task_start.Refused as e:
+        return jsonify({"error": e.reason}), e.status
+    return jsonify({"ok": True, "task_id": task_id}), 201
+
 # Every finished outcome drifts for up to five minutes, or until cleared.
 ORB_VISIBLE_AFTER_DONE_S = 300
 ORB_TERMINAL_STATES = ("completed", "error", "failed", "cancelled", "timeout", "interrupted",
