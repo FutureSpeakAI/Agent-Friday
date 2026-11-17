@@ -1,6 +1,7 @@
 """Exchange orders, quotes, fills, fees and provider registration (NS-40.4-11/-12, design Part D and section 10.5).
 Synthetic cash and test credits only."""
 import dataclasses
+import itertools
 import json
 from pathlib import Path
 
@@ -54,9 +55,15 @@ def buy(book, price, lots, cash, **over):
     return orders.place_buy(**kw)
 
 
+_exchanges = itertools.count(100)
+
+
 def sell(book, a, price, lots, seller="seller-1", **over):
     lot_units = over.get("lot_units", 1)
-    reservation = over.pop("reservation", None) or reserve(a, seller, lots * lot_units)
+    if "reservation" in over:
+        reservation = over.pop("reservation")
+    else:                                   # a fresh sale of its own, unless the test names the reservation
+        reservation = reserve(a, seller, lots * lot_units, exchange=orders.ExchangeId(f"x{next(_exchanges)}"))
     kw = common(book, order_id=orders.OrderId("s1"), party=seller, limit_price_per_lot_minor=price, lots=lots,
                 reservation=reservation, public_key=KEY.public_key, **over)
     kw.pop("buying_power", None)
@@ -120,7 +127,7 @@ def test_a_buy_order_needs_enough_unexpired_buying_power_of_its_own_provider():
     needed = 10 * 100 + ij.cash_fee(1000)
     assert isinstance(buy(book, 100, 10, needed), orders.Order)
     assert buy(book, 100, 10, needed - 1) is orders.OrderRefusal.BUYING_POWER_SHORT
-    assert buy(book, 100, 10, None) is orders.OrderRefusal.NO_BUYING_POWER
+    assert orders.place_buy(**common(book, order_id=orders.OrderId("b1"), buying_power=None))         is orders.OrderRefusal.NO_BUYING_POWER
     kw = common(book, order_id=orders.OrderId("b1"), buying_power={"amount": 10 ** 9})
     assert orders.place_buy(**kw) is orders.OrderRefusal.NO_BUYING_POWER
     assert orders.place_buy(**common(book, order_id=orders.OrderId("b1"), buying_power=power(needed, expires=NOW))) \
@@ -310,7 +317,7 @@ def test_the_quote_of_an_executable_match_carries_the_orders_market(authority):
     book = orders.OrderBook()
     s = sell(book, authority, 10, 5)
     q = orders.executable_quote(s, [buy(book, 12, 5, 1000)], NOW)
-    assert (q.ref, q.lot_units, q.provider_id, q.exchange_id) == (REF, 1, "synthetic", "x1")
+    assert (q.ref, q.lot_units, q.provider_id, q.exchange_id) == (REF, 1, "synthetic", s.reservation.exchange_id.value)
 
 
 def test_a_fill_names_its_quote_and_planning_accrues_nothing():

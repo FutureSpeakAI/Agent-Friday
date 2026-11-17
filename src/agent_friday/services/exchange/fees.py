@@ -1,12 +1,14 @@
 """The buyer's cash fee on an exchange order (NS-40.4-12): 0.25% of settled principal, rounded to the
 nearest minor unit on the CUMULATIVE principal, so a split order pays what one order would.
 
+Pure functions only: settlement keeps its own durable accounting in its store, so there is no in-memory fee book.
+
 Rules and the tests that hold them (tests/unit/test_exchange_orders.py):
-- Each fill is charged the increment, and the increments sum to the one-order fee:
+- Each fill is planned the increment, and the increments sum to the one-order fee:
   test_the_bundle_cash_vectors_pass_through_fees.
-- Replaying a fill accrues zero: test_replaying_a_fill_accrues_zero.
-- Only a confirmed fill may accrue, and only through FeeBook.accrue (the settlement workflow is its
-  one call site; that is held by the settlement tests when that PR lands).
+- In any confirmation order the sum charged never exceeds the fee on the cumulative principal (S-12):
+  test_the_fee_total_never_exceeds_the_cumulative_fee_in_any_confirmation_order.
+- Only a confirmed capture may charge, in one place: services/exchange/settlement.py (its own tests).
 """
 from __future__ import annotations
 
@@ -20,25 +22,15 @@ def fee_increment(cumulative_before: int, principal: int) -> int:
     return cash_fee(cumulative_before + principal) - cash_fee(cumulative_before)
 
 
-class FeeBook:
-    """Fees accrued per exchange order, once per fill."""
+def planned_increments(principals) -> list:
+    """The increment each fill is charged when the fills are planned in this order."""
+    out, before = [], 0
+    for principal in principals:
+        out.append(fee_increment(before, principal))
+        before += principal
+    return out
 
-    def __init__(self):
-        self._principal: dict[str, int] = {}
-        self._accrued: dict[str, dict[str, int]] = {}
 
-    def accrue(self, exchange_id: str, fill_id: str, principal: int) -> int:
-        """The increment for this fill the first time it is seen; 0 for the same fill again."""
-        done = self._accrued.setdefault(exchange_id, {})
-        if fill_id in done:
-            return 0
-        increment = fee_increment(self._principal.get(exchange_id, 0), principal)
-        self._principal[exchange_id] = self._principal.get(exchange_id, 0) + principal
-        done[fill_id] = increment
-        return increment
-
-    def total(self, exchange_id: str) -> int:
-        return sum(self._accrued.get(exchange_id, {}).values())
-
-    def settled_principal(self, exchange_id: str) -> int:
-        return self._principal.get(exchange_id, 0)
+def within_cumulative(charged, principals) -> bool:
+    """True when what was charged never exceeds the fee on the cumulative principal of these fills."""
+    return all(type(c) is int and c >= 0 for c in charged) and sum(charged) <= cash_fee(sum(principals))
