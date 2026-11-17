@@ -99,6 +99,12 @@ class Outcome(str, Enum):
     HALTED = "halted"
 
 
+# Probing the authority's lock is a try-to-take-and-let-go. Two threads probing at once would refuse each other and
+# report a writer that does not exist, so probes in one process take turns; a real holder still refuses every probe
+# (tests/unit/test_issuer_journal_durable.py::test_threads_of_one_journal_are_never_told_another_writer_holds_it).
+_PROBE = threading.Lock()
+
+
 class AuthorityHeld(RuntimeError):
     """An authority holds this issuer: no other object may write to its journal (design 10.4)."""
 
@@ -258,7 +264,7 @@ class IssuerJournal:
         The check is made before each write; a writer already inside its one transaction when the Authority starts
         finishes that transaction, which the Authority's own recovery then checks."""
         if not self._authority_held:
-            with exclusive_lock(self._path + AUTHORITY_LOCK_SUFFIX):
+            with _PROBE, exclusive_lock(self._path + AUTHORITY_LOCK_SUFFIX):    # one prober at a time: see _PROBE
                 pass
 
     def balances_at(self, seq: int) -> dict:
