@@ -54,11 +54,19 @@ def app_version() -> str:
         return "unknown"
 
 
+def _grant_rows(action_gate) -> list:
+    try:
+        return action_gate.ledger_grant_rows()
+    except Exception as err:  # noqa: BLE001 - the key or the ledger could not be read
+        raise pack.PackRefused("The grants could not be read (the ledger may have a break to review first), "
+                               "so nothing was exported.") from err
+
+
 def export(rng: pack.Range, version: str, now: int | None = None) -> Exported:
     from agent_friday.governance import action_gate
     moment = int(time.time()) if now is None else now
     entries = _read_ledger()
-    built = pack.build_pack(entries, approvals.list_approvals(), action_gate.ledger_grant_rows(),
+    built = pack.build_pack(entries, approvals.list_approvals(), _grant_rows(action_gate),
                             action_ledger.verify(force=True), rng, version, moment,
                             _signer())
     manifest_sha = hashlib.sha256(built.files[pack.PackFile.MANIFEST.value]).hexdigest()
