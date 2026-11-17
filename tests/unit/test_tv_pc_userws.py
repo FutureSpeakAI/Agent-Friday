@@ -370,3 +370,70 @@ def test_one_unreadable_version_does_not_hide_the_others(client, tmp_path):
 
 def test_a_save_against_an_id_that_never_existed_is_a_plain_404(client):
     assert save(client, device(), manifest(), base_rev=3).status_code == 404
+
+
+def test_a_first_save_that_fails_to_go_live_does_not_lock_the_id(client, tmp_path, monkeypatch):
+    real_write = pc_userws._write
+    failures = []
+
+    def fail_the_live_file_once(path, data):
+        if path.name == "garden.json" and not failures:
+            failures.append(path)
+            raise OSError("disk full")
+        return real_write(path, data)
+    monkeypatch.setattr(pc_userws, "_write", fail_the_live_file_once)
+    tv = device()
+    assert save(client, tv, manifest()).status_code == 503
+    assert save(client, tv, manifest()).status_code == 200 and files(tmp_path) == ["garden.json"]
+
+
+def test_a_delete_whose_history_cannot_move_puts_the_workspace_back(client, tmp_path, monkeypatch):
+    tv = device()
+    save(client, tv, manifest())
+    real_replace = pathlib.Path.replace
+
+    def refuse_the_history(self, target):
+        if self.parent.name == ".versions":
+            raise OSError("in use")
+        return real_replace(self, target)
+    monkeypatch.setattr(pathlib.Path, "replace", refuse_the_history)
+    assert call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden").status_code == 503
+    monkeypatch.setattr(pathlib.Path, "replace", real_replace)
+    assert files(tmp_path) == ["garden.json"]
+    assert call(client, tv, "GET", "/tv/v1/workspaces/user/garden/versions").get_json()["versions"]
+
+
+def test_a_restore_whose_history_cannot_move_leaves_everything_in_the_trash(client, tmp_path, monkeypatch):
+    tv = device()
+    save(client, tv, manifest())
+    call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden")
+    real_replace = pathlib.Path.replace
+
+    def refuse_the_history(self, target):
+        if self.name == "versions":
+            raise OSError("in use")
+        return real_replace(self, target)
+    monkeypatch.setattr(pathlib.Path, "replace", refuse_the_history)
+    assert call(client, tv, "POST", "/tv/v1/workspaces/user/garden/restore").status_code == 503
+    monkeypatch.setattr(pathlib.Path, "replace", real_replace)
+    assert files(tmp_path) == []
+    assert call(client, tv, "POST", "/tv/v1/workspaces/user/garden/restore").status_code == 200
+
+
+@pytest.mark.parametrize("text", ["tag\U000e0041char", "line sep", "soft­hyphen", "para sep", "mongolian᠎"])
+def test_every_hidden_format_character_is_refused(client, tmp_path, text):
+    assert save(client, device(), manifest(label=text)).status_code == 422 and files(tmp_path) == []
+
+
+def test_another_workspaces_trash_entry_does_not_make_a_missing_one_gone(client, tmp_path):
+    tv = device()
+    (tmp_path / "workspaces" / "user" / ".trash" / "garden-two-123").mkdir(parents=True)
+    assert save(client, tv, manifest(), base_rev=2).status_code == 404
+
+
+@pytest.mark.parametrize("base", [True, "3", -1, 1.5])
+def test_a_delete_with_a_base_rev_that_is_not_a_whole_number_is_refused(client, tmp_path, base):
+    tv = device()
+    save(client, tv, manifest())
+    assert call(client, tv, "DELETE", "/tv/v1/workspaces/user/garden", {"base_rev": base}).status_code == 400
+    assert files(tmp_path) == ["garden.json"]
