@@ -13,12 +13,17 @@ engine inside one conversation (Addendum H, 2026-11-15; the companion of tv_gate
   owner to answer on the PC. Local only, an engine that is off, an unknown engine or voice: a coded refusal in
   words. Nothing is switched quietly and nothing answers with another voice.
 
-The binding is held in this process only (it is a per-conversation choice, not a setting) and is reported with
+The binding is a per-conversation choice, not a setting, saved so a restart keeps it, and is reported with
 ``applies`` so a device never believes it changed more than it did.
+
+Enforced by tests/unit/test_tv_voices_contract.py: the cloud 409 and "nothing bound" cases, the owner-only
+403, the restart round-trip and the Local-only re-check.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 from collections import OrderedDict
 from typing import Optional
@@ -27,28 +32,100 @@ _log = logging.getLogger("friday.tv.voices")
 _MAX_BOUND = 256
 _LOCK = threading.Lock()
 _BOUND: "OrderedDict[str, dict]" = OrderedDict()
+_LOADED = False
+
+
+def _path():
+    from agent_friday.paths import friday_home
+    return friday_home() / "tv" / "voice_bindings.json"
+
+
+def _load_once() -> None:
+    """Read the saved bindings the first time they are needed, so a deploy or restart does not unbind a chat."""
+    global _LOADED
+    if _LOADED:
+        return
+    _LOADED = True
+    try:
+        for rec in json.loads(_path().read_text(encoding="utf-8")):
+            if isinstance(rec, dict) and rec.get("conversation_id") and rec.get("engine"):
+                _BOUND[str(rec["conversation_id"])] = {"conversation_id": str(rec["conversation_id"]),
+                                                       "engine": str(rec["engine"]),
+                                                       "voice": rec.get("voice") or None}
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as e:
+        _log.warning("saved voice bindings unreadable, starting empty: %s", type(e).__name__)
+
+
+def _save() -> None:
+    try:
+        path = _path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(list(_BOUND.values())), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        _log.warning("voice bindings not saved: %s", type(e).__name__)
+
+
+def _raw_bound(conversation_id: Optional[str]) -> Optional[dict]:
+    with _LOCK:
+        _load_once()
+        got = _BOUND.get(str(conversation_id or ""))
+        return dict(got) if got else None
 
 
 def bound_voice(conversation_id: Optional[str]) -> Optional[dict]:
-    """What this conversation is bound to (``engine``, ``voice``), or None."""
-    with _LOCK:
-        got = _BOUND.get(str(conversation_id or ""))
-        return dict(got) if got else None
+    """What this conversation is bound to, as true NOW, or None when nothing is bound.
+
+    The binding (``engine``, ``voice``) is checked again against the live slate every time it is read, because
+    the PC can change after the pick (Local only turned on, a key removed, an engine gone). The result carries
+    ``still_valid``, what leaves the house, the latency class and, when it is no longer valid, ``notice`` in
+    words: a device is told the voice it asked for cannot be used, never handed another one quietly."""
+    rec = _raw_bound(conversation_id)
+    if rec is None:
+        return None
+    out = dict(rec, still_valid=None, notice=None)
+    try:
+        from agent_friday.services import voice_slate
+        row = voice_slate.find(rec["engine"])
+        if row is None:
+            out.update(still_valid=False, notice="That voice engine is no longer on this PC.")
+        else:
+            out.update(local=row["local"], latency_class=row["latency_class"], what_leaves=row["what_leaves"],
+                       still_valid=not row["blocked"],
+                       notice=(row["blocked"]["reason"] if row["blocked"] else None))
+    except Exception as e:
+        _log.info("bound voice could not be re-checked: %s", type(e).__name__)
+    return out
 
 
 def _bind(conversation_id: str, engine: str, voice: Optional[str]) -> dict:
     rec = {"conversation_id": conversation_id, "engine": engine, "voice": voice}
     with _LOCK:
+        _load_once()
         _BOUND[conversation_id] = rec
         _BOUND.move_to_end(conversation_id)
         while len(_BOUND) > _MAX_BOUND:
             _BOUND.popitem(last=False)
+        _save()
     return dict(rec)
 
 
 def _reset_for_tests() -> None:
+    global _LOADED
     with _LOCK:
         _BOUND.clear()
+        _LOADED = False
+
+
+def _forget_memory_only() -> None:
+    """What a restart does to this module's memory (the saved file stays)."""
+    global _LOADED
+    with _LOCK:
+        _BOUND.clear()
+        _LOADED = False
 
 
 def _ask_owner(engine: str) -> bool:
