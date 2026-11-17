@@ -103,3 +103,32 @@ def test_re_checking_with_no_arrival_releases_what_is_already_satisfied():
     q = queue()
     q.park(ev("b", ["a"]))
     assert [e.event_id for e in q.arrived(None, have=lambda i: i == "a")] == ["b"]
+
+
+def test_a_parent_refused_after_its_release_keeps_its_child_waiting_when_the_child_is_parked_again():
+    """The queue counts a released event as arrived for the chain behind it, so a whole chain can leave in one
+    call. If the caller's local path then REFUSES the parent (it is never recorded), the child must not be
+    treated as satisfied: parked again, it waits for a parent that is really recorded (NS-40.2-11)."""
+    q = queue()
+    assert q.park(ev("b", ["a"]))[0] and q.park(ev("c", ["b"]))[0]
+    recorded = {"a"}
+    released = q.arrived("a", have=lambda i: i in recorded)
+    assert [e.event_id for e in released] == ["b", "c"] and len(q) == 0
+    # the local path refuses b (nothing is recorded for it), so c cannot run: the caller parks c again
+    assert q.park(released[1]) == (True, "parked"), "a released event is not a duplicate when parked again"
+    assert q.waiting_on() == {"b"}
+    assert q.arrived(None, have=lambda i: i in recorded) == [], "b was refused, so c is not ready"
+    assert q.arrived("a", have=lambda i: i in recorded) == []
+    assert len(q) == 1
+    # later b is really recorded (fetched from an approved source and accepted): only then does c leave
+    recorded.add("b")
+    assert [e.event_id for e in q.arrived("b", have=lambda i: i in recorded)] == ["c"]
+
+
+def test_a_refused_parent_that_is_never_recorded_never_releases_its_children_however_often_the_queue_is_rechecked():
+    q = queue()
+    q.park(ev("c", ["b"]))
+    for _ in range(5):
+        assert q.arrived(None, have=lambda i: i == "a") == []
+        assert q.arrived("a", have=lambda i: i == "a") == []
+    assert len(q) == 1 and q.waiting_on() == {"b"}
