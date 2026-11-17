@@ -108,13 +108,25 @@ def test_an_unreadable_archive_writes_nothing(client, monkeypatch):
 
 def test_a_break_in_range_still_gives_a_pack_with_the_break_first(client, monkeypatch):
     _seed()
+
+    def refuses(*a, **k):
+        raise L.LedgerError("the chain has a break")
+
     monkeypatch.setattr(L, "verify", lambda **k: {"ok": False, "first_break": "seq 2 was changed"})
+    monkeypatch.setattr(L, "append", refuses)
     r = _export(client)
     monkeypatch.undo()
-    assert r.status_code == 200
+    assert r.status_code == 200 and r.headers["X-Friday-Export-Recorded"] == "no"
     files = _files(r)
     assert "seq 2 was changed" in files["SUMMARY.md"].decode().splitlines()[2]
     assert json.loads(files["manifest.json"])["ledger_verified"] is False
+    problems, _ = checker.check_files(files, json.loads(files["manifest.json"])["public_key"])
+    assert problems == [], "the pack is whole even though its own export line could not be written"
+
+
+def test_a_normal_export_says_it_was_recorded(client):
+    _seed()
+    assert _export(client).headers["X-Friday-Export-Recorded"] == "yes"
 
 
 def test_the_summary_in_a_real_pack_says_supports_and_makes_no_claim(client):

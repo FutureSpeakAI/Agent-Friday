@@ -27,6 +27,7 @@ class Exported:
     filename: str
     zip_bytes: bytes
     manifest_sha256: str
+    recorded: bool = True
 
 
 def _signer() -> pack.Signer | None:
@@ -61,10 +62,14 @@ def export(rng: pack.Range, version: str, now: int | None = None) -> Exported:
                             action_ledger.verify(force=True), rng, version, moment,
                             _signer())
     manifest_sha = hashlib.sha256(built.files[pack.PackFile.MANIFEST.value]).hexdigest()
-    action_ledger.append("export", {
-        "event": "evidence_pack_exported", "by": "owner", "range_start": rng.start,
-        "range_end": rng.end, "entries": built.manifest["entries"],
-        "manifest_sha256": manifest_sha, "signed": bool(built.manifest["public_key"])})
+    try:
+        action_ledger.append("export", {
+            "event": "evidence_pack_exported", "by": "owner", "range_start": rng.start,
+            "range_end": rng.end, "entries": built.manifest["entries"],
+            "manifest_sha256": manifest_sha, "signed": bool(built.manifest["public_key"])})
+        recorded = True
+    except (action_ledger.LedgerError, OSError):
+        recorded = False    # a ledger that cannot take a line (for example one with a break) still gives its pack
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime(moment))
     return Exported(f"friday-evidence-{rng.start}_{rng.end}-{stamp}.zip", built.zip_bytes(),
-                    manifest_sha)
+                    manifest_sha, recorded)
