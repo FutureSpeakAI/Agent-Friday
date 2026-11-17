@@ -113,6 +113,7 @@ def test_the_gateway_is_loopback_only(upstream):
 
 
 def test_a_system_proxy_is_told_to_leave_loopback_alone(upstream, monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:8080")
     monkeypatch.setenv("NO_PROXY", "example.com")
     monkeypatch.delenv("no_proxy", raising=False)
     gw.stop_all()
@@ -173,10 +174,19 @@ def test_the_upstream_wait_is_the_rows_not_ten_minutes(upstream):
 @pytest.mark.parametrize("before,after", [("", "127.0.0.1"), ("example.com", "example.com,127.0.0.1"),
                                            ("*", "*"), ("127.0.0.10", "127.0.0.10,127.0.0.1")])
 def test_no_proxy_gets_loopback_as_a_whole_entry_and_a_wildcard_is_left_alone(monkeypatch, before, after):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:8080")
     monkeypatch.setenv("NO_PROXY", before)
     monkeypatch.setenv("no_proxy", before)
     gw._keep_loopback_direct()
     assert __import__("os").environ["NO_PROXY"] == after
+
+
+def test_with_no_system_proxy_the_environment_is_left_alone(monkeypatch):
+    for var in gw._PROXY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("NO_PROXY", "example.com")
+    gw._keep_loopback_direct()
+    assert __import__("os").environ["NO_PROXY"] == "example.com"
 
 
 def test_a_gateway_that_cannot_start_does_not_crash_the_key_check(monkeypatch):
