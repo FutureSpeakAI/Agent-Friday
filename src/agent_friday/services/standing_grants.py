@@ -87,7 +87,7 @@ def maybe_offer(decided_card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         standing_offers.record_offer_raised(fingerprint, tool=pattern.tool)
         _ledger("standing_offer_shown", pattern=fingerprint, tool=pattern.tool)
         return card
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _log.warning("standing offer not raised: %s", exc)
         return None
 
@@ -157,7 +157,7 @@ def cover(tool_name: str, args: Any, ctx: Dict[str, Any], why: str) -> Optional[
         from agent_friday.governance import action_gate
         fingerprint = action_pattern.from_card(card).fingerprint()
         return action_gate._use_grant(tool_name, dict(ctx or {}, grant_scope=scope_of(fingerprint)), args)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _log.warning("standing grant could not be checked, the owner is asked: %s", exc)
         return None
 
