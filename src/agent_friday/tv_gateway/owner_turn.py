@@ -294,6 +294,15 @@ def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
                  "why": "faster for voice; pick another model on this device to use it instead"}
 
 
+def note_served(truth: dict) -> None:
+    """Remember what answered this chat, for GET /tv/v1/conversations/<id>/state. Never touches the turn."""
+    try:
+        from agent_friday.tv_gateway import conversation_state
+        conversation_state.note_served(truth)
+    except Exception:
+        pass
+
+
 def bound_voice(cid: Optional[str]) -> Optional[dict]:
     """The voice a phone or tablet bound to this conversation, or None. A no-op until tv_gateway.voices exists
     (CORE-MODELS fills it); a failure here never touches the turn."""
@@ -401,6 +410,7 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
                       "friday": served({}, requested, cid)})
         return
     truth = served(payload, requested, cid)
+    note_served(truth)
     if dev is not None:
         from agent_friday.tv_gateway import turn
         from agent_friday.tv_gateway.tailnet import via as tailnet_via
