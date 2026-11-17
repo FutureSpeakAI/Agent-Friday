@@ -69,14 +69,39 @@ def device(kind="phone", member="stephen", rights=("pc_read",)):
     return tv
 
 
+def card(kind="send_email"):
+    """A real pending approval card; returns its id."""
+    return ap.create_approval(kind=kind, subject_type="crew", subject_id="c1", title="A card", force_gate=True)["approval_id"]
+
+
 def ask(client, tv, query):
     return client.get("/tv/v1/approvals/slot" + query, headers=auth(open_session(client, tv)))
 
 
 def test_the_answer_is_the_ids_the_desktop_names_and_nothing_else(client, desk):
-    desk.body = json.dumps({"ok": True, "ids": ["a1", "a2"], "title": "SECRET", "subject": "crew:c1"}).encode()
+    first, second = card(), card()
+    desk.body = json.dumps({"ok": True, "ids": [first, second], "title": "SECRET", "subject": "crew:c1"}).encode()
     answer = ask(client, device(), "?subject=crew:crew-3fa9")
-    assert answer.status_code == 200 and answer.get_json() == {"ok": True, "ids": ["a1", "a2"]}
+    assert answer.status_code == 200 and answer.get_json() == {"ok": True, "ids": [first, second]}
+
+
+def test_an_id_this_pc_does_not_hold_as_pending_is_not_passed_on(client, desk):
+    real = card()
+    desk.body = json.dumps({"ok": True, "ids": [real, "appr_notacard1"]}).encode()
+    assert ask(client, device(), "?subject=crew:c1").get_json()["ids"] == [real]
+
+
+def test_a_private_card_is_not_tied_to_a_subject_for_a_device_that_cannot_approve(client, desk):
+    ordinary, private = card(), card("tool_confirm")
+    desk.body = json.dumps({"ok": True, "ids": [ordinary, private]}).encode()
+    assert ask(client, device(), "?subject=crew:c1").get_json()["ids"] == [ordinary]
+
+
+def test_a_device_that_can_approve_sees_the_private_card_too(client, desk, monkeypatch):
+    ordinary, private = card(), card("tool_confirm")
+    desk.body = json.dumps({"ok": True, "ids": [ordinary, private]}).encode()
+    monkeypatch.setattr(device_pairing, "can_approve", lambda dev: True)
+    assert ask(client, device(), "?subject=crew:c1").get_json()["ids"] == [ordinary, private]
 
 
 def test_the_desktop_is_asked_for_exactly_the_subject_and_kind(client, desk):
