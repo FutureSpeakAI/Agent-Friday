@@ -163,7 +163,8 @@ class Refunded:
 
 
 class ProviderStatus(str, Enum):
-    UNKNOWN = "unknown"
+    UNKNOWN = "unknown"          # the provider has never heard of this key: nothing happened
+    UNREACHABLE = "unreachable"  # the provider could not be asked: nothing is known
     RESERVED = "reserved"
     CAPTURED = "captured"
     RELEASED = "released"

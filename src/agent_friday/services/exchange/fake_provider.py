@@ -46,13 +46,17 @@ class Fault(str, Enum):
 
 
 class FakeProvider:
-    def __init__(self, path, signing_seed: bytes, clock: Callable[[], int]):
+    def __init__(self, path, signing_seed: bytes, clock: Callable[[], int], *, synchronous: str = "FULL"):
+        if synchronous not in ("FULL", "NORMAL", "OFF"):
+            raise ValueError("synchronous is FULL, NORMAL or OFF")
+        self._synchronous = synchronous
         self._path = str(path)
         self._clock = clock
         self._key = Ed25519PrivateKey.from_private_bytes(signing_seed)
         self.public_key = self._key.public_key().public_bytes(
             serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
         self._armed: dict[Fault, dict] = {}
+        self._returning: set[str] = set()
         with self._db() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS power (ref TEXT PRIMARY KEY, payer TEXT, currency TEXT, amount INTEGER,
@@ -66,7 +70,7 @@ class FakeProvider:
     @contextlib.contextmanager
     def _db(self):
         db = sqlite3.connect(self._path, timeout=30)
-        db.execute("PRAGMA synchronous=FULL")
+        db.execute(f"PRAGMA synchronous={self._synchronous}")
         try:
             yield db
         finally:
@@ -76,14 +80,20 @@ class FakeProvider:
         return ProviderDescriptor(PROVIDER_ID, True, ("USD",), 1, "provider", True)
 
     def arm(self, fault: Fault, **options) -> None:
-        """Script one fault. OUTAGE takes `until=<clock value>`; the others fire once."""
-        self._armed[Fault(fault)] = options
+        """Script one fault. OUTAGE takes `until=<clock value>`; the others fire once, on the first
+        opportunity or on a later one with `after=<opportunities to let pass>`."""
+        self._armed[Fault(fault)] = dict(options)
 
     def _fires(self, fault: Fault) -> bool:
-        if fault in self._armed:
-            del self._armed[fault]
-            return True
-        return False
+        """True on the opportunity the fault was armed for: the first, or the (after+1)th with `after=n`."""
+        options = self._armed.get(fault)
+        if options is None:
+            return False
+        if options.get("after", 0) > 0:
+            options["after"] -= 1
+            return False
+        del self._armed[fault]
+        return True
 
     def _outage(self) -> bool:
         options = self._armed.get(Fault.OUTAGE)
@@ -243,19 +253,28 @@ class FakeProvider:
         return None if row is None else (json.loads(row[0]), row[1], capture_ref[4:])
 
     def payout(self, key, seller_ref, amount_minor):
+        with self._db() as db:
+            row = db.execute("SELECT status, request FROM ops WHERE key=? AND kind='payout'", (key,)).fetchone()
+            if row and row[0] == ProviderStatus.PAYOUT_RETURNED.value and row[1] == json.dumps(
+                    [seller_ref, amount_minor], sort_keys=True):
+                db.execute("UPDATE ops SET status=? WHERE key=?", (ProviderStatus.PAYOUT_PENDING.value, key))
+                self._events(db, key, ProviderStatus.PAYOUT_PENDING)
+                db.commit()
+
         def effect(db):
             if amount_minor < 1 or db.execute("SELECT COUNT(*) FROM ops WHERE kind='capture'").fetchone()[0] == 0:
                 return Refused(RefusalCode.INVALID)
             result = {"kind": "payout", "key": key, "payout_ref": "pay-" + key, "amount_minor": amount_minor}
             if self._fires(Fault.PAYOUT_RETURNED):
-                self._armed[Fault.PAYOUT_RETURNED] = {"key": key}
+                self._returning.add(key)
             return result, ProviderStatus.PAYOUT_PENDING
         return self._once(key, "payout", [seller_ref, amount_minor], effect)
 
     def settle_payout(self, key: str) -> None:
         """The provider finishes a payout: confirmed, or returned when PAYOUT_RETURNED was armed for it."""
         with self._db() as db:
-            returned = self._armed.get(Fault.PAYOUT_RETURNED, {}).get("key") == key
+            returned = key in self._returning
+            self._returning.discard(key)
             status = ProviderStatus.PAYOUT_RETURNED if returned else ProviderStatus.PAYOUT_CONFIRMED
             db.execute("UPDATE ops SET status=? WHERE key=? AND kind='payout'", (status.value, key))
             self._events(db, key, status)
@@ -282,6 +301,8 @@ class FakeProvider:
         return self._once(key, "refund", [capture_ref, amount_minor, reason], effect)
 
     def lookup(self, key: str) -> ProviderStatus:
+        if self._outage():
+            return ProviderStatus.UNREACHABLE
         with self._db() as db:
             row = db.execute("SELECT status FROM ops WHERE key=?", (key,)).fetchone()
         return ProviderStatus.UNKNOWN if row is None else ProviderStatus(row[0])
