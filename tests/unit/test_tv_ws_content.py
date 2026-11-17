@@ -53,6 +53,8 @@ class Desk:
 def desk(monkeypatch):
     d = Desk()
     monkeypatch.setattr(pc_read, "_desk", d)
+    monkeypatch.setattr(ws_knowledge, "PAGES_TTL_S", 0.0)
+    monkeypatch.setattr(ws_knowledge, "_LIST", {"key": None, "at": 0.0, "rows": []})
     return d
 
 
@@ -203,3 +205,16 @@ def test_a_normal_page_is_not_marked_truncated_and_a_changed_page_is_parsed_agai
     assert get(client, dev, path).get_json()["truncated"] is False
     desk.pages["entities/person-griff-jay.md"] = "# Changed\n\nnew words\n"
     assert get(client, dev, path).get_json()["title"] == "Changed"
+
+
+def test_paging_the_list_scans_the_wiki_once_within_the_ttl_and_again_after_it(client, desk, monkeypatch):
+    monkeypatch.setattr(ws_knowledge, "PAGES_TTL_S", 60.0)
+    clock = [1000.0]
+    monkeypatch.setattr(ws_knowledge.time, "monotonic", lambda: clock[0])
+    dev = paired()
+    for query in ("", "?cursor=40", "?facet.folder=projects"):
+        assert get(client, dev, "/tv/v1/workspaces/knowledge/list" + query).status_code == 200
+    assert [c[0] for c in desk.calls].count("/api/wiki/structure") == 1
+    clock[0] += 61
+    get(client, dev, "/tv/v1/workspaces/knowledge/list")
+    assert [c[0] for c in desk.calls].count("/api/wiki/structure") == 2
