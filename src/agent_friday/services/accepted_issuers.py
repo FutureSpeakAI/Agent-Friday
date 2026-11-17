@@ -23,8 +23,10 @@ Rules and the tests that hold them (tests/unit/test_accepted_issuers.py):
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -34,9 +36,13 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from agent_friday.services import peer_wire_v2 as wire
+from agent_friday.services.issuer_journal import AuthorityHeld, exclusive_lock
 from agent_friday.services.issuer_registry import IssuerRef
 
 LIST_PREFIX = b"asimov-accepted-issuers/v1" + bytes([0])
+MARK_PREFIX = b"asimov-accepted-issuers-mark/v1" + bytes([0])
+MARK_SUFFIX = ".mark"
+LOCK_SUFFIX = ".lock"
 ACCEPTED_BY = "owner:press"
 
 
@@ -71,31 +77,83 @@ def named_issuer(raw: bytes) -> str | None:
 
 
 class AcceptedIssuers:
+    """The owner's signed list. Each write carries a version, and the highest version this PC has written is kept,
+    signed, beside the list (`<list>.mark`). A list older than the mark reads as empty, so a withdrawn issuer cannot come
+    back because an older, validly signed copy was restored; a mark that does not verify reads as empty too. The limit,
+    stated plainly: someone who can delete BOTH files can put back an old list, because nothing outside the files
+    remembers the version. Accept and withdraw are read-modify-write under one OS lock, so threads and processes both take turns."""
+
     def __init__(self, path, sign: Callable[[bytes], str], public_key: str):
         self._path = Path(path)
         self._sign = sign
         self._public_key = public_key
 
-    def _read(self) -> list:
+    @contextlib.contextmanager
+    def _locked(self):
+        """One writer at a time, in this process or another: an OS lock on `<list>.lock`, waited for."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.ExitStack() as held:
+            for _ in range(1000):
+                try:
+                    held.enter_context(exclusive_lock(str(self._path) + LOCK_SUFFIX))
+                    break
+                except AuthorityHeld:
+                    time.sleep(0.01)
+            else:
+                raise RuntimeError("the accepted-issuers list is locked by another writer")
+            yield
+
+    def _verify(self, prefix: bytes, body: dict, signature: str) -> None:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(self._public_key)).verify(
+            bytes.fromhex(signature), prefix + wire.canonical(body))
+
+    def _mark(self) -> int:
+        """The highest version written here: 0 when there has never been a write, -1 when the mark cannot be trusted."""
+        mark = Path(str(self._path) + MARK_SUFFIX)
+        if not mark.exists():
+            return 0
+        try:
+            doc = json.loads(mark.read_text(encoding="ascii"))
+            version = doc["version"]
+            if type(version) is not int or version < 0:
+                return -1
+            self._verify(MARK_PREFIX, {"version": version}, doc["signature"])
+            return version
+        except (OSError, ValueError, KeyError, TypeError, InvalidSignature, wire.WireError):
+            return -1
+
+    def _read_versioned(self) -> tuple:
         try:
             doc = json.loads(self._path.read_text(encoding="ascii"))
-            entries, signature = doc["entries"], doc["signature"]
-            body = wire.canonical({"entries": entries})
-            Ed25519PublicKey.from_public_bytes(bytes.fromhex(self._public_key)).verify(
-                bytes.fromhex(signature), LIST_PREFIX + body)
-            return entries
+            entries, version = doc["entries"], doc["version"]
+            if type(version) is not int or version < 1:
+                return [], 0
+            self._verify(LIST_PREFIX, {"entries": entries, "version": version}, doc["signature"])
         except (OSError, ValueError, KeyError, TypeError, InvalidSignature, wire.WireError):
-            return []
+            return [], 0
+        mark = self._mark()
+        if mark < 0 or version < mark:
+            return [], 0                    # rolled back, or a mark that cannot be trusted: nothing is accepted
+        return entries, version
 
-    def _write(self, entries: list) -> None:
-        body = wire.canonical({"entries": entries})
-        signature = self._sign(LIST_PREFIX + body)
-        if not signature:
+    def _read(self) -> list:
+        return self._read_versioned()[0]
+
+    def _write(self, entries: list, version: int) -> None:
+        body = {"entries": entries, "version": version}
+        signature = self._sign(LIST_PREFIX + wire.canonical(body))
+        mark_signature = self._sign(MARK_PREFIX + wire.canonical({"version": version}))
+        if not signature or not mark_signature:
             raise RuntimeError("the list could not be signed")
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        # the list first, then the mark: a stop between them leaves a list at or above the mark, never below it
         temp = self._path.with_suffix(".tmp")
-        temp.write_text(json.dumps({"entries": entries, "signature": signature}, sort_keys=True), encoding="ascii")
+        temp.write_text(json.dumps({**body, "signature": signature}, sort_keys=True), encoding="ascii")
         os.replace(temp, self._path)
+        mark = Path(str(self._path) + MARK_SUFFIX)
+        mark_temp = mark.with_suffix(".marktmp")
+        mark_temp.write_text(json.dumps({"version": version, "signature": mark_signature}, sort_keys=True), encoding="ascii")
+        os.replace(mark_temp, mark)
 
     def refs(self) -> list:
         return [IssuerRef(e["issuer_id"], e["charter_digest"], e["unit_code"]) for e in self._read()]
@@ -109,24 +167,26 @@ class AcceptedIssuers:
     def accept(self, ref: IssuerRef, press, accepted_at: int) -> AcceptOutcome:
         if not isinstance(press, Press):
             return AcceptOutcome.PRESS_REQUIRED
-        entries = self._read()
-        for entry in entries:
-            if entry["issuer_id"] == ref.issuer_id:
-                same = entry["charter_digest"] == ref.charter_digest and entry["unit_code"] == ref.unit_code
-                return AcceptOutcome.ALREADY if same else AcceptOutcome.OTHER_CHARTER
-        entries.append({"issuer_id": ref.issuer_id, "charter_digest": ref.charter_digest,
-                        "unit_code": ref.unit_code, "accepted_by": ACCEPTED_BY, "accepted_at": accepted_at})
-        try:
-            self._write(entries)
-        except (RuntimeError, OSError):
-            return AcceptOutcome.CANNOT_SIGN        # nothing was written: the list stays as it was
-        return AcceptOutcome.ACCEPTED
+        with self._locked():
+            entries, version = self._read_versioned()
+            for entry in entries:
+                if entry["issuer_id"] == ref.issuer_id:
+                    same = entry["charter_digest"] == ref.charter_digest and entry["unit_code"] == ref.unit_code
+                    return AcceptOutcome.ALREADY if same else AcceptOutcome.OTHER_CHARTER
+            entries.append({"issuer_id": ref.issuer_id, "charter_digest": ref.charter_digest,
+                            "unit_code": ref.unit_code, "accepted_by": ACCEPTED_BY, "accepted_at": accepted_at})
+            try:
+                self._write(entries, max(version, self._mark()) + 1)
+            except (RuntimeError, OSError):
+                return AcceptOutcome.CANNOT_SIGN        # nothing was written: the list stays as it was
+            return AcceptOutcome.ACCEPTED
 
     def withdraw(self, issuer_id: str) -> bool:
         """Removes an issuer. No press: withdrawing only takes trust away."""
-        entries = self._read()
-        kept = [e for e in entries if e["issuer_id"] != issuer_id]
-        if len(kept) == len(entries):
-            return False
-        self._write(kept)
-        return True
+        with self._locked():
+            entries, version = self._read_versioned()
+            kept = [e for e in entries if e["issuer_id"] != issuer_id]
+            if len(kept) == len(entries):
+                return False
+            self._write(kept, max(version, self._mark()) + 1)
+            return True

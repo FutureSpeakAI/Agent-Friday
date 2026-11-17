@@ -144,6 +144,19 @@ def test_two_threads_accepting_different_issuers_lose_neither(tmp_path):
     assert lost == []
 
 
+def test_two_processes_accepting_different_issuers_lose_neither(tmp_path):
+    """The lock works across processes, not only threads: each process accepts its own issuer into 40 lists at once."""
+    import os
+    import subprocess
+    import sys
+    worker = Path(__file__).with_name("accepted_issuers_worker.py")
+    env = {**os.environ, "PYTHONPATH": str(SOURCE)}
+    procs = [subprocess.Popen([sys.executable, str(worker), who, str(tmp_path)], env=env) for who in ("a", "b")]
+    assert [p.wait(timeout=180) for p in procs] == [0, 0]
+    lost = [n for n in range(40) if {r.issuer_id for r in store(tmp_path, f"p{n}.json").refs()} != {"test.one", "test.two"}]
+    assert lost == []
+
+
 def offer(issuer):
     return wire.canonical({"body": {"payload": {"terms": {"issuer": issuer}}}, "signature": "x"})
 
