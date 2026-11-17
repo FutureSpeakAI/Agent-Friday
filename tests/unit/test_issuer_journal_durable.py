@@ -272,3 +272,13 @@ def test_every_short_sequence_keeps_supply_sequence_and_replay(tmp_path):
                 assert [r[0] for r in db.execute("SELECT seq FROM journal_effects ORDER BY seq")] == list(
                     range(1, posted + 1))
     assert count == 6 + 36 + 216
+
+
+def test_a_closed_journal_leaves_a_complete_file_behind(tmp_path):
+    path = tmp_path / "j.sqlite"
+    journal = make(path)
+    journal.execute(cmd("e1", treasury=-5, alice=5))
+    del journal
+    copy = tmp_path / "copy.sqlite"
+    copy.write_bytes(path.read_bytes())
+    assert make(copy).balances() == {"treasury": 95, "alice": 5}

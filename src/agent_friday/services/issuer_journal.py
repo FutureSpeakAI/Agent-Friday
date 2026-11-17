@@ -171,7 +171,7 @@ class IssuerJournal:
         self._lock = threading.Lock()
         self._point = lambda name: None
         self.halted: str | None = None
-        with self._connect() as db:
+        with contextlib.closing(self._connect()) as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS journal_meta (issuer TEXT PRIMARY KEY, supply INTEGER NOT NULL);
@@ -209,6 +209,7 @@ class IssuerJournal:
                 db.execute("UPDATE journal_meta SET treasury=? WHERE issuer=? AND treasury IS NULL",
                            (treasury, issuer))
             self._backfill(db)
+            db.commit()
         self.recover()
 
     @staticmethod
