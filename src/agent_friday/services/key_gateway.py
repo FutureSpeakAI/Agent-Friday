@@ -250,6 +250,7 @@ def descriptor_url(prov: dict) -> Optional[str]:
     shape = _auth_shape(prov)
     if (prov.get("auth") or {}).get("type", "env_var") != "env_var" or not shape or not _is_cloud_endpoint(base_url):
         return None
+    _keep_loopback_direct()
     header, key_format = shape
     parts = urlsplit(base_url)
     origin = "%s://%s" % (parts.scheme, parts.netloc)
