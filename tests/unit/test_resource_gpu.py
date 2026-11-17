@@ -89,3 +89,22 @@ def test_a_real_read_of_this_machines_card_is_an_estimate_or_unavailable():
     vector = m.stop(m.start())
     for reading in (vector.peak_device_memory_bytes, vector.gpu_active_ms):
         assert isinstance(reading, (rv.Estimated, rv.Unavailable))
+
+
+# ── second-review notes (PR #917), written red first ───────────────────────────────────────────────
+
+def test_the_basis_gives_the_real_span_not_the_configured_interval():
+    vector = meter(interval=0.25).vector([(0.0, 1000, 10), (0.7, 4000, 50), (1.5, 3000, 100)])
+    for reading in (vector.peak_device_memory_bytes, vector.gpu_active_ms):
+        assert "1500 ms" in reading.basis and "250 ms apart" not in reading.basis, reading.basis
+
+
+def test_the_basis_names_the_card_that_was_read_and_the_load_the_sampling_puts_on_it():
+    rows = iter([{"index": 1, "name": "Test Card X", "used_mib": 100, "util_pct": 20},
+                 {"index": 1, "name": "Test Card X", "used_mib": 900, "util_pct": 80}])
+    m = gpu.GpuSampleMeter(reader=lambda: next(rows, None), interval_s=0.01)
+    vector = m.stop(m.start())
+    for reading in (vector.peak_device_memory_bytes, vector.gpu_active_ms):
+        if isinstance(reading, rv.Estimated):
+            assert "Test Card X" in reading.basis and "card 1" in reading.basis, reading.basis
+            assert "nvidia-smi afresh" in reading.basis, "each sample is a call that loads the machine being measured"
