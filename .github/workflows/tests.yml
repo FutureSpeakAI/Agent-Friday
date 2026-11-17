@@ -192,6 +192,8 @@ jobs:
           calendar_freebusy.spec.ts calendar_rsvp.spec.ts calendar_delete.spec.ts
           activity_never_collapses.spec.ts connect_services.spec.ts laya_settings.spec.ts
           posting_screens.spec.ts three_d_off.spec.ts accessibility_keyboard.spec.ts accessibility_audit.spec.ts target_size.spec.ts text_size.spec.ts
+          gallery.spec.ts hand_cursor_registry.spec.ts knowledge_reader_unreachable.spec.ts
+          photosensitivity.spec.ts readability.spec.ts task_liveness.spec.ts vision.spec.ts
       # The run's output folder, uploaded on success as well as failure: it holds
       # the Settings walk table, failure traces, and the screenshots specs save
       # for a person to look at (posting_screens.spec.ts: posting-*.png).
