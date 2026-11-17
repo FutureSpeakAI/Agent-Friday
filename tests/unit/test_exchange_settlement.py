@@ -639,6 +639,28 @@ def test_a_refunded_fills_principal_no_longer_counts_toward_the_fee_check(env_fa
     assert env.drive("f2") is st.State.PAYOUT_CONFIRMED and env.settlement.fee_charged("f2") == 13
 
 
+def test_a_refunded_fills_fee_no_longer_counts_toward_the_fee_check(env_factory):
+    """S-13, the refunded half: f1 is paid out, returned, held and refunded; f2, planned as if first, completes."""
+    env = env_factory()
+    env.provider.fund("bp-1", "buyer-1", "USD", 20_000, contract.LATER)
+    for fill_id in ("f1", "f2"):
+        env.open_retry(fill_id, principal=5000, fee=13, units=50)
+    assert env.drive("f1") is st.State.PAYOUT_CONFIRMED
+    env.provider.return_payout("x1/f1/payout/once")
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.refund("f1", press=PRESS) is st.State.REFUNDED
+    assert env.drive("f2") is st.State.PAYOUT_CONFIRMED and env.settlement.fee_charged("f2") == 13
+
+
+def test_cash_can_only_be_reserved_after_the_p_is_held_and_captured_only_after_that():
+    """S-9 by structure: the table gives no way to MATCHED except through P_HELD, and none to a capture except from MATCHED."""
+    into = lambda target: sorted(s.value for s in st.State if target in st.TRANSITIONS[s])
+    assert into(st.State.P_HELD) == ["intent"]
+    assert into(st.State.MATCHED) == ["p-held"]
+    assert into(st.State.CAPTURE_REQUESTED) == ["matched"]
+    assert st.TRANSITIONS[st.State.INTENT] == {st.State.P_HELD, st.State.REFUSED}
+
+
 def test_the_fee_is_charged_at_one_place_only():
     source = SETTLEMENT.read_text(encoding="utf-8")
     tree = ast.parse(source)
