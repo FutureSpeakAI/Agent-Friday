@@ -13,6 +13,7 @@ from tests.unit.test_model_slate import CAT
 @pytest.fixture(autouse=True)
 def _clean(tmp_path, monkeypatch):
     monkeypatch.setattr(seat_timing, "_path", lambda: tmp_path / "seat_load_times.json")
+    monkeypatch.setattr(ms, "_benchmark", lambda mid: None)
     seat_timing._forget_memory_only()
     yield tmp_path
     seat_timing._forget_memory_only()

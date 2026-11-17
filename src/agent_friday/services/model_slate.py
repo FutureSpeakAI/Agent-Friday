@@ -100,6 +100,20 @@ def _blocked(m: dict, mode: str):
     return None
 
 
+def _benchmark(model_id) -> Optional[dict]:
+    """The newest benchmark of this model on THIS PC's hardware (VRAM, speed, cold load), or None."""
+    try:
+        from agent_friday.services import hardware_profile as hwp
+        from agent_friday.services import residency_catalog as rc
+        rows = rc.measurements(str(model_id), rc.profile_fingerprint(hwp.get()))
+        row = max(rows, key=lambda m: str(m.get("measured_at") or ""))
+    except Exception:
+        return None
+    return {"num_ctx": row.get("num_ctx"), "vram_mib": row.get("vram_mib"),
+            "tokens_per_second": row.get("tok_s_median"), "cold_load_seconds": row.get("cold_load_s"),
+            "measured_at": row.get("measured_at"), "basis": "benchmarked on this PC's hardware, not declared"}
+
+
 def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
     """What picking this model costs the first time: nothing for a cloud model or a resident seat; for a cold
     local seat the last measured load on this PC (None when it has not loaded since timing began)."""
@@ -112,8 +126,13 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
         secs = seat_timing.last_load_seconds(model_id)
     except Exception:
         secs = None
-    return {"cold": True, "expected_seconds": secs,
-            "basis": "last load measured on this PC" if secs is not None else "not loaded on this PC yet"}
+    if secs is not None:
+        return {"cold": True, "expected_seconds": secs, "basis": "last load measured on this PC"}
+    bench = _benchmark(model_id) or {}
+    if bench.get("cold_load_seconds"):
+        return {"cold": True, "expected_seconds": bench["cold_load_seconds"],
+                "basis": "benchmarked on this PC's hardware on %s" % bench.get("measured_at")}
+    return {"cold": True, "expected_seconds": None, "basis": "not loaded on this PC yet"}
 
 
 def _measured(model_id) -> Optional[dict]:
@@ -143,6 +162,7 @@ def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
     }
     out["switch"] = _switch_cost(m.get("id"), local, out["warm"])
     out["measured"] = _measured(m.get("id"))
+    out["benchmark"] = _benchmark(m.get("id")) if local else None
     why = _blocked(m, mode)
     out["can_serve"] = why is None
     out["blocked"] = ({"code": why[0], "reason": why[1]} if why else None)

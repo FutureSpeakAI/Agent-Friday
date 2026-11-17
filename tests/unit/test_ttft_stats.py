@@ -12,6 +12,7 @@ from tests.unit.test_model_slate import CAT
 @pytest.fixture(autouse=True)
 def _own_file(tmp_path, monkeypatch):
     monkeypatch.setattr(ttft_stats, "_path", lambda: tmp_path / "first_token_times.json")
+    monkeypatch.setattr(ms, "_benchmark", lambda mid: None)
     ttft_stats._forget_memory_only()
     yield
     ttft_stats._forget_memory_only()
