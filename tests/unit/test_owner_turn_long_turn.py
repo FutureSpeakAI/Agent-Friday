@@ -59,3 +59,38 @@ def test_a_turn_past_the_longest_wait_is_ended_with_a_plain_reason(client, wire,
 def test_words_that_arrived_before_an_early_close_are_delivered(client, wire):
     wire([{"started": True}, {"delta": "Good morning. Two meetings today."}])
     assert spoken(ask(client, phone())) == "Good morning. Two meetings today."
+
+
+class FakeDesktopTurn:
+    """A desktop turn that hands over frames one by one (what _DesktopTurn.frames does)."""
+
+    def __init__(self, frames):
+        self.frames_to_send = frames
+
+    def frames(self, idle_s=None):
+        yield from self.frames_to_send
+
+
+def test_a_phone_that_drops_the_connection_mid_turn_is_logged(caplog):
+    """The likeliest way a long turn loses its reply: the next write raises GeneratorExit and nothing was logged."""
+    import logging
+    stream = owner_turn._stream(FakeDesktopTurn([*TOOLS, DONE]))
+    for _ in range(4):
+        next(stream)                      # message_start, content_block_start, the first pings
+    with caplog.at_level(logging.INFO, logger=owner_turn.__name__):
+        stream.close()                    # the phone went away
+    assert any("ended=disconnected" in record.getMessage() for record in caplog.records)
+
+
+def test_every_finished_turn_writes_one_line_saying_how_it_ended(client, wire, caplog):
+    import logging
+    wire([{"started": True}, *TOOLS, DONE])
+    with caplog.at_level(logging.INFO, logger=owner_turn.__name__):
+        ask(client, phone()).get_data()
+    lines = [r.getMessage() for r in caplog.records if "owner turn finished" in r.getMessage()]
+    assert len(lines) == 1 and "ended=done" in lines[0] and "tools=4" in lines[0]
+
+
+def test_a_voice_answer_that_is_only_code_is_still_sent(client, wire):
+    wire([{"done": True, "payload": {"response": "```\nprint('hi')\n```", "model": "m", "seat": "local"}}])
+    assert spoken(ask(client, phone(), voice=True)).strip() != ""
