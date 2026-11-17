@@ -23,7 +23,11 @@ from agent_friday.services import device_pairing
 from agent_friday.tv_gateway import app as gateway
 from agent_friday.tv_gateway import household, pc_read
 from tests.unit.test_tv_gateway import auth, open_session
-from tests.unit.test_tv_pc_read import _clean, client, get, paired  # noqa: F401  (fixtures and helpers)
+from tests.unit import test_tv_pc_read as shared
+from tests.unit.test_tv_pc_read import get, paired
+
+client = shared.client
+_clean = shared._clean
 
 
 class Desk:
