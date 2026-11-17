@@ -125,6 +125,8 @@ def register(app: Flask) -> None:
     pc_act_media.register(app)
     from agent_friday.tv_gateway import pc_wiki
     pc_wiki.register(app)
+    from agent_friday.tv_gateway import pc_userws
+    pc_userws.register(app)
     @app.get("/tv/v1/jobs/<jid>/steps")
     def pc_job_steps(jid):
         denied = pc_read._guard("jobs")
