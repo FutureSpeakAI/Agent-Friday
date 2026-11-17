@@ -177,5 +177,5 @@ def test_only_an_owner_phone_or_tablet_with_the_right_may_read_people(client, de
 
 def test_a_record_whose_key_could_not_be_a_ref_is_left_out_not_sent_broken(client, desk):
     desk.people["Bad/Key"] = {"name": "Bad Key", "aliases": []}
-    desk.people["Back\Slash"] = {"name": "Back Slash", "aliases": []}
+    desk.people["Back" + chr(92) + "Slash"] = {"name": "Back Slash", "aliases": []}
     assert [r["title"] for r in ask(client, "list?section=people").get_json()["rows"]] == ["Griff Jay", "Jere Jay", "No Date"]

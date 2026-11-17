@@ -7,14 +7,13 @@ leave the PC. tests/unit/test_tv_ws_people.py holds the rules.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import threading
 import time
 from typing import Optional
 
 from agent_friday.tv_gateway import ws_blocks, ws_knowledge
-from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable, desk_json
+from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable, desk_json, digest as _digest
 
 PREFIX = "person:"
 KIND = "person"
@@ -41,10 +40,6 @@ def _people() -> dict:
     with _LOCK:
         _KEPT.update(at=time.monotonic(), people=people)
     return people
-
-
-def _digest(*parts) -> str:
-    return hashlib.sha256("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:10]
 
 
 def _when(person: dict) -> Optional[str]:

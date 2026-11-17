@@ -7,14 +7,13 @@ never leave, only how many people are invited. tests/unit/test_tv_ws_calendar.py
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from datetime import date, datetime, timedelta
 from typing import Optional
 from urllib.parse import quote
 
 from agent_friday.tv_gateway import ws_blocks
-from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable, desk_json
+from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable, desk_json, digest as _digest
 
 PREFIX = "event:"
 KIND = "event"
@@ -86,10 +85,6 @@ def facets(rows: list[dict]) -> list[dict]:
         day = FACETS["day"](r)
         counts[day] = counts.get(day, 0) + 1
     return [{"name": "day", "values": [{"v": k, "n": n} for k, n in sorted(counts.items())]}]
-
-
-def _digest(*parts) -> str:
-    return hashlib.sha256("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:10]
 
 
 def rev(rows: list[dict]) -> str:
