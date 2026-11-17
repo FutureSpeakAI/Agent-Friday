@@ -24,7 +24,7 @@ def history(starts=(10, 50)):
 
 def head(seq, generation, signer=None, issuer="test.one", digest=None):
     signer = signer or KEYS[generation]
-    h = auth.Head(issuer, digest or reg.charter_digest(charter()), generation, seq, "a" * 64, "0" * 64)
+    h = auth.Head(issuer, digest or reg.charter_digest(charter()), generation, seq, "a" * 64, "b" * 64, "0" * 64)
     raw = h.canonical_bytes()
     return raw, signer.sign(auth.HEAD_PREFIX + raw)
 
@@ -92,3 +92,12 @@ def test_a_broken_history_stops_every_head_from_verifying():
     records = history()
     with pytest.raises(chain.ChainError):
         chain.verify_head(*head(12, 1), charter(), [records[0], records[2]])
+
+
+# ── second-review note (PR #915): generation 0 must start at sequence 1, written red first ───────────
+
+def test_generation_zero_must_start_at_sequence_one():
+    early = [chain.AuthorityRecord(0, KEYS[0].public_key, 5, "genesis")]
+    with pytest.raises(chain.ChainError):
+        chain.verify_authority_chain(charter(), early)
+    assert chain.verify_authority_chain(charter(), [chain.genesis(charter())])
