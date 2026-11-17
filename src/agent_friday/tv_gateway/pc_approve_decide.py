@@ -229,7 +229,12 @@ def register(app: Flask) -> None:
         if not isinstance(ids, list) or len(ids) > SLOT_MAX_IDS or not all(
                 isinstance(i, str) and SLOT_ID.match(i) for i in ids):
             return refuse(503, "the PC could not check that right now", code="pc_unavailable")
-        return jsonify({"ok": True, "ids": ids})
+        # Only cards this PC still holds as pending, and never a private-detail card for a device that cannot approve:
+        # the list shows such a card as a generic title with no subject, and the slot must not tie it to a guessed subject.
+        pending = {rec.get("approval_id"): rec for rec in approvals.list_approvals(status="pending")}
+        may_see_private = device_pairing.can_approve(g.device)
+        shown = [i for i in ids if i in pending and (may_see_private or pending[i].get("kind") not in approvals.PRIVATE_DETAIL_KINDS)]
+        return jsonify({"ok": True, "ids": shown})
 
     @app.get("/tv/v1/approvals/events")
     def pc_approvals_events():
