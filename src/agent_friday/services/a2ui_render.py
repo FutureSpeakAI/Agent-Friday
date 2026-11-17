@@ -202,7 +202,8 @@ def render(messages, ctx: Context, *, data: dict | None = None,
         by_id = {c["id"]: c for c in doc["components"]}
         actions: dict = {}
         tree = [_build("root", by_id, model, {}, ctx, pending_approvals, actions)]
-    except ProfileError as e:
+    except (ProfileError, *prof.MALFORMED) as caught:
+        e = caught if isinstance(caught, ProfileError) else ProfileError("V1", "the view could not be drawn")
         receipt = {"rule": e.rule, "detail": e.detail, "subject": ctx.subject, "authorship": ctx.authorship}
         if receipt_sink:
             receipt_sink(receipt)
