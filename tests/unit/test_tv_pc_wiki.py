@@ -229,3 +229,51 @@ def test_every_desktop_path_the_wiki_routes_call_is_still_a_desktop_route():
     declared = set(re.findall(r"route\(\s*[\"'](/api/[^\"']+)[\"']", src))
     for path in ("/api/wiki/page", "/api/wiki/update", "/api/wiki/edit"):
         assert path in declared, path
+
+
+def test_the_rev_returned_by_a_save_is_the_rev_of_what_was_written(client, wiki):
+    page(wiki, "people/jere.md", JERE)
+    tv = device()
+    saved = call(client, tv, "PUT", "/tv/v1/wiki/page/people/jere.md", {"base_rev": rev_of(JERE), "markdown": "no newline at the end"})
+    assert saved.status_code == 200
+    assert saved.get_json()["rev"] == call(client, tv, "GET", "/tv/v1/wiki/source/people/jere.md").get_json()["rev"]
+
+
+def test_the_rev_does_not_come_from_a_second_read_that_another_writer_could_change(client, wiki, monkeypatch):
+    page(wiki, "people/jere.md", JERE)
+    real_read = pc_wiki._read_page
+    reads = []
+
+    def read_then_someone_else_writes(ref):
+        reads.append(ref)
+        answer = real_read(ref)
+        if len(reads) == 2:
+            pytest.fail("the rev must not come from a second read")
+        return answer
+    monkeypatch.setattr(pc_wiki, "_read_page", read_then_someone_else_writes)
+    saved = call(client, device(), "PUT", "/tv/v1/wiki/page/people/jere.md", {"base_rev": rev_of(JERE), "markdown": "new\n"})
+    assert saved.status_code == 200 and len(reads) == 1
+
+
+def test_a_page_removed_during_a_conflict_is_reported_as_removed(client, wiki, monkeypatch):
+    path = page(wiki, "people/jere.md", "# Jere\nChanged.\n")
+
+    def remove_then_stale(method, route, body):
+        path.unlink()
+        return 409, {}
+    monkeypatch.setattr(pc_wiki, "_desk_send", remove_then_stale)
+    answer = call(client, device(), "PUT", "/tv/v1/wiki/page/people/jere.md", {"base_rev": rev_of(JERE), "markdown": "mine\n"})
+    assert answer.status_code == 404 and answer.get_json()["code"] == "no_page"
+
+
+def test_an_empty_save_is_refused(client, wiki):
+    path = page(wiki, "people/jere.md", JERE)
+    answer = call(client, device(), "PUT", "/tv/v1/wiki/page/people/jere.md", {"base_rev": rev_of(JERE), "markdown": "  \n"})
+    assert answer.status_code == 400 and answer.get_json()["code"] == "empty_page"
+    assert path.read_text(encoding="utf-8") == JERE
+
+
+def test_a_title_with_line_breaks_stays_one_heading_line(client, wiki):
+    made = call(client, device(), "POST", "/tv/v1/wiki/page", {"path": "garden/x.md", "title": "Two\nlines", "markdown": "Body"})
+    assert made.status_code == 200
+    assert (wiki / "garden" / "x.md").read_text(encoding="utf-8").startswith("# Two lines\n")

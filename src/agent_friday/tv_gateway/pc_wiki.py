@@ -3,7 +3,8 @@
 
 Who: an owner-bound phone or tablet that holds ``pc_act`` (the job routes' guard). What:
 * ``GET  /tv/v1/wiki/source/<ref>``: the page's Markdown and its ``rev`` (the desktop's own ``before_sha256``: SHA-256 of
-  the text with LF line endings, so a phone can recompute it from what it shows);
+  the text with LF line endings). A phone sends back the rev it was given and never recomputes it: editors normalise
+  text, and the PC compares its own hash;
 * ``PUT  /tv/v1/wiki/page/<ref>`` ``{base_rev, markdown}``: replaces the page through the desktop's wiki write path,
   which refuses (409 ``stale``) when the page no longer hashes to ``base_rev``; the phone then gets ``409 conflict`` with
   the PC's current text and rev and chooses (keep mine, keep the PC's, save mine as a copy). Nothing is merged or
@@ -117,6 +118,8 @@ def register(app: Flask) -> None:
             return refuse(400, "not a wiki page path", code="bad_ref")
         if not (isinstance(base_rev, str) and REV.match(base_rev)) or markdown is None:
             return refuse(400, "send {base_rev, markdown}", code="bad_request")
+        if not markdown.strip():
+            return refuse(400, "an empty page is not saved; delete the page instead", code="empty_page")
         try:
             status, page = _read_page(ref)
             if status == 404:
@@ -128,11 +131,16 @@ def register(app: Flask) -> None:
             code, _ = _desk_send("POST", "/api/wiki/update", {"file": ref, "new_value": markdown,
                                                               "mode": "replace_file", "before_sha256": base_rev})
             if code == 409:
-                _, current = _read_page(ref)
+                current_status, current = _read_page(ref)
                 _receipt("wiki_save", ref, 409)
-                theirs = current or page
+                if current_status == 404:
+                    return refuse(404, "this page was removed on the PC", code="no_page")
+                if current is None:
+                    return refuse(503, "the PC could not do that right now", code="pc_unavailable")
+                if current["locked"]:
+                    return refuse(409, "this page is encrypted and the vault is locked on the PC", code="locked")
                 shaped = jsonify({"ok": False, "error": "the page changed on the PC since you opened it",
-                                  "code": "conflict", "current": {"markdown": theirs["markdown"], "rev": theirs["rev"]}})
+                                  "code": "conflict", "current": {"markdown": current["markdown"], "rev": current["rev"]}})
                 shaped.status_code = 409
                 return shaped
         except Exception as error:
@@ -142,11 +150,9 @@ def register(app: Flask) -> None:
             return refuse(503, "the PC could not do that right now", code="pc_unavailable")
         if code >= 300:
             return refuse(400, "the PC did not accept that page", code="not_saved")
-        try:
-            _, after = _read_page(ref)
-        except Exception:
-            after = None
-        return jsonify({"ok": True, "ref": ref, "rev": (after or {}).get("rev") or _rev(markdown)})
+        # The rev of exactly what was written (the desktop ends a page with one newline), not of a second read: another
+        # writer could change the page between the two, and the phone would then hold that writer's rev as its own.
+        return jsonify({"ok": True, "ref": ref, "rev": _rev(markdown if markdown.endswith("\n") else markdown + "\n")})
 
     @app.post("/tv/v1/wiki/page")
     def pc_wiki_create():
@@ -158,7 +164,7 @@ def register(app: Flask) -> None:
         if not valid_ref(path) or markdown is None or not (isinstance(title, str) and 0 < len(title.strip()) <= MAX_TITLE):
             return refuse(400, "send {path, title, markdown}", code="bad_request")
         if not markdown.lstrip().startswith("#"):
-            markdown = "# %s\n\n%s" % (title.strip(), markdown)
+            markdown = "# %s\n\n%s" % (" ".join(title.split()), markdown)
         try:
             code, _ = _desk_send("PUT", "/api/wiki/edit", {"file": path, "content": markdown, "create": True})
         except Exception as error:
