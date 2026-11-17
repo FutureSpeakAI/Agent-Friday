@@ -155,15 +155,14 @@ def register(app: Flask) -> None:
         if entry is None or reg.is_held(entry):
             return _refuse(404, "this PC has no workspace called %r" % ws, code="unknown_workspace",
                            known=[w["id"] for w in reg.workspaces()])
-        out = {"ok": True, "as_of": int(time.time()), "workspace": _ws_entry(entry)}
+        from agent_friday.services import laya_manifests as lm
         try:
-            from agent_friday.services import laya_manifests as lm
-            out["verbs"] = [{"id": v.get("id"), "label": v.get("label") or v.get("name"),
-                             "kind": v.get("kind") or v.get("risk")} for v in lm.verbs(ws) if isinstance(v, dict)]
-            out["actions_here"] = False                  # a device cannot run a verb until pc_act exists
-        except Exception:
-            out["verbs"] = []
-        return jsonify(out)
+            detail = _ws_detail(lm, ws)
+        except Exception as e:
+            _log.warning("pc_read workspace failed: %s", type(e).__name__)
+            return _refuse(503, "the PC could not read that workspace right now", code="pc_unavailable")
+        return jsonify({"ok": True, "as_of": int(time.time()), "workspace": _ws_entry(entry),
+                        "actions_here": False, **detail})
 
     # ── 3. jobs and their journals ──────────────────────────────────────────
     @app.get("/tv/v1/jobs")
@@ -238,6 +237,23 @@ def register(app: Flask) -> None:
         if len(body) > MAX_PREVIEW:
             return _refuse(413, "that preview is too big for a phone", code="too_big")
         return Response(body, mimetype=ctype.split(";")[0])
+
+
+def _ws_detail(lm, ws: str) -> dict:
+    """What the phone draws a workspace from, read from the workspace's Laya manifest."""
+    return {
+        "verbs": [_verb_entry(v) for v in lm.verbs(ws)],
+        "objects": [{"kind": o.get("kind"), "noun": o.get("noun")} for o in lm.objects(ws)],
+        "jobs": [{"id": j.get("id"), "label": j.get("activity_label") or j.get("id")} for j in lm.jobs(ws)],
+        "owner_only": [{"action": n.get("action"), "why": n.get("reason")}
+                       for n in lm.not_for_laya(ws) if n.get("kind") == "by_design"],
+    }
+
+
+def _verb_entry(v: dict) -> dict:
+    gate = v.get("gate") or {}
+    return {"id": v.get("id"), "label": (v.get("ui") or {}).get("control") or v.get("id"), "group": v.get("group"),
+            "gate_class": gate.get("class") or "outward", "card": gate.get("card") or "required"}
 
 
 def _ws_entry(w: dict) -> dict:
