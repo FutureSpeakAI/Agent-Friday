@@ -1611,8 +1611,8 @@ def _check_cloud_voice_switch(new_settings):
         return _lvr_g.gate_settings_write(new_settings)
     except Exception:
         # Fail CLOSED: a gate that cannot run must not let voice move to the cloud unasked.
-        eng = str((new_settings or {}).get("voice_engine") or "").strip().lower() if isinstance(new_settings, dict) else ""
-        if eng in ("gemini", "gemini-live", "openai"):
+        from agent_friday.services.voice_engines import is_cloud
+        if isinstance(new_settings, dict) and is_cloud(new_settings.get("voice_engine")):
             return {"http": 409, "body": {"status": "error",
                                           "message": "Cloud voice could not be asked about just now, so nothing "
                                                      "was changed. Try again in Settings, Voice."}}
