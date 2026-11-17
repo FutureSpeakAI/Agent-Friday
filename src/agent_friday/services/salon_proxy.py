@@ -227,7 +227,7 @@ class KeyProxy:
             h.send_header("Connection", "close")
             h.end_headers()
             while True:
-                chunk = resp.read(_CHUNK)
+                chunk = resp.read1(_CHUNK)   # what has arrived; read(n) would wait for n bytes and stall a streamed answer
                 if not chunk:
                     break
                 bytes_out += len(chunk)
