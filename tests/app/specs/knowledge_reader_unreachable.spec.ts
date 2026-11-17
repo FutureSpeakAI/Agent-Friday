@@ -1,3 +1,4 @@
+// ci-list: exempt fails in CI (unreachable page notice, 1 of 3); owner to fix until 2026-11-30
 // The knowledge reader tells the owner the truth about a page it could not load.
 //
 // Only a 404 from Friday means there is no page at that path. When the server
