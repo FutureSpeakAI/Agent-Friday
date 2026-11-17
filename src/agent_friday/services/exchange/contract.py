@@ -255,3 +255,7 @@ class ProviderContract:
         assert provider.lookup("k-p") is p.ProviderStatus.PAYOUT_PENDING
         assert _ok(provider.payout("k-q", done.capture_ref, "seller-1", 3), p.Refused).code is p.RefusalCode.INSUFFICIENT, \
             "the re-requested payout still counts against the capture"
+        self.return_payout(provider, "k-p")
+        _ok(provider.payout("k-r", done.capture_ref, "seller-1", 900), p.PayoutPending)       # the cash was paid again
+        assert _ok(provider.payout("k-p", done.capture_ref, "seller-1", 900), p.Refused).code is p.RefusalCode.INSUFFICIENT,             "a returned payout is not re-requested past what the capture still holds"
+        assert provider.lookup("k-p") is p.ProviderStatus.PAYOUT_RETURNED
