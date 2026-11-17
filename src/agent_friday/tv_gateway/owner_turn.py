@@ -389,24 +389,31 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     payload: dict = {}
     tools = 0
     ended = "closed"
-    for f in _frames_of(response):
-        if time.time() - started > MAX_TURN_S:
-            failed, ended = "the computer is still working on this after %d minutes; the answer will be on its screen" % (
-                MAX_TURN_S // 60), "deadline"
-            break
-        if f is None:
-            yield _status("thinking", started, voice_reply.THINKING)
-        elif "tool" in f:
-            tools += 1
-            yield _status("working", started, voice_reply.progress_words(f["tool"]))
-        elif "delta" in f:
-            spoken.append(str(f["delta"]))
-        elif "error" in f:
-            failed = str(f["error"])
-        elif f.get("done"):
-            payload = f.get("payload") or {}
-            final = str(payload.get("response") or "")
-            ended = "done"
+    try:
+        for f in _frames_of(response):
+            if time.time() - started > MAX_TURN_S:
+                failed, ended = "the computer is still working on this after %d minutes; the answer will be on its screen" % (
+                    MAX_TURN_S // 60), "deadline"
+                break
+            if f is None:
+                yield _status("thinking", started, voice_reply.THINKING)
+            elif "tool" in f:
+                tools += 1
+                yield _status("working", started, voice_reply.progress_words(f["tool"]))
+            elif "delta" in f:
+                spoken.append(str(f["delta"]))
+            elif "error" in f:
+                failed = str(f["error"])
+            elif f.get("done"):
+                payload = f.get("payload") or {}
+                final = str(payload.get("response") or "")
+                ended = "done"
+    except GeneratorExit:
+        # The phone dropped the connection (app backgrounded, radio handoff, its own read timeout): the next write
+        # raised here. The turn keeps running on the PC, and this is the line that says the phone was gone.
+        _log.warning("owner turn finished: ended=disconnected seconds=%d tools=%d answer_chars=%d (the phone closed "
+                     "the stream before the answer was sent)", int(time.time() - started), tools, len(final))
+        raise
     text = answer_only(final) or answer_only("".join(spoken))
     # One line per turn so a missing answer can be traced: how it ended, how long, how much came back.
     _log.info("owner turn finished: ended=%s seconds=%d tools=%d answer_chars=%d failed=%s", ended,
@@ -434,7 +441,7 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     truth["voice_bound"] = bound_voice(cid) if voice else None   # a voice chosen for this chat; None until voices.py (CORE-MODELS) fills the hook
     if voice:
         truth["formatted"] = text                               # the screen's copy; the stream text is what is spoken
-        text = truth["speech"]
+        text = truth["speech"] or text                          # an answer that is only a table or code is still sent
     if text:
         yield _event({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}})
     yield _event({"type": "content_block_stop", "index": 0})
