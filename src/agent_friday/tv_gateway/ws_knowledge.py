@@ -16,7 +16,7 @@ from typing import Optional
 from agent_friday.tv_gateway import ws_blocks
 from agent_friday.tv_gateway.ws_adapter import Locked, Missing, Unavailable, desk_json as _desk
 
-SECTIONS = ("pages",)                         # people and graph arrive with their own adapters
+PREFIX = "page:"
 KIND = "page"
 REF = re.compile(r"^page:(?P<path>[^\x00-\x1f\\:*?\"<>|]{1,200}\.(?:md|txt))$", re.I)
 VAULT_LOCKED = "[vault-encrypted file"

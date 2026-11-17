@@ -16,7 +16,7 @@ from urllib.parse import quote
 from agent_friday.tv_gateway import ws_blocks
 from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable, desk_json
 
-SECTIONS = ("agenda",)
+PREFIX = "event:"
 KIND = "event"
 FACETS = {"day": lambda row: (row["when"] or "")[:10]}
 AGENDA_DAYS = 14
