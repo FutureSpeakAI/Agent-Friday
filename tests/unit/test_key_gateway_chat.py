@@ -2,7 +2,8 @@
 
 Rules guarded here: a cloud provider's call carries only the stand-in key and the real key reaches the provider
 through the gateway, on the descriptor's own header; a streamed reply still arrives as events; a provider with no key
-is reported as such (not as the provider's 401); a local or private provider is called directly as before.
+is refused before any request; a local provider, and a provider the gateway will not serve (plain http), is called
+directly as before; the gateway waits as long as the descriptor's own timeout.
 """
 import http.server
 import json
@@ -110,7 +111,20 @@ def test_without_a_key_the_call_says_so_and_nothing_reaches_the_provider(provide
 
 
 def test_a_provider_on_this_machine_is_called_directly_with_its_own_key(provider, sent, monkeypatch):
-    monkeypatch.setattr(gw, "_is_cloud_endpoint", REAL_CLOUD_CHECK)   # the real rule: 127.0.0.1 is not a cloud host
-    local = descriptor(provider, classification="local", adapter="openai_compat")
+    local = descriptor(provider, classification="local", adapter="openai-compatible")
     smr._call_openai([{"role": "user", "content": "hi"}], model="m", tools=None, provider=local, stream=False)
     assert sent[0]["Authorization"] == "Bearer " + REAL and provider.seen[0][1]["authorization"] == "Bearer " + REAL
+
+
+def test_a_provider_the_gateway_will_not_serve_is_called_directly_as_before(provider, sent, monkeypatch):
+    monkeypatch.setattr(gw, "_is_cloud_endpoint", REAL_CLOUD_CHECK)   # the real rule: plain http / 127.0.0.1 is not served
+    smr._call_openai([{"role": "user", "content": "hi"}], model="m", tools=None, provider=descriptor(provider),
+                     stream=False)
+    assert sent[0]["Authorization"] == "Bearer " + REAL and provider.seen[0][1]["authorization"] == "Bearer " + REAL
+
+
+def test_the_gateway_waits_as_long_as_the_descriptors_own_timeout(provider):
+    short = gw.descriptor_url(descriptor(provider))
+    long_wait = gw.descriptor_url(descriptor(provider, network={"timeout_s": 600}))
+    waits = {proxy.url: proxy.upstream_timeout for key, proxy in gw._PROXIES.items() if isinstance(key, tuple)}
+    assert waits == {long_wait.rsplit("/v1", 1)[0]: 600}, (short, waits)
