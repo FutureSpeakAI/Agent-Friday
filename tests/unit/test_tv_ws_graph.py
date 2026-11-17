@@ -28,7 +28,7 @@ def ent(i, community, degree, **extra):
             "provenance": {"wiki_pages": ["secret/x.md"]}, **extra}
 
 
-ENTITIES = [ent("a", 0, 3), ent("b", 0, 2), ent("c", 0, 3), ent("d", 1, 2), ent("e", 1, 1)]
+ENTITIES = [ent("a", "0", 3), ent("b", "0", 2), ent("c", "0", 3), ent("d", "1", 2), ent("e", "1", 1)]
 RELS = [{"id": "r1", "source": "a", "target": "b", "weight": 1}, {"id": "r2", "source": "b", "target": "c", "weight": 2},
         {"id": "r3", "source": "a", "target": "c", "weight": 1}, {"id": "r4", "source": "c", "target": "d", "weight": 1},
         {"id": "r5", "source": "d", "target": "e", "weight": 1}]
@@ -38,7 +38,8 @@ class Desk:
     def __init__(self):
         self.calls, self.down = [], set()
         self.entities, self.rels = list(ENTITIES), list(RELS)
-        self.communities = [{"id": 0, "title": "Family", "size": 3}, {"id": 1, "title": "Work", "size": 2}]
+        self.communities = [{"id": "com_0", "community": "0", "title": "Family", "size": 3},
+                            {"id": "com_1", "community": "1", "title": "Work", "size": 2}]
         self.search = []
 
     def ok(self, body):
@@ -71,6 +72,7 @@ class Desk:
 def desk(monkeypatch):
     d = Desk()
     monkeypatch.setattr(pc_read, "_desk", d)
+    monkeypatch.setattr(ws_graph, "_SNAPSHOT", None)
     return d
 
 
@@ -81,7 +83,7 @@ def ask(client, path, dev=None):
 def test_the_summary_has_counts_communities_a_centre_and_a_rev(client, desk):
     got = ask(client, "/tv/v1/graph/summary").get_json()
     assert got["counts"] == {"entities": 5, "relationships": 5} and got["rev"] == "g_5_5_20261117T100000"
-    assert got["communities"][0] == {"id": 0, "label": "Family", "size": 3, "centre": [1.0, 2.0, 3.0]}
+    assert got["communities"][0] == {"id": "0", "label": "Family", "size": 3, "centre": [1.0, 2.0, 3.0]}
 
 
 def test_level_zero_is_communities_by_size_with_the_links_between_them(client, desk):
@@ -93,9 +95,9 @@ def test_level_zero_is_communities_by_size_with_the_links_between_them(client, d
 
 
 def test_level_zero_is_capped_at_three_hundred_communities(client, desk):
-    desk.entities = [ent("n%d" % i, i, 1) for i in range(400)]
+    desk.entities = [ent("n%d" % i, str(i), 1) for i in range(400)]
     desk.rels = []
-    desk.communities = [{"id": i, "title": "C%d" % i, "size": 1} for i in range(400)]
+    desk.communities = [{"id": "com_%d" % i, "community": str(i), "title": "C%d" % i, "size": 1} for i in range(400)]
     got = ask(client, "/tv/v1/graph?lod=0").get_json()
     assert len(got["nodes"]) == ws_graph.LOD0_NODES_MAX and [n["i"] for n in got["nodes"]] == list(range(300))
 
@@ -103,14 +105,14 @@ def test_level_zero_is_capped_at_three_hundred_communities(client, desk):
 def test_level_one_ranks_a_community_by_degree_and_numbers_the_nodes_by_rank(client, desk):
     got = ask(client, "/tv/v1/graph?lod=1&community=0").get_json()
     assert [(n["i"], n["id"]) for n in got["nodes"]] == [(0, "a"), (1, "c"), (2, "b")] and got["total"] == 3
-    assert got["nodes"][0] == {"i": 0, "id": "a", "label": "Node a", "type": "person", "community": 0, "degree": 3,
+    assert got["nodes"][0] == {"i": 0, "id": "a", "label": "Node a", "type": "person", "community": "0", "degree": 3,
                                "pos": [1.0, 2.0, 3.0]}
     assert sorted(got["edges"]) == [[0, 1, 1.0], [0, 2, 1.0], [2, 1, 2.0]] and got["next"] is None
 
 
 @pytest.mark.parametrize("limit", [1, 2, 3])
 def test_paging_a_community_never_renumbers_a_node_or_sends_an_edge_twice(client, desk, limit):
-    desk.entities = [ent("n%02d" % i, 0, 20 - i) for i in range(12)]
+    desk.entities = [ent("n%02d" % i, "0", 20 - i) for i in range(12)]
     desk.rels = [{"id": "r%d%d" % (i, j), "source": "n%02d" % i, "target": "n%02d" % j, "weight": 1}
                  for i in range(12) for j in range(i + 1, 12) if (i * 7 + j) % 3 == 0]
     whole = ask(client, "/tv/v1/graph?lod=1&community=0&limit=500").get_json()
@@ -126,7 +128,7 @@ def test_paging_a_community_never_renumbers_a_node_or_sends_an_edge_twice(client
 
 
 def test_level_one_pages_are_capped_at_five_hundred(client, desk):
-    desk.entities = [ent("n%04d" % i, 0, 1) for i in range(700)]
+    desk.entities = [ent("n%04d" % i, "0", 1) for i in range(700)]
     desk.rels = []
     got = ask(client, "/tv/v1/graph?lod=1&community=0&limit=99999").get_json()
     assert len(got["nodes"]) == 500 and got["next"] == "500" and got["total"] == 700
@@ -139,7 +141,7 @@ def test_a_bad_level_or_unknown_community_is_refused(client, desk, query, status
 
 
 def test_neighbours_put_the_node_first_and_are_capped(client, desk):
-    desk.entities = [ent("hub", 0, 50)] + [ent("n%03d" % i, 0, i) for i in range(300)]
+    desk.entities = [ent("hub", "0", 50)] + [ent("n%03d" % i, "0", i) for i in range(300)]
     desk.rels = [{"id": "r%d" % i, "source": "hub", "target": "n%03d" % i, "weight": 1} for i in range(300)]
     got = ask(client, "/tv/v1/graph/node/hub/neighbors?depth=9&limit=9999").get_json()
     assert got["center"] == "hub" and got["nodes"][0]["id"] == "hub" and len(got["nodes"]) == 200
@@ -148,7 +150,7 @@ def test_neighbours_put_the_node_first_and_are_capped(client, desk):
 
 
 def test_a_node_id_with_a_slash_or_colon_reaches_the_pc_whole(client, desk):
-    desk.entities = [ent("person:griff/jay", 0, 1)]
+    desk.entities = [ent("person:griff/jay", "0", 1)]
     desk.rels = []
     got = ask(client, "/tv/v1/graph/node/person:griff/jay/neighbors").get_json()
     assert [n["id"] for n in got["nodes"]] == ["person:griff/jay"]
@@ -175,7 +177,7 @@ def test_search_rows_carry_the_community_and_a_page_ref_only_for_a_page(client, 
 
 
 def test_no_description_wiki_path_or_url_is_in_any_answer(client, desk):
-    desk.entities = [dict(ent("a", 0, 3), title="See https://example.org/x now <b>bold</b>")]
+    desk.entities = [dict(ent("a", "0", 3), title="See https://example.org/x now <b>bold</b>")]
     desk.rels = []
     dev = paired()
     for path in ("/tv/v1/graph?lod=0", "/tv/v1/graph?lod=1&community=0", "/tv/v1/graph/node/a/neighbors"):
@@ -201,7 +203,7 @@ def test_an_answer_too_big_for_a_phone_is_refused(client, desk, monkeypatch):
 def test_changes_says_whether_the_graph_moved(client, desk):
     rev = ask(client, "/tv/v1/graph/summary").get_json()["rev"]
     assert ask(client, "/tv/v1/graph/changes?since=" + rev).get_json()["changed"] is False
-    desk.entities.append(ent("z", 1, 1))
+    desk.entities.append(ent("z", "1", 1))
     again = ask(client, "/tv/v1/graph/changes?since=" + rev).get_json()
     assert again["changed"] is True and again["rev"] != rev
 
@@ -211,3 +213,27 @@ def test_only_an_owner_phone_or_tablet_with_the_right_may_read_the_graph(client,
         assert ask(client, "/tv/v1/graph/" + path, paired("tv")).status_code == 403, path
         assert ask(client, "/tv/v1/graph/" + path, paired(right=False)).status_code == 403, path
     assert ask(client, "/tv/v1/graph?lod=0", paired("tv")).status_code == 403
+
+
+def test_the_graph_is_read_once_per_revision_and_again_when_it_moves(client, desk):
+    dev = paired()
+    for path in ("/tv/v1/graph?lod=0", "/tv/v1/graph?lod=1&community=0", "/tv/v1/graph/summary"):
+        assert ask(client, path, dev).status_code == 200
+    assert [c[0] for c in desk.calls].count("/api/knowledge-graph/graph") == 1
+    desk.entities.append(ent("z", "1", 1))
+    ask(client, "/tv/v1/graph?lod=0", dev)
+    assert [c[0] for c in desk.calls].count("/api/knowledge-graph/graph") == 2
+
+
+def test_a_community_is_named_by_its_nodes_value_not_its_records_id(client, desk):
+    got = ask(client, "/tv/v1/graph/summary").get_json()["communities"]
+    assert [c["id"] for c in got] == ["0", "1"] and "com_0" not in json.dumps(got)
+    assert ask(client, "/tv/v1/graph?lod=1&community=com_0").status_code == 404
+
+
+def test_a_page_with_too_many_edges_keeps_the_heaviest_and_says_how_many_it_left_out(client, desk, monkeypatch):
+    monkeypatch.setattr(ws_graph, "EDGES_PAGE_MAX", 2)
+    got = ask(client, "/tv/v1/graph?lod=1&community=0").get_json()
+    assert len(got["edges"]) == 2 and got["edges_left_out"] == 1
+    assert sorted(e[2] for e in got["edges"]) == [1.0, 2.0]
+    assert ask(client, "/tv/v1/graph?lod=0").get_json()["edges_left_out"] == 0
