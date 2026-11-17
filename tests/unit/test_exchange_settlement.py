@@ -24,7 +24,7 @@ CHARTER = IssuerCharter(issuer_id="test.one", unit_code="TESTP", precision=0, ge
                         treasury_account="treasury", cash_claim=False, genesis_authority=KEY.public_key,
                         created="2026-11-16T00:00:00Z")
 SALE = "sale:x1:seller-1"
-ACCOUNTS = st.Accounts(reserve=SALE, buyer="buyer")
+ACCOUNTS = st.Accounts(seller="seller-1", buyer="buyer")
 PARTIES = st.Parties("bp-1", "seller-1", "USD")
 SETTLEMENT = Path(st.__file__)
 PRESS = st.RefundPress()
@@ -67,8 +67,9 @@ class Env:
         if hasattr(self, "provider"):
             self.settlement = st.Settlement(self.tmp / "s.sqlite", self.authority, self.provider, synchronous="OFF")
 
-    def fill(self, fill_id="f1", exchange="x1", principal=PRINCIPAL, fee=FEE, units=UNITS):
-        return Fill(FillId(fill_id), ExchangeId(exchange), "q" * 8, units, principal // units, principal, fee, 1)
+    def fill(self, fill_id="f1", exchange="x1", principal=PRINCIPAL, fee=FEE, units=UNITS, planned_before=0):
+        return Fill(FillId(fill_id), ExchangeId(exchange), "q" * 8, units, principal // units, principal, fee, 1,
+                    planned_before)
 
     def open(self, fill_id="f1", accounts=ACCOUNTS, **kw):
         return self.settlement.open_fill(self.fill(fill_id, **kw), accounts, PARTIES)
@@ -119,7 +120,7 @@ class Env:
 def violations(env, fill_id="f1"):
     found = []
     balances = env.balances()
-    holders = [a for a in (SALE, fill_acct(fill_id), "buyer") if balances.get(a, 0)]
+    holders = [a for a in (SALE, fill_acct(fill_id), f"recovered:x1:{fill_id}", "buyer") if balances.get(a, 0)]
     if len(holders) != 1 or balances[holders[0]] != UNITS:
         found.append(f"S-1: the fill's P is not wholly in one place: {balances}")
     names = env.effects()
@@ -263,8 +264,9 @@ def test_every_crash_point_under_every_fault_converges_and_keeps_the_invariants(
 def two_fills(env, fund=True):
     if fund:         # funding replaces the buyer's books, so a restarted node must not fund again
         env.provider.fund("bp-1", "buyer-1", "USD", 20_000, contract.LATER)
-    for fill_id, fee in (("f1", 13), ("f2", 12)):
-        assert env.open_retry(fill_id, principal=5000, fee=fee, units=50) in (st.OpenResult.OPENED, st.OpenResult.ALREADY)
+    for fill_id, fee, before in (("f1", 13, 0), ("f2", 12, 5000)):
+        assert env.open_retry(fill_id, principal=5000, fee=fee, units=50, planned_before=before) in (
+            st.OpenResult.OPENED, st.OpenResult.ALREADY)
 
 
 def test_the_crash_matrix_with_two_fills_on_one_order_converges(env_factory):
@@ -491,11 +493,17 @@ def paid_out(env):
 
 
 def test_a_reversed_capture_needs_only_the_p_back_and_no_refund_is_sent(env_factory):
-    """S-11: a chargeback returns the buyer's cash itself; the fill is held and, on a press, only the P comes back."""
+    """S-11: a chargeback before the seller was paid returns the buyer's cash itself; on a press only the P comes back,
+    to the seller's reserve, and no cash refund is ever sent."""
     env = env_factory()
-    paid_out(env)
+    env.open()
+    env.settlement.advance("f1")
+    env.settlement.dispatch("f1")
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        db.execute("UPDATE legs SET status='sent' WHERE leg='capture'")
     env.provider.chargeback("x1/f1/capture/once")
-    env.settlement.pump(env.provider.deliver())
+    reversal = [r for r in env.provider.deliver() if b'"status":"reversed"' in r]
+    env.settlement.pump(reversal)
     assert env.settlement.state("f1") is st.State.HELD
     held_balances = env.balances()
     assert env.settlement.refund("f1", press=False) is st.State.HELD and env.balances() == held_balances
@@ -504,8 +512,139 @@ def test_a_reversed_capture_needs_only_the_p_back_and_no_refund_is_sent(env_fact
     assert env.settlement.refund("f1", press=PRESS) is st.State.REFUNDED
     assert env.ops("refund") == [], "a refund of a reversed capture is never sent"
     assert env.provider.books()["power"]["bp-1"]["amount"] == 10_000, "the buyer's cash came back once"
-    assert env.effects().count("fill:x1:f1:p-return") == 1 and env.effects().count("fill:x1:f1:p-transfer") == 1
+    assert env.effects().count("fill:x1:f1:p-return") == 1
     assert env.settlement.liabilities() == []
+
+
+def test_a_reversal_after_the_payout_recovers_the_p_into_a_held_account_not_the_sellers_reserve(env_factory):
+    """T21 / S-18: the seller holds the payout, so the P is not given back to them; it waits in recovered:<ex>:<fill>."""
+    env = env_factory()
+    paid_out(env)
+    env.provider.chargeback("x1/f1/capture/once")
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.HELD
+    assert env.settlement.refund("f1", press=PRESS) is st.State.HELD
+    assert env.balances() == {"treasury": SUPPLY - UNITS, "recovered:x1:f1": UNITS}, "not in the seller's reserve"
+    assert env.ops("refund") == []
+    assert env.settlement.liabilities() == [{"fill_id": "f1", "state": "held", "owed_minor": PRINCIPAL}]
+    assert env.settlement.settled("f1") is False
+    for _ in range(3):
+        env.settlement.tick("f1")
+    assert env.settlement.state("f1") is st.State.HELD and env.balances()["recovered:x1:f1"] == UNITS
+    assert violations(env) == []
+
+
+def test_a_reversal_while_the_payout_is_in_flight_is_the_same_and_stays_held_when_it_confirms_later(env_factory):
+    """T21, second half: the payout was only pending when the capture was reversed."""
+    env = env_factory()
+    env.open()
+    env.settlement.tick("f1")
+    assert env.settlement.state("f1") is st.State.PAYOUT_REQUESTED and env.payout_keys()
+    env.provider.chargeback("x1/f1/capture/once")
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.HELD
+    env.settlement.refund("f1", press=PRESS)
+    assert env.balances()["recovered:x1:f1"] == UNITS and env.ops("refund") == []
+    env.provider.settle_payout(env.payout_keys()[0])
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.HELD and env.settlement.settled("f1") is False
+    assert env.balances()["recovered:x1:f1"] == UNITS
+
+
+def test_a_payout_returned_and_asked_for_again_stands_again_when_the_capture_is_then_reversed(env_factory):
+    env = env_factory()
+    env.provider.arm(fp.Fault.PAYOUT_RETURNED)
+    env.open()
+    env.settlement.advance("f1")
+    env.settlement.dispatch("f1")
+    env.settlement.pump(env.provider.deliver())
+    env.settlement.tick("f1")
+    env.provider.settle_payout(env.payout_keys()[0])                       # returned
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.PAYOUT_RETURNED
+    env.settlement.tick("f1")                                              # asked for again under the same key
+    assert env.settlement.state("f1") is st.State.PAYOUT_REQUESTED and env.payout_keys()
+    env.provider.chargeback("x1/f1/capture/once")
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.HELD
+    env.settlement.refund("f1", press=PRESS)
+    assert env.balances()["recovered:x1:f1"] == UNITS, "the second payout stands, so the P is not given back to the seller"
+
+
+def test_the_recovered_p_goes_back_to_the_seller_once_the_payout_that_stood_is_returned(env_factory):
+    env = env_factory()
+    env.open()
+    env.settlement.tick("f1")
+    env.provider.chargeback("x1/f1/capture/once")
+    env.settlement.pump(env.provider.deliver())
+    env.settlement.refund("f1", press=PRESS)
+    assert env.balances()["recovered:x1:f1"] == UNITS
+    env.provider.return_payout(env.payout_keys()[0])
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.tick("f1") is st.State.REFUNDED
+    assert env.balances() == {"treasury": SUPPLY - UNITS, SALE: UNITS} and env.ops("refund") == []
+    assert env.effects().count("fill:x1:f1:p-restore") == 1
+
+
+def test_a_p_in_the_reserve_with_a_payout_standing_never_triggers_a_cash_refund(env_factory):
+    """Not reachable by the workflow itself; held by a stored state a crash or a bug could leave."""
+    env = env_factory()
+    paid_out(env)
+    env.provider.return_payout("x1/f1/payout/once")
+    env.settlement.pump(env.provider.deliver())          # held, payout returned
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        db.execute("UPDATE fills SET p_at='reserve', payout_returned=0")
+    assert env.settlement.refund("f1", press=PRESS) is st.State.HELD
+    assert env.ops("refund") == []
+
+
+def test_a_payout_queued_while_the_provider_was_down_is_never_sent_for_a_held_fill(env_factory):
+    """T22 / S-19: checked against a provider that would have paid."""
+    env = env_factory()
+    env.open()
+    env.settlement.advance("f1")
+    env.settlement.dispatch("f1")
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.CASH_CONFIRMED
+    calls = []
+    real_payout = env.provider.payout
+    env.provider.payout = lambda *args, **kw: calls.append(args) or real_payout(*args, **kw)
+    env.provider.arm(fp.Fault.OUTAGE, until=contract.NOW + 1_000)
+    env.settlement.tick("f1")
+    assert env.settlement.state("f1") is st.State.PAYOUT_REQUESTED
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        assert db.execute("SELECT status FROM legs WHERE leg='payout'").fetchone()[0] == "pending"
+    env.provider.chargeback("x1/f1/capture/once")
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.HELD
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        assert db.execute("SELECT status FROM legs WHERE leg='payout'").fetchone()[0] == "cancelled"
+    calls.clear()                                          # the attempt made during the outage was refused
+    env.clock.now += 2_000
+    for _ in range(3):
+        env.settlement.tick("f1")
+    assert [c for c in calls if c[0].endswith("/payout/once")] == [], "no payout call was made for a held fill"
+    assert env.ops("payout") == []
+
+
+def test_a_payout_leg_that_slipped_past_the_cancel_is_still_not_sent_for_a_reversed_capture(env_factory):
+    """S-19 at the point of sending, not only at the move to HELD."""
+    env = env_factory()
+    env.open()
+    env.settlement.advance("f1")
+    env.settlement.dispatch("f1")
+    env.settlement.pump(env.provider.deliver())
+    env.provider.arm(fp.Fault.OUTAGE, until=contract.NOW + 1_000)
+    env.settlement.tick("f1")
+    env.provider.chargeback("x1/f1/capture/once")
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:     # a node that learned of the reversal but did not cancel the leg
+        db.execute("UPDATE fills SET capture_reversed=1")
+    calls = []
+    real_payout = env.provider.payout
+    env.provider.payout = lambda *args, **kw: calls.append(args) or real_payout(*args, **kw)
+    env.clock.now += 2_000
+    env.settlement.dispatch("f1")
+    assert calls == []
 
 
 def late_return(env):
@@ -617,13 +756,68 @@ def test_two_planned_fills_confirm_in_either_order_and_the_fee_total_is_the_one_
     assert env.balances() == {"treasury": SUPPLY - UNITS, "buyer": UNITS}
 
 
-def test_a_fee_that_would_exceed_the_orders_fee_holds_the_fill(env_factory):
+def test_two_fills_planned_from_one_starting_point_the_second_to_confirm_is_held(env_factory):
     env = env_factory()
     env.provider.fund("bp-1", "buyer-1", "USD", 20_000, contract.LATER)
-    for fill_id in ("f1", "f2"):             # both planned as if first: 13 + 13 > cash_fee(10000) = 25
+    for fill_id in ("f1", "f2"):             # both planned as if first: their plan intervals overlap
         env.open_retry(fill_id, principal=5000, fee=13, units=50)
     assert env.drive("f1") is st.State.PAYOUT_CONFIRMED
     assert env.drive("f2") is st.State.HELD and env.settlement.fee_charged("f2") == 0
+
+
+def test_a_fee_that_is_not_the_planned_increment_holds_the_fill(env_factory):
+    env = env_factory()
+    env.open_retry("f1", fee=14)                    # the plan from 0 for 5000 charges 13
+    assert env.drive("f1") is st.State.HELD and env.settlement.fee_charged("f1") == 0
+
+
+@pytest.mark.parametrize("hundreds", [(100, 100, 100)])
+def test_a_fill_planned_to_pay_one_more_than_its_own_fee_is_not_held_for_confirming_first(env_factory, hundreds):
+    """The case that showed section 10's S-12 wrong: fills of 100, 100, 100 are planned 0, 1, 0."""
+    from agent_friday.services.exchange import fees
+    env = env_factory()
+    env.provider.fund("bp-1", "buyer-1", "USD", 1_000_000, contract.LATER)
+    planned, before = fees.planned_increments(hundreds), [0, 100, 200]
+    assert planned == [0, 1, 0]
+    for n in range(3):
+        env.open_retry(f"f{n + 1}", principal=hundreds[n], fee=planned[n], units=10, planned_before=before[n])
+    assert env.drive("f2") is st.State.PAYOUT_CONFIRMED, "planned 1, confirmed first: not held"
+    assert env.drive("f3") is st.State.PAYOUT_CONFIRMED and env.drive("f1") is st.State.PAYOUT_CONFIRMED
+
+
+def test_every_plan_of_up_to_three_fills_confirmed_in_every_order_completes_with_the_one_order_fee(env_factory):
+    """T20 / S-12'."""
+    from agent_friday.services.exchange import fees
+    from agent_friday.services.issuer_journal import cash_fee
+    runs = 0
+    for count in (2, 3):
+        for principals in itertools.product((100, 300, 1000), repeat=count):
+            planned = fees.planned_increments(principals)
+            before = [sum(principals[:i]) for i in range(count)]
+            for order in itertools.permutations(range(count)):
+                env = env_factory()
+                env.provider.fund("bp-1", "buyer-1", "USD", 1_000_000, contract.LATER)
+                for n in range(count):
+                    assert env.open_retry(f"f{n + 1}", principal=principals[n], fee=planned[n], units=10,
+                                          planned_before=before[n]) is st.OpenResult.OPENED
+                for n in order:
+                    state = env.drive(f"f{n + 1}")
+                    assert state is st.State.PAYOUT_CONFIRMED, (principals, order, n, state)
+                total = sum(env.settlement.fee_charged(f"f{n + 1}") for n in range(count))
+                assert total == cash_fee(sum(principals)), (principals, order, total)
+                runs += 1
+    assert runs == 9 * 2 + 27 * 6
+
+
+def test_a_fill_cannot_be_opened_against_any_reserve_but_its_sellers(env_factory):
+    """T23 / S-20: naming the treasury as the seller sells nothing of the treasury's."""
+    env = env_factory()
+    before = env.balances()
+    assert env.open("f1", accounts=st.Accounts(seller="treasury", buyer="buyer")) is st.OpenResult.REFUSED
+    assert env.balances() == before and env.provider.books()["ops"] == {}
+    row = sqlite3.connect(env.tmp / "s.sqlite").execute("SELECT reserve_account FROM fills").fetchone()[0]
+    assert row == "sale:x1:treasury", "the reserve is derived from the seller, never passed"
+    assert "reserve" not in st.Accounts.__dataclass_fields__
 
 
 def test_a_refunded_fills_principal_no_longer_counts_toward_the_fee_check(env_factory):
@@ -727,7 +921,7 @@ def test_a_second_fill_against_one_reservation_is_refused_at_open_and_touches_no
 
 def test_a_seller_with_nothing_reserved_is_refused_at_open(env_factory):
     env = env_factory()
-    nothing = st.Accounts(reserve="sale:x1:nobody", buyer="buyer")
+    nothing = st.Accounts(seller="nobody", buyer="buyer")
     assert env.open("f1", accounts=nothing) is st.OpenResult.REFUSED
     assert env.provider.books()["ops"] == {} and env.provider.books()["power"]["bp-1"]["reserved"] == 0
     assert env.balances() == {"treasury": SUPPLY - UNITS, SALE: UNITS}
@@ -735,11 +929,12 @@ def test_a_seller_with_nothing_reserved_is_refused_at_open(env_factory):
 
 def test_a_fills_units_come_from_its_lots_and_lot_size(env_factory):
     env = env_factory()
-    fill = Fill(FillId("f1"), ExchangeId("x1"), "q" * 8, 20, 250, 5000, FEE, 5)       # 20 lots of 5 units = 100 units
+    fill = Fill(FillId("f1"), ExchangeId("x1"), "q" * 8, 20, 250, 5000, FEE, 5, 0)       # 20 lots of 5 units = 100 units
     assert env.settlement.open_fill(fill, ACCOUNTS, PARTIES) is st.OpenResult.OPENED
     assert env.balances() == {"treasury": SUPPLY - UNITS, fill_acct(): 100}
-    for bad in (Fill(FillId("f2"), ExchangeId("x1"), "q" * 8, 0, 250, 0, 0, 5),
-                Fill(FillId("f3"), ExchangeId("x1"), "q" * 8, 20, 250, 5000, FEE, 0)):
+    for bad in (Fill(FillId("f2"), ExchangeId("x1"), "q" * 8, 0, 250, 0, 0, 5, 0),
+                Fill(FillId("f3"), ExchangeId("x1"), "q" * 8, 20, 250, 5000, FEE, 0, 0),
+                Fill(FillId("f4"), ExchangeId("x1"), "q" * 8, 20, 250, 5000, FEE, 5, -1)):
         with pytest.raises(ValueError):
             env.settlement.open_fill(bad, ACCOUNTS, PARTIES)
 

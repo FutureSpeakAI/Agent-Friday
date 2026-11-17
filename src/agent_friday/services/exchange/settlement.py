@@ -24,13 +24,23 @@ Invariants and the tests that hold them (tests/unit/test_exchange_settlement.py)
 - S-8 cash is never a balance in the P journal: test_cash_never_appears_in_the_p_journal.
 - S-9 no cash is captured for a fill whose P is not in its own fill account:
   test_no_capture_is_sent_for_a_fill_whose_p_is_not_in_its_own_account.
-- S-10 a refund posts the P back first and sends the cash only if that posted:
+- S-10 a refund recovers the P first and sends the cash only if that posted:
   test_a_refund_returns_the_p_first_and_sends_no_cash_while_it_is_unrecovered.
 - S-11 a reversed capture is never refunded: test_a_reversed_capture_needs_only_the_p_back_and_no_refund_is_sent.
-- S-12 the fee check is on the cumulative total in any confirmation order:
-  test_two_planned_fills_confirm_in_either_order_and_the_fee_total_is_the_one_order_fee.
-- S-13 settled principal for the fee excludes refunded and reversed fills:
-  test_a_refunded_fills_principal_no_longer_counts_toward_the_fee_check.
+- S-12' (design 11.1, replacing S-12) a fill's fee must be its planned increment, and the plan intervals of confirmed
+  fills must not overlap; nothing else holds a fill for its fee:
+  test_every_plan_of_up_to_three_fills_confirmed_in_every_order_completes_with_the_one_order_fee,
+  test_two_planned_fills_confirm_in_either_order_and_the_fee_total_is_the_one_order_fee,
+  test_a_fee_that_is_not_the_planned_increment_holds_the_fill,
+  test_two_fills_planned_from_one_starting_point_the_second_to_confirm_is_held.
+- S-13 the plan check ignores fills that were refunded or whose capture was reversed:
+  test_a_refunded_fills_principal_no_longer_counts_toward_the_fee_check and the reversed twin.
+- S-18 the P goes back to the seller's reserve only when the seller was not paid; otherwise it is held in
+  recovered:<exchange>:<fill>, the fill stays HELD and listed (M7 is Stephen's):
+  test_a_reversal_after_the_payout_recovers_the_p_into_a_held_account_not_the_sellers_reserve.
+- S-19 a held fill's queued payout is cancelled and none is sent for a held or reversed fill:
+  test_a_payout_queued_while_the_provider_was_down_is_never_sent_for_a_held_fill.
+- S-20 the sale reserve is derived from the seller, never passed: test_a_fill_cannot_be_opened_against_any_reserve_but_its_sellers.
 - S-14 a payout returned after it was confirmed holds the fill and lists it:
   test_a_payout_returned_after_confirmation_holds_the_fill_and_lists_it.
 - S-15 an inbox event is `applied` only if it changed something, else `ignored` with a reason:
@@ -59,6 +69,7 @@ from enum import Enum
 from agent_friday.services.exchange import fees
 from agent_friday.services.exchange import provider as p
 from agent_friday.services.exchange.orders import ExchangeId, Fill, FillId, _need
+from agent_friday.services.exchange.reservation import sale_account
 from agent_friday.services.issuer_journal import IssuerJournal, Outcome
 
 
@@ -99,7 +110,7 @@ FEE_ACCRUES_AT = S.CASH_CONFIRMED
 OPENING = (S.INTENT, S.P_HELD)
 
 # where a fill's P is (the `p_at` column): in the sale's reserve, in the fill's own account, or with the buyer
-AT_RESERVE, AT_FILL, AT_BUYER = "reserve", "fill", "buyer"
+AT_RESERVE, AT_FILL, AT_BUYER, AT_RECOVERED = "reserve", "fill", "buyer", "recovered"
 
 
 class IllegalTransition(RuntimeError):
@@ -132,8 +143,10 @@ class RefundPress:
 
 @dataclass(frozen=True)
 class Accounts:
-    """The journal accounts one fill moves P between. The fill's own account is derived, not passed."""
-    reserve: str      # the seller's sale reserve: where the units wait, and where they go back to
+    """Who the fill's P moves between. Every journal account but the buyer's is derived: the sale's reserve from the
+    seller with the function a SaleReservation uses (S-20), the fill's own account and the recovered account from the
+    exchange and fill ids."""
+    seller: str
     buyer: str
 
 
@@ -148,6 +161,10 @@ def fill_account(exchange_id: str, fill_id: str) -> str:
     return f"fill:{exchange_id}:{fill_id}"
 
 
+def recovered_account(exchange_id: str, fill_id: str) -> str:
+    return f"recovered:{exchange_id}:{fill_id}"
+
+
 def _effect(exchange_id: str, fill_id: str, what: str) -> str:
     return f"fill:{exchange_id}:{fill_id}:{what}"
 
@@ -159,7 +176,8 @@ CREATE TABLE IF NOT EXISTS fills (
     fee_charged INTEGER NOT NULL DEFAULT 0, reserve_account TEXT, buyer_account TEXT,
     buying_power_ref TEXT, seller_ref TEXT, currency TEXT, cash_reservation_ref TEXT, capture_ref TEXT,
     p_at TEXT NOT NULL DEFAULT 'reserve', cash_amount INTEGER NOT NULL,
-    capture_reversed INTEGER NOT NULL DEFAULT 0, refund_pressed INTEGER NOT NULL DEFAULT 0);
+    capture_reversed INTEGER NOT NULL DEFAULT 0, refund_pressed INTEGER NOT NULL DEFAULT 0,
+    planned_before INTEGER NOT NULL DEFAULT 0, payout_returned INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS legs (
     key TEXT PRIMARY KEY, fill_id TEXT NOT NULL, leg TEXT NOT NULL, status TEXT NOT NULL, answer TEXT);
 CREATE TABLE IF NOT EXISTS inbox (
@@ -224,6 +242,9 @@ class Settlement:
         db.execute("UPDATE fills SET state=? WHERE fill_id=?", (to.value, fill_id))
         db.execute("INSERT INTO history (fill_id, from_state, to_state) VALUES (?,?,?)",
                    (fill_id, before.value, to.value))
+        if to is State.HELD:        # S-19: a held fill sends no payout, so one still queued is cancelled
+            db.execute("UPDATE legs SET status='cancelled' WHERE fill_id=? AND leg=? AND status='pending'",
+                       (fill_id, p.Leg.PAYOUT.value))
 
     def _enqueue(self, db, fill_id: str, leg: p.Leg, scope: str = "once"):
         row = self._row(db, fill_id)
@@ -258,18 +279,21 @@ class Settlement:
         _need(fill.exchange_id, ExchangeId)
         if type(fill.lots) is not int or type(fill.lot_units) is not int or fill.lots < 1 or fill.lot_units < 1:
             raise ValueError("a fill has whole lots of a whole lot size")
+        if type(fill.planned_before) is not int or fill.planned_before < 0:
+            raise ValueError("a fill's place in the plan is a whole non-negative principal")
         units = fill.lots * fill.lot_units
         fill_id = fill.fill_id.value
         self._opened_here.discard(fill_id)
         with self._tx() as db:
             if self._row(db, fill_id) is None:
                 db.execute("INSERT INTO fills (fill_id, exchange_id, state, quote_hash, p_units, principal, fee_increment,"
-                           " reserve_account, buyer_account, buying_power_ref, seller_ref, currency, cash_amount)"
-                           " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           " reserve_account, buyer_account, buying_power_ref, seller_ref, currency, cash_amount, planned_before)"
+                           " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (fill_id, fill.exchange_id.value, State.INTENT.value, fill.quote_hash, units,
-                            fill.principal_minor, fill.fee_increment_minor, accounts.reserve, accounts.buyer,
+                            fill.principal_minor, fill.fee_increment_minor,
+                            sale_account(fill.exchange_id, accounts.seller), accounts.buyer,
                             parties.buying_power_ref, parties.seller_ref, parties.currency,
-                            fill.principal_minor + fill.fee_increment_minor))
+                            fill.principal_minor + fill.fee_increment_minor, fill.planned_before))
                 db.execute("INSERT INTO history (fill_id, from_state, to_state) VALUES (?,NULL,?)",
                            (fill_id, State.INTENT.value))
         self._point("intent")
@@ -339,6 +363,7 @@ class Settlement:
                 self._enqueue(db, fill_id, p.Leg.PAYOUT)
                 self._move(db, fill_id, State.PAYOUT_REQUESTED)
                 db.execute("UPDATE legs SET status='pending' WHERE key=?", (self._key(row, p.Leg.PAYOUT),))
+                db.execute("UPDATE fills SET payout_returned=0 WHERE fill_id=?", (fill_id,))
             elif state is State.CASH_CONFIRMED:
                 pass
             else:
@@ -366,22 +391,23 @@ class Settlement:
         return True
 
     def _confirm_cash(self, db, fill_id: str):
-        """CAPTURE_REQUESTED -> CASH_CONFIRMED, and the only place the buyer's fee is charged (S-12, S-13).
+        """CAPTURE_REQUESTED -> CASH_CONFIRMED, and the only place the buyer's fee is charged (S-12', S-13).
 
-        The fee is the increment planned at match time. The check is on the order's cumulative total: what was charged
-        on the other confirmed fills plus this one must not exceed the fee on their cumulative principal, in any
-        confirmation order. Fills that were refunded or whose capture was reversed no longer count."""
+        The fee is the increment planned at match time and must equal the increment for the fill's place in the plan
+        (`planned_before`). The plan intervals [planned_before, planned_before + principal) of the order's confirmed
+        fills must not overlap. A fill that breaks either is held; nothing else holds a fill for its fee. Fills that were
+        refunded or whose capture was reversed no longer count."""
         row = self._row(db, fill_id)
         if State(row["state"]) is not State.CAPTURE_REQUESTED:
             return
         others = db.execute(
-            "SELECT f.fee_charged, f.principal FROM fills f WHERE f.exchange_id=? AND f.fill_id<>? AND f.state<>? "
+            "SELECT f.planned_before, f.principal FROM fills f WHERE f.exchange_id=? AND f.fill_id<>? AND f.state<>? "
             "AND f.capture_reversed=0 AND EXISTS (SELECT 1 FROM history h WHERE h.fill_id=f.fill_id AND h.to_state=?)",
             (row["exchange_id"], fill_id, State.REFUNDED.value, FEE_ACCRUES_AT.value)).fetchall()
-        charged = [r[0] for r in others] + [row["fee_increment"]]
-        principals = [r[1] for r in others] + [row["principal"]]
-        if not fees.within_cumulative(charged, principals):
-            self._move(db, fill_id, State.HELD)    # the fee captured would exceed the order's fee: a person must settle it
+        intervals = [(r[0], r[1]) for r in others] + [(row["planned_before"], row["principal"])]
+        if (row["fee_increment"] != fees.fee_increment(row["planned_before"], row["principal"])
+                or fees.plan_overlaps(intervals)):
+            self._move(db, fill_id, State.HELD)    # the fee captured is not the planned one, or it was planned twice
             return
         db.execute("UPDATE fills SET fee_charged=? WHERE fill_id=?", (row["fee_increment"], fill_id))
         self._move(db, fill_id, FEE_ACCRUES_AT)
@@ -426,6 +452,11 @@ class Settlement:
             row = self._row(db, fill_id)
         sent = False
         for leg in pending:
+            with self._tx() as db:
+                row = self._row(db, fill_id)
+                if leg["leg"] == p.Leg.PAYOUT.value and (State(row["state"]) is State.HELD or row["capture_reversed"]):
+                    db.execute("UPDATE legs SET status='cancelled' WHERE key=?", (leg["key"],))    # S-19
+                    continue
             self._point(f"before-dispatch:{leg['leg']}")
             answer = self._send(row, leg["leg"], leg["key"])
             self._point(f"dispatched:{leg['leg']}")
@@ -530,11 +561,13 @@ class Settlement:
             elif status is p.ProviderStatus.PAYOUT_CONFIRMED and state is State.PAYOUT_REQUESTED:
                 db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
                 self._move(db, fill_id, State.PAYOUT_CONFIRMED)
-            elif status is p.ProviderStatus.PAYOUT_RETURNED and state is State.PAYOUT_REQUESTED:
-                db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
-                self._move(db, fill_id, State.PAYOUT_RETURNED)
-            elif status is p.ProviderStatus.PAYOUT_RETURNED and state is State.PAYOUT_CONFIRMED:
-                self._move(db, fill_id, State.HELD)    # S-14: returned after it was confirmed: the seller was not paid
+            elif status is p.ProviderStatus.PAYOUT_RETURNED:
+                db.execute("UPDATE fills SET payout_returned=1 WHERE fill_id=?", (fill_id,))
+                if state is State.PAYOUT_REQUESTED:
+                    db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
+                    self._move(db, fill_id, State.PAYOUT_RETURNED)
+                elif state is State.PAYOUT_CONFIRMED:
+                    self._move(db, fill_id, State.HELD)    # S-14: returned after it was confirmed: the seller was not paid
         elif kind == p.Leg.REFUND.value and status is p.ProviderStatus.REFUNDED:
             db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
 
@@ -632,20 +665,41 @@ class Settlement:
                            (fill_id, p.Leg.REFUND.value))
         return self.tick(fill_id) if held else self.state(fill_id)
 
+    def _payout_stands(self, row) -> bool:
+        """True when the seller has been, or may have been, paid for this fill and the payout was not returned (S-18)."""
+        with self._tx() as db:
+            leg = db.execute("SELECT status FROM legs WHERE key=?", (self._key(row, p.Leg.PAYOUT),)).fetchone()
+        return leg is not None and leg["status"] in ("done", "sent") and not row["payout_returned"]
+
     def _progress_refund(self, fill_id: str) -> bool:
         with self._tx() as db:
             row = self._row(db, fill_id)
         if row is None or State(row["state"]) is not State.HELD or not row["refund_pressed"]:
             return False
+        stands = self._payout_stands(row)
+        if row["p_at"] == AT_RECOVERED:
+            if stands:
+                return False        # M7 is Stephen's: until it is answered the fill stays held and listed
+            outcome = self._move_p(row, "p-restore", recovered_account(row["exchange_id"], fill_id), row["reserve_account"])
+            if not self._landed(outcome):
+                return False
+            with self._tx() as db:
+                db.execute("UPDATE fills SET p_at=? WHERE fill_id=?", (AT_RESERVE, fill_id))
+            return True
         if row["p_at"] != AT_RESERVE:
             source = {AT_BUYER: row["buyer_account"], AT_FILL: fill_account(row["exchange_id"], fill_id)}[row["p_at"]]
-            outcome = self._move_p(row, "p-return", source, row["reserve_account"])
+            # S-18: to the seller's reserve only if the seller was not paid; otherwise held where it can be asked for
+            target, where, what = ((recovered_account(row["exchange_id"], fill_id), AT_RECOVERED, "p-recover") if stands
+                                   else (row["reserve_account"], AT_RESERVE, "p-return"))
+            outcome = self._move_p(row, what, source, target)
             if not self._landed(outcome):
                 return False        # the P is not recoverable yet: no cash moves, and the fill stays held and listed
             with self._tx() as db:
-                db.execute("UPDATE fills SET p_at=? WHERE fill_id=?", (AT_RESERVE, fill_id))
+                db.execute("UPDATE fills SET p_at=? WHERE fill_id=?", (where, fill_id))
             self._point("p-returned")
             return True
+        if stands:
+            return False            # the seller's payout stands: no cash is refunded and the P is not given back to them
         if row["capture_reversed"]:
             with self._tx() as db:
                 if State(self._row(db, fill_id)["state"]) is State.HELD:

@@ -35,7 +35,7 @@ def authority(tmp_path):
 
 
 def reserve(a, seller="seller-1", units=1000, exchange=XID):
-    return res.reserve_for_sale(a, REF, exchange, seller, f"seller:{seller}", units)
+    return res.reserve_for_sale(a, REF, exchange, seller, units)
 
 
 def power(amount, expires=NOW + 500, payer="buyer-1", currency="USD", provider_id="synthetic"):
@@ -100,15 +100,17 @@ def test_a_hundred_dollars_filled_as_fifty_and_fifty_charges_thirteen_then_twelv
             fees.fee_increment(0, bad)
 
 
-def test_the_fee_total_never_exceeds_the_cumulative_fee_in_any_confirmation_order():
-    """S-12: charged in any order, the sum is what one order would pay; a fee charged twice is over."""
-    principals = [5000, 5000, 1234, 7]
-    for order in ([0, 1, 2, 3], [3, 2, 1, 0], [1, 3, 0, 2]):
-        charged = [fees.planned_increments(principals)[i] for i in order]
-        assert fees.within_cumulative(charged, principals)
-    assert fees.within_cumulative([13, 12], [5000, 5000]) and fees.within_cumulative([0, 0], [5000, 5000])
-    assert not fees.within_cumulative([13, 13], [5000, 5000]) and not fees.within_cumulative([26], [5000, 5000])
+def test_a_plan_charges_each_fill_its_increment_and_two_fills_from_one_starting_point_overlap():
+    """S-12': a fill is charged the increment planned from where it sits in the plan; overlapping plan intervals are
+    what the settlement refuses, and a plan that is followed in full charges the one-order fee in any order."""
     assert fees.planned_increments([5000, 5000]) == [13, 12]
+    assert fees.planned_increments([100, 100, 100]) == [0, 1, 0], "the increment can exceed the fee on the fill alone"
+    assert not fees.plan_overlaps([(0, 5000), (5000, 5000)])
+    assert fees.plan_overlaps([(0, 5000), (0, 5000)]) and fees.plan_overlaps([(0, 5000), (4999, 10)])
+    assert not fees.plan_overlaps([(5000, 5000), (0, 5000), (10000, 1)]), "order does not matter"
+    principals = [5000, 5000, 1234, 7, 100, 100, 100]
+    for order in itertools.permutations(range(4)):
+        assert sum(fees.planned_increments(principals[:4])[i] for i in order) == ij.cash_fee(sum(principals[:4]))
     assert not hasattr(fees, "FeeBook"), "the in-memory FeeBook is gone: settlement accounts in its own store"
 
 
@@ -173,6 +175,23 @@ def test_a_sell_order_is_accepted_only_with_a_verified_reservation_that_covers_i
     # another seller's reservation
     theirs = reserve(authority, seller="seller-2", units=100, exchange=orders.ExchangeId("x3"))
     assert sell(book, authority, 10, 5, seller="seller-1", reservation=theirs) is orders.OrderRefusal.NO_RESERVATION
+
+
+def test_a_sale_is_reserved_only_out_of_the_sellers_own_account(authority):
+    """T23 / S-20: the caller does not name the account to take the units from; a reservation taken from another
+    party's account does not verify."""
+    import inspect
+    assert "from_account" not in inspect.signature(res.reserve_for_sale).parameters
+    real = reserve(authority, units=5)
+    assert real.from_account == "seller:seller-1"
+    effect = res.reserve_effect(real.exchange_id, "seller-2")
+    outcome, signed = authority.execute({"issuer": "test.one", "effect": effect, "action": effect,
+                                         "postings": {"seller:seller-1": -5, res.sale_account(real.exchange_id, "seller-2"): 5}})
+    assert outcome is ij.Outcome.POSTED
+    stolen = res.SaleReservation(real.ref, real.exchange_id, "seller-2", res.sale_account(real.exchange_id, "seller-2"), 5,
+                                 effect, "seller:seller-1", signed)
+    with pytest.raises(res.ReservationError):
+        res.verify_reservation(stolen, KEY.public_key)
 
 
 def test_a_sell_order_on_an_unrelated_receipt_or_a_forged_one_is_refused(authority):
@@ -327,6 +346,7 @@ def test_a_fill_names_its_quote_and_planning_accrues_nothing():
     assert (first.fee_increment_minor, second.fee_increment_minor) == (13, 12)
     assert first.quote_hash == orders.quote_hash(q) and first.principal_minor == 5000
     assert first.lot_units == q.lot_units, "the fill carries the lot size its units are derived from"
+    assert (first.planned_before, second.planned_before) == (0, 5000), "and its place in the plan"
 
 
 def test_a_work_order_id_is_not_an_exchange_id():

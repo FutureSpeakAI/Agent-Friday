@@ -12,6 +12,8 @@ Rules and the tests that hold them (tests/unit/test_exchange_orders.py):
   test_a_sell_order_on_an_unrelated_receipt_or_a_forged_one_is_refused.
 - Reserving moves the units into the sale's own account once:
   test_reserving_for_a_sale_moves_the_units_into_the_sales_own_account_once.
+- A sale is reserved only out of the seller's own account, and a reservation that was taken from another party's account
+  does not verify (S-20): test_a_sale_is_reserved_only_out_of_the_sellers_own_account.
 """
 from __future__ import annotations
 
@@ -36,6 +38,11 @@ def sale_account(exchange_id, seller: str) -> str:
     return f"sale:{exchange_id.value}:{seller}"
 
 
+def seller_account(seller: str) -> str:
+    """The seller's own account: the only account a sale is reserved out of (S-20)."""
+    return f"seller:{seller}"
+
+
 def reserve_effect(exchange_id, seller: str) -> str:
     return f"reserve:{exchange_id.value}:{seller}"
 
@@ -52,11 +59,12 @@ class SaleReservation:
     signed: auth.SignedReceipt
 
 
-def reserve_for_sale(poster, ref: IssuerRef, exchange_id, seller: str, from_account: str,
-                     units: int) -> SaleReservation:
-    """Post the seller's units into the sale's own account through the authority and return what was posted. The same
-    reservation again is a duplicate and returns the same receipt."""
+def reserve_for_sale(poster, ref: IssuerRef, exchange_id, seller: str, units: int) -> SaleReservation:
+    """Post the seller's units, out of the seller's OWN account, into the sale's own account through the authority and
+    return what was posted. The caller does not name the account to take them from (S-20). The same reservation again
+    is a duplicate and returns the same receipt."""
     opaque(seller, "seller")
+    from_account = seller_account(seller)
     if type(units) is not int or units < 1:
         raise ReservationError("units")
     effect, account = reserve_effect(exchange_id, seller), sale_account(exchange_id, seller)
@@ -73,7 +81,8 @@ def verify_reservation(r, public_key: str) -> None:
     if not isinstance(r, SaleReservation):
         raise ReservationError("not_a_reservation")
     try:
-        if type(r.units) is not int or r.units < 1 or r.account != sale_account(r.exchange_id, r.seller):
+        if (type(r.units) is not int or r.units < 1 or r.account != sale_account(r.exchange_id, r.seller)
+                or r.from_account != seller_account(r.seller)):
             raise ReservationError("account")
         auth.verify_receipt(r.signed, public_key, r.ref.charter_digest)
         body = wire.decode(r.signed.receipt)
