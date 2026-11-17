@@ -18,6 +18,7 @@ still works for the session and nothing about the things touched reaches disk.
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import threading
 import time
@@ -137,6 +138,20 @@ def get(receipt_id: str) -> dict | None:
         _load()
         rec = _MEM.get(receipt_id)
         return dict(rec) if rec else None
+
+
+_RECEIPT_ID = re.compile(r"\brcpt_[0-9a-f]{19}\b")
+
+
+def receipt_in(result: Any) -> str | None:
+    """The receipt a tool result names, if the journal holds it. A result that merely quotes an id
+    the journal never wrote (text from a document, a model's guess) names no receipt."""
+    if not isinstance(result, str):
+        return None
+    for rid in reversed(_RECEIPT_ID.findall(result)):
+        if get(rid):
+            return rid
+    return None
 
 
 def latest(conversation_id: str | None = None, undoable: bool = True) -> dict | None:
