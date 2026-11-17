@@ -593,7 +593,7 @@ def _normalize_record(rec, *, source="user"):
     # Preserve run-bookkeeping fields if present.
     for k in ("last_run_ts", "last_run_date", "last_status", "last_summary",
               "not_before", "retry_count", "retry_pending", "catch_up", "slot_day", "slot_cause",
-              "finish_notice", "slots_from", "missed_through", "held_retry"):
+              "finish_notice", "slots_from", "missed_through", "held_retry", "in_flight"):
         if k in rec:
             out[k] = rec[k]
     return out
@@ -2269,7 +2269,7 @@ def _run_mark(rec, now, started) -> dict:
     switches itself off as it fires."""
     late_day = _late_slot_day(rec)
     slot_day = late_day or _in_zone(rec, now).strftime("%Y-%m-%d")
-    mark = dict(last_run_ts=started, last_run_date=slot_day, started_at=started, quiet_deferred=None,
+    mark = dict(last_run_ts=started, last_run_date=slot_day, started_at=started, in_flight=True, quiet_deferred=None,
                 slot_day=late_day, slot_cause=_late_cause(rec) if late_day else None)
     if rec.get("trigger") == "once":
         mark["enabled"] = False
@@ -2508,6 +2508,10 @@ def dispatch(rec, *, manual=False, require_enabled=False):
                 _notify_run(rec, "failed", err)
         finally:
             ended = _time.time()
+            try:
+                _patch_record(sid, in_flight=False)
+            except Exception:
+                pass
             _append_run({
                 "id": sid, "run_id": run_id, "name": rec.get("name"),
                 "started": started, "ended": ended,
@@ -3274,6 +3278,24 @@ def _loop():
         _time.sleep(60)
 
 
+def recover_interrupted_runs() -> int:
+    """A run still marked in flight when Friday starts was cut off by a stop or a crash: it gets one
+    recovery receipt and is not run again (the mark was written before it started, so its slot is spent).
+    Returns how many receipts were written."""
+    written = 0
+    try:
+        from agent_friday.services import recovery_receipts
+        for rec in _read_store():
+            if rec.get("in_flight") is not True:
+                continue
+            if recovery_receipts.schedule_interrupted(rec):
+                written += 1
+            _patch_record(rec.get("id"), in_flight=False)
+    except Exception as e:
+        _log.warning("interrupted scheduled runs were not recorded: %s", e)
+    return written
+
+
 def start_scheduler():
     """Register built-ins, seed/reconcile the store, and start the tick loop.
 
@@ -3287,6 +3309,7 @@ def start_scheduler():
     _STARTED = True
     _register_default_builtin_tasks()
     _seed_and_reconcile()
+    recover_interrupted_runs()
     _seed_default_agent_schedules()
     try:
         # Once: jobs made to send email before draft_email saved drafts keep sending.
