@@ -86,6 +86,10 @@ def _frames(response) -> Iterator[dict]:
 #: How often the phone hears that the turn is alive while the model is thinking (an SSE `ping`).
 STATUS_EVERY_S = 4.0
 
+#: The longest a remote turn is followed. Past it the phone is told plainly (an `error` event) instead of hearing pings
+#: for ever; the turn itself keeps running on the PC. A long "start my day" runs for minutes, so this is generous.
+MAX_TURN_S = 30 * 60.0
+
 
 def _call_desktop(text: str, conversation_id: Optional[str]):
     """The owner's chat turn on this PC's own app, in process, with this PC's own session token."""
@@ -383,10 +387,17 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     final = ""
     failed = None
     payload: dict = {}
+    tools = 0
+    ended = "closed"
     for f in _frames_of(response):
+        if time.time() - started > MAX_TURN_S:
+            failed, ended = "the computer is still working on this after %d minutes; the answer will be on its screen" % (
+                MAX_TURN_S // 60), "deadline"
+            break
         if f is None:
             yield _status("thinking", started, voice_reply.THINKING)
         elif "tool" in f:
+            tools += 1
             yield _status("working", started, voice_reply.progress_words(f["tool"]))
         elif "delta" in f:
             spoken.append(str(f["delta"]))
@@ -395,10 +406,17 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
         elif f.get("done"):
             payload = f.get("payload") or {}
             final = str(payload.get("response") or "")
+            ended = "done"
     text = answer_only(final) or answer_only("".join(spoken))
-    if failed and not text:
-        yield _event({"type": "error", "error": {"type": "api_error", "message": failed[:300]},
-                      "friday": served({}, requested, cid)})
+    # One line per turn so a missing answer can be traced: how it ended, how long, how much came back.
+    _log.info("owner turn finished: ended=%s seconds=%d tools=%d answer_chars=%d failed=%s", ended,
+              int(time.time() - started), tools, len(text), bool(failed))
+    if not text:
+        # Never an empty "success": the phone is told why there is no answer (stream closed early, only a reasoning
+        # scratchpad came back, a failure, the deadline). Guarded by tests/unit/test_owner_turn_long_turn.py.
+        yield _event({"type": "error", "error": {"type": "api_error", "message": (failed or (
+            "the computer finished without an answer; it may be on its screen")) [:300]},
+                      "friday": served(payload, requested, cid)})
         return
     truth = served(payload, requested, cid)
     if dev is not None:
