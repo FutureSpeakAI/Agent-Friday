@@ -24,12 +24,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, fields
+from enum import Enum
 from fractions import Fraction
 
 from agent_friday.services import peer_wire_v2 as wire
 
 QUOTE_PREFIX = b"asimov-resource-quote/v1" + bytes([0])
-_STATUSES = ("measured", "uncalibrated", "failed")
 _HEX64_CHARS = set("0123456789abcdef")
 
 
@@ -129,12 +129,16 @@ class MixedProfiles(ArithmeticError):
 
 @dataclass(frozen=True)
 class N1Quantity:
+    """An exact quantity of one profile. `estimated` is True when it was made from an Estimated reading."""
     profile: str
     numerator: int
     denominator: int
+    estimated: bool = False
 
     def __post_init__(self):
         _text(self.profile, "profile")
+        if type(self.estimated) is not bool:
+            raise ValueError("estimated is true or false")
         _whole(self.numerator, "numerator")
         _whole(self.denominator, "denominator", low=1)
         whole = Fraction(self.numerator, self.denominator)
@@ -157,7 +161,7 @@ class N1Quantity:
         if exact is None:
             return NotImplemented
         total = self.exact + exact
-        return N1Quantity(self.profile, total.numerator, total.denominator)
+        return N1Quantity(self.profile, total.numerator, total.denominator, self.estimated or other.estimated)
 
     def __lt__(self, other):
         exact = self._same(other)
@@ -204,13 +208,16 @@ class Calibration:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
-def n1_for(calibration: Calibration, config_digest: str, job_device_active_ms: int):
-    """Job device-active time over the profile's calibrated median, exact; None under another
-    configuration, because a calibration belongs to one exact configuration (C-7)."""
-    _whole(job_device_active_ms, "job_device_active_ms")
-    if config_digest != calibration.config_digest:
+def n1_for(calibration: Calibration, config_digest: str, reading):
+    """The device-active reading over the profile's calibrated median, exact. It takes the READING, not a bare
+    number, so an N1 made from an Estimated reading is marked as estimated; None for an Unavailable reading and
+    under another configuration, because a calibration belongs to one exact configuration (C-7)."""
+    if not isinstance(reading, Reading):
+        raise TypeError("n1_for takes the reading (Measured, Estimated or Unavailable), not a number")
+    if config_digest != calibration.config_digest or isinstance(reading, Unavailable):
         return None
-    return N1Quantity(calibration.profile, job_device_active_ms, calibration.median_device_active_ms)
+    return N1Quantity(calibration.profile, reading.value, calibration.median_device_active_ms,
+                      estimated=isinstance(reading, Estimated))
 
 
 @dataclass(frozen=True)
@@ -251,15 +258,29 @@ def quote_hash(quote: ResourceQuote) -> str:
     return hashlib.sha256(QUOTE_PREFIX + wire.canonical(quote.to_wire())).hexdigest()
 
 
+class ReceiptStatus(str, Enum):
+    MEASURED = "measured"          # the device-active reading was Measured and the N1 was made from it
+    ESTIMATED = "estimated"        # the device-active reading was an Estimated one and the N1 says so
+    UNCALIBRATED = "uncalibrated"  # no N1: another configuration, or no device-active reading
+    FAILED = "failed"
+
+
+DEVICE_FIELDS = ("gpu_active_ms", "cpu_active_ms")
+
+
 @dataclass(frozen=True)
 class MeasuredReceipt:
-    """The reading after the work. It names the quote it answers (C-1)."""
+    """The reading after the work. It names the quote it answers (C-1). Its status is true to how the
+    device-active reading (`device_field`) was got, and its N1, when it has one, is exactly that reading over the
+    calibration's median."""
     quote_hash: str
     task_id: str
     profile: str
     vector: ResourceVector
     n1: N1Quantity | None
-    status: str
+    status: ReceiptStatus
+    device_field: str = "gpu_active_ms"
+    calibration: Calibration | None = None
 
     def __post_init__(self):
         if (not isinstance(self.quote_hash, str) or len(self.quote_hash) != 64
@@ -269,15 +290,33 @@ class MeasuredReceipt:
         _text(self.profile, "profile")
         if not isinstance(self.vector, ResourceVector):
             raise ValueError("vector must be a ResourceVector")
-        if self.n1 is not None and (not isinstance(self.n1, N1Quantity) or self.n1.profile != self.profile):
-            raise ValueError("n1 must be a quantity of this receipt's profile")
-        if self.status not in _STATUSES:
-            raise ValueError("status must be one of " + ", ".join(_STATUSES))
-        if self.status == "measured" and self.n1 is None:
-            raise ValueError("a measured receipt with no N1 is uncalibrated")
+        if not isinstance(self.status, ReceiptStatus):
+            raise ValueError("status must be a ReceiptStatus")
+        if self.device_field not in DEVICE_FIELDS:
+            raise ValueError("device_field names the device-active reading")
+        reading = getattr(self.vector, self.device_field)
+        if self.n1 is not None:
+            if not isinstance(self.n1, N1Quantity) or self.n1.profile != self.profile:
+                raise ValueError("n1 must be a quantity of this receipt's profile")
+            if isinstance(reading, Unavailable):
+                raise ValueError("there is no N1 without a device-active reading")
+            if self.calibration is None or self.calibration.profile != self.profile:
+                raise ValueError("an N1 needs the calibration it was made under")
+            if self.n1.exact != Fraction(reading.value, self.calibration.median_device_active_ms):
+                raise ValueError("the N1 must be the device-active reading over the calibration's median")
+            if self.n1.estimated != isinstance(reading, Estimated):
+                raise ValueError("an N1 is marked estimated exactly when its reading was estimated")
+        needs = {ReceiptStatus.MEASURED: (Measured, True), ReceiptStatus.ESTIMATED: (Estimated, True)}
+        if self.status in needs:
+            kind, has_n1 = needs[self.status]
+            if self.n1 is None or not isinstance(reading, kind):
+                raise ValueError(f"a {self.status.value} receipt needs an N1 made from a {kind.__name__} reading")
+        elif self.status is ReceiptStatus.UNCALIBRATED and self.n1 is not None:
+            raise ValueError("an uncalibrated receipt has no N1")
 
     def to_wire(self) -> dict:
         return {"quote_hash": self.quote_hash, "task_id": self.task_id, "profile": self.profile,
-                "vector": self.vector.to_wire(),
-                "n1": None if self.n1 is None else {"n": self.n1.numerator, "d": self.n1.denominator},
-                "status": self.status}
+                "vector": self.vector.to_wire(), "device_field": self.device_field,
+                "n1": None if self.n1 is None else {"n": self.n1.numerator, "d": self.n1.denominator,
+                                                    "estimated": self.n1.estimated},
+                "status": self.status.value}

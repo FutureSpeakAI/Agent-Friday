@@ -34,7 +34,7 @@ def quote(**over):
 def test_the_bundle_negatron_vector_is_exactly_five_halves():
     case = VECTORS["negatron"][0]
     cal = calibration(profile=case["profile"], median_device_active_ms=case["reference_device_ms"])
-    n1 = rv.n1_for(cal, "cfg-1", case["job_device_ms"])
+    n1 = rv.n1_for(cal, "cfg-1", rv.Measured(case["job_device_ms"], 0, "m", "c"))
     assert (n1.numerator, n1.denominator) == (case["result_numerator"], case["result_denominator"]) == (5, 2)
     assert n1.shown(1) == "2.5 N1 (to 1 place)"
     assert case["energy_wh"] is None
@@ -89,13 +89,20 @@ def test_an_n1_quantity_is_kept_exact_and_reduced():
 
 def test_another_configuration_gets_no_n1():
     cal = calibration()
-    assert rv.n1_for(cal, "cfg-1", 10000) is not None
-    assert rv.n1_for(cal, "cfg-2", 10000) is None
+    reading = rv.Measured(10000, 0, "m", "c")
+    assert rv.n1_for(cal, "cfg-1", reading) is not None
+    assert rv.n1_for(cal, "cfg-2", reading) is None
+
+
+def _good_receipt_fields():
+    reading = rv.Measured(10000, 15, "m", "c")
+    cal = calibration(median_device_active_ms=4000)
+    return dict(task_id="t1", profile="N1:testGPU-a", vector=rv.ResourceVector(gpu_active_ms=reading),
+                n1=rv.n1_for(cal, "cfg-1", reading), status=rv.ReceiptStatus.MEASURED, calibration=cal)
 
 
 def test_a_receipt_cannot_be_built_without_a_quote_hash():
-    ok = dict(task_id="t1", profile="N1:testGPU-a", vector=rv.ResourceVector(),
-              n1=rv.N1Quantity("N1:testGPU-a", 5, 2), status="measured")
+    ok = _good_receipt_fields()
     assert rv.MeasuredReceipt(quote_hash=rv.quote_hash(quote()), **ok).to_wire()["quote_hash"]
     for bad in (None, "", "short", "g" * 64, "A" * 64, 5, b"x" * 64):
         with pytest.raises(ValueError):
@@ -107,10 +114,10 @@ def test_a_receipt_cannot_be_built_without_a_quote_hash():
 def test_a_receipt_states_its_calibration_honestly():
     base = dict(quote_hash=HASH, task_id="t1", profile="N1:testGPU-a", vector=rv.ResourceVector())
     with pytest.raises(ValueError):
-        rv.MeasuredReceipt(**base, n1=None, status="measured")
-    assert rv.MeasuredReceipt(**base, n1=None, status="uncalibrated").to_wire()["n1"] is None
+        rv.MeasuredReceipt(**base, n1=None, status=rv.ReceiptStatus.MEASURED)
+    assert rv.MeasuredReceipt(**base, n1=None, status=rv.ReceiptStatus.UNCALIBRATED).to_wire()["n1"] is None
     with pytest.raises(ValueError):
-        rv.MeasuredReceipt(**base, n1=rv.N1Quantity("N1:other", 1, 1), status="measured")
+        rv.MeasuredReceipt(**base, n1=rv.N1Quantity("N1:other", 1, 1), status=rv.ReceiptStatus.MEASURED)
     with pytest.raises(ValueError):
         rv.MeasuredReceipt(**base, n1=None, status="paid")
 
@@ -199,3 +206,68 @@ def test_no_resource_type_carries_an_amount_field():
     for cls in (rv.ResourceVector, rv.ResourceQuote, rv.MeasuredReceipt, rv.Calibration, rv.N1Quantity):
         for f in dataclasses.fields(cls):
             assert "amount" not in f.name and "price" not in f.name and "balance" not in f.name, f.name
+
+
+# ── second-review findings (PR #892, finding 2), written red first ────────────────────────────────
+
+def _cal():
+    return calibration(median_device_active_ms=4000)
+
+
+def test_n1_for_takes_the_reading_not_an_integer():
+    cal = _cal()
+    with pytest.raises(TypeError):
+        rv.n1_for(cal, "cfg-1", 10000)
+    measured = rv.n1_for(cal, "cfg-1", rv.Measured(10000, 15, "m", "c"))
+    estimated = rv.n1_for(cal, "cfg-1", rv.Estimated(10000, "sampled"))
+    assert (measured.numerator, measured.denominator, measured.estimated) == (5, 2, False)
+    assert (estimated.numerator, estimated.denominator, estimated.estimated) == (5, 2, True)
+    assert rv.n1_for(cal, "cfg-1", rv.Unavailable("no meter")) is None
+    assert rv.n1_for(cal, "cfg-2", rv.Measured(10000, 0, "m", "c")) is None
+
+
+def _receipt(reading, n1, status, **kw):
+    vector = rv.ResourceVector(gpu_active_ms=reading)
+    return rv.MeasuredReceipt(quote_hash="ab" * 32, task_id="t1", profile="N1:testGPU-a", vector=vector, n1=n1,
+                              status=status, calibration=_cal(), **kw)
+
+
+def test_a_receipt_is_measured_only_when_its_device_reading_was_measured():
+    S = rv.ReceiptStatus
+    exact = rv.Measured(10000, 15, "m", "c")
+    n1_exact = rv.n1_for(_cal(), "cfg-1", exact)
+    assert _receipt(exact, n1_exact, S.MEASURED).to_wire()["status"] == "measured"
+    guess = rv.Estimated(10000, "sampled")
+    n1_guess = rv.n1_for(_cal(), "cfg-1", guess)
+    with pytest.raises(ValueError):
+        _receipt(guess, n1_guess, S.MEASURED)
+    assert _receipt(guess, n1_guess, S.ESTIMATED).to_wire()["n1"]["estimated"] is True
+    with pytest.raises(ValueError):
+        _receipt(exact, n1_exact, S.ESTIMATED)
+    with pytest.raises(ValueError):
+        _receipt(rv.Unavailable("none"), rv.N1Quantity("N1:testGPU-a", 999, 1), S.MEASURED)
+    with pytest.raises(ValueError):
+        _receipt(rv.Unavailable("none"), rv.N1Quantity("N1:testGPU-a", 999, 1), S.UNCALIBRATED)
+    assert _receipt(rv.Unavailable("none"), None, S.UNCALIBRATED).n1 is None
+    with pytest.raises(ValueError):
+        _receipt(exact, None, S.MEASURED), "a measured receipt carries its N1"
+
+
+def test_a_receipts_n1_must_be_its_reading_over_the_calibrations_median_and_its_status_a_closed_enum():
+    S = rv.ReceiptStatus
+    assert {s.value for s in S} == {"measured", "estimated", "uncalibrated", "failed"}
+    exact = rv.Measured(10000, 15, "m", "c")
+    for wrong in (rv.N1Quantity("N1:testGPU-a", 3, 1), rv.N1Quantity("N1:testGPU-b", 5, 2)):
+        with pytest.raises(ValueError):
+            _receipt(exact, wrong, S.MEASURED)
+    with pytest.raises(ValueError):
+        _receipt(exact, rv.n1_for(_cal(), "cfg-1", exact), "measured")
+    with pytest.raises(ValueError):
+        _receipt(exact, rv.n1_for(_cal(), "cfg-1", exact), "paid")
+    assert _receipt(rv.Unavailable("x"), None, S.FAILED).status is S.FAILED
+
+
+def test_an_n1_from_an_estimate_stays_marked_when_quantities_are_added():
+    a = rv.N1Quantity("N1:a", 1, 2, estimated=True)
+    b = rv.N1Quantity("N1:a", 1, 3, estimated=False)
+    assert (a + b).estimated is True and (b + b).estimated is False
