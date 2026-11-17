@@ -23,6 +23,7 @@ import json
 import logging
 import re
 import threading
+import unicodedata
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -42,8 +43,13 @@ ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 ICON = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 #: Names Windows treats as devices: a file or folder called ``con`` or ``nul`` cannot be made there.
 RESERVED = frozenset(["con", "prn", "aux", "nul"] + ["com%d" % n for n in range(1, 10)] + ["lpt%d" % n for n in range(1, 10)])
-#: Control characters, bidirectional overrides and zero-width characters: never part of a name or a query.
-_HIDDEN = re.compile("[\\x00-\\x1f\\x7f\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u2069\\ufeff]")
+#: Control, format (zero-width, bidirectional, tag characters, soft hyphen) and line or paragraph separators: never part of
+#: a name or a query.
+_HIDDEN_CATEGORIES = ("Cc", "Cf", "Zl", "Zp")
+
+
+def _hidden(text: str) -> bool:
+    return any(unicodedata.category(ch) in _HIDDEN_CATEGORIES for ch in text)
 _LOCK = threading.Lock()
 _TOP = {"schema", "id", "label", "icon", "group", "sections"}
 _SECTION = {"id", "label", "view", "source", "a2ui"}
@@ -79,7 +85,7 @@ def palette() -> dict:
 
 def _plain(value, path: str, limit: int) -> str:
     from agent_friday.services import a2ui_profile
-    if not isinstance(value, str) or not value.strip() or len(value) > limit or _HIDDEN.search(value):
+    if not isinstance(value, str) or not value.strip() or len(value) > limit or _hidden(value):
         raise Fault("a plain text of 1 to %d characters, with no control or hidden characters" % limit, path)
     if a2ui_profile.has_url(value) or pc_read.hide_host_paths(value) != value:
         raise Fault("no link or file path in a name", path)
@@ -224,7 +230,7 @@ def _has_history(workspace_id: str) -> bool:
 
 def _trashed(workspace_id: str) -> bool:
     trash = _root() / ".trash"
-    return trash.is_dir() and any(trash.glob("%s-*" % workspace_id))
+    return trash.is_dir() and any(e.name[len(workspace_id) + 1:].isdigit() for e in trash.glob("%s-*" % workspace_id))
 
 
 def _trash_name(workspace_id: str) -> str:
@@ -322,11 +328,13 @@ def register(app: Flask) -> None:
                 answer.status_code = 409
                 return answer
             saved = _stored(body["manifest"], stored_rev, g.device["id"])
+            version = _versions(wid) / ("%06d.json" % saved["rev"])
             try:
-                _write(_versions(wid) / ("%06d.json" % saved["rev"]), saved)
+                _write(version, saved)
                 _write(_file(wid), saved)
             except OSError as error:
                 _log.warning("user workspace save failed: %s", type(error).__name__)
+                version.unlink(missing_ok=True)          # a version that never went live must not lock the id
                 return refuse(503, "the PC could not save that right now", code="pc_unavailable")
         _receipt("userws_save", wid, 200)
         return jsonify({"ok": True, "rev": saved["rev"], "manifest": saved})
@@ -340,6 +348,8 @@ def register(app: Flask) -> None:
         if bad is not None:
             return bad
         base_rev = (request.get_json(silent=True) or {}).get("base_rev")
+        if base_rev is not None and (not isinstance(base_rev, int) or isinstance(base_rev, bool) or base_rev < 0):
+            return refuse(400, "base_rev is a whole number", code="bad_request")
         with _LOCK:
             current = _load(wid)
             if current is None:
@@ -351,8 +361,12 @@ def register(app: Flask) -> None:
             try:
                 entry.mkdir(parents=True)
                 _file(wid).replace(entry / "workspace.json")
-                if _versions(wid).is_dir():                  # the history goes with it, so a new workspace of the same id starts clean
-                    _versions(wid).replace(entry / "versions")
+                try:
+                    if _versions(wid).is_dir():              # the history goes with it, so a new workspace of the same id starts clean
+                        _versions(wid).replace(entry / "versions")
+                except OSError:
+                    (entry / "workspace.json").replace(_file(wid))       # all or nothing: put the workspace back
+                    raise
             except OSError as error:
                 _log.warning("user workspace delete failed: %s", type(error).__name__)
                 return refuse(503, "the PC could not do that right now", code="pc_unavailable")
@@ -380,8 +394,12 @@ def register(app: Flask) -> None:
             newest = entries[-1]
             try:
                 (newest / "workspace.json").replace(_file(wid))
-                if (newest / "versions").is_dir():
-                    (newest / "versions").replace(_versions(wid))
+                try:
+                    if (newest / "versions").is_dir():
+                        (newest / "versions").replace(_versions(wid))
+                except OSError:
+                    _file(wid).replace(newest / "workspace.json")        # all or nothing: leave it in the trash
+                    raise
             except OSError as error:
                 _log.warning("user workspace restore failed: %s", type(error).__name__)
                 return refuse(503, "the PC could not do that right now", code="pc_unavailable")
