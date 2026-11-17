@@ -120,9 +120,16 @@ def no_key(response) -> bool:
     return getattr(response, "status_code", 0) == 401 and response.headers.get(NO_KEY_HEADER) == "no-key"
 
 
+_PROXY_VARS = ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+
+
 def _keep_loopback_direct() -> None:
     """A system HTTP proxy must never be asked to carry a request to our own loopback listener. An existing "*" already
-    means "bypass everything" and is left alone; otherwise 127.0.0.1 is added as a whole entry."""
+    means "bypass everything" and is left alone; otherwise 127.0.0.1 is added as a whole entry. Nothing is changed
+    when no proxy is configured, so the process environment (and every child that inherits it) stays as it was.
+    Guarded by tests/unit/test_key_gateway.py."""
+    if not any(os.environ.get(var) for var in _PROXY_VARS):
+        return
     for var in ("NO_PROXY", "no_proxy"):
         entries = [part.strip() for part in os.environ.get(var, "").split(",") if part.strip()]
         if "*" not in entries and "127.0.0.1" not in entries:
