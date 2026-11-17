@@ -74,6 +74,10 @@ BANNED_EFFECTS = frozenset({
     "governance", "claws_write", "trust_write", "policy_write"})
 
 
+#: what hostile or garbled input can raise inside the checks; each is turned into a V1 rejection.
+MALFORMED = (TypeError, ValueError, AttributeError, KeyError, IndexError, RecursionError, OverflowError)
+
+
 class ProfileError(ValueError):
     """The document breaks a profile rule; `rule` is its V-id (V1..V14) and the whole document is rejected."""
 
@@ -487,6 +491,24 @@ def _check_tree(comps: list[dict], ctx: Context) -> None:
             raise ProfileError("V5", "approval_slot never sits inside a template")
 
 
+MAX_META_DEPTH, MAX_META_NODES = MAX_DEPTH, 200
+
+
+def _check_metadata_size(meta) -> None:
+    """V6 also bounds what a view may carry in its metadata: depth and node count, so a document cannot
+    hide an unbounded structure there (found by the E-L fuzzer)."""
+    nodes, stack = 0, [(meta, 1)]
+    while stack:
+        node, depth = stack.pop()
+        nodes += 1
+        if depth > MAX_META_DEPTH or nodes > MAX_META_NODES:
+            raise ProfileError("V6", "the metadata is deeper or larger than a view may carry")
+        if isinstance(node, dict):
+            stack.extend((v, depth + 1) for v in node.values())
+        elif isinstance(node, list):
+            stack.extend((v, depth + 1) for v in node)
+
+
 def _check_data(comps, data, meta, ctx: Context, messages) -> None:
     declared = ((meta.get("friday") or {}).get("bindings") or {}) if isinstance(meta, dict) else {}
     prefixes = [b.get("path", "") for b in declared.values() if isinstance(b, dict)]
@@ -540,6 +562,16 @@ def check(messages, ctx: Context, direction: str = "to_renderer") -> dict:
     if ctx.authorship not in ("composer", "friday_liquid"):
         raise ProfileError("V14", "only Friday's composer or the friday-liquid fence may author a view; "
                                   "outside content is shown as one plain line")
+    try:
+        return _check_document(messages, ctx, direction)
+    except ProfileError:
+        raise
+    except MALFORMED as err:
+        # a shape no rule anticipated is still a rejection of the whole document, never a crash or a pass
+        raise ProfileError("V1", "the document is malformed") from err
+
+
+def _check_document(messages, ctx: Context, direction: str) -> dict:
     _v1_v2_messages(messages, direction)
     if direction != "to_renderer":
         return {"components": [], "data": {}, "metadata": {}, "surface": None}
@@ -550,6 +582,7 @@ def check(messages, ctx: Context, direction: str = "to_renderer") -> dict:
     for c in comps:
         _check_component(c, ctx, data)
     _check_tree(comps, ctx)
+    _check_metadata_size(meta)
     _check_data(comps, data, meta, ctx, messages)
     return {"components": comps, "data": data, "metadata": meta, "surface": sid}
 
