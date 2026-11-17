@@ -54,14 +54,14 @@ class State(str, Enum):
 S = State
 TRANSITIONS = {
     S.MATCHED: {S.CAPTURE_REQUESTED, S.RELEASED},
-    S.CAPTURE_REQUESTED: {S.CASH_CONFIRMED, S.RELEASED},
+    S.CAPTURE_REQUESTED: {S.CASH_CONFIRMED, S.RELEASED, S.HELD},
     S.CASH_CONFIRMED: {S.P_TRANSFERRED, S.HELD},
     S.P_TRANSFERRED: {S.PAYOUT_REQUESTED, S.HELD},
     S.PAYOUT_REQUESTED: {S.PAYOUT_CONFIRMED, S.PAYOUT_RETURNED, S.HELD},
     S.PAYOUT_RETURNED: {S.PAYOUT_REQUESTED, S.HELD},
     S.PAYOUT_CONFIRMED: {S.HELD},
     S.HELD: {S.REFUNDED},
-    S.RELEASED: set(),
+    S.RELEASED: {S.HELD},
     S.REFUNDED: set(),
 }
 TERMINAL = frozenset({S.PAYOUT_CONFIRMED, S.RELEASED, S.REFUNDED})
@@ -261,13 +261,11 @@ class Settlement:
         moved = self._move_p(row, "p-transfer", row["reserve_account"], row["buyer_account"], "buyer")
         self._point("p-posted")
         with self._tx() as db:
+            if moved:
+                db.execute("UPDATE fills SET p_at='buyer' WHERE fill_id=?", (fill_id,))   # where the journal put it
             if State(self._row(db, fill_id)["state"]) is not State.CASH_CONFIRMED:
                 return False
-            if moved:
-                db.execute("UPDATE fills SET p_at='buyer' WHERE fill_id=?", (fill_id,))
-                self._move(db, fill_id, State.P_TRANSFERRED)
-            else:
-                self._move(db, fill_id, State.HELD)
+            self._move(db, fill_id, State.P_TRANSFERRED if moved else State.HELD)
         self._point("moved:p-transferred")
         return True
 
@@ -277,6 +275,9 @@ class Settlement:
         if State(row["state"]) is not State.CAPTURE_REQUESTED:
             return
         charged = fees.fee_increment(self._settled_principal(db, row), row["principal"])
+        if charged != row["fee_increment"]:
+            self._move(db, fill_id, State.HELD)    # the fee captured is not the fee owed: a person must settle it
+            return
         db.execute("UPDATE fills SET fee_charged=? WHERE fill_id=?", (charged, fill_id))
         self._move(db, fill_id, FEE_ACCRUES_AT)
 
@@ -350,6 +351,8 @@ class Settlement:
     def _begin_release(self, db, fill_id: str):
         self._move(db, fill_id, State.RELEASED)
         self._enqueue(db, fill_id, p.Leg.RELEASE)
+        db.execute("UPDATE legs SET status='cancelled' WHERE fill_id=? AND leg=? AND status='pending'",
+                   (fill_id, p.Leg.CAPTURE.value))
 
     # -- reconciliation and events ----------------------------------------------------------
 
@@ -362,7 +365,7 @@ class Settlement:
         for leg in legs:
             if leg["status"] == "refused":
                 continue
-            if leg["status"] == "done" and not self._awaiting(row, leg):
+            if leg["status"] in ("done", "cancelled") and not self._awaiting(row, leg):
                 continue
             status = self._provider.lookup(leg["key"])
             self._point(f"looked-up:{leg['leg']}")
@@ -372,7 +375,7 @@ class Settlement:
     @staticmethod
     def _awaiting(row, leg) -> bool:
         state = State(row["state"])
-        return ((leg["leg"] == p.Leg.CAPTURE.value and state is State.CAPTURE_REQUESTED)
+        return ((leg["leg"] == p.Leg.CAPTURE.value and state in (State.CAPTURE_REQUESTED, State.RELEASED))
                 or (leg["leg"] == p.Leg.PAYOUT.value and state is State.PAYOUT_REQUESTED))
 
     def _apply_status(self, db, fill_id: str, leg: dict, status: p.ProviderStatus):
@@ -385,7 +388,10 @@ class Settlement:
                 db.execute("UPDATE legs SET status='pending' WHERE key=?", (key,))
         elif kind == p.Leg.CAPTURE.value and status is p.ProviderStatus.CAPTURED:
             db.execute("UPDATE legs SET status='done' WHERE key=?", (key,))
-            self._confirm_cash(db, fill_id)
+            if state is State.RELEASED:
+                self._move(db, fill_id, State.HELD)    # the cash was captured after all: it needs a refund
+            else:
+                self._confirm_cash(db, fill_id)
         elif kind == p.Leg.CAPTURE.value and status is p.ProviderStatus.REVERSED:
             if State.HELD in TRANSITIONS[state]:
                 self._move(db, fill_id, State.HELD)
@@ -479,6 +485,8 @@ class Settlement:
             held = row is not None and State(row["state"]) is State.HELD
             if held:
                 self._enqueue(db, fill_id, p.Leg.REFUND)
+                db.execute("UPDATE legs SET status='pending' WHERE fill_id=? AND leg=? AND status='refused'",
+                           (fill_id, p.Leg.REFUND.value))
         return self.tick(fill_id) if held else self.state(fill_id)
 
     def _finish_refund(self, fill_id: str) -> bool:

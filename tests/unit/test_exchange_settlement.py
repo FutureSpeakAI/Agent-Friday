@@ -116,6 +116,8 @@ def violations(env, fill_id="f1"):
     kinds = [kind for kind, _ in ops.values()]
     if "capture" in kinds and any(kind == "release" and status == "released" for kind, status in ops.values()):
         found.append("S-2: cash both captured and released")
+    if state is st.State.RELEASED and any(kind == "capture" for kind, _ in ops.values()):
+        found.append("S-2: the fill was released but its cash was captured")
     for kind in ("capture", "payout", "release", "refund"):
         if kinds.count(kind) > 1:
             found.append(f"a second {kind} reached the provider")
@@ -509,7 +511,7 @@ def test_every_move_not_in_the_table_is_refused(env_factory):
 
 
 def test_released_and_refunded_are_final(env_factory):
-    assert st.TRANSITIONS[st.State.RELEASED] == set() and st.TRANSITIONS[st.State.REFUNDED] == set()
+    assert st.TRANSITIONS[st.State.RELEASED] == {st.State.HELD} and st.TRANSITIONS[st.State.REFUNDED] == set()
     env = env_factory()
     env.open()
     env.settlement.cancel("f1")
@@ -552,3 +554,77 @@ def test_every_short_sequence_of_events_keeps_the_invariants_and_terminal_states
             final = env.drive()
             assert violations(env) == [], ops
             assert final in st.TERMINAL | {st.State.HELD}, (ops, final)
+
+
+def test_cancel_with_a_capture_still_waiting_never_sends_that_capture(env_factory):
+    """Found by an independent review: cancel moved the fill to RELEASED but left the pending capture to be
+    sent, so the buyer's cash was captured and the P went back to the seller."""
+    env = env_factory()
+    env.open()
+    env.settlement.advance("f1")
+    assert env.settlement.cancel("f1") is st.CancelResult.CANCELLED
+    ops = env.provider.books()["ops"]
+    assert not [k for k, (kind, _) in ops.items() if kind == "capture"], ops
+    assert env.provider.books()["power"]["bp-1"] == {"amount": 10_000, "reserved": 0}
+    assert env.balances() == {"treasury": SUPPLY - UNITS, "seller": UNITS} and violations(env) == []
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        assert db.execute("SELECT status FROM legs WHERE leg='capture'").fetchone()[0] == "cancelled"
+
+
+def test_cash_captured_after_the_fill_was_released_holds_the_fill_for_a_refund(env_factory):
+    env = env_factory()
+    env.open()
+    env.settlement.advance("f1")
+    env.settlement.dispatch("f1")                      # the capture really happens at the provider
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:   # while the node believes the fill was released
+        db.execute("UPDATE fills SET state='released'")
+        db.execute("UPDATE legs SET status='cancelled' WHERE leg='capture'")
+    env.settlement.tick("f1")
+    assert env.settlement.state("f1") is st.State.HELD
+    assert env.settlement.refund("f1", authorized=True) is st.State.REFUNDED
+    assert env.effects().count("fill:f1:p-return") <= 1
+
+
+def test_a_fee_that_is_not_the_fee_captured_holds_the_fill_instead_of_recording_a_wrong_one(env_factory):
+    env = env_factory()
+    env.provider.fund("bp-1", "buyer-1", "USD", 20_000, contract.LATER)
+    for fill_id, fee in (("f1", 13), ("f2", 12)):
+        env.settlement.open_fill(env.fill(fill_id, principal=5000, fee=fee), ACCOUNTS, PARTIES, 50)
+    env.drive("f2")                                   # confirms first, so its fee is 13, not the 12 that was captured
+    assert env.settlement.state("f2") is st.State.HELD
+    assert env.settlement.fee_charged("f2") == 0
+    assert env.drive("f1") is st.State.PAYOUT_CONFIRMED and env.settlement.fee_charged("f1") == 13
+
+
+def test_the_p_is_recorded_where_the_journal_put_it_even_if_the_fill_was_held_in_between(env_factory):
+    env = env_factory()
+    env.open()
+
+    def hold_after_posting(point):
+        if point == "p-posted":
+            with sqlite3.connect(env.tmp / "s.sqlite") as db:
+                db.execute("UPDATE fills SET state='held'")
+    env.settlement.advance("f1")
+    env.settlement.dispatch("f1")
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        db.execute("UPDATE fills SET state='cash-confirmed'")
+    env.settlement._point = hold_after_posting
+    env.settlement.advance("f1")
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        assert db.execute("SELECT p_at FROM fills").fetchone()[0] == "buyer"
+    env.settlement._point = lambda name: None
+    assert env.settlement.refund("f1", authorized=True) is st.State.REFUNDED
+    assert env.balances() == {"treasury": SUPPLY - UNITS, "seller": UNITS} and env.effects().count("fill:f1:p-return") == 1
+
+
+def test_a_reversal_while_the_capture_is_still_being_confirmed_holds_the_fill(env_factory):
+    env = env_factory()
+    env.open()
+    env.settlement.advance("f1")
+    env.settlement.dispatch("f1")
+    with sqlite3.connect(env.tmp / "s.sqlite") as db:
+        db.execute("UPDATE legs SET status='sent' WHERE leg='capture'")
+    env.provider.chargeback("x1/f1/capture/once")
+    env.settlement.pump(env.provider.deliver())
+    assert env.settlement.state("f1") is st.State.HELD
+
