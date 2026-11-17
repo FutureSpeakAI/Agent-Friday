@@ -30,6 +30,8 @@ import sqlite3
 import threading
 from fractions import Fraction
 
+from agent_friday.services.issuer_registry import charter_digest
+
 MAX_UNITS = 2 ** 53 - 1
 
 
@@ -80,7 +82,14 @@ def match_lots(case: dict) -> tuple[int, int | None]:
 class IssuerJournal:
     """One issuer's fixed-supply test-credit ledger in a SQLite file."""
 
-    def __init__(self, path, issuer: str, supply: int, treasury: str = "treasury"):
+    def __init__(self, path, issuer: str | None = None, supply: int | None = None,
+                 treasury: str = "treasury", *, charter=None):
+        digest = None
+        if charter is not None:
+            if issuer is not None or supply is not None:
+                raise TypeError("give a charter, or an issuer and a supply, not both")
+            issuer, supply, treasury = charter.issuer_id, charter.genesis_supply, charter.treasury_account
+            digest = charter_digest(charter)
         if type(supply) is not int or not 0 <= supply <= MAX_UNITS:
             raise ValueError("supply must be a whole number of units")
         self._path = str(path)
@@ -95,14 +104,28 @@ class IssuerJournal:
                     effect TEXT PRIMARY KEY, postings TEXT NOT NULL, posted_at REAL NOT NULL DEFAULT (strftime('%s','now')));
                 CREATE TABLE IF NOT EXISTS journal_actions (action TEXT PRIMARY KEY, effect TEXT NOT NULL);
             """)
-            row = db.execute("SELECT supply FROM journal_meta WHERE issuer=?", (issuer,)).fetchone()
+            have = {r[1] for r in db.execute("PRAGMA table_info(journal_meta)")}
+            for column, kind in (("charter_digest", "TEXT"), ("unit_code", "TEXT"), ("precision", "INTEGER")):
+                if column not in have:
+                    db.execute(f"ALTER TABLE journal_meta ADD COLUMN {column} {kind}")
+            row = db.execute("SELECT supply, charter_digest, unit_code, precision FROM journal_meta WHERE issuer=?",
+                             (issuer,)).fetchone()
             if row is None:
                 if db.execute("SELECT 1 FROM journal_meta").fetchone():
                     raise ValueError("this journal file belongs to another issuer")
-                db.execute("INSERT INTO journal_meta VALUES (?,?)", (issuer, supply))
+                db.execute("INSERT INTO journal_meta (issuer, supply, charter_digest, unit_code, precision) "
+                           "VALUES (?,?,?,?,?)",
+                           (issuer, supply, digest, charter.unit_code if charter else None,
+                            charter.precision if charter else None))
                 db.execute("INSERT INTO journal_balances VALUES (?,?)", (treasury, supply))
-            elif row[0] != supply:
+                return
+            if row[0] != supply:
                 raise ValueError("this journal was created with a different supply")
+            stored = (row[1], row[2], row[3])
+            given = (digest, charter.unit_code, charter.precision) if charter else (None, None, None)
+            if stored != given:
+                raise ValueError("this journal belongs to another charter" if stored[0]
+                                 else "this journal was made without a charter")
 
     def _connect(self):
         return sqlite3.connect(self._path)
