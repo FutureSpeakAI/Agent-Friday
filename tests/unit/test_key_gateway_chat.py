@@ -158,3 +158,11 @@ def test_the_single_openai_slot_pointed_at_this_machine_is_called_directly(provi
     legacy_settings(monkeypatch, provider)
     smr._call_openai([{"role": "user", "content": "hi"}], tools=None, stream=False)
     assert sent[0]["Authorization"] == "Bearer " + REAL
+
+
+def test_the_single_slot_and_a_registry_descriptor_do_not_stop_each_others_listener(provider, monkeypatch):
+    legacy_settings(monkeypatch, provider)
+    smr._call_openai([{"role": "user", "content": "hi"}], tools=None, stream=False)
+    smr._call_openai([{"role": "user", "content": "hi"}], model="m", tools=None,
+                     provider=descriptor(provider, name="openai"), stream=False)
+    assert len([key for key in gw._PROXIES if isinstance(key, tuple)]) == 2

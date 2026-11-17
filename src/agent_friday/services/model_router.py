@@ -1916,7 +1916,7 @@ def _call_openai(messages, system=None, model=None, max_tokens=None,
         outgoing_key = api_key
         try:
             gateway_base = key_gateway.descriptor_url(
-                {"name": "openrouter" if "openrouter.ai" in base_url else "openai", "base_url": base_url,
+                {"name": "legacy-openrouter" if "openrouter.ai" in base_url else "legacy-openai", "base_url": base_url,
                  "auth": {"type": "env_var", "key": "OPENAI_API_KEY"}}, key_source=_legacy_openai_key)
         except Exception as error:
             raise RuntimeError(f"The key gateway could not start for the OpenAI-compatible provider: {error}") from error
