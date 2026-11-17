@@ -26,7 +26,8 @@ Show `reason` / `blocked.reason` as written; they are the PC's own words (Local 
   `facts` is the PC's own row for the model: `switch` (`cold`, `expected_seconds`, `basis`: a cold local model needs
   loading; the number is measured on this PC or benchmarked, labelled), `measured` (median and p90 first-token wait
   and cache share from real answered turns, or null), `benchmark` (VRAM, tokens/s, cold load, date), `capabilities`
-  (declared by the provider, labelled as such). Show "about N s the first time" from `switch` when `cold` is true.
+  (declared by the provider, labelled as such). `measured` and `benchmark` appear once the model-slate timing work ships (#848, #862); until then
+  they are absent, so treat every field in `facts` as optional. Show "about N s the first time" from `switch` when `cold` is true.
 * Refusals (nothing changed): `400 unknown_model` (with `did_you_mean`), `409 model_unavailable`,
   `409 seat_refused` (the PC would not bind it; the reason is in `error`), `403 owner_only`, `400 bad_request`,
   `503 slate_unavailable`.
