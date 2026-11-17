@@ -185,5 +185,4 @@ def test_no_public_function_takes_a_bare_amount_integer():
 
 def test_the_bare_integer_guard_can_fail():
     assert bare_amount_params("def pay(units: int): pass") == ["pay(units: int)"]
-    assert bare_amount_params("def pay(units): pass
-def _p(amount: int): pass") == []
+    assert bare_amount_params("def pay(units): pass" + chr(10) + "def _p(amount: int): pass") == []
