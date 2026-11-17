@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import uuid
 from dataclasses import dataclass, fields
 from enum import Enum
 from pathlib import Path
@@ -37,7 +38,7 @@ from agent_friday.services import peer_wire_v2 as wire
 PROTOCOL = "asimov-issuer-charter/v1"
 DIGEST_PREFIX = PROTOCOL.encode("ascii") + bytes([0])
 MAX_UNITS = 2 ** 53 - 1
-_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+_ID = re.compile(r"[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9_-])?")   # never ends in a dot: Windows folds "a." into "a"
 _UNIT = re.compile(r"[A-Z0-9]{2,12}")
 _ACCOUNT = re.compile(r"[a-z0-9][a-z0-9._:-]{0,63}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -177,8 +178,10 @@ class Amount:
 
 
 class IssuerRegistry:
-    """Charters on disk, one folder per issuer id. A charter is written once and read back
-    against what was registered."""
+    """Charters on disk, one folder per issuer id. A charter is created exclusively (of two racing registrations
+    exactly one is answered REGISTERED) and read back against what was registered. `get` checks only that the stored
+    charter parses and names the same id: an edit that stays well formed is caught only where a journal bound to the
+    charter's digest exists."""
 
     def __init__(self, home):
         self._root = Path(home) / "issuers"
@@ -192,13 +195,21 @@ class IssuerRegistry:
         path = self._path(charter.issuer_id)
         raw = charter.canonical_bytes()
         if path.exists():
-            return (IssuerOutcome.ALREADY_REGISTERED if path.read_bytes() == raw
-                    else IssuerOutcome.CHARTER_MISMATCH)
+            return self._answer_for_existing(path, raw)
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp = path.with_suffix(".tmp")
+        temp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
         temp.write_bytes(raw)
-        os.replace(temp, path)
+        try:
+            os.link(temp, path)          # atomic, and it fails when the charter already exists: of two racers, one wins
+        except FileExistsError:
+            return self._answer_for_existing(path, raw)
+        finally:
+            temp.unlink(missing_ok=True)
         return IssuerOutcome.REGISTERED
+
+    @staticmethod
+    def _answer_for_existing(path: Path, raw: bytes) -> IssuerOutcome:
+        return (IssuerOutcome.ALREADY_REGISTERED if path.read_bytes() == raw else IssuerOutcome.CHARTER_MISMATCH)
 
     def get(self, issuer_id: str) -> IssuerCharter | None:
         path = self._path(issuer_id)

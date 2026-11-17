@@ -282,3 +282,83 @@ def test_a_closed_journal_leaves_a_complete_file_behind(tmp_path):
     copy = tmp_path / "copy.sqlite"
     copy.write_bytes(path.read_bytes())
     assert make(copy).balances() == {"treasury": 95, "alice": 5}
+
+
+# ── second-review findings (PR #897) and design 10.3, written red first ───────────────────────────
+
+def _post_one(path):
+    journal = make(path)
+    journal.execute(cmd("e1", treasury=-5, alice=5))
+    return journal
+
+
+def test_a_consistent_tamper_is_detected_because_the_request_hash_is_recomputed(tmp_path):
+    """Finding 1 / T4: postings and balances edited together passed, because only the stored hash was compared."""
+    path = tmp_path / "j.sqlite"
+    _post_one(path)
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE journal_effects SET postings=? WHERE effect='e1'", ('[["mallory",5],["treasury",-5]]',))
+        db.execute("DELETE FROM journal_balances WHERE account='alice'")
+        db.execute("INSERT INTO journal_balances VALUES ('mallory', 5)")
+    reopened = make(path)
+    assert reopened.halted, "the postings no longer hash to the request that was signed for"
+    assert reopened.execute(cmd("e2", treasury=-1, bob=1)) is ij.Outcome.HALTED
+    assert reopened.balances().get("mallory") == 5, "reads still work"
+
+
+def test_every_stored_column_that_the_request_hash_covers_is_checked(tmp_path):
+    for sql in ("UPDATE journal_effects SET reason='forged' WHERE effect='e1'",
+                "UPDATE journal_effects SET corrects='e0' WHERE effect='e1'",
+                "UPDATE journal_effects SET request_hash='" + "0" * 64 + "' WHERE effect='e1'",
+                "UPDATE journal_effects SET request_hash=NULL WHERE effect='e1'",
+                "UPDATE journal_effects SET effect='e1-renamed' WHERE effect='e1'"):
+        folder = tmp_path / str(abs(hash(sql)))
+        folder.mkdir()
+        path = folder / "j.sqlite"
+        _post_one(path)
+        with sqlite3.connect(path) as db:
+            db.execute(sql)
+        assert make(path).halted, sql
+
+
+def test_a_damaged_row_halts_the_journal_instead_of_stopping_it_opening(tmp_path):
+    """Finding 2 / T5: a receipt that no longer decodes raised WireError out of the constructor."""
+    damage = {
+        "receipt one byte": "UPDATE journal_receipts SET receipt=x'41'",
+        "receipt empty": "UPDATE journal_receipts SET receipt=x''",
+        "receipt not canonical": "UPDATE journal_receipts SET receipt=x'7b2261223a317d20'",
+        "postings not json": "UPDATE journal_effects SET postings='not json'",
+        "postings wrong shape": "UPDATE journal_effects SET postings='{\"a\":1}'",
+        "postings text amount": "UPDATE journal_effects SET postings='[[\"alice\",\"5\"]]'",
+        "seq text": "UPDATE journal_effects SET seq='one'",
+        "receipt row gone": "DELETE FROM journal_receipts",
+        "receipt of another seq": "UPDATE journal_receipts SET seq=7",
+    }
+    for name, sql in damage.items():
+        folder = tmp_path / name.replace(" ", "_")
+        folder.mkdir()
+        path = folder / "j.sqlite"
+        _post_one(path)
+        with sqlite3.connect(path) as db:
+            db.execute(sql)
+        reopened = make(path)                      # must not raise
+        assert reopened.halted, name
+        assert isinstance(reopened.balances(), dict) and reopened.head() >= 0, name
+        assert reopened.execute(cmd("e9", treasury=-1, carol=1)) is ij.Outcome.HALTED, name
+
+
+def test_a_command_of_only_zero_amounts_is_refused_at_the_edge(tmp_path):
+    journal = make(tmp_path / "j.sqlite")
+    assert journal.execute(cmd("z1", treasury=0, alice=0)) is ij.Outcome.UNITS
+    assert journal.head() == 0
+
+
+def test_a_halted_journal_writes_nothing_not_even_a_delivery_mark(tmp_path):
+    path = tmp_path / "j.sqlite"
+    _post_one(path)
+    with sqlite3.connect(path) as db:
+        db.execute("UPDATE journal_balances SET amount=amount+1 WHERE account='alice'")
+    halted = make(path)
+    before = tables(path)
+    halted.outbox_delivered("e1")
+    assert tables(path) == before
