@@ -11,6 +11,10 @@ shared contract suite in services/exchange/contract.py):
   ProviderContract.test_a_repeated_key_is_one_request.
 - A fault does what its name says: test_each_fault_does_what_it_says.
 - The double's books survive a restart: test_the_books_survive_a_restart.
+- Cash is conserved per capture: payouts plus refunds never exceed what was captured, a refund returns the cash to the
+  buyer, a reversal returns what was not refunded and blocks later refunds and payouts, and the books balance to the
+  minor unit after any short sequence of operations: ProviderContract's payout, refund and reversal tests and
+  test_the_books_balance_after_every_short_sequence_of_operations.
 """
 from __future__ import annotations
 
@@ -252,23 +256,51 @@ class FakeProvider:
         row = db.execute("SELECT data, status FROM ops WHERE key=? AND kind='capture'", (capture_ref[4:],)).fetchone()
         return None if row is None else (json.loads(row[0]), row[1], capture_ref[4:])
 
-    def payout(self, key, seller_ref, amount_minor):
+    def _holdings(self, db, capture_ref):
+        """(capture status, total captured, paid out, refunded, buyer's power ref) for one capture, from the ops
+        the double already holds; None when there is no such capture. Cash is conserved per capture: what was
+        captured is what has been paid out, refunded or reversed, plus what is still held."""
+        found = self._capture(db, capture_ref)
+        if found is None:
+            return None
+        data, status, _ = found
+        total = data["principal_minor"] + data["fee_minor"]
+        paid = refunded = 0
+        for kind, request, op_status in db.execute("SELECT kind, request, status FROM ops WHERE kind IN ('payout','refund')"):
+            req = json.loads(request)
+            if req[0] != capture_ref:
+                continue
+            if kind == "refund":
+                refunded += req[1]
+            elif op_status in (ProviderStatus.PAYOUT_PENDING.value, ProviderStatus.PAYOUT_CONFIRMED.value):
+                paid += req[2]
+        reservation = self._reservation(db, json.loads(db.execute(
+            "SELECT request FROM ops WHERE key=?", (capture_ref[4:],)).fetchone()[0])[0])
+        return status, total, paid, refunded, reservation[0][0]
+
+    def payout(self, key, capture_ref, seller_ref, amount_minor):
+        request = [capture_ref, seller_ref, amount_minor]
         with self._db() as db:
             row = db.execute("SELECT status, request FROM ops WHERE key=? AND kind='payout'", (key,)).fetchone()
-            if row and row[0] == ProviderStatus.PAYOUT_RETURNED.value and row[1] == json.dumps(
-                    [seller_ref, amount_minor], sort_keys=True):
+            if row and row[0] == ProviderStatus.PAYOUT_RETURNED.value and row[1] == json.dumps(request, sort_keys=True):
+                held = self._holdings(db, capture_ref)
+                if held is None or held[0] != ProviderStatus.CAPTURED.value or held[2] + held[3] + amount_minor > held[1]:
+                    return Refused(RefusalCode.INSUFFICIENT)
                 db.execute("UPDATE ops SET status=? WHERE key=?", (ProviderStatus.PAYOUT_PENDING.value, key))
                 self._events(db, key, ProviderStatus.PAYOUT_PENDING)
                 db.commit()
 
         def effect(db):
-            if amount_minor < 1 or db.execute("SELECT COUNT(*) FROM ops WHERE kind='capture'").fetchone()[0] == 0:
+            held = self._holdings(db, capture_ref) if isinstance(capture_ref, str) else None
+            if amount_minor < 1 or held is None or held[0] != ProviderStatus.CAPTURED.value:
                 return Refused(RefusalCode.INVALID)
+            if held[2] + held[3] + amount_minor > held[1]:
+                return Refused(RefusalCode.INSUFFICIENT)
             result = {"kind": "payout", "key": key, "payout_ref": "pay-" + key, "amount_minor": amount_minor}
             if self._fires(Fault.PAYOUT_RETURNED):
                 self._returning.add(key)
             return result, ProviderStatus.PAYOUT_PENDING
-        return self._once(key, "payout", [seller_ref, amount_minor], effect)
+        return self._once(key, "payout", request, effect)
 
     def settle_payout(self, key: str) -> None:
         """The provider finishes a payout: confirmed, or returned when PAYOUT_RETURNED was armed for it."""
@@ -280,22 +312,32 @@ class FakeProvider:
             self._events(db, key, status)
             db.commit()
 
+    def return_payout(self, key: str) -> None:
+        """The provider returns a payout that was already requested."""
+        self._returning.add(key)
+        self.settle_payout(key)
+
     def chargeback(self, capture_key: str) -> None:
-        """The buyer's side reverses a capture after the fact."""
+        """The buyer's side reverses a capture after the fact: the buyer's cash that was not already refunded comes
+        back to the buyer's books, and the capture can no longer be refunded or paid out."""
         with self._db() as db:
+            held = self._holdings(db, "cap-" + capture_key)
+            if held is None or held[0] != ProviderStatus.CAPTURED.value:
+                return
             db.execute("UPDATE ops SET status=? WHERE key=? AND kind='capture'",
                        (ProviderStatus.REVERSED.value, capture_key))
+            db.execute("UPDATE power SET amount=amount+? WHERE ref=?", (held[1] - held[3], held[4]))
             self._events(db, capture_key, ProviderStatus.REVERSED)
             db.commit()
 
     def refund(self, key, capture_ref, amount_minor, reason):
         def effect(db):
-            found = self._capture(db, capture_ref)
-            if found is None or found[1] not in (ProviderStatus.CAPTURED.value, ProviderStatus.REVERSED.value):
+            held = self._holdings(db, capture_ref) if isinstance(capture_ref, str) else None
+            if held is None or held[0] != ProviderStatus.CAPTURED.value:
                 return Refused(RefusalCode.INVALID)
-            captured = found[0]["principal_minor"] + found[0]["fee_minor"]
-            if not 1 <= amount_minor <= captured:
+            if not 1 <= amount_minor <= held[1] - held[2] - held[3]:
                 return Refused(RefusalCode.INSUFFICIENT)
+            db.execute("UPDATE power SET amount=amount+? WHERE ref=?", (amount_minor, held[4]))
             return ({"kind": "refunded", "key": key, "refund_ref": "ref-" + key, "amount_minor": amount_minor},
                     ProviderStatus.REFUNDED)
         return self._once(key, "refund", [capture_ref, amount_minor, reason], effect)
