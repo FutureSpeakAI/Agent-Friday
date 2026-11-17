@@ -179,3 +179,27 @@ def test_only_an_owner_phone_or_tablet_with_the_right_may_read_pages(client, des
     for path in ("list", "search?q=a", "item/page:entities/person-griff-jay.md", "changes"):
         assert get(client, paired("tv"), "/tv/v1/workspaces/knowledge/" + path).status_code == 403, path
         assert get(client, paired(right=False), "/tv/v1/workspaces/knowledge/" + path).status_code == 403, path
+
+
+def test_a_huge_page_is_cut_at_a_line_and_says_so_and_a_paged_read_parses_it_once(client, desk, monkeypatch):
+    big = "\n\n".join("paragraph number %d with some words" % i for i in range(60000))
+    desk.pages["entities/huge.md"] = big + "\n"
+    assert len(big) > ws_knowledge.MAX_SOURCE
+    calls = []
+    real = ws_knowledge.ws_blocks.parse
+    monkeypatch.setattr(ws_knowledge.ws_blocks, "parse", lambda text, folder: calls.append(len(text)) or real(text, folder))
+    monkeypatch.setattr(ws_knowledge, "_PARSED", type(ws_knowledge._PARSED)())
+    dev = paired()
+    one = get(client, dev, "/tv/v1/workspaces/knowledge/item/page:entities/huge.md").get_json()
+    two = get(client, dev, "/tv/v1/workspaces/knowledge/item/page:entities/huge.md?cursor=60").get_json()
+    assert one["truncated"] is True and two["blocks"][0]["text"] == "paragraph number 60 with some words"
+    assert len(calls) == 1 and calls[0] <= ws_knowledge.MAX_SOURCE and one["next"] == "60"
+
+
+def test_a_normal_page_is_not_marked_truncated_and_a_changed_page_is_parsed_again(client, desk, monkeypatch):
+    monkeypatch.setattr(ws_knowledge, "_PARSED", type(ws_knowledge._PARSED)())
+    dev = paired()
+    path = "/tv/v1/workspaces/knowledge/item/page:entities/person-griff-jay.md"
+    assert get(client, dev, path).get_json()["truncated"] is False
+    desk.pages["entities/person-griff-jay.md"] = "# Changed\n\nnew words\n"
+    assert get(client, dev, path).get_json()["title"] == "Changed"

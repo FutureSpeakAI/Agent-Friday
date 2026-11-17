@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,6 +19,10 @@ SECTIONS = ("pages",)                         # people and graph arrive with the
 KIND = "page"
 REF = re.compile(r"^page:(?P<path>[^\x00-\x1f\\:*?\"<>|]{1,200}\.(?:md|txt))$", re.I)
 VAULT_LOCKED = "[vault-encrypted file"
+MAX_SOURCE = 1_000_000          # characters of one page parsed; the real wiki holds a 20 MB page
+PARSED_KEPT = 8
+_PARSED: "OrderedDict" = OrderedDict()
+_LOCK = threading.Lock()
 
 
 class Missing(Exception):
@@ -126,7 +132,7 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
     if data.get("locked") or content.startswith(VAULT_LOCKED):
         raise Locked(ref)
     folder, _, filename = path.rpartition("/")
-    parsed = ws_blocks.parse(content, folder)
+    parsed, truncated = _parsed(path, data.get("modified"), content, folder)
     window = parsed.blocks[offset:offset + limit]
     more = offset + limit < len(parsed.blocks)
     return {"rev": "p_%s" % int(data.get("modified") or 0), "ref": ref, "kind": KIND,
@@ -134,4 +140,22 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
             "sensitivity": sensitivity, "taint": None,
             "meta": [{"k": "Folder", "v": folder or "wiki"}, {"k": "Updated", "v": _iso(data.get("modified")) or ""}],
             "blocks": window, "relations": [], "sources": parsed.sources if offset == 0 else [],
-            "next": str(offset + limit) if more else None}
+            "next": str(offset + limit) if more else None, "truncated": truncated}
+
+
+def _parsed(path: str, modified, content: str, folder: str):
+    """(Parsed, truncated) for one page version. Only the first MAX_SOURCE characters are read, cut at a line, and
+    the result is kept for a few pages so paging through a long one parses it once."""
+    key = (path, modified, len(content))
+    with _LOCK:
+        if key in _PARSED:
+            _PARSED.move_to_end(key)
+            return _PARSED[key]
+    truncated = len(content) > MAX_SOURCE
+    text = content[:MAX_SOURCE].rpartition("\n")[0] if truncated else content
+    made = (ws_blocks.parse(text, folder), truncated)
+    with _LOCK:
+        _PARSED[key] = made
+        while len(_PARSED) > PARSED_KEPT:
+            _PARSED.popitem(last=False)
+    return made
