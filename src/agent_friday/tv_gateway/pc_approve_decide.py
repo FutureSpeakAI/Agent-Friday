@@ -13,6 +13,7 @@ import dataclasses
 import json
 import queue
 import time
+import re
 from typing import Optional
 
 from flask import Flask, Response, g, jsonify, request, stream_with_context
@@ -24,6 +25,12 @@ from agent_friday.tv_gateway.approval_verify import Refusal, Rejected
 from agent_friday.tv_gateway.pc_common import allowed, refuse
 
 BEAT_S = 20
+
+#: The approval slot's filter (CONTRACT_approval_slot_android_tv): a subject ``<type>:<id>`` and an optional card kind.
+SLOT_SUBJECT = re.compile(r"^[a-z_]{1,32}:[A-Za-z0-9_.-]{1,80}\Z")
+SLOT_KIND = re.compile(r"^[a-z0-9_]{1,48}\Z")
+SLOT_MAX_IDS = 20
+SLOT_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}\Z")      # an approval id: plain characters; \Z, never $ (a trailing newline slips past $)
 
 
 def _fresh(dev: dict) -> Optional[dict]:
@@ -196,6 +203,33 @@ def register(app: Flask) -> None:
             return refuse(400, "only pending cards are listed", code=Refusal.BAD_REQUEST.value)
         cards = [card_item(rec, g.device) for rec in approvals.list_approvals(status="pending")]
         return jsonify({"ok": True, "as_of": int(time.time()), "cards": cards, "count": len(cards)})
+
+    @app.get("/tv/v1/approvals/slot")
+    def pc_approvals_slot():
+        """The ids of the pending cards that wait for one subject (an ``approval_slot`` in a Liquid UI document), asked of
+        the desktop's own route and nothing else. The device then takes each card from the list by id. Errors are closed
+        codes that never echo the filter; any failure, or a desktop without the route, is 503 ``pc_unavailable`` so the
+        device draws "could not check" and never falls back to the whole list. Guarded by
+        tests/unit/test_tv_pc_approval_slot.py."""
+        denied = pc_read._guard("approvals")
+        if denied is not None:
+            return denied
+        subject, kind = request.args.get("subject", ""), request.args.get("kind")
+        if not SLOT_SUBJECT.match(subject):
+            return refuse(400, "bad subject", code="bad_subject")
+        if kind is not None and not SLOT_KIND.match(kind):
+            return refuse(400, "bad kind", code="bad_kind")
+        try:
+            status, body, _ = pc_read._desk("/api/liquid/approval-slot",
+                                            {"subject": subject, **({"kind": kind} if kind is not None else {})})
+            answer = json.loads(body) if status == 200 else None
+        except Exception:
+            answer = None
+        ids = answer.get("ids") if isinstance(answer, dict) and answer.get("ok") is True else None
+        if not isinstance(ids, list) or len(ids) > SLOT_MAX_IDS or not all(
+                isinstance(i, str) and SLOT_ID.match(i) for i in ids):
+            return refuse(503, "the PC could not check that right now", code="pc_unavailable")
+        return jsonify({"ok": True, "ids": ids})
 
     @app.get("/tv/v1/approvals/events")
     def pc_approvals_events():
