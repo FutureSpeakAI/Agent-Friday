@@ -1,27 +1,38 @@
 """The one serialized writer for one issuer, and the signed heads it produces (NS-40.4-3; design:
-program/specs/DESIGN_economy_issuer_exchange_resource_2026-11-16.md, Part B.1, B.3, B.4).
+program/specs/DESIGN_economy_issuer_exchange_resource_2026-11-16.md, Part B and section 10.1 to 10.4).
 TEST CREDITS ONLY. The key is passed in by the caller and is never written to the journal file;
 where the production key lives (OS keychain or vault) is for the wiring PR.
 
-LIMIT, stated plainly: with a single authority, two different heads at the same sequence
-(equivocation) are DETECTED by a peer that pins what it has seen, not PREVENTED. Prevention would
-need the separately specified consensus; it is not built or claimed here.
+LIMIT, stated plainly: with a single authority, equivocation (two histories under one key) is DETECTED by a peer that
+pins what it has seen, not PREVENTED. Prevention would need the separately specified consensus; it is not built or
+claimed here. `HeadPins` takes one public key and is keyed by issuer id: it does not use the authority chain of
+services/issuer_authority_chain, which only matters once a second generation exists.
 
-Authority generations other than 0 (rotation, `valid_from_seq`, the accepted-issuer list) are PR 4.
+Authority generations other than 0 (rotation, `valid_from_seq`) are services/issuer_authority_chain.
 
 Rules and the tests that hold them (tests/unit/test_issuer_authority.py):
-- B-1 one writer per issuer: test_a_second_authority_is_refused_until_the_first_closes (also across processes).
+- B-1 / 10.4 one writer per issuer: the Authority holds a lock for its life and the journal's own write path refuses
+  every other writer, in this process or another:
+  test_a_second_authority_is_refused_until_the_first_closes,
+  test_while_an_authority_holds_an_issuer_no_other_object_can_post_to_it,
+  test_the_writing_journal_is_constructed_only_where_the_guard_allows.
 - B-6 a copy without the key reads "as of seq N" and can post nothing:
   test_a_copy_without_the_key_reads_as_of_a_sequence_and_posts_nothing.
-- A receipt carries its seq and a head signature that verifies against the chain:
-  test_a_receipt_verifies_against_the_head_chain, test_a_changed_receipt_head_or_signature_fails.
+- 10.1 the head commits to the receipt, so a receipt changed under a genuine head fails:
+  test_a_receipt_whose_effect_or_hash_was_changed_fails_under_the_genuine_head,
+  test_a_changed_receipt_head_or_signature_fails.
+- 10.1 there is one head per sequence with no gaps, each with the right state:
+  test_after_a_crash_that_skipped_heads_the_next_open_signs_every_missing_one_with_the_right_state,
+  test_an_old_duplicate_returns_its_receipt_with_its_own_head_even_after_a_gap.
 - Heads link to each other: test_each_head_links_to_the_one_before.
 - A head signature is bound to its purpose, issuer and charter:
   test_a_head_signature_is_bound_to_its_purpose_issuer_and_charter.
-- Equivocation stops acceptance and is reported once:
-  test_two_heads_at_one_sequence_refuse_the_issuer_and_report_once.
-- A crash between commit and head leaves a journal the next open signs again:
-  test_a_head_missing_after_a_crash_is_signed_on_the_next_open.
+- 10.2 equivocation is two heads at one sequence OR a head that does not link to its pinned neighbour, in any arrival
+  order, reported once: test_two_heads_at_one_sequence_refuse_the_issuer_and_report_once,
+  test_a_head_that_does_not_link_to_its_pinned_neighbour_is_equivocation_in_every_arrival_order,
+  test_a_head_whose_neighbours_are_not_pinned_yet_is_accepted_unlinked_and_checked_later.
+- 10.3 on open the last head's state and receipt hashes must equal the rebuilt journal's, else the journal is halted:
+  test_a_deep_tamper_that_re_hashes_everything_is_caught_by_the_last_head_on_open.
 """
 from __future__ import annotations
 
@@ -41,15 +52,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from agent_friday.services import peer_wire_v2 as wire
-from agent_friday.services.issuer_journal import IssuerJournal, Outcome
+from agent_friday.services.issuer_journal import (
+    AUTHORITY_LOCK_SUFFIX, AuthorityHeld, IssuerJournal, Outcome, exclusive_lock)
 from agent_friday.services.issuer_registry import IssuerCharter, charter_digest
 
 HEAD_PREFIX = b"asimov-issuer-head/v1" + bytes([0])
 GENESIS_HEAD = "0" * 64
-
-
-class AuthorityHeld(RuntimeError):
-    """Another writer holds this issuer's journal."""
+__all__ = ["Authority", "AuthorityHeld", "Ed25519Key", "Head", "HeadError", "HeadPins", "PinOutcome", "ReadOnlyView",
+           "SignedReceipt", "state_hash", "verify_chain", "verify_head", "verify_receipt"]
 
 
 class HeadError(ValueError):
@@ -83,12 +93,13 @@ class Head:
     generation: int
     seq: int
     state_hash: str
+    receipt_hash: str          # SHA-256 of the stored receipt bytes of the effect at this seq (design 10.1)
     prev_head_hash: str
 
     def canonical_bytes(self) -> bytes:
         return wire.canonical({"issuer_id": self.issuer_id, "charter_digest": self.charter_digest,
-                               "generation": self.generation, "seq": self.seq,
-                               "state_hash": self.state_hash, "prev_head_hash": self.prev_head_hash})
+                               "generation": self.generation, "seq": self.seq, "state_hash": self.state_hash,
+                               "receipt_hash": self.receipt_hash, "prev_head_hash": self.prev_head_hash})
 
     @property
     def digest(self) -> str:
@@ -106,13 +117,17 @@ def state_hash(balances: dict) -> str:
     return hashlib.sha256(wire.canonical([[a, v] for a, v in sorted(balances.items()) if v])).hexdigest()
 
 
+def receipt_hash(receipt: bytes) -> str:
+    return hashlib.sha256(receipt).hexdigest()
+
+
 def verify_head(raw: bytes, signature: str, public_key: str) -> Head:
     """The head, when its signature holds under `public_key` for this purpose."""
     head = Head.parse(raw)
     try:
         Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key)).verify(
             bytes.fromhex(signature), HEAD_PREFIX + raw)
-    except (InvalidSignature, ValueError) as err:
+    except (InvalidSignature, ValueError, TypeError) as err:
         raise HeadError("the head signature does not hold") from err
     return head
 
@@ -125,7 +140,8 @@ class SignedReceipt:
 
 
 def verify_receipt(signed: SignedReceipt, public_key: str, expected_charter_digest: str) -> Head:
-    """The head the receipt rests on, when every link holds: signature, charter, issuer and seq."""
+    """The head the receipt rests on, when every link holds: signature, charter, issuer, seq AND that the receipt's own
+    bytes are the ones the head commits to."""
     if signed.head is None or signed.signature is None:
         raise HeadError("this receipt has no head signature")
     head = verify_head(signed.head, signed.signature, public_key)
@@ -134,50 +150,28 @@ def verify_receipt(signed: SignedReceipt, public_key: str, expected_charter_dige
         raise HeadError("the head belongs to another charter")
     if body.get("issuer") != head.issuer_id or body.get("seq") != head.seq:
         raise HeadError("the receipt and the head do not agree")
+    if receipt_hash(signed.receipt) != head.receipt_hash:
+        raise HeadError("the receipt is not the one the head commits to")
     return head
 
 
 def verify_chain(heads: list, public_key: str, expected_charter_digest: str) -> Head:
-    """Every (head bytes, signature) verifies, seq rises, and each links to the one before."""
+    """Every (head bytes, signature) verifies, there is one head for every sequence from 1 with none missing, and each
+    links to the one before."""
     previous = None
     for raw, signature in heads:
         head = verify_head(raw, signature, public_key)
         if head.charter_digest != expected_charter_digest:
             raise HeadError("a head belongs to another charter")
-        if previous is not None and (head.seq <= previous.seq or head.prev_head_hash != previous.digest):
+        if previous is None:
+            if head.seq != 1 or head.prev_head_hash != GENESIS_HEAD:
+                raise HeadError("the first head does not start the chain")
+        elif head.seq != previous.seq + 1 or head.prev_head_hash != previous.digest:
             raise HeadError("the heads do not link")
-        if previous is None and head.prev_head_hash != GENESIS_HEAD:
-            raise HeadError("the first head does not start the chain")
         previous = head
     if previous is None:
         raise HeadError("no heads")
     return previous
-
-
-@contextlib.contextmanager
-def _exclusive(path: Path):
-    handle = open(path, "a+b")
-    try:
-        try:
-            if os.name == "nt":
-                import msvcrt
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as err:
-            raise AuthorityHeld("another writer holds this issuer's journal") from err
-        yield
-    finally:
-        try:
-            if os.name == "nt":
-                import msvcrt
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-        handle.close()
 
 
 class Authority:
@@ -190,18 +184,26 @@ class Authority:
         self._charter = charter
         self._key = key
         self._guard = contextlib.ExitStack()
-        self._guard.enter_context(_exclusive(self._path.with_name(self._path.name + ".lock")))
+        self._guard.enter_context(exclusive_lock(self._path.with_name(self._path.name + AUTHORITY_LOCK_SUFFIX)))
         try:
-            self.journal = IssuerJournal(self._path, charter=charter)
+            self.journal = IssuerJournal(self._path, charter=charter, authority_held=True)
             self._lock = threading.Lock()
             with contextlib.closing(sqlite3.connect(self._path, timeout=30)) as db:
                 db.execute("CREATE TABLE IF NOT EXISTS journal_heads ("
                            "seq INTEGER PRIMARY KEY, head BLOB NOT NULL, signature TEXT NOT NULL)")
                 db.commit()
-            self._sign_current()
+            self._check_existing_heads()
+            self._sign_missing()
         except BaseException:
             self._guard.close()
             raise
+
+    @property
+    def issuer(self) -> str:
+        return self.journal.issuer
+
+    def balances(self) -> dict:
+        return self.journal.balances()
 
     def close(self):
         self._guard.close()
@@ -212,27 +214,49 @@ class Authority:
     def __exit__(self, *exc):
         self.close()
 
-    def _heads(self) -> list:
+    def heads(self) -> list:
         with contextlib.closing(sqlite3.connect(self._path, timeout=30)) as db:
             return [(bytes(h), s) for h, s in db.execute("SELECT head, signature FROM journal_heads ORDER BY seq")]
 
-    def heads(self) -> list:
-        return self._heads()
+    def _halt(self, reason: str) -> None:
+        self.journal.halted = reason
 
-    def _sign_current(self):
-        """A signed head for the current sequence, unless there is one already (or nothing is posted)."""
-        seq = self.journal.head()
-        if seq == 0:
+    def _check_existing_heads(self) -> None:
+        """Before anything new is signed: the heads on file must verify, link, and the last one must agree with the
+        journal as it rebuilds now (design 10.3). A disagreement halts every write."""
+        if self.journal.halted:
+            return
+        stored = self.heads()
+        if not stored:
+            return
+        try:
+            last = verify_chain(stored, self._key.public_key, charter_digest(self._charter))
+        except HeadError:
+            return self._halt("the signed heads do not verify")
+        if last.seq > self.journal.head():
+            return self._halt("the signed heads run past the journal")
+        receipt = self.journal.receipt_at(last.seq)
+        if (receipt is None or last.receipt_hash != receipt_hash(receipt)
+                or last.state_hash != state_hash(self.journal.balances_at(last.seq))):
+            return self._halt("the last signed head does not match the journal")
+
+    def _sign_missing(self) -> None:
+        """One signed head for every sequence number with none missing: the state at an earlier sequence is rebuilt by
+        replaying the effects up to it (design 10.1)."""
+        if self.journal.halted:
             return
         with contextlib.closing(sqlite3.connect(self._path, timeout=30)) as db:
-            if db.execute("SELECT 1 FROM journal_heads WHERE seq=?", (seq,)).fetchone():
-                return
-            last = db.execute("SELECT head FROM journal_heads ORDER BY seq DESC LIMIT 1").fetchone()
-            prev = GENESIS_HEAD if last is None else hashlib.sha256(bytes(last[0])).hexdigest()
-            head = Head(self._charter.issuer_id, charter_digest(self._charter), self._key.generation, seq,
-                        state_hash(self.journal.balances()), prev)
-            raw = head.canonical_bytes()
-            db.execute("INSERT INTO journal_heads VALUES (?,?,?)", (seq, raw, self._key.sign(HEAD_PREFIX + raw)))
+            last = db.execute("SELECT seq, head FROM journal_heads ORDER BY seq DESC LIMIT 1").fetchone()
+            seq, previous = (last[0], hashlib.sha256(bytes(last[1])).hexdigest()) if last else (0, GENESIS_HEAD)
+            for number in range(seq + 1, self.journal.head() + 1):
+                receipt = self.journal.receipt_at(number)
+                if receipt is None:
+                    return self._halt("an effect has no receipt to sign a head for")
+                head = Head(self._charter.issuer_id, charter_digest(self._charter), self._key.generation, number,
+                            state_hash(self.journal.balances_at(number)), receipt_hash(receipt), previous)
+                raw = head.canonical_bytes()
+                db.execute("INSERT INTO journal_heads VALUES (?,?,?)", (number, raw, self._key.sign(HEAD_PREFIX + raw)))
+                previous = head.digest
             db.commit()
 
     def _head_at(self, seq: int):
@@ -246,7 +270,7 @@ class Authority:
             if receipt is None:
                 return outcome, None
             if outcome is Outcome.POSTED:
-                self._sign_current()
+                self._sign_missing()
             head, signature = self._head_at(wire.decode(receipt)["seq"])
             return outcome, SignedReceipt(receipt, head, signature)
 
@@ -283,12 +307,14 @@ class PinOutcome(str, Enum):
 
 
 class HeadPins:
-    """The heads a peer has verified, per issuer. Two valid heads at one sequence with different
-    contents stop that issuer for good and are reported once."""
+    """The heads a peer has verified, per issuer. Two histories under one key stop that issuer for good and are
+    reported once. A new head is accepted only if (design 10.2): no other head is pinned at its sequence with another
+    digest; the head pinned just below it is the one it links to; and the head pinned just above it links back to it. A
+    head whose neighbours are not pinned yet is accepted unlinked and checked when a neighbour arrives, in any order."""
 
     def __init__(self, path=None):
         self._path = Path(path) if path else None
-        self._seen: dict[str, dict[int, str]] = {}
+        self._seen: dict[str, dict[int, dict]] = {}
         self._stopped: set[str] = set()
         self.reports: list[dict] = []
         if self._path and self._path.exists():
@@ -301,9 +327,15 @@ class HeadPins:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             temp = self._path.with_suffix(".tmp")
-            temp.write_text(json.dumps({"seen": self._seen, "stopped": sorted(self._stopped),
-                                        "reports": self.reports}, sort_keys=True), encoding="ascii")
+            temp.write_text(json.dumps({"seen": self._seen, "stopped": sorted(self._stopped), "reports": self.reports},
+                                       sort_keys=True), encoding="ascii")
             os.replace(temp, self._path)
+
+    def _equivocation(self, issuer: str, head: Head, why: str) -> PinOutcome:
+        self._stopped.add(issuer)
+        self.reports.append({"issuer_id": issuer, "seq": head.seq, "why": why, "head": head.digest})
+        self._save()
+        return PinOutcome.EQUIVOCATION
 
     def accept(self, raw: bytes, signature: str, public_key: str, expected_charter_digest: str) -> PinOutcome:
         try:
@@ -316,15 +348,17 @@ class HeadPins:
         if issuer in self._stopped:
             return PinOutcome.REFUSED
         known = self._seen.setdefault(issuer, {})
-        if head.seq in known:
-            if known[head.seq] == head.digest:
+        same = known.get(head.seq)
+        if same is not None:
+            if same["d"] == head.digest:
                 return PinOutcome.KNOWN
-            self._stopped.add(issuer)
-            self.reports.append({"issuer_id": issuer, "seq": head.seq,
-                                 "heads": sorted([known[head.seq], head.digest])})
-            self._save()
-            return PinOutcome.EQUIVOCATION
-        known[head.seq] = head.digest
+            return self._equivocation(issuer, head, "another head at this sequence")
+        below, above = known.get(head.seq - 1), known.get(head.seq + 1)
+        if below is not None and head.prev_head_hash != below["d"]:
+            return self._equivocation(issuer, head, "does not link to the pinned head below it")
+        if above is not None and above["p"] != head.digest:
+            return self._equivocation(issuer, head, "the pinned head above it does not link to this one")
+        known[head.seq] = {"d": head.digest, "p": head.prev_head_hash}
         self._save()
         return PinOutcome.ACCEPTED
 
@@ -333,7 +367,3 @@ class HeadPins:
 
     def highest(self, issuer_id: str) -> int:
         return max(self._seen.get(issuer_id, {0: ""}))
-
-
-__all__ = ["Authority", "AuthorityHeld", "Ed25519Key", "Head", "HeadError", "HeadPins", "PinOutcome",
-           "ReadOnlyView", "SignedReceipt", "state_hash", "verify_chain", "verify_head", "verify_receipt"]

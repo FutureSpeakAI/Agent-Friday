@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -98,6 +99,41 @@ class Outcome(str, Enum):
     HALTED = "halted"
 
 
+class AuthorityHeld(RuntimeError):
+    """An authority holds this issuer: no other object may write to its journal (design 10.4)."""
+
+
+#: the lock file an Authority holds for its whole life; every other writer checks it before it writes
+AUTHORITY_LOCK_SUFFIX = ".authority"
+
+
+@contextlib.contextmanager
+def exclusive_lock(path):
+    """An exclusive, non-blocking OS lock on `path` for the duration of the block; AuthorityHeld if it is held."""
+    handle = open(path, "a+b")
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as err:
+            raise AuthorityHeld("another writer holds this issuer's journal") from err
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        handle.close()
+
+
 RECEIPT_PROTOCOL = "asimov-journal-receipt/v1"
 REQUEST_PREFIX = b"asimov-journal-request/v1" + bytes([0])
 _NAME = re.compile(r"[ -~]{1,200}")
@@ -113,7 +149,7 @@ def _acceptable(command: dict):
     for name in (effect, action, *postings):
         if not isinstance(name, str) or not _NAME.fullmatch(name):
             return None
-    if not all(type(v) is int and abs(v) <= MAX_UNITS for v in postings.values()):
+    if not all(type(v) is int and abs(v) <= MAX_UNITS for v in postings.values()) or not any(postings.values()):
         return None
     for optional in (corrects, reason):
         if optional is not None and (not isinstance(optional, str) or not _NAME.fullmatch(optional)):
@@ -156,7 +192,10 @@ class IssuerJournal:
     """
 
     def __init__(self, path, issuer: str | None = None, supply: int | None = None,
-                 treasury: str = "treasury", *, charter=None):
+                 treasury: str = "treasury", *, charter=None, authority_held: bool = False):
+        # The (issuer, supply) form is kept only because the bundle's issuer vector builds a journal that way
+        # (test_the_issuer_vector_gives_the_oracles_answer_for_every_command) and #842 and #852 still call it; new
+        # code passes a charter.
         digest = None
         if charter is not None:
             if issuer is not None or supply is not None:
@@ -166,9 +205,11 @@ class IssuerJournal:
         if type(supply) is not int or not 0 <= supply <= MAX_UNITS:
             raise ValueError("supply must be a whole number of units")
         self._path = str(path)
+        self._authority_held = authority_held      # only issuer_authority.Authority passes True, after taking the lock
         self.issuer = issuer
         self.supply = supply
         self._lock = threading.Lock()
+        self._guard_writes()
         self._point = lambda name: None
         self.halted: str | None = None
         with contextlib.closing(self._connect()) as db:
@@ -211,6 +252,30 @@ class IssuerJournal:
             self._backfill(db)
             db.commit()
         self.recover()
+
+    def _guard_writes(self) -> None:
+        """Every write path starts here: while an Authority holds the issuer, nothing else may write (design 10.4).
+        The check is made before each write; a writer already inside its one transaction when the Authority starts
+        finishes that transaction, which the Authority's own recovery then checks."""
+        if not self._authority_held:
+            with exclusive_lock(self._path + AUTHORITY_LOCK_SUFFIX):
+                pass
+
+    def balances_at(self, seq: int) -> dict:
+        """The balances as they stood after effect number `seq`, rebuilt by replaying the effects up to it."""
+        with contextlib.closing(self._connect()) as db:
+            treasury = (db.execute("SELECT treasury FROM journal_meta WHERE issuer=?", (self.issuer,)).fetchone() or [None])[0]
+            rebuilt = {treasury or "treasury": self.supply}
+            for postings, in db.execute("SELECT postings FROM journal_effects WHERE seq<=? ORDER BY seq", (seq,)):
+                for account, amount in json.loads(postings):
+                    rebuilt[account] = rebuilt.get(account, 0) + amount
+        return {a: v for a, v in rebuilt.items() if v}
+
+    def receipt_at(self, seq: int) -> bytes | None:
+        """The stored receipt bytes of the effect at `seq`, or None."""
+        with contextlib.closing(self._connect()) as db:
+            row = db.execute("SELECT receipt FROM journal_receipts WHERE seq=?", (seq,)).fetchone()
+        return None if row is None else bytes(row[0])
 
     @staticmethod
     def _add_columns(db, table, columns):
@@ -257,35 +322,51 @@ class IssuerJournal:
     def head(self) -> int:
         """The highest sequence number posted (0 for none)."""
         with contextlib.closing(self._connect()) as db:
-            return db.execute("SELECT COALESCE(MAX(seq), 0) FROM journal_effects").fetchone()[0]
+            top = db.execute("SELECT COALESCE(MAX(seq), 0) FROM journal_effects").fetchone()[0]
+        return top if type(top) is int else 0        # a damaged sequence column reads as nothing posted
 
     def recover(self) -> str | None:
-        """Rebuild the balances from the effects and check them. A mismatch halts writes and returns why."""
-        with contextlib.closing(self._connect()) as db:
-            treasury = db.execute("SELECT treasury FROM journal_meta WHERE issuer=?", (self.issuer,)).fetchone()[0] \
-                or "treasury"
-            rebuilt = {treasury: self.supply}
-            effects = db.execute("SELECT effect, postings, seq, request_hash FROM journal_effects ORDER BY seq").fetchall()
-            problem = None
-            for number, (effect, postings, seq, digest) in enumerate(effects, 1):
-                if seq != number:
-                    problem = "the sequence has a gap or a repeat"
-                    break
-                for account, amount in json.loads(postings):
-                    rebuilt[account] = rebuilt.get(account, 0) + amount
-                have = db.execute("SELECT seq, receipt FROM journal_receipts WHERE effect=?", (effect,)).fetchone()
-                if have is None or have[0] != seq or wire.decode(have[1]).get("request_hash") != digest:
-                    problem = "an effect has no matching receipt"
-                    break
-            if problem is None:
-                stored = {a: v for a, v in db.execute("SELECT account, amount FROM journal_balances") if v}
-                rebuilt = {a: v for a, v in rebuilt.items() if v}
-                if min(rebuilt.values(), default=0) < 0 or sum(rebuilt.values()) != self.supply:
-                    problem = "the effects do not keep the supply"
-                elif rebuilt != stored:
-                    problem = "the stored balances do not match the effects"
+        """Check everything that can be recomputed, in sequence order. A mismatch, or any stored row that cannot be
+        decoded, halts writes and returns why; recovery never raises for damaged data (design 10.3)."""
+        try:
+            problem = self._recover_problem()
+        except (sqlite3.Error, ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError,
+                wire.WireError):
+            problem = "a stored row cannot be read"
         self.halted = problem
         return problem
+
+    def _recover_problem(self) -> str | None:
+        with contextlib.closing(self._connect()) as db:
+            meta = db.execute("SELECT treasury FROM journal_meta WHERE issuer=?", (self.issuer,)).fetchone()
+            rebuilt = {(meta[0] if meta and meta[0] else "treasury"): self.supply}
+            effects = db.execute("SELECT effect, postings, seq, request_hash, corrects, reason "
+                                 "FROM journal_effects ORDER BY seq").fetchall()
+            receipts = {e: (s, bytes(r)) for e, s, r in db.execute("SELECT effect, seq, receipt FROM journal_receipts")}
+            if len(receipts) != len(effects):
+                return "the receipts and the effects do not match"
+            for number, (effect, postings, seq, stored_hash, corrects, reason) in enumerate(effects, 1):
+                if type(seq) is not int or seq != number:
+                    return "the sequence has a gap or a repeat"
+                rows = json.loads(postings)
+                if (not isinstance(rows, list) or not all(isinstance(r, list) and len(r) == 2 and isinstance(r[0], str)
+                                                         and type(r[1]) is int for r in rows)):
+                    return "an effect's postings cannot be read"
+                digest = request_hash(self.issuer, effect, dict(rows), corrects, reason)
+                if stored_hash != digest:
+                    return "an effect no longer hashes to the request that was posted"
+                have = receipts.get(effect)
+                if have is None or have[0] != seq or have[1] != _receipt(self.issuer, effect, seq, digest, corrects, reason):
+                    return "an effect has no matching receipt"
+                for account, amount in rows:
+                    rebuilt[account] = rebuilt.get(account, 0) + amount
+            stored = {a: v for a, v in db.execute("SELECT account, amount FROM journal_balances") if v}
+        rebuilt = {a: v for a, v in rebuilt.items() if v}
+        if min(rebuilt.values(), default=0) < 0 or sum(rebuilt.values()) != self.supply:
+            return "the effects do not keep the supply"
+        if rebuilt != stored:
+            return "the stored balances do not match the effects"
+        return None
 
     def outbox_pending(self, limit: int = 100) -> list[dict]:
         """Committed effects whose notification has not been delivered, oldest first."""
@@ -296,6 +377,9 @@ class IssuerJournal:
         return [{"effect": e, "seq": s, "receipt": bytes(r)} for e, s, r in rows]
 
     def outbox_delivered(self, effect: str) -> None:
+        if self.halted:
+            return                  # a halted journal writes nothing, not even a delivery mark
+        self._guard_writes()
         with self._transaction() as db:
             db.execute("UPDATE journal_outbox SET delivered_at=strftime('%s','now') WHERE effect=? "
                        "AND delivered_at IS NULL", (effect,))
@@ -306,6 +390,7 @@ class IssuerJournal:
     def execute_receipt(self, command: dict) -> tuple[Outcome, bytes | None]:
         """One command {issuer, effect, action, postings[, corrects, reason]}. Returns the outcome and,
         for posted and duplicate, the stored receipt bytes."""
+        self._guard_writes()
         if self.halted:
             return Outcome.HALTED, None
         if not isinstance(command, dict) or command.get("issuer") != self.issuer:
