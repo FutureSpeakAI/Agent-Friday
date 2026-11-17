@@ -95,7 +95,7 @@ def offer_due(card: Dict[str, Any], now: Optional[float] = None) -> Optional[act
         if now - float(state["last_offer_at"]) < _DAY_S:
             return None
         return pattern
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
