@@ -2212,6 +2212,16 @@ def _interrupted_words(name: str, verdict: Dict[str, Any], outcome: str) -> str:
             "the milestone again.")
 
 
+def _recovery_receipt(goal, m, run, **kw):
+    """One signed recovery receipt per interrupted milestone run; a receipt that cannot be written
+    never stops the settle."""
+    try:
+        from agent_friday.services import recovery_receipts
+        recovery_receipts.milestone_interrupted(goal, m, run, **kw)
+    except Exception as e:
+        _log.warning("recovery receipt not written for milestone %s: %s", m.get("milestone_id"), e)
+
+
 def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = True,
                          force: bool = False) -> str:
     """Settle one milestone whose run an earlier process left behind. Returns
@@ -2239,6 +2249,8 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
             goal, m, kind="milestone_interrupted_before_work", verdict=None, cost_mψ=0,
             note="Friday stopped before this milestone's work started; nothing ran, "
                  "so it runs again when it is next due."))
+        _recovery_receipt(goal, m, run, boundary="before its work started", may_have_acted=False,
+                          next="runs_again_when_due")
         return "pending"
     if not tid:
         # A run with no record (written before records existed) or one cut
@@ -2248,6 +2260,8 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
             "task_resumable": False, "task_needs_confirmation": False,
             "text": _interrupted_words(name, {}, "missing")},
             note="interrupted by a restart; its task is unknown; nothing was re-run")
+        _recovery_receipt(goal, m, run, boundary="handed to a task; the task is unknown",
+                          may_have_acted=True, next="not_repeated_owner_told")
         return "blocked"
     tid, outcome, _result = _task_now(tid)
     if outcome in ("running", "done"):
@@ -2263,6 +2277,8 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
                      "with an error. Nothing was run again. Look at the task in Tasks; "
                      "start the milestone again only when you're ready.")},
             note="interrupted by a restart; its task ended with an error; nothing was re-run")
+        _recovery_receipt(goal, m, run, boundary="its task ended with an error", may_have_acted=True,
+                          next="not_repeated_owner_told")
         return "blocked"
     verdict: Dict[str, Any] = {}
     if outcome == "interrupted":
@@ -2277,6 +2293,10 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
         "task_needs_confirmation": bool(verdict.get("needs_confirmation")),
         "text": _interrupted_words(name, verdict, outcome)},
         note="interrupted by a restart; waiting for the owner; nothing was re-run")
+    _recovery_receipt(goal, m, run, boundary="its task was interrupted", may_have_acted=True,
+                      next=("asks_the_owner_before_resuming" if verdict.get("needs_confirmation")
+                            else "may_resume_from_its_checkpoint" if verdict.get("resumable")
+                            else "stays_stopped_owner_told"))
     return "blocked"
 
 

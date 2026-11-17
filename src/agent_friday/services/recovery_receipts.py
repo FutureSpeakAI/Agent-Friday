@@ -113,6 +113,18 @@ def task_interrupted(task_id: str, state: Dict[str, Any], previous_exit: Optiona
                    "may_have_acted": may, "repeated": False, "next": nxt})
 
 
+def milestone_interrupted(goal: Dict[str, Any], milestone: Dict[str, Any], run: Dict[str, Any], *,
+                          boundary: str, may_have_acted: bool, next: str) -> bool:
+    """The receipt for one goal milestone whose run an earlier process left behind, written where
+    the boot pass settles it (not when the task finishes or the owner resumes it)."""
+    return _write({"subject": "milestone:%s:%s" % (goal.get("goal_id"), milestone.get("milestone_id")),
+                   "interruption": run.get("started_at") or run.get("boot"),
+                   "task": str(run.get("task_id") or "")[:80] or None,
+                   "what": str(milestone.get("name") or "")[:120],
+                   "last_boundary": boundary, "may_have_acted": may_have_acted,
+                   "repeated": False, "next": next})
+
+
 def card_interrupted(card: Dict[str, Any]) -> bool:
     """The receipt for one approved action stopped mid-run (its outcome is unknown, and the
     card can never authorise it again)."""
