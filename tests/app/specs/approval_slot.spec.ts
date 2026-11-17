@@ -57,7 +57,8 @@ test('the slot mounts only the named card in a frame the document cannot restyle
   // Only the named card, drawn by the shell's own body.
   await expect(slot.getByTestId('approval-card')).toHaveCount(1);
   await expect(slot.getByTestId('approval-card')).toHaveAttribute('data-approval-id', CARD.approval_id);
-  await expect(page.getByText('Not for this slot')).toHaveCount(0);
+  // The page's own approvals list may show the other card; the SLOT must not.
+  await expect(slot.getByText('Not for this slot')).toHaveCount(0);
   expect(asked.some(u => u.includes('subject=crew%3Ac1'))).toBe(true);
 
   // The frame is the shell's: its computed style equals the shell tokens, not the document's.
