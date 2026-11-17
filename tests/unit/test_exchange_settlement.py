@@ -625,6 +625,8 @@ def test_a_reversal_while_the_capture_is_still_being_confirmed_holds_the_fill(en
     with sqlite3.connect(env.tmp / "s.sqlite") as db:
         db.execute("UPDATE legs SET status='sent' WHERE leg='capture'")
     env.provider.chargeback("x1/f1/capture/once")
-    env.settlement.pump(env.provider.deliver())
+    reversal = [r for r in env.provider.deliver() if b'"status":"reversed"' in r]
+    assert len(reversal) == 1 and env.settlement.state("f1") is st.State.CAPTURE_REQUESTED
+    env.settlement.pump(reversal)
     assert env.settlement.state("f1") is st.State.HELD
 
