@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -28,6 +29,15 @@ def _path():
     return friday_home() / "models" / "seat_load_times.json"
 
 
+def _sane(value, low: float, high: float) -> Optional[float]:
+    """``value`` as a finite float in (low, high], else None: a damaged file or a caller never gets a nonsense number."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return f if math.isfinite(f) and low < f <= high else None
+
+
 def _load_once() -> None:
     global _LOADED
     if _LOADED:
@@ -36,15 +46,12 @@ def _load_once() -> None:
     try:
         raw = json.loads(_path().read_text(encoding="utf-8"))
         for mid, rec in raw.items():
-            if isinstance(rec, dict) and isinstance(rec.get("seconds"), (int, float)):
-                try:
-                    at = float(rec.get("at") or 0)
-                except (TypeError, ValueError):
-                    at = 0.0
-                _TIMES[str(mid)] = {"seconds": float(rec["seconds"]), "at": at}
+            sec = _sane(rec.get("seconds"), 0.0, _MAX_SECONDS) if isinstance(rec, dict) else None
+            if sec is not None:                  # one damaged record is dropped; the others are kept
+                _TIMES[str(mid)] = {"seconds": sec, "at": _sane(rec.get("at"), 0.0, 1e12) or 0.0}
     except FileNotFoundError:
         pass
-    except (OSError, ValueError, AttributeError, TypeError) as e:
+    except Exception as e:                       # a saved file of any shape starts empty, never breaks a load
         _log.warning("saved seat load times unreadable, starting empty: %s", type(e).__name__)
 
 
@@ -60,19 +67,21 @@ def _save() -> None:
 
 
 def record(model_id: str, seconds) -> bool:
-    """Remember a real cold load. Zero (already seated), negatives, non-numbers and absurd values are not loads."""
+    """Remember a real cold load. Zero (already seated), negatives, non-numbers and absurd values are not loads.
+    Never raises: the arbiter calls this right after a seat came up, and bookkeeping must not fail that load."""
+    sec = _sane(seconds, 0.0, _MAX_SECONDS)
+    if not model_id or sec is None:
+        return False
     try:
-        sec = float(seconds)
-    except (TypeError, ValueError):
+        with _LOCK:
+            _load_once()
+            _TIMES[str(model_id)] = {"seconds": round(sec, 1), "at": time.time()}
+            while len(_TIMES) > _MAX_ENTRIES:
+                _TIMES.pop(min(_TIMES, key=lambda k: _TIMES[k]["at"]))
+            _save()
+    except Exception as e:
+        _log.warning("seat load time not recorded: %s", type(e).__name__)
         return False
-    if not model_id or not 0.0 < sec <= _MAX_SECONDS:
-        return False
-    with _LOCK:
-        _load_once()
-        _TIMES[str(model_id)] = {"seconds": round(sec, 1), "at": time.time()}
-        while len(_TIMES) > _MAX_ENTRIES:
-            _TIMES.pop(min(_TIMES, key=lambda k: _TIMES[k]["at"]))
-        _save()
     return True
 
 

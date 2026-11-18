@@ -43,6 +43,16 @@ def test_a_record_with_a_nonsense_timestamp_is_kept_and_cannot_break_a_load(_cle
     assert seat_timing.record("m", 5)
 
 
+def test_no_saved_file_can_make_record_raise_or_hand_back_a_nonsense_number(_clean):
+    big = "9" * 400
+    (_clean / "seat_load_times.json").write_text(
+        '{"a": {"seconds": %s, "at": 1}, "b": {"seconds": 5, "at": %s}, "c": {"seconds": NaN}, '
+        '"d": {"seconds": -7}, "e": {"seconds": 9999999}, "f": {"seconds": 6, "at": 2}}' % (big, big), encoding="utf-8")
+    assert seat_timing.record("m", 5) is True                        # never raises, whatever the file held
+    assert [seat_timing.last_load_seconds(k) for k in "acde"] == [None] * 4
+    assert seat_timing.last_load_seconds("b") == 5.0 and seat_timing.last_load_seconds("f") == 6.0
+
+
 def test_the_arbiter_records_every_real_spawn():
     src = inspect.getsource(residency_arbiter.LlamaServerBackend._load_locked)
     assert "_seat_timing.record(model_id, took)" in src
