@@ -83,3 +83,12 @@ def test_a_damaged_saved_file_drops_only_the_damaged_part_and_record_never_raise
     assert ttft_stats.summary("c")["samples"] == 1
     assert ttft_stats.record("m", float("inf")) is False and ttft_stats.record("m", True) is False
     ttft_stats._forget_memory_only()
+
+
+def test_a_saved_cache_share_outside_zero_to_one_is_dropped_but_zero_is_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(ttft_stats, "_path", lambda: tmp_path / "s.json")
+    ttft_stats._forget_memory_only()
+    (tmp_path / "s.json").write_text('{"m": {"at": 1, "calls": [[500, -0.9], [600, 0.0], [700, 2]]}}', encoding="utf-8")
+    got = ttft_stats.summary("m")
+    assert got["samples"] == 1 and got["cache_share"] == 0.0
+    ttft_stats._forget_memory_only()

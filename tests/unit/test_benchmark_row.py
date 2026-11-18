@@ -46,3 +46,13 @@ def test_a_benchmarked_cold_load_is_the_estimate_until_a_real_load_is_timed(monk
 def test_an_unbenchmarked_model_shows_nothing_invented(monkeypatch, tmp_path):
     got = _pc(monkeypatch, tmp_path, {})["gemma4:e4b"]
     assert got["benchmark"] is None and got["switch"]["expected_seconds"] is None
+
+
+def test_a_footprint_record_never_hides_the_benchmark_and_a_damaged_load_time_is_not_shown(monkeypatch, tmp_path):
+    rows = {"gemma4:e4b": [
+        {"num_ctx": 8192, "vram_mib": 3081, "tok_s_median": 99.9, "cold_load_s": -5, "measured_at": "2026-08-14",
+         "source": "measured"},
+        {"num_ctx": None, "load_s": 9.0, "measured_at": "2026-11-18", "source": "measured"}]}   # newer footprint
+    got = _pc(monkeypatch, tmp_path, rows)["gemma4:e4b"]
+    assert got["benchmark"]["vram_mib"] == 3081 and got["benchmark"]["cold_load_seconds"] is None
+    assert got["switch"]["expected_seconds"] is None                     # -5 s is not an estimate

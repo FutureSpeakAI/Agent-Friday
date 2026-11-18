@@ -100,17 +100,29 @@ def _blocked(m: dict, mode: str):
     return None
 
 
+def _sane_seconds(value) -> Optional[float]:
+    """A stored load time as a finite float in (0, 3600], else None: a damaged store never reaches the slate."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        f = float(value)
+    except OverflowError:
+        return None
+    return f if f == f and 0.0 < f <= 3600.0 else None
+
+
 def _benchmark(model_id) -> Optional[dict]:
     """The newest benchmark of this model on THIS PC's hardware (VRAM, speed, cold load), or None."""
     try:
         from agent_friday.services import hardware_profile as hwp
         from agent_friday.services import residency_catalog as rc
-        rows = rc.measurements(str(model_id), rc.profile_fingerprint(hwp.get()))
-        row = max(rows, key=lambda m: str(m.get("measured_at") or ""))
+        rows = [m for m in rc.measurements(str(model_id), rc.profile_fingerprint(hwp.get()))
+                if m.get("num_ctx") is not None]                       # benchmark rows only,
+        row = max(rows, key=lambda m: str(m.get("measured_at") or ""))                   # not footprint records
     except Exception:
         return None
     return {"num_ctx": row.get("num_ctx"), "vram_mib": row.get("vram_mib"),
-            "tokens_per_second": row.get("tok_s_median"), "cold_load_seconds": row.get("cold_load_s"),
+            "tokens_per_second": row.get("tok_s_median"), "cold_load_seconds": _sane_seconds(row.get("cold_load_s")),
             "measured_at": row.get("measured_at"), "source": row.get("source"),
             "basis": ("measured on this PC" if row.get("source") == "measured" else
                       "measured once on a PC with the same hardware (ships with the app), not on this one")}
