@@ -271,7 +271,8 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     from agent_friday.tv_gateway import turn
     seat = {"model": model_id}
     if not cid:
-        d = _json(_api("POST", "/api/conversations", {"title": "Phone chat", "seat": seat}))
+        resp = _api("POST", "/api/conversations", {"title": "Phone chat", "seat": seat})
+        d = _json(resp)
         conv = d.get("conversation") or {}
         cid = conv.get("id")
         if not cid:
@@ -282,10 +283,12 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
         conv = conversation(cid)
         if not conv:
             raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
-        d = {}
-        if seat_model(conv) == model_id:
-            return cid                      # already bound: nothing to change, nothing to reload
-        d = _json(_api("PATCH", "/api/conversations/" + cid, {"seat": seat}))
+        if (conv.get("seat") or {}).get("model") == model_id:
+            return cid                      # this chat's OWN seat already: nothing to change, nothing to reload
+        resp = _api("PATCH", "/api/conversations/" + cid, {"seat": seat})
+        if getattr(resp, "status_code", 200) >= 500 or getattr(resp, "status_code", 200) in (401, 403):
+            raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable")
+        d = _json(resp)
         conv = d.get("conversation") or {}
     if (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],

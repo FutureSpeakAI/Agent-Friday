@@ -50,7 +50,7 @@ Show `reason` / `blocked.reason` as written; they are the PC's own words (Local 
 
 `GET /tv/v1/conversations/C/state` →
 `{ conversation_id, model: { bound, facts }, voice: { engine, voice, still_valid, what_leaves, notice } | null,
-last_served: { model, provider, seat, local, requested, substituted, fallback, notice, at } | null }`
+last_served: { model, provider, seat, local, requested, expected, substituted, fallback, notice, at } | null }`
 
 * `last_served` is what the PC's backend recorded as generating the latest reply **sent through the phone gateway**, **not** what was requested. `requested` is only what the device asked for in that turn (null when it sent no model). A turn with no `model` is compared with `expected`: the model the chat is bound to (its own seat, else its project's), read before the turn starts. `substituted` is set when another model answered than `requested`/`expected`. It is not updated by turns taken at the desk, and a failed or unrecorded turn leaves the previous value (compare `at`/the turn you just sent, not only this field).
   `substituted: true` means a different model answered than the one asked for; show `notice`/`fallback` with it.

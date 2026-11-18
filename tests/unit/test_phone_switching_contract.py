@@ -151,3 +151,37 @@ def test_a_desktop_that_cannot_answer_is_503_not_no_such_chat(client, desk):
 def test_a_turn_with_no_model_and_a_bad_chat_id_is_refused_before_any_lookup(client, desk):
     r = ask(client, phone(), conversation_id="a/b")
     assert r.status_code == 400 and desk.api_calls == []
+
+
+def test_a_switch_to_the_projects_model_is_still_pinned_to_the_chat_itself(client, desk):
+    desk.convs["conv-old"]["effective_seat"] = {"model": "claude-haiku-5-5"}      # inherited, no seat of its own
+    switch(client, phone(), model="claude-haiku-5-5", conversation_id="conv-old")
+    assert desk.convs["conv-old"]["seat"] == {"model": "claude-haiku-5-5"}
+
+
+def test_a_desktop_that_fails_on_the_write_is_503_not_a_refused_model(client, desk, monkeypatch):
+    real = desk.api
+
+    def api(method, path, body=None):
+        r = real(method, path, body)
+        if method == "PATCH":
+            r.status_code, r.d = 500, {}
+        return r
+    monkeypatch.setattr(owner_turn, "_api", api)
+    r = switch(client, phone(), model="claude-haiku-5-5", conversation_id="conv-old")
+    assert r.status_code == 503 and r.get_json()["code"] == "chat_unavailable"
+
+
+def test_the_expected_model_is_read_before_the_turn_runs_not_after(client, desk, monkeypatch):
+    dev = phone()
+    switch(client, dev, model="claude-haiku-5-5", conversation_id="conv-old")
+    real_post = desk.post
+
+    def post(text, conversation_id):
+        desk.convs["conv-old"]["seat"] = {"model": "bonsai2:27b"}       # the owner switches at the desk mid-turn
+        return real_post(text, conversation_id)
+    monkeypatch.setattr(owner_turn, "_post", post)
+    desk.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
+    block(ask(client, dev, conversation_id="conv-old"))
+    last = state(client, dev, "conv-old").get_json()["last_served"]
+    assert last["expected"] == "claude-haiku-5-5" and last["substituted"] is True
