@@ -58,7 +58,7 @@ def upstream(monkeypatch, tmp_path):
     monkeypatch.setitem(gw.PROVIDERS, "brave", gw.Provider(**{**row.__dict__, "upstream": fake.origin}))
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", REAL)
     monkeypatch.setenv("NO_PROXY", "example.com")   # registered so the test's change to it is undone
-    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.setenv("no_proxy", "example.com")   # both spellings registered, so Linux undoes the gateway's write
     monkeypatch.setattr(gw, "_from_settings", lambda row: "")
     gw.stop_all()
     yield fake
@@ -115,7 +115,7 @@ def test_the_gateway_is_loopback_only(upstream):
 def test_a_system_proxy_is_told_to_leave_loopback_alone(upstream, monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:8080")
     monkeypatch.setenv("NO_PROXY", "example.com")
-    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.setenv("no_proxy", "example.com")   # both spellings registered, so Linux undoes the gateway's write
     gw.stop_all()
     gw.url("brave")
     assert "127.0.0.1" in __import__("os").environ["NO_PROXY"]
@@ -186,6 +186,7 @@ def test_a_proxy_set_only_in_the_system_settings_is_told_to_leave_loopback_alone
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr("urllib.request.getproxies", lambda: {"https": "http://corp-proxy.example.com:3128"})
     monkeypatch.setenv("NO_PROXY", "example.com")
+    monkeypatch.setenv("no_proxy", "example.com")
     gw._keep_loopback_direct()
     assert "127.0.0.1" in __import__("os").environ["NO_PROXY"]
 
@@ -195,6 +196,7 @@ def test_a_proxy_that_appears_after_the_first_listener_still_gets_the_loopback_e
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr("urllib.request.getproxies", lambda: {})
     monkeypatch.setenv("NO_PROXY", "example.com")
+    monkeypatch.setenv("no_proxy", "example.com")
     gw.url("brave")
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.com:8080")
     gw.url("brave")
@@ -206,6 +208,7 @@ def test_with_no_system_proxy_the_environment_is_left_alone(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr("urllib.request.getproxies", lambda: {})
     monkeypatch.setenv("NO_PROXY", "example.com")
+    monkeypatch.setenv("no_proxy", "example.com")
     gw._keep_loopback_direct()
     assert __import__("os").environ["NO_PROXY"] == "example.com"
 
