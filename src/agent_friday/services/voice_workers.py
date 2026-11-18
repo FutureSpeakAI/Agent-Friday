@@ -303,7 +303,8 @@ def _worker_env(engine: str = "") -> dict:
     """The environment every voice worker process starts with, cold or warm.
     A worker loads files that are already on disk (fetched by the installer);
     it has no reason to reach the hub, so it cannot."""
-    env = dict(os.environ)
+    from agent_friday.services.extension_security import without_secret_names
+    env = without_secret_names(dict(os.environ))
     env.setdefault("PYTHONUNBUFFERED", "1")
     env["HF_HUB_OFFLINE"] = "1"
     env["TRANSFORMERS_OFFLINE"] = "1"
