@@ -1,7 +1,9 @@
-"""Q6 guard: a docstring that says a rule is "Held by tests/..." must name a test file that exists.
+"""Q6 guard: every ``tests/<file>.py`` a source comment or docstring names must exist.
 
-A rule pointing at a deleted or misspelled test is prose again. The scan is proved able to fail on a broken
-copy below (Q2); to fix a finding, point the docstring at the real test or delete the claim.
+Any mention counts ("Held by", "Enforced by", "tests/x.py fails if", a second path after "and", backticks): the
+repo words these claims many ways, so the guard reads the path, not the phrase. A rule pointing at a deleted or
+misspelled test is prose again. The scan is proved able to fail on a broken copy below (Q2); to fix a finding,
+point the comment at the real test or delete the claim.
 """
 from __future__ import annotations
 
@@ -9,7 +11,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CLAIM = re.compile(r"(?:Held|Enforced) by\s+(tests/[\w/.\-]+\.py)")
+CLAIM = re.compile(r"tests/[\w/\-]+\.py")
 
 
 def missing_tests(src: Path, root: Path) -> list:
@@ -25,10 +27,13 @@ def test_every_named_enforcing_test_exists():
     assert missing_tests(ROOT / "src", ROOT) == []
 
 
-def test_the_scan_catches_a_claim_that_points_nowhere(tmp_path):
+def test_the_scan_catches_a_claim_that_points_nowhere_in_any_phrasing(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "real.py").write_text("")
-    (tmp_path / "src" / "good.py").write_text('"""Held by tests/real.py."""\n')
-    (tmp_path / "src" / "bad.py").write_text('"""Held by tests/ghost.py."""\n')
-    assert missing_tests(tmp_path / "src", tmp_path) == ["src/bad.py names tests/ghost.py, which does not exist"]
+    (tmp_path / "src" / "good.py").write_text('"""Held by tests/real.py and `tests/real.py`."""\n')
+    (tmp_path / "src" / "bad.py").write_text('"""Held by tests/real.py and tests/ghost.py."""\n')
+    (tmp_path / "src" / "fails.py").write_text("# tests/nope.py fails if this drifts\n")
+    assert missing_tests(tmp_path / "src", tmp_path) == [
+        "src/bad.py names tests/ghost.py, which does not exist",
+        "src/fails.py names tests/nope.py, which does not exist"]

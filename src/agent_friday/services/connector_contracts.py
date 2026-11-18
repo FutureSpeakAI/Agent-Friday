@@ -131,7 +131,7 @@ def operation(tool: str) -> Dict[str, Any]:
 
 # ── the rest of the contract (BD-06: NS-23.1-3, -4, -6, -7; the card, NS-8.9-2) ──────────
 #
-# Declared as data, like the operations above. tests/unit/test_connector_contract_complete.py
+# Declared as data, like the operations above. tests/api/test_connector_contract_complete.py
 # ties each number to the constant the code runs on, each host to the code that calls it and
 # each kept file to the module that writes it, so the card cannot say something the code does
 # not do.
