@@ -68,7 +68,8 @@ class Desk:
             desk.convs["conv-new"] = {"id": "conv-new", "seat": body.get("seat")}
             r.d = {"conversation": dict(desk.convs["conv-new"])}
         elif method == "GET":
-            r.d = {"conversation": dict(desk.convs[path.rsplit("/", 1)[1]])}
+            got = desk.convs.get(path.rsplit("/", 1)[1])
+            r.d = {"conversation": dict(got)} if got else {}
         else:
             cid = path.rsplit("/", 1)[1]
             if desk.refuse:

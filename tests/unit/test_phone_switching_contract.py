@@ -91,12 +91,39 @@ def test_state_reports_the_bound_model_the_bound_voice_and_what_really_answered(
 def test_state_of_a_chat_never_answered_has_no_last_served_and_an_unknown_chat_is_404(client, desk):
     dev = phone()
     assert state(client, dev, "conv-old").get_json()["last_served"] is None
-    desk.convs.pop("conv-old")
-    desk_missing = state(client, dev, "conv-old")
-    assert desk_missing.status_code in (404, 503)
+    missing = state(client, dev, "conv-gone")
+    assert missing.status_code == 404 and missing.get_json()["code"] == "unknown_conversation"
 
 
-def test_the_stream_records_what_served_so_state_can_say_it(client, desk):
-    """owner_turn._stream calls note_served: the one line that feeds last_served."""
-    import inspect
-    assert "note_served(truth)" in inspect.getsource(owner_turn._stream)
+def test_switching_a_chat_the_pc_does_not_have_is_404_not_a_refused_model(client, desk):
+    r = switch(client, phone(), model="bonsai2:27b", conversation_id="conv-gone")
+    assert r.status_code == 404 and r.get_json()["code"] == "unknown_conversation"
+    assert not any(c[0] == "PATCH" for c in desk.api_calls)
+
+
+def test_a_chat_id_that_is_not_a_plain_token_never_reaches_an_internal_url(client, desk):
+    dev = phone()
+    for bad in ("x?y=1", "a/b", "..", "conv old"):
+        assert switch(client, dev, model="bonsai2:27b", conversation_id=bad).status_code == 400
+        assert ask(client, dev, model="bonsai2:27b", conversation_id=bad).status_code == 400
+    assert state(client, dev, "x%3Fy%3D1").status_code == 404
+    assert desk.api_calls == []
+
+
+def test_a_turn_with_no_model_is_still_flagged_when_another_model_answers_than_the_chat_is_bound_to(client, desk):
+    """The documented flow: switch once, then send turns with only the conversation id."""
+    dev = phone()
+    switch(client, dev, model="claude-haiku-5-5", conversation_id="conv-old")
+    desk.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
+    block(ask(client, dev, conversation_id="conv-old"))
+    last = state(client, dev, "conv-old").get_json()["last_served"]
+    assert last["model"] == "bonsai2:27b" and last["requested"] == "claude-haiku-5-5" and last["substituted"] is True
+
+
+def test_the_real_model_facts_pick_the_slate_row_fields(monkeypatch):
+    from agent_friday.services import model_slate
+    monkeypatch.undo()
+    monkeypatch.setattr(model_slate, "find", lambda mid: {"id": mid, "label": "L", "local": True, "secret": "x",
+                                                           "switch": {"cold": True}, "measured": None})
+    got = conversation_state.model_facts("m1")
+    assert got["id"] == "m1" and got["label"] == "L" and got["switch"] == {"cold": True} and "secret" not in got

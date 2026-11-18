@@ -2,7 +2,7 @@
 
 Contract for the phone lane (and any owner-bound tablet or watch). All paths are on the PC's gateway
 (`/tv/v1/...`), after the normal session (challenge, open, bearer). Only an **owner device** (paired and bound to the
-owner at the PC) may choose; a TV or family device sees the lists and gets `403 owner_only` on any switch.
+owner at the PC) may choose; a TV or family device sees the lists (the voice list's per-conversation binding is read-only and carries no conversation text) and gets `403 owner_only` on any switch.
 
 A choice is **per conversation**: it never changes the PC's own settings or any other chat. Nothing is switched
 quietly and nothing is answered by a different model or voice without saying so.
@@ -29,7 +29,7 @@ Show `reason` / `blocked.reason` as written; they are the PC's own words (Local 
   (declared by the provider, labelled as such). `measured` and `benchmark` appear once the model-slate timing work ships (#848, #862); until then
   they are absent, so treat every field in `facts` as optional. Show "about N s the first time" from `switch` when `cold` is true.
 * Refusals (nothing changed): `400 unknown_model` (with `did_you_mean`), `409 model_unavailable`,
-  `409 seat_refused` (the PC would not bind it; the reason is in `error`), `403 owner_only`, `400 bad_request`,
+  `409 seat_refused` (the PC would not bind it; the reason is in `error`), `404 unknown_conversation` (no such chat), `400 bad_request` (a chat id is letters, digits, `_` and `-` only), `403 owner_only`, `400 bad_request`,
   `503 slate_unavailable`.
 * Sending `model` in a `/tv/v1/messages` body does the same bind and then runs the turn; use `model/switch` when the
   user picks a model without sending a message.
@@ -52,7 +52,7 @@ Show `reason` / `blocked.reason` as written; they are the PC's own words (Local 
 `{ conversation_id, model: { bound, facts }, voice: { engine, voice, still_valid, what_leaves, notice } | null,
 last_served: { model, provider, seat, local, requested, substituted, fallback, notice, at } | null }`
 
-* `last_served` is what the PC's backend recorded as generating the latest reply, **not** what was requested.
+* `last_served` is what the PC's backend recorded as generating the latest reply **sent through the phone gateway**, **not** what was requested. A turn with no `model` is compared with the model the chat is bound to, so `substituted` is set when another model answered. It is not updated by turns taken at the desk, and a failed or unrecorded turn leaves the previous value (compare `at`/the turn you just sent, not only this field).
   `substituted: true` means a different model answered than the one asked for; show `notice`/`fallback` with it.
   It is held in memory, so it is `null` after a PC restart until the next turn; the same truth rides on every reply's
   closing `message_delta.friday` block (which also carries `voice_bound` on a voice turn).

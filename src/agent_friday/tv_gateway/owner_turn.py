@@ -201,6 +201,25 @@ def _api(method: str, path: str, body: Optional[dict] = None):
     return getattr(client, method.lower())(path, json=body, headers={"X-Friday-Token": core._current_api_token()})
 
 
+_CID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+def valid_cid(cid) -> bool:
+    """A chat id is a plain token: it is joined into an internal URL, so no slash, dot or query character gets in."""
+    return isinstance(cid, str) and bool(_CID.match(cid))
+
+
+def bound_model(cid: Optional[str]) -> str:
+    """The model this chat is bound to ('' when none or unknown): what a later turn is expected to be served by."""
+    if not valid_cid(cid):
+        return ""
+    try:
+        conv = _json(_api("GET", "/api/conversations/" + cid)).get("conversation") or {}
+        return str((conv.get("seat") or {}).get("model") or "")
+    except Exception:
+        return ""
+
+
 def requested_model(body: dict) -> str:
     m = (body or {}).get("model")
     return m.strip() if isinstance(m, str) else ""
@@ -231,8 +250,12 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
         if not cid:
             raise turn.TurnRefused(503, "this computer could not start that chat", "chat_unavailable")
     else:
+        if not valid_cid(cid):
+            raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
         d = _json(_api("GET", "/api/conversations/" + cid))
         conv = d.get("conversation") or {}
+        if not conv:
+            raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
         if (conv.get("seat") or {}).get("model") == model_id:
             return cid                      # already bound: nothing to change, nothing to reload
         d = _json(_api("PATCH", "/api/conversations/" + cid, {"seat": seat}))
@@ -326,6 +349,8 @@ def run(dev: dict, body: dict) -> Iterator[str]:
         raise turn.TurnRefused(400, "no message")
     cid = body.get("conversation_id")
     cid = cid.strip() if isinstance(cid, str) and cid.strip() else None
+    if cid and not valid_cid(cid):
+        raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
     requested = requested_model(body)
     asked = requested
     voice = is_voice_turn(dev, body)
@@ -367,7 +392,9 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     if response.status_code != 200:
         raise turn.TurnRefused(503 if response.status_code >= 500 else response.status_code,
                                "this computer did not take the turn")
-    return _stream(response, dev, requested, cid, voice=voice, voice_default=default, asked=asked)
+    # A turn with no model rides the model the chat was bound to, so a different answer is still flagged.
+    expected = requested or bound_model(cid)
+    return _stream(response, dev, expected, cid, voice=voice, voice_default=default, asked=asked)
 
 
 def _status(status: str, started: float, detail: str = "") -> str:

@@ -115,6 +115,8 @@ def register(app, refuse) -> None:
         denied = owner_only()
         if denied:
             return denied
+        if not owner_turn.valid_cid(cid):
+            return refuse(404, "this computer has no such chat", code="unknown_conversation")
         try:
             conv = owner_turn._json(owner_turn._api("GET", "/api/conversations/" + cid)).get("conversation")
         except Exception as e:
