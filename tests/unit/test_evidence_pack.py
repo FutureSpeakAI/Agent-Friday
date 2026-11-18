@@ -41,8 +41,9 @@ def make_ledger(specs):
 OK = {"ok": True}
 
 
-def build(entries, start=0.0, end=1000.0, approvals=(), grants=(), verify=OK):
-    return pack.build_pack(entries, approvals, grants, verify, pack.Range(start, end), "9.9", 5.0)
+def build(entries, start=0, end=1000, approvals=(), grants=(), verify=OK, signer=None):
+    return pack.build_pack(entries, approvals, grants, verify, pack.Range(start, end), "9.9", 5,
+                           signer)
 
 
 def seeded(n=6):
@@ -70,7 +71,8 @@ def test_a_clean_interpreter_with_only_the_standard_library_passes_the_check(tmp
     assert "everything checked holds" in run.stdout and "per-entry signatures" in run.stdout
 
 
-@pytest.mark.parametrize("name", [f.value for f in pack.PackFile if f is not pack.PackFile.MANIFEST])
+@pytest.mark.parametrize("name", [f.value for f in pack.PackFile
+                                  if f not in (pack.PackFile.MANIFEST, pack.PackFile.SIGNATURE)])
 def test_changing_a_file_by_one_byte_fails_the_check_and_names_the_file(tmp_path, name):
     folder = unpack(tmp_path, build(seeded()))
     target = folder / name
@@ -100,7 +102,7 @@ def test_removing_or_reordering_a_ledger_line_fails_and_names_the_line(tmp_path,
 
 def test_the_pack_holds_exactly_the_entries_in_range_for_every_small_ledger():
     times = [10.0, 20.0, 30.0, 40.0]
-    boundaries = [5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 45.0]
+    boundaries = [5, 10, 15, 20, 25, 30, 40, 45]
     for n in range(0, 5):
         for kinds in product(KINDS, repeat=min(n, 2)):
             specs = [(times[i], (kinds + KINDS)[i] if i < len(kinds) else "outcome", {"label": "x"})
@@ -122,7 +124,7 @@ def test_the_pack_holds_exactly_the_entries_in_range_for_every_small_ledger():
 
 def test_a_mid_chain_range_checks_from_the_stated_starting_hash(tmp_path):
     entries = seeded(6)
-    built = build(entries, 30.0, 55.0)
+    built = build(entries, 30, 55)
     assert built.manifest["prev_hash"] == entries[1]["hash"]
     problems, _ = checker.check(unpack(tmp_path, built))
     assert problems == []
@@ -132,7 +134,7 @@ def test_a_range_over_the_old_export_cap_is_written_whole(tmp_path):
     from agent_friday.routes.ledger import EXPORT_MAX
     count = EXPORT_MAX + 50
     entries = make_ledger([(float(i), "outcome", {"label": "x"}) for i in range(count)])
-    built = build(entries, 0.0, float(count) + 1)
+    built = build(entries, 0, count + 1)
     assert built.manifest["entries"] == count and len(ledger_lines(built)) == count
     problems, _ = checker.check(unpack(tmp_path, built))
     assert problems == []
@@ -219,14 +221,101 @@ def test_the_summary_says_supports_and_the_fixed_sentence_is_present_exactly():
 
 def test_a_range_that_ends_before_it_starts_is_refused():
     with pytest.raises(pack.PackRefused):
-        pack.Range(5.0, 5.0)
+        pack.Range(5, 5)
 
 
 def test_the_zip_holds_every_file_and_the_check_passes_on_the_zip(tmp_path):
-    built = build(seeded())
+    built = build(seeded(), signer=make_signer())
     path = tmp_path / "p.zip"
     path.write_bytes(built.zip_bytes())
     with zipfile.ZipFile(path) as z:
         assert set(z.namelist()) == set(built.files) == {f.value for f in pack.PackFile}
     problems, _ = checker.check(path)
     assert problems == []
+
+
+def make_signer(seed=b"" * 32):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    key = Ed25519PrivateKey.from_private_bytes(seed)
+    public = key.public_key().public_bytes(serialization.Encoding.Raw,
+                                           serialization.PublicFormat.Raw).hex()
+    return pack.Signer(lambda data: key.sign(data).hex(), public)
+
+
+def test_a_signed_pack_passes_and_names_the_key_it_checked(tmp_path):
+    signer = make_signer()
+    folder = unpack(tmp_path, build(seeded(), signer=signer))
+    problems, notes = checker.check(folder)
+    assert problems == [] and any("manifest.sig against the key named" in n for n in notes)
+    problems, notes = checker.check(folder, signer.public_key)
+    assert problems == [] and any("the key you gave" in n for n in notes)
+
+
+def test_the_manifest_bytes_come_from_the_federation_canonical_function():
+    from agent_friday.services import peer_wire_v2 as wire
+    assert pack.wire is wire
+    built = build(seeded(), signer=make_signer())
+    assert built.files["manifest.json"] == wire.canonical(json.loads(built.files["manifest.json"]))
+
+
+def test_a_changed_manifest_fails_the_signature(tmp_path):
+    built = build(seeded(), signer=make_signer())
+    folder = unpack(tmp_path, built)
+    changed = json.loads(built.files["manifest.json"])
+    changed["app_version"] = "6.6"
+    (folder / "manifest.json").write_bytes(canon(changed))
+    problems, _ = checker.check(folder)
+    assert any(p.startswith("manifest.sig") for p in problems), problems
+
+
+def test_another_keys_signature_fails(tmp_path):
+    owner, other = make_signer(), make_signer(b"" * 32)
+    built = build(seeded(), signer=pack.Signer(other.sign, owner.public_key))
+    problems, _ = checker.check(unpack(tmp_path, built))
+    assert any(p.startswith("manifest.sig") for p in problems), problems
+
+
+def test_a_pack_signed_by_someone_else_fails_when_the_expected_key_is_pinned(tmp_path):
+    owner, other = make_signer(), make_signer(b"" * 32)
+    folder = unpack(tmp_path, build(seeded(), signer=other))
+    problems, _ = checker.check(folder, owner.public_key)
+    assert any("different signing key" in p for p in problems), problems
+
+
+def test_an_unsigned_pack_says_so_and_fails_when_a_signer_is_required(tmp_path):
+    folder = unpack(tmp_path, build(seeded()))
+    problems, notes = checker.check(folder)
+    assert problems == [] and any("not signed" in n for n in notes)
+    problems, _ = checker.check(folder, make_signer().public_key)
+    assert any("not signed" in p for p in problems)
+
+
+def test_without_the_cryptography_package_the_check_says_it_skipped_the_signature(
+        tmp_path, monkeypatch):
+    folder = unpack(tmp_path, build(seeded(), signer=make_signer()))
+    monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None)
+    problems, notes = checker.check(folder)
+    assert problems == [] and any("did not check manifest.sig" in n for n in notes)
+
+
+def test_the_manifest_holds_whole_seconds_and_ascii_only():
+    built = build(seeded(), signer=make_signer())
+    manifest = built.manifest
+    assert type(manifest["range"]["start"]) is int and type(manifest["exported_at"]) is int
+    with pytest.raises(pack.PackRefused):
+        pack.Range(1.5, 9)
+
+
+def test_the_manifest_is_produced_by_calling_federations_canonical_function(monkeypatch):
+    from agent_friday.services import peer_wire_v2 as wire
+    seen, real = [], wire.canonical
+
+    def spy(item):
+        seen.append(item)
+        return b"SPIED:" + real(item)
+
+    monkeypatch.setattr(wire, "canonical", spy)
+    built = build(seeded(), signer=make_signer())
+    assert len(seen) == 1 and seen[0]["entries"] == 6
+    assert built.files["manifest.json"].startswith(b"SPIED:")
