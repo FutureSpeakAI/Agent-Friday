@@ -163,9 +163,8 @@ def test_legacy_single_slot_unchanged(monkeypatch):
     text, _ = smr._call_openai([{"role": "user", "content": "hello"}],
                                model="fake-cloud", tools=None)
     assert text == "hi"
-    # Default settings slot points at api.openai.com.
-    assert posts[0]["url"].endswith("/chat/completions")
-    assert posts[0]["headers"]["Authorization"] == "Bearer legacy-key"
+    # Default settings slot points at api.openai.com; since K2 the call goes through the gateway's loopback listener.
+    assert_through_the_gateway(posts[0], "/chat/completions", "legacy-key")
     assert posts[0]["headers"]["HTTP-Referer"] == "https://futurespeak.ai"
 
 
