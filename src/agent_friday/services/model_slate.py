@@ -113,7 +113,7 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
     except Exception:
         secs = None
     return {"cold": True, "expected_seconds": secs,
-            "basis": "last load measured on this PC" if secs is not None else "not loaded on this PC yet"}
+            "basis": "last load measured on this PC" if secs is not None else "no load timed on this PC yet"}
 
 
 def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
