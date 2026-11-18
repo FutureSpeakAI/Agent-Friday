@@ -249,6 +249,9 @@ def register(app: Flask) -> None:
             return _refuse(413, "that preview is too big for a phone", code="too_big")
         return Response(body, mimetype=ctype.split(";")[0])
 
+    from agent_friday.tv_gateway import pc_settings_read
+    pc_settings_read.register(app)       # evolution, providers, connectors (read-only)
+
 
 def _ws_detail(lm, ws: str) -> dict:
     """What the phone draws a workspace from, read from the workspace's Laya manifest."""
