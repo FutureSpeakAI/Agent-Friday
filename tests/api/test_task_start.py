@@ -20,12 +20,10 @@ def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(ag, "_register_agent_orb", lambda *a, **k: None)
     monkeypatch.setattr(ag, "_task_worker", lambda *a, **k: None)
     monkeypatch.setattr(global_stop, "active", lambda: False)
-    task_start._FROM_DEVICE.clear()
     with ag.TASKS_LOCK:
         saved = dict(ag.TASKS)
         ag.TASKS.clear()
     yield
-    task_start._FROM_DEVICE.clear()
     with ag.TASKS_LOCK:
         ag.TASKS.clear()
         ag.TASKS.update(saved)
