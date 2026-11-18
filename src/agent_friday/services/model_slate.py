@@ -111,7 +111,9 @@ def _benchmark(model_id) -> Optional[dict]:
         return None
     return {"num_ctx": row.get("num_ctx"), "vram_mib": row.get("vram_mib"),
             "tokens_per_second": row.get("tok_s_median"), "cold_load_seconds": row.get("cold_load_s"),
-            "measured_at": row.get("measured_at"), "basis": "benchmarked on this PC's hardware, not declared"}
+            "measured_at": row.get("measured_at"), "source": row.get("source"),
+            "basis": ("measured on this PC" if row.get("source") == "measured" else
+                      "measured once on a PC with the same hardware (ships with the app), not on this one")}
 
 
 def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
@@ -131,8 +133,8 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
     bench = _benchmark(model_id) or {}
     if bench.get("cold_load_seconds"):
         return {"cold": True, "expected_seconds": bench["cold_load_seconds"],
-                "basis": "benchmarked on this PC's hardware on %s" % bench.get("measured_at")}
-    return {"cold": True, "expected_seconds": None, "basis": "not loaded on this PC yet"}
+                "basis": "%s, on %s" % (bench.get("basis"), bench.get("measured_at"))}
+    return {"cold": True, "expected_seconds": None, "basis": "no load timed on this PC yet"}
 
 
 def _measured(model_id) -> Optional[dict]:

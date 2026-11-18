@@ -4,7 +4,9 @@ The model slate's switch block says what a cold seat costs to load; this says wh
 once running, and how much of the prompt the seat already held (``cache_share``: a first turn after a switch
 reads none of the old conversation, so it is the slow one). Numbers are measured, never declared: the last
 ``_WINDOW`` calls per model, median and 90th percentile, with the sample count so a device can see how thin
-the evidence is. services/reasoning_trace.model_call records every completed call; services/model_slate reads.
+the evidence is. services/reasoning_trace.model_call records the calls that report a first-token time (the local
+OpenAI-compatible rounds inside an active trace: a cloud model, or a call made outside a trace, has no sample
+and shows none, never a guess); services/model_slate reads.
 Held by tests/unit/test_ttft_stats.py (record, summary, window, restart, damaged file, nonsense refused, and a
 source check that model_call records).
 """

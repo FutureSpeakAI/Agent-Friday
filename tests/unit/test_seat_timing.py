@@ -38,6 +38,12 @@ def test_a_damaged_file_starts_empty_not_broken(_clean):
     assert seat_timing.record("m", 5)
 
 
+def test_a_record_with_a_nonsense_timestamp_is_kept_and_cannot_break_a_load(_clean):
+    (_clean / "seat_load_times.json").write_text('{"other": {"seconds": 5, "at": [1]}}', encoding="utf-8")
+    assert seat_timing.last_load_seconds("other") == 5.0      # the seconds were fine: only the stamp is dropped
+    assert seat_timing.record("m", 5)
+
+
 def test_the_arbiter_records_every_real_spawn():
     src = inspect.getsource(residency_arbiter.LlamaServerBackend._load_locked)
     assert "_seat_timing.record(model_id, took)" in src
@@ -53,7 +59,7 @@ def test_the_slate_says_what_switching_costs(monkeypatch):
     assert rows["claude-opus-5-5"]["switch"] == {"cold": False, "expected_seconds": 0.0, "basis": "already available"}
     assert rows["bonsai2:27b"]["switch"]["cold"] is False
     assert rows["gemma4:e4b"]["switch"] == {"cold": True, "expected_seconds": None,
-                                            "basis": "not loaded on this PC yet"}
+                                            "basis": "no load timed on this PC yet"}
     seat_timing.record("gemma4:e4b", 38.0)
     assert {r["id"]: r for r in ms.slate()["models"]}["gemma4:e4b"]["switch"] == {
         "cold": True, "expected_seconds": 38.0, "basis": "last load measured on this PC"}

@@ -20,17 +20,25 @@ def _pc(monkeypatch, tmp_path, rows):
 
 def test_the_newest_benchmark_is_shown_and_labelled(monkeypatch, tmp_path):
     rows = {"gemma4:e4b": [{"num_ctx": 8192, "vram_mib": 3081, "tok_s_median": 99.9, "cold_load_s": 27.5,
-                            "measured_at": "2026-08-14"},
-                           {"num_ctx": 32768, "vram_mib": 3200, "tok_s_median": 90.0, "measured_at": "2026-08-15"}]}
+                            "measured_at": "2026-08-14", "source": "seed"},
+                           {"num_ctx": 32768, "vram_mib": 3200, "tok_s_median": 90.0, "measured_at": "2026-08-15",
+                            "source": "measured"}]}
     got = _pc(monkeypatch, tmp_path, rows)["gemma4:e4b"]
     assert got["benchmark"]["vram_mib"] == 3200 and got["benchmark"]["measured_at"] == "2026-08-15"
-    assert "not declared" in got["benchmark"]["basis"]
+    assert got["benchmark"]["basis"] == "measured on this PC" and got["benchmark"]["source"] == "measured"
+
+
+def test_a_row_shipped_with_the_app_says_so_and_is_never_called_this_pcs_own(monkeypatch, tmp_path):
+    rows = {"gemma4:e4b": [{"num_ctx": 8192, "cold_load_s": 27.5, "measured_at": "2026-08-14", "source": "seed"}]}
+    got = _pc(monkeypatch, tmp_path, rows)["gemma4:e4b"]
+    assert "ships with the app" in got["benchmark"]["basis"] and "not on this one" in got["benchmark"]["basis"]
+    assert "ships with the app" in got["switch"]["basis"] and "2026-08-14" in got["switch"]["basis"]
 
 
 def test_a_benchmarked_cold_load_is_the_estimate_until_a_real_load_is_timed(monkeypatch, tmp_path):
-    rows = {"gemma4:e4b": [{"num_ctx": 8192, "cold_load_s": 27.5, "measured_at": "2026-08-14"}]}
+    rows = {"gemma4:e4b": [{"num_ctx": 8192, "cold_load_s": 27.5, "measured_at": "2026-08-14", "source": "measured"}]}
     sw = _pc(monkeypatch, tmp_path, rows)["gemma4:e4b"]["switch"]
-    assert sw == {"cold": True, "expected_seconds": 27.5, "basis": "benchmarked on this PC's hardware on 2026-08-14"}
+    assert sw == {"cold": True, "expected_seconds": 27.5, "basis": "measured on this PC, on 2026-08-14"}
     seat_timing.record("gemma4:e4b", 31.0)
     assert {r["id"]: r for r in ms.slate()["models"]}["gemma4:e4b"]["switch"]["expected_seconds"] == 31.0
 
