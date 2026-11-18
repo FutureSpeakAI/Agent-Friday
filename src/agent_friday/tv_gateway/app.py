@@ -307,6 +307,9 @@ def create_app(tailnet: bool = False) -> Flask:
     ws_content.register(app)                 # list, search, item and changes of a workspace, from its device block
     from agent_friday.tv_gateway import ws_graph
     ws_graph.register(app)                   # the knowledge graph by level of detail
+    from agent_friday.tv_gateway import pc_act, pc_approve
+    pc_approve.register(app)
+    pc_act.register(app)
     return app
 
 
