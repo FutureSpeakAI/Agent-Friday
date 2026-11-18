@@ -1,9 +1,11 @@
-"""Workspaces the owner builds on the phone or tablet (phone workspaces parity PW-G6; reads ``pc_read``, writes ``pc_act``).
+"""Workspaces the owner builds on the phone or tablet (phone workspaces parity PW-G6; reads ``pc_read``, writes
+``pc_act``).
 
-A user workspace is a file on the PC, ``<Friday home>/workspaces/user/<id>.json``, schema ``friday.user_workspace/1``. It
-**composes what already exists**: a section's ``source`` is a (workspace, kind, query, facet) triple over kinds the PC's
-manifests publish, and a ``board`` section is an A2UI Friday-profile document. It carries no code, no verb, no URL, no
-gate: rows keep the verbs and gates of the workspace they came from. Routes (owner-bound phone or tablet):
+A user workspace is a file on the PC, ``<Friday home>/workspaces/user/<id>.json``, schema
+``friday.user_workspace/1``. It **composes what already exists**: a section's ``source`` is a (workspace, kind,
+query, facet) triple over kinds the PC's manifests publish, and a ``board`` section is an A2UI Friday-profile
+document. It carries no code, no verb, no URL, no gate: rows keep the verbs and gates of the workspace they came
+from. Routes (owner-bound phone or tablet):
 
 * ``GET /tv/v1/workspaces/user`` and ``.../user/<id>``: list and read, with ``rev``;
 * ``GET /tv/v1/workspaces/palette``: the workspaces, kinds and views a section may use;
@@ -11,11 +13,11 @@ gate: rows keep the verbs and gates of the workspace they came from. Routes (own
 * ``POST .../user/<id>/validate`` (``pc_act``): the same checks, no write, for the builder's live errors;
 * ``DELETE .../user/<id>`` (``pc_act``): to the PC's trash, restorable; ``GET .../versions``; ``POST .../rollback``.
 
-All or nothing: a manifest that breaks any rule is refused whole with the rule and the path of the fault. Every save carries
-``base_rev``; the PC accepts only when it equals the stored ``rev`` (``0`` for a new workspace); a stale save is
+All or nothing: a manifest that breaks any rule is refused whole with the rule and the path of the fault. Every save
+carries ``base_rev``; the PC accepts only when it equals the stored ``rev`` (``0`` for a new workspace); a stale save is
 ``409 conflict`` carrying the PC's version, an edit of a workspace deleted on the PC is ``410 gone``. The server sets
-``rev``, ``base_rev``, ``updated_by`` and ``updated_at``; the device never does. Every version is kept. Each rule is held by
-a test in tests/unit/test_tv_pc_userws.py.
+``rev``, ``base_rev``, ``updated_by`` and ``updated_at``; the device never does. Every version is kept. Each rule is
+held by a test in tests/unit/test_tv_pc_userws.py.
 """
 from __future__ import annotations
 
@@ -42,9 +44,10 @@ MAX_SECTIONS, MAX_BYTES, MAX_LABEL, MAX_QUERY, MAX_FACETS = 20, 256 * 1024, 60, 
 ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 ICON = re.compile(r"^[a-z][a-z0-9_-]{0,23}$")
 #: Names Windows treats as devices: a file or folder called ``con`` or ``nul`` cannot be made there.
-RESERVED = frozenset(["con", "prn", "aux", "nul"] + ["com%d" % n for n in range(1, 10)] + ["lpt%d" % n for n in range(1, 10)])
-#: Control, format (zero-width, bidirectional, tag characters, soft hyphen) and line or paragraph separators: never part of
-#: a name or a query.
+RESERVED = frozenset(["con", "prn", "aux", "nul"] + ["com%d" % n for n in range(1, 10)]
+                     + ["lpt%d" % n for n in range(1, 10)])
+#: Control, format (zero-width, bidirectional, tag characters, soft hyphen) and line or paragraph separators: never
+#: part of a name or a query.
 _HIDDEN_CATEGORIES = ("Cc", "Cf", "Zl", "Zp")
 
 
@@ -114,7 +117,7 @@ def _board(document, path: str, workspace_id: str) -> None:
         raise Fault("an A2UI document is a non-empty list of messages", path)
     context = a2ui_profile.Context(subject="user_workspace:%s" % workspace_id, verbs=lambda name: None,
                                    authorship="composer",      # the owner's own, on an owner-bound device with pc_act
-                                   model_authored=True)        # or Friday's composer drafted it: held to the stricter rules
+                                   model_authored=True)     # or Friday's composer drafted it: the stricter rules
     try:
         a2ui_profile.check(document, context)
     except a2ui_profile.ProfileError as error:
@@ -133,7 +136,8 @@ def validate(manifest, workspace_id: str) -> None:
 
 
 def _validate(manifest, workspace_id: str) -> None:
-    if not isinstance(manifest, dict) or set(manifest) - _TOP or not {"schema", "id", "label", "sections"} <= set(manifest):
+    required = {"schema", "id", "label", "sections"}
+    if not isinstance(manifest, dict) or set(manifest) - _TOP or not required <= set(manifest):
         raise Fault("a manifest is {schema, id, label, icon?, group?, sections}", "$")
     if len(json.dumps(manifest).encode("utf-8")) > MAX_BYTES:
         raise Fault("at most %d KB" % (MAX_BYTES // 1024), "$")
@@ -318,8 +322,8 @@ def register(app: Flask) -> None:
                 _receipt("userws_save", wid, 410)
                 return refuse(410, "this workspace was deleted on the PC", code="gone")
             if current is None and _has_history(wid):
-                return refuse(409, "a deleted workspace with this id still has its history; restore it or pick another id",
-                              code="id_in_use")
+                return refuse(409, "a deleted workspace with this id still has its history; restore it or pick "
+                                   "another id", code="id_in_use")
             stored_rev = int(current.get("rev") or 0) if current else 0
             if base_rev != stored_rev:
                 _receipt("userws_save", wid, 409)
@@ -362,7 +366,7 @@ def register(app: Flask) -> None:
                 entry.mkdir(parents=True)
                 _file(wid).replace(entry / "workspace.json")
                 try:
-                    if _versions(wid).is_dir():              # the history goes with it, so a new workspace of the same id starts clean
+                    if _versions(wid).is_dir():     # the history goes with it: a new workspace of that id starts clean
                         _versions(wid).replace(entry / "versions")
                 except OSError:
                     (entry / "workspace.json").replace(_file(wid))       # all or nothing: put the workspace back
