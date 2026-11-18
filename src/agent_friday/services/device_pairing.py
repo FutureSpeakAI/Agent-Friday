@@ -22,14 +22,16 @@ device request is ``device:<id>`` (see principal()).
 from __future__ import annotations
 
 import base64
+import enum
 import hashlib
 import hmac
 import json
 import secrets
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 SESSION_PREFIX = "fdev_"
 SESSION_TTL_S = 12 * 3600
@@ -48,8 +50,8 @@ RECONFIRM_DAYS = 30
 #              (tv_gateway/channels). A channel is data the PC stores and never runs.
 RIGHTS = ("chat_read", "tv_brain", "studio", "tv_channels")
 # The owner's phone/tablet control rights (Mobile v3, Addendum B). They are NOT part of the pairing bundle above:
-# each is its own screen-only press at the PC, never preselected. Only pc_read exists so far (read-only routes).
-PC_RIGHTS = ("pc_read",)
+# each is its own screen-only press at the PC, never preselected.
+PC_RIGHTS = ("pc_read", "pc_approve")
 ALL_RIGHTS = RIGHTS + PC_RIGHTS
 BASE_RIGHT = "chat_read"
 SESSION_CONTEXT = b"friday-tv-session-v1|"
@@ -210,7 +212,10 @@ def add_device(spki_der: bytes, *, name: str, rights=BASE_RIGHT, kind: str = "tv
 
 
 def public_view(dev: dict) -> dict:
-    return {k: dev.get(k) for k in ("id", "kind", "name", "rights", "paired_at", "last_seen", "reconfirm_by")}
+    out = {k: dev.get(k) for k in ("id", "kind", "name", "rights", "paired_at", "last_seen", "reconfirm_by")}
+    out["approval_biometric"] = dev.get("approval_biometric")
+    out["approval_attested"] = dev.get("approval_attested")
+    return out
 
 
 def has_right(dev: Optional[dict], right: str) -> bool:
@@ -231,9 +236,153 @@ def set_right(device_id: str, right: str, granted: bool) -> Optional[dict]:
         have = set(dev.get("rights") or ()) | {BASE_RIGHT}
         (have.add if granted else have.discard)(right)
         dev["rights"] = sorted(have)
+        if right == APPROVAL_RIGHT and not granted:
+            _clear_approval_key(dev)
         _save(body)
+    if right == APPROVAL_RIGHT and not granted:
+        expire_pending_key_cards(device_id, "the right was withdrawn")
     _receipt("device_right_granted" if granted else "device_right_withdrawn", dev, right=right)
     return public_view(dev)
+
+
+# ── the approval key (pc_approve) ───────────────────────────────────────────
+
+APPROVAL_RIGHT = "pc_approve"
+RIGHT_CARD_KIND = "device_right"      # the kind of the screen-only card that grants a wider right (tv_gateway/pairing)
+APPROVAL_FIELDS = ("approval_spki", "approval_biometric", "approval_attested", "approval_fail_count")
+
+
+class KeyRefusal(enum.Enum):
+    BAD_KEY = "bad_key"
+    UNKNOWN_DEVICE = "unknown_device"
+    SESSION_KEY_REUSED = "session_key_reused"
+    TABLET_NEEDS_BIOMETRIC = "tablet_needs_biometric"
+
+
+class ApprovalKeyRefused(ValueError):
+    """The PC will not take this approval key; ``code`` is the plain reason the route sends back."""
+
+    def __init__(self, refusal: KeyRefusal):
+        super().__init__(refusal.value)
+        self.code = refusal.value
+
+
+class KeyStage(enum.Enum):
+    STAGED = "staged"                  # waiting for the owner's press at the PC
+    ALREADY_ACTIVE = "already_active"
+
+
+@dataclass(frozen=True)
+class ApprovalKey:
+    """A device's active approval key: P-256 SPKI (base64) and whether the owner's fingerprint is requested on
+    every use. ``attested`` stays False until the hardware proof is checked, so no screen may say "enforced"."""
+    spki: str
+    biometric: bool
+    attested: bool
+
+    @property
+    def key_id(self) -> str:
+        return spki_id(base64.b64decode(self.spki))
+
+
+def canonical_spki(spki_der: bytes) -> bytes:
+    """The one DER form of a P-256 public key (uncompressed point), whatever encoding it arrived in, so the same
+    key always has the same bytes and the same id. Raises ValueError for anything that is not a P-256 key."""
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    return _load_pub(spki_der).public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+
+
+def approval_key(dev: Optional[dict]) -> Optional[ApprovalKey]:
+    """The active approval key, or None while the owner has not pressed its card."""
+    if not dev or not dev.get("approval_spki"):
+        return None
+    return ApprovalKey(dev["approval_spki"], bool(dev.get("approval_biometric")), bool(dev.get("approval_attested")))
+
+
+def _clear_approval_key(dev: dict) -> None:
+    for field in APPROVAL_FIELDS + ("approval_pending",):
+        dev.pop(field, None)
+
+
+def stage_approval_key(device_id: str, spki_der: bytes, biometric: bool) -> Tuple[KeyStage, str]:
+    """Hold a device's approval key until the owner presses its card at the PC (``activate_approval_key``).
+    Returns what happened and the key's id. Refused: a key that is not P-256, the session key itself in any
+    encoding (a signature from it must never count as an approval), and a tablet key that does not ask for the
+    fingerprint. Guarded by tests/unit/test_tv_pc_approve_key.py."""
+    try:
+        canonical = canonical_spki(spki_der)
+    except Exception:
+        raise ApprovalKeyRefused(KeyRefusal.BAD_KEY)
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is None:
+            raise ApprovalKeyRefused(KeyRefusal.UNKNOWN_DEVICE)
+        if canonical_spki(base64.b64decode(dev["spki"])) == canonical:
+            raise ApprovalKeyRefused(KeyRefusal.SESSION_KEY_REUSED)
+        if dev.get("kind") == "tablet" and not biometric:
+            raise ApprovalKeyRefused(KeyRefusal.TABLET_NEEDS_BIOMETRIC)
+        key_id = spki_id(canonical)
+        active = approval_key(dev)
+        if active and active.key_id == key_id and active.biometric == bool(biometric):
+            dev.pop("approval_pending", None)
+            _save(body)
+            return KeyStage.ALREADY_ACTIVE, key_id
+        dev["approval_pending"] = {"spki": base64.b64encode(canonical).decode("ascii"), "biometric": bool(biometric)}
+        _save(body)
+    return KeyStage.STAGED, key_id
+
+
+def can_approve(dev: Optional[dict]) -> bool:
+    """A device approves only with the right AND an active key: a right without a key never approves.
+    Guarded by test_a_right_without_a_key_cannot_approve."""
+    return bool(dev) and has_right(dev, APPROVAL_RIGHT) and approval_key(dev) is not None
+
+
+def clear_pending_key(device_id: str) -> None:
+    """Drop a staged key that has no card to press. Guarded by test_a_registered_key_always_has_a_card_on_the_screen."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is not None and dev.pop("approval_pending", None) is not None:
+            _save(body)
+
+
+def expire_pending_key_cards(device_id: str, note: str) -> int:
+    """Take the device's unpressed pc_approve key cards off the screen (never approves one). Guarded by
+    test_a_new_key_replaces_the_pending_card, test_the_active_key_registered_again_takes_a_pending_card_away and
+    test_withdrawing_the_right_takes_its_pending_card_away."""
+    from agent_friday.services import approvals
+
+    def key_card(rec: dict) -> bool:
+        payload = rec.get("payload") or {}
+        return (rec.get("kind") == RIGHT_CARD_KIND and payload.get("device_id") == str(device_id)
+                and payload.get("right") == APPROVAL_RIGHT and "key_id" in payload)
+    return approvals.expire_matching(key_card, "tv_gateway", note)
+
+
+def pending_approval_key(device_id: str) -> Optional[ApprovalKey]:
+    dev = get_device(device_id) or {}
+    pend = dev.get("approval_pending")
+    return ApprovalKey(pend["spki"], bool(pend["biometric"]), False) if pend else None
+
+
+def activate_approval_key(device_id: str, key_id: str, biometric: bool) -> bool:
+    """Make the staged key active, only if it is still the key AND the fingerprint choice the owner's card named.
+    The caller is the card's decision hook (pairing._on_right_decision); guarded by
+    tests/unit/test_tv_pc_approve_key.py, which also pins who calls it."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        pend = (dev or {}).get("approval_pending")
+        if (not pend or spki_id(base64.b64decode(pend["spki"])) != key_id
+                or bool(pend["biometric"]) != bool(biometric)):
+            return False
+        dev.update(approval_spki=pend["spki"], approval_biometric=pend["biometric"], approval_attested=False,
+                   approval_fail_count=0)
+        dev.pop("approval_pending")
+        _save(body)
+    return True
 
 
 def list_devices() -> list:
@@ -258,7 +407,9 @@ def remove_device(device_id: str) -> bool:
             if did == device_id:
                 _SESSIONS.pop(h, None)
         _persist_sessions()
-        return gone
+    if gone:
+        expire_pending_key_cards(device_id, "the device was removed")
+    return gone
 
 
 def stop_all() -> int:

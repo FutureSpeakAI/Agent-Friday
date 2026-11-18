@@ -23,10 +23,11 @@ from typing import Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request
 
+from agent_friday.tv_gateway.pc_common import allowed, refuse as _refuse
+
 _log = logging.getLogger(__name__)
 
 RIGHT = "pc_read"
-OWNER_KINDS = ("phone", "tablet")                      # never the watch, never the TV
 _ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:\-]{0,95}$")      # never starts with a dot: no "..", no hidden names
 MAX_JSON = 4 * 1024 * 1024
 MAX_PREVIEW = 3 * 1024 * 1024
@@ -38,18 +39,6 @@ _LOCK = threading.Lock()
 
 # Fields of a workspace the phone needs to draw its entry; the rest of the registry stays on the PC.
 _WS_FIELDS = ("id", "label", "group", "icon", "blurb", "description", "order", "kind", "voice_names")
-
-
-def _refuse(status: int, reason: str, **extra) -> Response:
-    resp = jsonify({"ok": False, "error": reason, **extra})
-    resp.status_code = status
-    return resp
-
-
-def allowed(dev: Optional[dict]) -> bool:
-    """An owner-bound phone or tablet (the household's binding, never a claim in the request)."""
-    from agent_friday.tv_gateway import owner_turn
-    return bool(dev) and owner_turn.is_owner_device(dev) and str(dev.get("kind") or "").lower() in OWNER_KINDS
 
 
 def _guard(area: str) -> Optional[Response]:
