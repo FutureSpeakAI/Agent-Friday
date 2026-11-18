@@ -123,4 +123,4 @@ def test_the_detail_route_sends_each_verbs_arguments_beside_where_its_button_sit
 
 
 def test_a_workspace_with_no_block_sends_no_arguments(read):
-    assert all(v["args"] == [] for v in read("news").get_json()["verbs"])
+    assert all(v["args"] == [] for v in read("career").get_json()["verbs"])

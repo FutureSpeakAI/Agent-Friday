@@ -112,9 +112,9 @@ def test_a_section_the_workspace_does_not_serve_is_unknown(client, desk):
 
 def test_a_workspace_with_no_device_block_or_no_adapter_is_unknown_not_empty(client, desk, monkeypatch):
     dev = paired()
-    assert get(client, dev, "/tv/v1/workspaces/news/list").status_code == 404       # no block
-    monkeypatch.setitem(ws_content.ADAPTERS, "news", {"pages": ws_knowledge})
-    assert get(client, dev, "/tv/v1/workspaces/news/list").status_code == 404       # an adapter but no block
+    assert get(client, dev, "/tv/v1/workspaces/career/list").status_code == 404     # no block
+    monkeypatch.setitem(ws_content.ADAPTERS, "career", {"pages": ws_knowledge})
+    assert get(client, dev, "/tv/v1/workspaces/career/list").status_code == 404     # an adapter but no block
     monkeypatch.delitem(ws_content.ADAPTERS, "knowledge")
     assert get(client, dev, "/tv/v1/workspaces/knowledge/list").status_code == 404       # a block but no adapter
     assert get(client, dev, "/tv/v1/workspaces/..%2Fx/list").status_code == 404

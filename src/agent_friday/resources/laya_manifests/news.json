@@ -328,5 +328,25 @@
   }
  ],
  "resolver_sources": [],
- "workspace_tools": {"key": "news", "pools": []}
+ "workspace_tools": {"key": "news", "pools": []},
+ "device": {
+  "expose": true,
+  "sensitivity": "open",
+  "sections": {
+   "latest": {"view": "list", "kind": "story", "label": "Latest"}
+  },
+  "kinds": {
+   "story": {
+    "roles": {"title": "headline", "line": "outlet", "when": "published_at", "state": "category", "thumb": null},
+    "item_view": "reader",
+    "search": true,
+    "preview": false,
+    "stream": false,
+    "offline": "never",
+    "row_verbs": [],
+    "item_verbs": [],
+    "new_verb": null
+   }
+  }
+ }
 }
