@@ -58,8 +58,24 @@ def test_every_model_says_what_leaves_the_house_in_words(monkeypatch, tmp_path):
             assert r["what_leaves"].startswith("Your messages") and "go to" in r["what_leaves"]
 
 
-def test_a_relay_names_who_it_forwards_to_and_a_local_row_does_not_claim_this_pc_only():
-    relay = ms._what_leaves({"provider": "openrouter", "provider_label": "OpenRouter"}, False)
-    assert "OpenRouter" in relay and "forwards them to" in relay
-    assert "forwards" not in ms._what_leaves({"provider": "anthropic", "provider_label": "Anthropic"}, False)
-    assert "your own network" in ms.LEAVES_NOTHING and "Nothing leaves your own machines" in ms._what_leaves({}, True)
+def test_relays_are_named_cloud_tags_and_unverified_local_rows_are_not_called_private():
+    for prov, label in (("openrouter", "OpenRouter"), ("huggingface", "Hugging Face (Inference Providers)")):
+        sentence = ms._what_leaves({"provider": prov, "provider_label": label}, False)
+        assert label in sentence and "actually runs the model" in sentence
+    assert "actually runs" not in ms._what_leaves({"provider": "anthropic", "provider_label": "Anthropic"}, False)
+    # an Ollama cloud tag is relayed to ollama.com even though the row says local
+    tag = ms._what_leaves({"id": "gpt-oss:120b-cloud", "local": True, "provider": "ollama-local"}, True)
+    assert tag != ms.LEAVES_NOTHING and "relayed off this machine" in tag
+    assert ms._what_leaves({"id": "gemma4:e4b", "local": True, "provider": "no-such-provider"}, True) == ms.LEAVES_NOTHING
+    assert "your own network" in ms.LEAVES_NOTHING
+
+
+
+def test_a_footprint_record_never_hides_the_benchmark_and_a_damaged_load_time_is_not_shown(monkeypatch, tmp_path):
+    rows = {"gemma4:e4b": [
+        {"num_ctx": 8192, "vram_mib": 3081, "tok_s_median": 99.9, "cold_load_s": -5, "measured_at": "2026-08-14",
+         "source": "measured"},
+        {"num_ctx": None, "load_s": 9.0, "measured_at": "2026-11-18", "source": "measured"}]}   # newer footprint
+    got = _pc(monkeypatch, tmp_path, rows)["gemma4:e4b"]
+    assert got["benchmark"]["vram_mib"] == 3081 and got["benchmark"]["cold_load_seconds"] is None
+    assert got["switch"]["expected_seconds"] is None                     # -5 s is not an estimate

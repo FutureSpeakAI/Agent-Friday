@@ -100,17 +100,29 @@ def _blocked(m: dict, mode: str):
     return None
 
 
+def _sane_seconds(value) -> Optional[float]:
+    """A stored load time as a finite float in (0, 3600], else None: a damaged store never reaches the slate."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        f = float(value)
+    except OverflowError:
+        return None
+    return f if f == f and 0.0 < f <= 3600.0 else None
+
+
 def _benchmark(model_id) -> Optional[dict]:
     """The newest benchmark of this model on THIS PC's hardware (VRAM, speed, cold load), or None."""
     try:
         from agent_friday.services import hardware_profile as hwp
         from agent_friday.services import residency_catalog as rc
-        rows = rc.measurements(str(model_id), rc.profile_fingerprint(hwp.get()))
-        row = max(rows, key=lambda m: str(m.get("measured_at") or ""))
+        rows = [m for m in rc.measurements(str(model_id), rc.profile_fingerprint(hwp.get()))
+                if m.get("num_ctx") is not None]                       # benchmark rows only,
+        row = max(rows, key=lambda m: str(m.get("measured_at") or ""))                   # not footprint records
     except Exception:
         return None
     return {"num_ctx": row.get("num_ctx"), "vram_mib": row.get("vram_mib"),
-            "tokens_per_second": row.get("tok_s_median"), "cold_load_seconds": row.get("cold_load_s"),
+            "tokens_per_second": row.get("tok_s_median"), "cold_load_seconds": _sane_seconds(row.get("cold_load_s")),
             "measured_at": row.get("measured_at"), "source": row.get("source"),
             "basis": ("measured on this PC" if row.get("source") == "measured" else
                       "measured once on a PC with the same hardware (ships with the app), not on this one")}
@@ -139,19 +151,54 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
 
 LEAVES_NOTHING = ("Nothing leaves your own machines. Your messages and Friday's replies stay on this PC, or on "
                   "a computer on your own network that you run.")
-_RELAYS = ("openrouter",)               # providers that forward the request to whichever model they pick
+
+
+def _descriptor(provider_id) -> Optional[dict]:
+    """The provider's own descriptor (registry first, then the built-ins), or None when it is not known."""
+    try:
+        from agent_friday.routing import provider_descriptors as pd
+        for prov in list(pd._registry_providers()) + list(pd.BUILTIN_EXTRA_PROVIDERS):
+            if str(prov.get("name") or "").lower() == str(provider_id or "").lower():
+                return prov
+    except Exception:
+        pass
+    return None
+
+
+def _truly_local(m: dict) -> bool:
+    """A row is local only if the catalog says so AND it is not an Ollama cloud tag AND, when its provider is
+    known, that provider's own classification is local (a private base_url): the flag alone is not trusted."""
+    if not m.get("local"):
+        return False
+    try:
+        from agent_friday.services import local_only_guard
+        if local_only_guard.is_cloud_model_tag(m.get("id")):
+            return False
+        prov = _descriptor(m.get("provider"))
+        if prov is not None:
+            from agent_friday.routing import provider_descriptors as pd
+            return pd.classification_of(prov) == "local"
+    except Exception:
+        return False
+    return True
 
 
 def _what_leaves(m: dict, local: bool) -> str:
-    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's). A local
-    row is one the catalog classes private (this PC or the owner's own network). A relay is named with what it
-    forwards to. Held by tests/unit/test_benchmark_row.py."""
-    if local:
+    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's). Local
+    only when ``_truly_local``; a relay (a provider descriptor marked as an aggregator, e.g. OpenRouter, Hugging
+    Face) is named with what it forwards to. Held by tests/unit/test_benchmark_row.py."""
+    if local and _truly_local(m):
         return LEAVES_NOTHING
     who = m.get("provider_label") or m.get("provider") or "its cloud provider"
     sentence = "Your messages and the context Friday attaches to them go to %s while you use this model" % who
-    if str(m.get("provider") or "").lower() in _RELAYS:
-        sentence += ", and on to the model company it forwards them to"
+    prov = _descriptor(m.get("provider"))
+    try:
+        from agent_friday.routing import provider_descriptors as pd
+        relay = bool(prov) and pd._is_aggregator(prov)
+    except Exception:
+        relay = False
+    if relay or (local and not _truly_local(m)):
+        sentence += ", and on to the company that actually runs the model" if relay else             ", because this model is relayed off this machine"
     return sentence + "."
 
 

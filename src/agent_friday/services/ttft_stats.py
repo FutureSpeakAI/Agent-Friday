@@ -50,7 +50,7 @@ def _clean_call(c) -> Optional[list]:
     if not (isinstance(c, list) and len(c) == 2):
         return None
     ms = _finite(c[0], 0.0, _MAX_MS)
-    share = None if c[1] is None else _finite(c[1], -1.0, 1.0)
+    share = None if c[1] is None else _finite(c[1], -1e-9, 1.0)
     if ms is None or (c[1] is not None and share is None):
         return None
     return [int(ms), share]
