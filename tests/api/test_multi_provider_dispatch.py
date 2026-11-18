@@ -35,6 +35,15 @@ class _FakeResp:
         return self._payload
 
 
+def assert_through_the_gateway(post, path, real_key):
+    """Since K2 a cloud call goes to the key gateway's loopback listener with the stand-in key; the real key is added
+    there, so it never appears in what the caller sends."""
+    from agent_friday.services.salon_proxy import DUMMY_KEY
+    assert post["url"].startswith("http://127.0.0.1:") and post["url"].endswith(path), post["url"]
+    assert post["headers"]["Authorization"] == "Bearer " + DUMMY_KEY
+    assert real_key not in str(post["headers"]) and real_key not in str(post["payload"])
+
+
 def _capture_posts(monkeypatch):
     import requests
     posts = []
@@ -63,8 +72,7 @@ def test_dispatch_to_openrouter_descriptor(monkeypatch):
         provider="openrouter",
     )
     assert text == "hi"
-    assert posts[0]["url"] == "https://openrouter.ai/api/v1/chat/completions"
-    assert posts[0]["headers"]["Authorization"] == "Bearer or-key-not-real"
+    assert_through_the_gateway(posts[0], "/api/v1/chat/completions", "or-key-not-real")
     assert posts[0]["headers"]["X-Title"] == "Agent Friday"
     assert posts[0]["payload"]["usage"] == {"include": True}  # usage accounting
     assert posts[0]["payload"]["model"] == "meta-llama/llama-4-maverick"
@@ -132,8 +140,7 @@ def test_dispatch_to_groq_descriptor(monkeypatch):
             model="llama-3.3-70b-versatile", tools=None, provider="groq",
         )
         assert text == "hi"
-        assert posts[0]["url"] == "https://api.groq.com/openai/v1/chat/completions"
-        assert posts[0]["headers"]["Authorization"] == "Bearer gq-key-not-real"
+        assert_through_the_gateway(posts[0], "/openai/v1/chat/completions", "gq-key-not-real")
         assert "usage" not in posts[0]["payload"]  # groq declares no accounting
     finally:
         groq["enabled"] = was
@@ -156,9 +163,8 @@ def test_legacy_single_slot_unchanged(monkeypatch):
     text, _ = smr._call_openai([{"role": "user", "content": "hello"}],
                                model="fake-cloud", tools=None)
     assert text == "hi"
-    # Default settings slot points at api.openai.com.
-    assert posts[0]["url"].endswith("/chat/completions")
-    assert posts[0]["headers"]["Authorization"] == "Bearer legacy-key"
+    # Default settings slot points at api.openai.com; since K2 the call goes through the gateway's loopback listener.
+    assert_through_the_gateway(posts[0], "/chat/completions", "legacy-key")
     assert posts[0]["headers"]["HTTP-Referer"] == "https://futurespeak.ai"
 
 
