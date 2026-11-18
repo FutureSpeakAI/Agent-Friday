@@ -56,3 +56,10 @@ def test_every_model_says_what_leaves_the_house_in_words(monkeypatch, tmp_path):
             assert r["what_leaves"] == ms.LEAVES_NOTHING
         else:
             assert r["what_leaves"].startswith("Your messages") and "go to" in r["what_leaves"]
+
+
+def test_a_relay_names_who_it_forwards_to_and_a_local_row_does_not_claim_this_pc_only():
+    relay = ms._what_leaves({"provider": "openrouter", "provider_label": "OpenRouter"}, False)
+    assert "OpenRouter" in relay and "forwards them to" in relay
+    assert "forwards" not in ms._what_leaves({"provider": "anthropic", "provider_label": "Anthropic"}, False)
+    assert "your own network" in ms.LEAVES_NOTHING and "Nothing leaves your own machines" in ms._what_leaves({}, True)

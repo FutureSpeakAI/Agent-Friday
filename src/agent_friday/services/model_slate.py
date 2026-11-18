@@ -137,15 +137,22 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
     return {"cold": True, "expected_seconds": None, "basis": "no load timed on this PC yet"}
 
 
-LEAVES_NOTHING = "Nothing. Your messages and Friday's replies stay on this PC."
+LEAVES_NOTHING = ("Nothing leaves your own machines. Your messages and Friday's replies stay on this PC, or on "
+                  "a computer on your own network that you run.")
+_RELAYS = ("openrouter",)               # providers that forward the request to whichever model they pick
 
 
 def _what_leaves(m: dict, local: bool) -> str:
-    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's)."""
+    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's). A local
+    row is one the catalog classes private (this PC or the owner's own network). A relay is named with what it
+    forwards to. Held by tests/unit/test_benchmark_row.py."""
     if local:
         return LEAVES_NOTHING
     who = m.get("provider_label") or m.get("provider") or "its cloud provider"
-    return "Your messages and the context Friday attaches to them go to %s while you use this model." % who
+    sentence = "Your messages and the context Friday attaches to them go to %s while you use this model" % who
+    if str(m.get("provider") or "").lower() in _RELAYS:
+        sentence += ", and on to the model company it forwards them to"
+    return sentence + "."
 
 
 def _measured(model_id) -> Optional[dict]:
