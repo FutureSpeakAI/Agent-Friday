@@ -87,7 +87,7 @@ def test_no_pin_is_null_and_an_impossible_pin_counts_as_no_pin(client, desk):
 @pytest.mark.parametrize("change", [
     {"structure_index": 15}, {"structure_index": 64}, {"structure_index": -1}, {"calendar_index": 15}, {"structure_index": "5"}, {"structure_index": True},
     {"structure_index": 1.5}, {"calendar_index": None}, {"day": 0}, {"day": "6"}, {"structure": ""},
-    {"structure": "D:\\Data\\x"}, {"structure": "DAY 6\nNEXT"}, {"structure": "x" * 81}, {"structure": 5},
+    {"structure": "D:\\Data\\x"}, {"structure": "DAY 6\nNEXT"}, {"structure": "DAY 6\n"},{"structure": "x" * 81}, {"structure": 5},
     {"structure": "see https://example.com"}, {"structure": "file://share/x"}, {"structure": "mail me@example.test"},
     {"structure": "~/notes"}, {"structure": "/srv/data/x"}])
 def test_an_evolution_answer_that_is_not_plainly_the_shape_is_a_503(client, desk, change):
@@ -131,7 +131,8 @@ def test_connectors_carry_id_label_kind_and_connected_only(client, desk):
 
 def test_one_odd_connector_row_is_skipped_and_the_others_are_kept(client, desk):
     odd = [5, connector(key="../x"), connector(key=""), connector(connected="yes"), {**connector(), "name": "see https://x.y"},
-           {**connector(), "name": "D:/Data/x"}, {**connector(), "name": ""}]
+           {**connector(), "name": "D:/Data/x"}, {**connector(), "name": ""}, {**connector(), "name": "Gmail\n"},
+           connector(key="gmail\n")]                       # a trailing newline is not plain (\Z, never $)
     answer(desk, {"connectors": [connector("gmail"), *odd, connector("spotify")]})
     ids = [row["id"] for row in get(client, paired(), "/tv/v1/connectors").get_json()["connectors"]]
     assert ids == ["gmail", "spotify"]
