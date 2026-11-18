@@ -101,7 +101,8 @@ def test_a_missing_or_unreasonable_pattern_is_refused_before_the_desktop(client,
 def test_a_device_cannot_make_a_grant(client, desk):
     _, headers = plain(client)
     for method in ("post", "put", "patch"):
-        assert getattr(client, method)("/tv/v1/grants", json={"tools": ["send_email"]}, headers=headers).status_code in (404, 405)
+        sent = getattr(client, method)("/tv/v1/grants", json={"tools": ["send_email"]}, headers=headers)
+        assert sent.status_code in (404, 405)
     assert desk.calls == []
 
 
