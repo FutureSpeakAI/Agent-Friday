@@ -361,6 +361,35 @@ def expire_pending_key_cards(device_id: str, note: str) -> int:
     return approvals.expire_matching(key_card, "tv_gateway", note)
 
 
+MAX_BAD_SIGNATURES = 5
+
+
+def note_bad_signature(device_id: str) -> int:
+    """Count one failed approval signature; at MAX_BAD_SIGNATURES withdraw the right (and with it the key).
+    Returns the count now. Guarded by test_the_fifth_bad_signature_withdraws_the_right."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is None:
+            return 0
+        dev["approval_fail_count"] = int(dev.get("approval_fail_count") or 0) + 1
+        count = dev["approval_fail_count"]
+        _save(body)
+    if count >= MAX_BAD_SIGNATURES:
+        set_right(device_id, APPROVAL_RIGHT, False)
+    return count
+
+
+def clear_bad_signatures(device_id: str) -> None:
+    """A good signature starts the count again. Guarded by test_a_good_signature_resets_the_count."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is not None and dev.get("approval_fail_count"):
+            dev["approval_fail_count"] = 0
+            _save(body)
+
+
 def pending_approval_key(device_id: str) -> Optional[ApprovalKey]:
     dev = get_device(device_id) or {}
     pend = dev.get("approval_pending")
