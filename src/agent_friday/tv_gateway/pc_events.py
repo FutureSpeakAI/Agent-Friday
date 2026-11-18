@@ -4,20 +4,20 @@ A device holds ONE stream instead of one per feature. Each event has a source na
 job and workspace sources publish through :func:`publish` as they are built), an id, and the device's own shaping:
 
 * ``event: hello`` first: ``{boot, rev, as_of, resume}``; ``resume`` is ``ok`` or ``reset`` (see below);
-* ``id: <boot>-<n>`` / ``event: <source>`` / ``data: <json>`` per event. ``boot`` names this run of the PC (a random token),
-  so a number issued before a restart can never be mistaken for one of this run;
-* ``Last-Event-ID`` resumes from the ring of the last 200 events. A device whose id names another run, is not an id this PC
-  issued, is further behind than the ring, or is ahead of it is sent ``reset`` and refetches its lists; after a ``reset``
-  it receives every later event. A device is never left believing it is up to date;
+* ``id: <boot>-<n>`` / ``event: <source>`` / ``data: <json>`` per event. ``boot`` names this run of the PC (a random
+  token), so a number issued before a restart can never be mistaken for one of this run;
+* ``Last-Event-ID`` resumes from the ring of the last 200 events. A device whose id names another run, is not an id
+  this PC issued, is further behind than the ring, or is ahead of it is sent ``reset`` and refetches its lists; after
+  a ``reset`` it receives every later event. A device is never left believing it is up to date;
 * ``event: heartbeat`` every ``BEAT_S`` seconds; three missed and the device treats the PC as out of reach;
 * the ``pc_read`` right is re-checked on every beat and every event; a revoked device is sent ``revoked`` and closed;
 * at most ``MAX_STREAMS_PER_DEVICE`` streams per device: a new one ends the oldest (``superseded``) rather than being
   refused, so half-open connections of a phone that changed network never lock it out; a device that cannot keep up gets
   ``reset`` rather than silence.
 
-An approval card is cut down for this device the same way the cards list is (a private-detail card shows only its generic
-title unless the device can approve). Raw events live only in memory, in the ring. Each rule is held by a test in
-tests/unit/test_tv_pc_events.py.
+An approval card is cut down for this device the same way the cards list is (a private-detail card shows only its
+generic title unless the device can approve). Raw events live only in memory, in the ring. Each rule is held by a
+test in tests/unit/test_tv_pc_events.py.
 """
 from __future__ import annotations
 
@@ -55,8 +55,8 @@ _PUMP_STOP = threading.Event()
 
 
 def register_source(name: str, shaper: Callable[[dict, dict], Optional[dict]]) -> None:
-    """A source says how one of its raw events is shown to one device: ``shaper(raw, device) -> dict | None`` (None hides
-    it from that device). A source with no shaper publishes nothing to devices."""
+    """A source says how one of its raw events is shown to one device: ``shaper(raw, device) -> dict | None`` (None
+    hides it from that device). A source with no shaper publishes nothing to devices."""
     _SHAPERS[name] = shaper
 
 
@@ -90,9 +90,9 @@ def _evict(subscriber: "queue.Queue") -> None:
 
 
 def publish(source: str, raw: dict) -> int:
-    """Number and keep one event, and hand it to every connected stream. Never raises. Returns its number (0 if the source
-    has no shaper, so nothing is kept for devices). Numbering, the ring and delivery happen under one lock, so every stream
-    sees events in number order however many sources publish at once (delivery never blocks)."""
+    """Number and keep one event, and hand it to every connected stream. Never raises. Returns its number (0 if the
+    source has no shaper, so nothing is kept for devices). Numbering, the ring and delivery happen under one lock, so
+    every stream sees events in number order however many sources publish at once (delivery never blocks)."""
     global _LAST
     if source not in _SHAPERS:
         return 0
@@ -148,8 +148,8 @@ def stop_pump() -> None:
 
 
 def _parse_id(header: Optional[str]) -> Tuple[Optional[int], bool]:
-    """(number, readable): ``(None, True)`` for no header; ``(n, True)`` for an id of THIS run; ``(None, False)`` for any
-    other id (another run, garbage), which means reset."""
+    """(number, readable): ``(None, True)`` for no header; ``(n, True)`` for an id of THIS run; ``(None, False)`` for
+    any other id (another run, garbage), which means reset."""
     if not header:
         return None, True
     boot, _, number = header.partition("-")
@@ -212,7 +212,8 @@ def register(app: Flask) -> None:
 
         def frames():
             try:
-                yield _line(None, "hello", {"boot": _BOOT, "rev": at_subscribe, "as_of": int(time.time()), "resume": resume})
+                yield _line(None, "hello", {"boot": _BOOT, "rev": at_subscribe, "as_of": int(time.time()),
+                                            "resume": resume})
                 # after a reset the device refetches everything up to now and then wants every later event
                 last_sent = after if resume == "ok" and after is not None else at_subscribe
                 for number, source, raw in missed:
@@ -238,8 +239,9 @@ def register(app: Flask) -> None:
                         return
                     if source in ("heartbeat", "reset"):
                         if source == "reset":
-                            last_sent = _LAST                # set BEFORE the frame goes out: it refetches, so what is
-                                                             # published after this point is new to it (a duplicate is harmless)
+                            # set BEFORE the frame goes out: it refetches, so what is published after this point is
+                            # new to it (a duplicate is harmless)
+                            last_sent = _LAST
                         yield _line(None, source, {"as_of": int(time.time())})
                         continue
                     if number <= last_sent:                # already sent from the ring replay
