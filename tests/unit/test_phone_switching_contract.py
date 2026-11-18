@@ -117,7 +117,8 @@ def test_a_turn_with_no_model_is_still_flagged_when_another_model_answers_than_t
     desk.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
     block(ask(client, dev, conversation_id="conv-old"))
     last = state(client, dev, "conv-old").get_json()["last_served"]
-    assert last["model"] == "bonsai2:27b" and last["requested"] == "claude-haiku-5-5" and last["substituted"] is True
+    assert last["model"] == "bonsai2:27b" and last["requested"] is None
+    assert last["expected"] == "claude-haiku-5-5" and last["substituted"] is True
 
 
 def test_the_real_model_facts_pick_the_slate_row_fields(monkeypatch):
@@ -127,3 +128,26 @@ def test_the_real_model_facts_pick_the_slate_row_fields(monkeypatch):
                                                            "switch": {"cold": True}, "measured": None})
     got = conversation_state.model_facts("m1")
     assert got["id"] == "m1" and got["label"] == "L" and got["switch"] == {"cold": True} and "secret" not in got
+
+
+def test_a_chat_that_gets_its_model_from_its_project_is_flagged_and_reported_the_same_way(client, desk):
+    dev = phone()
+    desk.convs["conv-old"]["effective_seat"] = {"model": "claude-haiku-5-5"}
+    desk.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
+    block(ask(client, dev, conversation_id="conv-old"))
+    j = state(client, dev, "conv-old").get_json()
+    assert j["model"]["bound"] == "claude-haiku-5-5" and j["last_served"]["substituted"] is True
+
+
+def test_a_desktop_that_cannot_answer_is_503_not_no_such_chat(client, desk):
+    dev = phone()
+    desk.api_status = 500
+    r = state(client, dev, "conv-old")
+    assert r.status_code == 503 and r.get_json()["code"] == "chat_unavailable"
+    r = switch(client, dev, model="bonsai2:27b", conversation_id="conv-old")
+    assert r.status_code == 503 and r.get_json()["code"] == "chat_unavailable"
+
+
+def test_a_turn_with_no_model_and_a_bad_chat_id_is_refused_before_any_lookup(client, desk):
+    r = ask(client, phone(), conversation_id="a/b")
+    assert r.status_code == 400 and desk.api_calls == []

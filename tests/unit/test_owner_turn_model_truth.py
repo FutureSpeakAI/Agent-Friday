@@ -55,6 +55,7 @@ class Desk:
         self.refuse = None
         self.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
         self.extra = {}
+        self.api_status = 200           # what the desktop's API answers with (a test sets 401/500 to break it)
 
     def api(self, method, path, body=None):
         self.api_calls.append((method, path, body))
@@ -64,6 +65,10 @@ class Desk:
             def get_json(self, silent=True):
                 return self.d
         r = R()
+        r.status_code = desk.api_status
+        if desk.api_status != 200:
+            r.d = {}
+            return r
         if method == "POST" and path == "/api/conversations":
             desk.convs["conv-new"] = {"id": "conv-new", "seat": body.get("seat")}
             r.d = {"conversation": dict(desk.convs["conv-new"])}

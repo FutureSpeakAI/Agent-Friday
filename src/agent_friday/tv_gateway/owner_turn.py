@@ -209,13 +209,40 @@ def valid_cid(cid) -> bool:
     return isinstance(cid, str) and bool(_CID.match(cid))
 
 
+def conversation(cid: str) -> Optional[dict]:
+    """The desktop's record of one chat, or None when the desktop says there is no such chat. A desktop that
+    failed (401, 5xx, no answer) raises TurnRefused 503: that is not "no such chat"."""
+    from agent_friday.tv_gateway import turn
+    try:
+        resp = _api("GET", "/api/conversations/" + cid)
+    except Exception as e:
+        _log.warning("conversation lookup failed: %s", type(e).__name__)
+        raise turn.TurnRefused(503, "this computer could not look up that chat right now", "chat_unavailable")
+    status = getattr(resp, "status_code", 200)
+    if status == 404:
+        return None
+    if status != 200:
+        raise turn.TurnRefused(503, "this computer could not look up that chat right now", "chat_unavailable")
+    return _json(resp).get("conversation") or None
+
+
+def seat_model(conv: Optional[dict]) -> str:
+    """The model a chat runs on: its own seat, else the one its project gives it (the desktop's effective_seat)."""
+    conv = conv or {}
+    for key in ("seat", "effective_seat"):
+        model = (conv.get(key) or {}).get("model") if isinstance(conv.get(key), dict) else None
+        if model:
+            return str(model)
+    return ""
+
+
 def bound_model(cid: Optional[str]) -> str:
-    """The model this chat is bound to ('' when none or unknown): what a later turn is expected to be served by."""
+    """The model this chat is bound to ('' when none, unknown or the desktop cannot say): what a later turn is
+    expected to be served by. Held by tests/unit/test_phone_switching_contract.py."""
     if not valid_cid(cid):
         return ""
     try:
-        conv = _json(_api("GET", "/api/conversations/" + cid)).get("conversation") or {}
-        return str((conv.get("seat") or {}).get("model") or "")
+        return seat_model(conversation(cid))
     except Exception:
         return ""
 
@@ -252,11 +279,11 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     else:
         if not valid_cid(cid):
             raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
-        d = _json(_api("GET", "/api/conversations/" + cid))
-        conv = d.get("conversation") or {}
+        conv = conversation(cid)
         if not conv:
             raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
-        if (conv.get("seat") or {}).get("model") == model_id:
+        d = {}
+        if seat_model(conv) == model_id:
             return cid                      # already bound: nothing to change, nothing to reload
         d = _json(_api("PATCH", "/api/conversations/" + cid, {"seat": seat}))
         conv = d.get("conversation") or {}
@@ -266,9 +293,11 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     return cid
 
 
-def served(payload: dict, requested: str, cid: Optional[str]) -> dict:
+def served(payload: dict, requested: str, cid: Optional[str], expected: str = "") -> dict:
     """What the backend recorded as generating this reply, from the desktop's own turn record
-    (``served_by.answered_by``), never the requested id. Fallbacks and notices ride along."""
+    (``served_by.answered_by``), never the requested id. Fallbacks and notices ride along. ``requested`` is what the device asked for in this
+    turn; ``expected`` is the model the chat was already bound to when it asked for none. ``substituted`` compares
+    the answer with whichever of the two applies."""
     payload = payload if isinstance(payload, dict) else {}
     sb = payload.get("served_by") if isinstance(payload.get("served_by"), dict) else {}
     ans = sb.get("answered_by") if isinstance(sb.get("answered_by"), dict) else {}
@@ -277,7 +306,8 @@ def served(payload: dict, requested: str, cid: Optional[str]) -> dict:
     chain = payload.get("fallback_chain")
     return {"model": model, "provider": str(ans.get("provider") or sb.get("provider") or ""),
             "seat": seat, "local": (seat == "local") if seat else None,
-            "requested": requested or None, "substituted": bool(requested and model and requested != model),
+            "requested": requested or None, "expected": expected or None,
+            "substituted": bool((requested or expected) and model and (requested or expected) != model),
             "unknown": not model,
             "fallback": chain if isinstance(chain, list) else [],
             "notice": payload.get("seat_notice") or None, "conversation_id": cid}
@@ -322,8 +352,8 @@ def note_served(truth: dict) -> None:
     try:
         from agent_friday.tv_gateway import conversation_state
         conversation_state.note_served(truth)
-    except Exception:
-        pass
+    except Exception as e:
+        _log.info("last-served note skipped: %s", type(e).__name__)
 
 
 def bound_voice(cid: Optional[str]) -> Optional[dict]:
@@ -382,6 +412,9 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     word = {"tablet": "Tablet", "phone": "Phone", "watch": "Watch"}.get(kind, "Remote")
     shown = requested or (default or {}).get("model") or ""
     _CTX.activity = ("%s %s" % (word, "voice chat" if voice else "chat"), shown)
+    # A turn with no model rides the model the chat was bound to; read BEFORE the turn starts so a later switch
+    # cannot change what this answer is compared with.
+    expected = "" if requested else ((default or {}).get("model") or bound_model(cid))
     try:
         response = _post(text, cid)
     except Exception as e:
@@ -392,9 +425,7 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     if response.status_code != 200:
         raise turn.TurnRefused(503 if response.status_code >= 500 else response.status_code,
                                "this computer did not take the turn")
-    # A turn with no model rides the model the chat was bound to, so a different answer is still flagged.
-    expected = requested or bound_model(cid)
-    return _stream(response, dev, expected, cid, voice=voice, voice_default=default, asked=asked)
+    return _stream(response, dev, requested, cid, expected=expected, voice=voice, voice_default=default, asked=asked)
 
 
 def _status(status: str, started: float, detail: str = "") -> str:
@@ -405,7 +436,8 @@ def _status(status: str, started: float, detail: str = "") -> str:
 
 
 def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None,
-            voice: bool = False, voice_default: Optional[dict] = None, asked: str = "") -> Iterator[str]:
+            voice: bool = False, voice_default: Optional[dict] = None, asked: str = "",
+            expected: str = "") -> Iterator[str]:
     """The phone's stream: progress while the desktop works, then the FINAL answer only.
 
     The desktop's own deltas are not relayed as they arrive: they can carry a tool round's narration,
@@ -434,9 +466,9 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
     text = answer_only(final) or answer_only("".join(spoken))
     if failed and not text:
         yield _event({"type": "error", "error": {"type": "api_error", "message": failed[:300]},
-                      "friday": served({}, requested, cid)})
+                      "friday": served({}, requested, cid, expected)})
         return
-    truth = served(payload, requested, cid)
+    truth = served(payload, requested, cid, expected)
     note_served(truth)
     if dev is not None:
         from agent_friday.tv_gateway import turn

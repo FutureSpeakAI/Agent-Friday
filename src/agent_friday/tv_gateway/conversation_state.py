@@ -34,7 +34,7 @@ def note_served(truth: dict) -> None:
     cid = str((truth or {}).get("conversation_id") or "")
     if not cid or (truth or {}).get("unknown"):
         return
-    rec = {k: truth.get(k) for k in ("model", "provider", "seat", "local", "requested", "substituted",
+    rec = {k: truth.get(k) for k in ("model", "provider", "seat", "local", "requested", "expected", "substituted",
                                      "fallback", "notice")}
     rec["at"] = time.time()
     with _LOCK:
@@ -118,13 +118,12 @@ def register(app, refuse) -> None:
         if not owner_turn.valid_cid(cid):
             return refuse(404, "this computer has no such chat", code="unknown_conversation")
         try:
-            conv = owner_turn._json(owner_turn._api("GET", "/api/conversations/" + cid)).get("conversation")
-        except Exception as e:
-            _log.warning("conversation lookup failed: %s", type(e).__name__)
-            return refuse(503, "this computer could not look up that chat right now", code="chat_unavailable")
+            conv = owner_turn.conversation(cid)
+        except turn.TurnRefused as e:
+            return refuse(e.status, str(e), code=e.code or "chat_unavailable")
         if not conv:
             return refuse(404, "this computer has no such chat", code="unknown_conversation")
-        bound = (conv.get("seat") or {}).get("model")
+        bound = owner_turn.seat_model(conv) or None
         return jsonify({"ok": True, "conversation_id": cid,
                         "model": {"bound": bound, "facts": model_facts(bound)},
                         "voice": voices.bound_voice(cid), "last_served": last_served(cid)})
