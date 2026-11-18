@@ -16,18 +16,17 @@ Nothing here runs a verb, changes a setting or decides an approval; those wait f
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
 from typing import Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request
 
+from agent_friday.tv_gateway.pc_common import ID_PATTERN, allowed, refuse as _refuse
+
 _log = logging.getLogger(__name__)
 
 RIGHT = "pc_read"
-OWNER_KINDS = ("phone", "tablet")                      # never the watch, never the TV
-_ID = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:\-]{0,95}$")      # never starts with a dot: no "..", no hidden names
 MAX_JSON = 4 * 1024 * 1024
 MAX_PREVIEW = 3 * 1024 * 1024
 AUDIT_EVERY_S = 3600.0
@@ -38,18 +37,6 @@ _LOCK = threading.Lock()
 
 # Fields of a workspace the phone needs to draw its entry; the rest of the registry stays on the PC.
 _WS_FIELDS = ("id", "label", "group", "icon", "blurb", "description", "order", "kind", "voice_names")
-
-
-def _refuse(status: int, reason: str, **extra) -> Response:
-    resp = jsonify({"ok": False, "error": reason, **extra})
-    resp.status_code = status
-    return resp
-
-
-def allowed(dev: Optional[dict]) -> bool:
-    """An owner-bound phone or tablet (the household's binding, never a claim in the request)."""
-    from agent_friday.tv_gateway import owner_turn
-    return bool(dev) and owner_turn.is_owner_device(dev) and str(dev.get("kind") or "").lower() in OWNER_KINDS
 
 
 def _guard(area: str) -> Optional[Response]:
@@ -123,7 +110,7 @@ def register(app: Flask) -> None:
         denied = _guard("chats")
         if denied is not None:
             return denied
-        if not _ID.match(cid):
+        if not ID_PATTERN.match(cid):
             return _refuse(400, "not a chat id", code="bad_id")
         return _json_from_desk("/api/conversations/%s" % cid, None, "chat")
 
@@ -132,7 +119,7 @@ def register(app: Flask) -> None:
         denied = _guard("chats")
         if denied is not None:
             return denied
-        if not _ID.match(cid):
+        if not ID_PATTERN.match(cid):
             return _refuse(400, "not a chat id", code="bad_id")
         return _json_from_desk("/api/conversations/%s/messages" % cid, {"limit": _int("limit", 200, 500) or 200},
                                "chat_messages")
@@ -159,7 +146,7 @@ def register(app: Flask) -> None:
         denied = _guard("workspaces")
         if denied is not None:
             return denied
-        if not _ID.match(ws):
+        if not ID_PATTERN.match(ws):
             return _refuse(400, "not a workspace id", code="bad_id")
         from agent_friday.services import workspace_registry as reg
         entry = reg.get(ws)
@@ -188,7 +175,7 @@ def register(app: Flask) -> None:
         denied = _guard("jobs")
         if denied is not None:
             return denied
-        if not _ID.match(jid):
+        if not ID_PATTERN.match(jid):
             return _refuse(400, "not a job id", code="bad_id")
         return _json_from_desk("/api/tasks/%s" % jid, None, "job")
 
@@ -197,7 +184,7 @@ def register(app: Flask) -> None:
         denied = _guard("jobs")
         if denied is not None:
             return denied
-        if not _ID.match(jid):
+        if not ID_PATTERN.match(jid):
             return _refuse(400, "not a job id", code="bad_id")
         params = {"since": _int("since", 0, 2 ** 31)}
         if _int("limit", 0, 1000):
@@ -227,7 +214,7 @@ def register(app: Flask) -> None:
         denied = _guard("media")
         if denied is not None:
             return denied
-        if not _ID.match(mid):
+        if not ID_PATTERN.match(mid):
             return _refuse(400, "not a media id", code="bad_id")
         return _json_from_desk("/api/media/%s" % mid, None, "media_card")
 
@@ -236,7 +223,7 @@ def register(app: Flask) -> None:
         denied = _guard("media")
         if denied is not None:
             return denied
-        if not _ID.match(mid):
+        if not ID_PATTERN.match(mid):
             return _refuse(400, "not a media id", code="bad_id")
         try:
             status, body, ctype = _desk("/api/media/%s/preview" % mid)
