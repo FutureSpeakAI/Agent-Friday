@@ -53,6 +53,7 @@ class Desk:
         self.convs = {"conv-old": {"id": "conv-old", "seat": None}}
         self.api_calls, self.turns = [], []
         self.refuse = None
+        self.superseded = False     # another window chose a seat meanwhile: the desktop writes nothing
         self.pending = 0            # how many seat changes answer "still checking" before one settles
         self.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
         self.extra = {}
@@ -72,7 +73,9 @@ class Desk:
             r.d = {"conversation": dict(desk.convs[path.rsplit("/", 1)[1]])}
         else:
             cid = path.rsplit("/", 1)[1]
-            if desk.pending > 0:
+            if desk.superseded:
+                r.d = {"conversation": dict(desk.convs[cid]), "superseded": True}
+            elif desk.pending > 0:
                 desk.pending -= 1
                 r.d = {"conversation": dict(desk.convs[cid]), "seat_pending": True, "seat_change_id": "tok-1",
                        "note": "Friday is still checking which local model is serving."}
@@ -177,6 +180,14 @@ def test_a_check_that_never_finishes_is_a_503_that_says_try_again_not_a_409_refu
     r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
     body = r.get_data(as_text=True)
     assert r.status_code == 503 and "seat_pending" in body and "still checking" in body
+    assert desk.turns == []
+
+
+def test_a_seat_changed_on_the_pc_meanwhile_is_a_409_that_says_so(client, desk):
+    desk.superseded = True
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 409 and "seat_superseded" in body and "changed on this computer" in body
     assert desk.turns == []
 
 
