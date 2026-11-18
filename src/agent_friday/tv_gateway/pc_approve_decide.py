@@ -209,8 +209,8 @@ def register(app: Flask) -> None:
     def pc_approvals_slot():
         """The ids of the pending cards that wait for one subject (an ``approval_slot`` in a Liquid UI document), asked
         of the desktop's own route and nothing else. The device then takes each card from the list by id. Errors are
-        closed codes that never echo the filter; any failure, or a desktop without the route, is 503 ``pc_unavailable`` so the
-        device draws "could not check" and never falls back to the whole list. Guarded by
+        closed codes that never echo the filter; any failure, or a desktop without the route, is 503
+        ``pc_unavailable`` so the device draws "could not check" and never falls back to the whole list. Guarded by
         tests/unit/test_tv_pc_approval_slot.py."""
         denied = pc_read._guard("approvals")
         if denied is not None:
