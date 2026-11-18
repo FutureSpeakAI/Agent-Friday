@@ -1,11 +1,14 @@
 """What the PC doors for the owner's phone and tablet share: who counts, and the shape of a refusal."""
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from flask import Response, jsonify
 
 OWNER_KINDS = ("phone", "tablet")
+# A chat, job or media id: never starts with a dot, so no "..", no hidden names.
+ID_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:\-]{0,95}$")
 
 
 def allowed(dev: Optional[dict]) -> bool:
