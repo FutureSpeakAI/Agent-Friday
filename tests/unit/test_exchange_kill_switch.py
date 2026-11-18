@@ -68,11 +68,27 @@ def test_a_committed_fill_can_still_be_cancelled_and_a_held_one_refunded_while_h
     other = env_factory(gate)
     gate.allowed = True
     other.open()
-    other.drive()
+    other.settlement.advance("f1")
+    other.settlement.dispatch("f1")                              # the capture is asked for; no payout is ever sent (S-18: none stands)
+    with sqlite3.connect(other.tmp / "s.sqlite") as db:
+        db.execute("UPDATE legs SET status='sent' WHERE leg='capture'")
     other.provider.chargeback("x1/f1/capture/once")
-    other.settlement.pump(other.provider.deliver())
+    other.settlement.pump([r for r in other.provider.deliver() if b'"status":"reversed"' in r])
     gate.allowed = False
     assert other.settlement.refund("f1", press=base.PRESS) is State.REFUNDED
+
+
+def test_a_refund_while_halted_with_the_sellers_payout_standing_holds_the_fill_and_recovers_the_p(env_factory):
+    """Design 11 (S-18) under the kill switch: no cash moves, the P goes to the recovered account, the fill stays held."""
+    gate = Gate(True)
+    env = env_factory(gate)
+    env.open()
+    env.drive()                                                  # payout confirmed: it stands
+    env.provider.chargeback("x1/f1/capture/once")
+    env.settlement.pump(env.provider.deliver())
+    gate.allowed = False
+    assert env.settlement.refund("f1", press=base.PRESS) is State.HELD
+    assert env.balances()["recovered:x1:f1"] == base.UNITS and env.ops("refund") == []
 
 
 def test_the_history_is_kept_and_only_grows_while_halted(env_factory):
