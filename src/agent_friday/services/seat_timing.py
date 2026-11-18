@@ -2,8 +2,8 @@
 
 A device choosing a local model that is not resident wants to know "about how long until it answers". The
 honest answer is the last measured load of that model here, or nothing when it has not loaded since timing
-began (never a made-up number). services/residency_arbiter records every real spawn; services/model_slate
-reads it. Held by tests/unit/test_seat_timing.py (record, read back, restart, damaged file, nonsense refused,
+began (never a made-up number). services/residency_arbiter records every llama-server spawn (process start to /health answering; an Ollama
+load, and the time spent evicting the seat being replaced, are not in it); services/model_slate reads it. Held by tests/unit/test_seat_timing.py (record, read back, restart, damaged file, nonsense refused,
 and a source check that the arbiter records its spawns).
 """
 from __future__ import annotations
@@ -37,10 +37,14 @@ def _load_once() -> None:
         raw = json.loads(_path().read_text(encoding="utf-8"))
         for mid, rec in raw.items():
             if isinstance(rec, dict) and isinstance(rec.get("seconds"), (int, float)):
-                _TIMES[str(mid)] = {"seconds": float(rec["seconds"]), "at": float(rec.get("at") or 0)}
+                try:
+                    at = float(rec.get("at") or 0)
+                except (TypeError, ValueError):
+                    at = 0.0
+                _TIMES[str(mid)] = {"seconds": float(rec["seconds"]), "at": at}
     except FileNotFoundError:
         pass
-    except (OSError, ValueError, AttributeError) as e:
+    except (OSError, ValueError, AttributeError, TypeError) as e:
         _log.warning("saved seat load times unreadable, starting empty: %s", type(e).__name__)
 
 
