@@ -21,7 +21,7 @@ import agent_friday.core as core
 
 FAKE_OR = "sk-" + "or-" + "v1-" + "Zz9Yy8Xx7Ww6Vv5Uu4Tt3Ss2Rr1Qq0Pp"   # pragma: allowlist secret
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_PATH = "/api/v1/chat/completions"
 
 
 def _settings(mode="cloud_only"):
@@ -56,7 +56,10 @@ def anthropic_only(monkeypatch, patch_app):
 
 
 def _openrouter_posts(offline_calls):
-    return [c for c in offline_calls["requests"] if c["url"] == OPENROUTER_URL]
+    """OpenRouter chat posts. Since K2 the caller posts to the key gateway's loopback listener (which holds the key and
+    forwards to openrouter.ai), so the destination is the loopback address plus OpenRouter's own path."""
+    return [c for c in offline_calls["requests"]
+            if c["url"].startswith("http://127.0.0.1:") and c["url"].endswith(OPENROUTER_PATH)]
 
 
 def _route(has_tools=True, model=None):
