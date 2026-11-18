@@ -190,8 +190,19 @@ def test_threads_of_one_journal_are_never_told_another_writer_holds_it(tmp_path)
 RACE = textwrap.dedent("""
     import sys
     sys.path.insert(0, {src!r})
+    import time
     from agent_friday.services import issuer_journal as ij
-    j = ij.IssuerJournal({path!r}, "test.one", 10)
+    # the journal has one writer at a time (the exclusive authority lock): the other process waits its turn to open it
+    # and never writes beside it. test_two_processes_cannot_overdraw_one_balance fails if either process posts past the supply.
+    deadline = time.time() + 90
+    while True:
+        try:
+            j = ij.IssuerJournal({path!r}, "test.one", 10)
+            break
+        except ij.AuthorityHeld:
+            if time.time() > deadline:
+                raise
+            time.sleep(0.05)
     posted = 0
     for n in range(6):
         o = j.execute({{"issuer": "test.one", "effect": "p{tag}-%d" % n, "action": "p{tag}-%d" % n,
