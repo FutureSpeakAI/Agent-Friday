@@ -89,8 +89,8 @@ def test_calibration_takes_the_median_and_states_the_spread():
 
 
 def _receipt(task="t1"):
-    cal = rv.Calibration("N1:a", "bench", "cfg", 5, 4000, 20, "m", "2026-11-16T00:00:00Z")
-    reading = rv.Measured(10000, 15, "m", "none")
+    cal = rv.Calibration("N1:a", "bench", "cfg", 5, 4000, 20, "gpu/nvidia-smi-sampled", "2026-11-16T00:00:00Z")
+    reading = rv.Measured(10000, 15, "gpu/nvidia-smi-sampled", "none")
     return rv.MeasuredReceipt(quote_hash=HASH, task_id=task, profile="N1:a",
                               vector=rv.ResourceVector(gpu_active_ms=reading),
                               n1=rv.n1_for(cal, "cfg", reading), status=rv.ReceiptStatus.MEASURED, calibration=cal)
