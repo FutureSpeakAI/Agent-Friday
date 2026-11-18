@@ -1,15 +1,19 @@
 """Check an evidence pack with the standard library only (no Friday, no owner key).
 
-Run: python check_pack.py <pack.zip or unpacked folder>
+Run: python check_pack.py <pack.zip or unpacked folder> [--public-key <64 hex characters>]
 
 It recomputes the SHA-256 of every file the manifest lists, then walks the hash chain over
 ledger.jsonl (each entry's `prev` is the hash before it, each `hash` is the SHA-256 of the
-entry without `hash` and `sig`), starting from the manifest's stated `prev`. It says what it
+entry without `hash` and `sig`), starting from the manifest's stated `prev`. When the optional
+'cryptography' package is installed it also checks manifest.sig (Ed25519) against the key in
+the manifest, or against the key you pass with --public-key, which is the check that does not
+trust the pack's own word about who signed it. It says what it
 checked and what it did not: the per-entry `sig` is an HMAC under a key that stays on the
 owner's PC, so it is not checked here. Rules and the tests that hold them are in
 tests/unit/test_evidence_pack.py.
 """
 import hashlib
+import importlib
 import json
 import sys
 import zipfile
@@ -18,6 +22,7 @@ from pathlib import Path
 MANIFEST = "manifest.json"
 SIGNATURE = "manifest.sig"
 LEDGER = "ledger.jsonl"
+MANIFEST_PREFIX = b"asimov-evidence-pack/v1/manifest\x00"
 
 
 def canon(obj):
@@ -37,13 +42,13 @@ def _read_all(source):
         return {n: z.read(n) for n in z.namelist()}
 
 
-def check(source):
+def check(source, public_key=None):
     """(problems, notes): problems is empty when everything checked holds."""
-    return check_files(_read_all(source))
+    return check_files(_read_all(source), public_key)
 
 
-def check_files(files):
-    """The same check over {file name: bytes}."""
+def check_files(files, public_key=None):
+    """The same check over {file name: bytes}; `public_key` pins who must have signed."""
     problems, notes = [], []
     if MANIFEST not in files:
         return [f"{MANIFEST} is missing"], notes
@@ -59,11 +64,31 @@ def check_files(files):
     problems += _walk_chain(files.get(LEDGER, b""), manifest)
     notes.append("walked the hash chain over ledger.jsonl from the stated starting hash")
     notes.append("did not check per-entry signatures: they use a key that stays on the owner's PC")
-    if SIGNATURE in files:
-        notes.append("manifest.sig present; this script does not check it yet")
-    else:
-        notes.append("the manifest is not signed in this pack")
+    problems += _check_signature(files, manifest, public_key, notes)
     return problems, notes
+
+
+def _check_signature(files, manifest, pinned, notes):
+    if SIGNATURE not in files:
+        notes.append("the manifest is not signed in this pack")
+        return ["manifest.sig: the pack is not signed but a signer was required"] if pinned else []
+    key = pinned or manifest.get("public_key")
+    if pinned and manifest.get("public_key") != pinned:
+        return ["manifest.sig: the manifest names a different signing key than the one you gave"]
+    try:
+        ed = importlib.import_module("cryptography.hazmat.primitives.asymmetric.ed25519")
+        failure = importlib.import_module("cryptography.exceptions").InvalidSignature
+    except ImportError:
+        notes.append("did not check manifest.sig: the 'cryptography' package is not installed")
+        return []
+    try:
+        ed.Ed25519PublicKey.from_public_bytes(bytes.fromhex(key)).verify(
+            bytes.fromhex(files[SIGNATURE].decode("ascii")), MANIFEST_PREFIX + files[MANIFEST])
+    except (failure, ValueError, TypeError):
+        return ["manifest.sig: the signature does not match manifest.json and the signing key"]
+    notes.append("checked manifest.sig against " + ("the key you gave" if pinned
+                                                    else "the key named in the manifest"))
+    return []
 
 
 def _walk_chain(raw, manifest):
@@ -91,10 +116,11 @@ def _walk_chain(raw, manifest):
 
 
 def main(argv):
-    if len(argv) != 2:
+    if len(argv) not in (2, 4):
         print(__doc__)
         return 2
-    problems, notes = check(argv[1])
+    pinned = argv[3] if len(argv) == 4 and argv[2] == "--public-key" else None
+    problems, notes = check(argv[1], pinned)
     for note in notes:
         print("checked:", note)
     for problem in problems:
