@@ -1,15 +1,16 @@
-"""Three small read-only answers the phone's Settings and avatar need from the PC (handoff: HANDOFF-burndown-phone-settings-api.md
-sections 3 and 4; the shape picker's ``GET /tv/v1/evolution``). Same door as every other owner read: an owner-bound phone or
-tablet that holds ``pc_read`` (tv_gateway/pc_read); nothing here writes.
+"""Three small read-only answers the phone's Settings and avatar need from the PC (handoff:
+HANDOFF-burndown-phone-settings-api.md sections 3 and 4; the shape picker's ``GET /tv/v1/evolution``). Same door as
+every other owner read: an owner-bound phone or tablet that holds ``pc_read`` (tv_gateway/pc_read); nothing here writes.
 
-* ``GET /tv/v1/evolution``: the PC's chosen avatar shape, from the desktop's own ``/api/evolution``, cut down to ``day``,
-  ``structure``, ``structure_index``, ``calendar_index`` and ``preferred_scene_index`` (whole numbers and one short name). The
-  desktop's GET stores the first-launch date the first time it is ever asked, and nothing else.
-* ``GET /tv/v1/providers``: which model providers the PC has switched on: ``id``, ``label``, ``configured``, ``local``. Names
-  and a yes or no only: no key, no last-4, no URL, no header, no environment variable name.
-* ``GET /tv/v1/connectors``: ``id``, ``label``, ``kind`` (``mcp`` or ``connector``) and ``connected`` for every connector the
-  desktop lists. Nothing about its fields, setup, secrets, tools or detail text crosses. ``device_control`` is false: the
-  per-device on/off switch of the handoff is not built, so no row claims a device setting it does not have.
+* ``GET /tv/v1/evolution``: the PC's chosen avatar shape, from the desktop's own ``/api/evolution``, cut down to
+  ``day``, ``structure``, ``structure_index``, ``calendar_index`` and ``preferred_scene_index`` (whole numbers and one
+  short name). The desktop's GET stores the first-launch date the first time it is ever asked, and nothing else.
+* ``GET /tv/v1/providers``: which model providers the PC has switched on: ``id``, ``label``, ``configured``,
+  ``local``. Names and a yes or no only: no key, no last-4, no URL, no header, no environment variable name.
+* ``GET /tv/v1/connectors``: ``id``, ``label``, ``kind`` (``mcp`` or ``connector``) and ``connected`` for every
+  connector the desktop lists. Nothing about its fields, setup, secrets, tools or detail text crosses.
+  ``device_control`` is false: the per-device on/off switch of the handoff is not built, so no row claims a device
+  setting it does not have.
 
 A desktop failure or an answer that is not plainly that shape is a 503, never a guess. Each rule is held by a test in
 tests/unit/test_tv_pc_settings_read.py.
@@ -43,8 +44,8 @@ def _plain(value) -> Optional[str]:
 
 def _looks_like_a_host_path(text: str) -> bool:
     """True when the text looks like a file path or URL on this PC (a label must never carry one)."""
-    return bool(re.search(r"[A-Za-z]:[\\/]|\\\\|(?:^|\s)/(?:Users|home|mnt|var|tmp|opt|etc|root|srv|data)/|(?:^|\s)~[\\/]|[A-Za-z]+://|@",
-                          text))
+    return bool(re.search(r"[A-Za-z]:[\\/]|\\\\|(?:^|\s)/(?:Users|home|mnt|var|tmp|opt|etc|root|srv|data)/"
+                          r"|(?:^|\s)~[\\/]|[A-Za-z]+://|@", text))
 
 
 def _whole(value, low: int, high: int) -> Optional[int]:
@@ -112,11 +113,12 @@ def providers_answer() -> Optional[dict]:
             continue
         auth = prov.get("auth") if isinstance(prov.get("auth"), dict) else {}
         if auth.get("type", "env_var") == "env_var":
-            # Whether a key exists, never a use of it: provider_key_status only tests that the stored file decrypts (it does
-            # not stamp the key as used the way a read does), and the environment is asked without keeping what it returns.
+            # Whether a key exists, never a use of it: provider_key_status only tests that the stored file decrypts
+            # (it does not stamp the key as used the way a read does), and the environment is asked without keeping
+            # what it returns.
             configured = credential_store.provider_key_status(name) == "connected" or bool(pd._env_key(prov))
         else:
-            configured = True                              # no key to hold (a local server); sign-in state is not read here
+            configured = True      # no key to hold (a local server); sign-in state is not read here
         out.append({"id": name, "label": label, "configured": configured,
                     "local": pd.classification_of(prov) == pd.CLASSIFICATION_LOCAL})
     return {"ok": True, "providers": out[:MAX_ROWS]}
