@@ -120,3 +120,22 @@ def test_the_read_only_observer_cannot_start_a_job(client, spawned, monkeypatch,
     tok = client.post("/api/tasks/observer-token").get_json()["token"]
     r = client.post("/api/tasks/start", json={"prompt": "x", "origin": PHONE}, headers={obs.HEADER: tok})
     assert r.status_code == 403 and spawned == []
+
+
+def test_every_job_carries_its_origin_on_the_record_and_it_outlives_the_run(client, spawned):
+    mine = _start(client, origin="pc").get_json()["task_id"]
+    phone = _start(client).get_json()["task_id"]
+    with ag.TASKS_LOCK:
+        ag.TASKS[phone]["status"] = "complete"
+    assert ag.TASKS[mine]["origin"] == "pc" and ag.TASKS[phone]["origin"] == PHONE
+    rows = {t["task_id"]: t for t in client.get("/api/tasks").get_json()["tasks"]}
+    assert rows[phone]["origin"] == PHONE and rows[mine]["origin"] == "pc"
+    assert client.get("/api/tasks/%s" % phone).get_json()["origin"] == PHONE
+
+
+def test_the_cap_is_read_from_the_records_so_a_finished_job_frees_its_place(client, spawned):
+    ids = [_start(client).get_json()["task_id"] for _ in range(task_start.DEVICE_JOB_CAP)]
+    assert _start(client).status_code == 409
+    with ag.TASKS_LOCK:
+        ag.TASKS[ids[0]]["status"] = "complete"
+    assert _start(client).status_code == 201
