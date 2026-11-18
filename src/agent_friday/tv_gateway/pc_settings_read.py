@@ -43,24 +43,36 @@ def _plain(value) -> Optional[str]:
 
 def _looks_like_a_host_path(text: str) -> bool:
     """True when the text looks like a file path or URL on this PC (a label must never carry one)."""
-    return bool(re.search(r"[A-Za-z]:[\\/]|\\\\|(?:^|\s)/(?:Users|home|mnt|var|tmp|opt|etc|root)/|https?://", text))
+    return bool(re.search(r"[A-Za-z]:[\\/]|\\\\|(?:^|\s)/(?:Users|home|mnt|var|tmp|opt|etc|root|srv|data)/|(?:^|\s)~[\\/]|[A-Za-z]+://|@",
+                          text))
 
 
 def _whole(value, low: int, high: int) -> Optional[int]:
     return value if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high else None
 
 
+def _scene_count() -> int:
+    """How many shapes the PC has (the desktop bounds its own pin to this); 15 when it cannot be read."""
+    try:
+        from agent_friday.routes.insights import SCENE_NAMES
+        return len(SCENE_NAMES)
+    except Exception:
+        return 15
+
+
 def shape_evolution(data) -> Optional[dict]:
-    """The avatar shape answer, or None when the desktop's answer is not plainly one."""
+    """The avatar shape answer, or None when the desktop's answer is not plainly one. An index at or past the number of
+    shapes the PC has would crash the phone's lookup, so it is refused here too."""
     if not isinstance(data, dict):
         return None
-    index = _whole(data.get("structure_index"), 0, 63)
-    calendar = _whole(data.get("calendar_index"), 0, 63)
+    top = _scene_count() - 1
+    index = _whole(data.get("structure_index"), 0, top)
+    calendar = _whole(data.get("calendar_index"), 0, top)
     day = _whole(data.get("day"), 1, 1_000_000)
     if index is None or calendar is None or day is None:
         return None
     pinned = data.get("preferred_scene_index")
-    pinned = None if pinned is None else _whole(pinned, 0, 63)
+    pinned = None if pinned is None else _whole(pinned, 0, top)
     structure = _plain(data.get("structure"))
     if structure is None:
         return None
@@ -76,10 +88,10 @@ def shape_connectors(data) -> Optional[dict]:
     out = []
     for row in rows:
         if not isinstance(row, dict):
-            return None
+            continue                                       # one odd row never hides the others
         key, name = row.get("key"), _plain(row.get("name"))
         if not (isinstance(key, str) and _ID.match(key)) or name is None or not isinstance(row.get("connected"), bool):
-            return None
+            continue
         out.append({"id": key, "label": name, "kind": "mcp" if row.get("kind") == "mcp" else "connector",
                     "connected": row["connected"]})
     return {"ok": True, "device_control": False, "connectors": out}
@@ -88,17 +100,24 @@ def shape_connectors(data) -> Optional[dict]:
 def providers_answer() -> Optional[dict]:
     """The enabled model providers by name, with whether each has what it needs and whether it runs on this PC."""
     from agent_friday.routing import provider_descriptors as pd
+    from agent_friday.services import credential_store
     from agent_friday.services.provider_registry import get_provider_registry
     out = []
     for prov in get_provider_registry().list_providers():
         if not isinstance(prov, dict) or prov.get("enabled") is False:
             continue
         name = prov.get("name")
-        label = _plain(prov.get("label")) or (name if isinstance(name, str) else None)
+        label = _plain(prov.get("label")) or (name if isinstance(name, str) and _ID.match(name) else None)
         if not (isinstance(name, str) and _ID.match(name)) or label is None:
             continue
-        needs_key = (prov.get("auth") or {}).get("type", "env_var") == "env_var"
-        out.append({"id": name, "label": label, "configured": (pd.provider_key_source(prov) != "none") if needs_key else True,
+        auth = prov.get("auth") if isinstance(prov.get("auth"), dict) else {}
+        if auth.get("type", "env_var") == "env_var":
+            # Whether a key exists, never a use of it: provider_key_status only tests that the stored file decrypts (it does
+            # not stamp the key as used the way a read does), and the environment is asked without keeping what it returns.
+            configured = credential_store.provider_key_status(name) == "connected" or bool(pd._env_key(prov))
+        else:
+            configured = True                              # no key to hold (a local server); sign-in state is not read here
+        out.append({"id": name, "label": label, "configured": configured,
                     "local": pd.classification_of(prov) == pd.CLASSIFICATION_LOCAL})
     return {"ok": True, "providers": out[:MAX_ROWS]}
 
