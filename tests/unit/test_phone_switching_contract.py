@@ -185,3 +185,32 @@ def test_the_expected_model_is_read_before_the_turn_runs_not_after(client, desk,
     block(ask(client, dev, conversation_id="conv-old"))
     last = state(client, dev, "conv-old").get_json()["last_served"]
     assert last["expected"] == "claude-haiku-5-5" and last["substituted"] is True
+
+
+def test_a_pc_still_checking_its_local_models_is_a_retryable_409_not_a_refusal(client, desk, monkeypatch):
+    real = desk.api
+
+    def api(method, path, body=None):
+        r = real(method, path, body)
+        if method == "PATCH":
+            desk.convs["conv-old"]["seat"] = None          # the desktop did not bind it yet
+            r.d = {"conversation": dict(desk.convs["conv-old"]), "seat_pending": True,
+                   "note": "still checking which local model is serving, try again in a moment"}
+        return r
+    monkeypatch.setattr(owner_turn, "_api", api)
+    r = switch(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    j = r.get_json()
+    assert r.status_code == 409 and j["code"] == "seat_pending" and j["retry"] is True and "try again" in j["error"]
+
+
+def test_a_chat_deleted_between_the_look_and_the_write_is_404(client, desk, monkeypatch):
+    real = desk.api
+
+    def api(method, path, body=None):
+        r = real(method, path, body)
+        if method == "PATCH":
+            r.status_code, r.d = 404, {}
+        return r
+    monkeypatch.setattr(owner_turn, "_api", api)
+    r = switch(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    assert r.status_code == 404 and r.get_json()["code"] == "unknown_conversation"

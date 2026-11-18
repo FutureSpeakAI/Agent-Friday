@@ -266,8 +266,10 @@ def _json(resp) -> dict:
 
 
 def bind_seat(cid: Optional[str], model_id: str) -> str:
-    """Make the chat run on ``model_id`` and return its conversation id. Raises turn.TurnRefused
-    (409) with the PC's own reason when the seat cannot be bound: never a quiet other model."""
+    """Make the chat run on ``model_id`` and return its conversation id. Raises turn.TurnRefused with the PC's own
+    reason when the seat cannot be bound, never a quiet other model: 409 ``seat_refused`` (the PC will not),
+    409 ``seat_pending`` (the PC is still checking its local models: retry in a moment), 400 ``bad_request``,
+    404 ``unknown_conversation``, 503 ``chat_unavailable`` (the PC's chat store failed)."""
     from agent_friday.tv_gateway import turn
     seat = {"model": model_id}
     if not cid:
@@ -286,10 +288,17 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
         if (conv.get("seat") or {}).get("model") == model_id:
             return cid                      # this chat's OWN seat already: nothing to change, nothing to reload
         resp = _api("PATCH", "/api/conversations/" + cid, {"seat": seat})
-        if getattr(resp, "status_code", 200) >= 500 or getattr(resp, "status_code", 200) in (401, 403):
+        status = getattr(resp, "status_code", 200)
+        if status == 404:
+            raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
+        if status >= 500 or status in (401, 403):
             raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable")
         d = _json(resp)
         conv = d.get("conversation") or {}
+        if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
+            raise turn.TurnRefused(409, str(d.get("note") or "this computer is still checking its local models; "
+                                                              "try again in a moment")[:240],
+                                   "seat_pending", model=model_id, retry=True)
     if (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
                                "seat_refused", model=model_id)

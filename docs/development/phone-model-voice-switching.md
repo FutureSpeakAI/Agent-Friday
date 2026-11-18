@@ -29,7 +29,7 @@ Show `reason` / `blocked.reason` as written; they are the PC's own words (Local 
   (declared by the provider, labelled as such). `measured` and `benchmark` appear once the model-slate timing work ships (#848, #862); until then
   they are absent, so treat every field in `facts` as optional. Show "about N s the first time" from `switch` when `cold` is true.
 * Refusals (nothing changed): `400 unknown_model` (with `did_you_mean`), `409 model_unavailable`,
-  `409 seat_refused` (the PC would not bind it; the reason is in `error`), `404 unknown_conversation` (no such chat), `400 bad_request` (also a chat id that is not letters, digits, `_` and `-`), `403 owner_only`,
+  `409 seat_refused` (the PC would not bind it; the reason is in `error`), `404 unknown_conversation` (no such chat), `409 seat_pending` (the PC is still checking its local models: **retry** after a moment, `retry: true`), `400 bad_request` (also a chat id that is not letters, digits, `_` and `-`), `403 owner_only`,
   `503 slate_unavailable`.
 * Sending `model` in a `/tv/v1/messages` body does the same bind and then runs the turn; use `model/switch` when the
   user picks a model without sending a message.
