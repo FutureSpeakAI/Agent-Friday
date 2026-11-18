@@ -30,7 +30,8 @@ BEAT_S = 20
 SLOT_SUBJECT = re.compile(r"^[a-z_]{1,32}:[A-Za-z0-9_.-]{1,80}\Z")
 SLOT_KIND = re.compile(r"^[a-z0-9_]{1,48}\Z")
 SLOT_MAX_IDS = 20
-SLOT_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}\Z")      # an approval id: plain characters; \Z, never $ (a trailing newline slips past $)
+# an approval id: plain characters; \Z, never $ (a trailing newline slips past $)
+SLOT_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}\Z")
 
 
 def _fresh(dev: dict) -> Optional[dict]:
@@ -206,9 +207,9 @@ def register(app: Flask) -> None:
 
     @app.get("/tv/v1/approvals/slot")
     def pc_approvals_slot():
-        """The ids of the pending cards that wait for one subject (an ``approval_slot`` in a Liquid UI document), asked of
-        the desktop's own route and nothing else. The device then takes each card from the list by id. Errors are closed
-        codes that never echo the filter; any failure, or a desktop without the route, is 503 ``pc_unavailable`` so the
+        """The ids of the pending cards that wait for one subject (an ``approval_slot`` in a Liquid UI document), asked
+        of the desktop's own route and nothing else. The device then takes each card from the list by id. Errors are
+        closed codes that never echo the filter; any failure, or a desktop without the route, is 503 ``pc_unavailable`` so the
         device draws "could not check" and never falls back to the whole list. Guarded by
         tests/unit/test_tv_pc_approval_slot.py."""
         denied = pc_read._guard("approvals")
@@ -230,10 +231,12 @@ def register(app: Flask) -> None:
                 isinstance(i, str) and SLOT_ID.match(i) for i in ids):
             return refuse(503, "the PC could not check that right now", code="pc_unavailable")
         # Only cards this PC still holds as pending, and never a private-detail card for a device that cannot approve:
-        # the list shows such a card as a generic title with no subject, and the slot must not tie it to a guessed subject.
+        # the list shows such a card as a generic title with no subject, and the slot must not tie it to a guessed
+        # subject.
         pending = {rec.get("approval_id"): rec for rec in approvals.list_approvals(status="pending")}
         may_see_private = device_pairing.can_approve(g.device)
-        shown = [i for i in ids if i in pending and (may_see_private or pending[i].get("kind") not in approvals.PRIVATE_DETAIL_KINDS)]
+        shown = [i for i in ids if i in pending
+                 and (may_see_private or pending[i].get("kind") not in approvals.PRIVATE_DETAIL_KINDS)]
         return jsonify({"ok": True, "ids": shown})
 
     @app.get("/tv/v1/approvals/events")
