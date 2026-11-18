@@ -19,7 +19,6 @@ NAME_CHARS = 60
 DEVICE_JOB_CAP = 3
 
 _LOCK = threading.Lock()
-_FROM_DEVICE: dict = {}
 
 
 class Refused(Exception):
@@ -30,12 +29,11 @@ class Refused(Exception):
 
 
 def _running_from_devices() -> int:
+    """Device-started jobs still queued or running, read off the task records (each carries its origin)."""
     from agent_friday.services.agent import TASKS, TASKS_LOCK
     with TASKS_LOCK:
-        live = {tid for tid in _FROM_DEVICE if (TASKS.get(tid) or {}).get("status") in ("queued", "running")}
-    for tid in set(_FROM_DEVICE) - live:
-        _FROM_DEVICE.pop(tid, None)
-    return len(live)
+        return sum(1 for t in TASKS.values()
+                   if str(t.get("origin") or "").startswith("device:") and t.get("status") in ("queued", "running"))
 
 
 def _name(prompt: str) -> str:
@@ -65,8 +63,10 @@ def start(prompt, origin, conversation_id=None) -> str:
         task_id = _spawn_task(_name(prompt), prompt, conversation_id=conversation_id, principal="owner")
         if not task_id:
             raise Refused(409, "the PC would not start that job right now")
-        if origin != "pc":
-            _FROM_DEVICE[task_id] = origin
+        from agent_friday.services.agent import TASKS, TASKS_LOCK
+        with TASKS_LOCK:
+            if task_id in TASKS:
+                TASKS[task_id]["origin"] = origin
     task_journal.append(task_id, "decision", point="origin", chosen=origin,
                         reason="started by the owner from %s" % ("this PC" if origin == "pc" else "a paired device"))
     return task_id
