@@ -18,7 +18,7 @@ HASH = "ab" * 32
 
 def calibration(**over):
     base = dict(profile="N1:testGPU-a", benchmark_id="bench-1", config_digest="cfg-1", runs=5,
-                median_device_active_ms=4000, variation_permille=20, meter="process/psutil",
+                median_device_active_ms=4000, variation_permille=20, meter="gpu/nvidia-smi-sampled",
                 calibrated_at="2026-11-16T00:00:00Z")
     return rv.Calibration(**{**base, **over})
 
@@ -251,6 +251,27 @@ def test_a_receipt_is_measured_only_when_its_device_reading_was_measured():
     assert _receipt(rv.Unavailable("none"), None, S.UNCALIBRATED).n1 is None
     with pytest.raises(ValueError):
         _receipt(exact, None, S.MEASURED), "a measured receipt carries its N1"
+
+
+def test_a_receipts_reading_and_its_calibration_come_from_the_same_kind_of_meter():
+    """Review note on #892: a GPU profile's receipt made from the CPU meter's reading was accepted as MEASURED."""
+    cpu_cal = calibration(meter="process/psutil")
+    gpu_cal = calibration(meter="gpu/nvidia-smi-sampled")
+    reading = rv.Measured(10000, 15, "m", "c")
+
+    def receipt(field, cal):
+        vector = rv.ResourceVector(**{field: reading})
+        return rv.MeasuredReceipt(quote_hash="ab" * 32, task_id="t1", profile="N1:testGPU-a", vector=vector,
+                                  n1=rv.n1_for(cal, "cfg-1", reading), status=rv.ReceiptStatus.MEASURED,
+                                  device_field=field, calibration=cal)
+    assert receipt("gpu_active_ms", gpu_cal).status is rv.ReceiptStatus.MEASURED
+    assert receipt("cpu_active_ms", cpu_cal).status is rv.ReceiptStatus.MEASURED
+    with pytest.raises(ValueError):
+        receipt("gpu_active_ms", cpu_cal)       # the GPU profile's N1 from a CPU calibration
+    with pytest.raises(ValueError):
+        receipt("cpu_active_ms", gpu_cal)       # and the other way round
+    with pytest.raises(ValueError):
+        receipt("cpu_active_ms", calibration(meter="something/else"))
 
 
 def test_a_receipts_n1_must_be_its_reading_over_the_calibrations_median_and_its_status_a_closed_enum():

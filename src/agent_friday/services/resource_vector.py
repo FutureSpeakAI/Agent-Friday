@@ -255,6 +255,10 @@ class ReceiptStatus(str, Enum):
 
 
 DEVICE_FIELDS = ("gpu_active_ms", "cpu_active_ms")
+# the kind of meter a calibration must have been made with for each device-active reading: a GPU profile's N1 is never
+# the CPU meter's reading over a CPU median (tests/unit/test_resource_vector.py::
+# test_a_receipts_reading_and_its_calibration_come_from_the_same_kind_of_meter)
+METER_PREFIX = {"gpu_active_ms": "gpu/", "cpu_active_ms": "process/"}
 
 
 @dataclass(frozen=True)
@@ -291,6 +295,8 @@ class MeasuredReceipt:
                 raise ValueError("there is no N1 without a device-active reading")
             if self.calibration is None or self.calibration.profile != self.profile:
                 raise ValueError("an N1 needs the calibration it was made under")
+            if not self.calibration.meter.startswith(METER_PREFIX[self.device_field]):
+                raise ValueError("the calibration was made with another kind of meter than the reading")
             if self.n1.exact != Fraction(reading.value, self.calibration.median_device_active_ms):
                 raise ValueError("the N1 must be the device-active reading over the calibration's median")
             if self.n1.estimated != isinstance(reading, Estimated):
