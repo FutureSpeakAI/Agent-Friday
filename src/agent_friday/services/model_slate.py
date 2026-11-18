@@ -135,6 +135,17 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
     return {"cold": True, "expected_seconds": None, "basis": "not loaded on this PC yet"}
 
 
+LEAVES_NOTHING = "Nothing. Your messages and Friday's replies stay on this PC."
+
+
+def _what_leaves(m: dict, local: bool) -> str:
+    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's)."""
+    if local:
+        return LEAVES_NOTHING
+    who = m.get("provider_label") or m.get("provider") or "its cloud provider"
+    return "Your messages and the context Friday attaches to them go to %s while you use this model." % who
+
+
 def _measured(model_id) -> Optional[dict]:
     """First-token wait as measured on this PC from answered calls, or None when none have been timed."""
     try:
@@ -161,6 +172,7 @@ def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
         "hint": m.get("hint"),
     }
     out["switch"] = _switch_cost(m.get("id"), local, out["warm"])
+    out["what_leaves"] = _what_leaves(m, local)
     out["measured"] = _measured(m.get("id"))
     out["benchmark"] = _benchmark(m.get("id")) if local else None
     out["capabilities"] = {

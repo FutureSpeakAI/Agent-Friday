@@ -38,3 +38,13 @@ def test_a_benchmarked_cold_load_is_the_estimate_until_a_real_load_is_timed(monk
 def test_an_unbenchmarked_model_shows_nothing_invented(monkeypatch, tmp_path):
     got = _pc(monkeypatch, tmp_path, {})["gemma4:e4b"]
     assert got["benchmark"] is None and got["switch"]["expected_seconds"] is None
+
+
+def test_every_model_says_what_leaves_the_house_in_words(monkeypatch, tmp_path):
+    rows = _pc(monkeypatch, tmp_path, {})
+    assert rows
+    for r in rows.values():
+        if r["local"]:
+            assert r["what_leaves"] == ms.LEAVES_NOTHING
+        else:
+            assert r["what_leaves"].startswith("Your messages") and "go to" in r["what_leaves"]
