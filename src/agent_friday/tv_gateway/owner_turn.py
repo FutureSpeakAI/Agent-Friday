@@ -223,7 +223,7 @@ def _json(resp) -> dict:
         return {}
 
 
-SEAT_WAIT_S = 12.0      # how long a bind waits for the PC's check of which local model is serving
+SEAT_WAIT_S = 8.0       # a bind waits this long for the PC's local-model check: under a phone's 10 s read timeout
 SEAT_POLL_S = 0.5
 
 
@@ -263,6 +263,9 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(503, str(d.get("note") or "this computer is still checking its local models")[:240],
                                "seat_pending", model=model_id)
+    if d.get("superseded") and (conv.get("seat") or {}).get("model") != model_id:
+        raise turn.TurnRefused(409, "the model for this chat was changed on this computer a moment ago; pick again",
+                               "seat_superseded", model=model_id)
     if (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
                                "seat_refused", model=model_id)
