@@ -53,7 +53,7 @@ def _serving(ws: str):
     """(adapter, device block) for a workspace this PC serves to a phone, or None."""
     from agent_friday.services import laya_manifests as lm
     from agent_friday.services import workspace_registry as reg
-    entry = reg.get(ws) if pc_read._ID.match(ws) else None
+    entry = reg.get(ws) if pc_read.ID_PATTERN.match(ws) else None
     block = ws_device.device_block(lm.get(ws)) if entry is not None and not reg.is_held(entry) else None
     adapter = ADAPTERS.get(ws)
     return (adapter, block) if adapter is not None and block is not None else None

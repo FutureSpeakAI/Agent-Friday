@@ -305,6 +305,9 @@ def create_app(tailnet: bool = False) -> Flask:
     pc_read.register(app)                    # the owner phone/tablet read door (chats, workspaces, jobs, media)
     from agent_friday.tv_gateway import ws_content
     ws_content.register(app)                 # list, search, item and changes of a workspace, from its device block
+    from agent_friday.tv_gateway import pc_act, pc_approve
+    pc_approve.register(app)
+    pc_act.register(app)
     return app
 
 
