@@ -17,7 +17,7 @@ import json
 import pytest
 
 from agent_friday.routing import provider_descriptors as pd
-from agent_friday.services import provider_registry
+from agent_friday.services import credential_store, provider_registry
 from tests.unit import test_tv_pc_read as shared
 from tests.unit.test_tv_pc_read import get, paired
 
@@ -80,13 +80,16 @@ def test_no_pin_is_null_and_an_impossible_pin_counts_as_no_pin(client, desk):
     assert get(client, dev, "/tv/v1/evolution").get_json()["preferred_scene_index"] is None
     answer(desk, {**EVOLUTION, "preferred_scene_index": 9999})
     assert get(client, dev, "/tv/v1/evolution").get_json()["preferred_scene_index"] is None
+    answer(desk, {**EVOLUTION, "preferred_scene_index": 15})        # one past the last of the 15 shapes
+    assert get(client, dev, "/tv/v1/evolution").get_json()["preferred_scene_index"] is None
 
 
 @pytest.mark.parametrize("change", [
-    {"structure_index": 64}, {"structure_index": -1}, {"structure_index": "5"}, {"structure_index": True},
+    {"structure_index": 15}, {"structure_index": 64}, {"structure_index": -1}, {"calendar_index": 15}, {"structure_index": "5"}, {"structure_index": True},
     {"structure_index": 1.5}, {"calendar_index": None}, {"day": 0}, {"day": "6"}, {"structure": ""},
     {"structure": "D:\\Data\\x"}, {"structure": "DAY 6\nNEXT"}, {"structure": "x" * 81}, {"structure": 5},
-    {"structure": "see https://example.com"}])
+    {"structure": "see https://example.com"}, {"structure": "file://share/x"}, {"structure": "mail me@example.test"},
+    {"structure": "~/notes"}, {"structure": "/srv/data/x"}])
 def test_an_evolution_answer_that_is_not_plainly_the_shape_is_a_503(client, desk, change):
     answer(desk, {**EVOLUTION, **change})
     assert get(client, paired(), "/tv/v1/evolution").status_code == 503
@@ -126,11 +129,16 @@ def test_connectors_carry_id_label_kind_and_connected_only(client, desk):
     assert desk.calls == [("/api/connectors", {})]
 
 
-@pytest.mark.parametrize("rows", [
-    [5], [connector(key="../x")], [connector(key="")], [connector(connected="yes")], [{**connector(), "name": "see https://x.y"}],
-    [{**connector(), "name": "D:\\Data\\x"}], [{**connector(), "name": ""}], [connector("a%d" % n) for n in range(201)],
-    "not a list"])
-def test_a_connectors_answer_that_is_not_plainly_rows_is_a_503(client, desk, rows):
+def test_one_odd_connector_row_is_skipped_and_the_others_are_kept(client, desk):
+    odd = [5, connector(key="../x"), connector(key=""), connector(connected="yes"), {**connector(), "name": "see https://x.y"},
+           {**connector(), "name": "D:/Data/x"}, {**connector(), "name": ""}]
+    answer(desk, {"connectors": [connector("gmail"), *odd, connector("spotify")]})
+    ids = [row["id"] for row in get(client, paired(), "/tv/v1/connectors").get_json()["connectors"]]
+    assert ids == ["gmail", "spotify"]
+
+
+@pytest.mark.parametrize("rows", [[connector("a%d" % n) for n in range(201)], "not a list", None, {"a": 1}])
+def test_a_connectors_answer_that_is_not_plainly_a_list_is_a_503(client, desk, rows):
     answer(desk, {"connectors": rows})
     assert get(client, paired(), "/tv/v1/connectors").status_code == 503
 
@@ -158,7 +166,8 @@ def providers(monkeypatch):
     rows = [provider("anthropic"), provider("openrouter"), provider("llama-server", auth={"type": "none"}),
             provider("off", enabled=False), provider("../bad")]
     monkeypatch.setattr(provider_registry, "get_provider_registry", lambda: type("R", (), {"list_providers": lambda self: rows})())
-    monkeypatch.setattr(pd, "provider_key_source", lambda prov: "environment" if prov["name"] == "anthropic" else "none")
+    monkeypatch.setattr(credential_store, "provider_key_status", lambda name: "connected" if name == "anthropic" else "missing")
+    monkeypatch.setattr(pd, "_env_key", lambda prov: None)
     monkeypatch.setattr(pd, "classification_of", lambda prov: "local" if prov["name"] == "llama-server" else "cloud")
     return rows
 
@@ -173,6 +182,27 @@ def test_providers_are_names_and_a_yes_or_no_only(client, desk, providers):
     for forbidden in ("secret-host", "SECRET_ENV_NAME", "SECRET-HEADER-VALUE", "Authorization"):
         assert forbidden not in text
     assert desk.calls == []                     # answered from the PC's own registry, no desktop route
+
+
+def test_a_key_in_the_environment_alone_counts_as_configured(client, desk, providers, monkeypatch):
+    monkeypatch.setattr(pd, "_env_key", lambda prov: "x" if prov["name"] == "openrouter" else None)
+    by_id = {p["id"]: p["configured"] for p in get(client, paired(), "/tv/v1/providers").get_json()["providers"]}
+    assert by_id["openrouter"] is True
+
+
+def test_reading_the_providers_never_reads_or_stamps_a_key_as_used(client, desk, providers, monkeypatch):
+    """credential_store.get_provider_key (and read_secret) record a USE of the key; a Settings read is not one."""
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a Settings read must not read or use a stored key")
+    monkeypatch.setattr(credential_store, "get_provider_key", forbidden)
+    monkeypatch.setattr(credential_store, "read_secret", forbidden)
+    assert get(client, paired(), "/tv/v1/providers").status_code == 200
+
+
+def test_a_provider_with_a_broken_auth_block_is_listed_without_failing_the_others(client, desk, providers):
+    providers.append({"name": "oddball", "label": "Oddball", "auth": "not a dict"})
+    ids = [p["id"] for p in get(client, paired(), "/tv/v1/providers").get_json()["providers"]]
+    assert "oddball" in ids and "anthropic" in ids
 
 
 def test_a_provider_that_is_switched_off_or_badly_named_is_not_listed(client, desk, providers):
