@@ -5,8 +5,8 @@ once running, and how much of the prompt the seat already held (``cache_share``:
 reads none of the old conversation, so it is the slow one). Numbers are measured, never declared: the last
 ``_WINDOW`` calls per model, median and 90th percentile, with the sample count so a device can see how thin
 the evidence is. services/reasoning_trace.model_call records the calls that report a first-token time (streamed
-OpenAI-compatible rounds, local or cloud, inside an active trace: a model whose calls report none, such as the
-Claude API path, or a call made outside a trace, has no sample and shows none, never a guess);
+OpenAI-compatible rounds, local or cloud: the hook that reports a time only runs inside an active trace; a
+model whose calls report none, such as the Claude API path, has no sample and shows none, never a guess);
 services/model_slate reads.
 Held by tests/unit/test_ttft_stats.py (record, summary, window, restart, damaged file, nonsense refused, and a
 source check that model_call records).

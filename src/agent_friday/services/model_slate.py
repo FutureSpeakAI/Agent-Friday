@@ -111,21 +111,41 @@ def _sane_seconds(value) -> Optional[float]:
     return f if f == f and 0.0 < f <= 3600.0 else None
 
 
+def _positive(value, cap: float = 1e9) -> Optional[float]:
+    """A stored measurement as a finite number in (0, cap], else None (a damaged store never reaches a device)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        f = float(value)
+    except OverflowError:
+        return None
+    return f if f == f and 0.0 < f <= cap else None
+
+
+def _provenance(row: dict) -> str:
+    return ("measured on this PC" if row.get("source") == "measured" else
+            "measured once on a PC with the same hardware (ships with the app), not on this one")
+
+
 def _benchmark(model_id) -> Optional[dict]:
-    """The newest benchmark of this model on THIS PC's hardware (VRAM, speed, cold load), or None."""
+    """This PC's newest benchmark of the model (VRAM, speed) and, separately, the newest row that has a cold-load
+    time (the newest row may be a later run that skipped it), or None. Every number is checked on the way out."""
     try:
         from agent_friday.services import hardware_profile as hwp
         from agent_friday.services import residency_catalog as rc
         rows = [m for m in rc.measurements(str(model_id), rc.profile_fingerprint(hwp.get()))
-                if m.get("num_ctx") is not None]                       # benchmark rows only,
-        row = max(rows, key=lambda m: str(m.get("measured_at") or ""))                   # not footprint records
+                if m.get("num_ctx") is not None]                       # benchmark rows only, not footprints
+        newest = lambda r: str(r.get("measured_at") or "")             # noqa: E731
+        row = max(rows, key=newest)
+        cold_rows = [m for m in rows if _sane_seconds(m.get("cold_load_s")) is not None]
+        cold = max(cold_rows, key=newest) if cold_rows else None
     except Exception:
         return None
-    return {"num_ctx": row.get("num_ctx"), "vram_mib": row.get("vram_mib"),
-            "tokens_per_second": row.get("tok_s_median"), "cold_load_seconds": _sane_seconds(row.get("cold_load_s")),
-            "measured_at": row.get("measured_at"), "source": row.get("source"),
-            "basis": ("measured on this PC" if row.get("source") == "measured" else
-                      "measured once on a PC with the same hardware (ships with the app), not on this one")}
+    return {"num_ctx": int(_positive(row.get("num_ctx")) or 0) or None, "vram_mib": _positive(row.get("vram_mib")),
+            "tokens_per_second": _positive(row.get("tok_s_median")),
+            "cold_load_seconds": _sane_seconds(cold.get("cold_load_s")) if cold else None,
+            "cold_load_basis": ("%s, on %s" % (_provenance(cold), cold.get("measured_at"))) if cold else None,
+            "measured_at": row.get("measured_at"), "source": row.get("source"), "basis": _provenance(row)}
 
 
 def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
@@ -144,8 +164,7 @@ def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
         return {"cold": True, "expected_seconds": secs, "basis": "last load measured on this PC"}
     bench = _benchmark(model_id) or {}
     if bench.get("cold_load_seconds"):
-        return {"cold": True, "expected_seconds": bench["cold_load_seconds"],
-                "basis": "%s, on %s" % (bench.get("basis"), bench.get("measured_at"))}
+        return {"cold": True, "expected_seconds": bench["cold_load_seconds"], "basis": bench["cold_load_basis"]}
     return {"cold": True, "expected_seconds": None, "basis": "no load timed on this PC yet"}
 
 
