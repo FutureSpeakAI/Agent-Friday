@@ -355,8 +355,8 @@ def model_call(model: str = None, *, seat: str = None, provider: str = None,
     `prefill_tokens` / `cache_tokens` are llama-server's `prompt_n` /
     `cache_n` (what the seat read against what it already held); `ttft_ms`
     is the wait to the first token; `duration_ms` the whole call."""
+    _ttft_stats.record(model, ttft_ms, prefill_tokens, cache_tokens)   # never raises; outside the trace's try
     try:
-        _ttft_stats.record(model, ttft_ms, prefill_tokens, cache_tokens)
         with _LOCK:
             tr = _resolve(trace_id)
             if tr is None:

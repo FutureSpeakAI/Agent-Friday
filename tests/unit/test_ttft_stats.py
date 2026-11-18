@@ -51,7 +51,7 @@ def test_it_survives_a_restart_and_a_damaged_file_starts_empty(tmp_path):
     assert ttft_stats.record("m", 120)
 
 
-def test_every_answered_call_is_recorded_by_the_trace():
+def test_a_call_that_reports_a_first_token_time_is_recorded_by_the_trace():
     assert "_ttft_stats.record(model, ttft_ms, prefill_tokens, cache_tokens)" in inspect.getsource(
         reasoning_trace.model_call)
     reasoning_trace.model_call("m2", ttft_ms=321, prefill_tokens=10, cache_tokens=30)
@@ -67,3 +67,19 @@ def test_the_slate_shows_measured_wait_per_model(monkeypatch):
     rows = {r["id"]: r for r in ms.slate()["models"]}
     assert rows["gemma4:e4b"]["measured"]["median_ms"] == 700
     assert rows["bonsai2:27b"]["measured"] is None
+
+
+def test_a_damaged_saved_file_drops_only_the_damaged_part_and_record_never_raises(tmp_path, monkeypatch):
+    big = "9" * 400
+    monkeypatch.setattr(ttft_stats, "_path", lambda: tmp_path / "t.json")
+    ttft_stats._forget_memory_only()
+    (tmp_path / "t.json").write_text(
+        '{"a": {"at": [1], "calls": [[500, null]]}, "b": {"at": 1, "calls": [[700, null], [700, "x"], [NaN, 0.5],'
+        ' [-3, null], [800, 0.25]]}, "c": {"at": %s, "calls": [[900, null]]}}' % big, encoding="utf-8")
+    assert ttft_stats.record("m", 400) is True
+    assert ttft_stats.summary("a")["samples"] == 1                # a bad stamp costs the stamp, not the history
+    b = ttft_stats.summary("b")
+    assert b["samples"] == 2 and b["cache_share"] == 0.25         # only the sane calls count
+    assert ttft_stats.summary("c")["samples"] == 1
+    assert ttft_stats.record("m", float("inf")) is False and ttft_stats.record("m", True) is False
+    ttft_stats._forget_memory_only()

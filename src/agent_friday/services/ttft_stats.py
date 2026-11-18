@@ -4,9 +4,10 @@ The model slate's switch block says what a cold seat costs to load; this says wh
 once running, and how much of the prompt the seat already held (``cache_share``: a first turn after a switch
 reads none of the old conversation, so it is the slow one). Numbers are measured, never declared: the last
 ``_WINDOW`` calls per model, median and 90th percentile, with the sample count so a device can see how thin
-the evidence is. services/reasoning_trace.model_call records the calls that report a first-token time (the local
-OpenAI-compatible rounds inside an active trace: a cloud model, or a call made outside a trace, has no sample
-and shows none, never a guess); services/model_slate reads.
+the evidence is. services/reasoning_trace.model_call records the calls that report a first-token time (streamed
+OpenAI-compatible rounds, local or cloud, inside an active trace: a model whose calls report none, such as the
+Claude API path, or a call made outside a trace, has no sample and shows none, never a guess);
+services/model_slate reads.
 Held by tests/unit/test_ttft_stats.py (record, summary, window, restart, damaged file, nonsense refused, and a
 source check that model_call records).
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -33,6 +35,27 @@ def _path():
     return friday_home() / "models" / "first_token_times.json"
 
 
+def _finite(value, low: float, high: float) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        f = float(value)
+    except OverflowError:
+        return None
+    return f if math.isfinite(f) and low < f <= high else None
+
+
+def _clean_call(c) -> Optional[list]:
+    """One saved [ttft_ms, cache_share] pair if both parts are sane, else None (a damaged call is dropped alone)."""
+    if not (isinstance(c, list) and len(c) == 2):
+        return None
+    ms = _finite(c[0], 0.0, _MAX_MS)
+    share = None if c[1] is None else _finite(c[1], -1.0, 1.0)
+    if ms is None or (c[1] is not None and share is None):
+        return None
+    return [int(ms), share]
+
+
 def _load_once() -> None:
     global _LOADED
     if _LOADED:
@@ -40,15 +63,18 @@ def _load_once() -> None:
     _LOADED = True
     try:
         raw = json.loads(_path().read_text(encoding="utf-8"))
-        for mid, rec in raw.items():
-            calls = [c for c in rec.get("calls", []) if isinstance(c, list) and len(c) == 2
-                     and isinstance(c[0], (int, float))]
-            if calls:
-                _CALLS[str(mid)] = {"at": float(rec.get("at") or 0), "calls": calls[-_WINDOW:]}
     except FileNotFoundError:
-        pass
-    except (OSError, ValueError, AttributeError, TypeError) as e:
+        return
+    except Exception as e:                       # a saved file of any shape starts empty, never breaks a call
         _log.warning("saved first-token times unreadable, starting empty: %s", type(e).__name__)
+        return
+    for mid, rec in (raw.items() if isinstance(raw, dict) else []):
+        try:                                     # one damaged model is dropped alone; the others are kept
+            calls = [c for c in map(_clean_call, rec.get("calls", [])) if c]
+            if calls:
+                _CALLS[str(mid)] = {"at": _finite(rec.get("at"), 0.0, 1e12) or 0.0, "calls": calls[-_WINDOW:]}
+        except Exception:
+            continue
 
 
 def _save() -> None:
@@ -65,25 +91,29 @@ def _save() -> None:
 def _cache_share(prefill, cache) -> Optional[float]:
     if isinstance(prefill, (int, float)) and isinstance(cache, (int, float)) and prefill >= 0 and cache >= 0:
         total = prefill + cache
-        return round(cache / total, 3) if total else None
+        share = round(cache / total, 3) if total and math.isfinite(total) else None
+        return share if share is not None and math.isfinite(share) else None
     return None
 
 
 def record(model_id: str, ttft_ms, prefill_tokens=None, cache_tokens=None) -> bool:
     """Remember one answered call. Negative, zero, non-number and absurd waits are not measurements."""
-    if isinstance(ttft_ms, bool) or not isinstance(ttft_ms, (int, float)) or not 0 < ttft_ms <= _MAX_MS:
+    ms = _finite(ttft_ms, 0.0, _MAX_MS)
+    if ms is None or not model_id:
         return False
-    if not model_id:
+    try:
+        with _LOCK:
+            _load_once()
+            rec = _CALLS.setdefault(str(model_id), {"at": 0.0, "calls": []})
+            rec["calls"].append([int(ms), _cache_share(prefill_tokens, cache_tokens)])
+            del rec["calls"][:-_WINDOW]
+            rec["at"] = time.time()
+            while len(_CALLS) > _MAX_MODELS:
+                _CALLS.pop(min(_CALLS, key=lambda k: _CALLS[k]["at"]))
+            _save()
+    except Exception as e:                       # stats are a side channel: never fail the call being timed
+        _log.warning("first-token time not recorded: %s", type(e).__name__)
         return False
-    with _LOCK:
-        _load_once()
-        rec = _CALLS.setdefault(str(model_id), {"at": 0.0, "calls": []})
-        rec["calls"].append([int(ttft_ms), _cache_share(prefill_tokens, cache_tokens)])
-        del rec["calls"][:-_WINDOW]
-        rec["at"] = time.time()
-        while len(_CALLS) > _MAX_MODELS:
-            _CALLS.pop(min(_CALLS, key=lambda k: _CALLS[k]["at"]))
-        _save()
     return True
 
 
