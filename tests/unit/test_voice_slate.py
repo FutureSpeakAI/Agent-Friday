@@ -102,3 +102,13 @@ def test_local_only_refuses_a_cloud_switch_loudly(pc):
     with pytest.raises(vs.VoiceNotServable) as e:
         vs.plan_switch("gemini")
     assert e.value.code == vs.LOCAL_ONLY_MODE
+
+
+def test_every_built_in_engine_is_in_the_closed_set_and_old_spellings_resolve(pc):
+    """Walks every small case: each listed built-in id is an Engine; auto and gemini-live resolve."""
+    built_in = {r["id"] for r in vs.slate()["engines"] if not r["id"].startswith("cloud:")}
+    assert built_in == {e.value for e in vs.Engine}
+    assert vs.find("gemini-live")["id"] == "gemini" and vs.find("auto")["id"] == "local"
+    pc["settings"]["voice_engine"] = "auto"
+    assert vs.slate()["selected"] == "local"
+    assert set(vs.CLOUD_SPEECH) == {vs.Engine.GEMINI, vs.Engine.OPENAI}
