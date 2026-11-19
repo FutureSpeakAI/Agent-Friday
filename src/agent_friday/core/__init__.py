@@ -2263,6 +2263,7 @@ def _invalidate_settings_cache() -> None:
 
 #: Total time a settings read keeps retrying a transient failure.
 _SETTINGS_READ_RETRY_S: float = 1.0
+_SETTINGS_READ_MIN_TRIES: int = 4
 #: Total time a settings write keeps retrying a replace Windows denied.
 _SETTINGS_REPLACE_RETRY_S: float = 1.0
 #: The last settings read from or written to disk, per settings file path.
@@ -2307,7 +2308,9 @@ def _read_settings_file(path=None, *, retry_s=None) -> dict:
     deadline = _time.monotonic() + (
         _SETTINGS_READ_RETRY_S if retry_s is None else retry_s)
     delay = 0.01
+    tries = 0
     while True:
+        tries += 1
         try:
             # utf-8-sig: a byte-order mark is not corruption (see the loader).
             data = json.loads(path.read_text(encoding='utf-8-sig'))
@@ -2315,8 +2318,10 @@ def _read_settings_file(path=None, *, retry_s=None) -> dict:
                 raise TypeError("settings.json does not hold an object")
             return data
         except Exception as e:  # noqa: BLE001
+            # The deadline bounds the wait, not the number of looks: a thread the machine stalled for longer
+            # than the window would otherwise give up after one failed read (F4).
             if (not _settings_read_is_transient(e)
-                    or _time.monotonic() + delay > deadline):
+                    or (tries >= _SETTINGS_READ_MIN_TRIES and _time.monotonic() + delay > deadline)):
                 raise
             _time.sleep(delay)
             delay = min(delay * 2, 0.1)
