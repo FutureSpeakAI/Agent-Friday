@@ -94,3 +94,77 @@ def test_the_check_can_fail_a_load_time_post_would_be_seen(sources):
     accept = broken[broken.index("const accept = async"):broken.index("const withdraw = async")]
     assert "POST" in broken.replace(accept, ""), "the load-time POST would be seen"
     assert "POST" not in body.replace(body[body.index("const accept = async"):body.index("const withdraw = async")], "")
+
+
+# ── behaviour: the real component text run under node with a tiny React stand-in and a scripted apiFetch ──────────
+
+HARNESS = r"""
+const states = []; let idx = 0, effects = [], tree = null;
+const React = {
+  useState(init) { const i = idx++; if (!(i in states)) states[i] = init;
+    return [states[i], v => { states[i] = v; rerender(); }]; },
+  useEffect(fn) { effects.push(fn); },
+  createElement(type, props, ...kids) { return { type, props: props || {}, kids: kids.flat() }; },
+};
+const calls = []; const script = JSON.parse(process.argv[1]);
+const apiFetch = (url, opts) => { calls.push([(opts && opts.method) || 'GET', url]);
+  const r = script[calls[calls.length - 1].join(' ')] || { status: 500, body: {} };
+  return Promise.resolve({ ok: r.status < 300, status: r.status, json: () => Promise.resolve(r.body) }); };
+SRC
+function rerender() { idx = 0; tree = AcceptedIssuersPanel(); }
+const text = n => n == null ? '' : typeof n === 'string' ? n : [].concat(n.kids || []).map(text).join(' ');
+const find = (n, pred, out = []) => { if (n && typeof n === 'object') { if (pred(n)) out.push(n); (n.kids || []).forEach(k => find(k, pred, out)); } return out; };
+(async () => {
+  rerender(); effects.splice(0).forEach(f => f()); await new Promise(r => setTimeout(r, 20));
+  const out = { calls: calls.slice(), text: text(tree) };
+  const act = script.__act;
+  if (act === 'accept') { find(tree, n => n.type === 'input')[0].props.onChange({ target: { value: 'test.one' } });
+    find(tree, n => n.type === 'input')[0].props.onKeyDown({ key: 'Enter' }); await new Promise(r => setTimeout(r, 20));
+    out.after = text(tree); out.calls2 = calls.slice(); }
+  if (act === 'withdraw') { find(tree, n => n.type === 'button')[0].props.onClick(); await new Promise(r => setTimeout(r, 20));
+    out.after = text(tree); out.calls2 = calls.slice(); out.label = find(tree, n => n.type === 'button')[0] && find(tree, n => n.type === 'button')[0].props['aria-label']; }
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+def run_component(sources, script):
+    import json as _json
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    code = HARNESS.replace("SRC", component(sources["index.html"]))
+    done = subprocess.run([node, "-e", code, _json.dumps(script)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    return _json.loads(done.stdout)
+
+
+LIST = "GET /api/federation/accepted-issuers"
+
+
+def test_a_failed_read_says_it_could_not_read_and_never_claims_the_list_is_empty(sources):
+    for status in (401, 500):
+        out = run_component(sources, {LIST: {"status": status, "body": {"error": "x"}}})
+        assert "Could not read the accepted issuers" in out["text"] and "No issuer is accepted" not in out["text"], status
+
+
+def test_an_empty_list_and_a_list_are_shown_as_what_they_are(sources):
+    assert "No issuer is accepted" in run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}})["text"]
+    shown = run_component(sources, {LIST: {"status": 200, "body": {"issuers": [{"issuer_id": "test.one", "unit_code": "TESTP"}]}}})
+    assert "test.one (TESTP)" in shown["text"]
+
+
+def test_enter_accepts_once_with_a_post_and_reports_the_outcome(sources):
+    out = run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}, "__act": "accept",
+                                  "POST /api/federation/accepted-issuers": {"status": 201, "body": {"ok": True, "outcome": "accepted"}}})
+    assert [c for c in out["calls2"] if c[0] == "POST"] == [["POST", "/api/federation/accepted-issuers"]]
+    assert "Accepted. Offers that name this issuer are now read." in out["after"]
+    assert [c for c in out["calls"] if c[0] == "POST"] == [], "nothing was posted by loading the panel"
+
+
+def test_withdraw_names_its_issuer_and_a_missing_one_gets_its_own_words(sources):
+    listed = {"status": 200, "body": {"issuers": [{"issuer_id": "test.one", "unit_code": "TESTP"}]}}
+    out = run_component(sources, {LIST: listed, "__act": "withdraw",
+                                  "DELETE /api/federation/accepted-issuers/test.one": {"status": 404, "body": {"ok": False}}})
+    assert out["label"] == "Withdraw test.one"
+    assert "was not in the list" in out["after"]
