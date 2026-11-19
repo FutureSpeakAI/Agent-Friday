@@ -73,6 +73,32 @@ async function renderChange(src, first, second, feed, firstAnswer) {
   cursor = 0;
   return component(second);
 }
+// The answer for the OLD subject arrives after the props changed to the new one.
+async function renderLateAnswer(src, first, second, feed, lateBody) {
+  const effects = [];
+  const state = [];
+  let cursor = 0;
+  let release;
+  let calls = 0;
+  const env = {
+    React: { createElement: (type, p, ...children) => ({ type, props: p || {}, children: children.flat() }) },
+    useState: (init) => { const i = cursor++; if (!(i in state)) state[i] = init; return [state[i], (v) => { state[i] = v; }]; },
+    useEffect: (fn) => { effects.push(fn); },
+    useApprovalFeed: () => feed,
+    fetch: () => (++calls === 1 ? new Promise((r) => { release = () => r({ json: () => Promise.resolve(lateBody) }); }) : new Promise(() => {})),
+    decide: () => Promise.resolve(),
+  };
+  const component = load(src, env);
+  component(first);
+  for (const fn of effects.splice(0)) fn();
+  cursor = 0;
+  component(second);
+  for (const fn of effects.splice(0)) fn();
+  release();
+  await new Promise((r) => setTimeout(r, 0));
+  cursor = 0;
+  return component(second);
+}
 const ok = (body) => () => Promise.resolve({ json: () => Promise.resolve(body) });
 const card = (id) => ({ approval_id: id, title: 'T ' + id });
 
@@ -112,6 +138,9 @@ const card = (id) => ({ approval_id: id, title: 'T ' + id });
   out = await renderChange(html, { subject: 'crew:a', kind: 'x' }, { subject: 'crew:a', kind: 'y' }, [card('A1')], ok({ ok: true, ids: ['A1'] }));
   assert.equal(out, null, 'a changed kind is a different ask too');
 
+  out = await renderLateAnswer(html, { subject: 'crew:a' }, { subject: 'crew:b' }, [card('A1'), card('B1')], { ok: true, ids: ['A1'] });
+  assert.equal(out, null, 'a late answer for crew:a must not be drawn in the slot for crew:b');
+
   // The document's own extras never reach the output (V12): no id, text, style, children or label.
   r = await render(html, { subject: 'crew:c1', id: 'x', className: 'evil', style: { color: 'red' }, children: 'hi', label: 'Approve all', 'aria-label': 'Approve' },
     [card('a')], ok({ ok: true, ids: ['a'] }));
@@ -133,5 +162,11 @@ const card = (id) => ({ approval_id: id, title: 'T ' + id });
   const everything = html.replace('ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean)', 'items');
   r = await render(everything, { subject: 'crew:c1' }, [card('a'), card('b')], ok({ ok: true, ids: ['a'] }));
   assert.throws(() => assert.deepEqual(r.out.children.map((c) => c.props.a.approval_id), ['a']));
+  const unkeyed = html.replace('got && got.asked === asked ? got.ids : null', 'got ? got.ids : null');
+  assert.notEqual(unkeyed, html, 'the mutant must differ');
+  out = await renderLateAnswer(unkeyed, { subject: 'crew:a' }, { subject: 'crew:b' }, [card('A1'), card('B1')], { ok: true, ids: ['A1'] });
+  assert.notEqual(out, null, 'negative control: without the key the late answer for crew:a is drawn under crew:b');
+  out = await renderChange(unkeyed, { subject: 'crew:a' }, { subject: 'crew:b' }, [card('A1'), card('B1')], ok({ ok: true, ids: ['A1'] }));
+  assert.notEqual(out, null, 'negative control: without the key the old ids are drawn under the new subject');
   console.log('approval slot: all checks hold');
 })().catch((e) => { console.error(e); process.exit(1); });
