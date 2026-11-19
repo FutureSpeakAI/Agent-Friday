@@ -122,3 +122,34 @@ def test_the_read_only_observer_cannot_start_a_job(client, spawned, monkeypatch,
     tok = client.post("/api/tasks/observer-token").get_json()["token"]
     r = client.post("/api/tasks/start", json={"prompt": "x", "origin": PHONE}, headers={obs.HEADER: tok})
     assert r.status_code == 403 and spawned == []
+
+@pytest.mark.parametrize("origin", ["pc\n", "device:dev_phone_1\n", "pc ", "PC"])
+def test_an_origin_is_matched_whole_not_up_to_a_trailing_newline(client, spawned, origin):
+    r = _start(client, origin=origin)
+    assert r.status_code == 400 and spawned == []
+
+
+def test_the_journal_says_where_a_job_came_from_not_that_the_device_is_paired(client, spawned):
+    r = _start(client, origin="device:dev_unknown_9")
+    entries = [e for e in tj.read(r.get_json()["task_id"]) if e["kind"] == "decision" and e["point"] == "origin"]
+    assert "a paired device" not in entries[0]["reason"] and "device:dev_unknown_9" in entries[0]["reason"]
+
+
+def test_a_journal_that_cannot_be_written_does_not_make_a_running_job_look_failed(client, spawned, monkeypatch):
+    real = tj.append
+
+    def append(tid, kind, **kw):
+        if kind == "decision":
+            raise OSError("disk full")
+        return real(tid, kind, **kw)
+    monkeypatch.setattr(tj, "append", append)
+    r = _start(client)
+    assert r.status_code == 201 and r.get_json()["task_id"] == "job-0001"
+
+
+def test_a_spawn_that_raises_is_a_refusal_in_words_not_a_server_error(client, monkeypatch):
+    def boom(*a, **k):
+        raise PermissionError("not allowed to start that")
+    monkeypatch.setattr(ag, "_spawn_task", boom)
+    r = _start(client)
+    assert r.status_code == 409 and r.get_json()["error"] and "PermissionError" not in r.get_json()["error"]
