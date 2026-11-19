@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { BASE } from '../harness';
 import { whoStalled } from '../helpers/who_stalled';
 
