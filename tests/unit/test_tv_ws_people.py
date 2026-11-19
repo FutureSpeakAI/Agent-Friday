@@ -116,6 +116,18 @@ def test_a_wiki_page_that_cannot_be_read_does_not_hide_the_record(client, desk):
     assert got["title"] == "Griff Jay" and got["blocks"] == [] and got["relations"] == []
 
 
+def test_a_wiki_list_that_cannot_be_read_does_not_hide_the_record(client, desk):
+    desk.down.add("/api/wiki/structure")
+    got = ask(client, "item/person:Griff Jay")
+    assert got.status_code == 200 and got.get_json()["title"] == "Griff Jay" and got.get_json()["blocks"] == []
+
+
+def test_a_locked_wiki_page_does_not_hide_the_record(client, desk):
+    desk.pages["entities/person-griff-jay.md"] = "[vault-encrypted file, unlock the vault]"
+    got = ask(client, "item/person:Griff Jay")
+    assert got.status_code == 200 and got.get_json()["title"] == "Griff Jay" and got.get_json()["relations"] == []
+
+
 @pytest.mark.parametrize("ref", ["person:", "person:a/b", "person:..\\x", "person:" + "x" * 121, "person:Nobody Here"])
 def test_a_ref_that_is_not_a_person_is_404(client, desk, ref):
     assert ask(client, "item/" + ref.replace("\\", "%5C")).status_code == 404
