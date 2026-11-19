@@ -33,7 +33,8 @@ def _saved() -> list[dict]:
 
 
 def _row(story: dict, sensitivity: str) -> dict:
-    return {"ref": PREFIX + _ident(str(story["url"])), "kind": KIND, "title": ws_blocks.line(story.get("title"), 160) or "(untitled)",
+    return {"ref": PREFIX + _ident(str(story["url"])), "kind": KIND,
+            "title": ws_blocks.line(story.get("title"), 160) or "(untitled)",
             "line": ws_blocks.line(story.get("source"), 60), "state": ws_blocks.line(story.get("category"), 40) or None,
             "when": str(story.get("saved_at") or "")[:25] or None, "thumb": None, "lives_on": "pc",
             "sensitivity": sensitivity, "taint": TAINT}
@@ -68,9 +69,11 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
     if story is None:
         raise Missing(ref)
     row = _row(story, sensitivity)
-    meta = [{"k": k, "v": v} for k, v in (("Outlet", row["line"]), ("Category", row["state"]), ("Saved", row["when"])) if v]
+    shown = (("Outlet", row["line"]), ("Category", row["state"]), ("Saved", row["when"]))
+    meta = [{"k": k, "v": v} for k, v in shown if v]
     parsed = ws_blocks.parse(str(story.get("snippet") or ""))
-    return {"rev": "l_" + _digest(ref, row["title"], story.get("snippet")), "ref": ref, "kind": KIND, "title": row["title"],
+    return {"rev": "l_" + _digest(ref, row["title"], story.get("snippet")), "ref": ref, "kind": KIND,
+            "title": row["title"],
             "lives_on": "pc", "sensitivity": sensitivity, "taint": TAINT, "meta": meta,
             "blocks": parsed.blocks[offset:offset + limit], "relations": [],
             "sources": [{"id": "outlet", "title": row["line"], "host": row["line"]}] if row["line"] else [],

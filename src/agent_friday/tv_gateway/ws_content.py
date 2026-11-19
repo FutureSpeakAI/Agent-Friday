@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 
 from flask import Flask, Response, jsonify, request
 
-from agent_friday.tv_gateway import pc_read, ws_adapter, ws_calendar, ws_crew, ws_device, ws_knowledge, ws_news, ws_news_later, ws_people
+from agent_friday.tv_gateway import (pc_read, ws_adapter, ws_calendar, ws_crew, ws_device, ws_knowledge, ws_news,
+                                     ws_news_later, ws_people)
 
 _log = logging.getLogger(__name__)
 
