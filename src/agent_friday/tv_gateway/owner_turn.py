@@ -273,10 +273,10 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     from agent_friday.tv_gateway import turn
     seat = {"model": model_id}
     if not cid:
-        resp = _api("POST", "/api/conversations", {"title": "Phone chat", "seat": seat})
-        d = _json(resp)
-        conv = d.get("conversation") or {}
-        cid = conv.get("id")
+        # Start the chat WITHOUT a seat, then bind it through the same checked path as an existing chat: the
+        # desktop's create route stores a seat unchecked, and only its PATCH refuses a second local model.
+        d = _json(_api("POST", "/api/conversations", {"title": "Phone chat"}))
+        cid = (d.get("conversation") or {}).get("id")
         if not cid:
             raise turn.TurnRefused(503, "this computer could not start that chat", "chat_unavailable")
     else:
@@ -287,18 +287,19 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
             raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
         if (conv.get("seat") or {}).get("model") == model_id:
             return cid                      # this chat's OWN seat already: nothing to change, nothing to reload
-        resp = _api("PATCH", "/api/conversations/" + cid, {"seat": seat})
-        status = getattr(resp, "status_code", 200)
-        if status == 404:
-            raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
-        if status >= 500 or status in (401, 403):
-            raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable")
-        d = _json(resp)
-        conv = d.get("conversation") or {}
-        if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
-            raise turn.TurnRefused(409, str(d.get("note") or "this computer is still checking its local models; "
-                                                              "try again in a moment")[:240],
-                                   "seat_pending", model=model_id, retry=True)
+    # (the PATCH below is shared by both branches)
+    resp = _api("PATCH", "/api/conversations/" + cid, {"seat": seat})
+    status = getattr(resp, "status_code", 200)
+    if status == 404:
+        raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
+    if status >= 500 or status in (401, 403):
+        raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable")
+    d = _json(resp)
+    conv = d.get("conversation") or {}
+    if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
+        raise turn.TurnRefused(409, str(d.get("note") or "this computer is still checking its local models; "
+                                                          "try again in a moment")[:240],
+                               "seat_pending", model=model_id, retry=True)
     if (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
                                "seat_refused", model=model_id)

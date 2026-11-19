@@ -214,3 +214,11 @@ def test_a_chat_deleted_between_the_look_and_the_write_is_404(client, desk, monk
     monkeypatch.setattr(owner_turn, "_api", api)
     r = switch(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
     assert r.status_code == 404 and r.get_json()["code"] == "unknown_conversation"
+
+
+def test_a_switch_that_starts_a_new_chat_gets_the_same_refusals_as_one_on_an_existing_chat(client, desk):
+    desk.refuse = "There is only room for one local model at a time."
+    r = switch(client, phone(), model="bonsai2:27b")                  # no conversation_id
+    j = r.get_json()
+    assert r.status_code == 409 and j["code"] == "seat_refused" and "one local model" in j["error"]
+    assert not any(c[0] == "POST" and (c[2] or {}).get("seat") for c in desk.api_calls)   # never created with a seat
