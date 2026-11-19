@@ -130,9 +130,9 @@ def test_an_origin_is_matched_whole_not_up_to_a_trailing_newline(client, spawned
 
 
 def test_the_journal_says_where_a_job_came_from_not_that_the_device_is_paired(client, spawned):
-    r = _start(client, origin="device:never_paired")
+    r = _start(client, origin="device:dev_unknown_9")
     entries = [e for e in tj.read(r.get_json()["task_id"]) if e["kind"] == "decision" and e["point"] == "origin"]
-    assert "paired" not in entries[0]["reason"] and "device:never_paired" in entries[0]["reason"]
+    assert "a paired device" not in entries[0]["reason"] and "device:dev_unknown_9" in entries[0]["reason"]
 
 
 def test_a_journal_that_cannot_be_written_does_not_make_a_running_job_look_failed(client, spawned, monkeypatch):
