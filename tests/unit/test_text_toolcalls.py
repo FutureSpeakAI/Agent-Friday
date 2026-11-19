@@ -123,14 +123,51 @@ def test_a_cloud_seat_text_call_is_not_routed():
     assert calls == [] and refused == ["load_tools"]
 
 
-def test_long_adversarial_replies_are_scanned_in_linear_time():
+SMALL, BIG = 50_000, 200_000       # the big input is four times the small one
+GROWTH_LIMIT = 8.0                 # linear is about 4x; a quadratic scan is about 16x
+FLOOR_S = 0.02                     # below this a timing says nothing
+
+
+def _best_of_three(run, clock):
+    best = None
+    for _ in range(3):
+        t0 = clock()
+        run()
+        spent = clock() - t0
+        best = spent if best is None else min(best, spent)
+    return max(best, FLOOR_S)
+
+
+def _grows_linearly(make_run, clock=None):
+    """True when four times the input costs well under sixteen times the time. Compares the machine with itself,
+    so a slow or busy runner cannot fail it; only a scan that grows faster than linear does."""
     import time as _t
+    clock = clock or _t.monotonic
+    return _best_of_three(make_run(BIG), clock) <= GROWTH_LIMIT * _best_of_three(make_run(SMALL), clock)
+
+
+def test_long_adversarial_replies_are_scanned_in_linear_time():
     for chunk in ('<invoke name="a">', '<tool_call>{', '<invoke name="a"><parameter name="p">'):
-        text = chunk * (200_000 // len(chunk))
-        t0 = _t.monotonic()
-        tt.extract(text, TOOLS)
-        tt.guard_final(text, model="m", seat="local", tool_trace=[])
-        assert _t.monotonic() - t0 < 3.0, chunk
+        def make_run(n, chunk=chunk):
+            text = chunk * (n // len(chunk))
+            return lambda: (tt.extract(text, TOOLS), tt.guard_final(text, model="m", seat="local", tool_trace=[]))
+        assert _grows_linearly(make_run), chunk
+
+
+def test_the_growth_check_still_catches_a_scan_that_is_quadratic():
+    def make_run(n):
+        n = n // 10        # keep the deliberately slow case short
+        return lambda: sum(1 for _ in range(n) for _ in range(n // 40))
+    assert _grows_linearly(make_run) is False
+
+
+def test_the_linear_time_check_does_not_depend_on_how_fast_the_machine_is(monkeypatch):
+    """A busy shared runner is slow all over, not quadratic: the same scan, with every read of the clock four
+    seconds after the last, must still be judged linear (F1 in HANDOFF-TASKS-INBOX-flaky-tests-2026-11-18)."""
+    import time as _t
+    ticks = iter(range(0, 10_000_000, 4))
+    monkeypatch.setattr(_t, "monotonic", lambda: float(next(ticks)))
+    test_long_adversarial_replies_are_scanned_in_linear_time()
 
 
 def test_ordinary_starting_and_setting_up_are_not_promises():
