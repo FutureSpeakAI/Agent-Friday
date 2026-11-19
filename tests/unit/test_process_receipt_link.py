@@ -51,3 +51,17 @@ def test_the_latest_receipt_stays_when_a_later_call_names_none():
     agent._orb_tool_trace("p-rcpt", "write_file", {"path": "x"}, "Wrote (receipt_id %s)." % rid, 12)
     agent._orb_tool_trace("p-rcpt", "read_file", {"path": "x"}, "contents", 12)
     assert _row()["receipt_id"] == rid
+
+
+def test_a_successful_call_that_only_quotes_an_older_real_receipt_links_nothing():
+    """A read_file of notes that mention a real receipt id wrote no receipt; the row must not claim it did."""
+    rid = _receipt()
+    agent._orb_tool_trace("p-rcpt", "read_file", {"path": "notes.txt"}, "notes: undo with %s please" % rid, 12)
+    assert _row()["receipt_id"] is None
+
+
+def test_a_call_to_the_same_tool_that_quotes_a_receipt_from_long_ago_links_nothing(monkeypatch):
+    rid = _receipt()
+    aj._MEM[rid]["at"] = "2020-01-01T00:00:00"
+    agent._orb_tool_trace("p-rcpt", "write_file", {"path": "x"}, "Wrote 1 chars (earlier receipt %s)." % rid, 12)
+    assert _row()["receipt_id"] is None
