@@ -71,6 +71,8 @@ SURFACE = {
     "balances": "reads only",
     "execute_receipt": "execute with its receipt; same refusal (test_execute_receipt_refuses_a_mint_and_changes_nothing)",
     "head": "reads only",
+    "balances_at": "reads only: balances as of one sequence (test_every_public_method_that_exists_leaves_the_supply_and_balances_alone)",
+    "receipt_at": "reads only: the stored receipt of one sequence (same test)",
     "recover": "recomputes and halts on a mismatch; never posts",
     "outbox_pending": "reads only",
     "outbox_delivered": "marks a notification delivered; touches no balance",
@@ -97,6 +99,12 @@ def test_every_public_method_that_exists_leaves_the_supply_and_balances_alone(jo
         assert journal.outbox_pending() == []
     if hasattr(journal, "head"):
         journal.head()
+    if hasattr(journal, "balances_at"):
+        assert sum(journal.balances_at(journal.head()).values()) == GENESIS
+        journal.balances_at(0)
+    if hasattr(journal, "receipt_at"):
+        assert journal.receipt_at(1) is not None
+        journal.receipt_at(999)
     assert _snapshot(journal) == before
     assert sum(journal.balances().values()) == GENESIS
 
