@@ -204,7 +204,8 @@ def test_the_expected_model_is_read_before_the_turn_runs_not_after(client, desk,
     assert last["expected"] == "claude-haiku-5-5" and last["substituted"] is True
 
 
-def test_a_pc_still_checking_its_local_models_is_a_retryable_409_not_a_refusal(client, desk, monkeypatch):
+def test_a_pc_still_checking_its_local_models_is_a_retryable_503_not_a_refusal(client, desk, monkeypatch):
+    monkeypatch.setattr(owner_turn, "SEAT_WAIT_S", 0.05)
     real = desk.api
 
     def api(method, path, body=None):
@@ -217,7 +218,7 @@ def test_a_pc_still_checking_its_local_models_is_a_retryable_409_not_a_refusal(c
     monkeypatch.setattr(owner_turn, "_api", api)
     r = switch(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
     j = r.get_json()
-    assert r.status_code == 409 and j["code"] == "seat_pending" and j["retry"] is True and "try again" in j["error"]
+    assert r.status_code == 503 and j["code"] == "seat_pending" and j["retry"] is True and "still checking" in j["error"]
 
 
 def test_a_chat_deleted_between_the_look_and_the_write_is_404(client, desk, monkeypatch):
