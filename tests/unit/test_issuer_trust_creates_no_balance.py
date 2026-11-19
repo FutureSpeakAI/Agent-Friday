@@ -4,8 +4,10 @@ Trust is not money. #847 showed the journal has no way to create units and #892 
 journal unchanged. This file covers the rest of the row: registering charters (this issuer and many others), signing
 and verifying heads and receipts, pinning heads, accepting and withdrawing an issuer, and reading a copy of the
 journal all leave the journal's rows and balances exactly as they were. The journal is compared as a full row dump of
-every table (not file bytes, which a read may legitimately touch), and the check is shown able to fail (Q2): a posting
-changes the dump, and a registry that minted into the journal would too.
+every table (not file bytes, which a read may legitimately touch). Honest about what bites today: the registry, the pins and
+the accepted list write their own files, so for them this is a regression guard that fails the day one of them is wired to
+the journal; only verifying (a duplicate execute) and reading a copy touch the journal itself. The comparison is shown able
+to fail (Q2): a real posting changes the dump.
 
 Limit, stated plainly: it covers the operations that exist in the tree today (registry, authority, pins, accepted list,
 read-only view); a new trust feature must add itself to ACTIONS below.
