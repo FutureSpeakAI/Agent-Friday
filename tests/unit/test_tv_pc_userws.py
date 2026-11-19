@@ -320,10 +320,14 @@ def test_input_that_makes_a_rule_itself_fail_is_a_422_not_a_server_error(client,
 
 
 def test_nesting_too_deep_for_the_validator_is_a_422(client, tmp_path):
-    deep = []
-    for _ in range(3000):
-        deep = [deep]
-    answer = save(client, device(), manifest(sections=[{"id": "b", "label": "B", "view": "board", "a2ui": deep}]))
+    # The nesting is written as text: encoding a 3000-deep list would hit the test's own recursion limit before the
+    # request was ever sent (it did, on the CI runners).
+    marker = "NESTING_GOES_HERE"
+    body = json.dumps({"base_rev": 0, "manifest": manifest(sections=[{"id": "b", "label": "B", "view": "board",
+                                                                      "a2ui": marker}])})
+    body = body.replace('"' + marker + '"', "[" * 3000 + "]" * 3000)
+    answer = client.open("/tv/v1/workspaces/user/garden", method="PUT", data=body, content_type="application/json",
+                         headers=auth(open_session(client, device())))
     assert answer.status_code in (413, 422) and files(tmp_path) == []
 
 
