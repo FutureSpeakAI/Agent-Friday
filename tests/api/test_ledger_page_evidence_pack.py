@@ -38,3 +38,12 @@ def test_a_press_built_from_the_pages_own_fields_gets_a_zip(client):
 
 def test_the_page_names_the_download_from_the_answer_and_says_what_failed():
     assert "Content-Disposition" in PAGE and "nothing was exported" in PAGE
+
+
+def test_the_page_reads_the_not_recorded_signal_and_says_so_instead_of_plain_saved():
+    # The route answers 200 with X-Friday-Export-Recorded: no when the ledger could not take the export line (a broken
+    # chain). The page must say that in words; a plain "Saved" there is an audit export that is not on the record.
+    assert "X-Friday-Export-Recorded" in PAGE
+    assert "could not be written to the record" in PAGE
+    saved = PAGE.index("'Saved ' + fileName(r)")
+    assert PAGE.rindex("X-Friday-Export-Recorded", 0, saved + 400) > PAGE.rindex("pressPack(body)", 0, saved)
