@@ -1012,6 +1012,17 @@ def _arm(chat_fixture_gmail, monkeypatch):
     return _pending()[0]["approval_id"]
 
 
+def test_arming_a_card_that_is_refused_says_why(chat, monkeypatch):
+    """F3: a Windows CI run failed here as `assert 'refused' == 'card'` with nothing to say why. When the safe
+    write is refused instead of carded, the failure must carry the whole answer, the reason included."""
+    from agent_friday.services import reflex_chat as rc
+    why = "WHOLE-REASON-" + "y" * 300 + "-END"
+    monkeypatch.setattr(rc, "_safe_write_first", lambda *a, **k: {"outcome": "refused", "reason": why})
+    with pytest.raises(AssertionError) as caught:
+        _arm(None, monkeypatch)
+    assert why in str(caught.value)
+
+
 def _typed_yes(cid, words="yes", decision="approve"):
     toks = [agent._CURRENT_SURFACE.set("chat"), agent._CURRENT_CONVERSATION.set(CONV),
             agent._CURRENT_OWNER_TEXT.set(words)]
