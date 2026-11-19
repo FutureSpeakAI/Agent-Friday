@@ -48,8 +48,8 @@ def _real_calls():
         ("create_calendar_event", {"title": CANARY, "description": CANARY, "notes": CANARY}),
         ("write_file", {"path": CANARY, "content": CANARY}),
     ):
-        verdict = action_gate.authorize(tool, args, {"surface": "test"})
-        action_gate.record_outcome(tool, getattr(verdict, "receipt", None) or {}, "ok", detail="done")
+        action_gate.authorize(tool, args, {"surface": "test"})
+        action_gate.record_outcome(tool, action_gate.LAST_RECEIPT.get(), "ok", detail="done")
 
 
 def test_real_gate_entries_reach_the_pack_and_none_of_them_carries_the_canary(client):
@@ -59,6 +59,8 @@ def test_real_gate_entries_reach_the_pack_and_none_of_them_carries_the_canary(cl
     files = _files(r)
     ledger = files["ledger.jsonl"].decode("utf-8")
     assert "send_email" in ledger and "write_file" in ledger, "the real entries must be in the pack, or this proves nothing"
+    outcomes = [json.loads(line) for line in ledger.splitlines() if '"outcome"' in line]
+    assert any((o.get("rec") or {}).get("decision_seq") for o in outcomes), "outcomes must link to their decision, as production does"
     leaked = sorted(name for name, data in files.items() if CANARY.encode() in data)
     assert leaked == [], f"owner text from real calls reached the pack: {leaked}"
 
@@ -70,7 +72,7 @@ def test_every_real_ledger_line_in_the_pack_has_only_labels_and_hashes_for_its_t
     for line in files["ledger.jsonl"].decode("utf-8").splitlines():
         entry = json.loads(line)
         for key, value in (entry.get("rec") or {}).items():
-            if isinstance(value, str) and len(value) > 120:
+            if isinstance(value, str) and (len(value) > 120 or CANARY in value):
                 free.append((entry["seq"], entry["kind"], key, len(value)))
     assert free == [], f"a real ledger line carries a long text field: {free[:5]}"
 
