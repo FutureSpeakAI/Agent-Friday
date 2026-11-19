@@ -71,7 +71,7 @@ def test_nothing_accepts_on_load_typing_or_a_timer(sources):
 
 def test_the_only_buttons_are_accept_and_withdraw_and_the_wording_is_the_plain_one(sources):
     body = component(sources["index.html"])
-    labels = re.findall(r"'btn'[^)]*?\}, '([^']+)'\)", body)
+    labels = re.findall(r"createElement\('button'[^\n]*, '([A-Z][^']*)'\)", body)
     assert sorted(labels) == ["Accept this issuer", "Withdraw"], labels
     assert "Test credits only" in body
     for word in ("Approve", "Pay ", "Buy", "Top up", "Send money", "Allow"):
