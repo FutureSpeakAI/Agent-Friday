@@ -271,7 +271,8 @@ class ProcessKokoro:
         return self.process is not None and self.process.poll() is None
 
     def _env(self) -> dict:
-        env = dict(os.environ)
+        from agent_friday.services.extension_security import without_secret_names
+        env = without_secret_names(dict(os.environ))
         src = str(Path(__file__).resolve().parents[2])
         env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS",

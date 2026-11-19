@@ -53,6 +53,8 @@ class Desk:
         self.convs = {"conv-old": {"id": "conv-old", "seat": None}}
         self.api_calls, self.turns = [], []
         self.refuse = None
+        self.superseded = False     # another window chose a seat meanwhile: the desktop writes nothing
+        self.pending = 0            # how many seat changes answer "still checking" before one settles
         self.answer = {"model": "bonsai2:27b", "seat": "local", "provider": "arbiter-local"}
         self.extra = {}
 
@@ -71,7 +73,13 @@ class Desk:
             r.d = {"conversation": dict(desk.convs[path.rsplit("/", 1)[1]])}
         else:
             cid = path.rsplit("/", 1)[1]
-            if desk.refuse:
+            if desk.superseded:
+                r.d = {"conversation": dict(desk.convs[cid]), "superseded": True}
+            elif desk.pending > 0:
+                desk.pending -= 1
+                r.d = {"conversation": dict(desk.convs[cid]), "seat_pending": True, "seat_change_id": "tok-1",
+                       "note": "Friday is still checking which local model is serving."}
+            elif desk.refuse:
                 r.d = {"conversation": dict(desk.convs[cid]), "note": desk.refuse}
             else:
                 desk.convs[cid]["seat"] = body["seat"]
@@ -151,6 +159,35 @@ def test_a_seat_the_pc_refuses_is_a_409_with_its_reason_and_no_turn_runs(client,
     desk.refuse = "bonsai2:27b is loading; one local model at a time on this machine"
     r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
     assert r.status_code == 409 and "one local model at a time" in r.get_data(as_text=True)
+    assert desk.turns == []
+
+
+def test_a_pc_still_checking_its_local_models_is_waited_for_not_refused(client, desk, monkeypatch):
+    monkeypatch.setattr(owner_turn, "SEAT_POLL_S", 0)
+    desk.pending = 3
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    assert r.status_code == 200 and len(desk.turns) == 1
+    patches = [c for c in desk.api_calls if c[0] == "PATCH"]
+    assert len(patches) == 4
+    assert patches[0][2] == {"seat": {"model": "bonsai2:27b"}}
+    assert all(c[2] == {"seat": {"model": "bonsai2:27b"}, "seat_change_id": "tok-1"} for c in patches[1:])
+
+
+def test_a_check_that_never_finishes_is_a_503_that_says_try_again_not_a_409_refusal(client, desk, monkeypatch):
+    monkeypatch.setattr(owner_turn, "SEAT_POLL_S", 0)
+    monkeypatch.setattr(owner_turn, "SEAT_WAIT_S", 0.05)
+    desk.pending = 10 ** 6
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 503 and "seat_pending" in body and "still checking" in body
+    assert desk.turns == []
+
+
+def test_a_seat_changed_on_the_pc_meanwhile_is_a_409_that_says_so(client, desk):
+    desk.superseded = True
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 409 and "seat_superseded" in body and "changed on this computer" in body
     assert desk.turns == []
 
 

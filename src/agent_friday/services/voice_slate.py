@@ -11,6 +11,9 @@ works, labelled ``latency_basis``; not a benchmark), and exactly what leaves the
 of an engine; where this PC cannot list an engine's voices without a network call (an ElevenLabs account's
 own voices) only the voice in use is listed and ``voices_complete`` says so.
 
+Enforced by tests/unit/test_voice_slate.py (``test_a_cloud_speech_engine_is_never_switched_here_the_owner_is_asked``,
+``test_local_only_refuses_a_cloud_switch_loudly``) and tests/unit/test_tv_voices_contract.py.
+
 ``plan_switch`` answers "can this conversation move to that engine and voice, and what would leave the
 house?" without changing anything. A cloud engine is never switched here: the owner's one question ("just
 this call, or always?", services/local_voice_readiness) is the only way voice moves to the cloud, so a cloud
@@ -20,7 +23,20 @@ engines bind at connect time takes effect on the next connection, and the plan s
 """
 from __future__ import annotations
 
+from enum import Enum
 from typing import Optional
+
+class Engine(str, Enum):
+    """The closed set of built-in voice engines (values of the ``voice_engine`` setting). Cloud synthesis
+    providers are ``cloud:<name>`` and come from services/cloud_voice."""
+    LOCAL = "local"
+    LOCAL_GPU = "local-gpu"
+    GEMINI = "gemini"
+    OPENAI = "openai"
+
+
+#: Cloud speech-to-speech engines: audio leaves the house, so only the owner's answer on the PC may select them.
+CLOUD_SPEECH = (Engine.GEMINI, Engine.OPENAI)
 
 UNKNOWN_ENGINE = "unknown_engine"
 UNKNOWN_VOICE = "unknown_voice"
@@ -142,25 +158,25 @@ def _engine_rows(cat: dict, settings: dict) -> list:
             "latency_class": latency, "latency_basis": "guide: " + why, "what_leaves": leaves,
             "voices": voices, "voices_complete": complete}, **extra))
 
-    e = by_id.get("local") or {}
+    e = by_id.get(Engine.LOCAL) or {}
     piper = [_voice(v, v, synthesizer="piper") for v in _piper_voices()]
     kok_ok = bool((tts.get("kokoro") or {}).get("available"))
     kokoro = [_voice(v, v, synthesizer="kokoro") for v in _kokoro_voices()] if kok_ok else []
-    add("local", e.get("label") or "Local CPU (Whisper + Piper)", "local", True, True, e.get("available"),
+    add(Engine.LOCAL.value, e.get("label") or "Local CPU (Whisper + Piper)", "local", True, True, e.get("available"),
         e.get("hint"), "medium", "runs on the CPU, a sentence takes a moment", LEAVES_NOTHING,
         piper + kokoro, complete=True, kind="local_pipeline")
-    g = by_id.get("local-gpu") or {}
-    add("local-gpu", g.get("label") or "Local GPU (NeMo)", "local", True, True, g.get("available"),
+    g = by_id.get(Engine.LOCAL_GPU) or {}
+    add(Engine.LOCAL_GPU.value, g.get("label") or "Local GPU (NeMo)", "local", True, True, g.get("available"),
         g.get("hint"), "fast", "runs on the GPU", LEAVES_NOTHING, kokoro, kind="local_pipeline")
-    gm = by_id.get("gemini") or {}
+    gm = by_id.get(Engine.GEMINI) or {}
     gv = _gemini_voices()
-    add("gemini", gm.get("label") or "Gemini Live (cloud)", "google", False, bool(gm.get("available")),
+    add(Engine.GEMINI.value, gm.get("label") or "Gemini Live (cloud)", "google", False, bool(gm.get("available")),
         gm.get("available"), gm.get("hint"), "fast", "speech to speech, no text hop",
         "Your microphone audio and the conversation go to Google (Gemini Live) while it is on.",
         [_voice(v, v, gender=gv[v]) for v in sorted(gv)])
     ok = bool(oa["key_present"])
-    oe = by_id.get("openai") or {}
-    add("openai", oe.get("label") or "OpenAI Realtime (cloud)", "openai", False, ok,
+    oe = by_id.get(Engine.OPENAI) or {}
+    add(Engine.OPENAI.value, oe.get("label") or "OpenAI Realtime (cloud)", "openai", False, ok,
         oe.get("available", ok), oe.get("hint"), "fast", "speech to speech, no text hop",
         "Your microphone audio and the conversation go to OpenAI (Realtime) while it is on.",
         [_voice(v, v, default=(v == oa["default"])) for v in OPENAI_VOICES], model=oa["model"],
@@ -181,12 +197,17 @@ def _engine_rows(cat: dict, settings: dict) -> list:
     return rows
 
 
+def _canonical(engine: str) -> str:
+    """Older spellings of an engine: ``auto`` has always meant local, ``gemini-live`` is Gemini."""
+    return {"auto": Engine.LOCAL.value, "gemini-live": Engine.GEMINI.value}.get(engine, engine)
+
+
 def slate() -> dict:
     """Every engine and voice, with the selected engine, the voice in use and the routing mode."""
     settings = _settings()
     cat = _catalog()
     sel = str(settings.get("voice_engine") or "local").strip().lower()
-    sel = "local" if sel == "auto" else ("gemini" if sel == "gemini-live" else sel)
+    sel = _canonical(sel)
     rows = _engine_rows(cat, settings)
     for r in rows:
         r["selected"] = r["id"] == sel
@@ -195,8 +216,7 @@ def slate() -> dict:
 
 
 def find(engine: str, rows: Optional[list] = None) -> Optional[dict]:
-    key = str(engine or "").strip().lower()
-    key = "gemini" if key == "gemini-live" else key
+    key = _canonical(str(engine or "").strip().lower())
     for r in (rows if rows is not None else slate()["engines"]):
         if r["id"] == key:
             return r
@@ -225,7 +245,7 @@ def plan_switch(engine: str, voice: Optional[str] = None, conversation_id: Optio
         if chosen is None and row["voices_complete"]:
             raise VoiceNotServable(row["id"], UNKNOWN_VOICE,
                                    "%s has no voice called %r." % (row["label"], voice), voice)
-    live = row["id"] in ("gemini", "openai")
+    live = row["id"] in CLOUD_SPEECH
     out = {"engine": row["id"], "voice": voice or None, "conversation_id": conversation_id,
            "local": row["local"], "latency_class": row["latency_class"], "what_leaves": row["what_leaves"],
            "takes_effect": "next_connection" if live else "next_reply",
