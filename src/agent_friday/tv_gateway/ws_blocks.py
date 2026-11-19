@@ -52,8 +52,12 @@ def page_ref(folder: str, target: str) -> Optional[str]:
     return "page:" + joined
 
 
+_BARE_URL = re.compile(r"\b(?:https?|ftp|file)://\S+|\bwww\.\S+", re.I)
+
+
 def _clean(text: str) -> str:
-    text = _TAG.sub("", _IMAGE.sub("", text))
+    """Plain words: images dropped, a link keeps only its label, markup and any URL left in the text removed."""
+    text = _BARE_URL.sub("", _TAG.sub("", _LINK.sub(lambda m: m.group(1), _IMAGE.sub("", text))))
     text = _WIKILINK.sub(lambda m: m.group(2) or m.group(1), text)
     return _EMPHASIS.sub("", text)
 
