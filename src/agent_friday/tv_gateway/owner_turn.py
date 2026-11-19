@@ -346,7 +346,7 @@ def is_voice_turn(dev: Optional[dict], body: dict) -> bool:
 def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
     """(conversation id, what was chosen) for a voice turn whose device picked no model.
 
-    Only when the chat has no seat of its own yet: a pick made at the PC or on the device is never
+    Only when the chat has no seat of its own yet and none from its project: a pick made at the PC or on the device is never
     overridden. The choice is the fastest listed cloud model (voice_reply.FAST_VOICE_PREFERENCE), bound
     the same validated way a picker binds one, and reported to the device as a recommendation it can
     change. A seat the PC will not bind, or no such model, leaves the chat on its own seat, quietly."""
@@ -444,8 +444,8 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     finally:
         _CTX.activity = None
     if response.status_code != 200:
-        raise turn.TurnRefused(503 if response.status_code >= 500 else response.status_code,
-                               "this computer did not take the turn", **_made(new_chat and bool(cid), cid))
+        # Always 503: a 401/423 from the desktop's own door is the PC's problem, not the phone's session failing.
+        raise turn.TurnRefused(503, "this computer did not take the turn", **_made(new_chat and bool(cid), cid))
     return _stream(response, dev, requested, cid, expected=expected, voice=voice, voice_default=default, asked=asked)
 
 

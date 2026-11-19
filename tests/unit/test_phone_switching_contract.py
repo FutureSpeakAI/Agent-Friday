@@ -279,3 +279,12 @@ def test_a_voice_turn_in_a_chat_that_inherits_its_projects_model_is_not_quietly_
     ask(client, phone(), voice=True, conversation_id="conv-old")
     assert desk.convs["conv-old"]["seat"] is None                          # the project's model stands
     assert not any(c[0] == "PATCH" for c in desk.api_calls)
+
+
+def test_a_desktop_that_answers_the_turn_with_a_4xx_is_503_to_the_phone_not_its_own_status(client, desk, monkeypatch):
+    class R:
+        status_code = 401
+        response = iter([])
+    monkeypatch.setattr(owner_turn, "_post", lambda text, cid: R())
+    r = ask(client, phone(), conversation_id="conv-old")
+    assert r.status_code == 503
