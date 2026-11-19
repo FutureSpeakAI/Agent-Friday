@@ -29,6 +29,7 @@ import type { Page } from '../fixtures';
 import type { Request } from '@playwright/test';
 import { BASE } from '../harness';
 import { settle } from '../helpers/settle';
+import { whoStalled } from '../helpers/who_stalled';
 
 type Section = { id: string; label: string };
 const SECTIONS: Section[] = [
@@ -343,8 +344,10 @@ test.describe('Settings walk', () => {
             await loc.blur();
           }
         } catch (e: any) {
+          // Say which side stopped answering, so a starved runner is told apart from a covered control (F7).
+          const stalled = await whoStalled(page, BASE, 8000);
           rows.push({ ...base, action: 'changed', posted: '', apiPersisted: '', uiPersisted: '', result: 'fail',
-            detail: 'the control did not respond: ' + String(e.message || e).split('\n')[0] });
+            detail: 'the control did not respond: ' + String(e.message || e).split('\n')[0] + stalled });
           continue;
         }
         // Controls that keep their value elsewhere (their own route) never POST /api/settings: give those a short look.
