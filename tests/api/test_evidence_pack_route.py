@@ -157,7 +157,7 @@ def test_a_real_approval_is_listed_by_id_and_its_text_never_reaches_the_pack(cli
 def test_grants_that_cannot_be_read_refuse_the_pack_rather_than_leave_them_out(client, monkeypatch):
     from agent_friday.governance import action_gate
 
-    def unreadable():
+    def unreadable(usage=True):    # both the full read and the uses-free fallback fail
         raise L.LedgerError("the ledger has a break to review")
     _seed()
     monkeypatch.setattr(action_gate, "ledger_grant_rows", unreadable)
@@ -187,4 +187,24 @@ def test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack(
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     files = _files(r)
     assert json.loads(files["manifest.json"])["ledger_verified"] is False
-    assert len(files["grants.jsonl"].decode().strip().splitlines()) == 1, "the grant is in the pack, usage unread"
+    rows = [json.loads(x) for x in files["grants.jsonl"].decode().strip().splitlines()]
+    assert len(rows) == 1 and rows[0]["usage_read"] is False, "the grant is in the pack and says its use was not read"
+    assert not {"used_count", "revoked_at", "first_used_at", "status"} & set(rows[0]), "nothing the ledger would say is claimed"
+    assert "Grants whose use was not read" in files["SUMMARY.md"].decode()
+
+
+def test_a_grant_whose_use_was_not_read_is_kept_even_when_its_own_dates_are_outside_the_range():
+    from agent_friday.services import evidence_pack as pack
+    old = {"grant_id": "g1", "created_at": 1, "expires_at": 2, "usage_read": False}
+    assert pack._in_range([old], pack.GRANT_TIMES, pack.Range(100, 200)) == [old]
+    assert pack._in_range([dict(old, usage_read=True)], pack.GRANT_TIMES, pack.Range(100, 200)) == []
+
+
+def test_a_grants_key_that_cannot_be_read_still_refuses_the_pack(client, monkeypatch):
+    _seed()
+    action_gate.create_grant(tools=["send_email"], scope="job-key", expires_in_seconds=600, max_uses=1)
+    monkeypatch.setattr(action_gate, "_governance_key", lambda: (_ for _ in ()).throw(RuntimeError("no key")))
+    before = len(L.entries(["export"]))
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 409 and r.get_json()["code"] == "pack_refused" and len(L.entries(["export"])) == before

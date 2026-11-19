@@ -62,7 +62,11 @@ def _grant_rows(action_gate) -> list:
             # A break stops the strict read of a grant's uses. The pack is for exactly that case, so it lists the
             # grants without their uses; the pack itself says the ledger did not verify. Held by
             # test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack.
-            return action_gate.ledger_grant_rows(usage=False)
+            rows = action_gate.ledger_grant_rows(usage=False)
+            # Nothing the ledger would have said about a grant (uses, first use, revocation) was read, so none of it
+            # is stated: each row keeps its identity and its own dates and says its use was not read.
+            keep = ("grant_id", "kind", "pattern", "created_at", "expires_at", "max_uses")
+            return [dict({k: r[k] for k in keep if k in r}, usage_read=False) for r in rows]
     except Exception as err:  # noqa: BLE001 - the key or the ledger could not be read
         raise pack.PackRefused("The grants could not be read (the ledger may have a break to review first), "
                                "so nothing was exported.") from err
