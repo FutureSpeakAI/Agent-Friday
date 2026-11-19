@@ -13,7 +13,7 @@ import time
 from typing import Optional
 
 from agent_friday.tv_gateway import ws_blocks, ws_knowledge
-from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable, desk_json, digest as _digest
+from agent_friday.tv_gateway.ws_adapter import Locked, Missing, Unavailable, desk_json, digest as _digest
 
 PREFIX = "person:"
 KIND = "person"
@@ -110,15 +110,15 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
     if person is None:
         raise Missing(ref)
     row = _row(m.group("key"), person, sensitivity)
-    page = _wiki_page(row["title"], sensitivity)
-    blocks, sources, more, relations = [], [], None, []
-    if page:
-        try:
+    page, blocks, sources, more, relations = None, [], [], None, []
+    try:                                           # the wiki is extra: if it fails, the record still shows
+        page = _wiki_page(row["title"], sensitivity)
+        if page:
             got = ws_knowledge.item(page, sensitivity, offset, limit)
             blocks, sources, more = got["blocks"], got["sources"], got["next"]
             relations = [{"rel": "wiki page", "ref": page, "title": got["title"], "kind": "page"}]
-        except (Missing, Unavailable):
-            pass                                   # the page vanished or could not be read: the record still shows
+    except (Missing, Unavailable, Locked):
+        pass                                       # the list or page vanished, could not be read, or is locked
     return {"rev": "n_" + _digest(ref, row["when"], row["title"], page), "ref": ref, "kind": KIND, "title": row["title"],
             "lives_on": "pc", "sensitivity": sensitivity, "taint": None, "meta": _meta(person),
             "blocks": blocks, "relations": relations, "sources": sources, "next": more, "truncated": False}
