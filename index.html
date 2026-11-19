@@ -70262,19 +70262,21 @@ function ExperienceApprovals() {
 // subject and nothing else: no id, text, style, children or label of its own. The slot asks the
 // server which pending cards belong to that subject (GET /api/liquid/approval-slot, ids only),
 // then draws THE SHELL'S OWN card body for each, from the same feed as the System list. A decision
-// goes through the card's own buttons (fridayDecideApproval), never through the slot. The frame
-// uses shell tokens only. Rules are held by tests/app/specs/approval_slot.spec.ts.
+// is made with the card's own buttons (fridayDecideApproval). The frame
+// uses shell tokens only. Held by scripts/check_approval_slot.cjs (which cards, order, failure, V12, tokens, a changed subject) and tests/app/specs/approval_slot.spec.ts (the page).
 function ApprovalSlot({ subject, kind }) {
   const items = useApprovalFeed();
-  const [ids, setIds] = useState(null);
+  const [got, setGot] = useState(null);
   const [busy, setBusy] = useState('');
+  const asked = (subject || '') + '|' + (kind || '');
+  const ids = got && got.asked === asked ? got.ids : null;
   const waiting = items.map(a => a.approval_id).join(',');
   useEffect(() => {
     let live = true;
     const q = 'subject=' + encodeURIComponent(subject || '') + (kind ? '&kind=' + encodeURIComponent(kind) : '');
     fetch('/api/liquid/approval-slot?' + q).then(r => r.json())
-      .then(d => { if (live) setIds(d && d.ok && Array.isArray(d.ids) ? d.ids : 'unavailable'); })
-      .catch(() => { if (live) setIds('unavailable'); });
+      .then(d => { if (live) setGot({ asked, ids: d && d.ok && Array.isArray(d.ids) ? d.ids : 'unavailable' }); })
+      .catch(() => { if (live) setGot({ asked, ids: 'unavailable' }); });
     return () => { live = false; };
   }, [subject, kind, waiting]);
   if (ids === null) return null;
