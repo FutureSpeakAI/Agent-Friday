@@ -2242,6 +2242,8 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
         # The run record says the work was never handed to a task: the gate
         # and the budget had run, nothing else. Nothing ran, so it can run
         # again; its unspent reservation is given back.
+        _recovery_receipt(goal, m, run, boundary="before its work started", may_have_acted=False,
+                          next="runs_again_when_due")
         _update_milestone(goal_id, milestone_id, status="pending", blocker=None, hold=None,
                           **_closed_run(goal_id, milestone_id))
         _release_goal_budget(goal_id, int(run.get("reserved_mψ") or 0))
@@ -2249,19 +2251,17 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
             goal, m, kind="milestone_interrupted_before_work", verdict=None, cost_mψ=0,
             note="Friday stopped before this milestone's work started; nothing ran, "
                  "so it runs again when it is next due."))
-        _recovery_receipt(goal, m, run, boundary="before its work started", may_have_acted=False,
-                          next="runs_again_when_due")
         return "pending"
     if not tid:
         # A run with no record (written before records existed) or one cut
         # off as it was being handed to its task: what it did is unknown.
+        _recovery_receipt(goal, m, run, boundary="handed to a task; the task is unknown",
+                          may_have_acted=True, next="not_repeated_owner_told")
         _block(goal_id, milestone_id, {
             "type": "interrupted", "task_id": None, "needs_confirmation": True,
             "task_resumable": False, "task_needs_confirmation": False,
             "text": _interrupted_words(name, {}, "missing")},
             note="interrupted by a restart; its task is unknown; nothing was re-run")
-        _recovery_receipt(goal, m, run, boundary="handed to a task; the task is unknown",
-                          may_have_acted=True, next="not_repeated_owner_told")
         return "blocked"
     tid, outcome, _result = _task_now(tid)
     if outcome in ("running", "done"):
@@ -2271,14 +2271,14 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
         _adopt(goal_id, milestone_id, tid, token, background=background)
         return "adopted"
     if outcome == "failed":
+        _recovery_receipt(goal, m, run, boundary="its task ended with an error", may_have_acted=True,
+                          next="not_repeated_owner_told")
         _block(goal_id, milestone_id, {
             "type": "run_failed", "task_id": tid, "needs_confirmation": True,
             "text": (f"Friday stopped while “{name}” was running, and its task then ended "
                      "with an error. Nothing was run again. Look at the task in Tasks; "
                      "start the milestone again only when you're ready.")},
             note="interrupted by a restart; its task ended with an error; nothing was re-run")
-        _recovery_receipt(goal, m, run, boundary="its task ended with an error", may_have_acted=True,
-                          next="not_repeated_owner_told")
         return "blocked"
     verdict: Dict[str, Any] = {}
     if outcome == "interrupted":
@@ -2287,16 +2287,25 @@ def _reconcile_milestone(goal_id: str, milestone_id: str, *, background: bool = 
             verdict = task_resume.resumability(tid) or {}
         except Exception:
             verdict = {}
+    # Written before the milestone is settled: a crash between the two loses the settle, which the next boot
+    # redoes, and never the receipt (recovery_receipts dedupes the repeat).
+    if outcome == "interrupted":
+        _recovery_receipt(goal, m, run, boundary="its task was interrupted", may_have_acted=True,
+                          next=("asks_the_owner_before_resuming" if verdict.get("needs_confirmation")
+                                else "may_resume_from_its_checkpoint" if verdict.get("resumable")
+                                else "stays_stopped_owner_told"))
+    elif outcome == "missing":
+        _recovery_receipt(goal, m, run, boundary="its task could not be found", may_have_acted=True,
+                          next="not_repeated_owner_told")
+    else:
+        _recovery_receipt(goal, m, run, boundary="its task was in a state this pass does not know (%s)"
+                          % str(outcome)[:40], may_have_acted=True, next="not_repeated_owner_told")
     _block(goal_id, milestone_id, {
         "type": "interrupted", "task_id": tid, "needs_confirmation": True,
         "task_resumable": bool(verdict.get("resumable")),
         "task_needs_confirmation": bool(verdict.get("needs_confirmation")),
         "text": _interrupted_words(name, verdict, outcome)},
         note="interrupted by a restart; waiting for the owner; nothing was re-run")
-    _recovery_receipt(goal, m, run, boundary="its task was interrupted", may_have_acted=True,
-                      next=("asks_the_owner_before_resuming" if verdict.get("needs_confirmation")
-                            else "may_resume_from_its_checkpoint" if verdict.get("resumable")
-                            else "stays_stopped_owner_told"))
     return "blocked"
 
 
