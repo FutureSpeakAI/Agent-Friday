@@ -133,6 +133,15 @@ def test_long_adversarial_replies_are_scanned_in_linear_time():
         assert _t.monotonic() - t0 < 3.0, chunk
 
 
+def test_the_linear_time_check_does_not_depend_on_how_fast_the_machine_is(monkeypatch):
+    """A busy shared runner is slow all over, not quadratic: the same scan, with every read of the clock four
+    seconds after the last, must still be judged linear (F1 in HANDOFF-TASKS-INBOX-flaky-tests-2026-11-18)."""
+    import time as _t
+    ticks = iter(range(0, 10_000_000, 4))
+    monkeypatch.setattr(_t, "monotonic", lambda: float(next(ticks)))
+    test_long_adversarial_replies_are_scanned_in_linear_time()
+
+
 def test_ordinary_starting_and_setting_up_are_not_promises():
     for text in ("I'm starting to think you're right.", "I'm setting up the comparison as a table below.",
                  "I'll launch into a summary.", "Let me kick off with the basics."):
