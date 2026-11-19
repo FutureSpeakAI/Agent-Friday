@@ -7,9 +7,14 @@ task record and ``_spawn_task`` are unchanged.
 
 The PC enforces the limits, not the device: nothing starts while everything is stopped, and at most
 ``DEVICE_JOB_CAP`` device-started tasks run at once.
+
+``origin`` is ``pc`` for the owner at this PC (not counted against the cap) or ``device:<id>``. A device never names
+its own origin: the gateway builds ``device:<id>`` from the id it authenticated (tv_gateway/pc_act), and a caller that
+may reach this route with the PC's token is the owner, who needs no job started for them to start one.
 """
 from __future__ import annotations
 
+import logging
 import re
 import threading
 
@@ -18,6 +23,7 @@ MAX_PROMPT = 4000
 NAME_CHARS = 60
 DEVICE_JOB_CAP = 3
 
+_log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _FROM_DEVICE: dict = {}
 
@@ -49,7 +55,7 @@ def start(prompt, origin, conversation_id=None) -> str:
         raise Refused(400, "write what the job should do")
     if len(prompt) > MAX_PROMPT:
         raise Refused(400, "that is longer than a job can be; keep it under %d characters" % MAX_PROMPT)
-    if not isinstance(origin, str) or not ORIGIN.match(origin):
+    if not isinstance(origin, str) or not ORIGIN.fullmatch(origin):
         raise Refused(400, "not an origin")
     if conversation_id is not None:
         from agent_friday.services import conversations
@@ -62,12 +68,20 @@ def start(prompt, origin, conversation_id=None) -> str:
     with _LOCK:
         if origin != "pc" and _running_from_devices() >= DEVICE_JOB_CAP:
             raise Refused(409, "%d jobs from your devices are already running; wait for one to finish" % DEVICE_JOB_CAP)
-        task_id = _spawn_task(_name(prompt), prompt, conversation_id=conversation_id, principal="owner")
+        try:
+            task_id = _spawn_task(_name(prompt), prompt, conversation_id=conversation_id, principal="owner")
+        except Exception as e:
+            _log.warning("task_start: the PC could not start a job: %s", type(e).__name__)
+            raise Refused(409, "the PC could not start that job right now") from e
         if not task_id:
             raise Refused(409, "the PC would not start that job right now")
         if origin != "pc":
             _FROM_DEVICE[task_id] = origin
-    task_journal.append(task_id, "decision", point="origin", chosen=origin,
-                        reason="started by the owner from %s" % ("this PC" if origin == "pc" else "a paired device"))
+    try:
+        task_journal.append(task_id, "decision", point="origin", chosen=origin,
+                            reason="started by the owner from %s" % ("this PC" if origin == "pc" else origin))
+    except Exception as e:
+        # The job is already running: a journal that will not take the note must not make it look failed.
+        _log.warning("task_start: could not journal the origin of %s: %s", task_id, type(e).__name__)
     return task_id
 
