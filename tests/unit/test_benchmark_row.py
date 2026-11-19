@@ -71,8 +71,8 @@ def test_relays_are_named_cloud_tags_name_ollama_com_and_unverified_local_rows_a
 
 
 def test_a_cloud_tag_row_is_cloud_everywhere_not_only_in_the_privacy_sentence():
-    assert ms._truly_local({"id": "gpt-oss:120b-cloud", "local": True, "provider": "ollama-local"}) is False
-    assert ms._truly_local({"id": "gemma4:e4b", "local": True, "provider": "no-such-provider"}) is True
+    assert ms.is_local({"id": "gpt-oss:120b-cloud", "local": True, "provider": "ollama-local"}) is False
+    assert ms.is_local({"id": "gemma4:e4b", "local": True, "provider": "no-such-provider"}) is True
 
 
 
@@ -96,3 +96,19 @@ def test_the_cold_load_estimate_comes_from_the_newest_row_that_has_one_and_other
     assert got["switch"]["expected_seconds"] == 20.5 and "2026-08-14" in got["switch"]["basis"]
     assert got["benchmark"]["num_ctx"] == 32768 and got["benchmark"]["vram_mib"] is None
     assert got["benchmark"]["tokens_per_second"] is None            # NaN never reaches a device
+
+
+def test_a_cloud_tag_model_is_blocked_in_local_only_mode_and_listed_cloud_to_the_phone(monkeypatch, tmp_path):
+    cat = {"roles": {"orchestrator": [{"id": "gpt-oss:120b-cloud"}]},
+           "models": [{"id": "gpt-oss:120b-cloud", "provider": "ollama-local", "provider_label": "Local (Ollama)",
+                       "roles": ["orchestrator"], "local": True, "available": True, "needs_key": False}]}
+    m = cat["models"][0]
+    monkeypatch.setattr(ms, "_catalog", lambda: cat)
+    monkeypatch.setattr(ms, "_settings", lambda: {"model_routing": {"mode": "local_only"}})
+    monkeypatch.setattr(ms, "_local_busy_reason", lambda mid: None)
+    monkeypatch.setattr(ms, "_live_local", lambda: set())
+    row = {r["id"]: r for r in ms.slate()["models"]}["gpt-oss:120b-cloud"]
+    assert row["local"] is False and row["can_serve"] is False and row["blocked"]["code"] == "local_only_mode"
+    from agent_friday.tv_gateway import models as gw
+    phone = {r["id"]: r for r in gw.rows(None, cat, {"model_routing": {"mode": "local_only"}})}["gpt-oss:120b-cloud"]
+    assert phone["kind"] == "cloud"

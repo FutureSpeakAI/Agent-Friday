@@ -94,7 +94,7 @@ def _blocked(m: dict, mode: str):
             return (NEEDS_KEY, "%s needs a %s key, and this PC has none. Add it in Settings > "
                     "Connections on the PC." % (mid, who))
         return (PROVIDER_OFF, "%s: %s is not available on this PC right now." % (mid, who))
-    if not m.get("local") and mode == "local_only":
+    if not is_local(m) and mode == "local_only":
         return (LOCAL_ONLY_MODE, "%s is a cloud model and this PC is set to Local only. Change "
                 "routing mode on the PC (Settings > Models) to use it." % mid)
     return None
@@ -184,7 +184,7 @@ def _descriptor(provider_id) -> Optional[dict]:
     return None
 
 
-def _truly_local(m: dict) -> bool:
+def is_local(m: dict) -> bool:
     """A row is local only if the catalog says so AND it is not an Ollama cloud tag AND, when its provider is
     known, that provider's own classification is local (a private base_url): the flag alone is not trusted."""
     if not m.get("local"):
@@ -204,10 +204,10 @@ def _truly_local(m: dict) -> bool:
 
 def _what_leaves(m: dict) -> str:
     """In words, what a chat on this model sends out of the house (the same idea as the voice slate's). Local only
-    when ``_truly_local``. An Ollama cloud tag names ollama.com, not the local daemon that relays it; a relay (a
+    when ``is_local``. An Ollama cloud tag names ollama.com, not the local daemon that relays it; a relay (a
     provider descriptor marked as an aggregator, e.g. OpenRouter, Hugging Face) is named with what it forwards
     to. Held by tests/unit/test_benchmark_row.py."""
-    if _truly_local(m):
+    if is_local(m):
         return LEAVES_NOTHING
     relayed = False
     try:
@@ -238,7 +238,7 @@ def _measured(model_id) -> Optional[dict]:
 
 
 def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
-    local = _truly_local(m)       # the one answer to "is it local": the flag, verified (cloud tag, private host)
+    local = is_local(m)       # the one answer to "is it local": the flag, verified (cloud tag, private host)
     out = {
         "id": m.get("id"), "label": m.get("label") or m.get("id"),
         "provider": m.get("provider"), "provider_label": m.get("provider_label"),
@@ -325,7 +325,7 @@ def why_cannot_serve(model_id: str) -> Optional[tuple]:
     blocked = _blocked(m, _routing_mode(_settings()))
     if blocked:
         return blocked
-    if m.get("local"):
+    if is_local(m):
         busy = _local_busy_reason(mid)
         if busy:
             return (LOCAL_BUSY, busy)

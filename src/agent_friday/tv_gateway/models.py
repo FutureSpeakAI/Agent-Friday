@@ -110,7 +110,8 @@ def rows(dev: Optional[dict] = None, cat: Optional[dict] = None, settings: Optio
             continue
         seen.add(mid)
         ok = m.get("available") is not False
-        local = bool(m.get("local"))
+        from agent_friday.services import model_slate
+        local = model_slate.is_local(m)       # the one verified answer (a cloud tag is not local)
         resident = m.get("resident")
         warm = bool(resident) if resident is not None else (True if (local and mid == selected and ok) else
                                                             (None if not local else False))
