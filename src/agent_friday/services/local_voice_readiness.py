@@ -60,6 +60,9 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent_friday.services.voice_engines import CLOUD_ENGINES, SWITCH_ENGINES
+from agent_friday.services.voice_engines import is_cloud as _is_cloud
+
 _log = logging.getLogger("friday.local_voice_readiness")
 
 WEEK_S = 7 * 24 * 3600.0
@@ -97,9 +100,6 @@ SWITCH_REASONS = {
     "local_voice_failed": "Local voice did not start",
     "your_choice": "Your choice",
 }
-CLOUD_ENGINES = ("gemini", "gemini-live", "openai")
-#: The cloud voices the one switch question can move voice to.
-SWITCH_ENGINES = ("gemini", "openai")
 
 _LOCK = threading.RLock()
 _RUN_LOCK = threading.Lock()
@@ -233,7 +233,7 @@ def why_cloud(*, engine: Optional[str] = None, settings: Optional[dict] = None,
     eng = str(engine or s.get("voice_engine") or "local").strip().lower()
     if not engine and str((s.get("model_routing") or {}).get("mode") or "").strip().lower() == "local_only":
         eng = "local"
-    if eng not in ("gemini", "gemini-live"):
+    if not _is_cloud(eng):
         return {"on_cloud": False, "reason": None, "text": "", "action": None}
     state = voice_state(snapshot)
     if state == CAPABLE:
@@ -572,7 +572,7 @@ def offer_card(settings: Optional[dict] = None) -> Optional[dict]:
     s = settings if settings is not None else _settings()
     if str(s.get(OFFER_KEY) or "") != OFFER_PENDING:
         return None
-    if str(s.get("voice_engine") or "local").strip().lower() not in ("gemini", "gemini-live"):
+    if not _is_cloud(s.get("voice_engine")):
         return None
     nums = measured_numbers()
     return {"title": "Local voice now runs well on this PC",
@@ -603,7 +603,7 @@ def maybe_offer_switch(snapshot: Optional[dict] = None) -> bool:
                 return False
             if _record(s):
                 return False        # a cloud choice was recorded: its own switch-back offer owns this
-            if str(s.get("voice_engine") or "local").strip().lower() not in ("gemini", "gemini-live"):
+            if not _is_cloud(s.get("voice_engine")):
                 return False
             if voice_state(snapshot) != CAPABLE:
                 return False
@@ -667,10 +667,6 @@ FLAP_READINGS = 2
 #: Reads the question and applies its answer as one step, so a card click and a spoken
 #: answer racing each other cannot both apply.
 _ANSWER_LOCK = threading.RLock()
-
-
-def _is_cloud(engine: Any) -> bool:
-    return str(engine or "").strip().lower() in CLOUD_ENGINES
 
 
 def _cloud_voice_connected() -> bool:
