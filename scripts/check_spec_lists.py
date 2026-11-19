@@ -25,10 +25,17 @@ REPO = Path(__file__).resolve().parent.parent
 SPEC_DIR = Path("tests/app/specs")
 WORKFLOW = Path(".github/workflows/tests.yml")
 EXEMPT = re.compile(r"//\s*ci-list:\s*exempt\s+(.+?)\s+until\s+(\d{4}-\d{2}-\d{2})\s*$")
+SPEC_NAME = re.compile(r"[A-Za-z0-9_.-]+\.spec\.ts")
+
+
+def named_by_workflow(text: str) -> set[str]:
+    """The spec file names the workflow's commands name: whole names, and not those that appear only in a
+    YAML comment (a line's text after its first ``#``)."""
+    return {name for line in text.splitlines() for name in SPEC_NAME.findall(line.split("#", 1)[0])}
 
 
 def offenders(root: Path, today: dt.date) -> list[str]:
-    workflow = (root / WORKFLOW).read_text(encoding="utf-8")
+    workflow = named_by_workflow((root / WORKFLOW).read_text(encoding="utf-8"))
     out = []
     for spec in sorted((root / SPEC_DIR).glob("*.spec.ts")):
         if spec.name in workflow:
@@ -42,8 +49,8 @@ def offenders(root: Path, today: dt.date) -> list[str]:
     return out
 
 
-def main(argv: list[str]) -> int:
-    bad = offenders(REPO, dt.date.today())
+def main(argv: list[str], root: Path = REPO, today: dt.date | None = None) -> int:
+    bad = offenders(root, today or dt.date.today())
     for line in bad:
         print("[spec-list] WARN  " + line)
     if not bad:
