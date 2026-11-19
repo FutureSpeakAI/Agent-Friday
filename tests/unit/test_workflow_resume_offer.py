@@ -89,6 +89,21 @@ def test_yes_starts_that_one_step_again_with_the_earlier_result_as_context(world
     assert call["task_id"] not in ("t0", "t1")
 
 
+def test_a_resumed_step_killed_again_raises_a_new_card_the_receipt_does_not_promise_in_vain(world):
+    """The receipt says the owner will be asked. After a yes and a second interruption at the SAME step the old
+    approved card used to be reused, so nobody was asked."""
+    _killed_at_step_two()
+    _boot()
+    approvals.decide(_cards()[0]["approval_id"], "approve")
+    agent.TASKS["t1"]["status"] = "cancelled"
+    _task("t2", 1, "interrupted", created=NOW + 50)          # the resumed step, killed again
+    rr._reset_for_tests()
+    assert _boot() == ["wfr_1"]
+    pending = [c for c in _cards() if c["status"] == "pending"]
+    assert len(pending) == 1 and "resume from step 2" in pending[0]["title"]
+    assert pending[0]["payload"]["task_id"] == "t2"
+
+
 def test_no_and_expiry_start_nothing(world):
     _killed_at_step_two()
     _boot()
