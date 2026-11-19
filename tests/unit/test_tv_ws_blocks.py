@@ -74,6 +74,16 @@ def test_html_and_images_are_dropped_from_text():
     assert p.blocks == [{"t": "para", "text": "Hello alert(1) world"}]
 
 
+def test_no_url_leaves_in_a_table_cell_a_bare_address_or_an_auto_link():
+    page = ("| Site | Note |\n| --- | --- |\n| [site](https://evil.example/x?t=SECRET) | see www.bare.example/p?k=1 |\n\n"
+            "para https://bare.example/p?token=Z and <https://auto.example/q> and <a href=\"https://h.example/\">the call</a>\n\n"
+            "# Head [h](https://head.example/?s=1)\n")
+    text = str(wb.parse(page).blocks)
+    for leak in ("http", "www", "SECRET", "token=Z", "k=1", "evil.example", "bare.example", "auto.example", "h.example"):
+        assert leak not in text, leak
+    assert "site" in text and "the call" in text and "Head h" in text          # the words stay, only the addresses go
+
+
 @pytest.mark.parametrize("target", ["/etc/passwd.md", "../../secret.md", "C:\\x\\y.md", "http://x/y.md",
                                     "../..", "notes.png", "mailto:a@b.c", "javascript:alert(1)"])
 def test_a_link_that_leaves_the_wiki_or_is_not_a_page_gives_no_ref(target):
