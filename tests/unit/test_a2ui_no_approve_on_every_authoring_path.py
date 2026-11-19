@@ -4,7 +4,7 @@ test_a2ui_profile.py runs the 75 hostile documents as a MODEL-authored proposal 
 come from Friday's composer or from the friday-liquid fence in Friday's own turn. This file runs the same shared
 fixture (tests/fixtures/a2ui/profile_cases_v1.json) on both of those authorships, and runs hostile BLOCKS through the
 composer itself, so no path that can put a view on screen can render an approve, pay, allow or spend control or
-reach a gate verb. Pure and offline: no gate, model, network or file beyond the fixture is touched.
+bind an action. Pure and offline: no gate, model, network or file beyond the fixture is touched.
 
 The limit, stated plainly: there is no code yet that cuts a friday-liquid fence out of a model turn, so the
 `friday_liquid` authorship is exercised by handing the validator and renderer the document directly. When the fence
@@ -37,14 +37,6 @@ def ctx(authorship, **kw):
     return prof.Context(subject=SUBJECT, verbs=VERBS.get, authorship=authorship, **kw)
 
 
-class Gate:
-    def __init__(self):
-        self.calls = []
-
-    def __call__(self, *args, **kwargs):
-        self.calls.append((args, kwargs))
-
-
 @pytest.mark.parametrize("authorship", AUTHORSHIPS)
 @pytest.mark.parametrize("document,rule", CASES)
 def test_every_hostile_document_is_rejected_whole_on_the_composer_and_the_fence_path_too(document, rule, authorship):
@@ -56,14 +48,13 @@ def test_every_hostile_document_is_rejected_whole_on_the_composer_and_the_fence_
 @pytest.mark.parametrize("authorship", AUTHORSHIPS)
 @pytest.mark.parametrize("document,rule", CASES)
 def test_a_rejected_document_draws_nothing_it_could_control_whoever_authored_it(document, rule, authorship):
-    gate, receipts = Gate(), []
+    receipts = []
     r = rend.render(copy.deepcopy(document), ctx(authorship), receipt_sink=receipts.append,
                     pending_approvals=lambda s, k: [])
     assert not r.ok and r.receipt["rule"] == rule and receipts == [r.receipt]
     for banned in MARKUP_THE_DOCUMENT_MUST_NOT_CONTROL:
         assert banned not in r.html, banned
-    assert r.permitted_actions == {}
-    assert gate.calls == []
+    assert r.permitted_actions == {}, "a rejected document binds no verb, so nothing can be driven"
 
 
 def test_the_fixture_is_the_full_hostile_set_so_this_file_cannot_quietly_run_fewer_documents():
