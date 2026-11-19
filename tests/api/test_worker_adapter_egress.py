@@ -19,6 +19,12 @@ from agent_friday.services import egress_gate
 from agent_friday.services.worker_adapters import ollama_adapter
 
 
+def _is_the_adapters(req) -> bool:
+    """urlopen is replaced for the whole process, so a call from another thread reaches the stub too; only a
+    request to the Ollama relay is the adapter's (F5)."""
+    return str(getattr(req, "full_url", req)).startswith(ollama_adapter._OLLAMA_BASE)
+
+
 class _Task:
     def __init__(self, prompt="summarise this", budget_tokens=256,
                  deadline_seconds=30, task_id="t1"):
@@ -55,6 +61,8 @@ def test_adapter_routes_every_payload_through_the_gate(monkeypatch):
                                "eval_count": 4}).encode()
 
     def _urlopen(req, *a, **k):
+        if not _is_the_adapters(req):
+            raise OSError("not the adapter's request")
         sent["data"] = json.loads(req.data.decode())
         return _Resp()
 
@@ -81,6 +89,8 @@ def test_a_blocking_gate_stops_the_send(monkeypatch):
     reached = {"network": False}
 
     def _urlopen(req, *a, **k):
+        if not _is_the_adapters(req):
+            raise OSError("not the adapter's request")
         reached["network"] = True
         raise AssertionError("payload left the device despite a blocking gate")
 
