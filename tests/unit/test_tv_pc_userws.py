@@ -320,8 +320,7 @@ def test_input_that_makes_a_rule_itself_fail_is_a_422_not_a_server_error(client,
 
 
 def test_nesting_too_deep_for_the_validator_is_a_422(client, tmp_path):
-    # The nesting is written as text: encoding a 3000-deep list would hit the test's own recursion limit before the
-    # request was ever sent (it did, on the CI runners).
+    # The nesting is written as text: encoding a 3000-deep list would hit the test's own recursion limit.
     marker = "NESTING_GOES_HERE"
     body = json.dumps({"base_rev": 0, "manifest": manifest(sections=[{"id": "b", "label": "B", "view": "board",
                                                                       "a2ui": marker}])})
@@ -329,6 +328,23 @@ def test_nesting_too_deep_for_the_validator_is_a_422(client, tmp_path):
     answer = client.open("/tv/v1/workspaces/user/garden", method="PUT", data=body, content_type="application/json",
                          headers=auth(open_session(client, device())))
     assert answer.status_code in (413, 422) and files(tmp_path) == []
+
+
+@pytest.mark.parametrize("method, route", [("PUT", ""), ("POST", "/validate"), ("DELETE", ""), ("POST", "/rollback")])
+def test_a_body_the_json_parser_cannot_nest_deep_enough_to_read_is_a_422_on_every_route(
+        client, tmp_path, monkeypatch, method, route):
+    """Older Pythons raise RecursionError from json.loads on a deeply nested body; it must never be a server error.
+    The parser is made to raise it here so the rule holds on every Python the tests run on."""
+    from flask.json.provider import DefaultJSONProvider
+
+    def too_deep(self, text, **options):
+        raise RecursionError("maximum recursion depth exceeded while decoding a JSON document")
+    tv = device()
+    session = auth(open_session(client, tv))
+    monkeypatch.setattr(DefaultJSONProvider, "loads", too_deep)
+    answer = client.open("/tv/v1/workspaces/user/garden" + route, method=method, data="{}",
+                         content_type="application/json", headers=session)
+    assert answer.status_code == 422 and json.loads(answer.get_data())["rule"] and files(tmp_path) == []
 
 
 @pytest.mark.parametrize("text", ["line\nbreak", "tab\there", "zero​width", "bidi‮evil", "nul\x00byte", "bom﻿"])

@@ -28,7 +28,7 @@ import threading
 import unicodedata
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from flask import Flask, Response, g, jsonify, request
 
@@ -220,6 +220,15 @@ def _checked(workspace_id: str) -> Optional[Response]:
     return None if _good_id(workspace_id) else refuse(400, "not a workspace id", code="bad_id")
 
 
+def _json_body() -> Tuple[dict, Optional[Response]]:
+    """The request's JSON object and no refusal, or an empty one and a 422 when it is nested deeper than the JSON parser
+    can read (the parser raises RecursionError on older Pythons, which would otherwise be a server error)."""
+    try:
+        return request.get_json(silent=True) or {}, None
+    except RecursionError:
+        return {}, _fault_answer(Fault("nested no deeper than the parser reads", "$"))
+
+
 def _too_big() -> Optional[Response]:
     """A body far over the manifest cap is refused before it is parsed."""
     if (request.content_length or 0) > MAX_BYTES + 4096:
@@ -289,8 +298,11 @@ def register(app: Flask) -> None:
         too_big = _too_big()
         if too_big is not None:
             return too_big
+        body, too_deep = _json_body()
+        if too_deep is not None:
+            return too_deep
         try:
-            validate((request.get_json(silent=True) or {}).get("manifest"), wid)
+            validate(body.get("manifest"), wid)
         except Fault as error:
             return _fault_answer(error)
         return jsonify({"ok": True, "valid": True})
@@ -306,7 +318,9 @@ def register(app: Flask) -> None:
         too_big = _too_big()
         if too_big is not None:
             return too_big
-        body = request.get_json(silent=True) or {}
+        body, too_deep = _json_body()
+        if too_deep is not None:
+            return too_deep
         base_rev = body.get("base_rev")
         if not isinstance(base_rev, int) or isinstance(base_rev, bool) or base_rev < 0:
             return refuse(400, "send {base_rev, manifest}", code="bad_request")
@@ -351,7 +365,10 @@ def register(app: Flask) -> None:
         bad = _checked(wid)
         if bad is not None:
             return bad
-        base_rev = (request.get_json(silent=True) or {}).get("base_rev")
+        body, too_deep = _json_body()
+        if too_deep is not None:
+            return too_deep
+        base_rev = body.get("base_rev")
         if base_rev is not None and (not isinstance(base_rev, int) or isinstance(base_rev, bool) or base_rev < 0):
             return refuse(400, "base_rev is a whole number", code="bad_request")
         with _LOCK:
@@ -434,7 +451,9 @@ def register(app: Flask) -> None:
         bad = _checked(wid)
         if bad is not None:
             return bad
-        body = request.get_json(silent=True) or {}
+        body, too_deep = _json_body()
+        if too_deep is not None:
+            return too_deep
         target, base_rev = body.get("rev"), body.get("base_rev")
         if not all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in (target, base_rev)):
             return refuse(400, "send {rev, base_rev}", code="bad_request")
