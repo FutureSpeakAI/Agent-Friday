@@ -298,9 +298,10 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     resp = _api("PATCH", "/api/conversations/" + cid, {"seat": seat})
     status = getattr(resp, "status_code", 200)
     if status == 404:
-        raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
+        raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation", **_made(started, cid))
     if status >= 500 or status in (401, 403):
-        raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable")
+        raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable",
+                               **_made(started, cid))
     d = _json(resp)
     conv = d.get("conversation") or {}
     if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
@@ -359,8 +360,8 @@ def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
         if not row:
             return cid, None
         cid = bind_seat(cid, row["id"])
-    except turn.TurnRefused:
-        return cid, None
+    except turn.TurnRefused as e:
+        return e.extra.get("conversation_id") or cid, None      # keep a chat this call just made: no orphan, no 2nd chat
     except Exception:
         return cid, None
     return cid, {"model": row["id"], "label": row.get("name") or row["id"], "recommended": True,

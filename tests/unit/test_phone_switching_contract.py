@@ -234,3 +234,24 @@ def test_a_refused_new_chat_hands_back_its_id_so_a_retry_reuses_it_not_a_second_
     ok = switch(client, dev, model="bonsai2:27b", conversation_id=j["conversation_id"]).get_json()
     assert ok["ok"] and ok["conversation_id"] == "conv-new"
     assert sum(1 for c in desk.api_calls if c[0] == "POST") == posts          # no second chat created
+
+
+def test_a_failed_write_after_creating_a_chat_still_hands_back_its_id(client, desk, monkeypatch):
+    real = desk.api
+
+    def api(method, path, body=None):
+        r = real(method, path, body)
+        if method == "PATCH":
+            r.status_code, r.d = 500, {}
+        return r
+    monkeypatch.setattr(owner_turn, "_api", api)
+    j = switch(client, phone(), model="bonsai2:27b").get_json()
+    assert j["code"] == "chat_unavailable" and j["conversation_id"] == "conv-new"
+
+
+def test_a_voice_turn_whose_default_model_is_refused_runs_in_the_chat_it_created_not_a_second_one(client, desk):
+    desk.refuse = "still checking"
+    r = ask(client, phone(), voice=True, conversation_id=None)
+    assert r.status_code == 200
+    assert sum(1 for c in desk.api_calls if c[0] == "POST") == 1          # one chat, not a spare plus another
+    assert desk.turns[0]["conversation_id"] == "conv-new"
