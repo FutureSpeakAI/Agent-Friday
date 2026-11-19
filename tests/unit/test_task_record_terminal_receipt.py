@@ -154,6 +154,21 @@ def test_waiting_on_a_card_is_not_the_ending(isolated):
     assert _receipt("t-end-5")["status"] == "declined"
 
 
+@pytest.fixture
+def _leaked_settler():
+    """What an earlier test in the same worker can leave behind: the receipt settler marked active. While it is
+    marked, a status change only queues its task for 'the settler', and nobody settles it (F6, F12, F15)."""
+    with agent._SETTLE_GUARD:
+        agent._SETTLER["active"] = True
+    yield
+
+
+def test_a_settler_left_active_by_an_earlier_test_does_not_swallow_this_tests_ending(_leaked_settler, isolated):
+    _running("t-end-leak")
+    agent._task_set("t-end-leak", status="complete", ended=3.0)
+    assert _receipt("t-end-leak")["status"] == "complete"
+
+
 def test_a_resumed_task_gets_a_receipt_for_its_new_ending(isolated):
     _running("t-end-6")
     agent._task_set("t-end-6", status="failed", ended=3.0)
