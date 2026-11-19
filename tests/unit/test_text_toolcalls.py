@@ -154,11 +154,20 @@ def test_long_adversarial_replies_are_scanned_in_linear_time():
         assert _grows_linearly(make_run), chunk
 
 
+def _cost_counter():
+    """A clock that reads the work done instead of the time passed, so the check can be tried on a known cost."""
+    work = [0]
+    return work, (lambda: float(work[0]))
+
+
 def test_the_growth_check_still_catches_a_scan_that_is_quadratic():
-    def make_run(n):
-        n = n // 10        # keep the deliberately slow case short
-        return lambda: sum(1 for _ in range(n) for _ in range(n // 40))
-    assert _grows_linearly(make_run) is False
+    work, clock = _cost_counter()
+    assert _grows_linearly(lambda n: (lambda: work.__setitem__(0, work[0] + n * n)), clock=clock) is False
+
+
+def test_the_growth_check_passes_a_scan_that_is_linear():
+    work, clock = _cost_counter()
+    assert _grows_linearly(lambda n: (lambda: work.__setitem__(0, work[0] + n)), clock=clock) is True
 
 
 def test_the_linear_time_check_does_not_depend_on_how_fast_the_machine_is(monkeypatch):
