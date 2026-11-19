@@ -197,6 +197,47 @@ def test_a_stalled_thread_still_tries_a_few_times_before_it_gives_up(owned, monk
     assert core._read_settings_file()["agent_name"] == OWNER_NAME
 
 
+def test_a_stalled_thread_gives_up_only_after_the_minimum_number_of_looks(owned, monkeypatch):
+    """The minimum is a number of looks, not just 'more than one': three sharing violations in a row on a stalled
+    thread are still retried, and the fourth look reads the file."""
+    import time as real_time
+
+    class _JumpyClock:
+        def __init__(self):
+            self.now = 0.0
+
+        def monotonic(self):
+            self.now += 5.0
+            return self.now
+
+        def sleep(self, s):
+            pass
+
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+    monkeypatch.setattr(core, "_time", _JumpyClock())
+    _fail_reads(monkeypatch, times=3)
+    assert core._read_settings_file()["agent_name"] == OWNER_NAME
+
+
+def test_a_read_asked_to_make_one_attempt_makes_one(owned, monkeypatch):
+    """The degraded path asks for retry_s=0.0, 'one attempt'; the minimum number of looks must not override it."""
+    reads = {"n": 0}
+    real = core.Path.read_text
+
+    def read_text(self, *a, **k):
+        if self == core.SETTINGS_FILE:
+            reads["n"] += 1
+            raise _sharing_violation()
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(core.Path, "read_text", read_text)
+    with pytest.raises(PermissionError):
+        core._read_settings_file(retry_s=0.0)
+    assert reads["n"] == 1
+
+
 def test_a_save_of_a_failed_read_does_not_overwrite_the_file(owned, monkeypatch):
     _forget_last_good(monkeypatch)
     s = _load_while_unreadable(monkeypatch)
