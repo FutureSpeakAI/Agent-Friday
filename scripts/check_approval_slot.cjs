@@ -46,6 +46,33 @@ async function render(src, props, feed, answer) {
   cursor = 0;
   return { out: component(props), asked };
 }
+// One mounted slot whose props change: the state survives, the second answer is held back.
+async function renderChange(src, first, second, feed, firstAnswer) {
+  const effects = [];
+  const state = [];
+  let cursor = 0;
+  let answer = firstAnswer;
+  const env = {
+    React: { createElement: (type, p, ...children) => ({ type, props: p || {}, children: children.flat() }) },
+    useState: (init) => { const i = cursor++; if (!(i in state)) state[i] = init; return [state[i], (v) => { state[i] = v; }]; },
+    useEffect: (fn) => { effects.push(fn); },
+    useApprovalFeed: () => feed,
+    fetch: () => answer(),
+    decide: () => Promise.resolve(),
+  };
+  const component = load(src, env);
+  component(first);
+  for (const fn of effects.splice(0)) fn();
+  await new Promise((r) => setTimeout(r, 0));
+  cursor = 0;
+  component(first);
+  answer = () => new Promise(() => {});
+  cursor = 0;
+  component(second);
+  for (const fn of effects.splice(0)) fn();
+  cursor = 0;
+  return component(second);
+}
 const ok = (body) => () => Promise.resolve({ json: () => Promise.resolve(body) });
 const card = (id) => ({ approval_id: id, title: 'T ' + id });
 
@@ -78,6 +105,12 @@ const card = (id) => ({ approval_id: id, title: 'T ' + id });
   // Still asking: nothing yet, so a slow answer never flashes "nothing is waiting".
   r = await render(html, { subject: 'crew:c1' }, [card('a')], () => new Promise(() => {}));
   assert.equal(r.out, null);
+
+  // A changed subject never shows the previous subject's cards while its own answer is still out.
+  let out = await renderChange(html, { subject: 'crew:a' }, { subject: 'crew:b' }, [card('A1'), card('B1')], ok({ ok: true, ids: ['A1'] }));
+  assert.equal(out, null, 'the slot for crew:b must not hold the card of crew:a');
+  out = await renderChange(html, { subject: 'crew:a', kind: 'x' }, { subject: 'crew:a', kind: 'y' }, [card('A1')], ok({ ok: true, ids: ['A1'] }));
+  assert.equal(out, null, 'a changed kind is a different ask too');
 
   // The document's own extras never reach the output (V12): no id, text, style, children or label.
   r = await render(html, { subject: 'crew:c1', id: 'x', className: 'evil', style: { color: 'red' }, children: 'hi', label: 'Approve all', 'aria-label': 'Approve' },
