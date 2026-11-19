@@ -166,7 +166,7 @@
     note.textContent = 'Making the pack…';
     pressPack(body).then(r => (r.status === 403 ? refreshDesk().then(() => pressPack(body)) : r))
       .then(r => r.ok
-        ? r.blob().then(b => { saveBlob(b, fileName(r)); note.textContent = 'Saved ' + fileName(r) + ' to your downloads. It never left this PC.'; })
+        ? r.blob().then(b => { saveBlob(b, fileName(r)); note.textContent = r.headers.get('X-Friday-Export-Recorded') === 'no' ? 'Saved ' + fileName(r) + ' to your downloads, but this export could not be written to the record, and the ledger it was made from did not verify. Check the ledger integrity first.' : 'Saved ' + fileName(r) + ' to your downloads. It never left this PC.'; })
         : r.json().catch(() => ({})).then(d => { note.textContent = d.error || 'The evidence pack could not be made; nothing was exported.'; }))
       .catch(() => { note.textContent = 'The evidence pack could not be made; nothing was exported.'; })
       .then(() => { go.disabled = false; });
