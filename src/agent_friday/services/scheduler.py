@@ -2510,8 +2510,9 @@ def dispatch(rec, *, manual=False, require_enabled=False):
             ended = _time.time()
             try:
                 _patch_record(sid, in_flight=False)
-            except Exception:
-                pass
+            except Exception as e:
+                # If the mark stays, the next start calls this finished run interrupted: say so now.
+                _log.warning("scheduler: could not clear the in-flight mark of %s: %s", sid, type(e).__name__)
             _append_run({
                 "id": sid, "run_id": run_id, "name": rec.get("name"),
                 "started": started, "ended": ended,
@@ -3285,14 +3286,18 @@ def recover_interrupted_runs() -> int:
     written = 0
     try:
         from agent_friday.services import recovery_receipts
-        for rec in _read_store():
-            if rec.get("in_flight") is not True:
-                continue
+        records = [r for r in _read_store() if r.get("in_flight") is True]
+    except Exception as e:
+        _log.warning("interrupted scheduled runs were not recorded: %s", e)
+        return written
+    for rec in records:
+        # One record that will not take its receipt or its clear must not leave the others unrecorded.
+        try:
             if recovery_receipts.schedule_interrupted(rec):
                 written += 1
             _patch_record(rec.get("id"), in_flight=False)
-    except Exception as e:
-        _log.warning("interrupted scheduled runs were not recorded: %s", e)
+        except Exception as e:
+            _log.warning("an interrupted scheduled run (%s) was not fully recorded: %s", rec.get("id"), e)
     return written
 
 
