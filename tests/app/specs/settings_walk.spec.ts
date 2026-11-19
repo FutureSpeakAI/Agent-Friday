@@ -30,6 +30,7 @@ import type { Request } from '@playwright/test';
 import { BASE } from '../harness';
 import { settle } from '../helpers/settle';
 import { whoStalled } from '../helpers/who_stalled';
+import { quietPage } from '../helpers/quiet_page';
 
 type Section = { id: string; label: string };
 const SECTIONS: Section[] = [
@@ -246,6 +247,8 @@ test.describe('Settings walk', () => {
     // Every control in every section, including Models (~870 rows), each saved, read back and reloaded:
     // about 6 minutes on a fast PC and two to three times that on a 4-core CI runner.
     test.setTimeout(2_400_000);
+    // The walk checks that controls keep their values, not the 3D scene, which starves a small runner (F7).
+    await quietPage(page);
     const forbidden: string[] = [];
     const external: string[] = [];
     await page.route('**/*', route => {
