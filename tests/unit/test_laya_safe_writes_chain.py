@@ -306,7 +306,7 @@ def test_n6_the_chat_sealed_line_carries_a_row_sample(chat, gmail, monkeypatch):
     Page(monkeypatch)
     out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
                                turn_id="t-1", authenticated=True, local=True)
-    assert out["outcome"] == "card"
+    assert out["outcome"] == "card", repr(out)
     assert "Subject" not in out["reply"] and "Sender" not in out["reply"] and "@" not in out["reply"]
     assert "archive 3 conversations" in out["reply"] and "Nothing changes until you press Approve on it" in out["reply"]
     assert "@" not in str(out["tool_trace"]), "what the chat history keeps (and a later cloud turn reads) has no address"
@@ -1008,7 +1008,7 @@ def _arm(chat_fixture_gmail, monkeypatch):
     Page(monkeypatch)
     out = rc._safe_write_first("archive these", {"source": rc.PAGE_SOURCE}, session_id="s1", conversation_id=CONV,
                                turn_id="t-1", authenticated=True, local=True)
-    assert out["outcome"] == "card"
+    assert out["outcome"] == "card", repr(out)
     return _pending()[0]["approval_id"]
 
 
