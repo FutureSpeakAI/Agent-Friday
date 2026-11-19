@@ -80,13 +80,30 @@ def test_unrelated_modules_and_lookalike_names_are_not_flagged(tmp_path):
     assert _load().run(services) == []
 
 
+def test_a_third_party_name_that_happens_to_be_a_money_or_resource_word_is_not_ours(tmp_path):
+    services = _tree(tmp_path, {
+        "resource_measure.py": "from numpy import economy\nimport somelib.exchange\nfrom somelib import issuer_journal\n",
+        "economy.py": "from otherlib import resource_vector\n",
+    })
+    assert _load().run(services) == []
+
+
+def test_each_finding_says_how_to_fix_it(tmp_path):
+    services = _tree(tmp_path, {"resource_vector.py": "import agent_friday.services.issuer_journal\n"})
+    done = subprocess.run([sys.executable, str(SCRIPT), str(services)], capture_output=True, text=True, timeout=60)
+    assert "resource and money modules may not import each other" in done.stdout
+
+
 def test_the_exit_code_is_one_with_a_line_per_finding(tmp_path):
     services = _tree(tmp_path, {"resource_vector.py": "import agent_friday.services.issuer_journal\n"})
     done = subprocess.run([sys.executable, str(SCRIPT), str(services)], capture_output=True, text=True, timeout=60)
     assert done.returncode == 1
-    assert done.stdout.strip().splitlines() == ["resource_vector.py: imports issuer_journal"]
+    assert done.stdout.strip().splitlines()[0] == "resource_vector.py: imports issuer_journal (resource and money modules may not import each other; pass the value in, do not import the module)"
 
 
 def test_ci_runs_the_script():
     workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    assert "python scripts/check_resource_money_imports.py" in workflow
+    steps = [line.strip() for line in workflow.splitlines()]
+    assert "run: python scripts/check_resource_money_imports.py" in steps
+    at = steps.index("run: python scripts/check_resource_money_imports.py")
+    assert not steps[at - 1].startswith("#") and not any(l.startswith("if:") for l in steps[at - 2:at])

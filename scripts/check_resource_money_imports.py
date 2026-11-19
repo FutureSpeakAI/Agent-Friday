@@ -15,19 +15,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ROOT / "src" / "agent_friday" / "services"
 RESOURCE = frozenset({"resource_vector", "resource_measure"})
+HINT = "resource and money modules may not import each other; pass the value in, do not import the module"
 MONEY = frozenset({"issuer_journal", "issuer_registry", "stage_escrow", "exchange", "economy", "journal_commitment"})
 
 
 def imported_names(source: str) -> set:
-    """Every dotted-path component of every module an import statement names, and every imported name."""
+    """Every dotted-path component of every module of OURS an import statement names, and every name imported from it.
+    Ours means a relative import or a path starting at agent_friday; `from numpy import economy` is not ours."""
     found = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                found.update(alias.name.split("."))
+                if alias.name.split(".")[0] == "agent_friday":
+                    found.update(alias.name.split("."))
         elif isinstance(node, ast.ImportFrom):
-            found.update((node.module or "").split("."))
-            found.update(alias.name for alias in node.names)
+            module = node.module or ""
+            if node.level > 0 or module.split(".")[0] == "agent_friday":
+                found.update(module.split("."))
+                found.update(alias.name for alias in node.names)
     found.discard("")
     return found
 
@@ -52,7 +57,7 @@ def run(services: Path = SERVICES) -> list:
         other = MONEY if side == "resource" else RESOURCE
         rel = path.relative_to(services).as_posix()
         for name in sorted(imported_names(path.read_text(encoding="utf-8-sig")) & other):
-            findings.append(f"{rel}: imports {name}")
+            findings.append(f"{rel}: imports {name} ({HINT})")
     return findings
 
 
