@@ -79,6 +79,14 @@ def test_a_stale_feed_answers_now_and_refreshes_behind(monkeypatch):
     assert calls and ne.news_items_fast(limit_per=8)[0]["title"].startswith("new")
 
 
+def test_the_fast_feed_check_does_not_depend_on_how_fast_the_machine_is(monkeypatch):
+    """F13: the check below used a 0.5 s stopwatch and failed a busy Windows runner (5.85 s). A clock that jumps ten
+    seconds on every read is a very slow machine, not a slow tool; the tool must still be judged fast."""
+    ticks = iter(range(0, 10_000_000, 10))
+    monkeypatch.setattr(time, "time", lambda: float(next(ticks)))
+    test_the_search_news_tool_uses_the_fast_feed(monkeypatch)
+
+
 def test_the_search_news_tool_uses_the_fast_feed(monkeypatch):
     from agent_friday.services import agent
     monkeypatch.setattr(ne, "_fetch_news_items",
