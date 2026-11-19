@@ -70,6 +70,17 @@ def _handler(monkeypatch):
     return calls
 
 
+def test_a_hold_instead_of_a_question_says_its_whole_reason(monkeypatch):
+    """When the tool is held rather than asked about, the failure shows the whole reason, not a cut-off
+    (F2: a Windows CI failure was unreadable past 'could not be checked: th...')."""
+    from agent_friday.services import authority
+    why = "WHOLE-REASON-" + "x" * 400 + "-END"
+    monkeypatch.setattr(authority, "hold_reason", lambda: why)
+    with pytest.raises(AssertionError) as caught:
+        _ask()
+    assert why in str(caught.value)
+
+
 # --- approval replies -----------------------------------------------------------
 
 def test_a_whole_yes_runs_the_stored_action_with_the_same_outcome(monkeypatch):
