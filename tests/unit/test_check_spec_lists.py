@@ -78,3 +78,14 @@ def test_enforce_exits_one_on_an_offender_and_zero_without_the_flag(tmp_path):
 def test_enforce_exits_zero_when_every_spec_is_named_or_exempt(tmp_path):
     root = _tree(tmp_path, ["a.spec.ts"], {"a.spec.ts": ""})
     assert _guard().main(["--enforce"], root=root, today=TODAY) == 0
+
+
+def test_an_exemption_with_a_date_that_is_not_a_date_is_reported_not_a_crash(tmp_path):
+    """The guard is warn-only: a typo in an exemption must be a line in its report, never a traceback."""
+    root = _tree(tmp_path, ["a.spec.ts"], {"a.spec.ts": "",
+                                           "b.spec.ts": "// ci-list: exempt why until 2026-13-45\ntest()"})
+    guard = _guard()
+    [line] = guard.offenders(root, TODAY)
+    assert line.startswith("b.spec.ts") and "not a date" in line
+    assert guard.main([], root=root, today=TODAY) == 0
+    assert guard.main(["--enforce"], root=root, today=TODAY) == 1

@@ -44,7 +44,13 @@ def offenders(root: Path, today: dt.date) -> list[str]:
         found = next((m for m in map(EXEMPT.search, head) if m), None)
         if not found:
             out.append("%s is not run by CI and says nothing about why" % spec.name)
-        elif dt.date.fromisoformat(found.group(2)) < today:
+            continue
+        try:
+            expires = dt.date.fromisoformat(found.group(2))
+        except ValueError:
+            out.append("%s: its CI exemption has a date that is not a date (%s)" % (spec.name, found.group(2)))
+            continue
+        if expires < today:
             out.append("%s: its CI exemption (%s) expired %s" % (spec.name, found.group(1), found.group(2)))
     return out
 
