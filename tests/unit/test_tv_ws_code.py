@@ -97,6 +97,19 @@ def test_no_folder_path_diff_or_file_contents_leave_anywhere(client, desk):
     assert {c[0] for c in desk.calls} <= {"/api/repos/scan", "/api/repos/zeta/status"}      # never /api/git/diff or a file route
 
 
+def test_a_changed_file_keeps_its_name_even_with_underscores_or_a_www_part(client, desk):
+    names = ["src/__init__.py", "pkg/__pycache__/x.pyc", "docs/www.notes.md", "a_b/__main__.py", "<odd>.txt"]
+    desk.files = [{"code": "M", "file": n} for n in names]
+    got = get(client, paired(), "/tv/v1/workspaces/code/item/repo:zeta").get_json()
+    assert [row[1] for row in got["blocks"][0]["rows"]] == names
+
+
+def test_a_changed_file_list_that_swaps_a_name_changes_the_item_revision(client, desk):
+    first = get(client, paired(), "/tv/v1/workspaces/code/item/repo:zeta").get_json()["rev"]
+    desk.files = [{"code": "M", "file": "src/other.py"}, {"code": "?", "file": "notes.txt"}, {"code": "", "file": ""}]
+    assert get(client, paired(), "/tv/v1/workspaces/code/item/repo:zeta").get_json()["rev"] != first
+
+
 def test_a_very_long_file_list_is_cut_and_says_so(client, desk):
     desk.files = [{"code": "M", "file": "f%d.py" % i} for i in range(250)]
     got = get(client, paired(), "/tv/v1/workspaces/code/item/repo:zeta").get_json()

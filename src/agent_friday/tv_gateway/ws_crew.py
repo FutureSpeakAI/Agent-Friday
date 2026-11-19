@@ -23,10 +23,12 @@ def _row(agent: dict, sensitivity: str) -> Optional[dict]:
     ident = str(agent.get("id") or "")
     if not REF.match(PREFIX + ident):
         return None
-    model = " ".join(part for part in (ws_blocks.line(agent.get("provider"), 40), ws_blocks.line(agent.get("model"), 60)) if part)
+    made_by = (ws_blocks.line(agent.get("provider"), 40), ws_blocks.line(agent.get("model"), 60))
+    model = " ".join(part for part in made_by if part)
     return {"ref": PREFIX + ident, "kind": KIND, "title": ws_blocks.line(agent.get("name"), 80) or "(unnamed)",
             "line": " · ".join(part for part in (ws_blocks.line(agent.get("role"), 100), model) if part),
-            "state": ws_blocks.line(agent.get("status"), 20) or None, "when": _when(agent.get("updated_at")), "thumb": None,
+            "state": ws_blocks.line(agent.get("status"), 20) or None, "when": _when(agent.get("updated_at")),
+            "thumb": None,
             "lives_on": "pc", "sensitivity": sensitivity, "taint": None}
 
 
@@ -65,7 +67,8 @@ def rev(rows: list[dict]) -> str:
 
 def search(q: str, sensitivity: str) -> list[dict]:
     needle = q.strip().lower()
-    return [dict(r, snippet=None) for r in pages(sensitivity) if needle in r["title"].lower() or needle in r["line"].lower()]
+    return [dict(r, snippet=None) for r in pages(sensitivity)
+            if needle in r["title"].lower() or needle in r["line"].lower()]
 
 
 def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
@@ -77,12 +80,16 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
     if row is None:
         raise Missing(ref)
     meta = [{"k": "Status", "v": row["state"] or "unknown"}, {"k": "Model", "v": row["line"].split(" · ")[-1]},
-            {"k": "Step limit", "v": str(agent.get("max_steps"))}, {"k": "Time limit", "v": "%s s" % agent.get("time_budget_s")}]
-    for label, key in (("Tools", "allowed_tools"), ("Skills", "skills"), ("Projects", "project_ids"), ("Folders", "grants")):
+            {"k": "Step limit", "v": str(agent.get("max_steps"))},
+            {"k": "Time limit", "v": "%s s" % agent.get("time_budget_s")}]
+    counted = (("Tools", "allowed_tools"), ("Skills", "skills"), ("Projects", "project_ids"), ("Folders", "grants"))
+    for label, key in counted:
         values = agent.get(key)
         meta.append({"k": label, "v": "%d" % len(values) if isinstance(values, list) else "0"})
-    parsed = ws_blocks.parse("\n\n".join(t for t in (str(agent.get("role") or ""), str(agent.get("persona") or "")) if t))
-    return {"rev": "a_" + _digest(ref, agent.get("revision"), row["title"]), "ref": ref, "kind": KIND, "title": row["title"],
+    said = (str(agent.get("role") or ""), str(agent.get("persona") or ""))
+    parsed = ws_blocks.parse("\n\n".join(t for t in said if t))
+    return {"rev": "a_" + _digest(ref, agent.get("revision"), row["title"]), "ref": ref, "kind": KIND,
+            "title": row["title"],
             "lives_on": "pc", "sensitivity": sensitivity, "taint": None, "meta": meta,
             "blocks": parsed.blocks[offset:offset + limit], "relations": [], "sources": [],
             "next": str(offset + limit) if offset + limit < len(parsed.blocks) else None, "truncated": False}

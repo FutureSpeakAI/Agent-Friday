@@ -39,7 +39,8 @@ def _row(story: dict, sensitivity: str) -> Optional[dict]:
     if not REF.match(PREFIX + ident):
         return None
     return {"ref": PREFIX + ident, "kind": KIND, "title": ws_blocks.line(story.get("title"), 160) or "(untitled)",
-            "line": ws_blocks.line(story.get("source") or story.get("domain"), 60), "state": ws_blocks.line(story.get("category"), 40) or None,
+            "line": ws_blocks.line(story.get("source") or story.get("domain"), 60),
+            "state": ws_blocks.line(story.get("category"), 40) or None,
             "when": str(story.get("published_at") or story.get("fetched_at") or "")[:25] or None, "thumb": None,
             "lives_on": "pc", "sensitivity": sensitivity, "taint": TAINT}
 
@@ -93,5 +94,6 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
     window = parsed.blocks[offset:offset + limit]
     return {"rev": "s_" + _digest(ref, row["when"], row["title"], story.get("snippet")), "ref": ref, "kind": KIND,
             "title": row["title"], "lives_on": "pc", "sensitivity": sensitivity, "taint": TAINT, "meta": meta,
-            "blocks": window, "relations": [], "sources": [{"id": "outlet", "title": outlet, "host": outlet}] if outlet else [],
+            "blocks": window, "relations": [],
+            "sources": [{"id": "outlet", "title": outlet, "host": outlet}] if outlet else [],
             "next": str(offset + limit) if offset + limit < len(parsed.blocks) else None, "truncated": False}

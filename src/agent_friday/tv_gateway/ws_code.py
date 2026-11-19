@@ -21,13 +21,21 @@ FILES_MAX = 200
 REF = re.compile(r"^repo:(?P<name>[A-Za-z0-9][A-Za-z0-9._\-]{0,99})$")
 
 
+def _file_name(name) -> str:
+    """A changed file's name as the repository has it: only control characters and length are cut, because the
+    words cleaner would turn src/__init__.py into src/init.py and docs/www.notes.md into docs/."""
+    return "".join(c for c in str(name or "") if c.isprintable())[:200]
+
+
 def _row(card: dict, sensitivity: str) -> Optional[dict]:
     name = str(card.get("name") or "")
     if not REF.match(PREFIX + name):
         return None
-    dirty, ahead, behind = (n if isinstance(n, int) and not isinstance(n, bool) else 0 for n in (card.get("dirty"), card.get("ahead"), card.get("behind")))
+    counts = (card.get("dirty"), card.get("ahead"), card.get("behind"))
+    dirty, ahead, behind = (n if isinstance(n, int) and not isinstance(n, bool) else 0 for n in counts)
     changed = "%d changed" % dirty if dirty else "clean"
-    sync = " · ".join(part for part in ("%d ahead" % ahead if ahead else "", "%d behind" % behind if behind else "") if part)
+    moved = ("%d ahead" % ahead if ahead else "", "%d behind" % behind if behind else "")
+    sync = " · ".join(part for part in moved if part)
     state = "error" if card.get("error") else ("clean" if changed == "clean" else "changed")
     return {"ref": PREFIX + name, "kind": KIND, "title": name,
             "line": " · ".join(part for part in (ws_blocks.line(card.get("branch"), 80), changed, sync) if part),
@@ -62,7 +70,8 @@ def rev(rows: list[dict]) -> str:
 
 def search(q: str, sensitivity: str) -> list[dict]:
     needle = q.strip().lower()
-    return [dict(r, snippet=None) for r in pages(sensitivity) if needle in r["title"].lower() or needle in r["line"].lower()]
+    return [dict(r, snippet=None) for r in pages(sensitivity)
+            if needle in r["title"].lower() or needle in r["line"].lower()]
 
 
 def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
@@ -79,11 +88,12 @@ def item(ref: str, sensitivity: str, offset: int, limit: int) -> dict:
     if card.get("last_when"):
         meta.append({"k": "Committed", "v": ws_blocks.line(card.get("last_when"), 40)})
     files = [f for f in (card.get("files") or []) if isinstance(f, dict) and f.get("file")]
-    shown = [[ws_blocks.line(f.get("code"), 4), ws_blocks.line(f.get("file"), 200)] for f in files[:FILES_MAX]]
+    shown = [[ws_blocks.line(f.get("code"), 4), _file_name(f.get("file"))] for f in files[:FILES_MAX]]
     blocks = [{"t": "table", "columns": ["Change", "File"], "rows": shown}] if shown else []
     if len(files) > FILES_MAX:
         blocks.append({"t": "para", "text": "%d more changed files are not listed." % (len(files) - FILES_MAX)})
-    return {"rev": "r_" + _digest(ref, row["line"], len(files)), "ref": ref, "kind": KIND, "title": row["title"],
+    names = [str(f.get("file")) for f in files]
+    return {"rev": "r_" + _digest(ref, row["line"], *names), "ref": ref, "kind": KIND, "title": row["title"],
             "lives_on": "pc", "sensitivity": sensitivity, "taint": None, "meta": meta,
             "blocks": blocks[offset:offset + limit], "relations": [], "sources": [],
             "next": str(offset + limit) if offset + limit < len(blocks) else None, "truncated": len(files) > FILES_MAX}
