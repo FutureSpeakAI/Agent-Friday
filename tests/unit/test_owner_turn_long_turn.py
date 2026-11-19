@@ -13,8 +13,12 @@ a closed stream and a timeout could not be told apart. Guarded here:
 import pytest
 
 from agent_friday.tv_gateway import owner_turn
-from tests.unit.test_owner_turn_stream import (DONE, _clean, ask, client, events, phone, spoken,  # noqa: F401
-                                               wire)
+from tests.unit import test_owner_turn_stream as shared
+from tests.unit.test_owner_turn_stream import DONE, ask, events, phone, spoken
+
+client = shared.client       # the shared fixtures are bound by name, so no lint suppression is needed (CODE_QUALITY Q3)
+wire = shared.wire
+_clean = shared._clean
 
 TOOLS = [{"tool": {"name": name}} for name in ("Searching the wiki", "Reading your calendar", "Searching the web",
                                                "Reading your email")]
