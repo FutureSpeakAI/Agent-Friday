@@ -55,7 +55,7 @@ def _offer(rec: Dict[str, Any]) -> bool:
     name = str((rec.get("workflow_definition") or {}).get("name") or rec.get("chain") or "A workflow")[:120]
     recovery_receipts.workflow_interrupted(rec, step=step, total=total, name=name)
     card = approvals.create_approval(
-        kind=KIND, subject_type="workflow_run", subject_id="%s:%d" % (rec["run_id"], step),
+        kind=KIND, subject_type="workflow_run", subject_id="%s:%d:%s" % (rec["run_id"], step, rec.get("task_id")),
         title="%s stopped at step %d of %d: resume from step %d?" % (name, step + 1, total, step + 1),
         description=("Friday stopped while step %d was running, so it may already have done some of it. "
                      "Steps before it finished and are not run again. Nothing runs unless you say yes."
