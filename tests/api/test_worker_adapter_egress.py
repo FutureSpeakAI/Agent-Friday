@@ -153,3 +153,22 @@ def test_unverifiable_host_is_treated_as_cloud(monkeypatch):
         egress_gate.gate_worker_payload(
             {"model": "m", "prompt": "secret"},
             base_url="http://localhost:11434", provider="ollama")
+
+
+def test_traffic_from_another_thread_is_not_the_adapter_reaching_the_wire(monkeypatch):
+    """F5: the stub replaces urllib.request.urlopen for the whole process, so any other thread's urllib call
+    during the window used to count as the adapter leaking. Here an unrelated call is made from inside the run,
+    which stands in for that thread; the blocked adapter must still be judged by what IT sent."""
+    import urllib.request
+    real_run = ollama_adapter.OllamaAdapter._run
+
+    def run_with_other_traffic(self, aid, task):
+        try:
+            urllib.request.urlopen("http://unrelated.invalid/elsewhere", timeout=1)
+        except Exception:
+            pass
+        return real_run(self, aid, task)
+
+    monkeypatch.setattr(ollama_adapter.OllamaAdapter, "_run", run_with_other_traffic)
+    test_a_blocking_gate_stops_the_send(monkeypatch)
+
