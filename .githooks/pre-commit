@@ -99,6 +99,11 @@ if ! $PY "$HERE/../scripts/check_trust_in_governance.py"; then
     exit 1
 fi
 
+# ── Cloud voice engine names ──────────────────────────────────────────────
+# One module (services/voice_engines.py) spells the cloud voice engines; warn-only
+# until the batch after 2026-11-23, then add --enforce. Stdlib AST scan.
+$PY "$HERE/../scripts/check_cloud_engine_literals.py" || true
+
 # ── Visible-jobs check ────────────────────────────────────────────────────
 # Every launch point of model work sits behind services/visible_jobs, so the
 # job is a task the person can see (model, steps, trace, queue place). AST
