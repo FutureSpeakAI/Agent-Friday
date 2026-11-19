@@ -63627,7 +63627,7 @@ function AcceptedIssuersPanel() {
     : issuers.map(i => React.createElement('div', { key: i.issuer_id, 'data-accepted-issuer': i.issuer_id, style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, fontSize: 12 } },
         React.createElement('span', { style: { flex: 1 } }, i.issuer_id + ' (' + i.unit_code + ')'),
         React.createElement('button', { className: 'btn', disabled: busy, 'aria-label': 'Withdraw ' + i.issuer_id, onClick: () => withdraw(i.issuer_id) }, 'Withdraw')));
-  const stoppedRows = stopped.map((s, n) => React.createElement('div', { key: 'stopped' + n, role: 'alert', 'data-stopped-issuer': s.issuer_id, style: { fontSize: 12, color: '#ff8c42', marginBottom: 6 } }, 'Stopped: ' + s.issuer_id + ' showed two different histories (sequence ' + s.seq + ': ' + s.why + '). Offers that name it are not accepted.'));
+  const stoppedRows = stopped.map((s, n) => React.createElement('div', { key: 'stopped' + n, role: 'alert', 'data-stopped-issuer': s.issuer_id, style: { fontSize: 12, color: '#ff8c42', marginBottom: 6 } }, 'Recorded: this PC saw a problem with the history of issuer ' + s.issuer_id + ' (sequence ' + s.seq + ': ' + s.why + '). This is a record for you to read; it does not by itself change what is accepted.'));
   return React.createElement('div', null,
     ...stoppedRows,
     React.createElement('div', { style: dim }, 'Test credits only. An offer that names an issuer you have not accepted is declined before it is read. Accepting needs a click on this PC; withdrawing does not.'),

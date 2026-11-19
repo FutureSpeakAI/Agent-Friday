@@ -176,8 +176,8 @@ REPORTS = "GET /api/federation/issuer-reports"
 def test_a_stopped_issuer_is_shown_with_its_reason_and_a_failed_read_shows_nothing_false(sources):
     reports = {"status": 200, "body": {"ok": True, "reports": [{"issuer_id": "test.one", "seq": 3, "why": "another head at this sequence"}], "stopped": ["test.one"]}}
     out = run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}, REPORTS: reports})
-    assert "Stopped: test.one showed two different histories (sequence 3: another head at this sequence)" in out["text"]
+    assert "Recorded: this PC saw a problem with the history of issuer test.one (sequence 3: another head at this sequence)" in out["text"]
     none = run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}, REPORTS: {"status": 500, "body": {}}})
-    assert "Stopped:" not in none["text"]
+    assert "Recorded:" not in none["text"]
     quiet = run_component(sources, {LIST: {"status": 200, "body": {"issuers": []}}, REPORTS: {"status": 200, "body": {"ok": True, "reports": [], "stopped": []}}})
-    assert "Stopped:" not in quiet["text"]
+    assert "Recorded:" not in quiet["text"]
