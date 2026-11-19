@@ -60,7 +60,7 @@ def test_every_rule_in_the_docstring_names_a_test_that_exists():
     found = re.findall(r"(?<![a-z_/])(test_[a-z_0-9]+)", ev.__doc__)
     named = set(found) - {own.stem}
     body = ast.parse(own.read_text(encoding="utf-8")).body
-    assert len(named) == 5 and named <= {n.name for n in body if isinstance(n, ast.FunctionDef)}
+    assert len(named) == 11 and named <= {n.name for n in body if isinstance(n, ast.FunctionDef)}
 
 
 # ── fees and journal postings, read-only (NS-41.5-4, second half) ─────────────────────────────────
