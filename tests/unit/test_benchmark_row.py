@@ -112,3 +112,10 @@ def test_a_cloud_tag_model_is_blocked_in_local_only_mode_and_listed_cloud_to_the
     from agent_friday.tv_gateway import models as gw
     phone = {r["id"]: r for r in gw.rows(None, cat, {"model_routing": {"mode": "local_only"}})}["gpt-oss:120b-cloud"]
     assert phone["kind"] == "cloud"
+
+
+def test_an_unreachable_cloud_tag_model_is_told_to_the_phone_as_offline_not_as_not_running_on_the_pc():
+    from agent_friday.tv_gateway import models as gw
+    tag = {"id": "gpt-oss:120b-cloud", "label": "gpt-oss cloud", "provider": "ollama-local",
+           "provider_label": "Local (Ollama)", "local": True, "available": False, "needs_key": False}
+    assert "offline or unreachable" in gw.why_unavailable(tag, {}) and "not running" not in gw.why_unavailable(tag, {})

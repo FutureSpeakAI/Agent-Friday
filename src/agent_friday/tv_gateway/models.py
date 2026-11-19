@@ -87,7 +87,8 @@ def why_unavailable(m: dict, providers: dict) -> str:
     if m.get("needs_key") and (m.get("available") is False or prov.get("available") is False):
         art = "an" if str(plabel)[:1].upper() in "AEIOU" else "a"
         return "%s needs %s %s key on your PC (add it in Settings > Keys)" % (label, art, plabel)
-    if m.get("local"):
+    from agent_friday.services import model_slate
+    if model_slate.is_local(m):
         return "%s is not running on your PC" % label
     return "%s is offline or unreachable from your PC right now" % plabel
 
