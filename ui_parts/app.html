@@ -23677,8 +23677,10 @@ function AcceptedIssuersPanel() {
   const [candidate, setCandidate] = React.useState('');
   const [msg, setMsg] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  const [stopped, setStopped] = React.useState([]);
+  const loadReports = () => apiFetch('/api/federation/issuer-reports').then(r => r.ok ? r.json() : null).then(d => setStopped(d && Array.isArray(d.reports) ? d.reports : [])).catch(() => setStopped([]));
   const load = () => apiFetch('/api/federation/accepted-issuers').then(r => r.ok ? r.json() : null).then(d => setIssuers(d && Array.isArray(d.issuers) ? d.issuers : null)).catch(() => setIssuers(null));
-  React.useEffect(() => { load(); }, []);
+  React.useEffect(() => { load(); loadReports(); }, []);
   const WORDS = { accepted: 'Accepted. Offers that name this issuer are now read.', already: 'That issuer was already accepted.', 'other-charter': 'This PC holds a different charter under that id, so it was not accepted.', 'cannot-sign': 'The list could not be signed, so nothing was changed.', 'press-required': 'Accepting needs a click on this PC itself.' };
   const accept = async () => {
     const id = candidate.trim();
@@ -23711,7 +23713,9 @@ function AcceptedIssuersPanel() {
     : issuers.map(i => React.createElement('div', { key: i.issuer_id, 'data-accepted-issuer': i.issuer_id, style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, fontSize: 12 } },
         React.createElement('span', { style: { flex: 1 } }, i.issuer_id + ' (' + i.unit_code + ')'),
         React.createElement('button', { className: 'btn', disabled: busy, 'aria-label': 'Withdraw ' + i.issuer_id, onClick: () => withdraw(i.issuer_id) }, 'Withdraw')));
+  const stoppedRows = stopped.map((s, n) => React.createElement('div', { key: 'stopped' + n, role: 'alert', 'data-stopped-issuer': s.issuer_id, style: { fontSize: 12, color: '#ff8c42', marginBottom: 6 } }, 'Stopped: ' + s.issuer_id + ' showed two different histories (sequence ' + s.seq + ': ' + s.why + '). Offers that name it are not accepted.'));
   return React.createElement('div', null,
+    ...stoppedRows,
     React.createElement('div', { style: dim }, 'Test credits only. An offer that names an issuer you have not accepted is declined before it is read. Accepting needs a click on this PC; withdrawing does not.'),
     rows,
     React.createElement('div', { style: { display: 'flex', gap: 6, marginTop: 8 } },

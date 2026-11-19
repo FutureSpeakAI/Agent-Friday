@@ -38,7 +38,7 @@ def pins(tmp_path, monkeypatch):
 def head(seq, state="aa", prev="0" * 64, receipt="bb"):
     h = auth.Head("test.one", DIGEST, 0, seq, state * 32, receipt * 32, prev)
     raw = h.canonical_bytes()
-    return raw, KEY.sign(raw)
+    return raw, KEY.sign(auth.HEAD_PREFIX + raw)
 
 
 def test_no_report_by_default(client, pins):
