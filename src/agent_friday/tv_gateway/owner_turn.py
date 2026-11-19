@@ -265,6 +265,12 @@ def _json(resp) -> dict:
         return {}
 
 
+def _made(started: bool, cid: str) -> dict:
+    """A chat this call just created rides on the refusal, so the device retries INTO it instead of leaving one
+    empty chat behind per attempt."""
+    return {"conversation_id": cid} if started else {}
+
+
 def bind_seat(cid: Optional[str], model_id: str) -> str:
     """Make the chat run on ``model_id`` and return its conversation id. Raises turn.TurnRefused with the PC's own
     reason when the seat cannot be bound, never a quiet other model: 409 ``seat_refused`` (the PC will not),
@@ -272,6 +278,7 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     404 ``unknown_conversation``, 503 ``chat_unavailable`` (the PC's chat store failed)."""
     from agent_friday.tv_gateway import turn
     seat = {"model": model_id}
+    started = not cid
     if not cid:
         # Start the chat WITHOUT a seat, then bind it through the same checked path as an existing chat: the
         # desktop's create route stores a seat unchecked, and only its PATCH refuses a second local model.
@@ -299,10 +306,10 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
     if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer is still checking its local models; "
                                                           "try again in a moment")[:240],
-                               "seat_pending", model=model_id, retry=True)
+                               "seat_pending", model=model_id, retry=True, **_made(started, cid))
     if (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
-                               "seat_refused", model=model_id)
+                               "seat_refused", model=model_id, **_made(started, cid))
     return cid
 
 

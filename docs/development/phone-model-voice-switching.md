@@ -22,6 +22,7 @@ Show `reason` / `blocked.reason` as written; they are the PC's own words (Local 
 `POST /tv/v1/model/switch` `{ "model": "<id, display name or family word>", "conversation_id": "C"? }`
 
 * No `conversation_id`: the PC starts the chat on that model and returns its id. Keep it and send it with every turn.
+  If that switch is refused (`seat_refused` / `seat_pending`) the refusal still carries the new chat's `conversation_id`: retry INTO it, do not send another switch without one.
 * `200`: `{ ok, conversation_id, model, asked, applies: "this_conversation", takes_effect: "next_turn", facts, served }`.
   `facts` is the PC's own row for the model: `switch` (`cold`, `expected_seconds`, `basis`: a cold local model needs
   loading; the number is measured on this PC or benchmarked, labelled), `measured` (median and p90 first-token wait

@@ -222,3 +222,15 @@ def test_a_switch_that_starts_a_new_chat_gets_the_same_refusals_as_one_on_an_exi
     j = r.get_json()
     assert r.status_code == 409 and j["code"] == "seat_refused" and "one local model" in j["error"]
     assert not any(c[0] == "POST" and (c[2] or {}).get("seat") for c in desk.api_calls)   # never created with a seat
+
+
+def test_a_refused_new_chat_hands_back_its_id_so_a_retry_reuses_it_not_a_second_empty_chat(client, desk):
+    dev = phone()
+    desk.refuse = "There is only room for one local model at a time."
+    j = switch(client, dev, model="bonsai2:27b").get_json()
+    assert j["code"] == "seat_refused" and j["conversation_id"] == "conv-new"
+    desk.refuse = None
+    posts = sum(1 for c in desk.api_calls if c[0] == "POST")
+    ok = switch(client, dev, model="bonsai2:27b", conversation_id=j["conversation_id"]).get_json()
+    assert ok["ok"] and ok["conversation_id"] == "conv-new"
+    assert sum(1 for c in desk.api_calls if c[0] == "POST") == posts          # no second chat created
