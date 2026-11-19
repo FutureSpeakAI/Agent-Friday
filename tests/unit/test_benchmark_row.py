@@ -79,3 +79,14 @@ def test_a_footprint_record_never_hides_the_benchmark_and_a_damaged_load_time_is
     got = _pc(monkeypatch, tmp_path, rows)["gemma4:e4b"]
     assert got["benchmark"]["vram_mib"] == 3081 and got["benchmark"]["cold_load_seconds"] is None
     assert got["switch"]["expected_seconds"] is None                     # -5 s is not an estimate
+
+
+def test_the_cold_load_estimate_comes_from_the_newest_row_that_has_one_and_other_numbers_are_checked(monkeypatch, tmp_path):
+    rows = {"gemma4:e4b": [
+        {"num_ctx": 8192, "vram_mib": 3081, "tok_s_median": 99.0, "cold_load_s": 20.5, "measured_at": "2026-08-14",
+         "source": "seed"},
+        {"num_ctx": 32768, "vram_mib": "x", "tok_s_median": float("nan"), "measured_at": "2026-08-15", "source": "seed"}]}
+    got = _pc(monkeypatch, tmp_path, rows)["gemma4:e4b"]
+    assert got["switch"]["expected_seconds"] == 20.5 and "2026-08-14" in got["switch"]["basis"]
+    assert got["benchmark"]["num_ctx"] == 32768 and got["benchmark"]["vram_mib"] is None
+    assert got["benchmark"]["tokens_per_second"] is None            # NaN never reaches a device
