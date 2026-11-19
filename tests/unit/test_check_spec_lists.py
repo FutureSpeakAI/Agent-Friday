@@ -52,3 +52,29 @@ def test_a_reason_without_an_expiry_does_not_exempt(tmp_path):
 
 def test_the_real_repo_is_reported_not_failed_by_default():
     assert _guard().main([]) == 0
+
+
+def test_a_spec_named_only_in_a_workflow_comment_is_not_run(tmp_path):
+    root = _tree(tmp_path, ["a.spec.ts"], {"a.spec.ts": "", "gallery.spec.ts": "test()"})
+    wf = root / ".github" / "workflows" / "tests.yml"
+    wf.write_text(wf.read_text(encoding="utf-8") + "\n# gallery.spec.ts is left out here, TODO\n", encoding="utf-8")
+    [line] = _guard().offenders(root, TODAY)
+    assert line.startswith("gallery.spec.ts")
+
+
+def test_a_longer_name_that_contains_the_spec_name_does_not_count_as_naming_it(tmp_path):
+    root = _tree(tmp_path, ["x_gallery.spec.ts"], {"x_gallery.spec.ts": "", "gallery.spec.ts": "test()"})
+    [line] = _guard().offenders(root, TODAY)
+    assert line.startswith("gallery.spec.ts")
+
+
+def test_enforce_exits_one_on_an_offender_and_zero_without_the_flag(tmp_path):
+    root = _tree(tmp_path, ["a.spec.ts"], {"a.spec.ts": "", "b.spec.ts": "test()"})
+    guard = _guard()
+    assert guard.main(["--enforce"], root=root, today=TODAY) == 1
+    assert guard.main([], root=root, today=TODAY) == 0
+
+
+def test_enforce_exits_zero_when_every_spec_is_named_or_exempt(tmp_path):
+    root = _tree(tmp_path, ["a.spec.ts"], {"a.spec.ts": ""})
+    assert _guard().main(["--enforce"], root=root, today=TODAY) == 0
