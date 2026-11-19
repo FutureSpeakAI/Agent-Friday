@@ -21,6 +21,17 @@ import agent_friday.services.agent as agent
 from tests import ledger_support
 
 
+def _start_with_no_settler_marked_active():
+    """A test starts with no receipt settler marked active or holding work, and no sweep thread still running.
+    Teardown resets this too, but an earlier test in the same worker may have left it set (F6, F12, F15)."""
+    th = getattr(agent, "_RECEIPT_SWEEP", {}).get("thread")
+    if th is not None:
+        th.join(timeout=10)
+    with agent._SETTLE_GUARD:
+        agent._SETTLE_DIRTY.clear()
+        agent._SETTLER["active"] = False
+
+
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
     from agent_friday.services import task_journal as tj
@@ -28,6 +39,7 @@ def isolated(tmp_path, monkeypatch):
     tj.reset_for_tests()
     import agent_friday.notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **kw: kw)
+    _start_with_no_settler_marked_active()
     with agent.TASKS_LOCK:
         saved = dict(agent.TASKS)
     yield

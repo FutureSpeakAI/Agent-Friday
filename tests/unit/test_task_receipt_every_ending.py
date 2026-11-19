@@ -21,6 +21,12 @@ def isolated(tmp_path, monkeypatch):
     from agent_friday.services import task_journal as tj
     monkeypatch.setattr(tj, "BASE_DIR_OVERRIDE", tmp_path / "tasks")
     tj.reset_for_tests()
+    th = getattr(agent, "_RECEIPT_SWEEP", {}).get("thread")
+    if th is not None:
+        th.join(timeout=10)
+    with agent._SETTLE_GUARD:          # an earlier test in this worker may have left a settler marked active
+        agent._SETTLE_DIRTY.clear()
+        agent._SETTLER["active"] = False
     with agent.TASKS_LOCK:
         saved = dict(agent.TASKS)
         agent.TASKS.clear()
