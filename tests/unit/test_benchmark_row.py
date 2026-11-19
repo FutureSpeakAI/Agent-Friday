@@ -58,16 +58,22 @@ def test_every_model_says_what_leaves_the_house_in_words(monkeypatch, tmp_path):
             assert r["what_leaves"].startswith("Your messages") and "go to" in r["what_leaves"]
 
 
-def test_relays_are_named_cloud_tags_and_unverified_local_rows_are_not_called_private():
+def test_relays_are_named_cloud_tags_name_ollama_com_and_unverified_local_rows_are_not_called_private():
     for prov, label in (("openrouter", "OpenRouter"), ("huggingface", "Hugging Face (Inference Providers)")):
-        sentence = ms._what_leaves({"provider": prov, "provider_label": label}, False)
+        sentence = ms._what_leaves({"provider": prov, "provider_label": label})
         assert label in sentence and "actually runs the model" in sentence
-    assert "actually runs" not in ms._what_leaves({"provider": "anthropic", "provider_label": "Anthropic"}, False)
-    # an Ollama cloud tag is relayed to ollama.com even though the row says local
-    tag = ms._what_leaves({"id": "gpt-oss:120b-cloud", "local": True, "provider": "ollama-local"}, True)
-    assert tag != ms.LEAVES_NOTHING and "relayed off this machine" in tag
-    assert ms._what_leaves({"id": "gemma4:e4b", "local": True, "provider": "no-such-provider"}, True) == ms.LEAVES_NOTHING
+    assert "actually runs" not in ms._what_leaves({"provider": "anthropic", "provider_label": "Anthropic"})
+    tag = ms._what_leaves({"id": "gpt-oss:120b-cloud", "local": True, "provider": "ollama-local",
+                           "provider_label": "Local (Ollama)"})
+    assert "ollama.com" in tag and "Local (Ollama)" not in tag and tag != ms.LEAVES_NOTHING
+    assert ms._what_leaves({"id": "gemma4:e4b", "local": True, "provider": "no-such-provider"}) == ms.LEAVES_NOTHING
     assert "your own network" in ms.LEAVES_NOTHING
+
+
+def test_a_cloud_tag_row_is_cloud_everywhere_not_only_in_the_privacy_sentence():
+    assert ms._truly_local({"id": "gpt-oss:120b-cloud", "local": True, "provider": "ollama-local"}) is False
+    assert ms._truly_local({"id": "gemma4:e4b", "local": True, "provider": "no-such-provider"}) is True
+
 
 
 

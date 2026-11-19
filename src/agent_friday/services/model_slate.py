@@ -202,22 +202,29 @@ def _truly_local(m: dict) -> bool:
     return True
 
 
-def _what_leaves(m: dict, local: bool) -> str:
-    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's). Local
-    only when ``_truly_local``; a relay (a provider descriptor marked as an aggregator, e.g. OpenRouter, Hugging
-    Face) is named with what it forwards to. Held by tests/unit/test_benchmark_row.py."""
-    if local and _truly_local(m):
+def _what_leaves(m: dict) -> str:
+    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's). Local only
+    when ``_truly_local``. An Ollama cloud tag names ollama.com, not the local daemon that relays it; a relay (a
+    provider descriptor marked as an aggregator, e.g. OpenRouter, Hugging Face) is named with what it forwards
+    to. Held by tests/unit/test_benchmark_row.py."""
+    if _truly_local(m):
         return LEAVES_NOTHING
-    who = m.get("provider_label") or m.get("provider") or "its cloud provider"
+    relayed = False
+    try:
+        from agent_friday.services import local_only_guard
+        relayed = bool(m.get("local")) and local_only_guard.is_cloud_model_tag(m.get("id"))
+    except Exception:
+        pass
+    who = "ollama.com (Ollama's cloud)" if relayed else (
+        m.get("provider_label") or m.get("provider") or "its cloud provider")
     sentence = "Your messages and the context Friday attaches to them go to %s while you use this model" % who
-    prov = _descriptor(m.get("provider"))
     try:
         from agent_friday.routing import provider_descriptors as pd
-        relay = bool(prov) and pd._is_aggregator(prov)
+        prov = _descriptor(m.get("provider"))
+        if prov and pd._is_aggregator(prov) and not relayed:
+            sentence += ", and on to the company that actually runs the model"
     except Exception:
-        relay = False
-    if relay or (local and not _truly_local(m)):
-        sentence += ", and on to the company that actually runs the model" if relay else             ", because this model is relayed off this machine"
+        pass
     return sentence + "."
 
 
@@ -231,7 +238,7 @@ def _measured(model_id) -> Optional[dict]:
 
 
 def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
-    local = bool(m.get("local"))
+    local = _truly_local(m)       # the one answer to "is it local": the flag, verified (cloud tag, private host)
     out = {
         "id": m.get("id"), "label": m.get("label") or m.get("id"),
         "provider": m.get("provider"), "provider_label": m.get("provider_label"),
@@ -247,7 +254,7 @@ def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
         "hint": m.get("hint"),
     }
     out["switch"] = _switch_cost(m.get("id"), local, out["warm"])
-    out["what_leaves"] = _what_leaves(m, local)
+    out["what_leaves"] = _what_leaves(m)
     out["measured"] = _measured(m.get("id"))
     out["benchmark"] = _benchmark(m.get("id")) if local else None
     out["capabilities"] = {
