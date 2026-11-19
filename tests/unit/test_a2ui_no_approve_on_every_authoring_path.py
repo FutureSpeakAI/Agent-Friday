@@ -104,7 +104,7 @@ def test_a_composed_view_draws_only_the_shells_own_card_marker_for_ids_the_shell
                     pending_approvals=lambda subject, kind: ["card-1"] if subject == SUBJECT else [])
     assert r.ok
     assert r.html.count("data-shell-card") == 1 and "card-1" in r.html
-    assert set(r.permitted_actions) == {"open_run"}
+    assert {verb for verb, _keys in r.permitted_actions.values()} == {"open_run"}
 
 
 def test_a_slot_for_another_subject_is_refused_on_both_authorships():
