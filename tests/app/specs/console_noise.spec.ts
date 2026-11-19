@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { isNoise } from '../helpers/console_noise';
 
 // F8: the smoke test must not call the machine's own faults an app error, and must keep calling real ones.
