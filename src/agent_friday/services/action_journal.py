@@ -143,13 +143,24 @@ def get(receipt_id: str) -> dict | None:
 _RECEIPT_ID = re.compile(r"\brcpt_[0-9a-f]{19}\b")
 
 
-def receipt_in(result: Any) -> str | None:
-    """The receipt a tool result names, if the journal holds it. A result that merely quotes an id
-    the journal never wrote (text from a document, a model's guess) names no receipt."""
+def _written_at(rec: dict) -> float | None:
+    try:
+        return time.mktime(time.strptime(rec.get("at") or "", "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError):
+        return None
+
+
+def receipt_in(result: Any, *, tool: str, within_s: float) -> str | None:
+    """The receipt THIS tool call wrote: an id its result names that the journal holds, written by the same
+    tool, in the last ``within_s`` seconds. A result that merely quotes an id (text from a document, a model's
+    guess, a receipt an earlier call wrote, a receipt another tool wrote) names no receipt."""
     if not isinstance(result, str):
         return None
+    now = time.time()
     for rid in reversed(_RECEIPT_ID.findall(result)):
-        if get(rid):
+        rec = get(rid)
+        written = _written_at(rec) if rec else None
+        if rec and rec.get("tool") == tool and written is not None and now - written <= within_s:
             return rid
     return None
 
