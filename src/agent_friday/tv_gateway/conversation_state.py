@@ -61,7 +61,7 @@ def model_facts(model_id: Optional[str]) -> Optional[dict]:
         return None
     try:
         from agent_friday.services import model_slate
-        row = model_slate.find(model_id)
+        row = model_slate.row_for(model_id)
     except Exception as e:
         _log.info("model facts unavailable: %s", type(e).__name__)
         return None

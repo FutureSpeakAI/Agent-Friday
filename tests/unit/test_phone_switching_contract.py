@@ -121,13 +121,30 @@ def test_a_turn_with_no_model_is_still_flagged_when_another_model_answers_than_t
     assert last["expected"] == "claude-haiku-5-5" and last["substituted"] is True
 
 
-def test_the_real_model_facts_pick_the_slate_row_fields(monkeypatch):
+def test_the_real_model_facts_come_from_a_built_slate_row_not_the_raw_catalog_row(monkeypatch):
+    """The facts a phone shows (can_serve, capabilities, switch when the slate has it) exist only on a slate row."""
     from agent_friday.services import model_slate
     monkeypatch.undo()
-    monkeypatch.setattr(model_slate, "find", lambda mid: {"id": mid, "label": "L", "local": True, "secret": "x",
-                                                           "switch": {"cold": True}, "measured": None})
-    got = conversation_state.model_facts("m1")
-    assert got["id"] == "m1" and got["label"] == "L" and got["switch"] == {"cold": True} and "secret" not in got
+    cat = {"roles": {"orchestrator": [{"id": "claude-haiku-5-5"}]},
+           "models": [{"id": "claude-haiku-5-5", "provider": "anthropic", "provider_label": "Anthropic",
+                       "roles": ["orchestrator"], "local": False, "available": True, "needs_key": False,
+                       "secret": "x"}]}
+    monkeypatch.setattr(model_slate, "_catalog", lambda: cat)
+    monkeypatch.setattr(model_slate, "_settings", lambda: {"model_routing": {"mode": "local_preferred"}})
+    monkeypatch.setattr(model_slate, "_local_busy_reason", lambda mid: None)
+    monkeypatch.setattr(model_slate, "_live_local", lambda: set())
+    got = conversation_state.model_facts("claude-haiku-5-5")
+    assert got["id"] == "claude-haiku-5-5" and got["can_serve"] is True and got["cloud"] is True
+    assert "capabilities" in got and "secret" not in got            # a slate-row field, absent from the raw row
+
+
+def test_a_turn_the_desktop_does_not_take_hands_back_the_new_chats_id(client, desk, monkeypatch):
+    def refuse_post(text, conversation_id):
+        raise RuntimeError("desktop stalled")
+    monkeypatch.setattr(owner_turn, "_post", refuse_post)
+    r = ask(client, phone(), model="claude-haiku-5-5")
+    j = r.get_json()
+    assert r.status_code == 503 and j["conversation_id"] == "conv-new"
 
 
 def test_a_chat_that_gets_its_model_from_its_project_is_flagged_and_reported_the_same_way(client, desk):

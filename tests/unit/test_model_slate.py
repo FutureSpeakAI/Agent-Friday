@@ -115,3 +115,14 @@ def test_the_available_copy_of_an_id_wins(monkeypatch, pc):
         {"id": "m", "provider": "b", "roles": ["orchestrator"], "available": True, "needs_key": True}]}
     monkeypatch.setattr(ms, "_catalog", lambda: dup)
     assert ms.require_servable("m")["provider"] == "b"
+
+
+def test_row_for_builds_the_same_row_the_slate_lists_and_none_for_an_unlisted_model(monkeypatch):
+    monkeypatch.setattr(ms, "_catalog", lambda: CAT)
+    monkeypatch.setattr(ms, "_settings", lambda: {"model_routing": {"mode": "local_preferred"}})
+    monkeypatch.setattr(ms, "_local_busy_reason", lambda mid: None)
+    monkeypatch.setattr(ms, "_live_local", lambda: set())
+    listed = {r["id"]: r for r in ms.slate()["models"]}["claude-opus-5-5"]
+    got = ms.row_for("claude-opus-5-5")
+    assert {k: got[k] for k in ("id", "cloud", "can_serve", "capabilities")} == {k: listed[k] for k in ("id", "cloud", "can_serve", "capabilities")}
+    assert ms.row_for("no-such-model") is None

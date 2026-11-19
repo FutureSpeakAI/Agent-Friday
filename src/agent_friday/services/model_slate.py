@@ -154,6 +154,17 @@ def slate(*, live: Optional[set] = None) -> dict:
             "local_one_at_a_time": True}
 
 
+def row_for(model_id: str) -> Optional[dict]:
+    """The slate row (switch cost, measured wait, benchmark, capabilities, can_serve) for one model, built the same
+    way ``slate()`` builds it, or None when this PC does not list the model. ``find`` returns the raw catalog row;
+    a caller that wants the facts a device shows must use this. Held by tests/unit/test_model_slate.py."""
+    m = find(model_id)
+    if m is None:
+        return None
+    st = _settings()
+    return _row(m, str(st.get("orchestrator_model") or ""), _live_local(), _routing_mode(st))
+
+
 def find(model_id: str) -> Optional[dict]:
     """The catalog row for this id (the available copy first), or None."""
     mid = (model_id or "").strip()

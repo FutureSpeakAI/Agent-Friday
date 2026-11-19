@@ -402,6 +402,7 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     cid = cid.strip() if isinstance(cid, str) and cid.strip() else None
     if cid and not valid_cid(cid):
         raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
+    new_chat = not cid                      # a chat THIS call creates rides on a later refusal so a retry reuses it
     requested = requested_model(body)
     asked = requested
     voice = is_voice_turn(dev, body)
@@ -440,12 +441,12 @@ def run(dev: dict, body: dict) -> Iterator[str]:
         response = _post(text, cid)
     except Exception as e:
         _log.info("owner turn not started: %s", type(e).__name__)
-        raise turn.TurnRefused(503, "this computer can't answer that right now")
+        raise turn.TurnRefused(503, "this computer can't answer that right now", **_made(new_chat and bool(cid), cid))
     finally:
         _CTX.activity = None
     if response.status_code != 200:
         raise turn.TurnRefused(503 if response.status_code >= 500 else response.status_code,
-                               "this computer did not take the turn")
+                               "this computer did not take the turn", **_made(new_chat and bool(cid), cid))
     return _stream(response, dev, requested, cid, expected=expected, voice=voice, voice_default=default, asked=asked)
 
 
