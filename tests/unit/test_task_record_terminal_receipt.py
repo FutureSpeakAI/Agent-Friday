@@ -195,6 +195,29 @@ def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
     assert len(_rows_for("t-end-7")) == 1
 
 
+def test_a_second_receipt_for_a_racing_stop_names_who_wrote_it(isolated, monkeypatch):
+    """F6: a Windows CI run failed the race test as `assert 2 == 1` with two receipts that differed in `ended`
+    (3.0 and the wall clock): something other than the two calls wrote one. A stray writer is injected here; the
+    failure of the race test must name it, so the next red run says who it was."""
+    import threading
+    real = agent._task_terminal_receipt
+    fired = []
+
+    def with_a_stray_writer(task_id, snap, supersedes=None):
+        if task_id == "t-end-7" and not fired:
+            fired.append(1)
+            stray = threading.Thread(target=real, name="stray-sweeper",
+                                     args=(task_id, dict(snap, ended=1795040834.9)))
+            stray.start()
+            stray.join(timeout=10)
+        return real(task_id, snap, supersedes=supersedes)
+
+    monkeypatch.setattr(agent, "_task_terminal_receipt", with_a_stray_writer)
+    with pytest.raises(AssertionError) as caught:
+        test_a_stop_racing_the_worker_writes_one_receipt(isolated)
+    assert "stray-sweeper" in str(caught.value)
+
+
 def test_a_different_ending_arriving_mid_write_is_not_lost(isolated):
     """The worker writes 'complete' while a stop sets 'cancelled'. Whatever status
     the record is left with, its last receipt names that status (superseding)."""
