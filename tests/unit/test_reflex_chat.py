@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from agent_friday.governance import action_gate
-from agent_friday.services import agent, approvals, off_record
+from agent_friday.services import agent, approvals, authority, off_record
 from agent_friday.services import reflex_chat as rc
 from agent_friday.services import turn_plan as tp
 from agent_friday.services import turn_receipt as tr
@@ -40,6 +40,12 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(off_record, "active", lambda settings=None: False)
     import agent_friday.core as core
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    # These tests are about the reply rules, with action authority in its normal state. The gate asks
+    # services/authority whether the owner revoked it, which reads the action ledger from disk; on a slow
+    # Windows runner that read can fail past its three tries and hold the call ("could not be checked"),
+    # which has nothing to do with the rule under test. Revocation and an unreadable ledger holding are
+    # tested in test_authority*.py; the pin itself is proved by test_a_revoked_authority_still_holds_the_ask.
+    monkeypatch.setattr(authority, "revoked", lambda: None)
     tp._recent.clear()
     tp.begin_turn(None)
     rc.reset_stats()
@@ -71,6 +77,16 @@ def _handler(monkeypatch):
 
 
 # --- approval replies -----------------------------------------------------------
+
+def test_a_revoked_authority_still_holds_the_ask(monkeypatch):
+    """The pin in `isolated` is a test-only choice: a revocation the gate sees still holds the call."""
+    monkeypatch.setattr(authority, "revoked", lambda: {"at": "2026-11-19T00:00:00Z", "by": "owner:ui"})
+    ctx = agent.prepare_confirmation_ctx(
+        SID, "run this", {"authenticated": True, "conversation_id": CONV, "owner_surface": True})
+    result = agent._execute_tool("run_command", {"command": "Write-Output first"}, session_ctx=ctx)
+    assert "GOVERNANCE HOLD" in result and "CONFIRMATION REQUIRED" not in result
+
+
 
 def test_a_whole_yes_runs_the_stored_action_with_the_same_outcome(monkeypatch):
     calls = _handler(monkeypatch)
