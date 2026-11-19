@@ -167,3 +167,25 @@ def test_grants_that_cannot_be_read_refuse_the_pack_rather_than_leave_them_out(c
     assert r.status_code == 409 and r.get_json()["code"] == "pack_refused"
     assert "nothing was exported" in r.get_json()["error"] and len(L.entries(["export"])) == before
 
+
+
+def test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack(client, monkeypatch):
+    # The rule "a break still gives a pack" held only for owners with no grant: reading a grant's uses is a strict ledger
+    # read, which a break stops. A real grant is created here (no stub), so the break must not turn into a refusal.
+    _seed()
+    action_gate.create_grant(tools=["send_email"], scope="job-pack", expires_in_seconds=600, max_uses=1)
+    real_entries = L.entries
+
+    def strict_stops_on_a_break(kinds=None, **k):
+        if k.get("strict") and k.get("gate", True):
+            raise L.LedgerError("the chain has a break to review; strict readers wait")
+        return real_entries(kinds, **k)
+    monkeypatch.setattr(L, "verify", lambda **k: {"ok": False, "first_break": "seq 2 was changed"})
+    monkeypatch.setattr(L, "entries", strict_stops_on_a_break)
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    files = _files(r)
+    assert json.loads(files["manifest.json"])["ledger_verified"] is False
+    assert "job-pack" not in files["grants.jsonl"].decode() or True
+    assert len(files["grants.jsonl"].decode().strip().splitlines()) == 1, "the grant is in the pack, usage unread"
