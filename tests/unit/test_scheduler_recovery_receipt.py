@@ -71,3 +71,67 @@ def test_a_record_from_before_the_mark_is_not_called_interrupted():
     _job("t_old", lambda: None)
     assert "in_flight" not in _stored("sch_t_old")
     assert s.recover_interrupted_runs() == 0 and _mine("sch_t_old") == []
+
+
+def test_a_crash_between_the_receipt_and_the_clear_writes_no_second_receipt():
+    """The dedupe is for exactly this: the receipt is written, the mark is not cleared (a crash, a locked file), and
+    the next start finds the mark again."""
+    rec = _job("t_crash", lambda: None)
+    s._patch_record("sch_t_crash", **s._run_mark(rec, s._now_central(), time.time() - 120))
+    real = s._patch_record
+
+    def failing(sid, **fields):
+        if fields.get("in_flight") is False:
+            raise OSError("the store is locked")
+        return real(sid, **fields)
+
+    s._patch_record = failing
+    try:
+        assert s.recover_interrupted_runs() == 1
+    finally:
+        s._patch_record = real
+    assert _stored("sch_t_crash")["in_flight"] is True          # not cleared: the crash case
+    rr._reset_for_tests()                                       # a new process reads the ledger afresh
+    assert s.recover_interrupted_runs() == 0
+    assert len(_mine("sch_t_crash")) == 1
+    assert _stored("sch_t_crash")["in_flight"] is False
+
+
+def test_one_record_that_cannot_be_cleared_does_not_stop_the_others_being_recorded():
+    a = _job("t_a", lambda: None)
+    b = _job("t_b", lambda: None)
+    for rec in (a, b):
+        s._patch_record(rec["id"], **s._run_mark(rec, s._now_central(), time.time() - 120))
+    real = s._patch_record
+
+    def failing(sid, **fields):
+        if fields.get("in_flight") is False and sid == "sch_t_a":
+            raise OSError("the store is locked")
+        return real(sid, **fields)
+
+    s._patch_record = failing
+    try:
+        assert s.recover_interrupted_runs() == 2
+    finally:
+        s._patch_record = real
+    assert len(_mine("sch_t_a")) == 1 and len(_mine("sch_t_b")) == 1
+
+
+def test_a_finished_run_whose_mark_cannot_be_cleared_says_so_in_the_log(caplog):
+    rec = _job("t_log", lambda: None)
+    real = s._patch_record
+
+    def failing(sid, **fields):
+        if fields.get("in_flight") is False:
+            raise OSError("the store is locked")
+        return real(sid, **fields)
+
+    s._patch_record = failing
+    try:
+        import logging
+        with caplog.at_level(logging.WARNING):
+            s.dispatch(rec)
+            _wait_history("sch_t_log")
+    finally:
+        s._patch_record = real
+    assert "in-flight mark" in caplog.text and "OSError" in caplog.text
