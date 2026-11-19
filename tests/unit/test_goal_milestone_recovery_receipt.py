@@ -106,3 +106,40 @@ def test_a_task_that_finished_or_is_running_again_gets_no_milestone_receipt(monk
     _tasks(monkeypatch, {"task_done": ("done", "the draft")})
     _boot()
     assert _mine(gid, mid) == []
+
+
+def test_the_receipt_writer_itself_writes_one_entry_for_the_same_interruption():
+    """The dedupe a second start relies on, tried directly: the same (milestone, interruption) twice is one entry."""
+    from agent_friday.services import recovery_receipts as rr
+    goal, m = {"goal_id": "g_dd"}, {"milestone_id": "m_dd", "name": "Draft issue"}
+    run = {"task_id": "task_x", "started_at": NOW - 60}
+    kw = dict(boundary="its task was interrupted", may_have_acted=True, next=rr.NOT_REPEATED)
+    assert rr.milestone_interrupted(goal, m, run, **kw) is True
+    assert rr.milestone_interrupted(goal, m, run, **kw) is False
+    assert len(_mine("g_dd", "m_dd")) == 1
+
+
+def test_a_task_the_pc_cannot_find_is_not_called_interrupted(monkeypatch):
+    gid, mid = _stopped_milestone({"task_id": "task_gone", "boot": "prev", "started_at": NOW - 60})
+    _tasks(monkeypatch, {})                                    # no such task: the outcome is "missing"
+    _boot()
+    [r] = _mine(gid, mid)
+    assert "interrupted" not in r["last_boundary"] and "not be found" in r["last_boundary"]
+    assert r["may_have_acted"] is True and r["next"] == "not_repeated_owner_told"
+
+
+def test_the_receipt_is_written_before_the_milestone_is_settled(monkeypatch):
+    """A crash between the two must lose the settle (which the next boot redoes), never the receipt."""
+    from agent_friday.services import goals
+    gid, mid = _stopped_milestone({"task_id": "task_old", "boot": "prev", "started_at": NOW - 60})
+    _tasks(monkeypatch, {"task_old": ("interrupted", "")})
+    _verdict(monkeypatch)
+
+    def crash(*a, **k):
+        raise RuntimeError("the process was killed here")
+    monkeypatch.setattr(goals, "_block", crash)
+    try:
+        _boot()
+    except RuntimeError:
+        pass
+    assert len(_mine(gid, mid)) == 1
