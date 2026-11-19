@@ -3,15 +3,16 @@ TEST CREDITS ONLY.
 
 Live cash needs a named provider, accountable signatories and its own gate, none of which exist in this release. What can
 be tested today is the other half of the row: nothing a test unit, a balance, a charter flag or a settings key can say turns
-live cash on or lets a non-test provider in. Four routes are closed here, each shown able to fail (Q2):
+live cash on or lets a non-test provider in. What each check really bites on:
 
-  1. a journal holding the largest representable supply, under a charter whose cash_claim is True, still leaves every
-     live-cash question answering "no";
-  2. every combination of federation settings (including a fed_live_cash and a bare live_cash key set to True) leaves the
-     capability off;
-  3. a non-test provider is refused after that balance exists, and the registry stays empty;
-  4. a charter with cash_claim=True is a different issuer from one with False (the digest binds it), so a test issuer
-     cannot be swapped for a "cash" one under the same id.
+  1. a journal at the largest supply under a charter whose cash_claim is True: the capability question takes only the settings
+     dict, so the balance is not an input to it; this is a documented-by-test fact, not a check that can fail on balances;
+  2. every combination of federation settings (including fed_live_cash and a bare live_cash key) leaves the capability off:
+     the real check, but with no negative control of its own (a mutant that removes the never-list is caught by 3 and 2 together);
+  3. a non-test provider is refused after that balance exists: shown able to fail (the never-list emptied lets it in);
+  4. a charter with cash_claim=True digests differently from False, so a test issuer cannot be swapped for a "cash" one.
+
+Also frozen here: a bare `live_cash` key reads as a plain flag in held_features.enabled, and no capability follows from it.
 
 The limit, stated plainly: there is no NFT or similar token type in the tree to test; the row's NFT half has nothing to
 run against until one exists. And the positive half of the row (a named provider, signatories and the gate) is not buildable now.
