@@ -320,6 +320,9 @@ def register(app: Flask) -> None:
     from agent_friday.tv_gateway import pc_settings_read
     pc_settings_read.register(app)       # evolution, providers, connectors (read-only)
 
+    from agent_friday.tv_gateway import app_update           # update the phone app from this PC (same owner gate)
+    app_update.register(app)
+
 
 def _acts_live() -> bool:
     """Whether this PC serves the device act route; until it does no verb button may be drawn."""
