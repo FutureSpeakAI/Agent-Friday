@@ -170,13 +170,17 @@ def test_a_resumed_task_gets_a_receipt_for_its_new_ending(isolated):
 def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
     """The same ending set twice at once: one entry (the second finds it written)."""
     import threading
+    import traceback
     _running("t-end-7")
     gate = threading.Barrier(2)
+    writers = []        # who wrote each task_end: the thread and the few calls above it (F6)
     from agent_friday.services import action_ledger
     real = action_ledger.try_append
 
     def slow(kind, rec, **kw):
         if kind == "task_end":
+            writers.append((threading.current_thread().name,
+                            " | ".join(traceback.format_stack(limit=7)[:-1]).replace(chr(10), " ")))
             try:
                 gate.wait(timeout=1)
             except threading.BrokenBarrierError:
@@ -192,7 +196,10 @@ def test_a_stop_racing_the_worker_writes_one_receipt(isolated):
             t.join(timeout=10)
     finally:
         action_ledger.try_append = real
-    assert len(_rows_for("t-end-7")) == 1
+    rows = _rows_for("t-end-7")
+    assert len(rows) == 1, "receipts: %r; written by: %s" % (
+        [(r.get("status"), r.get("ended")) for r in rows],
+        " ;; ".join("%s <- %s" % (name, stack[-700:]) for name, stack in writers))
 
 
 def test_a_second_receipt_for_a_racing_stop_names_who_wrote_it(isolated, monkeypatch):
