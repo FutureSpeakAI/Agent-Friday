@@ -183,7 +183,7 @@ def _versions(workspace_id: str) -> Path:
 def _load(workspace_id: str) -> Optional[dict]:
     try:
         data = json.loads(_file(workspace_id).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -221,12 +221,18 @@ def _checked(workspace_id: str) -> Optional[Response]:
 
 
 def _json_body() -> Tuple[dict, Optional[Response]]:
-    """The request's JSON object and no refusal, or an empty one and a 422 when it is nested deeper than the JSON parser
-    can read (the parser raises RecursionError on older Pythons, which would otherwise be a server error)."""
+    """The request's JSON object and no refusal (an empty body is an empty object), or an empty one and a 422 when the
+    body is nested deeper than the JSON parser can read (it raises RecursionError on older Pythons) or is not an
+    object: either would otherwise be a server error further in."""
     try:
-        return request.get_json(silent=True) or {}, None
+        data = request.get_json(silent=True)
     except RecursionError:
         return {}, _fault_answer(Fault("nested no deeper than the parser reads", "$"))
+    if data is None:
+        return {}, None
+    if not isinstance(data, dict):
+        return {}, _fault_answer(Fault("a JSON object", "$"))
+    return data, None
 
 
 def _too_big() -> Optional[Response]:
@@ -439,7 +445,7 @@ def register(app: Flask) -> None:
         for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
             try:
                 rows.append(_row(json.loads(path.read_text(encoding="utf-8"))))
-            except (OSError, ValueError, AttributeError):
+            except (OSError, ValueError, AttributeError, RecursionError):
                 continue                                    # one unreadable version never hides the others
         return jsonify({"ok": True, "versions": rows})
 
@@ -469,7 +475,7 @@ def register(app: Flask) -> None:
             try:
                 kept = json.loads((_versions(wid) / ("%06d.json" % target)).read_text(encoding="utf-8"))
                 old = {key: kept[key] for key in _TOP if key in kept}
-            except (OSError, ValueError, TypeError):
+            except (OSError, ValueError, TypeError, RecursionError):
                 return refuse(404, "no such version", code="no_version")
             try:
                 validate(old, wid)                      # a version that stopped validating is not brought back

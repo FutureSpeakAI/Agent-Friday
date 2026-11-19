@@ -347,6 +347,14 @@ def test_a_body_the_json_parser_cannot_nest_deep_enough_to_read_is_a_422_on_ever
     assert answer.status_code == 422 and json.loads(answer.get_data())["rule"] and files(tmp_path) == []
 
 
+@pytest.mark.parametrize("method, route", [("PUT", ""), ("POST", "/validate"), ("DELETE", ""), ("POST", "/rollback")])
+@pytest.mark.parametrize("text", ["[1]", '"x"', "5", "true"])
+def test_a_body_that_is_not_a_json_object_is_a_422_on_every_route(client, tmp_path, method, route, text):
+    answer = client.open("/tv/v1/workspaces/user/garden" + route, method=method, data=text,
+                         content_type="application/json", headers=auth(open_session(client, device())))
+    assert answer.status_code == 422 and json.loads(answer.get_data())["rule"] and files(tmp_path) == []
+
+
 @pytest.mark.parametrize("text", ["line\nbreak", "tab\there", "zero​width", "bidi‮evil", "nul\x00byte", "bom﻿"])
 def test_names_and_queries_with_control_or_hidden_characters_are_refused(client, tmp_path, text):
     assert save(client, device(), manifest(label=text)).status_code == 422
