@@ -187,5 +187,4 @@ def test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack(
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     files = _files(r)
     assert json.loads(files["manifest.json"])["ledger_verified"] is False
-    assert "job-pack" not in files["grants.jsonl"].decode() or True
     assert len(files["grants.jsonl"].decode().strip().splitlines()) == 1, "the grant is in the pack, usage unread"

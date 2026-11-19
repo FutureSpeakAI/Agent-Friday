@@ -56,7 +56,13 @@ def app_version() -> str:
 
 def _grant_rows(action_gate) -> list:
     try:
-        return action_gate.ledger_grant_rows()
+        try:
+            return action_gate.ledger_grant_rows()
+        except action_ledger.LedgerError:
+            # A break stops the strict read of a grant's uses. The pack is for exactly that case, so it lists the
+            # grants without their uses; the pack itself says the ledger did not verify. Held by
+            # test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack.
+            return action_gate.ledger_grant_rows(usage=False)
     except Exception as err:  # noqa: BLE001 - the key or the ledger could not be read
         raise pack.PackRefused("The grants could not be read (the ledger may have a break to review first), "
                                "so nothing was exported.") from err
