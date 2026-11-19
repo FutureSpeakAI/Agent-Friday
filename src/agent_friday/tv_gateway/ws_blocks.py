@@ -1,7 +1,7 @@
 """Markdown to the plain blocks a phone draws (PHONE_WORKSPACES_PARITY section 3, contract R4).
 
 A wiki page is parsed on the PC into a short list of block types and nothing else leaves: no HTML, no image,
-no URL to follow. An external link becomes a source (its host only); an internal link becomes a link block
+no URL to follow in the text (a code block is kept as written). An external link becomes a source (its host only); an internal link becomes a link block
 with a page ref. tests/unit/test_tv_ws_blocks.py holds each rule below and walks hostile inputs.
 
 Block types: heading, para, list, table, quote, code, link.
@@ -26,7 +26,7 @@ _QUOTE = re.compile(r"^\s*>\s?(.*)$")
 _TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
 _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
-_LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+_LINK = re.compile(r"\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+\"[^\"]*\")?\)")
 _WIKILINK = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 _TAG = re.compile(r"<[^>]+>")
 _EMPHASIS = re.compile(r"(\*\*|__|~~|`)")
@@ -52,14 +52,15 @@ def page_ref(folder: str, target: str) -> Optional[str]:
     return "page:" + joined
 
 
-_BARE_URL = re.compile(r"\b(?:https?|ftp|file)://\S+|\bwww\.\S+", re.I)
+_BARE_URL = re.compile(r"(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9+.\-]*://|www\.)\S+", re.I)
 
 
 def _clean(text: str) -> str:
-    """Plain words: images dropped, a link keeps only its label, markup and any URL left in the text removed."""
-    text = _BARE_URL.sub("", _TAG.sub("", _LINK.sub(lambda m: m.group(1), _IMAGE.sub("", text))))
+    """Plain words: images dropped, a link keeps only its label, markup and any URL left in the text removed.
+    The URL strip comes last: emphasis marks such as _https://x_ must be gone first, or they hide the address."""
+    text = _TAG.sub("", _LINK.sub(lambda m: m.group(1), _IMAGE.sub("", text)))
     text = _WIKILINK.sub(lambda m: m.group(2) or m.group(1), text)
-    return _EMPHASIS.sub("", text)
+    return _BARE_URL.sub("", _EMPHASIS.sub("", text))
 
 
 def line(text, limit: int = 200) -> str:

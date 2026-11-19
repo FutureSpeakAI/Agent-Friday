@@ -84,6 +84,16 @@ def test_no_url_leaves_in_a_table_cell_a_bare_address_or_an_auto_link():
     assert "site" in text and "the call" in text and "Head h" in text          # the words stay, only the addresses go
 
 
+@pytest.mark.parametrize("text", [
+    "_https://x.y/?t=SECRET_ after", "__https://x.y/?t=SECRET__ after", "a1https://x.y/?t=SECRET after",
+    "[a](https://e.x/a_(b)?t=SECRET) after", "see ssh://h.x/?t=SECRET after", "~~www.x.y/?t=SECRET~~ after",
+    "| A | B |\n| - | - |\n| _https://x.y/?t=SECRET_ | [l](https://e.x/a_(b)?t=SECRET) |",
+])
+def test_an_address_wrapped_in_emphasis_or_brackets_does_not_get_through(text):
+    got = str(wb.parse(text).blocks)
+    assert "SECRET" not in got and "://" not in got and "www" not in got
+
+
 @pytest.mark.parametrize("target", ["/etc/passwd.md", "../../secret.md", "C:\\x\\y.md", "http://x/y.md",
                                     "../..", "notes.png", "mailto:a@b.c", "javascript:alert(1)"])
 def test_a_link_that_leaves_the_wiki_or_is_not_a_page_gives_no_ref(target):
