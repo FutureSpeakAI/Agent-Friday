@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from agent_friday.governance import action_gate
-from agent_friday.services import agent, approvals, off_record
+from agent_friday.services import agent, approvals, authority, off_record
 from agent_friday.services import reflex_chat as rc
 from agent_friday.services import turn_plan as tp
 from agent_friday.services import turn_receipt as tr
@@ -40,6 +40,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(off_record, "active", lambda settings=None: False)
     import agent_friday.core as core
     monkeypatch.setattr(core, "FRIDAY_DIR", tmp_path)
+    # RED EVIDENCE (do not merge): the authority read reports "unreadable", as the slow Windows runner did.
+    monkeypatch.setattr(authority, "revoked", lambda: {"at": None, "by": None, "unreadable": True, "error": "OSError"})
     tp._recent.clear()
     tp.begin_turn(None)
     rc.reset_stats()
