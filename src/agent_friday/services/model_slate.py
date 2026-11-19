@@ -155,7 +155,7 @@ def slate(*, live: Optional[set] = None) -> dict:
 
 
 def row_for(model_id: str) -> Optional[dict]:
-    """The slate row (switch cost, measured wait, benchmark, capabilities, can_serve) for one model, built the same
+    """The slate row (can_serve, capabilities and whatever else ``_row`` carries: switch cost, measured wait, benchmark once they ship) for one model, built the same
     way ``slate()`` builds it, or None when this PC does not list the model. ``find`` returns the raw catalog row;
     a caller that wants the facts a device shows must use this. Held by tests/unit/test_model_slate.py."""
     m = find(model_id)

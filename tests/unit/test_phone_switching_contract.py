@@ -40,7 +40,7 @@ def test_a_switch_binds_the_chat_and_says_it_applies_to_this_conversation_only(c
     r = switch(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
     j = r.get_json()
     assert r.status_code == 200 and j["ok"] and j["model"] == "bonsai2:27b" and j["applies"] == "this_conversation"
-    assert desk.convs["conv-old"]["seat"] == {"model": "bonsai2:27b"} and j["facts"]["switch"]["cold"] is False
+    assert desk.convs["conv-old"]["seat"] == {"model": "bonsai2:27b"} and j["facts"]["id"] == "bonsai2:27b"   # the stubbed facts: the real row is tested below
 
 
 def test_a_switch_with_no_conversation_starts_one_on_that_model(client, desk):
@@ -272,3 +272,10 @@ def test_a_voice_turn_whose_default_model_is_refused_runs_in_the_chat_it_created
     assert r.status_code == 200
     assert sum(1 for c in desk.api_calls if c[0] == "POST") == 1          # one chat, not a spare plus another
     assert desk.turns[0]["conversation_id"] == "conv-new"
+
+
+def test_a_voice_turn_in_a_chat_that_inherits_its_projects_model_is_not_quietly_rebound(client, desk):
+    desk.convs["conv-old"]["effective_seat"] = {"model": "bonsai2:27b"}
+    ask(client, phone(), voice=True, conversation_id="conv-old")
+    assert desk.convs["conv-old"]["seat"] is None                          # the project's model stands
+    assert not any(c[0] == "PATCH" for c in desk.api_calls)

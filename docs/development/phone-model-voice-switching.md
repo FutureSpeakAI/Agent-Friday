@@ -27,12 +27,12 @@ Show `reason` / `blocked.reason` as written; they are the PC's own words (Local 
   `facts` is the PC's own row for the model: `switch` (`cold`, `expected_seconds`, `basis`: a cold local model needs
   loading; the number is measured on this PC or benchmarked, labelled), `measured` (median and p90 first-token wait
   and cache share from real answered turns, or null), `benchmark` (VRAM, tokens/s, cold load, date), `capabilities`
-  (declared by the provider, labelled as such). `measured` and `benchmark` appear once the model-slate timing work ships (#848, #862); until then
-  they are absent, so treat every field in `facts` as optional. Show "about N s the first time" from `switch` when `cold` is true.
-* Refusals (nothing changed): `400 unknown_model` (with `did_you_mean`), `409 model_unavailable`,
+  (declared by the provider, labelled as such). `switch`, `measured` and `benchmark` appear once the model-slate timing work ships (#848, #862); until
+  then they are absent, so treat every field in `facts` as optional. Show "about N s the first time" from `switch` when it is present and `cold` is true.
+* Refusals (the model is not bound; a refused switch that had to START a chat returns that chat's `conversation_id`: retry INTO it): `400 unknown_model` (with `did_you_mean`), `409 model_unavailable`,
   `409 seat_refused` (the PC would not bind it; the reason is in `error`), `404 unknown_conversation` (no such chat), `409 seat_pending` (the PC is still checking its local models: **retry** after a moment, `retry: true`), `400 bad_request` (also a chat id that is not letters, digits, `_` and `-`), `403 owner_only`,
-  `503 slate_unavailable`.
-* Sending `model` in a `/tv/v1/messages` body does the same bind and then runs the turn; use `model/switch` when the
+  `503 slate_unavailable` (the PC could not check the model), `503 chat_unavailable` (the PC's chat store did not answer a create, lookup or write).
+* Sending `model` in a `/tv/v1/messages` body does the same bind and then runs the turn (its refusals, and `503` when the desktop does not take the turn, carry the new chat's `conversation_id` too: retry into it); use `model/switch` when the
   user picks a model without sending a message.
 
 ## 3. Switch the voice engine for one conversation
@@ -64,7 +64,7 @@ last_served: { model, provider, seat, local, requested, expected, substituted, f
 ## Flow the phone should implement
 
 1. Open session. `GET /tv/v1/models` and `GET /tv/v1/voices` (cache for the screen; refresh on open).
-2. User picks a model: `POST /tv/v1/model/switch`. Show `facts.switch` and any refusal reason. Keep `conversation_id`.
+2. User picks a model: `POST /tv/v1/model/switch`. Show `facts.switch` when present, and any refusal reason. Keep `conversation_id`.
 3. User picks a voice engine: `POST /tv/v1/voice/switch`. On `409 needs_choice` show `what_leaves` and wait for the PC.
 4. Send turns with the same `conversation_id`. On each reply read `friday.model` and `friday.substituted`;
    label the bubble with the served model, not the requested one.

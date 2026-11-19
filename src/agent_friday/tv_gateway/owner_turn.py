@@ -353,8 +353,7 @@ def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
     from agent_friday.tv_gateway import turn, voice_reply
     try:
         if cid:
-            conv = _json(_api("GET", "/api/conversations/" + cid)).get("conversation") or {}
-            if (conv.get("seat") or {}).get("model"):
+            if seat_model(conversation(cid)):     # its own seat, else its project's: never rebound quietly
                 return cid, None
         row = voice_reply.fast_voice_model(_slate(dev))
         if not row:

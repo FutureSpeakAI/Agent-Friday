@@ -4,8 +4,8 @@ phone parity item "PC model and voice switching from the phone").
 * ``POST /tv/v1/model/switch {model, conversation_id?}`` (owner device only) binds ONE conversation to a PC
   model the same validated way a ``model`` in a Messages body does (models.resolve, then owner_turn.bind_seat):
   a model this PC cannot run, or that Local only forbids, is a coded refusal in words and nothing changes.
-  Without a ``conversation_id`` it starts the chat and returns its id. The answer says what the switch costs
-  (services/model_slate: a cold local seat's expected load, measured first-token wait, this PC's benchmark),
+  Without a ``conversation_id`` it starts the chat and returns its id. The answer carries the model's slate row as ``facts`` (can_serve, capabilities and, once #848/#862
+  land in services/model_slate, the switch cost, measured first-token wait and this PC's benchmark),
   and ``applies`` says "this_conversation", never more.
 * ``GET /tv/v1/conversations/<cid>/state`` (owner device only): the model and voice that conversation is bound
   to, and ``last_served``: what actually answered its latest turn (the desktop's own record, not the request),
