@@ -11,6 +11,9 @@ The PC enforces the limits, not the device: nothing starts while everything is s
 ``origin`` is ``pc`` for the owner at this PC (not counted against the cap) or ``device:<id>``. A device never names
 its own origin: the gateway builds ``device:<id>`` from the id it authenticated (tv_gateway/pc_act), and a caller that
 may reach this route with the PC's token is the owner, who needs no job started for them to start one.
+The cap holds because the only caller that names a device origin is that gateway door, and its test
+``test_the_device_cannot_choose_the_origin_or_send_anything_else`` (PR #967, tests/unit/test_tv_pc_jobs_start.py)
+fails if it ever forwards an origin from the device's own body.
 """
 from __future__ import annotations
 
@@ -36,9 +39,13 @@ class Refused(Exception):
 
 
 def _running_from_devices() -> int:
+    """Device-started jobs that have not ended. A job waiting on an approval card, for a seat, or paused is still
+    the device's job: only a terminal status (or a record that is gone) frees its place."""
     from agent_friday.services.agent import TASKS, TASKS_LOCK
+    from agent_friday.services.task_journal import is_terminal
     with TASKS_LOCK:
-        live = {tid for tid in _FROM_DEVICE if (TASKS.get(tid) or {}).get("status") in ("queued", "running")}
+        live = {tid for tid in _FROM_DEVICE
+                if tid in TASKS and not is_terminal((TASKS[tid] or {}).get("status"))}
     for tid in set(_FROM_DEVICE) - live:
         _FROM_DEVICE.pop(tid, None)
     return len(live)

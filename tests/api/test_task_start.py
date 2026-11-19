@@ -153,3 +153,20 @@ def test_a_spawn_that_raises_is_a_refusal_in_words_not_a_server_error(client, mo
     monkeypatch.setattr(ag, "_spawn_task", boom)
     r = _start(client)
     assert r.status_code == 409 and r.get_json()["error"] and "PermissionError" not in r.get_json()["error"]
+
+
+@pytest.mark.parametrize("waiting", ["waiting_approval", "waiting_for_approval", "queued-for-seat", "waiting", "paused"])
+def test_a_job_waiting_on_a_card_or_a_seat_still_holds_its_place_under_the_cap(client, spawned, waiting):
+    """Every tool is behind the action gate, so device jobs routinely wait for an owner's yes. They are still the
+    device's jobs: three of them waiting must not let a fourth start, and they must not be forgotten."""
+    ids = [_start(client).get_json()["task_id"] for _ in range(task_start.DEVICE_JOB_CAP)]
+    with ag.TASKS_LOCK:
+        for tid in ids:
+            ag.TASKS[tid]["status"] = waiting
+    assert _start(client).status_code == 409
+    with ag.TASKS_LOCK:
+        ag.TASKS[ids[0]]["status"] = "running"                 # it resumes: still counted
+    assert _start(client).status_code == 409
+    with ag.TASKS_LOCK:
+        ag.TASKS[ids[0]]["status"] = "complete"                # only an ending frees the place
+    assert _start(client).status_code == 201
