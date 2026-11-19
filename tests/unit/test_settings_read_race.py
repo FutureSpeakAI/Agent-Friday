@@ -172,6 +172,31 @@ def _load_while_unreadable(monkeypatch):
     return s
 
 
+def test_a_stalled_thread_still_tries_a_few_times_before_it_gives_up(owned, monkeypatch):
+    """F4: a thread the runner stalls for longer than the retry window used to give up after ONE failed read
+    (the deadline had passed by the time it looked). The clock here jumps five seconds on every read of it; one
+    sharing violation must still be retried."""
+    import time as real_time
+
+    class _JumpyClock:
+        def __init__(self):
+            self.now = 0.0
+
+        def monotonic(self):
+            self.now += 5.0
+            return self.now
+
+        def sleep(self, s):
+            pass
+
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+    monkeypatch.setattr(core, "_time", _JumpyClock())
+    _fail_reads(monkeypatch, times=1)
+    assert core._read_settings_file()["agent_name"] == OWNER_NAME
+
+
 def test_a_save_of_a_failed_read_does_not_overwrite_the_file(owned, monkeypatch):
     _forget_last_good(monkeypatch)
     s = _load_while_unreadable(monkeypatch)
