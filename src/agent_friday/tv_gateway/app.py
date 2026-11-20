@@ -303,6 +303,11 @@ def create_app(tailnet: bool = False) -> Flask:
     inherit.register(app)
     from agent_friday.tv_gateway import pc_read
     pc_read.register(app)                    # the owner phone/tablet read door (chats, workspaces, jobs, media)
+    from agent_friday.tv_gateway import pc_act, pc_approve
+    pc_approve.register(app)
+    pc_act.register(app)
+    from agent_friday.tv_gateway import pc_grants
+    pc_grants.register(app)             # standing grants: list, revoke, stop an offer (K5 PR D)
     return app
 
 
