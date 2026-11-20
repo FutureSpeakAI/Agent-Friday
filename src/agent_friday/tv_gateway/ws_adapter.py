@@ -7,6 +7,7 @@ three into 404, 423 and 503. tests/unit/test_tv_ws_content.py holds the mapping.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Optional
 
@@ -39,3 +40,8 @@ def desk_json(path: str, params: Optional[dict] = None) -> dict:
     if not isinstance(data, dict):
         raise Unavailable(path)
     return data
+
+
+def digest(*parts) -> str:
+    """A short stable fingerprint of what a revision is made of (a rev is compared, never parsed)."""
+    return hashlib.sha256("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:10]
