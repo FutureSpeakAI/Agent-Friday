@@ -67,8 +67,11 @@ def _grants():
     return [g for g in action_gate.list_grants() if str(g["scope"]).startswith(sg.PATTERN_SCOPE)]
 
 
+OWN_LINE = {"principal": "owner", "session_id": "s-chat", "owner_surface": True}
+
+
 def _call(tool="create_task", **args):
-    return action_gate.authorize(tool, args or {"list": "home"}, {"principal": "owner", "session_id": "s-chat"})
+    return action_gate.authorize(tool, args or {"list": "home"}, dict(OWN_LINE), clean=True)
 
 
 def test_the_nth_approval_raises_exactly_one_offer_card_and_no_grant():
@@ -200,10 +203,12 @@ def test_a_grant_never_covers_another_pattern_or_a_new_or_unusual_instance(store
 
 def test_a_laya_or_private_data_reason_asks_even_with_a_live_grant(store):
     _granted(store)
-    ctx = {"principal": "owner", "session_id": "s-chat"}
-    assert sg.cover("create_task", {"list": "home"}, ctx, "routine") is not None
-    assert sg.cover("create_task", {"list": "home"}, ctx, "Laya judged that it changes something outside") is None
-    assert sg.cover("create_task", {"list": "home"}, ctx, "private data would leave in its arguments") is None
+    ctx = dict(OWN_LINE)
+    assert sg.cover("create_task", {"list": "home"}, ctx, "routine", clean=True) is not None
+    assert sg.cover("create_task", {"list": "home"}, ctx, "Laya judged that it changes something outside",
+                    clean=True) is None
+    assert sg.cover("create_task", {"list": "home"}, ctx, "private data would leave in its arguments",
+                    clean=True) is None
 
 
 def test_a_tainted_call_is_asked_even_with_a_live_grant(store):
@@ -233,17 +238,17 @@ def test_cover_itself_refuses_an_excluded_action_even_if_a_grant_were_found(monk
     monkeypatch.setattr(action_gate, "_use_grant", lambda tool, ctx, args=None: {"grant_id": "grant_x"})
     for _ in range(3):
         _decide(tool="draft_email", send=True)
-    ctx = {"principal": "owner", "session_id": "s-chat"}
+    ctx = dict(OWN_LINE)
     assert an.peek(ap.card_of_call("draft_email", {"send": True})) is an.Novelty.SEEN
-    assert sg.cover("draft_email", {"send": True}, ctx, "") is None, "a send with no named recipient"
+    assert sg.cover("draft_email", {"send": True}, ctx, "", clean=True) is None, "a send with no named recipient"
     for _ in range(3):
         _decide(tool="draft_email", send=True, to="ann@example.com")
-    assert sg.cover("draft_email", {"send": True, "to": "ann@example.com"}, ctx, "") is not None
+    assert sg.cover("draft_email", {"send": True, "to": "ann@example.com"}, ctx, "", clean=True) is not None
 
 
 # ── review findings on #873 (two independent critics) ─────────────────────────────────────────────────────
 
-CHAT = {"principal": "owner", "session_id": "s-chat"}
+CHAT = OWN_LINE
 
 
 def _grant_via_press(store, **tool_input):
@@ -254,21 +259,22 @@ def _grant_via_press(store, **tool_input):
 def test_a_grant_earned_in_chat_does_not_cover_the_same_call_from_an_unattended_ctx(store):
     """The pattern's origin is the confirmation gate of a chat session: a new origin is a new action."""
     _grant_via_press(store)
-    assert action_gate.authorize("create_task", {"list": "home"}, dict(CHAT)).action == "allow"
+    assert action_gate.authorize("create_task", {"list": "home"}, dict(CHAT), clean=True).action == "allow"
     for ctx in ({"principal": "owner"},
                 {"principal": "owner", "scheduled": True, "schedule_id": "sch_x"},
-                {"principal": "owner", "session_id": "s-chat", "is_background_task": True},
-                {"principal": "owner", "session_id": "s-chat", "confirm_bypass": True}):
-        assert action_gate.authorize("create_task", {"list": "home"}, ctx).action != "allow", ctx
+                dict(OWN_LINE, is_background_task=True),
+                dict(OWN_LINE, confirm_bypass=True)):
+        assert action_gate.authorize("create_task", {"list": "home"}, ctx, clean=True).action != "allow", ctx
 
 
 def test_a_grant_earned_on_one_text_does_not_cover_a_call_that_spends_money(store):
     """Free text is outside the pattern, so the money and irreversible exclusions must be checked on the call
     itself when the grant is spent, not only on the card that earned it."""
     _grant_via_press(store, list="home", title="Call mom")
-    assert action_gate.authorize("create_task", {"list": "home", "title": "Call dad"}, dict(CHAT)).action == "allow"
+    assert action_gate.authorize("create_task", {"list": "home", "title": "Call dad"}, dict(CHAT),
+                                 clean=True).action == "allow"
     spend = action_gate.authorize("create_task", {"list": "home", "title": "Pay the vendor $5,000 now"},
-                                  dict(CHAT))
+                                  dict(CHAT), clean=True)
     assert spend.action != "allow"
 
 
@@ -279,7 +285,7 @@ def test_the_standing_path_never_spends_a_task_or_schedule_grant(store):
     action_gate.create_grant(tools=["create_task"], scope="task_zz", expires_in_seconds=3600, max_uses=1,
                              created_by="owner", note="a task grant")
     ctx = dict(CHAT, task_id="task_zz")
-    assert action_gate.authorize("create_task", {"list": "home"}, ctx).action != "allow"
+    assert action_gate.authorize("create_task", {"list": "home"}, ctx, clean=True).action != "allow"
 
 
 def test_an_offer_can_be_raised_again_after_a_decline_without_wedging_the_slot(store):
@@ -305,3 +311,36 @@ def test_the_offer_card_says_the_scope_first_and_bounds_what_a_tool_argument_can
     assert "30 days or 50 uses" in text and "take this back in Settings" in text
     assert text.index("30 days") < text.index("a" * 30), "the fixed wording must come before tool-supplied text"
     assert len(text) < 700 and "a" * 100 not in text
+
+
+def test_a_grant_is_not_spent_in_a_turn_that_read_outside_content(store):
+    """The pre-approved send path needs a clean call (nothing read from outside content in the turn); a standing
+    grant must not be easier to spend than that."""
+    _grant_via_press(store)
+    assert action_gate.authorize("create_task", {"list": "home"}, dict(CHAT), clean=False).action != "allow"
+    assert action_gate.authorize("create_task", {"list": "home"}, dict(CHAT), clean=True).action == "allow"
+
+
+@pytest.mark.parametrize("remote", [
+    {"owner_surface": False},                                   # a chat that is not the owner's own line on this PC
+    {"owner_surface": None},
+    {"owner_surface": True, "remote": True},                    # marked remote
+    {"owner_surface": True, "remote_device": "device:phone1"},
+    {"owner_surface": True, "origin": "phone"},
+])
+def test_a_grant_is_not_spent_from_a_chat_that_is_not_the_owners_own_line_on_this_pc(store, remote):
+    _grant_via_press(store)
+    ctx = dict(CHAT, **remote)
+    assert action_gate.authorize("create_task", {"list": "home"}, ctx, clean=True).action != "allow", remote
+
+
+def test_an_offer_is_not_recorded_as_raised_when_no_new_pending_card_came_back(store, monkeypatch):
+    """If the store hands back a card that is not pending, nothing was shown: no pending mark, no 'shown' line."""
+    pattern = ap.from_call("create_task", {"list": "home"})
+    monkeypatch.setattr(so, "offer_due", lambda card: pattern)
+    monkeypatch.setattr(approvals, "create_approval", lambda **kw: {"approval_id": "old", "status": "denied"})
+    recorded = []
+    monkeypatch.setattr(so, "record_offer_raised", lambda *a, **k: recorded.append(a))
+    assert sg.maybe_offer({"status": "approved", "kind": "tool_confirm", "requested_by": "confirmation_gate",
+                           "payload": {"tool": "create_task", "input": {"list": "home"}}}) is None
+    assert recorded == []
