@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from typing import Optional, Tuple
@@ -25,13 +26,15 @@ from flask import Flask, Response, current_app, g, jsonify, request
 
 from agent_friday.tv_gateway import ws_device
 
-from agent_friday.tv_gateway.pc_common import ID_PATTERN, allowed, refuse as _refuse
+from agent_friday.tv_gateway.pc_common import ID_PATTERN, allowed, hide_host_paths, refuse as _refuse
 
 _log = logging.getLogger(__name__)
 
 RIGHT = "pc_read"
 MAX_JSON = 4 * 1024 * 1024
 MAX_PREVIEW = 3 * 1024 * 1024
+MAX_FILE_CHUNK = 8 * 1024 * 1024
+_RANGE = re.compile(r"^bytes=(\d{0,19})-(\d{0,19})$")
 AUDIT_EVERY_S = 3600.0
 _MEDIA_ARGS = ("view", "q", "kind", "type", "project", "status", "tag", "source", "from", "to", "limit",
                "offset", "sort", "collection")
@@ -78,6 +81,11 @@ def _desk(path: str, params: Optional[dict] = None) -> Tuple[int, bytes, str]:
 
 CHATS_PAGE, CHATS_PAGE_MAX = 30, 100
 MESSAGES_PAGE, MESSAGES_PAGE_MAX = 200, 500
+JOBS_PAGE, JOBS_PAGE_MAX = 50, 200
+JOB_FIELDS = ("task_id", "name", "status", "state", "progress", "step_n", "step_total", "icon", "model",
+              "category", "created", "started", "ended", "elapsed", "off_record", "process", "conversation_id",
+              "last_seen", "stalled", "cost_usd", "now", "stop_requested", "queue_state", "queue_position",
+              "queue_total", "resumable", "resume_reason")
 
 
 def _unavailable(area: str, e: Optional[Exception] = None) -> Response:
@@ -91,7 +99,7 @@ def _stamped(resp: Response) -> Response:
     return resp
 
 
-def _json_from_desk(path: str, params: Optional[dict] = None, area: str = "") -> Response:
+def _json_from_desk(path: str, params: Optional[dict] = None, area: str = "", shape=None) -> Response:
     try:
         status, body, ctype = _desk(path, params)
     except Exception as e:
@@ -100,6 +108,11 @@ def _json_from_desk(path: str, params: Optional[dict] = None, area: str = "") ->
         return _refuse(413, "that is too big to send to a phone; ask for a smaller page", code="too_big")
     if status >= 500:
         return _unavailable(area)
+    if shape is not None:
+        try:
+            body = json.dumps(shape(json.loads(body))).encode("utf-8")
+        except ValueError:
+            return _refuse(503, "the PC's answer could not be read safely", code="pc_unavailable")
     return _stamped(Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json"))
 
 
@@ -116,6 +129,10 @@ def _desk_object(path: str, params: dict, area: str, key: str) -> Tuple[Optional
     if status >= 300 or not isinstance(data, dict) or not isinstance(data.get(key), list):
         return None, Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
     return data, None
+
+
+def _job_row(task: dict) -> dict:
+    return {k: task[k] for k in JOB_FIELDS if k in task}
 
 
 def _page_out(payload: dict) -> Response:
@@ -246,10 +263,23 @@ def register(app: Flask) -> None:
     # ── 3. jobs and their journals ──────────────────────────────────────────
     @app.get("/tv/v1/jobs")
     def pc_jobs():
+        """The jobs list: one summary row per job (never its prompt, log or result; the detail routes carry those),
+        newest as the desktop orders them, ``limit`` (default 50, at most 200) from ``offset``, optionally only
+        jobs with one ``status``. Held by tests/unit/test_tv_pc_jobs.py."""
         denied = _guard("jobs")
         if denied is not None:
             return denied
-        return _json_from_desk("/api/tasks", None, "jobs")
+        data, other = _desk_object("/api/tasks", {}, "jobs", "tasks")
+        if other is not None:
+            return other
+        rows = [_job_row(t) for t in data["tasks"] if isinstance(t, dict)]
+        status = (request.args.get("status") or "").strip()[:40]
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+        limit, offset = _int("limit", JOBS_PAGE, JOBS_PAGE_MAX) or JOBS_PAGE, _int("offset", 0, 1_000_000)
+        nxt = offset + limit if offset + limit < len(rows) else None
+        return _page_out({"status": "ok", "tasks": rows[offset:offset + limit], "total": len(rows),
+                          "offset": offset, "next_offset": nxt})
 
     @app.get("/tv/v1/jobs/<jid>")
     def pc_job(jid):
@@ -281,7 +311,7 @@ def register(app: Flask) -> None:
         params = {k: request.args[k][:200] for k in _MEDIA_ARGS if request.args.get(k)}
         if "limit" in params:
             params["limit"] = _int("limit", 100, 500) or 100
-        return _json_from_desk("/api/media", params, "media")
+        return _json_from_desk("/api/media", params, "media", shape=hide_host_paths)
 
     @app.get("/tv/v1/media/status")
     def pc_media_status():
@@ -297,7 +327,7 @@ def register(app: Flask) -> None:
             return denied
         if not ID_PATTERN.match(mid):
             return _refuse(400, "not a media id", code="bad_id")
-        return _json_from_desk("/api/media/%s" % mid, None, "media_card")
+        return _json_from_desk("/api/media/%s" % mid, None, "media_card", shape=hide_host_paths)
 
     @app.get("/tv/v1/media/<mid>/preview")
     def pc_media_preview(mid):
@@ -322,6 +352,97 @@ def register(app: Flask) -> None:
 
     from agent_friday.tv_gateway import app_update           # update the phone app from this PC (same owner gate)
     app_update.register(app)
+
+    @app.get("/tv/v1/media/<mid>/strip")
+    def pc_media_strip(mid):
+        denied = _guard("media")
+        if denied is not None:
+            return denied
+        if not ID_PATTERN.match(mid):
+            return _refuse(400, "not a media id", code="bad_id")
+        try:
+            status, body, ctype = _desk("/api/media/%s/strip" % mid)
+        except Exception as e:
+            _log.warning("pc_read strip failed: %s", type(e).__name__)
+            return _refuse(503, "the PC could not make that strip right now", code="pc_unavailable")
+        if status != 200 or not ctype.lower().startswith("image/"):
+            return _refuse(404 if status == 404 else 503, "no strip for that item", code="no_preview")
+        if len(body) > MAX_PREVIEW:
+            return _refuse(413, "that strip is too big for a phone", code="too_big")
+        resp = Response(body, mimetype=ctype.split(";")[0])
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    @app.get("/tv/v1/media/<mid>/file")
+    def pc_media_file(mid):
+        denied = _guard("media")
+        if denied is not None:
+            return denied
+        if not ID_PATTERN.match(mid):
+            return _refuse(400, "not a media id", code="bad_id")
+        wanted = _capped_range(request.headers.get("Range", ""))
+        try:
+            status, body, ctype, content_range = _desk_range("/api/media/%s/file" % mid, wanted)
+        except Exception as e:
+            _log.warning("pc_read file failed: %s", type(e).__name__)
+            return _refuse(503, "the PC could not send that file right now", code="pc_unavailable")
+        if status == 416:
+            out_of_range = _refuse(416, "that range is outside the file", code="range_not_satisfiable")
+            out_of_range.headers["Content-Range"] = content_range
+            return out_of_range
+        if status not in (200, 206):
+            return _refuse(404 if status == 404 else 503, "no file for that item", code="no_file")
+        if len(body) > MAX_FILE_CHUNK:
+            return _refuse(413, "the PC sent more than one chunk; ask for a range", code="too_big")
+        mimetype = ctype.split(";")[0] or "application/octet-stream"
+        resp = Response(body, status=status, mimetype=mimetype)
+        resp.headers.update({"Accept-Ranges": "bytes", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                             "X-Friday-Chunk-Cap": str(MAX_FILE_CHUNK)})
+        if not mimetype.startswith(("image/", "audio/", "video/")):
+            resp.headers["Content-Disposition"] = "attachment"
+        if content_range:
+            resp.headers["Content-Range"] = content_range
+        return resp
+
+    @app.get("/tv/v1/media/collections")
+    def pc_media_collections():
+        denied = _guard("media")
+        if denied is not None:
+            return denied
+        return _json_from_desk("/api/media/collections", None, "media_collections", shape=hide_host_paths)
+
+    @app.get("/tv/v1/media/collections/<cid>")
+    def pc_media_collection(cid):
+        denied = _guard("media")
+        if denied is not None:
+            return denied
+        if not ID_PATTERN.match(cid):
+            return _refuse(400, "not a collection id", code="bad_id")
+        return _json_from_desk("/api/media/collections/%s" % cid, {"limit": _int("limit", 200, 500) or 200},
+                               "media_collection", shape=hide_host_paths)
+
+
+def _capped_range(header: str) -> str:
+    """The Range to ask the desktop for: the device's single range, never longer than MAX_FILE_CHUNK; a suffix range
+    (``bytes=-N``) keeps its meaning with N capped; a first chunk when it sent none or sent something else.
+    Guarded by test_a_file_is_sent_in_capped_ranges."""
+    match = _RANGE.match(header or "")
+    first, last = (match.group(1), match.group(2)) if match else ("", "")
+    if match and not first and last and int(last) > 0:
+        return "bytes=-%d" % min(int(last), MAX_FILE_CHUNK)
+    start = int(first) if first else 0
+    end = int(last) if last and first else start + MAX_FILE_CHUNK - 1
+    if end < start:
+        start, end = 0, MAX_FILE_CHUNK - 1          # a range the desktop would read as "the whole file"
+    return "bytes=%d-%d" % (start, min(end, start + MAX_FILE_CHUNK - 1))
+
+
+def _desk_range(path: str, byte_range: str):
+    from agent_friday import core
+    headers = {"X-Friday-Token": core._current_api_token(), "Range": byte_range}
+    reply = core.app.test_client().get(path, headers=headers)
+    return (reply.status_code, reply.get_data(), reply.headers.get("Content-Type", ""),
+            reply.headers.get("Content-Range", ""))
 
 
 def _acts_live() -> bool:

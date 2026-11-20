@@ -83,6 +83,14 @@ if ! $PY "$HERE/../scripts/check_stale_model_names.py"; then
     exit 1
 fi
 
+# No new module reads a raw provider key; the list of today's readers only shrinks
+# (scripts/check_raw_key_readers.py). AST walk, stdlib only.
+if ! $PY "$HERE/../scripts/check_raw_key_readers.py"; then
+    echo "[pre-commit] raw-key-readers check FAILED - commit blocked." >&2
+    echo "[pre-commit] emergency bypass (discouraged): git commit --no-verify" >&2
+    exit 1
+fi
+
 # Governance never reads trust: trust may add caution and can never clear a
 # card (scripts/check_trust_in_governance.py). AST walk, stdlib only.
 if ! $PY "$HERE/../scripts/check_trust_in_governance.py"; then
