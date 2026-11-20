@@ -79,20 +79,35 @@ def _arg_rule(tool_input: Dict[str, Any]) -> Tuple[Tuple[str, str], ...]:
     return tuple(rule)
 
 
+#: Who raises the card for a tool call that waits for the owner's yes (agent._confirm_card).
+GATE_ORIGIN = "confirmation_gate"
+
+
+def from_call(tool: str, tool_input: Any, *, principal: str = "owner",
+              origin: str = GATE_ORIGIN) -> ActionPattern:
+    """The pattern of a tool call about to be decided: what its card would parse to."""
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    return ActionPattern(tool=str(tool)[:80], destination=_destinations(tool_input),
+                         arg_rule=_arg_rule(tool_input), principal=str(principal or "owner")[:60],
+                         origin=str(origin or "")[:60])
+
+
+def card_of_call(tool: str, tool_input: Any, *, principal: str = "owner",
+                 origin: str = GATE_ORIGIN, task_id: str = "") -> Dict[str, Any]:
+    """The card a call would be raised as, for the checks that read a card (exclusion, novelty)."""
+    return {"kind": "tool_confirm", "principal": principal, "requested_by": origin,
+            "payload": {"tool": tool, "input": tool_input if isinstance(tool_input, dict) else {},
+                        "task_id": task_id}}
+
+
 def from_card(card: Dict[str, Any]) -> Optional[ActionPattern]:
     """The pattern of a tool card, or None for any other kind of card."""
     payload = card.get("payload") if isinstance(card.get("payload"), dict) else {}
     tool = payload.get("tool")
     if card.get("kind") != "tool_confirm" or not isinstance(tool, str) or not tool:
         return None
-    tool_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
-    return ActionPattern(
-        tool=tool[:80],
-        destination=_destinations(tool_input),
-        arg_rule=_arg_rule(tool_input),
-        principal=str(card.get("principal") or "owner")[:60],
-        origin=str(payload.get("origin") or card.get("requested_by") or "")[:60],
-    )
+    return from_call(tool, payload.get("input"), principal=str(card.get("principal") or "owner"),
+                     origin=str(payload.get("origin") or card.get("requested_by") or ""))
 
 
 def known_tools() -> frozenset:
@@ -105,10 +120,24 @@ def _sends(pattern: ActionPattern, tool_input: Dict[str, Any]) -> bool:
     return bool(_SEND_NAME.search(pattern.tool)) or tool_input.get("send") is True
 
 
+def tool_exclusion(tool: str) -> Optional[GrantExclusion]:
+    """The exclusions that depend on the tool alone. Grant creation checks this too, so a request
+    made by hand for such a tool is refused."""
+    from agent_friday.governance import action_gate
+    if action_gate.narrow_grant_only(tool):
+        return GrantExclusion.NO_UNDO
+    if _CREDENTIAL.search(tool):
+        return GrantExclusion.CREDENTIAL
+    if _DEVICE.search(tool):
+        return GrantExclusion.DEVICE_RIGHT
+    if tool not in known_tools():
+        return GrantExclusion.UNKNOWN_TOOL
+    return None
+
+
 def exclusion_of(card: Dict[str, Any]) -> Optional[GrantExclusion]:
     """Why this card's action may never have a standing grant, or None when it may be offered one.
     Fails closed: anything not recognised is excluded."""
-    from agent_friday.governance import action_gate
     from agent_friday.services import approvals
     pattern = from_card(card)
     if pattern is None:
@@ -123,14 +152,11 @@ def exclusion_of(card: Dict[str, Any]) -> Optional[GrantExclusion]:
         return GrantExclusion.LAYA_CARD
     if card.get("policy_class") in ("spend", "irreversible"):
         return GrantExclusion.MONEY if card.get("policy_class") == "spend" else GrantExclusion.NO_UNDO
-    if action_gate.narrow_grant_only(pattern.tool):
-        return GrantExclusion.NO_UNDO
-    if _CREDENTIAL.search(pattern.tool) or any(_CREDENTIAL.search(str(k)) for k in tool_input):
+    by_tool = tool_exclusion(pattern.tool)
+    if by_tool is not None:
+        return by_tool
+    if any(_CREDENTIAL.search(str(k)) for k in tool_input):
         return GrantExclusion.CREDENTIAL
-    if _DEVICE.search(pattern.tool):
-        return GrantExclusion.DEVICE_RIGHT
-    if pattern.tool not in known_tools():
-        return GrantExclusion.UNKNOWN_TOOL
     if _sends(pattern, tool_input) and not pattern.destination:
         return GrantExclusion.UNNAMED_RECIPIENT
     return None

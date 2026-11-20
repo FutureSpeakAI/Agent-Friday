@@ -43,7 +43,7 @@ from urllib.parse import urlparse
 from agent_friday.user_errors import UserFacingValueError
 
 KINDS = ("scoped", "run", "send", "file", "library", "desktop", "crew")
-SUBJECT_KINDS = ("goal", "task", "schedule", "session", "owner")
+SUBJECT_KINDS = ("goal", "task", "schedule", "session", "owner", "pattern")
 #: What a grant does in quiet hours. allow: it covers as at any other time
 #: (what every grant did before these records). respect: it follows the
 #: owner's quiet (quiet hours, "quiet until morning"): while quiet is on it
@@ -344,6 +344,8 @@ def subject_of_scope(scope) -> dict:
     Code task)."""
     s = str(scope or "")
     low = s.lower()
+    if low.startswith("pattern:"):
+        return {"kind": "pattern", "id": s}
     if low.startswith("sch_"):
         return {"kind": "schedule", "id": s}
     if low.startswith("goal"):

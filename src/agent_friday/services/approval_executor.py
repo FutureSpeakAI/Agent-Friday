@@ -69,6 +69,8 @@ def register() -> None:
     from agent_friday.services import approvals as _ap
     _ap.register_decision_hook(KIND, _on_decision)
     _ap.register_decision_hook("tool_confirm", _on_decision)
+    from agent_friday.services import standing_grants
+    standing_grants.register()
     _registered = True
     _log.info("approval executor registered for %r cards", KIND)
 

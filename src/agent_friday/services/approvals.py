@@ -191,6 +191,9 @@ def notice_body(rec: Dict[str, Any]) -> str:
     return str(rec.get("description") or rec.get("action_description") or "")
 
 SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
+    # The shell's offer of a standing grant (services/standing_grants): only the owner's press on
+    # this PC's own screen accepts it; declining is open to every channel.
+    "standing_grant_offer": frozenset({"owner:ui"}),
     # A website task's plan that adds a site to the owner's list
     # (services/web_tasks): widening what Friday may do is a press on screen.
     "web_task_plan_new_sites": frozenset({"owner:ui"}),
@@ -1258,7 +1261,13 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
     _journal_card(out, "decided")
     _note_novelty(out)
     _fire_hook(out)
+    _offer_standing_grant(out)
     return out, True
+
+
+def _offer_standing_grant(card: Dict[str, Any]) -> None:
+    from agent_friday.services import standing_grants
+    standing_grants.maybe_offer(card)
 
 
 def _note_novelty(card: Dict[str, Any]) -> None:

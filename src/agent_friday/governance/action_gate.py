@@ -1768,7 +1768,10 @@ def create_grant(*, tools, scope: str, expires_in_seconds: float,
         finite = False
     if not tools or not scope or not finite or expires_in_seconds <= 0 or max_uses < 1:
         raise ValueError("a grant needs tools, a scope, a positive expiry and uses")
-    _broad = broad_grant_refusal(tools, expires_in_seconds, max_uses)
+    from agent_friday.services import standing_grants as _sgr
+    _broad = (_sgr.standing_refusal(tools, expires_in_seconds, max_uses, created_by)
+              if str(scope).startswith(_sgr.PATTERN_SCOPE)
+              else broad_grant_refusal(tools, expires_in_seconds, max_uses))
     if _broad:
         from agent_friday.user_errors import UserFacingValueError
         raise UserFacingValueError(_broad, status=400)
@@ -3397,6 +3400,12 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
         return Verdict("allow", klass, "its own approval card is the gate (with provenance)",
                        detail=withheld)
     excluded: dict = {}
+    if not tainted:
+        from agent_friday.services import standing_grants as _sgr
+        standing = _sgr.cover(tool_name, args, ctx, why,
+                              clean=bool(clean and not (tainted if grant_tainted is None else grant_tainted)))
+        if standing is not None:
+            return Verdict("allow", klass, f"standing grant {standing['grant_id']}", grant=standing)
     if not tainted and not _interactive(ctx):
         # Idempotent execute (NS-36.3-5) before a grant use is spent: a request
         # the grant would let run, already carried out, is refused here (as
