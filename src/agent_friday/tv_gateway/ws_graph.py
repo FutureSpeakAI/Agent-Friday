@@ -28,6 +28,7 @@ from urllib.parse import quote
 from flask import Flask, Response, jsonify, request
 
 from agent_friday.tv_gateway import pc_read, ws_blocks
+from agent_friday.tv_gateway.ws_adapter import Missing, Unavailable
 
 _log = logging.getLogger(__name__)
 
@@ -41,14 +42,6 @@ MAX_BODY = 512 * 1024
 FEED_LIMIT = 200000                      # the whole graph is read here, ranked and cut here, never on the phone
 _NODE_ID = re.compile(r"^[^\x00-\x1f\\]{1,200}$")
 _COMMUNITY = re.compile(r"^[^\x00-\x1f\\]{1,40}$")
-
-
-class Missing(Exception):
-    """No such node or community."""
-
-
-class Unavailable(Exception):
-    """The PC could not read its graph."""
 
 
 def _feed(path: str, params: Optional[dict] = None) -> dict:
@@ -102,6 +95,7 @@ class Snapshot:
     inside: dict          # community key -> [(rank a, rank b, weight)], by the later of the two ranks
     between: dict         # (community key, community key) -> link count
     centres: dict         # community key -> [x, y, z]
+    by_page: dict         # wiki page path -> the node that cites it most (highest degree first)
 
 
 _SNAPSHOT: Optional[Snapshot] = None
@@ -118,8 +112,12 @@ def snapshot() -> Snapshot:
     data = _feed("/api/knowledge-graph/graph", {"view": "compact", "limit": FEED_LIMIT})
     entities = [e for e in data.get("entities") or [] if isinstance(e, dict) and e.get("id")]
     ranked: dict = {}
+    by_page: dict = {}
     for e in sorted(entities, key=lambda e: (-int(e.get("degree") or 0), str(e["id"]))):
         ranked.setdefault(str(e.get("community")), []).append(e)
+        for path in (e.get("provenance") or {}).get("wiki_pages") or []:
+            if isinstance(path, str):
+                by_page.setdefault(path, str(e["id"]))
     place = {e["id"]: (c, i) for c, rows in ranked.items() for i, e in enumerate(rows)}
     inside: dict = {}
     between: dict = {}
@@ -142,10 +140,32 @@ def snapshot() -> Snapshot:
     titles = {str(c.get("community") if c.get("community") is not None else c.get("id")): c.get("title")
               for c in data.get("communities") or [] if isinstance(c, dict)}
     made = Snapshot(now, {k: v for k, v in (head.get("counts") or {}).items() if isinstance(v, int)},
-                    titles, ranked, inside, between, centres)
+                    titles, ranked, inside, between, centres, by_page)
     with _LOCK:
         _SNAPSHOT = made
     return made
+
+
+def node_of_page(path: str) -> Optional[str]:
+    """The graph node that cites this wiki page, so a page can open in the graph; None when none does."""
+    return snapshot().by_page.get(path)
+
+
+def relations_of(node_id: str, limit: int) -> list[dict]:
+    """What a node is linked to, heaviest first, as the contract's relations (rel, ref, title, kind)."""
+    data = _feed("/api/knowledge-graph/neighbors/" + quote(node_id, safe="/:"), {"depth": 1})
+    titles = {str(e.get("id")): e.get("title") for e in data.get("entities") or [] if isinstance(e, dict)}
+    found: dict = {}
+    for r in data.get("relationships") or []:
+        if not isinstance(r, dict) or node_id not in (r.get("source"), r.get("target")):
+            continue
+        other = str(r["target"] if r.get("source") == node_id else r.get("source"))
+        weight = _weight(r)
+        if other in titles and other != node_id and weight >= found.get(other, (0, ""))[0]:
+            found[other] = (weight, ws_blocks.line(r.get("type") or r.get("label") or "related", 40) or "related")
+    ranked = sorted(found.items(), key=lambda kv: (-kv[1][0], kv[0]))[:limit]
+    return [{"rel": rel, "ref": "node:" + other, "title": ws_blocks.line(titles[other], 120), "kind": "node"}
+            for other, (_, rel) in ranked]
 
 
 def summary() -> dict:
