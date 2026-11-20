@@ -257,7 +257,11 @@ def descriptor_url(prov: dict) -> Optional[str]:
     path = parts.path.rstrip("/")
     name = str(prov.get("name") or parts.netloc)
     from agent_friday.routing.provider_descriptors import provider_env_keys
-    identity = (name, origin, path, header, key_format, tuple(provider_env_keys(prov)))
+    try:
+        timeout_s = max(1, int((prov.get("network") or {}).get("timeout_s") or 180))   # the same wait the caller would give
+    except (TypeError, ValueError):
+        timeout_s = 180
+    identity = (name, origin, path, header, key_format, tuple(provider_env_keys(prov)), timeout_s)
 
     def key_now() -> Optional[str]:
         from agent_friday.routing.provider_descriptors import provider_api_key
@@ -271,7 +275,7 @@ def descriptor_url(prov: dict) -> Optional[str]:
                 _PROXIES.pop(old).stop()
             proxy = KeyProxy(upstream=origin, key_provider=key_now, allowed_prefixes=(path + "/",),
                              allowed_methods=("GET", "POST"), key_header=header, key_format=key_format,
-                             upstream_timeout=180)
+                             upstream_timeout=timeout_s)
             proxy.start()
             _keep_loopback_direct()
             _PROXIES[identity] = proxy
