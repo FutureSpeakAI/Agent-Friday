@@ -40,7 +40,7 @@ def _signer() -> pack.Signer | None:
 def _read_ledger() -> list[dict]:
     try:
         return action_ledger.entries(None, newest_first=False, archive=True, strict=True,
-                                     gate=False)
+                                     gate=False, resolve_text=False)    # the lines as written: hashes, never the text
     except action_ledger.LedgerError as err:
         raise pack.PackRefused(
             f"The archive could not be read ({err.user_message}); nothing was exported.") from err

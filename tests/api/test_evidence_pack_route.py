@@ -246,7 +246,8 @@ def test_the_export_reads_the_archive_and_reads_strictly(client, monkeypatch):
     r = _export(client)
     monkeypatch.undo()
     assert r.status_code == 200
-    assert any(k.get("archive") is True and k.get("strict") is True and k.get("gate") is False for k in seen), seen
+    assert any(k.get("archive") is True and k.get("strict") is True and k.get("gate") is False
+               and k.get("resolve_text") is False for k in seen), seen  # the pack reads lines as written (free text stays a hash)
 
 
 def test_a_grant_the_ledger_says_is_revoked_is_flagged_without_a_time(client):

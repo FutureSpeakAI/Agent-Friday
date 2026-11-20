@@ -509,7 +509,7 @@ def api_ledger_export():
             args["limit"] = "500"
             kinds, where, _limit, archive = _filters(args)
             rows, archive_error = _read(kinds, newest_first=False, where=where, archive=archive,
-                                        limit=EXPORT_MAX)
+                                        limit=EXPORT_MAX, resolve_text=False)   # whole lines, so they check elsewhere
             if archive_error:
                 return jsonify({"status": "error", "code": "archive_unreadable",
                                 "error": "The archive could not be read (%s); nothing was exported." % archive_error}), 409

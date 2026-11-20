@@ -34,6 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
+from agent_friday.services import ledger_text
 from agent_friday.services import peer_wire_v2 as wire
 
 GENESIS = "0" * 64
@@ -123,6 +124,12 @@ def _refuse_content(entries: list[Mapping]) -> None:
             raise PackRefused(
                 f"Entry {entry['seq']} carries free text ('{found}'). The pack holds labels and "
                 "hashes only, so nothing was written.")
+        raw = ledger_text.raw_text_key(entry.get("rec"))
+        if raw:
+            raise PackRefused(
+                f"Entry {entry['seq']} was written before free text was kept as a hash ('{raw}' holds the "
+                "text itself). The pack holds labels and hashes only, so nothing was written; "
+                "choose a range that starts after that entry.")
 
 
 def _content_key(node) -> str | None:
