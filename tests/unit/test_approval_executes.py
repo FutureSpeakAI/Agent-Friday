@@ -104,28 +104,60 @@ def test_approving_twice_runs_once(store, ran):
     assert len(ran) == 1, "a second approval ran the action again: %r" % (ran,)
 
 
-def test_two_surfaces_approving_at_once_run_once(store, ran):
+def test_two_surfaces_approving_at_once_run_once(store, ran, caplog):
     """Cross-tab: the Workflows session's approval popups mean two tabs can
-    approve the same card in the same instant. One decision, one action."""
+    approve the same card in the same instant. One decision, one action.
+
+    When it fails, the message says why: what each racing call raised or returned, the card's final state
+    (an executor that could not check the ledger records "held: ..." on the card) and what the store logged.
+    A bare "ran 0 times" (CI, Windows, 2026-11-19) named nothing."""
     from agent_friday.services import approval_executor as ex
     ex.register()
     rec = _card(store)
     start = threading.Barrier(4)
+    seen = []
 
     def approve():
         start.wait()
         try:
-            store.decide(rec["approval_id"], "approve", decided_by="owner")
-        except Exception:
-            pass
+            seen.append(("returned", store.decide(rec["approval_id"], "approve", decided_by="owner").get("status")))
+        except Exception as e:  # noqa: BLE001 - recorded, and shown if the count is wrong
+            seen.append(("raised", "%s: %s" % (type(e).__name__, e)))
 
     ts = [threading.Thread(target=approve) for _ in range(4)]
     for t in ts:
         t.start()
     for t in ts:
         t.join()
-    assert len(ran) == 1, (
-        "four simultaneous approvals ran the action %d times" % len(ran))
+    final = store.get_approval(rec["approval_id"]) or {}
+    why = "calls=%r final status=%r used=%r logged=%r" % (
+        seen, final.get("status"), final.get("used"), [r.getMessage()[:160] for r in caplog.records
+                                                        if r.levelname in ("WARNING", "ERROR")][:6])
+    assert not [s for s in seen if s[0] == "raised"], "a racing approval raised: " + why
+    assert len(ran) == 1, "four simultaneous approvals ran the action %d times: %s" % (len(ran), why)
+
+
+def test_a_ledger_read_that_is_busy_for_a_few_tries_does_not_stop_an_approved_action(store, ran, monkeypatch):
+    """The executor's claim and the governance checkpoint both read the ledger strictly. Windows can refuse that read
+    for a moment while another thread writes it; one retry was not enough, and a refused read means the action does
+    not run ("held"). The store retries its own file the same way (_BUSY_RETRIES)."""
+    from agent_friday.services import action_ledger
+    from agent_friday.services import approval_executor as ex
+    ex.register()
+    real = action_ledger.entries
+    refused = {"n": 0}
+
+    def busy_then_ok(*a, **k):
+        if k.get("strict") and refused["n"] < 3:
+            refused["n"] += 1
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        return real(*a, **k)
+
+    monkeypatch.setattr(action_ledger, "entries", busy_then_ok)
+    rec = _card(store)
+    store.decide(rec["approval_id"], "approve", decided_by="owner")
+    assert refused["n"] >= 3, "the test never refused a read"
+    assert len(ran) == 1, "a briefly busy ledger kept an approved action from running"
 
 
 def test_a_denied_card_never_runs(store, ran):
