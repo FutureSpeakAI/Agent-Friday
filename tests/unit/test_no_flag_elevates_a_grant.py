@@ -68,7 +68,7 @@ def test_a_grant_for_one_tool_and_scope_covers_nothing_else(monkeypatch):
 
 def _every_flag(on):
     keys = set(held_features.CAPABILITIES) | {"fed_" + c for c in held_features.CAPABILITIES}
-    keys |= {held_features.FEDERATION, "live_cash", "public_discovery"}
+    keys |= {held_features.FEDERATION, held_features.TRUST_AGENTS, "live_cash", "public_discovery"}
     # the kill switch stays off in BOTH runs: with it on, the real rule turns every capability off and the two runs
     # would not differ in what the rule says
     return {"held_features": {k: on for k in keys}}
@@ -99,8 +99,8 @@ def test_the_same_grant_gives_the_same_answers_with_every_flag_on_and_every_flag
 
 
 def test_the_check_can_fail_a_grant_path_that_follows_the_capability_rule_makes_the_two_runs_differ(monkeypatch):
-    # negative control (Q2): a consume that lets a write_file through when a capability is on, reading the settings the
-    # way the real rule does (no import in governance, no literal "held_features" in the grant code)
+    # negative control (Q2): a consume that lets a write_file through when a capability is on. It shows only that the
+    # differential sees a settings-following elevation (the import and text scans cover code placed in governance)
     real = action_gate.consume_grant
 
     def elevating(tool, scope):
