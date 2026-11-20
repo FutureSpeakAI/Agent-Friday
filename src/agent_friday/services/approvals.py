@@ -461,12 +461,22 @@ def _mac(tag: bytes, rec: Dict[str, Any], fields, key: Optional[bytes]) -> str:
     return _hm.new(key or _seal_key(), tag + blob, hashlib.sha256).hexdigest()
 
 
+#: The seal errors already reported, so a missing key is said once and not on every card read.
+_SEAL_WARNED: set = set()
+
+
 def _holds(rec: Dict[str, Any], field: str, tag: bytes, fields) -> bool:
     import hmac as _hm
     try:
         seal = (rec or {}).get(field)
         return bool(seal) and _hm.compare_digest(str(seal), _mac(tag, rec, fields, None))
-    except Exception:  # noqa: BLE001 - no key, no proof
+    except Exception as e:  # noqa: BLE001 - no key, no proof
+        # Still refused. But a seal that cannot be CHECKED (a key that would not read) must not look like a
+        # seal that does not MATCH: say which, once per distinct error (F2/F9).
+        said = (type(e).__name__, str(e)[:200])
+        if said not in _SEAL_WARNED and len(_SEAL_WARNED) < 20:
+            _SEAL_WARNED.add(said)
+            _log.warning("a card seal could not be checked (%s: %s); it is treated as not sealed", *said)
         return False
 
 
