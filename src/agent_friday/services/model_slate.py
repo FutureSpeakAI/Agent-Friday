@@ -94,14 +94,151 @@ def _blocked(m: dict, mode: str):
             return (NEEDS_KEY, "%s needs a %s key, and this PC has none. Add it in Settings > "
                     "Connections on the PC." % (mid, who))
         return (PROVIDER_OFF, "%s: %s is not available on this PC right now." % (mid, who))
-    if not m.get("local") and mode == "local_only":
+    if not is_local(m) and mode == "local_only":
         return (LOCAL_ONLY_MODE, "%s is a cloud model and this PC is set to Local only. Change "
                 "routing mode on the PC (Settings > Models) to use it." % mid)
     return None
 
 
+def _sane_seconds(value) -> Optional[float]:
+    """A stored load time as a finite float in (0, 3600], else None: a damaged store never reaches the slate."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        f = float(value)
+    except OverflowError:
+        return None
+    return f if f == f and 0.0 < f <= 3600.0 else None
+
+
+def _positive(value, cap: float = 1e9) -> Optional[float]:
+    """A stored measurement as a finite number in (0, cap], else None (a damaged store never reaches a device)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        f = float(value)
+    except OverflowError:
+        return None
+    return f if f == f and 0.0 < f <= cap else None
+
+
+def _provenance(row: dict) -> str:
+    return ("measured on this PC" if row.get("source") == "measured" else
+            "measured once on a PC with the same hardware (ships with the app), not on this one")
+
+
+def _benchmark(model_id) -> Optional[dict]:
+    """This PC's newest benchmark of the model (VRAM, speed) and, separately, the newest row that has a cold-load
+    time (the newest row may be a later run that skipped it), or None. Every number is checked on the way out."""
+    try:
+        from agent_friday.services import hardware_profile as hwp
+        from agent_friday.services import residency_catalog as rc
+        rows = [m for m in rc.measurements(str(model_id), rc.profile_fingerprint(hwp.get()))
+                if m.get("num_ctx") is not None]                       # benchmark rows only, not footprints
+        newest = lambda r: str(r.get("measured_at") or "")             # noqa: E731
+        row = max(rows, key=newest)
+        cold_rows = [m for m in rows if _sane_seconds(m.get("cold_load_s")) is not None]
+        cold = max(cold_rows, key=newest) if cold_rows else None
+    except Exception:
+        return None
+    return {"num_ctx": int(_positive(row.get("num_ctx")) or 0) or None, "vram_mib": _positive(row.get("vram_mib")),
+            "tokens_per_second": _positive(row.get("tok_s_median")),
+            "cold_load_seconds": _sane_seconds(cold.get("cold_load_s")) if cold else None,
+            "cold_load_basis": ("%s, on %s" % (_provenance(cold), cold.get("measured_at"))) if cold else None,
+            "measured_at": row.get("measured_at"), "source": row.get("source"), "basis": _provenance(row)}
+
+
+def _switch_cost(model_id, local: bool, warm: Optional[bool]) -> dict:
+    """What picking this model costs the first time: nothing for a cloud model or a resident seat; for a cold
+    local seat the last measured load on this PC (None when it has not loaded since timing began)."""
+    if not local or warm:
+        return {"cold": False, "expected_seconds": 0.0, "basis": "already available"}
+    if warm is None:
+        return {"cold": None, "expected_seconds": None, "basis": "residency not known right now"}
+    try:
+        from agent_friday.services import seat_timing
+        secs = seat_timing.last_load_seconds(model_id)
+    except Exception:
+        secs = None
+    if secs is not None:
+        return {"cold": True, "expected_seconds": secs, "basis": "last load measured on this PC"}
+    bench = _benchmark(model_id) or {}
+    if bench.get("cold_load_seconds"):
+        return {"cold": True, "expected_seconds": bench["cold_load_seconds"], "basis": bench["cold_load_basis"]}
+    return {"cold": True, "expected_seconds": None, "basis": "no load timed on this PC yet"}
+
+
+LEAVES_NOTHING = ("Nothing leaves your own machines. Your messages and Friday's replies stay on this PC, or on "
+                  "a computer on your own network that you run.")
+
+
+def _descriptor(provider_id) -> Optional[dict]:
+    """The provider's own descriptor (registry first, then the built-ins), or None when it is not known."""
+    try:
+        from agent_friday.routing import provider_descriptors as pd
+        for prov in list(pd._registry_providers()) + list(pd.BUILTIN_EXTRA_PROVIDERS):
+            if str(prov.get("name") or "").lower() == str(provider_id or "").lower():
+                return prov
+    except Exception:
+        pass
+    return None
+
+
+def is_local(m: dict) -> bool:
+    """A row is local only if the catalog says so AND it is not an Ollama cloud tag AND, when its provider is
+    known, that provider's own classification is local (a private base_url): the flag alone is not trusted."""
+    if not m.get("local"):
+        return False
+    try:
+        from agent_friday.services import local_only_guard
+        if local_only_guard.is_cloud_model_tag(m.get("id")):
+            return False
+        prov = _descriptor(m.get("provider"))
+        if prov is not None:
+            from agent_friday.routing import provider_descriptors as pd
+            return pd.classification_of(prov) == "local"
+    except Exception:
+        return False
+    return True
+
+
+def _what_leaves(m: dict) -> str:
+    """In words, what a chat on this model sends out of the house (the same idea as the voice slate's). Local only
+    when ``is_local``. An Ollama cloud tag names ollama.com, not the local daemon that relays it; a relay (a
+    provider descriptor marked as an aggregator, e.g. OpenRouter, Hugging Face) is named with what it forwards
+    to. Held by tests/unit/test_benchmark_row.py."""
+    if is_local(m):
+        return LEAVES_NOTHING
+    relayed = False
+    try:
+        from agent_friday.services import local_only_guard
+        relayed = bool(m.get("local")) and local_only_guard.is_cloud_model_tag(m.get("id"))
+    except Exception:
+        pass
+    who = "ollama.com (Ollama's cloud)" if relayed else (
+        m.get("provider_label") or m.get("provider") or "its cloud provider")
+    sentence = "Your messages and the context Friday attaches to them go to %s while you use this model" % who
+    try:
+        from agent_friday.routing import provider_descriptors as pd
+        prov = _descriptor(m.get("provider"))
+        if prov and pd._is_aggregator(prov) and not relayed:
+            sentence += ", and on to the company that actually runs the model"
+    except Exception:
+        pass
+    return sentence + "."
+
+
+def _measured(model_id) -> Optional[dict]:
+    """First-token wait as measured on this PC from answered calls, or None when none have been timed."""
+    try:
+        from agent_friday.services import ttft_stats
+        return ttft_stats.summary(model_id)
+    except Exception:
+        return None
+
+
 def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
-    local = bool(m.get("local"))
+    local = is_local(m)       # the one answer to "is it local": the flag, verified (cloud tag, private host)
     out = {
         "id": m.get("id"), "label": m.get("label") or m.get("id"),
         "provider": m.get("provider"), "provider_label": m.get("provider_label"),
@@ -116,6 +253,10 @@ def _row(m: dict, selected: str, live: Optional[set], mode: str) -> dict:
         "context_window": m.get("context_window"),
         "hint": m.get("hint"),
     }
+    out["switch"] = _switch_cost(m.get("id"), local, out["warm"])
+    out["what_leaves"] = _what_leaves(m)
+    out["measured"] = _measured(m.get("id"))
+    out["benchmark"] = _benchmark(m.get("id")) if local else None
     out["capabilities"] = {
         "modalities": list(m.get("modalities") or ["text"]),
         "supports_tools": m.get("supports_tools"),
@@ -184,7 +325,7 @@ def why_cannot_serve(model_id: str) -> Optional[tuple]:
     blocked = _blocked(m, _routing_mode(_settings()))
     if blocked:
         return blocked
-    if m.get("local"):
+    if is_local(m):
         busy = _local_busy_reason(mid)
         if busy:
             return (LOCAL_BUSY, busy)
