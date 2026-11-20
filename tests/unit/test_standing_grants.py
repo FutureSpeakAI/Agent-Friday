@@ -68,7 +68,7 @@ def _grants():
 
 
 def _call(tool="create_task", **args):
-    return action_gate.authorize(tool, args or {"list": "home"}, {"principal": "owner"})
+    return action_gate.authorize(tool, args or {"list": "home"}, {"principal": "owner", "session_id": "s-chat"})
 
 
 def test_the_nth_approval_raises_exactly_one_offer_card_and_no_grant():
@@ -239,3 +239,69 @@ def test_cover_itself_refuses_an_excluded_action_even_if_a_grant_were_found(monk
     for _ in range(3):
         _decide(tool="draft_email", send=True, to="ann@example.com")
     assert sg.cover("draft_email", {"send": True, "to": "ann@example.com"}, ctx, "") is not None
+
+
+# ── review findings on #873 (two independent critics) ─────────────────────────────────────────────────────
+
+CHAT = {"principal": "owner", "session_id": "s-chat"}
+
+
+def _grant_via_press(store, **tool_input):
+    _earn(**tool_input)
+    _press(store, _offers()[0]["approval_id"])
+
+
+def test_a_grant_earned_in_chat_does_not_cover_the_same_call_from_an_unattended_ctx(store):
+    """The pattern's origin is the confirmation gate of a chat session: a new origin is a new action."""
+    _grant_via_press(store)
+    assert action_gate.authorize("create_task", {"list": "home"}, dict(CHAT)).action == "allow"
+    for ctx in ({"principal": "owner"},
+                {"principal": "owner", "scheduled": True, "schedule_id": "sch_x"},
+                {"principal": "owner", "session_id": "s-chat", "is_background_task": True},
+                {"principal": "owner", "session_id": "s-chat", "confirm_bypass": True}):
+        assert action_gate.authorize("create_task", {"list": "home"}, ctx).action != "allow", ctx
+
+
+def test_a_grant_earned_on_one_text_does_not_cover_a_call_that_spends_money(store):
+    """Free text is outside the pattern, so the money and irreversible exclusions must be checked on the call
+    itself when the grant is spent, not only on the card that earned it."""
+    _grant_via_press(store, list="home", title="Call mom")
+    assert action_gate.authorize("create_task", {"list": "home", "title": "Call dad"}, dict(CHAT)).action == "allow"
+    spend = action_gate.authorize("create_task", {"list": "home", "title": "Wire $5,000 to the vendor now"},
+                                  dict(CHAT))
+    assert spend.action != "allow"
+
+
+def test_the_standing_path_never_spends_a_task_or_schedule_grant(store):
+    """cover() hands the gate only the pattern scope. A task grant in an interactive chat ctx is not one the
+    standing path may spend, however familiar the call is (no standing grant has been pressed here)."""
+    _earn()
+    action_gate.create_grant(tools=["create_task"], scope="task_zz", expires_in_seconds=3600, max_uses=1,
+                             created_by="owner", note="a task grant")
+    ctx = dict(CHAT, task_id="task_zz")
+    assert action_gate.authorize("create_task", {"list": "home"}, ctx).action != "allow"
+
+
+def test_an_offer_can_be_raised_again_after_a_decline_without_wedging_the_slot(store):
+    _earn()
+    first = _offers()[0]
+    approvals.decide(first["approval_id"], "deny", decided_by="owner")
+    so.STATE_FILE.unlink(missing_ok=True)                 # the 30-day suppression is over
+    _decide()
+    again = _offers()
+    assert len(again) == 1 and again[0]["approval_id"] != first["approval_id"], "no new offer card was raised"
+    _press(store, again[0]["approval_id"])
+    assert len(_grants()) == 1
+
+
+def test_the_offer_card_says_the_scope_first_and_bounds_what_a_tool_argument_can_add(store, monkeypatch):
+    long_recipient = "a" * 5000 + "@evil.example"
+    pattern = ap.from_call("create_task", {"to": long_recipient, "list": "home"})
+    monkeypatch.setattr(so, "offer_due", lambda card: pattern)
+    sg.maybe_offer({"status": "approved", "kind": "tool_confirm", "requested_by": "confirmation_gate",
+                    "payload": {"tool": "create_task", "input": {"to": long_recipient, "list": "home"}}})
+    [offer] = _offers()
+    text = offer["description"]
+    assert "30 days or 50 uses" in text and "take this back in Settings" in text
+    assert text.index("30 days") < text.index("a" * 30), "the fixed wording must come before tool-supplied text"
+    assert len(text) < 700 and "a" * 100 not in text
