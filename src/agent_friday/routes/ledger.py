@@ -527,7 +527,7 @@ def api_ledger_export():
 @login_required
 def api_ledger_evidence_pack():
     """The owner's evidence pack for a date range, as a zip to keep (brief K6). A press on
-    Friday's own page on this PC; never offered to a paired device. Local file only."""
+    Friday's own page on this PC; never streamed to a paired device (an owner device triggers a save on the PC through /tv/v1/evidence/pack). Local file only."""
     from agent_friday.core import _is_local_request
     from agent_friday.services import evidence_pack, evidence_pack_export, screen_click
     if not (_is_local_request() and screen_click.screen_session(request)):

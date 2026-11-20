@@ -140,7 +140,7 @@ def test_firecrawl_is_halted_before_the_wire(monkeypatch):
     from agent_friday.services import firecrawl as fc
     _settings(monkeypatch, hard_stop_monthly=1.0, hard_stop_monthly_enabled=True)
     _spend(1.50)
-    monkeypatch.setattr(fc, "api_key", lambda: "fake-firecrawl-key")  # pragma: allowlist secret
+    monkeypatch.setattr(fc, "key_stand_in", lambda: "fake-firecrawl-key")  # pragma: allowlist secret
     monkeypatch.setattr(requests, "post", lambda *a, **k: (_ for _ in ()).throw(AssertionError("wire touched")))
     out = fc.search("weather in Denver")
     assert out["ok"] is False and "Paused by your spending cap" in out["error"]

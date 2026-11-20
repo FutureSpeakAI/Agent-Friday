@@ -27,3 +27,21 @@ def test_the_fixed_sentence_is_the_only_exception_and_only_when_exact():
 def test_a_changed_or_missing_fixed_sentence_in_the_module_fails_the_guard(monkeypatch):
     monkeypatch.setattr(guard, "SENTENCE", guard.SENTENCE + " Changed.")
     assert any("fixed sentence" in p for p in guard.run())
+
+
+def _page(tmp_path, monkeypatch, text):
+    page = tmp_path / "ledger.html"
+    page.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(guard, "PAGE", page)
+
+
+def test_a_claim_on_the_page_fails_the_guard(tmp_path, monkeypatch):
+    _page(tmp_path, monkeypatch, '<section id="evidence-pack"><p>%s</p><p>Fully compliant.</p></section>' % guard.SENTENCE)
+    assert any("static/ledger.html" in p and "ompliant" in p for p in guard.run())
+
+
+def test_a_page_without_the_fixed_sentence_or_the_section_fails_the_guard(tmp_path, monkeypatch):
+    _page(tmp_path, monkeypatch, '<section id="evidence-pack"><p>Export it.</p></section>')
+    assert any("fixed sentence is missing" in p and "ledger.html" in p for p in guard.run())
+    _page(tmp_path, monkeypatch, "<p>nothing</p>")
+    assert any("section is not found" in p for p in guard.run())

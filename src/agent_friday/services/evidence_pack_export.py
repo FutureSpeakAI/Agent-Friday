@@ -15,7 +15,9 @@ Rules and the tests that hold them (tests/api/test_evidence_pack_route.py):
 from __future__ import annotations
 
 import hashlib
+import json
 import time
+import zipfile
 from dataclasses import dataclass
 
 from agent_friday.services import action_ledger, approvals
@@ -83,7 +85,7 @@ def _grant_rows(action_gate) -> list:
                                "so nothing was exported.") from err
 
 
-def export(rng: pack.Range, version: str, now: int | None = None) -> Exported:
+def export(rng: pack.Range, version: str, now: int | None = None, by: str = "owner") -> Exported:
     from agent_friday.governance import action_gate
     moment = int(time.time()) if now is None else now
     entries = _read_ledger()
@@ -93,7 +95,7 @@ def export(rng: pack.Range, version: str, now: int | None = None) -> Exported:
     manifest_sha = hashlib.sha256(built.files[pack.PackFile.MANIFEST.value]).hexdigest()
     try:
         action_ledger.append("export", {
-            "event": "evidence_pack_exported", "by": "owner", "range_start": rng.start,
+            "event": "evidence_pack_exported", "by": by[:60], "range_start": rng.start,
             "range_end": rng.end, "entries": built.manifest["entries"],
             "manifest_sha256": manifest_sha, "signed": bool(built.manifest["public_key"])})
         recorded = True
@@ -102,3 +104,34 @@ def export(rng: pack.Range, version: str, now: int | None = None) -> Exported:
     stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime(moment))
     return Exported(f"friday-evidence-{rng.start}_{rng.end}-{stamp}.zip", built.zip_bytes(),
                     manifest_sha, recorded)
+
+
+@dataclass(frozen=True)
+class Saved:
+    path: str
+    filename: str
+    manifest_sha256: str
+    entries: int
+    recorded: bool
+
+
+def packs_dir():
+    from agent_friday.core import FRIDAY_DIR
+    return FRIDAY_DIR / "evidence_packs"
+
+
+def export_to_disk(rng: pack.Range, version: str, by: str, now: int | None = None, folder=None) -> Saved:
+    """Build the pack and keep it on this PC (a file in `folder`, by default the Friday home's evidence_packs).
+    The bytes never leave: the caller gets the path, the manifest hash and the entry count. `by` names who
+    triggered it in the ledger line ("owner" at the PC, "device:<id>" from an owner phone). Written whole or not at
+    all (a temporary file, then a rename). tests/unit/test_evidence_pack_save.py holds the rules."""
+    done = export(rng, version, now, by)
+    target_dir = folder if folder is not None else packs_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / done.filename
+    partial = target.with_name(target.name + ".part")
+    partial.write_bytes(done.zip_bytes)
+    partial.replace(target)
+    with zipfile.ZipFile(target) as z:
+        entries = json.loads(z.read(pack.PackFile.MANIFEST.value)).get("entries", 0)
+    return Saved(str(target), done.filename, done.manifest_sha256, int(entries), done.recorded)

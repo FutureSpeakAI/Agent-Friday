@@ -291,7 +291,8 @@ def _font_env() -> Dict[str, str]:
     """ffmpeg's subtitles filter (libass) reads fonts through fontconfig, which
     has no default config on Windows: point it at the system fonts with a
     small config written beside the index, once."""
-    env = dict(os.environ)
+    from agent_friday.services.extension_security import without_secret_names
+    env = without_secret_names(dict(os.environ))
     if sys.platform != "win32":
         return env
     try:
