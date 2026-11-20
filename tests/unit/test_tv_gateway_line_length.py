@@ -12,7 +12,7 @@ import agent_friday.tv_gateway as gateway_package
 
 LIMIT = 120
 MODULES = ("pc_common", "pc_act", "pc_act_media", "pc_approve_decide", "approval_verify", "phone_update")
-MODULES += ("ws_news", "ws_news_later")                       # the News adapters (PW-G2)
+MODULES += ("ws_news", "ws_news_later", "ws_crew")                       # the News adapters (PW-G2)
 ROOT = pathlib.Path(gateway_package.__file__).resolve().parent
 
 
