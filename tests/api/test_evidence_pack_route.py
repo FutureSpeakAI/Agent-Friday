@@ -157,7 +157,7 @@ def test_a_real_approval_is_listed_by_id_and_its_text_never_reaches_the_pack(cli
 def test_grants_that_cannot_be_read_refuse_the_pack_rather_than_leave_them_out(client, monkeypatch):
     from agent_friday.governance import action_gate
 
-    def unreadable():
+    def unreadable(usage=True):    # both the full read and the uses-free fallback fail
         raise L.LedgerError("the ledger has a break to review")
     _seed()
     monkeypatch.setattr(action_gate, "ledger_grant_rows", unreadable)
@@ -167,3 +167,101 @@ def test_grants_that_cannot_be_read_refuse_the_pack_rather_than_leave_them_out(c
     assert r.status_code == 409 and r.get_json()["code"] == "pack_refused"
     assert "nothing was exported" in r.get_json()["error"] and len(L.entries(["export"])) == before
 
+
+
+def test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack(client, monkeypatch):
+    # The rule "a break still gives a pack" held only for owners with no grant: reading a grant's uses is a strict ledger
+    # read, which a break stops. A real grant is created here (no stub), so the break must not turn into a refusal.
+    _seed()
+    action_gate.create_grant(tools=["send_email"], scope="job-pack", expires_in_seconds=600, max_uses=1)
+    real_entries = L.entries
+
+    def strict_stops_on_a_break(kinds=None, **k):
+        if k.get("strict") and k.get("gate", True):
+            raise L.LedgerError("the chain has a break to review; strict readers wait")
+        return real_entries(kinds, **k)
+    monkeypatch.setattr(L, "verify", lambda **k: {"ok": False, "first_break": "seq 2 was changed"})
+    monkeypatch.setattr(L, "entries", strict_stops_on_a_break)
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    files = _files(r)
+    assert json.loads(files["manifest.json"])["ledger_verified"] is False
+    rows = [json.loads(x) for x in files["grants.jsonl"].decode().strip().splitlines()]
+    assert len(rows) == 1 and rows[0]["usage_read"] is False, "the grant is in the pack and says its use was not read"
+    assert not {"used_count", "revoked_at", "first_used_at", "status"} & set(rows[0]), "nothing the ledger would say is claimed"
+    assert "Grants whose use was not read" in files["SUMMARY.md"].decode()
+
+
+def test_a_grant_whose_use_was_not_read_is_kept_even_when_its_own_dates_are_outside_the_range():
+    from agent_friday.services import evidence_pack as pack
+    old = {"grant_id": "g1", "created_at": 1, "expires_at": 2, "usage_read": False}
+    assert pack._in_range([old], pack.GRANT_TIMES, pack.Range(100, 200)) == [old]
+    assert pack._in_range([dict(old, usage_read=True)], pack.GRANT_TIMES, pack.Range(100, 200)) == []
+
+
+def test_a_grants_key_that_cannot_be_read_still_refuses_the_pack(client, monkeypatch):
+    _seed()
+    action_gate.create_grant(tools=["send_email"], scope="job-key", expires_in_seconds=600, max_uses=1)
+    monkeypatch.setattr(action_gate, "_governance_key", lambda: (_ for _ in ()).throw(RuntimeError("no key")))
+    before = len(L.entries(["export"]))
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 409 and r.get_json()["code"] == "pack_refused" and len(L.entries(["export"])) == before
+
+
+def test_a_grants_read_that_fails_while_the_chain_verifies_still_refuses_the_pack(client, monkeypatch):
+    _seed()
+    action_gate.create_grant(tools=["send_email"], scope="job-ok", expires_in_seconds=600, max_uses=1)
+    real_entries = L.entries
+
+    def unreadable_strict(kinds=None, **k):
+        if k.get("strict") and k.get("gate", True):
+            raise L.LedgerError("the ledger could not be read (PermissionError)")
+        return real_entries(kinds, **k)
+    monkeypatch.setattr(L, "entries", unreadable_strict)
+    before = len(L.entries(["export"]))
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 409 and r.get_json()["code"] == "pack_refused" and len(L.entries(["export"])) == before
+
+
+def test_a_body_that_is_not_two_day_strings_is_a_400_in_words_not_a_500(client):
+    for body in ({"since": 1700000000, "until": 1700086400}, [1], {"since": "nan", "until": "1e999"},
+                 {"since": "2026-11-01"}, {"since": ["x"], "until": {"y": 1}}):
+        r = client.post(URL, json=body, headers=_press())
+        assert r.status_code == 400 and "first and last day" in r.get_json()["error"], body
+
+
+def test_the_export_reads_the_archive_and_reads_strictly(client, monkeypatch):
+    # the module says "the archive too, strictly": the real read must be asked for both (a default read would pass)
+    _seed()
+    seen = []
+    real = L.entries
+
+    def spy(kinds=None, **k):
+        seen.append(k)
+        return real(kinds, **k)
+    monkeypatch.setattr(L, "entries", spy)
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 200
+    assert any(k.get("archive") is True and k.get("strict") is True and k.get("gate") is False for k in seen), seen
+
+
+def test_a_grant_the_ledger_says_is_revoked_is_flagged_without_a_time(client):
+    _seed()
+    g = action_gate.create_grant(tools=["send_email"], scope="job-rv", expires_in_seconds=600, max_uses=1)
+    action_gate.revoke_all_grants()
+    action_gate.create_grant(tools=["send_email"], scope="job-live", expires_in_seconds=600, max_uses=1)
+    rows = [json.loads(x) for x in _files(_export(client))["grants.jsonl"].decode().strip().splitlines()]
+    assert rows and all("revoked_at" not in r and "revoked" in r for r in rows)
+
+
+import pytest  # noqa: E402 - the fixture below is module-wide whatever its position
+
+
+@pytest.fixture(autouse=True)
+def _own_grants_file(monkeypatch, tmp_path):
+    # grants.json lives in the per-process test home: a grant an earlier test left would be listed here too
+    monkeypatch.setattr(action_gate, "_grants_file", lambda: tmp_path / "grants.json")

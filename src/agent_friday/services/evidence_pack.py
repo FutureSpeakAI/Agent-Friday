@@ -46,10 +46,12 @@ APPROVAL_FIELDS = ("approval_id", "kind", "subject_type", "policy_class", "gated
                    "consumed", "created_at", "expires_at", "decided_at", "decided_by",
                    "decided_source", "decided_check", "used_at", "off_record", "policy_version",
                    "decided_policy_version", "action_fingerprint", "decided_device", "withdrawn")
-GRANT_FIELDS = ("grant_id", "kind", "pattern", "created_at", "expires_at", "uses", "max_uses",
-                "used_count", "first_used_at", "revoked_at", "status")
+# The fields a real grant row carries (governance/action_gate.create_grant and _ledger_row): labels, numbers and
+# times only. No free text (note, scope, pattern) is copied. Held by test_a_grant_row_carries_only_its_listed_fields.
+GRANT_FIELDS = ("grant_id", "tools", "created_at", "expires_at", "max_uses", "uses_left", "used_count",
+                "first_used_at", "revoked", "money_spent", "policy_version", "usage_read")
 APPROVAL_TIMES = ("created_at", "decided_at", "used_at")
-GRANT_TIMES = ("created_at", "first_used_at", "revoked_at", "expires_at")
+GRANT_TIMES = ("created_at", "first_used_at", "expires_at")   # no revocation time: a grant row does not carry a real one
 
 
 class PackFile(str, Enum):
@@ -148,6 +150,9 @@ def _in_range(rows: Iterable[Mapping], keys: tuple[str, ...], rng: Range) -> lis
     it is kept (the pack is never silently short) and the summary counts it."""
     chosen = []
     for row in rows:
+        if row.get("usage_read") is False:     # its use is unknown, so it cannot be placed by a use or revocation time
+            chosen.append(row)
+            continue
         times = [row[k] for k in keys if isinstance(row.get(k), (int, float))]
         if not times or any(rng.start <= t < rng.end for t in times):
             chosen.append(row)
@@ -241,6 +246,7 @@ def summary(entries: list[Mapping], approvals: list[Mapping], grants: list[Mappi
     source = _counts(str(a.get("decided_source")) for a in approvals if a.get("decided_source"))
     versions = sorted({e["pv"] for e in entries if "pv" in e})
     undated = _undated(approvals, APPROVAL_TIMES) + _undated(grants, GRANT_TIMES)
+    unread = sum(1 for g in grants if g.get("usage_read") is False)
     lines += [
         f"Range: {rng.start} to {rng.end} (unix seconds, start included, end excluded).",
         f"Ledger entries: {len(entries)}",
@@ -249,6 +255,8 @@ def summary(entries: list[Mapping], approvals: list[Mapping], grants: list[Mappi
         *[f"- status {name}: {count}" for name, count in status.items()],
         *[f"- decided from {name}: {count}" for name, count in source.items()],
         f"Grants: {len(grants)}",
+        "Grants listed are those still on file: a grant revoked or expired and then pruned is not listed (the ledger keeps only its revoke line).",
+        *([f"Grants whose use was not read (the ledger could not be read): {unread}"] if unread else []),
         *([f"Rows with no recorded time (kept): {undated}"] if undated else []),
         "Actions seen for the first time: "
         + ("recorded" if any("novelty" in a for a in approvals) else "the label was not recorded"),
