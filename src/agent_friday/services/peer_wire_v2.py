@@ -176,12 +176,17 @@ def event_schema() -> dict:
     return _schema_cache
 
 
-def verify_event(raw: bytes, trusted_keys) -> Verified:
+def verify_event(raw: bytes, trusted_keys, recipient: str | None = None) -> Verified:
     """Authenticate one wire event. `trusted_keys` is the set of actor public keys (64 hex
     characters) the caller already trusts for this realm; an unknown actor is refused.
     Raises WireError(code) with code in: size, encoding, duplicate_key, number, string,
     integer, depth, type, noncanonical, schema, untrusted_key, signature, header,
-    terms_mismatch, role, split. Returning means authenticated bytes, nothing more."""
+    terms_mismatch, role, split, recipient. Returning means authenticated bytes, nothing more.
+
+    `recipient`: the caller's own id. When given, an event addressed to anyone else is refused with code
+    "recipient" right after the signature check, before the header, terms, role or split rules read anything
+    (a cheap check, spec: schema, signature, key, realm, recipient, type before content). None keeps the old
+    behaviour; tests/unit/test_peer_wire_recipient.py holds the rule and shows it can fail."""
     env = decode(raw)
     if not isinstance(env, dict) or not schema_matches(env, event_schema()):
         _fail("schema")
@@ -193,6 +198,8 @@ def verify_event(raw: bytes, trusted_keys) -> Verified:
             bytes.fromhex(env["signature"]), EVENT_PREFIX + canonical(body))
     except (InvalidSignature, ValueError):
         _fail("signature")
+    if recipient is not None and body["recipient"] != recipient:
+        _fail("recipient")
     if body["issued_at"] >= body["expires_at"] or body["parents"] != sorted(body["parents"]):
         _fail("header")
     if body["type"] == "job.offer":
@@ -263,8 +270,8 @@ class PeerEventStore:
                               "FROM peer_equivocations_v2 ORDER BY seen_at").fetchall()
 
 
-def receive(raw: bytes, trusted_keys, store: PeerEventStore) -> tuple[str, str]:
+def receive(raw: bytes, trusted_keys, store: PeerEventStore, recipient: str | None = None) -> tuple[str, str]:
     """Authenticate and record one wire event: (disposition, event_id). Raises WireError for
     anything that must not be recorded. The disposition is not an authorization."""
-    verified = verify_event(raw, trusted_keys)
+    verified = verify_event(raw, trusted_keys, recipient)
     return store.record(verified, raw), verified.event_id
