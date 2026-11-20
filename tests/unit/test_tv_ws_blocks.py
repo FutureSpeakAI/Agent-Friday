@@ -87,6 +87,7 @@ def test_no_url_leaves_in_a_table_cell_a_bare_address_or_an_auto_link():
 @pytest.mark.parametrize("text", [
     "_https://x.y/?t=SECRET_ after", "__https://x.y/?t=SECRET__ after", "a1https://x.y/?t=SECRET after",
     "[a](https://e.x/a_(b)?t=SECRET) after", "see ssh://h.x/?t=SECRET after", "~~www.x.y/?t=SECRET~~ after",
+    "![i](https://x.y/(a)?t=SECRET) after", "![i](https://x.y/a_(b).png?t=SECRET) after",
     "| A | B |\n| - | - |\n| _https://x.y/?t=SECRET_ | [l](https://e.x/a_(b)?t=SECRET) |",
 ])
 def test_an_address_wrapped_in_emphasis_or_brackets_does_not_get_through(text):
