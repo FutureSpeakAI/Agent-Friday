@@ -1743,8 +1743,12 @@ def api_capabilities_state():
     Absent and unconfigured are distinct, and unconfigured names its key."""
     try:
         from agent_friday.services import capability_state as _cs
+        try:
+            federation = _cs.federation_as_dicts()
+        except Exception:  # noqa: BLE001 - the six federation rows failing must not take the other capabilities with them
+            federation = []
         return jsonify({"status": "ok", "capabilities": _cs.as_dicts(),
-                        "federation": _cs.federation_as_dicts(),
+                        "federation": federation,
                         "states": list(_cs.STATES), "health_states": list(_cs.HEALTH_STATES),
                         "groups": list(_cs.GROUPS)})
     except Exception as e:

@@ -39,7 +39,7 @@ def test_nothing_is_working_and_the_two_held_ones_never_open_in_any_combination_
         rows = by_key(cs.federation_states({"held_features": dict(zip(KEYS, values))}))
         assert all(r.state != cs.WORKING for r in rows.values())
         for held in ("federation_public_discovery", "federation_live_cash"):
-            assert rows[held].state == cs.ABSENT and rows[held].health == "blocked_by_policy", held
+            assert rows[held].state != cs.ABSENT and rows[held].health == "blocked_by_policy", held
 
 
 def test_each_situation_reads_as_what_it_is():
@@ -50,18 +50,21 @@ def test_each_situation_reads_as_what_it_is():
     on = by_key(cs.federation_states(settings(federation=True, fed_invited_jobs=True)))["federation_invited_jobs"]
     assert on.state == cs.PRESENT_UNVERIFIED and "no job on this PC has proven it" in on.detail
     stopped = by_key(cs.federation_states(settings(federation=True, fed_invited_jobs=True, fed_kill_switch=True)))
-    assert stopped["federation_invited_jobs"].state == cs.ABSENT
+    assert stopped["federation_invited_jobs"].state == cs.PRESENT_UNVERIFIED, "still installed and switched on"
     assert stopped["federation_invited_jobs"].health == "blocked_by_policy"
+    assert "kill switch" in stopped["federation_invited_jobs"].detail
+    assert not any(r.state == cs.ABSENT for r in cs.federation_states(settings(federation=True, fed_kill_switch=True))),         "absent means not installed on this machine; nothing here is that"
 
 
 def test_the_check_can_fail_with_the_never_list_emptied_live_cash_would_read_as_switched_on(monkeypatch):
     monkeypatch.setattr(hf, "NEVER_IN_THIS_RELEASE", frozenset())
     row = by_key(cs.federation_states(settings(federation=True, fed_live_cash=True)))["federation_live_cash"]
-    assert row.state != cs.ABSENT, "the never-list is what holds it"
+    assert row.health != "blocked_by_policy" and row.state == cs.PRESENT_UNVERIFIED, "the never-list is what holds it"
 
 
 def test_they_stay_out_of_what_the_model_reads():
     assert not any(p.__name__.startswith("federation") for p in cs.PROBES)
-    block = cs.describe_for_model()
-    assert "Federation" not in block
+    block = cs.describe_for_model([c for c in cs.snapshot()])
+    assert block == cs.describe_for_model(cs.snapshot()), "the block is built from PROBES alone"
+    assert "Federation" not in block and "federation_" not in block
 

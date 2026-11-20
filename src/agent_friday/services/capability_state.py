@@ -213,40 +213,53 @@ PROBES = (firecrawl_state, brave_state, duckduckgo_state, local_brain_state,
           google_accounts_state)
 
 
-_FED_LABELS = {
-    "offline_rehearsal": "Federation: offline rehearsal (test credits on this PC)",
-    "invited_jobs": "Federation: invited manual jobs",
-    "unattended_worker": "Federation: unattended local worker",
-    "private_publish": "Federation: private publish",
-    "public_discovery": "Federation: public discovery",
-    "live_cash": "Federation: live cash",
-}
+def _fed_labels():
+    from agent_friday.services import held_features as hf
+    return {
+        hf.OFFLINE_REHEARSAL: "Federation: offline rehearsal (test credits on this PC)",
+        hf.INVITED_JOBS: "Federation: invited manual jobs",
+        hf.UNATTENDED_WORKER: "Federation: unattended local worker",
+        hf.PRIVATE_PUBLISH: "Federation: private publish",
+        hf.PUBLIC_DISCOVERY: "Federation: public discovery",
+        hf.LIVE_CASH: "Federation: live cash",
+    }
 
 
 def federation_states(settings: dict | None = None) -> list:
-    """The six logical federation capabilities (spec: Integration, phase 0), each in the closed vocabulary.
-    Held by tests/unit/test_federation_capability_state.py. Read live from held_features and never from a probe of
-    a peer: nothing here reports WORKING, because no job on this PC has proven any of them. They are kept out of
-    PROBES on purpose: PROBES is what the model reads every turn, and these are for the owner's screen."""
+    """The six logical federation capabilities (spec: Integration, phase 0). `state` says what is installed or
+    switched, `health` says whether a policy holds it: a held capability is not "absent" (absent means not installed
+    on this machine, above). Held by tests/unit/test_federation_capability_state.py. Nothing here reports WORKING,
+    because no job on this PC has proven any of them. Kept out of PROBES on purpose: PROBES is what the model reads
+    every turn, and these are for the owner's screen."""
     from agent_friday.services import held_features as hf
+    if settings is None:
+        try:
+            from agent_friday.core import _load_settings
+            settings = _load_settings()
+        except Exception:  # noqa: BLE001 - unreadable settings read as everything off, as held_features does
+            settings = {}
+    labels = _fed_labels()
+    stopped = hf.kill_switch_engaged(settings)
     out = []
     for cap in hf.CAPABILITIES:
-        label = _FED_LABELS[cap]
+        key, label = "federation_" + cap, labels[cap]
         if cap in hf.NEVER_IN_THIS_RELEASE:
-            out.append(CapabilityState("federation_" + cap, label, ABSENT, (), "",
-                                       "not in this release; no setting turns it on", health="blocked_by_policy"))
-        elif hf.kill_switch_engaged(settings):
-            out.append(CapabilityState("federation_" + cap, label, ABSENT, (), "",
-                                       "stopped by the owner's kill switch", health="blocked_by_policy"))
-        elif not hf.enabled(hf.FEDERATION, settings):
-            out.append(CapabilityState("federation_" + cap, label, UNCONFIGURED, ("held_features." + hf.FEDERATION,),
-                                       "Turn Federation on in Settings -> Federation", "Federation is off"))
+            out.append(CapabilityState(key, label, UNCONFIGURED, (), "", "held in this release; no setting turns it on",
+                                       health="blocked_by_policy"))
+            continue
+        if not hf.enabled(hf.FEDERATION, settings):
+            c = CapabilityState(key, label, UNCONFIGURED, ("held_features." + hf.FEDERATION,),
+                                "Turn Federation on in Settings -> Federation", "Federation is off")
         elif not hf.enabled("fed_" + cap, settings):
-            out.append(CapabilityState("federation_" + cap, label, UNCONFIGURED, ("held_features.fed_" + cap,),
-                                       "Turn this one on in Settings -> Federation", "its own switch is off"))
+            c = CapabilityState(key, label, UNCONFIGURED, ("held_features.fed_" + cap,),
+                                "Turn this one on in Settings -> Federation", "its own switch is off")
         else:
-            out.append(CapabilityState("federation_" + cap, label, PRESENT_UNVERIFIED, (), "",
-                                       "switched on; no job on this PC has proven it yet"))
+            c = CapabilityState(key, label, PRESENT_UNVERIFIED, (), "",
+                                "switched on; no job on this PC has proven it yet")
+        if stopped:
+            c = CapabilityState(c.key, c.label, c.state, c.needs, c.fix, "stopped by the owner's kill switch",
+                                health="blocked_by_policy")
+        out.append(c)
     return out
 
 
