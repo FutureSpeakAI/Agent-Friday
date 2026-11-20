@@ -45,6 +45,8 @@ def test_nothing_is_working_and_the_two_held_ones_never_open_in_any_combination_
                 assert row.state != cs.ABSENT, key       # a switch could open it, so it is not "nothing to switch on"
             if row.state == cs.UNCONFIGURED:
                 assert row.needs and row.fix, f"{key}: unconfigured names the setting that would change it"
+                assert "settings.json" in row.fix and row.needs[0] in row.fix, f"{key}: the fix names where the setting lives"
+                assert "Settings ->" not in row.fix, f"{key}: no Settings tab has these switches while Federation is off"
 
 
 def test_each_situation_reads_as_what_it_is():

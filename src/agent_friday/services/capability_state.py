@@ -251,10 +251,10 @@ def federation_states(settings: dict | None = None) -> list:
             continue
         if not hf.enabled(hf.FEDERATION, settings):
             c = CapabilityState(key, label, UNCONFIGURED, ("held_features." + hf.FEDERATION,),
-                                "Turn Federation on in Settings -> Federation", "Federation is off")
+                                "To enable it, set held_features.federation to true in settings.json (there is no switch for it in Settings yet), then restart Friday", "Federation is off")
         elif not hf.enabled("fed_" + cap, settings):
             c = CapabilityState(key, label, UNCONFIGURED, ("held_features.fed_" + cap,),
-                                "Turn this one on in Settings -> Federation", "its own switch is off")
+                                "To enable it, set held_features.fed_" + cap + " to true in settings.json (there is no switch for it in Settings yet), then restart Friday", "its own switch is off")
         else:
             c = CapabilityState(key, label, PRESENT_UNVERIFIED, (), "",
                                 "switched on; no job on this PC has proven it yet")
