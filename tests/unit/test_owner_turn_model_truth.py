@@ -10,7 +10,8 @@ had the truth and the gateway threw it away. The promises guarded here:
 * (a) a `model` this PC lists as a seat is bound to the chat the way the desktop's picker binds one (the
   validated PATCH /api/conversations route); a new chat is created with it; a chat already on it is left
   alone (no write, so nothing reloads); a seat the PC refuses is a 409 with its reason and no turn runs on
-  some other model;
+  some other model (once: the next message with the same pick is answered on the chat's own seat and says
+  why, tests/unit/test_owner_turn_cloud_pick_over_phone.py);
 * (b) the closing `message_delta` carries a `friday` block: the model the backend recorded as generating
   (not the requested id), its seat and provider, and the conversation id; an unknown is "unknown", never
   the requested id;
@@ -63,6 +64,8 @@ class Desk:
         desk = self
 
         class R:
+            status_code = 200
+
             def get_json(self, silent=True):
                 return self.d
         r = R()
