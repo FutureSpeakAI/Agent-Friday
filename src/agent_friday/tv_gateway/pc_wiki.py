@@ -2,12 +2,12 @@
 ``pc_act``).
 
 Who: an owner-bound phone or tablet that holds ``pc_act`` (the job routes' guard). What:
-* ``GET  /tv/v1/wiki/source/<ref>``: the page's Markdown and its ``rev`` (the desktop's own ``before_sha256``: SHA-256 of
-  the text with LF line endings). A phone sends back the rev it was given and never recomputes it: editors normalise
-  text, and the PC compares its own hash;
+* ``GET  /tv/v1/wiki/source/<ref>``: the page's Markdown and its ``rev`` (the desktop's own ``before_sha256``:
+  SHA-256 of the text with LF line endings). A phone sends back the rev it was given and never recomputes it: editors
+  normalise text, and the PC compares its own hash;
 * ``PUT  /tv/v1/wiki/page/<ref>`` ``{base_rev, markdown}``: replaces the page through the desktop's wiki write path,
-  which refuses (409 ``stale``) when the page no longer hashes to ``base_rev``; the phone then gets ``409 conflict`` with
-  the PC's current text and rev and chooses (keep mine, keep the PC's, save mine as a copy). Nothing is merged or
+  which refuses (409 ``stale``) when the page no longer hashes to ``base_rev``; the phone then gets ``409 conflict``
+  with the PC's current text and rev and chooses (keep mine, keep the PC's, save mine as a copy). Nothing is merged or
   overwritten silently;
 * ``POST /tv/v1/wiki/page`` ``{path, title, markdown}``: a new page; an existing one is never replaced (409 ``exists``).
 ``<ref>`` is a wiki-relative path ending in ``.md`` or ``.txt`` (no ``..``, no backslash, no leading slash); the desktop
@@ -140,7 +140,8 @@ def register(app: Flask) -> None:
                 if current["locked"]:
                     return refuse(409, "this page is encrypted and the vault is locked on the PC", code="locked")
                 shaped = jsonify({"ok": False, "error": "the page changed on the PC since you opened it",
-                                  "code": "conflict", "current": {"markdown": current["markdown"], "rev": current["rev"]}})
+                                  "code": "conflict",
+                                  "current": {"markdown": current["markdown"], "rev": current["rev"]}})
                 shaped.status_code = 409
                 return shaped
         except Exception as error:
@@ -161,7 +162,8 @@ def register(app: Flask) -> None:
             return denied
         body = request.get_json(silent=True) or {}
         path, title, markdown = body.get("path"), body.get("title"), _text(body, "markdown")
-        if not valid_ref(path) or markdown is None or not (isinstance(title, str) and 0 < len(title.strip()) <= MAX_TITLE):
+        title_ok = isinstance(title, str) and 0 < len(title.strip()) <= MAX_TITLE
+        if not valid_ref(path) or markdown is None or not title_ok:
             return refuse(400, "send {path, title, markdown}", code="bad_request")
         if not markdown.lstrip().startswith("#"):
             markdown = "# %s\n\n%s" % (" ".join(title.split()), markdown)
