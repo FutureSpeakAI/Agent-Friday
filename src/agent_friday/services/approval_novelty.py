@@ -105,7 +105,7 @@ def _load_state() -> Dict[str, Any]:
             return state
     except FileNotFoundError:
         pass
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _log.warning("approval novelty counts unreadable, starting again: %s", exc)
     return _empty_state()
 
@@ -159,7 +159,7 @@ def note_decision(card: Dict[str, Any]) -> Optional[Novelty]:
             with LABELS_FILE.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(line) + "\n")
         return label
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _log.warning("approval novelty not recorded: %s", exc)
         return None
 
