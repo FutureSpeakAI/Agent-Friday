@@ -26,6 +26,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
+from agent_friday.services import voice_engines
+
+
 class Engine(str, Enum):
     """The closed set of built-in voice engines (values of the ``voice_engine`` setting). Cloud synthesis
     providers are ``cloud:<name>`` and come from services/cloud_voice."""
@@ -36,7 +39,7 @@ class Engine(str, Enum):
 
 
 #: Cloud speech-to-speech engines: audio leaves the house, so only the owner's answer on the PC may select them.
-CLOUD_SPEECH = (Engine.GEMINI, Engine.OPENAI)
+CLOUD_SPEECH = tuple(Engine(e) for e in voice_engines.SWITCH_ENGINES)
 
 UNKNOWN_ENGINE = "unknown_engine"
 UNKNOWN_VOICE = "unknown_voice"
