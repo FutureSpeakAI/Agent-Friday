@@ -78,6 +78,11 @@ def _desk(path: str, params: Optional[dict] = None) -> Tuple[int, bytes, str]:
 
 CHATS_PAGE, CHATS_PAGE_MAX = 30, 100
 MESSAGES_PAGE, MESSAGES_PAGE_MAX = 200, 500
+JOBS_PAGE, JOBS_PAGE_MAX = 50, 200
+JOB_FIELDS = ("task_id", "name", "status", "state", "progress", "step_n", "step_total", "icon", "model",
+              "category", "created", "started", "ended", "elapsed", "off_record", "process", "conversation_id",
+              "last_seen", "stalled", "cost_usd", "now", "stop_requested", "queue_state", "queue_position",
+              "queue_total", "resumable", "resume_reason")
 
 
 def _unavailable(area: str, e: Optional[Exception] = None) -> Response:
@@ -116,6 +121,10 @@ def _desk_object(path: str, params: dict, area: str, key: str) -> Tuple[Optional
     if status >= 300 or not isinstance(data, dict) or not isinstance(data.get(key), list):
         return None, Response(body, status=status, mimetype=ctype.split(";")[0] or "application/json")
     return data, None
+
+
+def _job_row(task: dict) -> dict:
+    return {k: task[k] for k in JOB_FIELDS if k in task}
 
 
 def _page_out(payload: dict) -> Response:
@@ -246,10 +255,23 @@ def register(app: Flask) -> None:
     # ── 3. jobs and their journals ──────────────────────────────────────────
     @app.get("/tv/v1/jobs")
     def pc_jobs():
+        """The jobs list: one summary row per job (never its prompt, log or result; the detail routes carry those),
+        newest as the desktop orders them, ``limit`` (default 50, at most 200) from ``offset``, optionally only
+        jobs with one ``status``. Held by tests/unit/test_tv_pc_jobs.py."""
         denied = _guard("jobs")
         if denied is not None:
             return denied
-        return _json_from_desk("/api/tasks", None, "jobs")
+        data, other = _desk_object("/api/tasks", {}, "jobs", "tasks")
+        if other is not None:
+            return other
+        rows = [_job_row(t) for t in data["tasks"] if isinstance(t, dict)]
+        status = (request.args.get("status") or "").strip()[:40]
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+        limit, offset = _int("limit", JOBS_PAGE, JOBS_PAGE_MAX) or JOBS_PAGE, _int("offset", 0, 1_000_000)
+        nxt = offset + limit if offset + limit < len(rows) else None
+        return _page_out({"status": "ok", "tasks": rows[offset:offset + limit], "total": len(rows),
+                          "offset": offset, "next_offset": nxt})
 
     @app.get("/tv/v1/jobs/<jid>")
     def pc_job(jid):
