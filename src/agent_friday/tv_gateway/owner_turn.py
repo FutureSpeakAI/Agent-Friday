@@ -205,6 +205,52 @@ def _api(method: str, path: str, body: Optional[dict] = None):
     return getattr(client, method.lower())(path, json=body, headers={"X-Friday-Token": core._current_api_token()})
 
 
+_CID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+def valid_cid(cid) -> bool:
+    """A chat id is a plain token: it is joined into an internal URL, so no slash, dot or query character gets in."""
+    return isinstance(cid, str) and bool(_CID.match(cid))
+
+
+def conversation(cid: str) -> Optional[dict]:
+    """The desktop's record of one chat, or None when the desktop says there is no such chat. A desktop that
+    failed (401, 5xx, no answer) raises TurnRefused 503: that is not "no such chat"."""
+    from agent_friday.tv_gateway import turn
+    try:
+        resp = _api("GET", "/api/conversations/" + cid)
+    except Exception as e:
+        _log.warning("conversation lookup failed: %s", type(e).__name__)
+        raise turn.TurnRefused(503, "this computer could not look up that chat right now", "chat_unavailable")
+    status = getattr(resp, "status_code", 200)
+    if status == 404:
+        return None
+    if status != 200:
+        raise turn.TurnRefused(503, "this computer could not look up that chat right now", "chat_unavailable")
+    return _json(resp).get("conversation") or None
+
+
+def seat_model(conv: Optional[dict]) -> str:
+    """The model a chat runs on: its own seat, else the one its project gives it (the desktop's effective_seat)."""
+    conv = conv or {}
+    for key in ("seat", "effective_seat"):
+        model = (conv.get(key) or {}).get("model") if isinstance(conv.get(key), dict) else None
+        if model:
+            return str(model)
+    return ""
+
+
+def bound_model(cid: Optional[str]) -> str:
+    """The model this chat is bound to ('' when none, unknown or the desktop cannot say): what a later turn is
+    expected to be served by. Held by tests/unit/test_phone_switching_contract.py."""
+    if not valid_cid(cid):
+        return ""
+    try:
+        return seat_model(conversation(cid))
+    except Exception:
+        return ""
+
+
 def requested_model(body: dict) -> str:
     m = (body or {}).get("model")
     return m.strip() if isinstance(m, str) else ""
@@ -223,58 +269,82 @@ def _json(resp) -> dict:
         return {}
 
 
+def _made(started: bool, cid: str) -> dict:
+    """A chat this call just created rides on the refusal, so the device retries INTO it instead of leaving one
+    empty chat behind per attempt."""
+    return {"conversation_id": cid} if started else {}
+
+
 SEAT_WAIT_S = 8.0       # a bind waits this long for the PC's local-model check: under a phone's 10 s read timeout
 SEAT_POLL_S = 0.5
 
 
-def _patch_seat_waiting(cid: str, seat: dict) -> dict:
-    """PATCH the chat's seat. While the PC answers that it is still checking (``seat_pending``) the same selection is
+def _patch_seat_waiting(cid: str, seat: dict):
+    """PATCH the chat's seat and return (http status, answer). While the PC answers that it is still checking (``seat_pending``) the same selection is
     sent again with the ``seat_change_id`` it handed back, as the desktop's own picker does, until it settles or
     SEAT_WAIT_S passes. A check that is merely slow must not become a refusal on the phone."""
     deadline = time.monotonic() + SEAT_WAIT_S
     body = {"seat": seat}
     while True:
-        answer = _json(_api("PATCH", "/api/conversations/" + cid, body))
-        if not answer.get("seat_pending") or time.monotonic() >= deadline:
-            return answer
+        resp = _api("PATCH", "/api/conversations/" + cid, body)
+        status = getattr(resp, "status_code", 200)
+        answer = _json(resp)
+        if status != 200 or not answer.get("seat_pending") or time.monotonic() >= deadline:
+            return status, answer
         if answer.get("seat_change_id"):
             body = {"seat": seat, "seat_change_id": answer["seat_change_id"]}
         time.sleep(SEAT_POLL_S)
 
 
 def bind_seat(cid: Optional[str], model_id: str) -> str:
-    """Make the chat run on ``model_id`` and return its conversation id. Raises turn.TurnRefused
-    (409) with the PC's own reason when the seat cannot be bound: never a quiet other model."""
+    """Make the chat run on ``model_id`` and return its conversation id. Raises turn.TurnRefused with the PC's own
+    reason when the seat cannot be bound, never a quiet other model: 409 ``seat_refused`` (the PC will not),
+    503 ``seat_pending`` (still checking its local models after waiting SEAT_WAIT_S: retry), 409 ``seat_superseded``
+    (the chat's model was changed at the PC meanwhile), 400 ``bad_request``, 404 ``unknown_conversation``,
+    503 ``chat_unavailable`` (the PC's chat store failed)."""
     from agent_friday.tv_gateway import turn
     seat = {"model": model_id}
+    started = not cid
     if not cid:
-        d = _json(_api("POST", "/api/conversations", {"title": "Phone chat", "seat": seat}))
-        conv = d.get("conversation") or {}
-        cid = conv.get("id")
+        # Start the chat WITHOUT a seat, then bind it through the same checked path as an existing chat: the
+        # desktop's create route stores a seat unchecked, and only its PATCH refuses a second local model.
+        d = _json(_api("POST", "/api/conversations", {"title": "Phone chat"}))
+        cid = (d.get("conversation") or {}).get("id")
         if not cid:
             raise turn.TurnRefused(503, "this computer could not start that chat", "chat_unavailable")
     else:
-        d = _json(_api("GET", "/api/conversations/" + cid))
-        conv = d.get("conversation") or {}
+        if not valid_cid(cid):
+            raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
+        conv = conversation(cid)
+        if not conv:
+            raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation")
         if (conv.get("seat") or {}).get("model") == model_id:
-            return cid                      # already bound: nothing to change, nothing to reload
-        d = _patch_seat_waiting(cid, seat)
-        conv = d.get("conversation") or {}
+            return cid                      # this chat's OWN seat already: nothing to change, nothing to reload
+    # (the PATCH below is shared by both branches; a slow local-model check is waited out, not refused)
+    status, d = _patch_seat_waiting(cid, seat)
+    if status == 404:
+        raise turn.TurnRefused(404, "this computer has no such chat", "unknown_conversation", **_made(started, cid))
+    if status >= 500 or status in (401, 403):
+        raise turn.TurnRefused(503, "this computer could not change that chat right now", "chat_unavailable",
+                               **_made(started, cid))
+    conv = d.get("conversation") or {}
     if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(503, str(d.get("note") or "this computer is still checking its local models")[:240],
-                               "seat_pending", model=model_id)
+                               "seat_pending", model=model_id, retry=True, **_made(started, cid))
     if d.get("superseded") and (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, "the model for this chat was changed on this computer a moment ago; pick again",
-                               "seat_superseded", model=model_id)
+                               "seat_superseded", model=model_id, **_made(started, cid))
     if (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
-                               "seat_refused", model=model_id)
+                               "seat_refused", model=model_id, **_made(started, cid))
     return cid
 
 
-def served(payload: dict, requested: str, cid: Optional[str]) -> dict:
+def served(payload: dict, requested: str, cid: Optional[str], expected: str = "") -> dict:
     """What the backend recorded as generating this reply, from the desktop's own turn record
-    (``served_by.answered_by``), never the requested id. Fallbacks and notices ride along."""
+    (``served_by.answered_by``), never the requested id. Fallbacks and notices ride along. ``requested`` is what the device asked for in this
+    turn; ``expected`` is the model the chat was already bound to when it asked for none. ``substituted`` compares
+    the answer with whichever of the two applies."""
     payload = payload if isinstance(payload, dict) else {}
     sb = payload.get("served_by") if isinstance(payload.get("served_by"), dict) else {}
     ans = sb.get("answered_by") if isinstance(sb.get("answered_by"), dict) else {}
@@ -283,7 +353,8 @@ def served(payload: dict, requested: str, cid: Optional[str]) -> dict:
     chain = payload.get("fallback_chain")
     return {"model": model, "provider": str(ans.get("provider") or sb.get("provider") or ""),
             "seat": seat, "local": (seat == "local") if seat else None,
-            "requested": requested or None, "substituted": bool(requested and model and requested != model),
+            "requested": requested or None, "expected": expected or None,
+            "substituted": bool((requested or expected) and model and (requested or expected) != model),
             "unknown": not model,
             "fallback": chain if isinstance(chain, list) else [],
             "notice": payload.get("seat_notice") or None, "conversation_id": cid}
@@ -301,26 +372,34 @@ def is_voice_turn(dev: Optional[dict], body: dict) -> bool:
 def fast_voice_default(cid: Optional[str], dev: Optional[dict] = None):
     """(conversation id, what was chosen) for a voice turn whose device picked no model.
 
-    Only when the chat has no seat of its own yet: a pick made at the PC or on the device is never
+    Only when the chat has no seat of its own yet and none from its project: a pick made at the PC or on the device is never
     overridden. The choice is the fastest listed cloud model (voice_reply.FAST_VOICE_PREFERENCE), bound
     the same validated way a picker binds one, and reported to the device as a recommendation it can
     change. A seat the PC will not bind, or no such model, leaves the chat on its own seat, quietly."""
     from agent_friday.tv_gateway import turn, voice_reply
     try:
         if cid:
-            conv = _json(_api("GET", "/api/conversations/" + cid)).get("conversation") or {}
-            if (conv.get("seat") or {}).get("model"):
+            if seat_model(conversation(cid)):     # its own seat, else its project's: never rebound quietly
                 return cid, None
         row = voice_reply.fast_voice_model(_slate(dev))
         if not row:
             return cid, None
         cid = bind_seat(cid, row["id"])
-    except turn.TurnRefused:
-        return cid, None
+    except turn.TurnRefused as e:
+        return e.extra.get("conversation_id") or cid, None      # keep a chat this call just made: no orphan, no 2nd chat
     except Exception:
         return cid, None
     return cid, {"model": row["id"], "label": row.get("name") or row["id"], "recommended": True,
                  "why": "faster for voice; pick another model on this device to use it instead"}
+
+
+def note_served(truth: dict) -> None:
+    """Remember what answered this chat, for GET /tv/v1/conversations/<id>/state. Never touches the turn."""
+    try:
+        from agent_friday.tv_gateway import conversation_state
+        conversation_state.note_served(truth)
+    except Exception as e:
+        _log.info("last-served note skipped: %s", type(e).__name__)
 
 
 def bound_voice(cid: Optional[str]) -> Optional[dict]:
@@ -346,6 +425,9 @@ def run(dev: dict, body: dict) -> Iterator[str]:
         raise turn.TurnRefused(400, "no message")
     cid = body.get("conversation_id")
     cid = cid.strip() if isinstance(cid, str) and cid.strip() else None
+    if cid and not valid_cid(cid):
+        raise turn.TurnRefused(400, "that chat id is not valid", "bad_request")
+    new_chat = not cid                      # a chat THIS call creates rides on a later refusal so a retry reuses it
     requested = requested_model(body)
     asked = requested
     voice = is_voice_turn(dev, body)
@@ -377,17 +459,20 @@ def run(dev: dict, body: dict) -> Iterator[str]:
     word = {"tablet": "Tablet", "phone": "Phone", "watch": "Watch"}.get(kind, "Remote")
     shown = requested or (default or {}).get("model") or ""
     _CTX.activity = ("%s %s" % (word, "voice chat" if voice else "chat"), shown)
+    # A turn with no model rides the model the chat was bound to; read BEFORE the turn starts so a later switch
+    # cannot change what this answer is compared with.
+    expected = "" if requested else ((default or {}).get("model") or bound_model(cid))
     try:
         response = _post(text, cid)
     except Exception as e:
         _log.info("owner turn not started: %s", type(e).__name__)
-        raise turn.TurnRefused(503, "this computer can't answer that right now")
+        raise turn.TurnRefused(503, "this computer can't answer that right now", **_made(new_chat and bool(cid), cid))
     finally:
         _CTX.activity = None
     if response.status_code != 200:
-        raise turn.TurnRefused(503 if response.status_code >= 500 else response.status_code,
-                               "this computer did not take the turn")
-    return _stream(response, dev, requested, cid, voice=voice, voice_default=default, asked=asked)
+        # Always 503: a 401/423 from the desktop's own door is the PC's problem, not the phone's session failing.
+        raise turn.TurnRefused(503, "this computer did not take the turn", **_made(new_chat and bool(cid), cid))
+    return _stream(response, dev, requested, cid, expected=expected, voice=voice, voice_default=default, asked=asked)
 
 
 def _status(status: str, started: float, detail: str = "") -> str:
@@ -398,7 +483,8 @@ def _status(status: str, started: float, detail: str = "") -> str:
 
 
 def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Optional[str] = None,
-            voice: bool = False, voice_default: Optional[dict] = None, asked: str = "") -> Iterator[str]:
+            voice: bool = False, voice_default: Optional[dict] = None, asked: str = "",
+            expected: str = "") -> Iterator[str]:
     """The phone's stream: progress while the desktop works, then the FINAL answer only.
 
     The desktop's own deltas are not relayed as they arrive: they can carry a tool round's narration,
@@ -448,9 +534,10 @@ def _stream(response, dev: Optional[dict] = None, requested: str = "", cid: Opti
         # scratchpad came back, a failure, the deadline). Guarded by tests/unit/test_owner_turn_long_turn.py.
         yield _event({"type": "error", "error": {"type": "api_error", "message": (failed or (
             "the computer finished without an answer; it may be on its screen")) [:300]},
-                      "friday": served(payload, requested, cid)})
+                      "friday": served(payload, requested, cid, expected)})
         return
-    truth = served(payload, requested, cid)
+    truth = served(payload, requested, cid, expected)
+    note_served(truth)
     if dev is not None:
         from agent_friday.tv_gateway import turn
         from agent_friday.tv_gateway.tailnet import via as tailnet_via
