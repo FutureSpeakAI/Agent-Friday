@@ -5,6 +5,14 @@ import time
 from agent_friday.services.knowledge_graph import wiki_graph
 
 
+def test_the_mention_scan_check_does_not_depend_on_how_fast_the_machine_is(monkeypatch):
+    """F17: the check below used a 2.0 s stopwatch and failed a busy ubuntu runner (2.85 s). A clock that jumps ten
+    seconds on every read is a very slow machine, not a slow scan; the scan must still be judged fine."""
+    ticks = iter(range(0, 10_000_000, 10))
+    monkeypatch.setattr(time, "perf_counter", lambda: float(next(ticks)))
+    test_archive_mention_scan_budget()
+
+
 def test_archive_mention_scan_budget():
     pages = {
         str(i): dict(title=f"Archive article {i:05d}", stem=f"archive-{i:05d}",
