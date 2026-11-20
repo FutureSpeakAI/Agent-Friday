@@ -29,6 +29,7 @@ CAT = {
 
 @pytest.fixture
 def pc(monkeypatch):
+    monkeypatch.setattr(ms, "_benchmark", lambda mid: None)
     state = {"mode": "local_preferred", "live": {"bonsai2:27b"}, "busy": None}
     monkeypatch.setattr(ms, "_catalog", lambda: CAT)
     monkeypatch.setattr(ms, "_settings", lambda: {"orchestrator_model": "bonsai2:27b",
