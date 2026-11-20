@@ -159,7 +159,7 @@ def test_the_kill_switch_gate_follows_the_owners_setting_and_fails_closed(monkey
     def unreadable():
         raise OSError("no settings")
     monkeypatch.setattr(core, "_load_settings", unreadable)
-    assert gate() is False, "settings that cannot be read cannot say the switch is off"
+    assert gate() is False, "a loader that raises counts as halted too (the real loader returns degraded settings instead: the real-loader test)"
 
 
 def test_a_reserve_leg_left_pending_by_a_crash_is_not_sent_by_a_tick_while_halted(env_factory):
@@ -194,16 +194,25 @@ def test_settings_that_the_real_loader_could_not_read_count_as_halted(monkeypatc
     monkeypatch.setattr(core, "SETTINGS_FILE", broken)
     monkeypatch.setattr(core, "_SETTINGS_READ_RETRY_S", 0)
     monkeypatch.setitem(core._SETTINGS_LAST_GOOD, "value", None)
+    monkeypatch.setitem(core._SETTINGS_CACHE, "value", None)       # an earlier real read must not answer for the file
     assert core._is_degraded_settings(core._load_settings()), "the real loader marks an unreadable file degraded"
     assert held_features.new_effects_gate()() is False
 
 
-def test_settlement_is_handed_its_gate_and_does_not_reach_for_the_app_core_or_settings():
-    # core pulls flask, subprocess and asyncio into the exchange (scripts/check_exchange_imports.py bans those; it
-    # sees only direct imports, so this holds the indirect one). provider.py names held_features for its never-list
-    # (older, #905); settlement does not.
+def test_the_exchange_guard_finds_the_app_core_in_every_import_form_and_the_package_is_clean():
+    import importlib.util
     from pathlib import Path
-    root = Path(st.__file__).parent
-    core = [p.name for p in root.glob("*.py") if "agent_friday.core" in p.read_text(encoding="utf-8-sig")]
-    assert core == [], core
-    assert "held_features" not in Path(st.__file__).read_text(encoding="utf-8-sig")
+    script = Path(__file__).resolve().parents[2] / "scripts" / "check_exchange_imports.py"
+    spec = importlib.util.spec_from_file_location("check_exchange_imports", script)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    for source in ("from agent_friday import core
+", "import agent_friday.core
+", "from agent_friday.core import _load_settings
+",
+                   "def f():
+    from agent_friday import core
+"):
+        assert guard.banned(guard.imported_modules(source)), source
+    assert guard.run() == [], "settlement is handed its gate (new_effects_allowed); it does not reach for the app core"
+    assert "held_features" not in Path(st.__file__).read_text(encoding="utf-8-sig"), "provider.py names it for its never-list (older); settlement does not"

@@ -19,6 +19,9 @@ NETWORK = frozenset({
     "ftplib", "smtplib", "imaplib", "poplib", "telnetlib", "xmlrpc", "socketserver", "asyncio", "grpc",
     "stripe", "plaid", "paypalrestsdk", "boto3", "flask", "agent_friday.services.peer_transport",
     "importlib", "subprocess", "ctypes", "cffi", "multiprocessing", "pty",
+    # the app core loads flask, subprocess and asyncio: the exchange is handed what it needs and never reaches for it
+    # (held by tests/unit/test_exchange_kill_switch.py, which shows `from agent_friday import core` is found)
+    "agent_friday.core",
 })
 DYNAMIC_CALLS = frozenset({"__import__", "import_module", "exec", "eval"})
 

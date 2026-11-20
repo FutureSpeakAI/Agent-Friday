@@ -354,7 +354,9 @@ class Settlement:
     def _allowed_now(self) -> bool:
         """The kill switch stops NEW side effects only: opening a fill, which holds P and reserves cash. Everything
         already committed carries on (confirming, paying out, releasing, refunding) and the history is kept
-        (NS-40.1-18). A gate that cannot answer counts as halted."""
+        (NS-40.1-18). A gate that cannot answer counts as halted. Stated limit: a RESERVE leg the provider already answered
+        (reconcile saw it reserved) goes back to pending and is not re-asked while halted, so that fill waits in P_HELD
+        until the switch is off (asking again would be the same effect under the same key, but the gate is conservative)."""
         try:
             return self._new_effects_allowed() is True
         except Exception:  # noqa: BLE001
