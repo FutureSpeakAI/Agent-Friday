@@ -213,6 +213,52 @@ PROBES = (firecrawl_state, brave_state, duckduckgo_state, local_brain_state,
           google_accounts_state)
 
 
+_FED_LABELS = {
+    "offline_rehearsal": "Federation: offline rehearsal (test credits on this PC)",
+    "invited_jobs": "Federation: invited manual jobs",
+    "unattended_worker": "Federation: unattended local worker",
+    "private_publish": "Federation: private publish",
+    "public_discovery": "Federation: public discovery",
+    "live_cash": "Federation: live cash",
+}
+
+
+def federation_states(settings: dict | None = None) -> list:
+    """The six logical federation capabilities (spec: Integration, phase 0), each in the closed vocabulary.
+    Held by tests/unit/test_federation_capability_state.py. Read live from held_features and never from a probe of
+    a peer: nothing here reports WORKING, because no job on this PC has proven any of them. They are kept out of
+    PROBES on purpose: PROBES is what the model reads every turn, and these are for the owner's screen."""
+    from agent_friday.services import held_features as hf
+    out = []
+    for cap in hf.CAPABILITIES:
+        label = _FED_LABELS[cap]
+        if cap in hf.NEVER_IN_THIS_RELEASE:
+            out.append(CapabilityState("federation_" + cap, label, ABSENT, (), "",
+                                       "not in this release; no setting turns it on", health="blocked_by_policy"))
+        elif hf.kill_switch_engaged(settings):
+            out.append(CapabilityState("federation_" + cap, label, ABSENT, (), "",
+                                       "stopped by the owner's kill switch", health="blocked_by_policy"))
+        elif not hf.enabled(hf.FEDERATION, settings):
+            out.append(CapabilityState("federation_" + cap, label, UNCONFIGURED, ("held_features." + hf.FEDERATION,),
+                                       "Turn Federation on in Settings -> Federation", "Federation is off"))
+        elif not hf.enabled("fed_" + cap, settings):
+            out.append(CapabilityState("federation_" + cap, label, UNCONFIGURED, ("held_features.fed_" + cap,),
+                                       "Turn this one on in Settings -> Federation", "its own switch is off"))
+        else:
+            out.append(CapabilityState("federation_" + cap, label, PRESENT_UNVERIFIED, (), "",
+                                       "switched on; no job on this PC has proven it yet"))
+    return out
+
+
+def federation_as_dicts(settings: dict | None = None) -> list:
+    out = []
+    for c in federation_states(settings):
+        health, why = health_of(c)
+        out.append({"key": c.key, "label": c.label, "state": c.state, "needs": list(c.needs), "fix": c.fix,
+                    "detail": c.detail, "health": health, "health_why": why, "group": _GROUP_OF[health]})
+    return out
+
+
 def snapshot() -> list:
     out = []
     for probe in PROBES:
