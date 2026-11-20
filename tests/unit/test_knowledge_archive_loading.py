@@ -5,37 +5,51 @@ import time
 from agent_friday.services.knowledge_graph import wiki_graph
 
 
-def test_the_mention_scan_check_does_not_depend_on_how_fast_the_machine_is(monkeypatch):
-    """F17: the check below used a 2.0 s stopwatch and failed a busy ubuntu runner (2.85 s). A clock that jumps ten
-    seconds on every read is a very slow machine, not a slow scan; the scan must still be judged fine."""
-    ticks = iter(range(0, 10_000_000, 10))
-    monkeypatch.setattr(time, "perf_counter", lambda: float(next(ticks)))
-    test_archive_mention_scan_budget()
-
-
-def _scan_seconds(titles):
+def _body_and_pages(titles):
     pages = {
         str(i): dict(title=f"Archive article {i:05d}", stem=f"archive-{i:05d}",
                      out_links=[], in_links=[], mention_count=0)
         for i in range(titles)
     }
     last = titles - 1
-    bodies = {"0": ("ordinary prose with no matching title. " * 5000)
-                     + f" Archive article {last:05d}!"}
-    started = time.perf_counter()
-    wiki_graph._extract_mentions(pages, bodies)
-    elapsed = time.perf_counter() - started
-    assert (str(last), "mention") in pages["0"]["out_links"]
-    return elapsed
+    body = ("ordinary prose with no matching title. " * 5000) + f" Archive article {last:05d}!"
+    return pages, body, last
+
+
+def _best_of_three(run):
+    best = None
+    for _ in range(3):
+        started = time.perf_counter()
+        run()
+        spent = time.perf_counter() - started
+        best = spent if best is None else min(best, spent)
+    return best
+
+
+# The scan may cost this many times what one pass over the same body costs on this machine. The real scan is
+# about 8 times that unit; trying every title against the whole body (6000 regex searches) is thousands of times.
+SCAN_LIMIT_IN_BODY_PASSES = 60
 
 
 def test_archive_mention_scan_budget():
-    """Four times the titles must cost well under sixteen times the time (a scan that tries every title against
-    the whole body would be quadratic in work and show it). Compares the machine with itself, so a busy shared
-    runner cannot fail it; the old check was an absolute 2.0 s (F17)."""
-    small = max(min(_scan_seconds(1500) for _ in range(3)), 0.02)
-    big = min(_scan_seconds(6000) for _ in range(3))
-    assert big <= 8.0 * small, f"4x the titles cost {big / small:.1f}x the time ({small:.2f}s -> {big:.2f}s)"
+    """Judged against one pass over the same body on the same machine, so a busy shared runner (everything slower,
+    the pass too) cannot fail it, while a scan that tries every title against the whole body still does. The old
+    check was an absolute 2.0 s (F17)."""
+    import re
+
+    def scan_once():
+        pages, body, last = _body_and_pages(6000)
+        started = time.perf_counter()
+        wiki_graph._extract_mentions(pages, {"0": body})
+        elapsed = time.perf_counter() - started
+        assert (str(last), "mention") in pages["0"]["out_links"]
+        return elapsed
+
+    pages, body, _ = _body_and_pages(6000)
+    one_pass = max(_best_of_three(lambda: len(re.findall(r"\w+", body))), 0.002)
+    scan = min(scan_once() for _ in range(3))
+    assert scan <= SCAN_LIMIT_IN_BODY_PASSES * one_pass, (
+        f"the mention scan cost {scan / one_pass:.0f} passes over the body ({scan:.2f}s against {one_pass:.3f}s)")
 
 
 def test_mentions_boundaries_longest_case_and_explicit():
