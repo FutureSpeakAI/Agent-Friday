@@ -53,9 +53,16 @@ def gmail(tmp_path, monkeypatch):
     monkeypatch.setattr(_cs, "read_secret", lambda path: path.read_bytes())
     sw._KEY_CACHE = None
     sw._KEY_RETRY_AT = 0.0
+    # The typed-chat rung is bounded in time (laya.POINT_ACT_BUDGET_MS) and the router remembers a rung that
+    # overran as "busy" in module state. On a loaded runner either one turned a card into None, and one test's
+    # overrun reached the next (F3). `_route` below already gives its rungs 5 s for the same reason.
+    from agent_friday.services import laya as _laya, laya_router as _lr
+    monkeypatch.setattr(_laya, "POINT_ACT_BUDGET_MS", 30_000)
+    _lr._rung_busy.clear()
     tok = agent._CURRENT_CONVERSATION.set(CONV)
     yield fake
     agent._CURRENT_CONVERSATION.reset(tok)
+    _lr._rung_busy.clear()
     desktop_bus.reset()
     sw.reset()
 

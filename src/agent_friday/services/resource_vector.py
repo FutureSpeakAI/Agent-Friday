@@ -39,8 +39,8 @@ def _whole(value, what, low=0):
     return value
 
 
-def _text(value, what):
-    if not isinstance(value, str) or not value or len(value) > 120 or not value.isascii() or not value.isprintable():
+def _text(value, what, limit=120):
+    if not isinstance(value, str) or not value or len(value) > limit or not value.isascii() or not value.isprintable():
         raise ValueError(f"{what} must be short printable ASCII text")
     return value
 
@@ -69,7 +69,7 @@ class Estimated:
 
     def __post_init__(self):
         _whole(self.value, "value")
-        _text(self.basis, "basis")
+        _text(self.basis, "basis", limit=400)
 
     def to_wire(self) -> dict:
         return {"v": self.value, "basis": self.basis}
@@ -110,6 +110,17 @@ class ResourceVector:
 
     def to_wire(self) -> dict:
         return {f.name: getattr(self, f.name).to_wire() for f in fields(self)}
+
+    def merged(self, other: "ResourceVector") -> "ResourceVector":
+        """One vector from two meters that read different things. A field both meters filled is refused,
+        never added or averaged: unlike readings are not combined (C-4)."""
+        out = {}
+        for f in fields(self):
+            mine, theirs = getattr(self, f.name), getattr(other, f.name)
+            if not isinstance(mine, Unavailable) and not isinstance(theirs, Unavailable):
+                raise ValueError(f"{f.name} was read by both meters")
+            out[f.name] = theirs if isinstance(mine, Unavailable) else mine
+        return ResourceVector(**out)
 
 
 class MixedProfiles(ArithmeticError):
