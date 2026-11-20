@@ -6,7 +6,6 @@ page's raw file text never leaves. tests/unit/test_tv_ws_content.py holds the ru
 """
 from __future__ import annotations
 
-import json
 import re
 import threading
 import time
@@ -14,7 +13,8 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Optional
 
-from agent_friday.tv_gateway import pc_read, ws_blocks
+from agent_friday.tv_gateway import ws_blocks
+from agent_friday.tv_gateway.ws_adapter import Locked, Missing, Unavailable, desk_json as _desk
 
 SECTIONS = ("pages",)                         # people and graph arrive with their own adapters
 KIND = "page"
@@ -28,31 +28,7 @@ _PARSED: "OrderedDict" = OrderedDict()
 _LOCK = threading.Lock()
 
 
-class Missing(Exception):
-    """No such page here."""
-
-
-class Locked(Exception):
-    """The page is encrypted and the PC's vault is locked."""
-
-
-class Unavailable(Exception):
-    """The PC could not read its wiki."""
-
-
-def _desk(path: str, params: Optional[dict] = None):
-    status, body, _ = pc_read._desk(path, params)
-    if status == 404:
-        raise Missing(path)
-    if status != 200:
-        raise Unavailable(path)
-    try:
-        data = json.loads(body)
-    except ValueError as e:
-        raise Unavailable(path) from e
-    if not isinstance(data, dict):
-        raise Unavailable(path)
-    return data
+FACETS = {"folder": lambda row: row["line"]}
 
 
 def ref_path(ref: str) -> str:
