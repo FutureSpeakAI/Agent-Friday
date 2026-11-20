@@ -65,10 +65,15 @@ def test_the_id_must_match_exactly(make):
     assert e.value.code == "recipient"
 
 
-def test_the_check_can_fail_with_the_comparison_removed_an_observer_would_act(monkeypatch):
+def test_the_check_can_fail_with_the_comparison_removed_an_observer_would_act():
+    # negative control: the real source of act_on with its comparison deleted, run, lets an observer act
+    import inspect
+    source = inspect.getsource(wire.act_on)
+    mutant = source.replace('if not isinstance(own_id, str) or own_id != verified.body["recipient"]:', "if False:")
+    assert mutant != source, "the mutation must change the source"
+    namespace = {"_fail": wire._fail, "Verified": wire.Verified}
+    exec(mutant, namespace)
     _, verified = _verifying_cases()[0]
-    # a permissive door: what act_on would be without its comparison
-    def permissive(v, own_id):
-        return v.body
-    monkeypatch.setattr(wire, "act_on", permissive)
-    assert wire.act_on(verified, OBSERVER) == verified.body, "without the comparison the observer acts"
+    assert namespace["act_on"](verified, OBSERVER) == verified.body, "without the comparison the observer acts"
+    with pytest.raises(wire.WireError):
+        wire.act_on(verified, OBSERVER)

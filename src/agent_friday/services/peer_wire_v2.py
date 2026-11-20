@@ -270,6 +270,14 @@ class PeerEventStore:
                               "FROM peer_equivocations_v2 ORDER BY seen_at").fetchall()
 
 
+def act_on(verified: Verified, own_id) -> dict:
+    """The one door from "authenticated" to "acted on": the event body, only for the node it is addressed to. An observer
+    (a node that trusts the actor's key and verified the event) gets WireError("recipient"). The id must be exactly the
+    event's recipient. Held by tests/unit/test_peer_wire_observer_cannot_act.py. Nothing calls this yet."""
+    if not isinstance(own_id, str) or own_id != verified.body["recipient"]:
+        _fail("recipient")
+    return verified.body
+
 def receive(raw: bytes, trusted_keys, store: PeerEventStore, recipient: str | None = None) -> tuple[str, str]:
     """Authenticate and record one wire event: (disposition, event_id). Raises WireError for
     anything that must not be recorded. The disposition is not an authorization."""
