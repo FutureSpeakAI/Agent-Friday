@@ -191,6 +191,19 @@ def test_a_seat_changed_on_the_pc_meanwhile_is_a_409_that_says_so(client, desk):
     assert desk.turns == []
 
 
+def test_a_local_model_that_is_not_running_is_a_409_that_says_so_in_the_pcs_words(client, desk, monkeypatch):
+    """The phone shows this text: "Bonsai2 is not running on your PC", not a bare refusal."""
+    from agent_friday.tv_gateway import models
+    reason = models.why_unavailable({"label": "Bonsai2", "local": True}, {})
+    assert reason == "Bonsai2 is not running on your PC"      # the wording itself, not only its path to the 409
+    monkeypatch.setattr(owner_turn, "_slate", lambda dev: [{"id": "bonsai2:27b", "name": "Bonsai2", "available": False,
+                                                            "reason": reason}])
+    r = ask(client, phone(), model="bonsai2:27b", conversation_id="conv-old")
+    body = r.get_data(as_text=True)
+    assert r.status_code == 409 and "model_unavailable" in body and "Bonsai2 is not running on your PC" in body
+    assert desk.turns == [] and not [c for c in desk.api_calls if c[0] == "PATCH"]
+
+
 def test_no_model_binds_nothing_and_an_unknown_one_is_refused_loudly_not_quietly_answered(client, desk):
     ask(client, phone())
     r = ask(client, phone(), model="some-placeholder")
