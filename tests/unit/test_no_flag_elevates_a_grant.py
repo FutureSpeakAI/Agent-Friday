@@ -9,9 +9,9 @@ A grant is signed with its own limits and is judged only on them. What this file
   3. the trap in (1) is shown able to fail: a function that does ask held_features trips it (Q2);
   4. a spent grant stays spent and a grant for one tool or scope does not cover another, with the flag readers refusing
      to answer;
-  5. the differential check, which is the one that also catches a direct read of settings["held_features"]: the same
-     life of a grant is run with every flag on and with every flag off (the settings loader the governance code itself
-     uses is replaced) and the outcomes must be identical.
+  5. the differential check, which also catches a direct read of the settings: the same life of a grant is run with every
+     capability flag on (kill switch off) and with every flag off, the settings loader the governance code itself uses
+     being replaced, and the outcomes must be identical; a flag-following consume is shown to make them differ.
 
 The limit, stated plainly: this is about the grant code. A future caller that decides "this tool is allowed because a
 flag is on" without going through a grant is outside it; the route gate (held_features) and the grant check are
@@ -66,26 +66,51 @@ def test_a_grant_for_one_tool_and_scope_covers_nothing_else(monkeypatch):
     assert asked == []
 
 
-def _life(monkeypatch, flags):
+def _every_flag(on):
+    keys = set(held_features.CAPABILITIES) | {"fed_" + c for c in held_features.CAPABILITIES}
+    keys |= {held_features.FEDERATION, "live_cash", "public_discovery"}
+    # the kill switch stays off in BOTH runs: with it on, the real rule turns every capability off and the two runs
+    # would not differ in what the rule says
+    return {"held_features": {k: on for k in keys}}
+
+
+def _life(monkeypatch, on, consume=None):
     from agent_friday import core
-    settings = {"held_features": {k: flags for k in (
-        "federation", "fed_offline_rehearsal", "fed_invited_jobs", "fed_unattended_worker", "fed_private_publish",
-        "fed_public_discovery", "fed_live_cash", "live_cash", "public_discovery", "fed_kill_switch")}}
+    settings = _every_flag(on)
     monkeypatch.setattr(core, "_load_settings", lambda: settings)
+    consume = consume or action_gate.consume_grant
     grant = action_gate.create_grant(tools=["send_email"], scope="job-d", expires_in_seconds=600, max_uses=2)
-    return [action_gate.consume_grant("write_file", "job-d") is None,
-            action_gate.consume_grant("send_email", "job-other") is None,
-            action_gate.consume_grant("send_email", "job-d") is not None,
-            action_gate.consume_grant("send_email", "job-d") is not None,
-            action_gate.consume_grant("send_email", "job-d") is None,
+    return [consume("write_file", "job-d") is None,
+            consume("send_email", "job-other") is None,
+            consume("send_email", "job-d") is not None,
+            consume("send_email", "job-d") is not None,
+            consume("send_email", "job-d") is None,
             action_gate.revoke_grant(grant["grant_id"]) is True]
 
 
 def test_the_same_grant_gives_the_same_answers_with_every_flag_on_and_every_flag_off(monkeypatch):
+    from agent_friday import core
+    monkeypatch.setattr(core, "_load_settings", lambda: _every_flag(True))
+    assert any(held_features.capability_enabled(c) for c in held_features.CAPABILITIES), "the 'on' run really has capabilities on"
     on = _life(monkeypatch, True)
     action_gate.revoke_all_grants()
     off = _life(monkeypatch, False)
     assert on == off == [True, True, True, True, True, True]
+
+
+def test_the_check_can_fail_a_grant_path_that_follows_the_capability_rule_makes_the_two_runs_differ(monkeypatch):
+    # negative control (Q2): a consume that lets a write_file through when a capability is on, reading the settings the
+    # way the real rule does (no import in governance, no literal "held_features" in the grant code)
+    real = action_gate.consume_grant
+
+    def elevating(tool, scope):
+        if held_features.capability_enabled(held_features.INVITED_JOBS):
+            return {"grant_id": "elevated"}
+        return real(tool, scope)
+    on = _life(monkeypatch, True, consume=elevating)
+    action_gate.revoke_all_grants()
+    off = _life(monkeypatch, False, consume=elevating)
+    assert on != off, "a flag-following grant check is seen by the differential"
 
 
 def test_the_governance_package_does_not_import_held_features():
