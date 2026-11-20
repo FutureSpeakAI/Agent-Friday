@@ -332,3 +332,15 @@ def test_a_grant_is_not_spent_from_a_chat_that_is_not_the_owners_own_line_on_thi
     _grant_via_press(store)
     ctx = dict(CHAT, **remote)
     assert action_gate.authorize("create_task", {"list": "home"}, ctx, clean=True).action != "allow", remote
+
+
+def test_an_offer_is_not_recorded_as_raised_when_no_new_pending_card_came_back(store, monkeypatch):
+    """If the store hands back a card that is not pending, nothing was shown: no pending mark, no 'shown' line."""
+    pattern = ap.from_call("create_task", {"list": "home"})
+    monkeypatch.setattr(so, "offer_due", lambda card: pattern)
+    monkeypatch.setattr(approvals, "create_approval", lambda **kw: {"approval_id": "old", "status": "denied"})
+    recorded = []
+    monkeypatch.setattr(so, "record_offer_raised", lambda *a, **k: recorded.append(a))
+    assert sg.maybe_offer({"status": "approved", "kind": "tool_confirm", "requested_by": "confirmation_gate",
+                           "payload": {"tool": "create_task", "input": {"list": "home"}}}) is None
+    assert recorded == []

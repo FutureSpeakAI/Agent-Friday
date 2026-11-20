@@ -136,17 +136,22 @@ def on_offer_decided(card: Dict[str, Any]) -> None:
             by=str(card.get("decided_by") or ""))
 
 
-def cover(tool_name: str, args: Any, ctx: Dict[str, Any], why: str) -> Optional[dict]:
+def cover(tool_name: str, args: Any, ctx: Dict[str, Any], why: str, *, clean: bool = False) -> Optional[dict]:
     """A live standing grant spent on this call, or None when the owner is asked as usual.
 
     A grant is earned on the confirmation cards of a chat session (the pattern's origin), so it covers only a call
     from an interactive chat session: a scheduled, background or session-less call is a different origin and is
-    never covered. The call's own money and irreversible class is judged here, on the call, because free text is
-    outside the pattern and the card that earned the grant may have said something harmless."""
+    never covered. Nor is a chat that is not the owner's own line typed on this PC (a phone, a channel, a tunnel), nor
+    a turn that read outside content (``clean`` is the same flag a pre-approved send needs), so a standing grant is
+    never easier to spend than a pre-approved send. The call's own money and irreversible class is judged here, on
+    the call, because free text is outside the pattern and the card that earned the grant may have said something
+    harmless."""
     try:
-        from agent_friday.governance import action_gate
+        from agent_friday.governance import action_gate, grant_record
         ctx = ctx or {}
-        if not action_gate._interactive(ctx):
+        if not clean or not action_gate._interactive(ctx):
+            return None
+        if ctx.get("owner_surface") is not True or grant_record.is_remote(ctx):
             return None
         if any(word in str(why or "").lower() for word in _ESCALATION_WORDS):
             return None

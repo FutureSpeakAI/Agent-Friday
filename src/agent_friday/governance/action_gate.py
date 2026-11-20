@@ -3402,7 +3402,8 @@ def _decide(tool_name, klass, why, ctx, tainted, args=None, clean=False,
     excluded: dict = {}
     if not tainted:
         from agent_friday.services import standing_grants as _sgr
-        standing = _sgr.cover(tool_name, args, ctx, why)
+        standing = _sgr.cover(tool_name, args, ctx, why,
+                              clean=bool(clean and not (tainted if grant_tainted is None else grant_tainted)))
         if standing is not None:
             return Verdict("allow", klass, f"standing grant {standing['grant_id']}", grant=standing)
     if not tainted and not _interactive(ctx):
