@@ -13,19 +13,29 @@ def test_the_mention_scan_check_does_not_depend_on_how_fast_the_machine_is(monke
     test_archive_mention_scan_budget()
 
 
-def test_archive_mention_scan_budget():
+def _scan_seconds(titles):
     pages = {
         str(i): dict(title=f"Archive article {i:05d}", stem=f"archive-{i:05d}",
                      out_links=[], in_links=[], mention_count=0)
-        for i in range(6000)
+        for i in range(titles)
     }
+    last = titles - 1
     bodies = {"0": ("ordinary prose with no matching title. " * 5000)
-                     + " Archive article 05999!"}
+                     + f" Archive article {last:05d}!"}
     started = time.perf_counter()
     wiki_graph._extract_mentions(pages, bodies)
     elapsed = time.perf_counter() - started
-    assert ("5999", "mention") in pages["0"]["out_links"]
-    assert elapsed < 2.0, f"Archive mention scan took {elapsed:.2f}s"
+    assert (str(last), "mention") in pages["0"]["out_links"]
+    return elapsed
+
+
+def test_archive_mention_scan_budget():
+    """Four times the titles must cost well under sixteen times the time (a scan that tries every title against
+    the whole body would be quadratic in work and show it). Compares the machine with itself, so a busy shared
+    runner cannot fail it; the old check was an absolute 2.0 s (F17)."""
+    small = max(min(_scan_seconds(1500) for _ in range(3)), 0.02)
+    big = min(_scan_seconds(6000) for _ in range(3))
+    assert big <= 8.0 * small, f"4x the titles cost {big / small:.1f}x the time ({small:.2f}s -> {big:.2f}s)"
 
 
 def test_mentions_boundaries_longest_case_and_explicit():
