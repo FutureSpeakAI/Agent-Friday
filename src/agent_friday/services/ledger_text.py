@@ -8,7 +8,10 @@ text itself stays on this PC in a local sidecar (action_ledger's texts.jsonl) th
 what Friday did, and that no export reads. Held by tests/unit/test_ledger_text.py and
 tests/unit/test_action_ledger_free_text.py.
 
-Known limits (named, not hidden): the key list is a deny list, so a NEW record key that carries text must be added here;
+Known limits (named, not hidden): a reader that decides from a record's value must read a key that is NOT hidden (an
+answer drawn from a fixed set is structure: doctor_weekly's weekly / not_now / never); Undo and the artifact manifest read
+items[].path and items[].backup, so with the sidecar lost they find no file and fail safe; the trust carry-over kinds are
+kept as written, so MCP server URLs (and any token in a query string) appear in a pack as written; the key list is a deny list, so a NEW record key that carries text must be added here;
 dict KEYS are not hidden (items[0]["path"] style keys are structure; a map keyed by host name keeps the host); the sidecar is
 plaintext on this PC, as the live ledger was before; a signed receipt whose inner HMAC covers the text verifies only while
 the sidecar can restore it.
@@ -24,7 +27,7 @@ from typing import Any, Callable
 #: The fields of a ledger record that hold an owner's words, paths or titles. A new kind of record that carries text under
 #: a new key adds the key here: the writer then hides it and the export refuses an older entry that kept it raw.
 FREE_TEXT_KEYS = frozenset({"summary", "items", "what_ran", "critique", "artifacts", "note", "removed", "path", "paths",
-                            "target", "detail", "item", "why", "file", "files", "folder", "folders", "answer", "error", "errors"})
+                            "target", "detail", "item", "why", "file", "files", "folder", "folders", "error", "errors"})
 #: Kinds a governance decision is READ from by matching their text (governance/trust_anchor): kept as written, so losing
 #: the sidecar can never change what is trusted. Held by test_losing_the_sidecar_never_brings_released_trust_back.
 KEPT_AS_WRITTEN_KINDS = frozenset({"trust_carry_over", "trust_carry_over_released"})

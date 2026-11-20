@@ -127,3 +127,16 @@ def test_losing_the_sidecar_never_brings_released_trust_back():
     L._TEXTS.clear()
     carried = trust_anchor._read("hosts")
     assert host not in carried["items"] and "https://other.example.net/mcp" in carried["items"]
+
+
+def test_losing_the_sidecar_never_resets_the_owners_never_to_ask_again():
+    # critic on 301e393a9: doctor_weekly reads the owner's answer from the ledger by value (weekly / not_now / never);
+    # the answer is one of a fixed set, so it is structure and stays as written
+    from agent_friday.services import doctor_weekly
+    L.append("doctor_weekly", {"event": "answer", "answer": "never", "local_only_too": False}, durable=True)
+    assert b"ft1:" not in _live_bytes()
+    sidecar = L.ledger_dir() / L.TEXTS_NAME
+    if sidecar.exists():
+        sidecar.unlink()
+    L._TEXTS.clear()
+    assert doctor_weekly._answer_on_record()["answer"] == "never"

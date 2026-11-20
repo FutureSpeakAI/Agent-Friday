@@ -2,7 +2,8 @@
 
 FREE_TEXT_KEYS is a deny list; a new writer that puts words under a new key would leak them into an export unless the key is
 added there. This test reads every `<ledger>.append("kind", {...})` call in src/ and fails on a key that is in neither set, so
-the author has to decide (hide it, or say here why it is structure). A key in STRUCTURE that holds text is a review error.
+the author has to decide (hide it, or say here why it is structure). A key in STRUCTURE that holds text is a review error. It sees only literal dicts: a record built in a variable
+(decision `entry`, goal `receipt`) is not checked, so those writers are reviewed by hand.
 It can fail: remove a key from STRUCTURE and it names it (test_the_guard_names_an_unclassified_key)."""
 import ast
 from pathlib import Path
@@ -14,7 +15,7 @@ STRUCTURE = frozenset({
     "codes", "decision", "decision_hash", "decision_policy_version", "decision_seq", "duration_ms", "entries", "event",
     "failed", "grant", "index", "limit", "local_only_too", "manifest_sha256", "members", "ok", "outcome", "period",
     "policy_version", "provider", "range_end", "range_start", "reason", "seconds", "setting", "signed", "spend", "stage",
-    "status", "surface", "terminal", "tool", "verified", "list", "made_by", "goal_id", "kept", "label", "kind"})
+    "answer", "status", "surface", "terminal", "tool", "verified", "list", "made_by", "goal_id", "kept", "label", "kind"})
 SRC = Path(__file__).resolve().parents[2] / "src"
 
 
