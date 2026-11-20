@@ -221,6 +221,63 @@ def url(name: str) -> str:
         return proxy.url
 
 
+def _is_cloud_endpoint(base_url: str) -> bool:
+    """Whether a provider's base URL is a public https host (the only kind that gets the key through the gateway)."""
+    from urllib.parse import urlsplit
+    from agent_friday.routing.provider_descriptors import is_private_host
+    parts = urlsplit(base_url or "")
+    return parts.scheme == "https" and bool(parts.netloc) and not is_private_host(base_url)
+
+
+def _auth_shape(prov: dict) -> Optional[tuple]:
+    """(header name, key format) a descriptor puts its key under, found by asking it to build the header for a marker.
+    None when the descriptor sends no key header."""
+    from agent_friday.routing.provider_descriptors import auth_headers
+    marker = "<<key>>"
+    for header, value in auth_headers(prov, marker).items():
+        if marker in value:
+            return header, value.replace("{", "{{").replace("}", "}}").replace(marker, "{key}")
+    return None
+
+
+def descriptor_url(prov: dict) -> Optional[str]:
+    """The loopback base URL for a provider descriptor, with its path (``http://127.0.0.1:N/v1``), or None when the
+    descriptor should be called directly: a local or private host, plain http, or no key header. The listener is pinned
+    to this descriptor's own host and path and sends its key only there; a caller picks the descriptor, never the
+    destination. Guarded by tests/unit/test_key_gateway_descriptor.py."""
+    from urllib.parse import urlsplit
+    base_url = (prov.get("base_url") or "").rstrip("/")
+    shape = _auth_shape(prov)
+    if (prov.get("auth") or {}).get("type", "env_var") != "env_var" or not shape or not _is_cloud_endpoint(base_url):
+        return None
+    _keep_loopback_direct()
+    header, key_format = shape
+    parts = urlsplit(base_url)
+    origin = "%s://%s" % (parts.scheme, parts.netloc)
+    path = parts.path.rstrip("/")
+    name = str(prov.get("name") or parts.netloc)
+    from agent_friday.routing.provider_descriptors import provider_env_keys
+    identity = (name, origin, path, header, key_format, tuple(provider_env_keys(prov)))
+
+    def key_now() -> Optional[str]:
+        from agent_friday.routing.provider_descriptors import provider_api_key
+        return provider_api_key(prov) or None
+
+    with _LOCK:
+        proxy = _PROXIES.get(identity)
+        if proxy is None:
+            # an edited descriptor replaces its old listener instead of leaving it running
+            for old in [k for k in _PROXIES if isinstance(k, tuple) and k[0] == name]:
+                _PROXIES.pop(old).stop()
+            proxy = KeyProxy(upstream=origin, key_provider=key_now, allowed_prefixes=(path + "/",),
+                             allowed_methods=("GET", "POST"), key_header=header, key_format=key_format,
+                             upstream_timeout=180)
+            proxy.start()
+            _keep_loopback_direct()
+            _PROXIES[identity] = proxy
+        return proxy.url + path
+
+
 def stop_all() -> None:
     with _LOCK:
         proxies = list(_PROXIES.values())
