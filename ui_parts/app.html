@@ -20163,6 +20163,22 @@ function LocalVoiceReadiness({ s }) {
 // disclosure BEFORE it takes effect: Gemini's four lines here (with the §4.5
 // relay line), a synthesis provider's from /api/voice/cloud/disclosure.
 // Greyed rows carry the reason (no key, offline, local-only, GA rule).
+function OpenAIVoiceCap({ s, save }) {
+  const kept = s.voice_openai_monthly_cap_usd;
+  const [text, setText] = useState(kept == null ? '' : String(kept));
+  const commit = () => {
+    const v = text.trim();
+    if (v === '') { save({ voice_openai_monthly_cap_usd: null }); return; }
+    const n = Number(v);
+    if (!isFinite(n) || n < 0) { setText(kept == null ? '' : String(kept)); return; }
+    save({ voice_openai_monthly_cap_usd: n });
+  };
+  return /*#__PURE__*/React.createElement("div", { 'data-openai-voice-cap': '1', style: { marginTop: 8, fontSize: 12, lineHeight: 1.45 } },
+    /*#__PURE__*/React.createElement("label", null, "Monthly limit for OpenAI voice (USD) ",
+      /*#__PURE__*/React.createElement("input", { type: "number", className: "input", min: "0", step: "1", value: text, placeholder: "No limit", 'aria-label': 'Monthly limit for OpenAI voice in US dollars',
+        style: { width: 90, marginLeft: 6 }, onChange: e => setText(e.target.value), onBlur: commit })),
+    /*#__PURE__*/React.createElement("div", { style: { opacity: 0.7, marginTop: 2 } }, "Blank means no limit. When this month's OpenAI voice spend reaches it, a call ends and " + fridayName() + " says why; nothing switches voice on its own."));
+}
 function VoiceModePicker({ s, save, mc }) {
   const [providers, setProviders] = useState([]);
   const [pending, setPending] = useState(null);   // {id, label, lines}
@@ -20222,6 +20238,7 @@ function VoiceModePicker({ s, save, mc }) {
         "aria-disabled": o.off, title: o.off && o.reason ? o.reason : o.desc, onClick: () => choose(o)
       }, o.label))),
       rows.filter(o => o.id === cur).map(o => /*#__PURE__*/React.createElement("div", { key: 'cur', style: { fontSize: 11, opacity: 0.75, marginTop: 6, lineHeight: 1.45 } }, o.desc)),
+      oai && /*#__PURE__*/React.createElement(OpenAIVoiceCap, { s: s, save: save }),
       rows.filter(o => o.off && o.reason).map(o => /*#__PURE__*/React.createElement("div", { key: 'why-' + o.id, style: { fontSize: 11, opacity: 0.7, marginTop: 4, lineHeight: 1.45 } }, /*#__PURE__*/React.createElement("b", null, o.label, " unavailable:"), " ", o.reason)),
       refusal && /*#__PURE__*/React.createElement("div", { role: "status", 'data-cloud-voice-refused': '1', style: { fontSize: 11, opacity: 0.85, marginTop: 6, lineHeight: 1.45 } }, refusal),
       pending && /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, padding: 10, border: '1px solid rgba(255,179,71,0.5)', borderRadius: 6, fontSize: 12, lineHeight: 1.5 } },
