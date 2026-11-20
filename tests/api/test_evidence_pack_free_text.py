@@ -54,10 +54,10 @@ def test_the_text_is_still_there_for_this_pcs_own_readers(client):
 def test_an_entry_written_before_hiding_existed_is_refused_in_words_not_exported(client, monkeypatch):
     _seed()
     # the old writer: text on disk as it was
-    monkeypatch.setattr(ledger_text, "hide", lambda rec, digest: (rec, {}))
-    action_journal.record("write_file", "create", "files", items=[{"path": CANARY}], summary="Created " + CANARY,
-                          status="done")
-    monkeypatch.undo()
+    with monkeypatch.context() as old_writer:  # a scoped patch: undo() would also undo the client fixture
+        old_writer.setattr(ledger_text, "hide", lambda rec, digest: (rec, {}))
+        action_journal.record("write_file", "create", "files", items=[{"path": CANARY}], summary="Created " + CANARY,
+                              status="done")
     r = _export(client)
     assert r.status_code == 409 and r.get_json()["code"] == "pack_refused"
     assert "written before free text was kept as a hash" in r.get_json()["error"]
