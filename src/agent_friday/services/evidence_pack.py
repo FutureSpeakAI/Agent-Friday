@@ -46,8 +46,10 @@ APPROVAL_FIELDS = ("approval_id", "kind", "subject_type", "policy_class", "gated
                    "consumed", "created_at", "expires_at", "decided_at", "decided_by",
                    "decided_source", "decided_check", "used_at", "off_record", "policy_version",
                    "decided_policy_version", "action_fingerprint", "decided_device", "withdrawn")
-GRANT_FIELDS = ("grant_id", "kind", "pattern", "created_at", "expires_at", "uses", "max_uses",
-                "used_count", "first_used_at", "revoked_at", "status", "usage_read")
+# The fields a real grant row carries (governance/action_gate.create_grant and _ledger_row): labels, numbers and
+# times only. No free text (note, scope, pattern) is copied. Held by test_a_grant_row_carries_only_its_listed_fields.
+GRANT_FIELDS = ("grant_id", "tools", "created_at", "expires_at", "max_uses", "uses_left", "used_count",
+                "first_used_at", "revoked_at", "money_spent", "policy_version", "usage_read")
 APPROVAL_TIMES = ("created_at", "decided_at", "used_at")
 GRANT_TIMES = ("created_at", "first_used_at", "revoked_at", "expires_at")
 

@@ -224,3 +224,26 @@ def test_a_grants_read_that_fails_while_the_chain_verifies_still_refuses_the_pac
     r = _export(client)
     monkeypatch.undo()
     assert r.status_code == 409 and r.get_json()["code"] == "pack_refused" and len(L.entries(["export"])) == before
+
+
+def test_a_body_that_is_not_two_day_strings_is_a_400_in_words_not_a_500(client):
+    for body in ({"since": 1700000000, "until": 1700086400}, [1], {"since": "nan", "until": "1e999"},
+                 {"since": "2026-11-01"}, {"since": ["x"], "until": {"y": 1}}):
+        r = client.post(URL, json=body, headers=_press())
+        assert r.status_code == 400 and "first and last day" in r.get_json()["error"], body
+
+
+def test_the_export_reads_the_archive_and_reads_strictly(client, monkeypatch):
+    # the module says "the archive too, strictly": the real read must be asked for both (a default read would pass)
+    _seed()
+    seen = []
+    real = L.entries
+
+    def spy(kinds=None, **k):
+        seen.append(k)
+        return real(kinds, **k)
+    monkeypatch.setattr(L, "entries", spy)
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 200
+    assert any(k.get("archive") is True and k.get("strict") is True for k in seen), seen

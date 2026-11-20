@@ -70,7 +70,7 @@ def _grant_rows(action_gate) -> list:
             rows = action_gate.ledger_grant_rows(usage=False)
             # Nothing the ledger would have said about a grant (uses, first use, revocation) was read, so none of it
             # is stated: each row keeps its identity and its own dates and says its use was not read.
-            keep = ("grant_id", "kind", "pattern", "created_at", "expires_at", "max_uses")
+            keep = ("grant_id", "tools", "created_at", "expires_at", "max_uses", "policy_version")
             return [dict({k: r[k] for k in keep if k in r}, usage_read=False) for r in rows]
     except Exception as err:  # noqa: BLE001 - the key or the ledger could not be read
         raise pack.PackRefused("The grants could not be read (the ledger may have a break to review first), "
