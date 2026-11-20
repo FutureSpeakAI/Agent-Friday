@@ -21,6 +21,17 @@ import agent_friday.services.agent as agent
 from tests import ledger_support
 
 
+def _start_with_no_settler_marked_active():
+    """A test starts with no receipt settler marked active or holding work, and no sweep thread still running.
+    Teardown resets this too, but an earlier test in the same worker may have left it set (F6, F12, F15)."""
+    th = getattr(agent, "_RECEIPT_SWEEP", {}).get("thread")
+    if th is not None:
+        th.join(timeout=10)
+    with agent._SETTLE_GUARD:
+        agent._SETTLE_DIRTY.clear()
+        agent._SETTLER["active"] = False
+
+
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
     from agent_friday.services import task_journal as tj
@@ -28,6 +39,7 @@ def isolated(tmp_path, monkeypatch):
     tj.reset_for_tests()
     import agent_friday.notifications_engine as ne
     monkeypatch.setattr(ne, "push", lambda **kw: kw)
+    _start_with_no_settler_marked_active()
     with agent.TASKS_LOCK:
         saved = dict(agent.TASKS)
     yield
@@ -152,6 +164,21 @@ def test_waiting_on_a_card_is_not_the_ending(isolated):
     agent._task_set("t-end-5", status="declined", ended=5.0)
     assert [r["status"] for r in _rows_for("t-end-5")] == ["declined"]
     assert _receipt("t-end-5")["status"] == "declined"
+
+
+@pytest.fixture
+def _leaked_settler():
+    """What an earlier test in the same worker can leave behind: the receipt settler marked active. While it is
+    marked, a status change only queues its task for 'the settler', and nobody settles it (F6, F12, F15)."""
+    with agent._SETTLE_GUARD:
+        agent._SETTLER["active"] = True
+    yield
+
+
+def test_a_settler_left_active_by_an_earlier_test_does_not_swallow_this_tests_ending(_leaked_settler, isolated):
+    _running("t-end-leak")
+    agent._task_set("t-end-leak", status="complete", ended=3.0)
+    assert _receipt("t-end-leak")["status"] == "complete"
 
 
 def test_a_resumed_task_gets_a_receipt_for_its_new_ending(isolated):
