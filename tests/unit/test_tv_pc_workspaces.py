@@ -16,7 +16,11 @@ import pytest
 from agent_friday.services import laya_manifests as lm
 from agent_friday.services import workspace_registry as reg
 from tests.unit.test_tv_gateway import auth, open_session
-from tests.unit.test_tv_pc_read import _clean, client, paired  # noqa: F401  (fixtures and helpers)
+from tests.unit import test_tv_pc_read as shared
+from tests.unit.test_tv_pc_read import paired
+
+client = shared.client
+_clean = shared._clean
 
 GATE_CLASSES = {"internal", "self_gated", "by_argument", "card_only_when_outward", "outward"}
 CARDS = {"none", "own_card", "required", "by_argument"}

@@ -41,6 +41,18 @@
   <a class="btn" id="exp-report" href="/api/ledger/export?format=report">Save the verification report</a>
 </section>
 
+<section aria-labelledby="ev-h" id="evidence-pack">
+  <h2 id="ev-h">Evidence pack</h2>
+  <p class="muted">One file for the days you choose: the signed record of what Friday did, who approved it and from where, the grants, and a one-page summary, with a small checker anyone can run. It is saved to this PC only. Nothing is uploaded or sent.</p>
+  <form id="ev">
+    <label>First day <input name="since" type="date" required></label>
+    <label>Last day <input name="until" type="date" required></label>
+    <button type="submit" id="ev-go">Export the evidence pack</button>
+  </form>
+  <p id="ev-note" role="status"></p>
+  <p class="muted">This export supports ISO 27001 evidence-gathering. It is not a certification and makes no compliance claim.</p>
+</section>
+
 <section aria-labelledby="f-h">
   <h2 id="f-h">Find entries</h2>
   <form id="f">
@@ -129,6 +141,37 @@
   const $ = id => document.getElementById(id);
   const el = (tag, txt, cls) => { const e = document.createElement(tag); if (txt != null) e.textContent = String(txt); if (cls) e.className = cls; return e; };
   let lastSeq = null;
+
+  function saveBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+  const fileName = r => ((r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [])[1] || 'friday-evidence-pack.zip';
+  const pressPack = body => fetch('/api/ledger/evidence-pack', {
+    method: 'POST', cache: 'no-store',
+    headers: Object.assign({ 'X-Friday-Token': tok, 'Content-Type': 'application/json' }, deskKey ? { 'X-Friday-Desk': deskKey } : {}),
+    body: JSON.stringify(body)
+  });
+  function exportPack(ev) {
+    ev.preventDefault();
+    const f = ev.target, note = $('ev-note'), go = $('ev-go');
+    const body = { since: f.since.value, until: f.until.value };
+    if (!body.since || !body.until) { note.textContent = 'Pick the first and the last day.'; return; }
+    go.disabled = true;
+    note.textContent = 'Making the pack…';
+    pressPack(body).then(r => (r.status === 403 ? refreshDesk().then(() => pressPack(body)) : r))
+      .then(r => r.ok
+        ? r.blob().then(b => { saveBlob(b, fileName(r)); note.textContent = 'Saved ' + fileName(r) + ' to your downloads. It never left this PC.'; })
+        : r.json().catch(() => ({})).then(d => { note.textContent = d.error || 'The evidence pack could not be made; nothing was exported.'; }))
+      .catch(() => { note.textContent = 'The evidence pack could not be made; nothing was exported.'; })
+      .then(() => { go.disabled = false; });
+  }
+  $('ev').addEventListener('submit', exportPack);
 
   function showState(l) {
     if (!l) return;

@@ -522,6 +522,34 @@ def api_ledger_export():
         return api_error(e, "The ledger could not be exported.")
 
 
+@ledger_bp.route("/api/ledger/evidence-pack", methods=["POST"])
+@login_required
+def api_ledger_evidence_pack():
+    """The owner's evidence pack for a date range, as a zip to keep (brief K6). A press on
+    Friday's own page on this PC; never streamed to a paired device (an owner device triggers a save on the PC through /tv/v1/evidence/pack). Local file only."""
+    from agent_friday.core import _is_local_request
+    from agent_friday.services import evidence_pack, evidence_pack_export, screen_click
+    if not (_is_local_request() and screen_click.screen_session(request)):
+        return jsonify({"status": "error", "code": "press_required",
+                        "error": "Export the evidence pack on Friday's own page, on this PC."}), 403
+    body = request.get_json(silent=True) or {}
+    start, end = _when(body.get("since")), _when(body.get("until"), end=True)
+    if start is None or end is None:
+        return jsonify({"status": "error", "error": "Say the first and last day to include."}), 400
+    try:
+        rng = evidence_pack.Range(int(start), int(end))
+        done = evidence_pack_export.export(rng, evidence_pack_export.app_version())
+    except evidence_pack.PackRefused as refused:
+        return jsonify({"status": "error", "code": "pack_refused", "error": str(refused)}), 409
+    except Exception as e:  # noqa: BLE001
+        return api_error(e, "The evidence pack could not be made; nothing was exported.")
+    resp = Response(done.zip_bytes, content_type="application/zip")
+    resp.headers["Content-Disposition"] = 'attachment; filename="%s"' % done.filename
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Friday-Export-Recorded"] = "yes" if done.recorded else "no"
+    return resp
+
+
 @ledger_bp.route("/api/ledger/retention", methods=["GET"])
 @login_required
 def api_ledger_retention():
