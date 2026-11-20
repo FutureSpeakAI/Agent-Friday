@@ -62,6 +62,12 @@ RIGHT_CARDS = {
         "index on this PC, from home or over your private link. It can only read: it cannot change anything, "
         "run an action or approve a card. Each kind of reading is listed in the PC's receipts, and removing "
         "the device here ends it."),
+    "pc_act": (
+        "Let this phone or tablet control jobs on this PC?",
+        "The device may ask this PC to stop a job after its current step, to pick up an interrupted job, or to run a "
+        "finished one again. Each goes through the same checks as the button on this PC, and anything that needs your "
+        "yes still raises a card here. It cannot approve a card, change a setting or open anything else. Every use is "
+        "listed in the PC's receipts, and removing the device here ends it."),
     "pc_approve": (
         "Let this phone or tablet approve cards for this PC?",
         "The device may approve one card at a time, from home or over your private link. Each approval is "

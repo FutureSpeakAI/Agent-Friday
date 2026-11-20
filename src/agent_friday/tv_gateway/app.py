@@ -305,8 +305,11 @@ def create_app(tailnet: bool = False) -> Flask:
     pc_read.register(app)                    # the owner phone/tablet read door (chats, workspaces, jobs, media)
     from agent_friday.tv_gateway import pc_evidence
     pc_evidence.register(app)                # an owner device triggers the evidence pack; it is saved on the PC
-    from agent_friday.tv_gateway import pc_approve
+    from agent_friday.tv_gateway import pc_act, pc_approve
     pc_approve.register(app)
+    pc_act.register(app)
+    from agent_friday.tv_gateway import pc_grants
+    pc_grants.register(app)             # standing grants: list, revoke, stop an offer (K5 PR D)
     return app
 
 

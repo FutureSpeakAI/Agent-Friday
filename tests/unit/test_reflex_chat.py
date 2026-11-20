@@ -52,7 +52,7 @@ def _ask(command="Write-Output first"):
     ctx = agent.prepare_confirmation_ctx(
         SID, "run this", {"authenticated": True, "conversation_id": CONV, "owner_surface": True})
     result = agent._execute_tool("run_command", {"command": command}, session_ctx=ctx)
-    assert "CONFIRMATION REQUIRED" in result
+    assert "CONFIRMATION REQUIRED" in result, result
     return ctx
 
 
@@ -68,6 +68,17 @@ def _handler(monkeypatch):
     monkeypatch.setitem(agent.CLAUDE_TOOL_HANDLERS, "run_command",
                         lambda args: calls.append(dict(args)) or "observed output")
     return calls
+
+
+def test_a_hold_instead_of_a_question_says_its_whole_reason(monkeypatch):
+    """When the tool is held rather than asked about, the failure shows the whole reason, not a cut-off
+    (F2: a Windows CI failure was unreadable past 'could not be checked: th...')."""
+    from agent_friday.services import authority
+    why = "WHOLE-REASON-" + "x" * 400 + "-END"
+    monkeypatch.setattr(authority, "hold_reason", lambda: why)
+    with pytest.raises(AssertionError) as caught:
+        _ask()
+    assert why in str(caught.value)
 
 
 # --- approval replies -----------------------------------------------------------
