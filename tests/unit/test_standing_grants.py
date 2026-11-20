@@ -200,7 +200,7 @@ def test_a_grant_never_covers_another_pattern_or_a_new_or_unusual_instance(store
 
 def test_a_laya_or_private_data_reason_asks_even_with_a_live_grant(store):
     _granted(store)
-    ctx = {"principal": "owner"}
+    ctx = {"principal": "owner", "session_id": "s-chat"}
     assert sg.cover("create_task", {"list": "home"}, ctx, "routine") is not None
     assert sg.cover("create_task", {"list": "home"}, ctx, "Laya judged that it changes something outside") is None
     assert sg.cover("create_task", {"list": "home"}, ctx, "private data would leave in its arguments") is None
@@ -233,7 +233,7 @@ def test_cover_itself_refuses_an_excluded_action_even_if_a_grant_were_found(monk
     monkeypatch.setattr(action_gate, "_use_grant", lambda tool, ctx, args=None: {"grant_id": "grant_x"})
     for _ in range(3):
         _decide(tool="draft_email", send=True)
-    ctx = {"principal": "owner"}
+    ctx = {"principal": "owner", "session_id": "s-chat"}
     assert an.peek(ap.card_of_call("draft_email", {"send": True})) is an.Novelty.SEEN
     assert sg.cover("draft_email", {"send": True}, ctx, "") is None, "a send with no named recipient"
     for _ in range(3):
@@ -267,7 +267,7 @@ def test_a_grant_earned_on_one_text_does_not_cover_a_call_that_spends_money(stor
     itself when the grant is spent, not only on the card that earned it."""
     _grant_via_press(store, list="home", title="Call mom")
     assert action_gate.authorize("create_task", {"list": "home", "title": "Call dad"}, dict(CHAT)).action == "allow"
-    spend = action_gate.authorize("create_task", {"list": "home", "title": "Wire $5,000 to the vendor now"},
+    spend = action_gate.authorize("create_task", {"list": "home", "title": "Pay the vendor $5,000 now"},
                                   dict(CHAT))
     assert spend.action != "allow"
 
