@@ -39,6 +39,10 @@ class Provider:
     store_names: tuple
     settings_names: tuple = ()
     timeout_s: int = 60
+    core_attrs: tuple = ()      # module constants in agent_friday.core that hold the key at boot, read first
+    key_prefix: str = ""        # a real key starts with this; checked here so the key never leaves
+    shape_message: str = ""
+    migrate_plaintext: bool = False   # move a key found only in plaintext settings into the encrypted store
 
 
 PROVIDERS = {
@@ -52,6 +56,13 @@ PROVIDERS = {
         key_header="Authorization", key_format="Bearer {key}", env_names=("FIRECRAWL_API_KEY",),
         store_names=("firecrawl",), settings_names=("firecrawl_api_key",),
         timeout_s=180),   # search with page content waits up to firecrawl.SEARCH_TIMEOUT_S
+    "elevenlabs": Provider(
+        name="elevenlabs", upstream="https://api.elevenlabs.io", prefixes=("/v1/",), methods=("GET", "POST"),
+        key_header="xi-api-key", key_format="{key}", env_names=("ELEVENLABS_API_KEY",),
+        store_names=("elevenlabs",), settings_names=("elevenlabs_api_key",), timeout_s=120,
+        core_attrs=("ELEVENLABS_API_KEY",), key_prefix="sk_", migrate_plaintext=True,
+        shape_message=("this looks like an ElevenLabs key *id*, not a key - real keys begin with 'sk_'. The short hex "
+                       "string beside a key in the dashboard is its id and the API will reject it.")),
 }
 
 _LOCK = threading.Lock()
@@ -80,8 +91,37 @@ def _from_settings(row: Provider) -> str:
     return ""
 
 
+def _from_core(row: Provider) -> str:
+    try:
+        from agent_friday import core
+        for attr in row.core_attrs:
+            value = getattr(core, attr, "") or ""
+            if str(value).strip():
+                return str(value).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _migrate_plaintext(row: Provider, key: str) -> None:
+    """A key found in plaintext settings is encrypted into the store and the plaintext copy blanked (best effort)."""
+    try:
+        from agent_friday.services import credential_store
+        credential_store.set_provider_key(row.store_names[0], key)
+        if (credential_store.get_provider_key(row.store_names[0]) or "") != key:
+            return
+        from agent_friday.core import _save_settings
+        _save_settings({row.settings_names[0]: ""})
+    except Exception:
+        pass
+
+
 def _find_key(row: Provider) -> str:
-    """The provider's key from wherever the owner put it: environment, then the encrypted store, then settings."""
+    """The provider's key from wherever the owner put it: core's boot constant, the environment, the encrypted store,
+    then settings (a key found only in plaintext settings is moved into the store)."""
+    from_core = _from_core(row)
+    if from_core:
+        return from_core
     for env_name in row.env_names:
         value = (os.environ.get(env_name) or "").strip()
         if value:
@@ -94,7 +134,19 @@ def _find_key(row: Provider) -> str:
                 return value.strip()
     except Exception:
         pass
-    return _from_settings(row)
+    found = _from_settings(row)
+    if found and row.migrate_plaintext:
+        _migrate_plaintext(row, found)
+    return found
+
+
+def shape_problem(name: str) -> Optional[str]:
+    """Why the stored key cannot be right (wrong prefix), or None. The key is checked here and never returned."""
+    row = _row(name)
+    key = _find_key(row)
+    if key and row.key_prefix and not key.startswith(row.key_prefix):
+        return row.shape_message or "this key does not look right"
+    return None
 
 
 def available(name: str) -> bool:

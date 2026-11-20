@@ -36,7 +36,7 @@ class _FakeResponse:
 
 class TestElevenLabsCostMetering:
     def test_speak_text_records_character_count_and_model(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(et, "_api_key", lambda: "fake-elevenlabs-key")
+        monkeypatch.setattr(et, "_key_stand_in", lambda: "fake-elevenlabs-key")
         monkeypatch.setattr(et, "_settings", lambda: {})
         monkeypatch.setattr(et, "_dest_dir", lambda folder: (tmp_path, None))
         monkeypatch.setattr(
@@ -89,7 +89,7 @@ class TestElevenLabsCostMetering:
         assert rate["in"] > 0
 
     def test_a_failed_record_call_never_breaks_the_tool(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(et, "_api_key", lambda: "fake-elevenlabs-key")
+        monkeypatch.setattr(et, "_key_stand_in", lambda: "fake-elevenlabs-key")
         monkeypatch.setattr(et, "_settings", lambda: {})
         monkeypatch.setattr(et, "_dest_dir", lambda folder: (tmp_path, None))
         monkeypatch.setattr(

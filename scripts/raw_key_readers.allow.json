@@ -106,11 +106,6 @@
       "expires": "2027-03-31",
       "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
     },
-    "src/agent_friday/services/elevenlabs_tools.py": {
-      "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
-      "expires": "2027-03-31",
-      "approved_by": "Dispatch 2026-11-16 (K2 standing order)"
-    },
     "src/agent_friday/services/google_oauth_client.py": {
       "reason": "Reads a provider key in-process today; moves to the call-time proxy under docs/PROXY_WIDENING_PLAN.md (A3/A4).",
       "expires": "2027-03-31",

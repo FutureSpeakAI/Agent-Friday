@@ -44,6 +44,8 @@ import time
 import uuid
 from pathlib import Path
 
+from agent_friday.services import key_gateway
+
 API_ROOT = "https://api.elevenlabs.io/v1"
 
 # Sensible defaults. Both overridable per-call and via settings.json.
@@ -68,15 +70,11 @@ def _settings():
         return {}
 
 
-def _api_key():
-    """Resolve the key the one way keys resolve: cloud_voice._api_key (core,
-    the live env, the credential store, then legacy settings.json)."""
-    try:
-        from agent_friday.services.cloud_voice import _api_key as _resolve
-        return _resolve("elevenlabs")
-    except Exception:
-        key = os.environ.get("ELEVENLABS_API_KEY", "") or ""
-        return key.strip()
+def _key_stand_in():
+    """A stand-in for the ElevenLabs key: the proxy's dummy when a key exists, else an empty string. The real key
+    (core's boot constant, the live env, the credential store, then legacy settings.json) is found by
+    ``key_gateway`` and never returned here. Guarded by tests/unit/test_key_gateway_elevenlabs.py."""
+    return key_gateway.stand_in("elevenlabs")
 
 
 _NO_KEY = (
@@ -95,7 +93,7 @@ def _request(method, path, *, key, json_body=None, stream=False):
         _cloud_intent.require_owner_engine("elevenlabs", "ElevenLabs speech tool")
     except _cloud_intent.NoCloudIntent as e:
         return None, str(e)
-    url = API_ROOT + path
+    url = key_gateway.url("elevenlabs") + "/v1" + path
     try:
         resp = requests.request(
             method, url,
@@ -175,7 +173,7 @@ def _tool_speak_text(inp):
     if os.environ.get("FRIDAY_TESTING"):
         return "speak_text: skipped (FRIDAY_TESTING set — no network calls)."
 
-    key = _api_key()
+    key = _key_stand_in()
     if not key:
         return "speak_text error: " + _NO_KEY
 
@@ -268,7 +266,7 @@ def _tool_list_voices(inp):
     inp = inp or {}
     if os.environ.get("FRIDAY_TESTING"):
         return "list_voices: skipped (FRIDAY_TESTING set — no network calls)."
-    key = _api_key()
+    key = _key_stand_in()
     if not key:
         return "list_voices error: " + _NO_KEY
     resp, err = _request("GET", "/voices", key=key)

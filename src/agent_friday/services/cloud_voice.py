@@ -40,6 +40,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from agent_friday.services import key_gateway
 from agent_friday.user_errors import UserFacingError
 
 log = logging.getLogger(__name__)
@@ -336,7 +337,8 @@ def _migrate_plaintext_key(provider: str, key: str) -> None:
 
 
 def _api_key(provider: str) -> str:
-    """Module constant -> live env -> credential store -> settings.json.
+    """For a provider the key gateway serves (ElevenLabs): a stand-in, never the key. For the others: module constant
+    -> live env -> credential store -> settings.json.
 
     The credential store is where a key typed into Friday is kept. The
     plaintext settings.json field is read last, as a fallback for installs
@@ -344,6 +346,8 @@ def _api_key(provider: str) -> str:
     on the way out. ``elevenlabs_tools._api_key()`` delegates here so there is
     one way keys resolve, not two.
     """
+    if provider in key_gateway.PROVIDERS:
+        return key_gateway.stand_in(provider)
     spec = PROVIDERS.get(provider) or {}
     key = ""
     try:
@@ -376,6 +380,8 @@ def key_problem(provider: str, key: str) -> str | None:
     """
     if not key:
         return "needs an API key"
+    if key == key_gateway.DUMMY_KEY and provider in key_gateway.PROVIDERS:
+        return key_gateway.shape_problem(provider)     # the gateway checks the real key's shape; it never leaves
     if provider == "elevenlabs" and not key.startswith("sk_"):
         return ("this looks like an ElevenLabs key *id*, not a key - real keys "
                 "begin with 'sk_'. The short hex string beside a key in the "
@@ -813,11 +819,11 @@ def _synth_elevenlabs(text: str, key: str, model: str, voice: str, *, speed=None
     """POST /text-to-speech/{voice_id}. HTTP client imported lazily (C3)."""
     _require_engine("elevenlabs", "ElevenLabs")
     import requests
-    url = "%s/text-to-speech/%s" % (PROVIDERS["elevenlabs"]["base_url"], voice)
     payload = {"text": text, "model_id": model}
     if speed is not None:
         payload["voice_settings"] = {"speed": speed}
     try:
+        url = "%s/v1/text-to-speech/%s" % (key_gateway.url("elevenlabs"), voice)
         resp = requests.post(
             url, headers={"xi-api-key": key, "accept": "audio/mpeg"},
             json=payload, timeout=_TIMEOUT)
@@ -880,6 +886,10 @@ def _raise_for_status(resp, provider: str, label: str) -> None:
     """
     if resp.status_code < 400:
         return
+    if provider in key_gateway.PROVIDERS and key_gateway.no_key(resp):
+        raise CloudVoiceUnavailable(
+            "%s cannot be used: needs an API key" % label, code="cloud_voice_no_key",
+            offer=("Add a key in Settings then Voice, or use Friday's local voice."), requested=provider)
     detail = ""
     try:
         body = resp.json().get("detail") or resp.json().get("error")
