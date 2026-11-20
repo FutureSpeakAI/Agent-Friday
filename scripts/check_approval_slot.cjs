@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const root = path.join(__dirname, '..');
+const root = process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname, '..');   // a root argument lets a test check a copy
 function source(file) {
   const text = fs.readFileSync(path.join(root, file), 'utf8');
   const start = text.indexOf('function ApprovalSlot(');
@@ -123,6 +123,7 @@ const card = (id) => ({ approval_id: id, title: 'T ' + id });
   r = await render(html, { subject: 'crew:c1' }, [card('a')], ok({ ok: true, ids: [] }));
   assert.equal(r.out.props['data-testid'], 'approval-slot');
   assert.equal(line(r.out), 'Nothing is waiting here.');
+  assert.equal(r.out.children[0].props.role, 'status', 'the empty and failed lines are announced');
   for (const answer of [ok({ ok: false, error: 'bad_subject' }), ok({ ok: true, ids: 'a' }), () => Promise.reject(new Error('down'))]) {
     r = await render(html, { subject: 'crew:c1' }, [card('a')], answer);
     assert.equal(line(r.out), 'Could not check what is waiting.');

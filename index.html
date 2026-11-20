@@ -70291,7 +70291,7 @@ function ApprovalSlot({ subject, kind }) {
     'data-testid': 'approval-slot', role: 'group', 'aria-label': 'Waiting for your decision',
     style: { margin: '8px 0', padding: 8, border: '1px solid var(--fr-glass-edge)', borderRadius: 8, background: 'var(--fr-glass)', color: 'var(--fr-text)' }
   }, mine.length ? mine.map(a => React.createElement(ApprovalCardBody, { key: a.approval_id, a, busy, onDecide: decide }))
-    : React.createElement('div', { 'data-testid': 'approval-slot-empty', style: { fontSize: 11, color: 'var(--fr-dim)' } },
+    : React.createElement('div', { 'data-testid': 'approval-slot-empty', role: 'status', style: { fontSize: 11, color: 'var(--fr-dim)' } },
         ids === 'unavailable' ? 'Could not check what is waiting.' : 'Nothing is waiting here.'));
 }
 window.FridayApprovalSlot = ApprovalSlot;
