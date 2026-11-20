@@ -854,8 +854,9 @@ def rerun_task(task_id):
     # A re-run asked for by a paired device (the gateway sends {origin: "device:<id>"}) counts against that device's
     # cap like a job it started; from the PC itself there is no origin and no cap.
     from agent_friday.services import task_start
+    _body = request.get_json(silent=True)
     try:
-        with task_start.DeviceSlot((request.get_json(silent=True) or {}).get('origin')) as _slot:
+        with task_start.DeviceSlot(_body.get('origin') if isinstance(_body, dict) else None) as _slot:
             new_id = _spawn_task(t.get('name') or 'Task', prompt, description=t.get('description') or '',
                                  chain=t.get('chain'), chain_step=int(t.get('chain_step') or 0),
                                  model=t.get('model'), tools=t.get('tools'),

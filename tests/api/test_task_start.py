@@ -228,3 +228,11 @@ def test_a_cap_check_that_raises_does_not_leave_the_job_lock_held(monkeypatch):
             pass
     assert task_start._LOCK.acquire(blocking=False), "the job lock was left held"
     task_start._LOCK.release()
+
+
+@pytest.mark.parametrize("body", [[1], "text", 7, None])
+def test_a_rerun_with_a_body_that_is_not_an_object_is_still_a_plain_rerun(client, spawned, body):
+    """The route ignored its body before; a body that is not an object must not turn into a 500."""
+    old = _finished()
+    r = client.post("/api/tasks/%s/rerun" % old, json=body)
+    assert r.status_code == 200 and len(spawned) == 1
