@@ -54,6 +54,7 @@ Invariants and the tests that hold them (tests/unit/test_exchange_settlement.py)
 - A forged or unauthenticated event changes nothing and is recorded as refused:
   test_a_forged_event_changes_nothing_and_is_recorded.
 - A copied signed receipt replayed on another node pays nothing: test_a_replayed_fill_on_another_node_pays_nothing.
+- The owner's kill switch stops opening and lets committed settlement finish (NS-40.1-18): tests/unit/test_exchange_kill_switch.py.
 - Settlement is handed an Authority, never a bare journal: test_a_bare_journal_is_not_accepted.
 - Fee accrual has one call site: test_the_fee_is_charged_at_one_place_only.
 """
@@ -65,6 +66,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from enum import Enum
+from typing import Callable
 
 from agent_friday.services.exchange import fees
 from agent_friday.services.exchange import provider as p
@@ -122,6 +124,7 @@ class OpenResult(str, Enum):
     ALREADY = "already"
     REFUSED = "refused"
     PENDING = "pending"
+    HALTED = "halted"          # the owner's kill switch is on: no new fill is opened
 
 
 class CancelResult(str, Enum):
@@ -193,12 +196,14 @@ _REFUSING = frozenset({Outcome.INSUFFICIENT, Outcome.UNITS, Outcome.ISSUER, Outc
 class Settlement:
     """The workflow over one store, one issuer authority and one provider."""
 
-    def __init__(self, path, authority, provider, *, synchronous: str = "FULL"):
+    def __init__(self, path, authority, provider, *, synchronous: str = "FULL",
+                 new_effects_allowed: Callable[[], bool] | None = None):
         if synchronous not in ("FULL", "NORMAL", "OFF"):
             raise ValueError("synchronous is FULL, NORMAL or OFF")
         if isinstance(authority, IssuerJournal) or not hasattr(authority, "execute") or not hasattr(authority, "issuer"):
             raise TypeError("settlement posts P through the issuer's Authority, not a bare journal")
         self._synchronous = synchronous
+        self._new_effects_allowed = new_effects_allowed or (lambda: True)
         self._path = str(path)
         self._authority = authority
         self._provider = provider
@@ -285,6 +290,10 @@ class Settlement:
         fill_id = fill.fill_id.value
         self._opened_here.discard(fill_id)
         with self._tx() as db:
+            row = self._row(db, fill_id)
+        if (row is None or State(row["state"]) in OPENING) and not self._allowed_now():
+            return OpenResult.HALTED
+        with self._tx() as db:
             if self._row(db, fill_id) is None:
                 db.execute("INSERT INTO fills (fill_id, exchange_id, state, quote_hash, p_units, principal, fee_increment,"
                            " reserve_account, buyer_account, buying_power_ref, seller_ref, currency, cash_amount, planned_before)"
@@ -315,7 +324,7 @@ class Settlement:
         """One opening step, if the fill is still opening. True when something moved."""
         with self._tx() as db:
             row = self._row(db, fill_id)
-        if row is None or State(row["state"]) not in OPENING:
+        if row is None or State(row["state"]) not in OPENING or not self._allowed_now():
             return False
         if State(row["state"]) is State.INTENT:
             return self._hold_p(row)
@@ -341,6 +350,17 @@ class Settlement:
                 self._move(db, fill_id, State.REFUSED)    # the journal refused: no cash is touched
         self._point("p-held")
         return True
+
+    def _allowed_now(self) -> bool:
+        """The kill switch stops NEW side effects only: opening a fill, which holds P and reserves cash. Everything
+        already committed carries on (confirming, paying out, releasing, refunding) and the history is kept
+        (NS-40.1-18). A gate that cannot answer counts as halted. Stated limit: a RESERVE leg the provider already answered
+        (reconcile saw it reserved) goes back to pending and is not re-asked while halted, so that fill waits in P_HELD
+        until the switch is off (asking again would be the same effect under the same key, but the gate is conservative)."""
+        try:
+            return self._new_effects_allowed() is True
+        except Exception:  # noqa: BLE001
+            return False
 
     # -- the step functions -----------------------------------------------------------------
 
@@ -457,6 +477,8 @@ class Settlement:
                 if leg["leg"] == p.Leg.PAYOUT.value and (State(row["state"]) is State.HELD or row["capture_reversed"]):
                     db.execute("UPDATE legs SET status='cancelled' WHERE key=?", (leg["key"],))    # S-19
                     continue
+            if leg["leg"] == p.Leg.RESERVE.value and not self._allowed_now():
+                continue       # reserving cash is a new effect: a leg left pending by a crash waits while halted
             self._point(f"before-dispatch:{leg['leg']}")
             answer = self._send(row, leg["leg"], leg["key"])
             self._point(f"dispatched:{leg['leg']}")
@@ -760,3 +782,4 @@ class Settlement:
                  State.PAYOUT_CONFIRMED: "payout confirmed", State.RELEASED: "released", State.REFUSED: "refused",
                  State.HELD: "held", State.REFUNDED: "refunded"}[state]
         return {"state": state.value, "stage": stage, "p_at": row["p_at"]}
+
