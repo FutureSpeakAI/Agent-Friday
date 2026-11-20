@@ -848,7 +848,10 @@ def _append_locked(key: bytes, items: list, durable: bool, pv: Optional[str] = N
     # free text is written as a keyed hash; the text goes to the local sidecar first (services/ledger_text.py)
     hidden_items, sidecar = [], {}
     for k, r in pending + list(items):
-        hidden, texts = ledger_text.hide(_normalise(r), lambda t: _text_digest(key, t))
+        if k in ledger_text.KEPT_AS_WRITTEN_KINDS:
+            hidden, texts = _normalise(r), {}
+        else:
+            hidden, texts = ledger_text.hide(_normalise(r), lambda t: _text_digest(key, t))
         hidden_items.append((k, hidden))
         sidecar.update(texts)
     try:

@@ -95,11 +95,11 @@ def test_a_line_that_carries_a_raw_rec_key_is_a_tampered_line_not_a_shown_entry(
 def test_other_text_carrying_keys_are_hidden_target_detail_and_trust_items():
     L.append("decision", {"action_id": "act-1", "tool": "send_email", "target": "to " + CANARY, "decision": "allow"})
     L.append("outcome", {"action_id": "act-1", "tool": "send_email", "detail": "failed " + CANARY})
-    L.append("trust_carry_over_released", {"item": CANARY, "why": "because " + CANARY,
+    L.append("goal", {"goal_id": "g1", "item": CANARY, "why": "because " + CANARY,
                                            "items": {"host": CANARY}})
     assert b"CANARY-31ab" not in _live_bytes() and b"Taxes" not in _live_bytes()
     assert b'"decision":"allow"' in _live_bytes()
-    shown = L.entries(["trust_carry_over_released"])[0]["rec"]
+    shown = L.entries(["goal"])[0]["rec"]
     assert shown["item"] == CANARY and shown["items"] == {"host": CANARY}, "this PC's readers see the text"
 
 
@@ -110,3 +110,20 @@ def test_a_sidecar_that_cannot_be_written_does_not_lose_the_receipt(monkeypatch)
     entry = _write()
     assert entry is not None and L.verify(force=True)["ok"] is True
     assert b"CANARY-31ab" not in _live_bytes(), "no text on disk either: it shows as the hash"
+
+
+def test_losing_the_sidecar_never_brings_released_trust_back():
+    # critic on 4b079dd8a: trust_anchor._read matches the released item by its text; a record a governance decision is
+    # read from is kept as written, so deleting texts.jsonl cannot change what is trusted
+    from agent_friday.governance import trust_anchor
+    host = "https://mcp.example.com/mcp"
+    L.append(trust_anchor.KIND, {"list": "hosts", "items": {host: True, "https://other.example.net/mcp": True},
+                                 "made_by": "carried_over"})
+    L.append(trust_anchor.RELEASE, {"list": "hosts", "item": host, "why": "owner removed it"})
+    assert b"ft1:" not in _live_bytes().split(b"trust_carry_over_released")[-1], "kept as written"
+    sidecar = L.ledger_dir() / L.TEXTS_NAME
+    if sidecar.exists():
+        sidecar.unlink()
+    L._TEXTS.clear()
+    carried = trust_anchor._read("hosts")
+    assert host not in carried["items"] and "https://other.example.net/mcp" in carried["items"]
