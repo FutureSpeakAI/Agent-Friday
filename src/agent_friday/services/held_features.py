@@ -137,3 +137,20 @@ def federation_route_gate():
     if capability and not capability_enabled(capability, settings):
         return jsonify(not_enabled_body("fed_" + capability)), 404
     return None
+
+
+def new_effects_gate():
+    """The callable the exchange's Settlement is handed as `new_effects_allowed`: true unless the owner has stopped all
+    Federation and Economy activity. Settings that could not be read count as halted: core._load_settings does not
+    raise on an unreadable file, it returns the last good settings or the defaults marked degraded, and neither can
+    say the switch is off. Held by tests/unit/test_exchange_kill_switch.py."""
+    def allowed() -> bool:
+        try:
+            from agent_friday import core
+            settings = core._load_settings()
+            if core._is_degraded_settings(settings):
+                return False
+        except Exception:  # noqa: BLE001 - settings that cannot be read cannot say the switch is off
+            return False
+        return not kill_switch_engaged(settings)
+    return allowed

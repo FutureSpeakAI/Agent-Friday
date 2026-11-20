@@ -475,6 +475,8 @@ class Settlement:
                 if leg["leg"] == p.Leg.PAYOUT.value and (State(row["state"]) is State.HELD or row["capture_reversed"]):
                     db.execute("UPDATE legs SET status='cancelled' WHERE key=?", (leg["key"],))    # S-19
                     continue
+            if leg["leg"] == p.Leg.RESERVE.value and not self._allowed_now():
+                continue       # reserving cash is a new effect: a leg left pending by a crash waits while halted
             self._point(f"before-dispatch:{leg['leg']}")
             answer = self._send(row, leg["leg"], leg["key"])
             self._point(f"dispatched:{leg['leg']}")
@@ -779,15 +781,3 @@ class Settlement:
                  State.HELD: "held", State.REFUNDED: "refunded"}[state]
         return {"state": state.value, "stage": stage, "p_at": row["p_at"]}
 
-
-def kill_switch_gate() -> Callable[[], bool]:
-    """The gate for `new_effects_allowed`: true unless the owner has stopped all Federation and Economy activity."""
-    def allowed() -> bool:
-        from agent_friday.core import _load_settings
-        from agent_friday.services import held_features
-        try:
-            settings = _load_settings()
-        except Exception:  # noqa: BLE001 - settings that cannot be read cannot say the switch is off
-            return False
-        return not held_features.kill_switch_engaged(settings)
-    return allowed

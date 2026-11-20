@@ -144,8 +144,8 @@ def test_the_default_gate_changes_nothing_for_callers_that_pass_none(env_factory
 
 def test_the_kill_switch_gate_follows_the_owners_setting_and_fails_closed(monkeypatch):
     import agent_friday.core as core
-    gate = st.kill_switch_gate()
     from agent_friday.services import held_features
+    gate = held_features.new_effects_gate()
     key = held_features.KILL_SWITCH
     monkeypatch.setattr(core, "_load_settings", lambda: {"held_features": {key: True}})
     assert gate() is False
@@ -160,3 +160,50 @@ def test_the_kill_switch_gate_follows_the_owners_setting_and_fails_closed(monkey
         raise OSError("no settings")
     monkeypatch.setattr(core, "_load_settings", unreadable)
     assert gate() is False, "settings that cannot be read cannot say the switch is off"
+
+
+def test_a_reserve_leg_left_pending_by_a_crash_is_not_sent_by_a_tick_while_halted(env_factory):
+    # opening is a new effect: a RESERVE enqueued before the switch went on must not reach the provider afterwards
+    gate = Gate(True)
+    env = env_factory(gate)
+
+    def crash_before_the_reserve_is_sent(point):
+        if point == "before-dispatch:reserve":
+            raise base.Crash(point)
+    env.settlement._point = crash_before_the_reserve_is_sent
+    with pytest.raises(base.Crash):
+        env.open()
+    env.settlement._point = lambda name: None
+    gate.allowed = False
+    for _ in range(3):
+        env.settlement.tick("f1")
+    assert env.ops("reserve") == [], "no provider call for a new reservation while halted"
+    assert env.settlement.state("f1") in st.OPENING
+    gate.allowed = True
+    env.settlement.tick("f1")
+    assert env.ops("reserve") != [], "and it goes out once the switch is off again"
+
+
+def test_settings_that_the_real_loader_could_not_read_count_as_halted(monkeypatch, tmp_path):
+    # core._load_settings does not raise on an unreadable file: it returns the last good settings or the defaults,
+    # marked degraded, and the defaults carry no fed_kill_switch key
+    import agent_friday.core as core
+    from agent_friday.services import held_features
+    broken = tmp_path / "settings.json"
+    broken.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(core, "SETTINGS_FILE", broken)
+    monkeypatch.setattr(core, "_SETTINGS_READ_RETRY_S", 0)
+    monkeypatch.setitem(core._SETTINGS_LAST_GOOD, "value", None)
+    assert core._is_degraded_settings(core._load_settings()), "the real loader marks an unreadable file degraded"
+    assert held_features.new_effects_gate()() is False
+
+
+def test_settlement_is_handed_its_gate_and_does_not_reach_for_the_app_core_or_settings():
+    # core pulls flask, subprocess and asyncio into the exchange (scripts/check_exchange_imports.py bans those; it
+    # sees only direct imports, so this holds the indirect one). provider.py names held_features for its never-list
+    # (older, #905); settlement does not.
+    from pathlib import Path
+    root = Path(st.__file__).parent
+    core = [p.name for p in root.glob("*.py") if "agent_friday.core" in p.read_text(encoding="utf-8-sig")]
+    assert core == [], core
+    assert "held_features" not in Path(st.__file__).read_text(encoding="utf-8-sig")
