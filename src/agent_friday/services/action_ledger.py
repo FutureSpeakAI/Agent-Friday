@@ -983,7 +983,23 @@ def append(kind: str, rec: dict, *, durable: bool = False) -> dict:
     with _TLOCK:
         _check_dir()
         _ensure_migrated()
-        return _guarded_append(key, [(kind, rec)], durable, pv)
+        out = _guarded_append(key, [(kind, rec)], durable, pv)
+    return _as_written_by_caller(out, rec)
+
+
+def _as_written_by_caller(out: Optional[dict], rec: dict) -> Optional[dict]:
+    """The entry append() hands back carries the caller's own rec (its words), not the hidden form on disk: a caller that
+    signed its record (action_gate's hmac) must get back what it signed. The entry still hashes as the line written
+    (`raw_rec`). Held by test_append_hands_back_the_entry_as_the_caller_wrote_it."""
+    if not isinstance(out, dict):
+        return out
+    mine = _normalise(rec)
+    if out.get("rec") == mine:
+        return out
+    shown = _Shown(out)
+    shown["rec"] = mine
+    shown.raw_rec = out.get("rec")
+    return shown
 
 
 def try_append(kind: str, rec: dict, **kw) -> Optional[dict]:
