@@ -113,6 +113,19 @@ def task_interrupted(task_id: str, state: Dict[str, Any], previous_exit: Optiona
                    "may_have_acted": may, "repeated": False, "next": nxt})
 
 
+def workflow_interrupted(rec: Dict[str, Any], *, step: int, total: int, name: str) -> bool:
+    """The receipt for a scheduled workflow run cut off mid-step: which step it reached. It is not
+    resumed on its own; the owner is asked (services/workflow_resume)."""
+    return _write({"subject": "workflow:%s" % rec.get("run_id"), "interruption": rec.get("task_id"),
+                   "task": str(rec.get("task_id") or "")[:80] or None,
+                   "schedule": str(rec.get("schedule_id") or "")[:80] or None,
+                   "what": name, "step": step + 1, "steps_total": total,
+                   "last_boundary": ("step %d finished; step %d was running" % (step, step + 1)) if step
+                                    else "step 1 was running",
+                   "may_have_acted": True, "repeated": False, "outcome": "interrupted",
+                   "next": ASKS})
+
+
 def card_interrupted(card: Dict[str, Any]) -> bool:
     """The receipt for one approved action stopped mid-run (its outcome is unknown, and the
     card can never authorise it again)."""

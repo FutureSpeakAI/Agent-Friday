@@ -6132,10 +6132,11 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                 # safe to repeat is left for a person.
                 _auto = _tr2.auto_enabled()
                 _picked = []
+                from agent_friday.services import workflow_resume as _wfr
                 if _auto:
                     from agent_friday.services import reconcile as _rc
                     for _r in summary.get('resumable') or []:
-                        if _r.get('needs_confirmation'):
+                        if _r.get('needs_confirmation') or _wfr.is_workflow_step(TASKS.get(_r['task_id'])):
                             continue
                         _rc._resume_in_background(_r['task_id'])
                         _picked.append(_r['task_id'])
@@ -6143,6 +6144,13 @@ def _restore_tasks_from_journal(announce=True, limit=200):
                     summary['workflow_tails_recovered'] = _recover_workflow_tails()
                 summary['auto_resumed'] = _picked
                 _tr2.announce(summary.get('resumable') or [], resumed=_picked)
+            except Exception:
+                pass
+            try:
+                from agent_friday.services import workflow_resume as _wfr2
+                with TASKS_LOCK:
+                    _wf_rows = [dict(t) for t in TASKS.values()]
+                summary['workflow_resume_offered'] = _wfr2.offer_after_boot(_wf_rows)
             except Exception:
                 pass
             # §34.16-1: what a crash interrupted mid outward action is told,
