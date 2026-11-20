@@ -148,6 +148,8 @@ jobs:
         run: python scripts/check_brand_tokens.py
       - name: Markdown links
         run: python scripts/check_doc_links.py
+      - name: App specs are run by CI (warn-only)
+        run: python scripts/check_spec_lists.py
       - name: Secret / PII scan of the whole tracked tree
         run: python .githooks/security_scan.py --tree
       - name: Whitespace and conflict markers
