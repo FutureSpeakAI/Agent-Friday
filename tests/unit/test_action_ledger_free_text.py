@@ -93,14 +93,14 @@ def test_a_line_that_carries_a_raw_rec_key_is_a_tampered_line_not_a_shown_entry(
 
 
 def test_other_text_carrying_keys_are_hidden_target_detail_and_trust_items():
-    L.append("decision", {"tool": "send_email", "target": "to " + CANARY, "decision": "allow"})
-    L.append("outcome", {"tool": "send_email", "detail": "failed " + CANARY})
+    L.append("decision", {"action_id": "act-1", "tool": "send_email", "target": "to " + CANARY, "decision": "allow"})
+    L.append("outcome", {"action_id": "act-1", "tool": "send_email", "detail": "failed " + CANARY})
     L.append("trust_carry_over_released", {"item": CANARY, "why": "because " + CANARY,
-                                           "items": {CANARY + ".example": "yes"}})
+                                           "items": {"host": CANARY}})
     assert b"CANARY-31ab" not in _live_bytes() and b"Taxes" not in _live_bytes()
     assert b'"decision":"allow"' in _live_bytes()
     shown = L.entries(["trust_carry_over_released"])[0]["rec"]
-    assert shown["item"] == CANARY and shown["items"] == {CANARY + ".example": "yes"}, "this PC's readers see the text and the keys"
+    assert shown["item"] == CANARY and shown["items"] == {"host": CANARY}, "this PC's readers see the text"
 
 
 def test_a_sidecar_that_cannot_be_written_does_not_lose_the_receipt(monkeypatch):

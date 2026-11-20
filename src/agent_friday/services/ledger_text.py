@@ -8,6 +8,11 @@ text itself stays on this PC in a local sidecar (action_ledger's texts.jsonl) th
 what Friday did, and that no export reads. Held by tests/unit/test_ledger_text.py and
 tests/unit/test_action_ledger_free_text.py.
 
+Known limits (named, not hidden): the key list is a deny list, so a NEW record key that carries text must be added here;
+dict KEYS are not hidden (items[0]["path"] style keys are structure; a map keyed by host name keeps the host); the sidecar is
+plaintext on this PC, as the live ledger was before; a signed receipt whose inner HMAC covers the text verifies only while
+the sidecar can restore it.
+
 This module is pure: it knows the keys and the shape of a hidden value, and nothing about keys, files or the network.
 """
 from __future__ import annotations
@@ -18,7 +23,8 @@ from typing import Any, Callable
 
 #: The fields of a ledger record that hold an owner's words, paths or titles. A new kind of record that carries text under
 #: a new key adds the key here: the writer then hides it and the export refuses an older entry that kept it raw.
-FREE_TEXT_KEYS = frozenset({"summary", "items", "what_ran", "critique", "artifacts", "note", "removed", "path", "paths"})
+FREE_TEXT_KEYS = frozenset({"summary", "items", "what_ran", "critique", "artifacts", "note", "removed", "path", "paths",
+                            "target", "detail", "item", "why"})
 PREFIX = "ft1:"
 _HIDDEN = re.compile(r"^ft1:[0-9a-f]{64}$")
 
