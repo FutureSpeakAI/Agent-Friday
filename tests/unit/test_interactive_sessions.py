@@ -317,3 +317,79 @@ class TestToolRegistration:
         # relay would make a multi-turn session unusable.
         assert "send_to_session" not in agent_mod._ALWAYS_CONFIRM
         assert "read_session_output" not in agent_mod._ALWAYS_CONFIRM
+
+
+# ── the child's environment holds no provider key ───────────────────────────
+class _CapturedEnv:
+    """Stands in for Popen: remembers the environment the child would get."""
+
+    def __init__(self):
+        self.env = None
+
+    def __call__(self, *args, **kwargs):
+        import io
+        self.env = dict(kwargs["env"])
+
+        class _Child:
+            pid = 0
+            stdout = io.StringIO("")
+            stdin = io.StringIO("")
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+        return _Child()
+
+
+SECRET_NAMES = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY", "FRIDAY_NEXTPROVIDER_API_KEY",
+                "FRIDAY_VAULT_PASSPHRASE", "GITHUB_TOKEN", "SOME_FUTURE_SECRET")
+
+
+def test_a_spawned_child_gets_no_provider_key_or_secret(monkeypatch):
+    """Guards the rule 'no agent holds a key' for the interactive-session spawn path (K2 of the Compressor eval).
+    The allow-list is the one the MCP sandbox uses; a name that is not on it never crosses, including names
+    that do not exist yet."""
+    monkeypatch.delenv("FRIDAY_SESSION_DEPTH", raising=False)  # the suite may itself run inside a Friday session
+    for name in SECRET_NAMES:
+        monkeypatch.setenv(name, "sk-test-" + name)
+    captured = _CapturedEnv()
+    monkeypatch.setattr(isess.subprocess, "Popen", captured)
+    monkeypatch.setattr(isess, "_os_process_start_iso", lambda pid: None)
+    monkeypatch.setattr(isess, "_persist_all", lambda: None)
+    result = isess.spawn(command="cmd.exe /c echo hi")
+    assert result.get("session_id"), result
+    leaked = [name for name in SECRET_NAMES if name in captured.env]
+    assert leaked == []
+    assert not any(value.startswith("sk-test-") for value in captured.env.values())
+
+
+def test_a_spawned_child_still_gets_what_it_needs_to_start(monkeypatch):
+    monkeypatch.delenv("FRIDAY_SESSION_DEPTH", raising=False)
+    monkeypatch.setenv("PATH", "somewhere")
+    captured = _CapturedEnv()
+    monkeypatch.setattr(isess.subprocess, "Popen", captured)
+    monkeypatch.setattr(isess, "_os_process_start_iso", lambda pid: None)
+    monkeypatch.setattr(isess, "_persist_all", lambda: None)
+    result = isess.spawn(command="cmd.exe /c echo hi")
+    assert captured.env["PATH"] == "somewhere"
+    assert captured.env["FRIDAY_SESSION_DEPTH"] == "1" and captured.env["FRIDAY_SESSION_ID"] == result["session_id"]
+
+
+def test_a_spawned_child_keeps_the_shell_basics_but_no_secret(monkeypatch):
+    monkeypatch.delenv("FRIDAY_SESSION_DEPTH", raising=False)
+    monkeypatch.setenv("PSModulePath", "modules")
+    monkeypatch.setenv("USERNAME", "someone")
+    monkeypatch.setenv("SSL_CERT_FILE", "ca.pem")
+    monkeypatch.setenv("HTTPS_PROXY", "http://user:pw@proxy")  # a proxy URL can carry a password
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+    captured = _CapturedEnv()
+    monkeypatch.setattr(isess.subprocess, "Popen", captured)
+    monkeypatch.setattr(isess, "_os_process_start_iso", lambda pid: None)
+    monkeypatch.setattr(isess, "_persist_all", lambda: None)
+    assert isess.spawn(command="cmd.exe /c echo hi").get("session_id")
+    names = {name.upper() for name in captured.env}
+    assert {"PSMODULEPATH", "USERNAME", "SSL_CERT_FILE"} <= names
+    assert "HTTPS_PROXY" not in names and "ANTHROPIC_API_KEY" not in names

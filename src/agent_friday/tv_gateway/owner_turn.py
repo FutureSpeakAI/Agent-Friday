@@ -223,6 +223,25 @@ def _json(resp) -> dict:
         return {}
 
 
+SEAT_WAIT_S = 8.0       # a bind waits this long for the PC's local-model check: under a phone's 10 s read timeout
+SEAT_POLL_S = 0.5
+
+
+def _patch_seat_waiting(cid: str, seat: dict) -> dict:
+    """PATCH the chat's seat. While the PC answers that it is still checking (``seat_pending``) the same selection is
+    sent again with the ``seat_change_id`` it handed back, as the desktop's own picker does, until it settles or
+    SEAT_WAIT_S passes. A check that is merely slow must not become a refusal on the phone."""
+    deadline = time.monotonic() + SEAT_WAIT_S
+    body = {"seat": seat}
+    while True:
+        answer = _json(_api("PATCH", "/api/conversations/" + cid, body))
+        if not answer.get("seat_pending") or time.monotonic() >= deadline:
+            return answer
+        if answer.get("seat_change_id"):
+            body = {"seat": seat, "seat_change_id": answer["seat_change_id"]}
+        time.sleep(SEAT_POLL_S)
+
+
 def bind_seat(cid: Optional[str], model_id: str) -> str:
     """Make the chat run on ``model_id`` and return its conversation id. Raises turn.TurnRefused
     (409) with the PC's own reason when the seat cannot be bound: never a quiet other model."""
@@ -239,8 +258,14 @@ def bind_seat(cid: Optional[str], model_id: str) -> str:
         conv = d.get("conversation") or {}
         if (conv.get("seat") or {}).get("model") == model_id:
             return cid                      # already bound: nothing to change, nothing to reload
-        d = _json(_api("PATCH", "/api/conversations/" + cid, {"seat": seat}))
+        d = _patch_seat_waiting(cid, seat)
         conv = d.get("conversation") or {}
+    if d.get("seat_pending") and (conv.get("seat") or {}).get("model") != model_id:
+        raise turn.TurnRefused(503, str(d.get("note") or "this computer is still checking its local models")[:240],
+                               "seat_pending", model=model_id)
+    if d.get("superseded") and (conv.get("seat") or {}).get("model") != model_id:
+        raise turn.TurnRefused(409, "the model for this chat was changed on this computer a moment ago; pick again",
+                               "seat_superseded", model=model_id)
     if (conv.get("seat") or {}).get("model") != model_id:
         raise turn.TurnRefused(409, str(d.get("note") or "this computer would not use that model for this chat")[:240],
                                "seat_refused", model=model_id)
