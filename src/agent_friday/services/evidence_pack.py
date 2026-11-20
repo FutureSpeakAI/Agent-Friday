@@ -124,7 +124,8 @@ def _refuse_content(entries: list[Mapping]) -> None:
             raise PackRefused(
                 f"Entry {entry['seq']} carries free text ('{found}'). The pack holds labels and "
                 "hashes only, so nothing was written.")
-        raw = ledger_text.raw_text_key(entry.get("rec"))
+        raw = (None if entry.get("kind") in ledger_text.KEPT_AS_WRITTEN_KINDS
+               else ledger_text.raw_text_key(entry.get("rec")))
         if raw:
             raise PackRefused(
                 f"Entry {entry['seq']} was written before free text was kept as a hash ('{raw}' holds the "
