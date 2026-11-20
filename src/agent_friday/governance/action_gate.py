@@ -1685,14 +1685,15 @@ def _live_view(g: dict, events: Optional[dict] = None,
     return dict(_ledger_row(g, events), uses_left=left)
 
 
-def ledger_grant_rows() -> list:
+def ledger_grant_rows(usage: bool = True) -> list:
     """Every signed grant (live or not) as the ledger has it (`_ledger_row`): its
     uses, revocation and counters. For the grant record view
     (governance/grant_record.all_records). Raises when the key or the ledger
-    cannot be read."""
+    cannot be read. `usage=False` lists the grants without reading their uses (no strict
+    ledger read), for a reader that must still work when the ledger has a break."""
     key = _governance_key()
     gs = _read_grants(key)
-    events = _grant_events() if gs else {}
+    events = _grant_events() if (gs and usage) else {}
     return [_ledger_row(g, events) for g in gs]
 
 
