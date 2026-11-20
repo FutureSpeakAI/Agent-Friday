@@ -51,7 +51,7 @@ RECONFIRM_DAYS = 30
 RIGHTS = ("chat_read", "tv_brain", "studio", "tv_channels")
 # The owner's phone/tablet control rights (Mobile v3, Addendum B). They are NOT part of the pairing bundle above:
 # each is its own screen-only press at the PC, never preselected.
-PC_RIGHTS = ("pc_read", "pc_approve")
+PC_RIGHTS = ("pc_read", "pc_approve", "pc_act")
 ALL_RIGHTS = RIGHTS + PC_RIGHTS
 BASE_RIGHT = "chat_read"
 SESSION_CONTEXT = b"friday-tv-session-v1|"
