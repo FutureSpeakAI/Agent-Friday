@@ -120,19 +120,81 @@ def test_a_read_that_keeps_failing_serves_the_last_good_settings(owned, monkeypa
     assert not getattr(again, "degraded", False)
 
 
-def test_a_concurrent_writer_never_exposes_defaults_to_a_reader(owned, monkeypatch):
-    """A writer saving deltas while reads intermittently meet a sharing violation."""
+def _every_third_read_fails(monkeypatch, *, per_thread=True):
+    """Make every third read of settings.json raise a sharing violation.
+
+    Counted per thread by default: each thread meets a violation on every third read OF ITS OWN, so a retrying
+    read never meets two in a row. One counter shared by two threads (``per_thread=False``) makes each thread's
+    failures depend on how many reads the other thread happened to make in between, so a writer can meet five
+    in a row by chance and give up (the F4 flake: seen on a runner where the writer looped many saves)."""
     real = core.Path.read_text
-    n = {"reads": 0}
+    shared = {"n": 0}
+    own = threading.local()
 
     def read_text(self, *a, **k):
         if self == core.SETTINGS_FILE:
-            n["reads"] += 1
-            if n["reads"] % 3 == 0:
+            if per_thread:
+                own.n = getattr(own, "n", 0) + 1
+                count = own.n
+            else:
+                shared["n"] += 1
+                count = shared["n"]
+            if count % 3 == 0:
                 raise _sharing_violation()
         return real(self, *a, **k)
 
     monkeypatch.setattr(core.Path, "read_text", read_text)
+
+
+def _failures_seen_by_one_thread(reads=12):
+    """Which of its own reads (1-based) fail for a thread that reads while another thread reads in between."""
+    other_reads = threading.Event()
+    my_turn = threading.Event()
+    done = threading.Event()
+    failed = []
+
+    def other():
+        while not done.is_set():
+            if other_reads.wait(0.05):
+                other_reads.clear()
+                try:
+                    core.Path(core.SETTINGS_FILE).read_text(encoding="utf-8")
+                except PermissionError:
+                    pass
+                my_turn.set()
+
+    t = threading.Thread(target=other, daemon=True)
+    t.start()
+    try:
+        for i in range(1, reads + 1):
+            try:
+                core.Path(core.SETTINGS_FILE).read_text(encoding="utf-8")
+            except PermissionError:
+                failed.append(i)
+            other_reads.set()                 # the other thread makes one read between each of mine
+            assert my_turn.wait(5)
+            my_turn.clear()
+    finally:
+        done.set()
+        t.join(5)
+    return failed
+
+
+def test_each_thread_meets_a_violation_on_every_third_read_of_its_own(owned, monkeypatch):
+    _every_third_read_fails(monkeypatch)
+    assert _failures_seen_by_one_thread() == [3, 6, 9, 12]
+
+
+def test_one_counter_shared_by_two_threads_does_not_give_each_thread_its_own_pattern(owned, monkeypatch):
+    """The hazard the per-thread counter removes: with a shared counter and one read by the other thread in
+    between, a thread meets a violation on every OTHER read of its own set, not every third."""
+    _every_third_read_fails(monkeypatch, per_thread=False)
+    assert _failures_seen_by_one_thread() != [3, 6, 9, 12]
+
+
+def test_a_concurrent_writer_never_exposes_defaults_to_a_reader(owned, monkeypatch):
+    """A writer saving deltas while reads intermittently meet a sharing violation."""
+    _every_third_read_fails(monkeypatch)
     stop = threading.Event()
     errors = []
 
@@ -170,6 +232,72 @@ def _load_while_unreadable(monkeypatch):
     s = core._load_settings()
     flag["on"] = False          # the file is readable again by the time of the save
     return s
+
+
+def test_a_stalled_thread_still_tries_a_few_times_before_it_gives_up(owned, monkeypatch):
+    """F4: a thread the runner stalls for longer than the retry window used to give up after ONE failed read
+    (the deadline had passed by the time it looked). The clock here jumps five seconds on every read of it; one
+    sharing violation must still be retried."""
+    import time as real_time
+
+    class _JumpyClock:
+        def __init__(self):
+            self.now = 0.0
+
+        def monotonic(self):
+            self.now += 5.0
+            return self.now
+
+        def sleep(self, s):
+            pass
+
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+    monkeypatch.setattr(core, "_time", _JumpyClock())
+    _fail_reads(monkeypatch, times=1)
+    assert core._read_settings_file()["agent_name"] == OWNER_NAME
+
+
+def test_a_stalled_thread_gives_up_only_after_the_minimum_number_of_looks(owned, monkeypatch):
+    """The minimum is a number of looks, not just 'more than one': three sharing violations in a row on a stalled
+    thread are still retried, and the fourth look reads the file."""
+    import time as real_time
+
+    class _JumpyClock:
+        def __init__(self):
+            self.now = 0.0
+
+        def monotonic(self):
+            self.now += 5.0
+            return self.now
+
+        def sleep(self, s):
+            pass
+
+        def __getattr__(self, name):
+            return getattr(real_time, name)
+
+    monkeypatch.setattr(core, "_time", _JumpyClock())
+    _fail_reads(monkeypatch, times=3)
+    assert core._read_settings_file()["agent_name"] == OWNER_NAME
+
+
+def test_a_read_asked_to_make_one_attempt_makes_one(owned, monkeypatch):
+    """The degraded path asks for retry_s=0.0, 'one attempt'; the minimum number of looks must not override it."""
+    reads = {"n": 0}
+    real = core.Path.read_text
+
+    def read_text(self, *a, **k):
+        if self == core.SETTINGS_FILE:
+            reads["n"] += 1
+            raise _sharing_violation()
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(core.Path, "read_text", read_text)
+    with pytest.raises(PermissionError):
+        core._read_settings_file(retry_s=0.0)
+    assert reads["n"] == 1
 
 
 def test_a_save_of_a_failed_read_does_not_overwrite_the_file(owned, monkeypatch):

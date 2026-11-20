@@ -1278,8 +1278,15 @@ def decide_with_outcome(approval_id: str, decision: str, *, decided_by: str = "o
         out = dict(rec)
     _feed("card_resolved", out)
     _journal_card(out, "decided")
+    _note_novelty(out)
     _fire_hook(out)
     return out, True
+
+
+def _note_novelty(card: Dict[str, Any]) -> None:
+    """Shadow label for the decision (approval_novelty); it reads and decides nothing."""
+    from agent_friday.services import approval_novelty
+    approval_novelty.note_decision(card)
 
 
 #: The label a verified press on this PC's own screen carries (services/screen_click.SCREEN).
