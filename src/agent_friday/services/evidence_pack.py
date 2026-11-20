@@ -47,7 +47,9 @@ APPROVAL_FIELDS = ("approval_id", "kind", "subject_type", "policy_class", "gated
                    "decided_source", "decided_check", "used_at", "off_record", "policy_version",
                    "decided_policy_version", "action_fingerprint", "decided_device", "withdrawn")
 GRANT_FIELDS = ("grant_id", "kind", "pattern", "created_at", "expires_at", "uses", "max_uses",
-                "revoked_at", "status")
+                "used_count", "first_used_at", "revoked_at", "status")
+APPROVAL_TIMES = ("created_at", "decided_at", "used_at")
+GRANT_TIMES = ("created_at", "first_used_at", "revoked_at", "expires_at")
 
 
 class PackFile(str, Enum):
@@ -141,8 +143,19 @@ def _pick(rows: Iterable[Mapping], fields: tuple[str, ...]) -> list[dict]:
     return [{k: row[k] for k in fields if k in row} for row in rows]
 
 
-def _in_range(rows: Iterable[Mapping], key: str, rng: Range) -> list[Mapping]:
-    return [r for r in rows if isinstance(r.get(key), (int, float)) and rng.start <= r[key] < rng.end]
+def _in_range(rows: Iterable[Mapping], keys: tuple[str, ...], rng: Range) -> list[Mapping]:
+    """Rows with any of `keys` inside the range. A row with no time at all cannot be placed, so
+    it is kept (the pack is never silently short) and the summary counts it."""
+    chosen = []
+    for row in rows:
+        times = [row[k] for k in keys if isinstance(row.get(k), (int, float))]
+        if not times or any(rng.start <= t < rng.end for t in times):
+            chosen.append(row)
+    return chosen
+
+
+def _undated(rows: Iterable[Mapping], keys: tuple[str, ...]) -> int:
+    return sum(1 for r in rows if not any(isinstance(r.get(k), (int, float)) for k in keys))
 
 
 def _starting_hash(entries: list[Mapping], chosen: list[Mapping]) -> str:
@@ -157,8 +170,8 @@ def build_pack(entries: list[Mapping], approvals: Iterable[Mapping], grants: Ite
                signer: Signer | None = None) -> Pack:
     chosen = [e for e in entries if rng.holds(e)]
     _refuse_content(chosen)
-    approval_rows = _pick(_in_range(approvals, "created_at", rng), APPROVAL_FIELDS)
-    grant_rows = _pick(_in_range(grants, "created_at", rng), GRANT_FIELDS)
+    approval_rows = _pick(_in_range(approvals, APPROVAL_TIMES, rng), APPROVAL_FIELDS)
+    grant_rows = _pick(_in_range(grants, GRANT_TIMES, rng), GRANT_FIELDS)
     checker = Path(__file__).with_name("evidence_pack_checker.py").read_bytes()
     body = {
         PackFile.LEDGER.value: _jsonl(chosen),
@@ -227,6 +240,7 @@ def summary(entries: list[Mapping], approvals: list[Mapping], grants: list[Mappi
     status = _counts(str(a.get("status")) for a in approvals)
     source = _counts(str(a.get("decided_source")) for a in approvals if a.get("decided_source"))
     versions = sorted({e["pv"] for e in entries if "pv" in e})
+    undated = _undated(approvals, APPROVAL_TIMES) + _undated(grants, GRANT_TIMES)
     lines += [
         f"Range: {rng.start} to {rng.end} (unix seconds, start included, end excluded).",
         f"Ledger entries: {len(entries)}",
@@ -235,6 +249,7 @@ def summary(entries: list[Mapping], approvals: list[Mapping], grants: list[Mappi
         *[f"- status {name}: {count}" for name, count in status.items()],
         *[f"- decided from {name}: {count}" for name, count in source.items()],
         f"Grants: {len(grants)}",
+        *([f"Rows with no recorded time (kept): {undated}"] if undated else []),
         "Actions seen for the first time: "
         + ("recorded" if any("novelty" in a for a in approvals) else "the label was not recorded"),
         f"Policy versions in force: {', '.join(versions) if versions else 'none recorded'}",

@@ -144,7 +144,7 @@ def test_firecrawl_sends_a_cloud_seats_public_health_query(monkeypatch):
         sent.append(json)
         return _Resp()
 
-    monkeypatch.setattr(fc, "api_key", lambda: "fake-firecrawl-key")  # pragma: allowlist secret
+    monkeypatch.setattr(fc, "key_stand_in", lambda: "fake-firecrawl-key")  # pragma: allowlist secret
     monkeypatch.setattr(requests, "post", fake_post)
     monkeypatch.setattr(fc, "_meter", lambda *a, **k: None)
     with _cloud(MEDICAID_Q):

@@ -5,19 +5,51 @@ import time
 from agent_friday.services.knowledge_graph import wiki_graph
 
 
-def test_archive_mention_scan_budget():
+def _body_and_pages(titles):
     pages = {
         str(i): dict(title=f"Archive article {i:05d}", stem=f"archive-{i:05d}",
                      out_links=[], in_links=[], mention_count=0)
-        for i in range(6000)
+        for i in range(titles)
     }
-    bodies = {"0": ("ordinary prose with no matching title. " * 5000)
-                     + " Archive article 05999!"}
-    started = time.perf_counter()
-    wiki_graph._extract_mentions(pages, bodies)
-    elapsed = time.perf_counter() - started
-    assert ("5999", "mention") in pages["0"]["out_links"]
-    assert elapsed < 2.0, f"Archive mention scan took {elapsed:.2f}s"
+    last = titles - 1
+    body = ("ordinary prose with no matching title. " * 5000) + f" Archive article {last:05d}!"
+    return pages, body, last
+
+
+def _best_of_three(run):
+    best = None
+    for _ in range(3):
+        started = time.perf_counter()
+        run()
+        spent = time.perf_counter() - started
+        best = spent if best is None else min(best, spent)
+    return best
+
+
+# The scan may cost this many times what one pass over the same body costs on this machine. The real scan is
+# about 8 times that unit; trying every title against the whole body (6000 regex searches) is thousands of times.
+SCAN_LIMIT_IN_BODY_PASSES = 60
+
+
+def test_archive_mention_scan_budget():
+    """Judged against one pass over the same body on the same machine, so a busy shared runner (everything slower,
+    the pass too) cannot fail it, while a scan that tries every title against the whole body still does. The old
+    check was an absolute 2.0 s (F17)."""
+    import re
+
+    def scan_once():
+        pages, body, last = _body_and_pages(6000)
+        started = time.perf_counter()
+        wiki_graph._extract_mentions(pages, {"0": body})
+        elapsed = time.perf_counter() - started
+        assert (str(last), "mention") in pages["0"]["out_links"]
+        return elapsed
+
+    pages, body, _ = _body_and_pages(6000)
+    one_pass = max(_best_of_three(lambda: len(re.findall(r"\w+", body))), 0.002)
+    scan = min(scan_once() for _ in range(3))
+    assert scan <= SCAN_LIMIT_IN_BODY_PASSES * one_pass, (
+        f"the mention scan cost {scan / one_pass:.0f} passes over the body ({scan:.2f}s against {one_pass:.3f}s)")
 
 
 def test_mentions_boundaries_longest_case_and_explicit():
