@@ -105,22 +105,22 @@ def _guard() -> Optional[Response]:
     return None
 
 
-def _act(action: str, job_id: str, path: str) -> Response:
+def _act(action: str, job_id: str, path: str, body: Optional[dict] = None) -> Response:
     denied = _guard()
     if denied is not None:
         return denied
     if not ID_PATTERN.match(job_id):
         return refuse(400, "not a job id", code="bad_id")
     try:
-        status, body = _desk_post(path % job_id)
+        status, answered = _desk_post(path % job_id) if body is None else _desk_post(path % job_id, body)
     except Exception as e:
         _log.warning("pc_act %s failed: %s", action, type(e).__name__)
-        status, body = 503, {}
+        status, answered = 503, {}
     device_pairing._receipt("device_act", g.device, right=RIGHT, action=action, job=job_id, outcome=status,
                             via=tailnet.via())
     if status >= 500:
         return refuse(503, "the PC could not do that right now", code="pc_unavailable")
-    answer = jsonify({k: body[k] for k in _KEEP if k in body})
+    answer = jsonify({k: answered[k] for k in _KEEP if k in answered})
     answer.status_code = status
     return answer
 
@@ -210,4 +210,6 @@ def register(app: Flask) -> None:
 
     @app.post("/tv/v1/jobs/<jid>/rerun")
     def pc_job_rerun(jid):
-        return _act("rerun", jid, "/api/tasks/%s/rerun")
+        # A re-run is a job started for this device: it carries the origin the gateway built from the id it
+        # authenticated, so the PC counts it against the device's cap like a job the device started.
+        return _act("rerun", jid, "/api/tasks/%s/rerun", {"origin": "device:%s" % g.device["id"]})
