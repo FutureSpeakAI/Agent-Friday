@@ -328,8 +328,8 @@ def test_a_grant_row_with_no_time_at_all_is_kept_and_the_summary_counts_it():
 
 
 def test_a_grant_is_placed_by_any_of_its_dates_not_only_by_when_it_was_made():
-    # made long before the range, revoked inside it: it belongs in the pack (a created_at-only rule would drop it)
-    inside = {"grant_id": "g1", "created_at": 1.0, "revoked_at": 150.0}
+    # made long before the range, first used inside it: it belongs in the pack (a created_at-only rule would drop it)
+    inside = {"grant_id": "g1", "created_at": 1.0, "first_used_at": 150.0}
     outside = {"grant_id": "g2", "created_at": 1.0, "expires_at": 2.0}
     built = build(seeded(), start=100, end=200, grants=[inside, outside])
     ids = [json.loads(line)["grant_id"] for line in built.files["grants.jsonl"].decode().strip().splitlines()]

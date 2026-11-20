@@ -54,10 +54,16 @@ def app_version() -> str:
         return "unknown"
 
 
+def _revoked_flag(rows) -> list:
+    """A grant row's `revoked_at` is the time the export was made when the ledger says it was revoked (the file row
+    keeps none), so the pack says only THAT it was revoked, never when. Held by test_a_grant_the_ledger_says_is_revoked_is_flagged_without_a_time."""
+    return [dict({k: v for k, v in r.items() if k != "revoked_at"}, revoked=bool(r.get("revoked_at"))) for r in rows]
+
+
 def _grant_rows(action_gate) -> list:
     try:
         try:
-            return action_gate.ledger_grant_rows()
+            return _revoked_flag(action_gate.ledger_grant_rows())
         except action_ledger.LedgerError:
             # A break stops the strict read of a grant's uses. The pack is for exactly that case, so it lists the
             # grants without their uses, and the pack itself says the ledger did not verify. Any other reason the

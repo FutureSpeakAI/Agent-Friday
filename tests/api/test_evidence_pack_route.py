@@ -246,4 +246,22 @@ def test_the_export_reads_the_archive_and_reads_strictly(client, monkeypatch):
     r = _export(client)
     monkeypatch.undo()
     assert r.status_code == 200
-    assert any(k.get("archive") is True and k.get("strict") is True for k in seen), seen
+    assert any(k.get("archive") is True and k.get("strict") is True and k.get("gate") is False for k in seen), seen
+
+
+def test_a_grant_the_ledger_says_is_revoked_is_flagged_without_a_time(client):
+    _seed()
+    g = action_gate.create_grant(tools=["send_email"], scope="job-rv", expires_in_seconds=600, max_uses=1)
+    action_gate.revoke_all_grants()
+    action_gate.create_grant(tools=["send_email"], scope="job-live", expires_in_seconds=600, max_uses=1)
+    rows = [json.loads(x) for x in _files(_export(client))["grants.jsonl"].decode().strip().splitlines()]
+    assert rows and all("revoked_at" not in r and "revoked" in r for r in rows)
+
+
+import pytest  # noqa: E402 - the fixture below is module-wide whatever its position
+
+
+@pytest.fixture(autouse=True)
+def _own_grants_file(monkeypatch, tmp_path):
+    # grants.json lives in the per-process test home: a grant an earlier test left would be listed here too
+    monkeypatch.setattr(action_gate, "_grants_file", lambda: tmp_path / "grants.json")
