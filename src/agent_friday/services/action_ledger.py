@@ -291,10 +291,17 @@ def _normalise(rec: Any) -> Any:
     return json.loads(json.dumps(rec, default=str))
 
 
+class _Shown(dict):
+    """An entry as this PC's readers get it: `rec` holds the text, and `raw_rec` (an attribute, never a key, so no line read
+    from disk can carry one) is the rec the line was hashed with. Held by test_action_ledger_free_text."""
+    raw_rec: Any = None
+
+
 def body_hash(entry: dict) -> str:
-    body = {k: v for k, v in entry.items() if k not in ("hash", "sig", "_raw_rec")}
-    if "_raw_rec" in entry:
-        body["rec"] = entry["_raw_rec"]        # an entry shown with its text restored hashes as the line it came from
+    body = {k: v for k, v in entry.items() if k not in ("hash", "sig")}
+    raw = getattr(entry, "raw_rec", None)
+    if raw is not None:
+        body["rec"] = raw                      # a shown entry hashes as the line it came from
     return hashlib.sha256(canon(body)).hexdigest()
 
 
@@ -332,8 +339,9 @@ def _text_digest(key: bytes, text: str) -> str:
 
 
 def _remember_texts(d: Path, texts: dict) -> None:
-    """Write the sidecar lines for `texts` before the entries that name them, so a hash never outlives its text by
-    a crash. Raises OSError when it cannot be written (the entry is then not written either)."""
+    """Write the sidecar lines for `texts` before the entries that name them (a crash can leave a text without an entry,
+    never the reverse). Raises OSError when it cannot be written; the caller then writes the receipt anyway and the
+    entry shows its hash (test_a_sidecar_that_cannot_be_written_does_not_lose_the_receipt)."""
     if not texts:
         return
     with open(d / TEXTS_NAME, "ab") as f:
@@ -370,11 +378,14 @@ def _text_of(digest: str):
 
 def _shown(e: dict) -> dict:
     """The entry with its hidden free text turned back into text for this PC's own readers, keeping the line's own rec
-    under `_raw_rec` so entry_ok and body_hash still hold. An entry with nothing hidden is returned as it is."""
+    on `raw_rec` so entry_ok and body_hash still hold. An entry with nothing hidden is returned as it is."""
     rec = e.get("rec")
     if not isinstance(rec, (dict, list)) or '"ft1:' not in json.dumps(rec, default=str):
         return e
-    return {**e, "rec": ledger_text.show(rec, _text_of), "_raw_rec": rec}
+    shown = _Shown(e)
+    shown["rec"] = ledger_text.show(rec, _text_of)
+    shown.raw_rec = rec
+    return shown
 
 
 # ── The anchor outside the data folder ──────────────────────────────────────
@@ -840,7 +851,10 @@ def _append_locked(key: bytes, items: list, durable: bool, pv: Optional[str] = N
         hidden, texts = ledger_text.hide(_normalise(r), lambda t: _text_digest(key, t))
         hidden_items.append((k, hidden))
         sidecar.update(texts)
-    _remember_texts(d, sidecar)
+    try:
+        _remember_texts(d, sidecar)
+    except OSError as e:                       # the receipt matters more than the words: it shows as the hash
+        _log.warning("ledger text sidecar not written: %s", e)
     with open(live, "ab") as f:
         for n, (k, r) in enumerate(hidden_items):
             ts, t = _now()
@@ -987,7 +1001,7 @@ def entries(kinds: Optional[Iterable[str]] = None, *, newest_first: bool = True,
             stop: Optional[Callable[[], bool]] = None,
             resolve_text: bool = True) -> list[dict]:
     """Entries, optionally filtered by kind and a predicate. By default each entry's hidden free text is turned back
-    into text from this PC's sidecar (the line's own rec is kept under `_raw_rec`, so entry_ok still holds, and `where`
+    into text from this PC's sidecar (the line's own rec is kept on the entry's `raw_rec` attribute, so entry_ok still holds, and `where`
     sees the text). `resolve_text=False` gives the lines exactly as written, hashes and all: what an export reads, so
     nothing that leaves the machine holds the text. Held by tests/unit/test_action_ledger_free_text.py."""
     if not resolve_text:

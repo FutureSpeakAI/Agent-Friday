@@ -77,3 +77,36 @@ def test_the_check_can_fail_with_the_old_writer_the_canary_is_on_disk(monkeypatc
     monkeypatch.setattr(ledger_text, "hide", lambda rec, digest: (rec, {}))
     _write()
     assert b"CANARY-31ab" in _live_bytes(), "hide() is what keeps the text off the disk"
+
+
+def test_a_line_that_carries_a_raw_rec_key_is_a_tampered_line_not_a_shown_entry():
+    # critic A on 92579f1ae: a stored "_raw_rec" must never stand in for the rec that was hashed
+    _write()
+    live = L.ledger_dir() / L.LIVE_NAME
+    line = json.loads(live.read_text(encoding="utf-8").splitlines()[-1])
+    line["_raw_rec"] = dict(line["rec"])
+    line["rec"] = {"tool": "forged", "status": "done"}
+    live.write_bytes(json.dumps(line, separators=(",", ":")).encode("utf-8") + b"\n")
+    assert L.entry_ok(line, L._key()) is False
+    assert L.verify(force=True)["ok"] is False
+    assert all(e["rec"].get("tool") != "forged" for e in L.entries(["action"], verified=True))
+
+
+def test_other_text_carrying_keys_are_hidden_target_detail_and_trust_items():
+    L.append("decision", {"action_id": "act-1", "tool": "send_email", "target": "to " + CANARY, "decision": "allow"})
+    L.append("outcome", {"action_id": "act-1", "tool": "send_email", "detail": "failed " + CANARY})
+    L.append("trust_carry_over_released", {"item": CANARY, "why": "because " + CANARY,
+                                           "items": {"host": CANARY}})
+    assert b"CANARY-31ab" not in _live_bytes() and b"Taxes" not in _live_bytes()
+    assert b'"decision":"allow"' in _live_bytes()
+    shown = L.entries(["trust_carry_over_released"])[0]["rec"]
+    assert shown["item"] == CANARY and shown["items"] == {"host": CANARY}, "this PC's readers see the text"
+
+
+def test_a_sidecar_that_cannot_be_written_does_not_lose_the_receipt(monkeypatch):
+    def refuse(d, texts):
+        raise OSError("texts.jsonl is locked")
+    monkeypatch.setattr(L, "_remember_texts", refuse)
+    entry = _write()
+    assert entry is not None and L.verify(force=True)["ok"] is True
+    assert b"CANARY-31ab" not in _live_bytes(), "no text on disk either: it shows as the hash"

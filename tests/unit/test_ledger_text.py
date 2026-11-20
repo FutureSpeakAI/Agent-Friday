@@ -39,7 +39,7 @@ def test_every_string_under_a_free_text_key_is_hidden_at_any_depth():
 
 
 def test_values_outside_the_free_text_keys_are_left_alone():
-    rec = {"action_id": "act-1", "tool": "send_email", "label": "work", "detail": "done", "decision_seq": 4}
+    rec = {"action_id": "act-1", "tool": "send_email", "label": "work", "reason": "done", "decision_seq": 4}
     hidden, texts = lt.hide(rec, digest)
     assert hidden == rec and texts == {}
 
@@ -71,3 +71,4 @@ def test_the_check_can_fail_a_key_set_without_summary_leaves_the_canary(monkeypa
     monkeypatch.setattr(lt, "FREE_TEXT_KEYS", lt.FREE_TEXT_KEYS - {"summary"})
     hidden, _ = lt.hide({"summary": CANARY}, digest)
     assert CANARY in repr(hidden), "the key set is what decides what is hidden"
+
