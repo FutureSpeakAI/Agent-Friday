@@ -1,3 +1,4 @@
+// ci-list: exempt all 4 tests skip themselves in CI, so listing it proves nothing; owner to make them run or delete them until 2026-11-30
 /**
  * TASK LIVENESS — does work visibly happen while it is happening?
  *
