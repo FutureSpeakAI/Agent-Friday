@@ -101,3 +101,12 @@ def test_recording_an_event_authorizes_and_runs_nothing(client):
         _post(client, _raw(case))
     assert approvals.list_approvals(status="pending") == [], "an event raised an approval card"
     assert approvals.list_approvals(status="approved") == []
+
+
+def test_an_event_on_another_protocol_version_is_a_422_with_its_own_code(client):
+    import copy
+    from agent_friday.services import peer_wire_v2 as wire
+    env = copy.deepcopy(next(c for c in VECTORS["cases"] if c["name"] == "signed_offer")["envelope"])
+    env["body"]["protocol"] = "asimov-peer/v3"
+    r = _post(client, wire.canonical(env))
+    assert r.status_code == 422 and r.get_json()["error"] == "protocol_incompatible"
