@@ -110,3 +110,20 @@ def test_a_sidecar_that_cannot_be_written_does_not_lose_the_receipt(monkeypatch)
     entry = _write()
     assert entry is not None and L.verify(force=True)["ok"] is True
     assert b"CANARY-31ab" not in _live_bytes(), "no text on disk either: it shows as the hash"
+
+
+def test_losing_the_sidecar_never_brings_released_trust_back():
+    # critic on 4b079dd8a: trust_anchor._read matches the released item by its text; a record a governance decision is
+    # read from is kept as written, so deleting texts.jsonl cannot change what is trusted
+    from agent_friday.governance import trust_anchor
+    host = "https://mcp.example.com/mcp"
+    L.append(trust_anchor.KIND, {"list": "hosts", "items": {host: True, "https://other.example.net/mcp": True},
+                                 "made_by": "carried_over"})
+    L.append(trust_anchor.RELEASE, {"list": "hosts", "item": host, "why": "owner removed it"})
+    assert b"ft1:" not in _live_bytes().split(b"trust_carry_over_released")[-1], "kept as written"
+    sidecar = L.ledger_dir() / L.TEXTS_NAME
+    if sidecar.exists():
+        sidecar.unlink()
+    L._TEXTS.clear()
+    carried = trust_anchor._read("hosts")
+    assert host not in carried["items"] and "https://other.example.net/mcp" in carried["items"]
