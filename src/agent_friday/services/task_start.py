@@ -52,9 +52,10 @@ def _running_from_devices() -> int:
 
 
 class DeviceSlot:
-    """The cap for any other door that starts work for a device (a re-run): ``with DeviceSlot(origin) as slot:`` holds
-    the job lock, refuses with 409 when ``origin`` is a device already running ``DEVICE_JOB_CAP`` jobs, and
-    ``slot.adopt(task_id)`` counts the new task against that device. No origin, or ``pc``, is not capped."""
+    """The cap for any other door that starts a NEW task for a device (a re-run): ``with DeviceSlot(origin) as slot:``
+    holds the job lock, refuses with 409 when devices already run ``DEVICE_JOB_CAP`` jobs, and
+    ``slot.adopt(task_id)`` counts the new task as a device's. No origin, or ``pc``, is not capped. The cap is
+    across all devices together. Resuming an existing task starts no new task and is not counted here."""
 
     def __init__(self, origin):
         if origin is not None and (not isinstance(origin, str) or not ORIGIN.fullmatch(origin)):
@@ -63,9 +64,12 @@ class DeviceSlot:
 
     def __enter__(self):
         _LOCK.acquire()
-        if self.origin is not None and _running_from_devices() >= DEVICE_JOB_CAP:
-            _LOCK.release()
-            raise Refused(409, "%d jobs from your devices are already running; wait for one to finish" % DEVICE_JOB_CAP)
+        try:
+            if self.origin is not None and _running_from_devices() >= DEVICE_JOB_CAP:
+                raise Refused(409, "%d jobs from your devices are already running; wait for one to finish" % DEVICE_JOB_CAP)
+        except BaseException:
+            _LOCK.release()           # __exit__ does not run when __enter__ raises
+            raise
         return self
 
     def __exit__(self, *exc):

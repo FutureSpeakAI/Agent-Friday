@@ -215,3 +215,16 @@ def test_a_rerun_from_the_pc_itself_is_not_capped(client, spawned):
 def test_a_rerun_with_an_origin_that_is_not_one_is_refused_before_anything_starts(client, spawned, origin):
     old = _finished()
     assert _rerun(client, old, origin=origin).status_code == 400 and spawned == []
+
+
+def test_a_cap_check_that_raises_does_not_leave_the_job_lock_held(monkeypatch):
+    """__exit__ does not run when __enter__ raises, so the lock must be given back on any failure, or every later
+    start and re-run waits for it forever."""
+    def boom():
+        raise RuntimeError("a bad record in the registry")
+    monkeypatch.setattr(task_start, "_running_from_devices", boom)
+    with pytest.raises(RuntimeError):
+        with task_start.DeviceSlot(PHONE):
+            pass
+    assert task_start._LOCK.acquire(blocking=False), "the job lock was left held"
+    task_start._LOCK.release()
