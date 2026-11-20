@@ -180,3 +180,38 @@ def test_a_job_whose_worker_is_finished_and_waits_only_for_the_owners_card_frees
     with ag.TASKS_LOCK:
         ag.TASKS[ids[0]]["status"] = "waiting_approval"
     assert _start(client).status_code == 201
+
+
+def _finished(tid="old-1"):
+    with ag.TASKS_LOCK:
+        ag.TASKS[tid] = {"task_id": tid, "name": "an earlier job", "prompt": "tidy the downloads folder",
+                         "status": "complete", "created": 1.0}
+    return tid
+
+
+def _rerun(client, tid, **body):
+    return client.post("/api/tasks/%s/rerun" % tid, json=body)
+
+
+def test_a_rerun_asked_for_by_a_device_counts_against_that_devices_cap(client, spawned):
+    """The cap must not be a way around by re-running one finished job again and again."""
+    old = _finished()
+    for _ in range(task_start.DEVICE_JOB_CAP):
+        assert _rerun(client, old, origin=PHONE).status_code == 200
+    again = _rerun(client, old, origin=PHONE)
+    assert again.status_code == 409 and "already running" in again.get_json()["error"]
+    assert _start(client).status_code == 409                       # the same cap, from the other door
+    assert len(spawned) == task_start.DEVICE_JOB_CAP
+
+
+def test_a_rerun_from_the_pc_itself_is_not_capped(client, spawned):
+    old = _finished()
+    for _ in range(task_start.DEVICE_JOB_CAP + 2):
+        assert _rerun(client, old).status_code == 200
+    assert _rerun(client, old, origin="pc").status_code == 200
+
+
+@pytest.mark.parametrize("origin", ["pc\n", 7, ["device:x"], "phone"])
+def test_a_rerun_with_an_origin_that_is_not_one_is_refused_before_anything_starts(client, spawned, origin):
+    old = _finished()
+    assert _rerun(client, old, origin=origin).status_code == 400 and spawned == []

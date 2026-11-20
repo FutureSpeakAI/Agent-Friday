@@ -51,6 +51,32 @@ def _running_from_devices() -> int:
     return len(live)
 
 
+class DeviceSlot:
+    """The cap for any other door that starts work for a device (a re-run): ``with DeviceSlot(origin) as slot:`` holds
+    the job lock, refuses with 409 when ``origin`` is a device already running ``DEVICE_JOB_CAP`` jobs, and
+    ``slot.adopt(task_id)`` counts the new task against that device. No origin, or ``pc``, is not capped."""
+
+    def __init__(self, origin):
+        if origin is not None and (not isinstance(origin, str) or not ORIGIN.fullmatch(origin)):
+            raise Refused(400, "not an origin")
+        self.origin = None if origin in (None, "pc") else origin
+
+    def __enter__(self):
+        _LOCK.acquire()
+        if self.origin is not None and _running_from_devices() >= DEVICE_JOB_CAP:
+            _LOCK.release()
+            raise Refused(409, "%d jobs from your devices are already running; wait for one to finish" % DEVICE_JOB_CAP)
+        return self
+
+    def __exit__(self, *exc):
+        _LOCK.release()
+        return False
+
+    def adopt(self, task_id) -> None:
+        if self.origin is not None and task_id:
+            _FROM_DEVICE[task_id] = self.origin
+
+
 def _name(prompt: str) -> str:
     first = " ".join(prompt.split())
     return first if len(first) <= NAME_CHARS else first[:NAME_CHARS - 1].rstrip() + "…"
