@@ -60,8 +60,13 @@ def _grant_rows(action_gate) -> list:
             return action_gate.ledger_grant_rows()
         except action_ledger.LedgerError:
             # A break stops the strict read of a grant's uses. The pack is for exactly that case, so it lists the
-            # grants without their uses; the pack itself says the ledger did not verify. Held by
-            # test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack.
+            # grants without their uses, and the pack itself says the ledger did not verify. Any other reason the
+            # ledger could not be read (a vanished segment, an unreadable file, no key) still refuses: the pack
+            # would otherwise say "intact" beside grants it could not read. Held by
+            # test_a_break_in_range_with_a_real_signed_grant_on_file_still_gives_the_pack and
+            # test_a_grants_read_that_fails_while_the_chain_verifies_still_refuses_the_pack.
+            if action_ledger.verify(force=True).get("ok"):
+                raise
             rows = action_gate.ledger_grant_rows(usage=False)
             # Nothing the ledger would have said about a grant (uses, first use, revocation) was read, so none of it
             # is stated: each row keeps its identity and its own dates and says its use was not read.

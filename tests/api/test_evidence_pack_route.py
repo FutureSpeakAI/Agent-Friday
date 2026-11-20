@@ -208,3 +208,19 @@ def test_a_grants_key_that_cannot_be_read_still_refuses_the_pack(client, monkeyp
     r = _export(client)
     monkeypatch.undo()
     assert r.status_code == 409 and r.get_json()["code"] == "pack_refused" and len(L.entries(["export"])) == before
+
+
+def test_a_grants_read_that_fails_while_the_chain_verifies_still_refuses_the_pack(client, monkeypatch):
+    _seed()
+    action_gate.create_grant(tools=["send_email"], scope="job-ok", expires_in_seconds=600, max_uses=1)
+    real_entries = L.entries
+
+    def unreadable_strict(kinds=None, **k):
+        if k.get("strict") and k.get("gate", True):
+            raise L.LedgerError("the ledger could not be read (PermissionError)")
+        return real_entries(kinds, **k)
+    monkeypatch.setattr(L, "entries", unreadable_strict)
+    before = len(L.entries(["export"]))
+    r = _export(client)
+    monkeypatch.undo()
+    assert r.status_code == 409 and r.get_json()["code"] == "pack_refused" and len(L.entries(["export"])) == before
