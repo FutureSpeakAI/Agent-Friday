@@ -128,3 +128,41 @@ def test_the_gateway_waits_as_long_as_the_descriptors_own_timeout(provider):
     long_wait = gw.descriptor_url(descriptor(provider, network={"timeout_s": 600}))
     waits = {proxy.url: proxy.upstream_timeout for key, proxy in gw._PROXIES.items() if isinstance(key, tuple)}
     assert waits == {long_wait.rsplit("/v1", 1)[0]: 600}, (short, waits)
+
+
+def legacy_settings(monkeypatch, fake, key=REAL):
+    settings = {"model_routing": {"openai_base_url": fake.origin + "/v1", "openai_api_key": key, "openai_model": "m"}}
+    monkeypatch.setattr(smr, "_load_settings", lambda: settings)
+    return settings
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_the_single_openai_slot_holds_the_stand_in_and_the_provider_gets_the_real_key(provider, sent, monkeypatch, stream):
+    legacy_settings(monkeypatch, provider)
+    text, _ = smr._call_openai([{"role": "user", "content": "hi"}], tools=None, stream=stream)
+    assert text == "hello"
+    assert sent[0]["Authorization"] == "Bearer " + DUMMY_KEY and REAL not in str(sent)
+    assert provider.seen[0][1]["authorization"] == "Bearer " + REAL and provider.seen[0][0] == "/v1/chat/completions"
+
+
+def test_a_key_changed_in_settings_is_used_by_the_next_call(provider, monkeypatch):
+    settings = legacy_settings(monkeypatch, provider)
+    smr._call_openai([{"role": "user", "content": "hi"}], tools=None, stream=False)
+    settings["model_routing"]["openai_api_key"] = "sk-swapped-in-settings"  # pragma: allowlist secret
+    smr._call_openai([{"role": "user", "content": "hi"}], tools=None, stream=False)
+    assert [seen[1]["authorization"] for seen in provider.seen] == ["Bearer " + REAL, "Bearer sk-swapped-in-settings"]
+
+
+def test_the_single_openai_slot_pointed_at_this_machine_is_called_directly(provider, sent, monkeypatch):
+    monkeypatch.setattr(gw, "_is_cloud_endpoint", REAL_CLOUD_CHECK)
+    legacy_settings(monkeypatch, provider)
+    smr._call_openai([{"role": "user", "content": "hi"}], tools=None, stream=False)
+    assert sent[0]["Authorization"] == "Bearer " + REAL
+
+
+def test_the_single_slot_and_a_registry_descriptor_do_not_stop_each_others_listener(provider, monkeypatch):
+    legacy_settings(monkeypatch, provider)
+    smr._call_openai([{"role": "user", "content": "hi"}], tools=None, stream=False)
+    smr._call_openai([{"role": "user", "content": "hi"}], model="m", tools=None,
+                     provider=descriptor(provider, name="openai"), stream=False)
+    assert len([key for key in gw._PROXIES if isinstance(key, tuple)]) == 2

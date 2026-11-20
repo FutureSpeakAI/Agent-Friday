@@ -240,11 +240,13 @@ def _auth_shape(prov: dict) -> Optional[tuple]:
     return None
 
 
-def descriptor_url(prov: dict) -> Optional[str]:
+def descriptor_url(prov: dict, key_source=None) -> Optional[str]:
     """The loopback base URL for a provider descriptor, with its path (``http://127.0.0.1:N/v1``), or None when the
     descriptor should be called directly: a local or private host, plain http, or no key header. The listener is pinned
     to this descriptor's own host and path and sends its key only there; a caller picks the descriptor, never the
-    destination. Guarded by tests/unit/test_key_gateway_descriptor.py."""
+    destination. ``key_source`` is an optional function returning the key when it is not kept where a descriptor's
+    ``auth`` says (the legacy single OpenAI slot); it must be a stable function, not a closure over one call's data.
+    Guarded by tests/unit/test_key_gateway_descriptor.py."""
     from urllib.parse import urlsplit
     base_url = (prov.get("base_url") or "").rstrip("/")
     shape = _auth_shape(prov)
@@ -261,11 +263,12 @@ def descriptor_url(prov: dict) -> Optional[str]:
         timeout_s = max(1, int((prov.get("network") or {}).get("timeout_s") or 180))   # the same wait the caller would give
     except (TypeError, ValueError):
         timeout_s = 180
-    identity = (name, origin, path, header, key_format, tuple(provider_env_keys(prov)), timeout_s)
+    identity = (name, origin, path, header, key_format, tuple(provider_env_keys(prov)), timeout_s,
+                getattr(key_source, "__qualname__", ""))
 
     def key_now() -> Optional[str]:
         from agent_friday.routing.provider_descriptors import provider_api_key
-        return provider_api_key(prov) or None
+        return (key_source() if key_source else provider_api_key(prov)) or None
 
     with _LOCK:
         proxy = _PROXIES.get(identity)
