@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import os
 import time
+
+from agent_friday.services import key_gateway
 from typing import Any
 from agent_friday.user_errors import ExceptionText, clip
 from agent_friday.user_errors import keep_mark as _keep_mark
@@ -82,42 +84,11 @@ class SearchStatus:
 
 
 def brave_key() -> str:
-    """The Brave subscription token, from wherever the user put it.
-
-    Environment first (start.bat, which is how every other key here is set),
-    then the encrypted provider store, then settings. Checking all three
-    matters because the alternative is a key that is present, paid for, and
-    silently ignored because it went in the "wrong" place — and the symptom
-    would be search quietly staying on the DuckDuckGo scrape with nothing
-    saying why.
-
-    ONE key covers both endpoints: the news engine's /res/v1/news/search and
-    this module's /res/v1/web/search use the same X-Subscription-Token.
-    """
-    env = (os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()
-    if env:
-        return env
-    try:
-        from agent_friday.services import credential_store
-        # "brave-search" is the name the first-run key screen used to store
-        # it under; read it too, so a key saved there is not silently ignored.
-        for name in ("brave", "brave-search"):
-            k = credential_store.get_provider_key(name)
-            if k and k.strip():
-                return k.strip()
-    except Exception:
-        pass
-    try:
-        from agent_friday.core import _load_settings
-        s = _load_settings() or {}
-        for holder in (s, s.get("api_keys") or {}, s.get("search") or {}):
-            if isinstance(holder, dict):
-                v = holder.get("brave_search_api_key") or holder.get("brave_api_key")
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
-    except Exception:
-        pass
-    return ""
+    """A stand-in for the Brave key: the proxy's dummy when a key exists (environment, encrypted store or settings,
+    in that order, found by ``key_gateway``), else an empty string. The real key is never returned here; the
+    gateway puts it on the request. ONE key covers both endpoints (/res/v1/web/search and /res/v1/news/search).
+    Guarded by tests/unit/test_key_gateway.py::test_brave_callers_never_hold_the_real_key."""
+    return key_gateway.stand_in("brave")
 
 
 # ── Three states, never two (the false-green this surface exists to kill) ─────
@@ -202,8 +173,9 @@ def verify_key(key: str | None = None) -> dict:
     """
     # egress: not recorded: the owner's key check sends only the fixed word "test", no data of theirs
     import requests
-    k = (key or brave_key() or "").strip()
-    if not k:
+    k = (key or "").strip()
+    stored = not k and brave_key()
+    if not k and not stored:
         return {"configured": False, "valid": None,
                 "summary": "No Brave key is configured."}
     from agent_friday.services.cloud_intent import outbound_held
@@ -212,10 +184,14 @@ def verify_key(key: str | None = None) -> dict:
         return {"configured": True, "valid": None, "endpoints": {}, "limits": {},
                 "summary": _held, "route_not_chosen": True}
 
-    endpoints = {
-        "web": "https://api.search.brave.com/res/v1/web/search",
-        "news": "https://api.search.brave.com/res/v1/news/search",
-    }
+    # A key typed on the key screen is checked directly (it is not stored yet); the stored key goes through the gateway.
+    try:
+        base = "https://api.search.brave.com" if k else key_gateway.url("brave")
+    except Exception:
+        return {"configured": True, "valid": None, "endpoints": {}, "limits": {},
+                "summary": "The local key gateway could not start, so the stored key was not checked."}
+    k = k or brave_key()
+    endpoints = {"web": base + "/res/v1/web/search", "news": base + "/res/v1/news/search"}
     out: dict = {"configured": True, "endpoints": {}, "limits": {}}
     for name, url in endpoints.items():
         try:
@@ -224,6 +200,9 @@ def verify_key(key: str | None = None) -> dict:
                                       "X-Subscription-Token": k}, timeout=20)
         except Exception as e:
             out["endpoints"][name] = {"ok": False, "error": ExceptionText(f"{type(e).__name__}: {e}")}
+            continue
+        if key_gateway.no_key(r):
+            out["endpoints"][name] = {"ok": False, "no_key": True}
             continue
         entry = {"ok": r.status_code == 200, "http": r.status_code}
         if r.status_code != 200:
@@ -237,6 +216,8 @@ def verify_key(key: str | None = None) -> dict:
                 out["limits"][hk] = hv
         out["endpoints"][name] = entry
 
+    if out["endpoints"] and all(entry.get("no_key") for entry in out["endpoints"].values()):
+        return {"configured": False, "valid": None, "summary": "No Brave key is configured."}
     web_ok = out["endpoints"].get("web", {}).get("ok")
     news_ok = out["endpoints"].get("news", {}).get("ok")
     out["valid"] = bool(web_ok or news_ok)
@@ -269,26 +250,7 @@ def verify_key(key: str | None = None) -> dict:
 def key_status() -> dict:
     """Where the key is (or is not), so 'why is search still scraping?' is
     answerable without reading source."""
-    import os as _os
-    sources = {
-        "environment": bool((_os.environ.get("BRAVE_SEARCH_API_KEY") or "").strip()),
-        "encrypted_store": False,
-        "settings": False,
-    }
-    try:
-        from agent_friday.services import credential_store
-        sources["encrypted_store"] = bool(credential_store.get_provider_key("brave", use=False))  # a status check
-    except Exception:
-        pass
-    try:
-        from agent_friday.core import _load_settings
-        s = _load_settings() or {}
-        sources["settings"] = any(
-            isinstance(h, dict) and (h.get("brave_search_api_key")
-                                     or h.get("brave_api_key"))
-            for h in (s, s.get("api_keys") or {}, s.get("search") or {}))
-    except Exception:
-        pass
+    sources = key_gateway.sources("brave")
     have = bool(brave_key())
     return {
         "configured": have,
@@ -441,11 +403,13 @@ def _brave(query: str, count: int) -> dict:
     import requests
     key = brave_key()
     r = requests.get(
-        "https://api.search.brave.com/res/v1/web/search",
+        key_gateway.url("brave") + "/res/v1/web/search",
         params={"q": query, "count": min(max(count, 1), 20)},
         headers={"Accept": "application/json", "X-Subscription-Token": key},
         timeout=20,
     )
+    if key_gateway.no_key(r):
+        return {"status": SearchStatus.BACKEND_BROKEN, "detail": "no Brave key is configured"}
     if r.status_code == 401:
         return {"status": SearchStatus.BACKEND_BROKEN,
                 "detail": "Brave rejected the API key (HTTP 401)"}
@@ -729,7 +693,7 @@ def search(query: str, count: int = 10) -> dict:
     return last
 
 
-#: Where the key goes. Read by firecrawl.api_key() in this order: the
+#: Where the key goes. Read by services/key_gateway.py in this order: the
 #: FIRECRAWL_API_KEY environment variable (start.bat sets Friday's keys),
 #: the credential store, then `firecrawl_api_key` in settings.json.
 FIRECRAWL_KEY_HOWTO = (
