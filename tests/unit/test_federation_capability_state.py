@@ -2,11 +2,11 @@
 
 What each check really bites on:
   1. all six appear, each in the closed vocabulary, in the spec's order;
-  2. nothing is ever reported as working (no job on this PC has proven any of them), and public discovery and live cash
-     read as held in every combination of settings (2**10 of them, so a new switch cannot open them);
+  2. nothing is ever reported as working (no job on this PC has proven any of them), every unconfigured row names the
+     setting that would change it, and public discovery and live cash read as absent and held in every combination of settings (2**10 of them, so a new switch cannot open them);
   3. an off federation switch, an off own switch, the kill switch and a fully switched-on capability each read as what
      they are, and the kill switch outranks every other setting;
-  4. they are NOT in PROBES (what the model reads every turn) and the model block is unchanged;
+  4. they are NOT in PROBES (what the model reads every turn) and the model block names none of them;
   (the route half is in tests/api/test_federation_capability_state_route.py)
 The check in 2 is shown able to fail: with the never-list emptied, live cash would read as switched on.
 """
@@ -39,7 +39,12 @@ def test_nothing_is_working_and_the_two_held_ones_never_open_in_any_combination_
         rows = by_key(cs.federation_states({"held_features": dict(zip(KEYS, values))}))
         assert all(r.state != cs.WORKING for r in rows.values())
         for held in ("federation_public_discovery", "federation_live_cash"):
-            assert rows[held].state != cs.ABSENT and rows[held].health == "blocked_by_policy", held
+            assert rows[held].state == cs.ABSENT and rows[held].health == "blocked_by_policy", held
+        for key, row in rows.items():
+            if key not in ("federation_public_discovery", "federation_live_cash"):
+                assert row.state != cs.ABSENT, key       # a switch could open it, so it is not "nothing to switch on"
+            if row.state == cs.UNCONFIGURED:
+                assert row.needs and row.fix, f"{key}: unconfigured names the setting that would change it"
 
 
 def test_each_situation_reads_as_what_it_is():
@@ -53,7 +58,8 @@ def test_each_situation_reads_as_what_it_is():
     assert stopped["federation_invited_jobs"].state == cs.PRESENT_UNVERIFIED, "still installed and switched on"
     assert stopped["federation_invited_jobs"].health == "blocked_by_policy"
     assert "kill switch" in stopped["federation_invited_jobs"].detail
-    assert not any(r.state == cs.ABSENT for r in cs.federation_states(settings(federation=True, fed_kill_switch=True))),         "absent means not installed on this machine; nothing here is that"
+    rows = by_key(cs.federation_states(settings(federation=True, fed_kill_switch=True)))
+    assert [k for k, r in rows.items() if r.state == cs.ABSENT] == ["federation_public_discovery", "federation_live_cash"],         "only the two that are not part of this release are absent; a stopped capability is not"
 
 
 def test_the_check_can_fail_with_the_never_list_emptied_live_cash_would_read_as_switched_on(monkeypatch):
@@ -64,7 +70,6 @@ def test_the_check_can_fail_with_the_never_list_emptied_live_cash_would_read_as_
 
 def test_they_stay_out_of_what_the_model_reads():
     assert not any(p.__name__.startswith("federation") for p in cs.PROBES)
-    block = cs.describe_for_model([c for c in cs.snapshot()])
-    assert block == cs.describe_for_model(cs.snapshot()), "the block is built from PROBES alone"
+    block = cs.describe_for_model()
     assert "Federation" not in block and "federation_" not in block
 

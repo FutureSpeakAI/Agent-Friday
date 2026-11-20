@@ -1745,7 +1745,9 @@ def api_capabilities_state():
         from agent_friday.services import capability_state as _cs
         try:
             federation = _cs.federation_as_dicts()
-        except Exception:  # noqa: BLE001 - the six federation rows failing must not take the other capabilities with them
+        except Exception as fed_err:  # noqa: BLE001 - the six federation rows failing must not take the other capabilities with them
+            import logging as _lg
+            _lg.getLogger("friday.capabilities").warning("federation capability rows failed: %s", fed_err)
             federation = []
         return jsonify({"status": "ok", "capabilities": _cs.as_dicts(),
                         "federation": federation,

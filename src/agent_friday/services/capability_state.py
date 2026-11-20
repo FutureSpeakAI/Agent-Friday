@@ -244,7 +244,9 @@ def federation_states(settings: dict | None = None) -> list:
     for cap in hf.CAPABILITIES:
         key, label = "federation_" + cap, labels[cap]
         if cap in hf.NEVER_IN_THIS_RELEASE:
-            out.append(CapabilityState(key, label, UNCONFIGURED, (), "", "held in this release; no setting turns it on",
+            # Not part of this release at all: there is no code path a setting could switch on, so it is absent in the
+            # module's sense (not there to use), and the policy that keeps it so is said in health.
+            out.append(CapabilityState(key, label, ABSENT, (), "", "not part of this release; no setting turns it on",
                                        health="blocked_by_policy"))
             continue
         if not hf.enabled(hf.FEDERATION, settings):
