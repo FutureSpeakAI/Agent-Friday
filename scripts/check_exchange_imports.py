@@ -26,14 +26,21 @@ NETWORK = frozenset({
 DYNAMIC_CALLS = frozenset({"__import__", "import_module", "exec", "eval"})
 
 
-def imported_modules(source: str) -> set:
+def imported_modules(source: str, package: str = "agent_friday.services.exchange") -> set:
+    """Every module the source imports, relative imports resolved against `package` (the importing file's package)."""
     found = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             found.update(a.name for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            found.add(node.module)
-            found.update(f"{node.module}.{a.name}" for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                parts = package.split(".")
+                base = parts[:max(len(parts) - (node.level - 1), 0)]
+                module = ".".join(base + ([module] if module else []))
+            if module:
+                found.add(module)
+                found.update(f"{module}.{a.name}" for a in node.names)
     return found
 
 
@@ -43,14 +50,16 @@ def dynamic_calls(source: str) -> set:
 
 
 def banned(modules: set) -> list:
-    return sorted(m for m in modules if m in NETWORK or m.split(".")[0] in NETWORK)
+    return sorted(m for m in modules if m in NETWORK or m.split(".")[0] in NETWORK
+                  or any(m.startswith(name + ".") for name in NETWORK))
 
 
 def run(package: Path = PACKAGE) -> list:
     findings = []
     for path in sorted(package.rglob("*.py")):
         source = path.read_text(encoding="utf-8-sig")
-        for module in banned(imported_modules(source)):
+        dotted = ".".join(("agent_friday.services.exchange",) + path.relative_to(package).parts[:-1])
+        for module in banned(imported_modules(source, dotted)):
             findings.append(f"{path.relative_to(package)}: imports {module}")
         for call in sorted(dynamic_calls(source)):
             findings.append(f"{path.relative_to(package)}: calls {call}")

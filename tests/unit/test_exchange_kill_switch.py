@@ -207,7 +207,8 @@ def test_the_exchange_guard_finds_the_app_core_in_every_import_form_and_the_pack
     guard = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(guard)
     for source in ("from agent_friday import core", "import agent_friday.core", "from agent_friday.core import _load_settings",
-                   "def f():\n    from agent_friday import core"):
+                   "def f():\n    from agent_friday import core", "from agent_friday.core.os_mode import x",
+                   "import agent_friday.core.os_mode", "from ... import core", "from ...core import _load_settings"):
         assert guard.banned(guard.imported_modules(source)), source
     assert guard.run() == [], "settlement is handed its gate (new_effects_allowed); it does not reach for the app core"
     assert "held_features" not in Path(st.__file__).read_text(encoding="utf-8-sig"), "provider.py names it for its never-list (older); settlement does not"
