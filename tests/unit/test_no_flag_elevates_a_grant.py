@@ -58,7 +58,7 @@ def test_a_grants_whole_life_never_asks_a_flag(monkeypatch):
 
 
 def test_a_grant_for_one_tool_and_scope_covers_nothing_else(monkeypatch):
-    _trap(monkeypatch)     # with every flag reader refusing to answer, the limits still hold on their own
+    asked = _trap(monkeypatch)     # with every flag reader refusing to answer, the limits still hold on their own
     action_gate.create_grant(tools=["send_email"], scope="job-1", expires_in_seconds=600, max_uses=2)
     assert action_gate.consume_grant("write_file", "job-1") is None, "another tool"
     assert action_gate.consume_grant("send_email", "job-2") is None, "another scope"
