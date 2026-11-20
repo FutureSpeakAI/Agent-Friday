@@ -71,3 +71,9 @@ def test_the_check_can_fail_a_key_set_without_summary_leaves_the_canary(monkeypa
     monkeypatch.setattr(lt, "FREE_TEXT_KEYS", lt.FREE_TEXT_KEYS - {"summary"})
     hidden, _ = lt.hide({"summary": CANARY}, digest)
     assert CANARY in repr(hidden), "the key set is what decides what is hidden"
+
+
+def test_dict_keys_under_a_free_text_key_are_hidden_and_shown_again():
+    hidden, texts = lt.hide({"items": {CANARY: "v"}}, digest)
+    assert CANARY not in repr(hidden) and all(lt.is_hidden(k) for k in hidden["items"])
+    assert lt.show(hidden, lambda d: texts.get(d)) == {"items": {CANARY: "v"}}
