@@ -126,6 +126,18 @@ def workflow_interrupted(rec: Dict[str, Any], *, step: int, total: int, name: st
                    "next": ASKS})
 
 
+def schedule_interrupted(rec: Dict[str, Any]) -> bool:
+    """The receipt for one scheduled run cut off mid-run. Its slot was marked spent before it started,
+    so it is not run again; what it did before the stop is not known."""
+    task = rec.get("task") or {}
+    return _write({"subject": "schedule:%s" % rec.get("id"), "interruption": rec.get("started_at"),
+                   "what": str(rec.get("name") or "")[:120],
+                   "last_boundary": "started; no checkpoint",
+                   "in_flight": str(task.get("ref") or task.get("kind") or "")[:60] or None,
+                   "may_have_acted": True, "repeated": False, "outcome": "unknown",
+                   "next": NOT_REPEATED})
+
+
 def card_interrupted(card: Dict[str, Any]) -> bool:
     """The receipt for one approved action stopped mid-run (its outcome is unknown, and the
     card can never authorise it again)."""
