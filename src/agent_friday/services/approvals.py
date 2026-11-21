@@ -250,6 +250,8 @@ SCREEN_ONLY_KINDS: Dict[str, frozenset] = {
     # Widening what a paired device may do (one right per card: Friday as the TV's
     # brain; Studio jobs that spend on this PC's providers). Narrowing needs no card.
     "device_right": frozenset({"owner:ui"}),
+    # Keeping a paired device for 30 more days (services/device_pairing.reconfirm): the owner's press at the PC.
+    "device_reconfirm": frozenset({"owner:ui"}),
 }
 
 

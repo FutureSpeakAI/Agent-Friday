@@ -37,6 +37,10 @@ SESSION_PREFIX = "fdev_"
 SESSION_TTL_S = 12 * 3600
 CHALLENGE_TTL_S = 60
 RECONFIRM_DAYS = 30
+RECONFIRM_WARN_DAYS = 7              # the owner is asked this long before a device's date
+RECONFIRM_GRACE_DAYS = 7             # rows made before enforcement shipped get this long, once
+RECONFIRM_CARD_KIND = "device_reconfirm"
+RECONFIRM_ASK_EVERY_S = 6 * 3600     # a card the owner left or declined is raised again after this
 # Named rights. A device holds a set of them; "chat_read" always, the others only by a
 # press on this PC, one card per right, nothing pre-selected (tv_gateway/pairing).
 #   chat_read  chat with Friday and read what she shares (memory, knowledge graph, models)
@@ -123,7 +127,7 @@ def _sign(body: dict) -> str:
 
 
 def _empty() -> dict:
-    return {"gateway": {"enabled": False, "port": 0}, "devices": {}}
+    return {"gateway": {"enabled": False, "port": 0}, "devices": {}, "reconfirm_grace_done": True}
 
 
 def _load() -> dict:
@@ -135,9 +139,30 @@ def _load() -> dict:
             return _empty()
         body.setdefault("gateway", {"enabled": False, "port": 0})
         body.setdefault("devices", {})
+        if not body.get("reconfirm_grace_done"):
+            _grace_old_rows(body)
         return body
     except Exception:
         return _empty()
+
+
+def _grace_old_rows(body: dict) -> None:
+    """Once, the first time a store made before reconfirm_by was enforced is read: a row with no date gets 30 days
+    from when it was paired, and a row due sooner than the grace gets the grace, so shipping this locks nothing
+    out the same minute. New stores are born with the flag set (_empty), so a lapse later is never excused."""
+    now = time.time()
+    floor = now + RECONFIRM_GRACE_DAYS * 86400
+    with _LOCK:
+        for dev in body["devices"].values():
+            due = dev.get("reconfirm_by")
+            if due is None:
+                due = float(dev.get("paired_at") or now) + RECONFIRM_DAYS * 86400
+            dev["reconfirm_by"] = max(float(due), floor)
+        body["reconfirm_grace_done"] = True
+        try:
+            _save(body)
+        except OSError:
+            pass
 
 
 def _save(body: dict) -> None:
@@ -438,6 +463,7 @@ def remove_device(device_id: str) -> bool:
         _persist_sessions()
     if gone:
         expire_pending_key_cards(device_id, "the device was removed")
+        _expire_reconfirm_cards(device_id, "the device was removed")
     return gone
 
 
@@ -471,6 +497,75 @@ def session_message(nonce: str, device_id: str) -> bytes:
     return SESSION_CONTEXT + nonce.encode("ascii") + b"|" + device_id.encode("ascii")
 
 
+class ReconfirmNeeded(Exception):
+    """A device past its reconfirm date asked for a session. Raised only after it signed the challenge."""
+
+    def __init__(self, device_id: str):
+        super().__init__("the owner has not kept this device paired")
+        self.device_id = device_id
+
+
+def reconfirm_state(dev: dict) -> str:
+    """``ok``, ``due`` (inside the last RECONFIRM_WARN_DAYS) or ``overdue`` (past the date)."""
+    due = dev.get("reconfirm_by")
+    if due is None:
+        return "ok"
+    left = float(due) - time.time()
+    if left <= 0:
+        return "overdue"
+    return "due" if left <= RECONFIRM_WARN_DAYS * 86400 else "ok"
+
+
+_RECONFIRM_ASKED: dict = {}            # device id -> when its card was last raised
+
+
+def request_reconfirm(dev: dict) -> Optional[str]:
+    """Raise the screen-only "Keep this device paired?" card, at most once per RECONFIRM_ASK_EVERY_S.
+    Returns the card id, or None when one was raised lately or the card could not be made."""
+    now = time.time()
+    with _LOCK:
+        if now - _RECONFIRM_ASKED.get(dev["id"], 0.0) < RECONFIRM_ASK_EVERY_S:
+            return None
+        _RECONFIRM_ASKED[dev["id"]] = now
+    try:
+        from agent_friday.services import approvals
+        name = str(dev.get("name") or "device")
+        card = approvals.create_approval(
+            kind=RECONFIRM_CARD_KIND, subject_type="device_reconfirm", subject_id=str(dev["id"]),
+            title='Keep "%s" paired?' % name,
+            description=("Press Approve to keep \"%s\" paired with Friday for %d more days. It keeps every right it "
+                         "has now. If you do not recognise it, or no longer use it, press Decline or remove it "
+                         "under Paired devices: when its time is up it can no longer connect."
+                         % (name, RECONFIRM_DAYS)),
+            action_description="Keep a paired device for %d more days" % RECONFIRM_DAYS,
+            payload={"device_id": str(dev["id"]), "origin": "tv_gateway"},
+            requested_by="tv_gateway", force_gate=True)
+        return card.get("approval_id")
+    except Exception:
+        return None
+
+
+def reconfirm(device_id: str, approval_id: str = "") -> bool:
+    """The owner's press on the card: 30 more days from now. Only the card's decision hook calls this."""
+    with _LOCK:
+        body = _load()
+        dev = body["devices"].get(str(device_id))
+        if dev is None:
+            return False
+        dev["reconfirm_by"] = time.time() + RECONFIRM_DAYS * 86400
+        _save(body)
+        _RECONFIRM_ASKED.pop(str(device_id), None)
+    _receipt("device_reconfirmed", dev, approval_id=approval_id)
+    return True
+
+
+def _expire_reconfirm_cards(device_id: str, note: str) -> int:
+    from agent_friday.services import approvals
+    return approvals.expire_matching(
+        lambda rec: rec.get("kind") == RECONFIRM_CARD_KIND
+        and (rec.get("payload") or {}).get("device_id") == str(device_id), "tv_gateway", note)
+
+
 def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[str]:
     """Return a session token if the device signed this live challenge, else None."""
     from cryptography.exceptions import InvalidSignature
@@ -488,6 +583,12 @@ def open_session(device_id: str, nonce: str, signature_der: bytes) -> Optional[s
         pub.verify(signature_der, session_message(nonce, dev["id"]), ec.ECDSA(hashes.SHA256()))
     except (InvalidSignature, ValueError, TypeError):
         return None
+    # Only after a good signature, so nobody else can ask whether a device has lapsed.
+    state = reconfirm_state(dev)
+    if state != "ok":
+        request_reconfirm(dev)
+        if state == "overdue":
+            raise ReconfirmNeeded(dev["id"])
     token = SESSION_PREFIX + secrets.token_urlsafe(32)
     with _LOCK:
         _restore_sessions()
@@ -526,6 +627,9 @@ def check_session(token: str) -> Optional[dict]:
         if dev is None:                      # removed: the session dies with it
             _SESSIONS.pop(h, None)
             return None
+        if reconfirm_state(dev) == "overdue":    # the owner has not kept it: the session ends at the date
+            _SESSIONS.pop(h, None)
+            return None
         return dev
 
 
@@ -548,6 +652,7 @@ def _reset_for_tests() -> None:
         _SESSIONS.clear()
         _CHALLENGES.clear()
         _RESTORED = False
+        _RECONFIRM_ASKED.clear()
         try:
             _sessions_path().unlink(missing_ok=True)
         except Exception:

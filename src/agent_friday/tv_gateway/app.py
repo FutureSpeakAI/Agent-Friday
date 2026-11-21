@@ -121,8 +121,12 @@ def create_app(tailnet: bool = False) -> Flask:
             sig = base64.b64decode(str(body.get("sig", "")), validate=True)
         except Exception:
             return _refuse(400, "bad signature encoding")
-        token = device_pairing.open_session(str(body.get("device_id", "")),
-                                            str(body.get("nonce", "")), sig)
+        try:
+            token = device_pairing.open_session(str(body.get("device_id", "")),
+                                                str(body.get("nonce", "")), sig)
+        except device_pairing.ReconfirmNeeded:
+            return _refuse(403, "This device's 30 days are up. Ask the owner to press Approve on the Keep this "
+                                "device paired card on the PC, then try again.", code="reconfirm_needed")
         if token is None:
             return _refuse(401, "not paired, or the challenge was wrong or used", code="not_paired_or_bad_challenge")
         from agent_friday.tv_gateway import tailnet as tn
