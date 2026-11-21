@@ -9,6 +9,10 @@ checks as its own button: stop after the current step, resume an interrupted job
 that needs the owner's word about a tool that was mid-flight is refused with the desktop's reason; the device cannot
 give that word (``confirm_pending`` is never sent).
 
+A fourth action starts a job: ``POST /tv/v1/jobs {prompt, conversation_id?}`` asks the desktop's own
+``/api/tasks/start`` with the device as the origin and nothing else the device sent; the PC enforces the stop and the
+cap on concurrent device jobs.
+
 Reading a job's steps, whether it can resume, and its live event stream needs only ``pc_read``; the stream re-checks
 the device and the right before every frame and every heartbeat.
 
@@ -23,7 +27,7 @@ import logging
 import re
 from typing import Optional, Tuple
 
-from flask import Flask, Response, g, jsonify, stream_with_context
+from flask import Flask, Response, g, jsonify, request, stream_with_context
 
 from agent_friday.services import device_pairing
 from agent_friday.tv_gateway import pc_read, tailnet
@@ -38,10 +42,11 @@ _KEEP = ("ok", "error", "reason", "status", "stop_requested", "task_id", "rerun_
          "needs_confirmation")
 
 
-def _desk_post(path: str) -> Tuple[int, dict]:
-    """One POST with no body to this PC's own app, in process, with its own token. ``path`` is built here."""
+def _desk_post(path: str, body: Optional[dict] = None) -> Tuple[int, dict]:
+    """One POST to this PC's own app, in process, with its own token. ``path`` is built here; the body is
+    empty except for starting a job, where the gateway has checked every field."""
     from agent_friday import core
-    reply = core.app.test_client().post(path, json={}, headers={"X-Friday-Token": core._current_api_token()})
+    reply = core.app.test_client().post(path, json=body or {}, headers={"X-Friday-Token": core._current_api_token()})
     body = reply.get_json(silent=True)
     return reply.status_code, body if isinstance(body, dict) else {}
 
@@ -100,29 +105,67 @@ def _guard() -> Optional[Response]:
     return None
 
 
-def _act(action: str, job_id: str, path: str) -> Response:
+def _act(action: str, job_id: str, path: str, body: Optional[dict] = None) -> Response:
     denied = _guard()
     if denied is not None:
         return denied
     if not ID_PATTERN.match(job_id):
         return refuse(400, "not a job id", code="bad_id")
     try:
-        status, body = _desk_post(path % job_id)
+        status, answered = _desk_post(path % job_id) if body is None else _desk_post(path % job_id, body)
     except Exception as e:
         _log.warning("pc_act %s failed: %s", action, type(e).__name__)
-        status, body = 503, {}
+        status, answered = 503, {}
     device_pairing._receipt("device_act", g.device, right=RIGHT, action=action, job=job_id, outcome=status,
                             via=tailnet.via())
     if status >= 500:
         return refuse(503, "the PC could not do that right now", code="pc_unavailable")
-    answer = jsonify({k: body[k] for k in _KEEP if k in body})
+    answer = jsonify({k: answered[k] for k in _KEEP if k in answered})
     answer.status_code = status
     return answer
 
 
+MAX_PROMPT = 4000
+
+
+def _start_job() -> Response:
+    denied = _guard()
+    if denied is not None:
+        return denied
+    sent = request.get_json(silent=True)
+    sent = sent if isinstance(sent, dict) else {}
+    prompt, conversation = sent.get("prompt"), sent.get("conversation_id")
+    if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_PROMPT:
+        return refuse(400, "write what the job should do, in under %d characters" % MAX_PROMPT, code="bad_prompt")
+    if conversation is not None and not (isinstance(conversation, str) and ID_PATTERN.match(conversation)):
+        return refuse(400, "not a conversation id", code="bad_id")
+    body = {"prompt": prompt, "origin": "device:%s" % g.device["id"]}
+    if conversation is not None:
+        body["conversation_id"] = conversation
+    try:
+        status, reply = _desk_post("/api/tasks/start", body)
+    except Exception as e:
+        _log.warning("pc_act start failed: %s", type(e).__name__)
+        status, reply = 503, {}
+    job = reply.get("task_id") if status < 300 else None
+    device_pairing._receipt("device_act", g.device, right=RIGHT, action="start", job=job, outcome=status,
+                            via=tailnet.via())
+    if status >= 500:
+        return refuse(503, "the PC could not start that right now", code="pc_unavailable")
+    if status >= 300 or not job:
+        return refuse(status if status >= 400 else 409, str(reply.get("error") or "the PC would not start that job"),
+                      code="not_started")
+    answer = jsonify({"ok": True, "job_id": job})
+    answer.status_code = 201
+    return answer
+
+
 def register(app: Flask) -> None:
+    app.post("/tv/v1/jobs")(_start_job)
+
     from agent_friday.tv_gateway import pc_act_media
     pc_act_media.register(app)
+
     @app.get("/tv/v1/jobs/<jid>/steps")
     def pc_job_steps(jid):
         denied = pc_read._guard("jobs")
@@ -170,4 +213,6 @@ def register(app: Flask) -> None:
 
     @app.post("/tv/v1/jobs/<jid>/rerun")
     def pc_job_rerun(jid):
-        return _act("rerun", jid, "/api/tasks/%s/rerun")
+        # A re-run is a job started for this device: it carries the origin the gateway built from the id it
+        # authenticated, so the PC counts it against the device's cap like a job the device started.
+        return _act("rerun", jid, "/api/tasks/%s/rerun", {"origin": "device:%s" % g.device["id"]})
