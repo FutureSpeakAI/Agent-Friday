@@ -48,6 +48,19 @@ They are deliberately short. Everything here is also true for humans; see
 - Distinguish "refused by policy" from "not implemented". Some designs record
   a deliberate decision not to build; do not turn them back into backlog.
 
+## Code quality
+
+The standard is [docs/development/code-quality.md](docs/development/code-quality.md).
+
+- A correction made twice becomes a check: redesign, type, guard script, test, in that order. Prose is last.
+- A new guard, lint rule or model is shown failing on the mistake it exists for before it is trusted.
+- A comment or docstring that states a rule about this code names the test or guard that enforces it.
+  Narration, history and excuses for a workaround are deleted, not edited.
+- Outside data is parsed into a typed value where it enters. No raw dicts or magic strings past that point.
+- Remove what a change makes dead in the same change.
+- A pure module with a stated rule carries one test that checks the rule over every small case.
+- An allow-list entry or suppression carries a reason, an expiry date and an approval on its own line.
+
 ## Running tests
 
 `pytest.ini` defaults to `-n auto`. On a small machine pass `-n 0`, `-n 1` or

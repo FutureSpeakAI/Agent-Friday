@@ -102,3 +102,40 @@ def test_cancel_leaves_voice_where_it_was(monkeypatch):
     q = lvr.ask_cloud_switch(source="settings", engine="openai")["question"]
     assert lvr.answer_cloud_switch("cancel", question_id=q["id"])["choice"] == "cancel"
     assert st.data["voice_engine"] == "local"
+
+
+CAPABLE_SNAP = {"capable": True}
+
+
+def _on_openai_by_always(monkeypatch):
+    st = Store(monkeypatch)
+    q = lvr.ask_cloud_switch(source="settings", engine="openai")["question"]
+    lvr.answer_cloud_switch("always", question_id=q["id"])
+    return st
+
+
+def test_a_session_on_openai_says_why_it_is_on_the_cloud_and_local_is_ready(monkeypatch):
+    Store(monkeypatch, engine="openai")
+    monkeypatch.setattr(lvr, "voice_state", lambda snap=None: lvr.CAPABLE)
+    out = lvr.why_cloud(engine="openai")
+    assert out["on_cloud"] is True and "Local voice would also run" in out["text"]
+
+
+def test_the_old_once_only_offer_covers_a_hand_set_openai_voice_too(monkeypatch):
+    Store(monkeypatch, engine="openai")
+    monkeypatch.setattr(lvr, "voice_state", lambda snap=None: lvr.CAPABLE)
+    monkeypatch.setattr(lvr, "measured_numbers", lambda profile=None: {"measured": True})
+    lvr._save({lvr.OFFER_KEY: lvr.OFFER_PENDING})
+    assert lvr.offer_card() is not None
+
+
+def test_after_always_on_openai_local_voice_ready_again_offers_the_switch_back_once(monkeypatch):
+    st = _on_openai_by_always(monkeypatch)
+    monkeypatch.setattr(lvr, "voice_state", lambda snap=None: lvr.CAPABLE)
+    monkeypatch.setattr(lvr, "measured_numbers", lambda profile=None: {"measured": True})
+    monkeypatch.setattr(lvr, "_now", lambda: T0 + 3600)
+    assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1800) is True
+    assert lvr.maybe_offer_switch_back(CAPABLE_SNAP, assessed_at=T0 + 1900) is False
+    card = lvr.switch_back_card()
+    assert [c["id"] for c in card["choices"]] == ["switch_back", "keep_cloud"]
+    assert st.data["voice_engine"] == "openai"                 # offered, never switched

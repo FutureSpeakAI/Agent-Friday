@@ -29,6 +29,7 @@ CAT = {
 
 @pytest.fixture
 def pc(monkeypatch):
+    monkeypatch.setattr(ms, "_benchmark", lambda mid: None)
     state = {"mode": "local_preferred", "live": {"bonsai2:27b"}, "busy": None}
     monkeypatch.setattr(ms, "_catalog", lambda: CAT)
     monkeypatch.setattr(ms, "_settings", lambda: {"orchestrator_model": "bonsai2:27b",
@@ -56,6 +57,19 @@ def test_the_slate_lists_every_provider_the_picker_does_with_the_facts(pc):
     assert gemma["warm"] is False  # cold: installed, not serving
     assert s["selected"] == "bonsai2:27b" and s["routing_mode"] == "local_preferred"
     assert [r["id"] for r in s["models"][:2]] == ["claude-opus-5-5", "bonsai2:27b"]  # picker first
+
+
+def test_every_row_carries_declared_capabilities_and_says_they_are_not_measured(pc, monkeypatch):
+    cat = dict(CAT, models=[dict(CAT["models"][0], modalities=["text", "vision"], supports_tools=True,
+                                 context_window=200000, price_in=15.0, price_out=75.0)] + CAT["models"][1:])
+    monkeypatch.setattr(ms, "_catalog", lambda: cat)
+    rows = _by_id(ms.slate())
+    c = rows["claude-opus-5-5"]["capabilities"]
+    assert c["modalities"] == ["text", "vision"] and c["supports_tools"] is True and c["context_window"] == 200000
+    assert c["price_in_per_1m"] == 15.0 and "not measured" in c["basis"]
+    for r in rows.values():
+        assert set(r["capabilities"]) == set(c) and r["capabilities"]["modalities"]
+    assert rows["bonsai2:27b"]["capabilities"]["supports_tools"] is None  # unknown stays unknown, never guessed
 
 
 def test_warm_is_unknown_not_guessed_when_the_seats_cannot_be_surveyed(pc):
@@ -102,3 +116,14 @@ def test_the_available_copy_of_an_id_wins(monkeypatch, pc):
         {"id": "m", "provider": "b", "roles": ["orchestrator"], "available": True, "needs_key": True}]}
     monkeypatch.setattr(ms, "_catalog", lambda: dup)
     assert ms.require_servable("m")["provider"] == "b"
+
+
+def test_row_for_builds_the_same_row_the_slate_lists_and_none_for_an_unlisted_model(monkeypatch):
+    monkeypatch.setattr(ms, "_catalog", lambda: CAT)
+    monkeypatch.setattr(ms, "_settings", lambda: {"model_routing": {"mode": "local_preferred"}})
+    monkeypatch.setattr(ms, "_local_busy_reason", lambda mid: None)
+    monkeypatch.setattr(ms, "_live_local", lambda: set())
+    listed = {r["id"]: r for r in ms.slate()["models"]}["claude-opus-5-5"]
+    got = ms.row_for("claude-opus-5-5")
+    assert {k: got[k] for k in ("id", "cloud", "can_serve", "capabilities")} == {k: listed[k] for k in ("id", "cloud", "can_serve", "capabilities")}
+    assert ms.row_for("no-such-model") is None

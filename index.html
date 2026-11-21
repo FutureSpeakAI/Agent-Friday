@@ -70276,6 +70276,43 @@ function ExperienceApprovals() {
     error && React.createElement('p', {role:'alert'}, error),
     items.map(a => React.createElement(ApprovalCardBody, {key:a.approval_id,a,busy,onDecide:decide})));
 }
+// The shell-owned approval slot (NS-41.3-1, SC D5.0 P5 and V12). A Liquid UI document names a
+// subject and nothing else: no id, text, style, children or label of its own. The slot asks the
+// server which pending cards belong to that subject (GET /api/liquid/approval-slot, ids only),
+// then draws THE SHELL'S OWN card body for each, from the same feed as the System list. A decision
+// is made with the card's own buttons (fridayDecideApproval). The frame
+// uses shell tokens only. Held by scripts/check_approval_slot.cjs (which cards, order, failure, V12, tokens, a changed subject) and tests/app/specs/approval_slot.spec.ts (the page).
+function ApprovalSlot({ subject, kind }) {
+  const items = useApprovalFeed();
+  const [got, setGot] = useState(null);
+  const [busy, setBusy] = useState('');
+  const asked = (subject || '') + '|' + (kind || '');
+  const ids = got && got.asked === asked ? got.ids : null;
+  const waiting = items.map(a => a.approval_id).join(',');
+  useEffect(() => {
+    let live = true;
+    const q = 'subject=' + encodeURIComponent(subject || '') + (kind ? '&kind=' + encodeURIComponent(kind) : '');
+    fetch('/api/liquid/approval-slot?' + q).then(r => r.json())
+      .then(d => { if (live) setGot({ asked, ids: d && d.ok && Array.isArray(d.ids) ? d.ids : 'unavailable' }); })
+      .catch(() => { if (live) setGot({ asked, ids: 'unavailable' }); });
+    return () => { live = false; };
+  }, [subject, kind, waiting]);
+  if (ids === null) return null;
+  const mine = Array.isArray(ids) ? ids.map(id => items.find(a => a.approval_id === id)).filter(Boolean) : [];
+  if (Array.isArray(ids) && ids.length && !mine.length) return null;
+  const decide = (id, decision) => {
+    if (busy) return;
+    setBusy(id);
+    fridayDecideApproval(id, decision).finally(() => setBusy(''));
+  };
+  return React.createElement('div', {
+    'data-testid': 'approval-slot', role: 'group', 'aria-label': 'Waiting for your decision',
+    style: { margin: '8px 0', padding: 8, border: '1px solid var(--fr-glass-edge)', borderRadius: 8, background: 'var(--fr-glass)', color: 'var(--fr-text)' }
+  }, mine.length ? mine.map(a => React.createElement(ApprovalCardBody, { key: a.approval_id, a, busy, onDecide: decide }))
+    : React.createElement('div', { 'data-testid': 'approval-slot-empty', role: 'status', style: { fontSize: 11, color: 'var(--fr-dim)' } },
+        ids === 'unavailable' ? 'Could not check what is waiting.' : 'Nothing is waiting here.'));
+}
+window.FridayApprovalSlot = ApprovalSlot;
 function App() {
   const [openWins, setOpenWins] = useState(new Set());
   const [focusWin, setFocusWin] = useState(null);
