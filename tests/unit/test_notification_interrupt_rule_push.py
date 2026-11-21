@@ -73,3 +73,43 @@ def test_each_emitter_a_rule_names_passes_its_own_id_where_it_pushes(rule_id, mo
     for emitter in rule.emitters:
         assert re.search(r'emitter\s*=\s*(?:None if manual else )?"%s"' % emitter, text), emitter
         assert emitter in registered
+
+
+# -- a needs-you success must not hide the job's next failure ---------------------
+
+def test_dismissing_a_ran_card_does_not_hide_the_jobs_next_failure():
+    ne.push(title="Nightly sync ran", body="Completed.", source="scheduler", kind="scheduled_task",
+            priority="low", emitter="E07", dedupe_key="sched-ok:nightly")
+    ne.dismiss_all()
+    out = ne.push(title="Nightly sync failed", body="no seat", source="scheduler", kind="scheduled_failure",
+                  priority="high", emitter="E04", dedupe_key="sched-fail:nightly",
+                  resolve_key="sched-fail:nightly")
+    assert not out.get("suppressed") and not out.get("dismissed"), out
+    assert [c["kind"] for c in ne.list_notifications(limit=50)] == ["scheduled_failure"]
+
+
+# -- one event must not interrupt twice ---------------------------------------
+
+def _scheduler(monkeypatch):
+    from agent_friday.services import scheduler
+    from agent_friday.services import voice_engine
+    monkeypatch.setattr(voice_engine, "_notif_engine", ne, raising=False)
+    monkeypatch.setattr(scheduler, "_setup_finished", lambda: True)
+    return scheduler
+
+
+def test_an_ordinary_scheduled_job_that_ran_is_a_needs_you_card(monkeypatch):
+    _scheduler(monkeypatch)._notify_run({"id": "sch_nightly_sync", "name": "Nightly sync"}, "complete", "ok")
+    assert _only_card()["tier"] == pol.NEEDS_YOU
+
+
+@pytest.mark.parametrize("schedule_id", ["sch_front_page_evening", "sch_daily_creation", "sch_afternoon_briefing",
+                                         "sch_weekly_digest"])
+def test_a_routine_whose_delivery_has_its_own_notice_keeps_a_quiet_ran_card(monkeypatch, schedule_id):
+    _scheduler(monkeypatch)._notify_run({"id": schedule_id, "name": "Routine"}, "complete", "ok")
+    assert _only_card()["tier"] == pol.FYI
+
+
+def test_the_heartbeat_is_not_a_routine_with_its_own_notice(monkeypatch):
+    from agent_friday.services import scheduler
+    assert "sch_heartbeat" not in scheduler.OWN_DELIVERY_NOTICE
