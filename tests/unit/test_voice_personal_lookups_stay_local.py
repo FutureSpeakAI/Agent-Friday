@@ -1,16 +1,14 @@
-"""Local voice: a lookup in the owner's own stores never reaches the public web.
+"""Local voice: a lookup the owner points at their own things never reaches the public web.
 
-Measured 2026-11-21 on the live desktop: "Look up Stephen in my knowledge graph" was routed to ``search_web`` with
-the query "Stephen in my knowledge graph" and read the web's answer aloud. The rule layer matched the bare
-"look up" verb and never looked at where the owner said to look. These tests pin three rules, each with a case
-that fails on that code:
+Rules, each with cases that fail on the unfixed rule layer (services/laya_router tier 0):
 
-* a lookup that names the owner's own store (knowledge graph, knowledge base, memory, vault, contacts) is a local
-  ``search_wiki``, with only the subject as its query, and is never ``search_web``;
-* a bare "look up X" that does not say where to look is asked back, naming the public web and the owner's notes,
-  and never runs a web search by itself (a person's name is not a public-world question);
-* the web runs only when the owner says so ("search the web for", "google", "online"), and the Route says it
-  is the web, so the spoken acknowledgement can name it.
+* a lookup that names the owner's own store (knowledge graph, knowledge base, memory, vault, contacts, notes, wiki)
+  is the local ``search_wiki`` with only the subject as its query;
+* a bare "look up X" that names no place is asked back, naming the public web and the owner's notes, unless it is
+  one of a fixed list of questions about the world that name nobody (weather, a capital, sunset time);
+* the web runs by itself only when the owner directs it there ("the web", "the internet", "search online"), and
+  never for words that are the owner's own (my online banking, my Google Drive);
+* walk-all: no phrasing in PERSONAL_PHRASINGS reaches ``search_web`` through the rules.
 """
 from __future__ import annotations
 
@@ -18,23 +16,42 @@ import pytest
 
 from agent_friday.services import laya_router as lr
 
-PERSONAL = [
+STORE_LOOKUPS = [
     "Look up Stephen in my knowledge graph.",
     "look up Acme in my knowledge base",
     "Search my knowledge graph for Acme",
     "find the roof repair in my memory",
     "Look up Dana in my contacts",
     "Check my vault for the passport scan",
+    "look up Stephen in my notes",
+    "find Dana in my wiki",
+]
+
+#: Every one is the owner's own business. None may run search_web by itself.
+PERSONAL_PHRASINGS = STORE_LOOKUPS + [
+    "Look up Stephen",
+    "look up my sister Dana",
+    "look up who Dana is",
+    "look up where Dana lives",
+    "look up when Dana's birthday is",
+    "look up what Dana said about the roof",
+    "look up Dana's score",
+    "look up where Stephen Webster lives",
+    "look up what is Stephen Webster's phone number",
+    "search for my online banking password",
+    "look up my online order status",
+    "look up my Google Drive files",
+    "look up Acme",
 ]
 
 
-@pytest.mark.parametrize("text", PERSONAL)
-def test_a_lookup_in_the_owners_own_store_is_local_and_never_the_web(text):
+@pytest.mark.parametrize("text", STORE_LOOKUPS)
+def test_a_lookup_in_the_owners_own_store_is_local(text):
     r = lr.rule_route(text)
-    assert r is not None and r.tool == "search_wiki", r
-    assert r.decision == "tool"
+    assert r is not None and r.decision == "tool" and r.tool == "search_wiki", r
     q = r.args["query"].lower()
-    assert "knowledge" not in q and "memory" not in q and "vault" not in q and "contacts" not in q, q
+    for store in ("knowledge", "memory", "vault", "contacts", "notes", "wiki"):
+        assert store not in q, q
     assert q, "the subject of the lookup must survive"
 
 
@@ -43,17 +60,24 @@ def test_the_subject_of_a_personal_lookup_is_kept():
     assert lr.rule_route("Search my knowledge graph for Acme").args["query"].lower() == "acme"
 
 
-@pytest.mark.parametrize("text", ["Look up Stephen", "look up my sister Dana", "look up Acme"])
-def test_a_bare_lookup_with_no_place_named_is_asked_back_not_sent_to_the_web(text):
+@pytest.mark.parametrize("text", PERSONAL_PHRASINGS)
+def test_no_personal_phrasing_reaches_the_web_by_itself(text):
     r = lr.rule_route(text)
-    assert r is not None
-    assert r.decision == "ask", r
+    assert r is None or r.tool != "search_web" or r.decision != "tool", r
+
+
+@pytest.mark.parametrize("text", ["Look up Stephen", "look up my sister Dana", "look up who Dana is",
+                                  "look up where Stephen Webster lives", "look up Acme",
+                                  "search for my online banking password", "look up my Google Drive files"])
+def test_a_bare_lookup_with_no_place_named_is_asked_back(text):
+    r = lr.rule_route(text)
+    assert r is not None and r.decision == "ask", r
     q = r.question.lower()
     assert "web" in q and "notes" in q, q
-    assert r.tool != "search_web" or r.decision == "ask"
 
 
-@pytest.mark.parametrize("text", ["look up what time sunset is today", "look up the capital of France"])
+@pytest.mark.parametrize("text", ["look up what time sunset is today", "look up the capital of France",
+                                  "look up the weather in Paris"])
 def test_a_plain_question_about_the_world_still_runs_the_web_search(text):
     r = lr.rule_route(text)
     assert r is not None and r.decision == "tool" and r.tool == "search_web", r
@@ -61,8 +85,8 @@ def test_a_plain_question_about_the_world_still_runs_the_web_search(text):
 
 
 @pytest.mark.parametrize("text", ["Search the web for the Louvre opening hours", "google the weather in Paris",
-                                  "look online for flights to Rome"])
-def test_the_web_runs_only_when_the_owner_says_the_web(text):
+                                  "look online for flights to Rome", "search the internet for hiking trails"])
+def test_the_web_runs_when_the_owner_directs_it_there(text):
     r = lr.rule_route(text)
     assert r is not None and r.decision == "tool" and r.tool == "search_web", r
 

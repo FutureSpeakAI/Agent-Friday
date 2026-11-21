@@ -525,32 +525,40 @@ _NO = re.compile(r"^(?:friday,?\s+)?(?:no|nope|don'?t|do not|decline|deny|cancel
                  r"never mind|stop)\b[\s,.!]*(?:(?:thanks|thank you)[\s,.!]*)?$", re.I)
 
 #: The owner's own stores a spoken lookup may name. A lookup in one of them is the local search, whatever verb
-#: introduced it (a bare "look up" used to win and send the subject to the web).
-_OWN_STORE = r"(?:knowledge (?:graph|base)|memory|memories|vault|contacts?|address book)"
+#: introduced it. Held by tests/unit/test_voice_personal_lookups_stay_local.py (the personal-store tests).
+_OWN_STORE = r"(?:knowledge (?:graph|base)|memory|memories|vault|contacts?|address book|notes|wiki)"
 _OWN_STORE_AFTER = re.compile(
     r"\b(?:look up|look for|search|find|check|pull up)\s+(?P<q>.+?)\s+(?:in|from|on|using|within)\s+(?:my|the)\s+"
     + _OWN_STORE + r"\b", re.I)
 _OWN_STORE_FIRST = re.compile(
     r"\b(?:look up|look in|search|check|find|pull up)\s+(?:in\s+)?(?:my|the)\s+" + _OWN_STORE
     + r"\s+(?:for|about|on)\s+(?P<q>.+)", re.I)
-#: The owner says the web. Anything weaker is not enough to leave the PC.
-_SAYS_WEB = re.compile(r"\b(?:the web|the internet|online|google|web search)\b", re.I)
-
-
-_PUBLIC_CUE = re.compile(
-    r"^(?:what|when|where|who|why|how|which)\b|\b(?:weather|forecast|time|capital|price|hours|population|score|"
-    r"recipe|sunset|sunrise|distance|definition|meaning|translate|currency|exchange rate)\b", re.I)
+#: The owner directs a search to the web: "the web", "the internet", "web search" always; "search/look/find
+#: online" and a leading "google X" only when the words say nothing of the owner (my online banking, my Google
+#: Drive are the owner's own things, not a request for the web). Held by the web and personal-phrasing tests.
+_SAYS_WEB_ALWAYS = re.compile(r"\b(?:the web|the internet|web search)\b", re.I)
+_SAYS_WEB_WEAK = re.compile(
+    r"\b(?:search|look|find|check)(?: out)?(?: it| that| this| for it)? online\b|\bonline for\b"
+    r"|^(?:please |can you |could you )?google\s+(?!drive|docs|calendar|photos|account)", re.I)
 _PERSONAL_WORD = re.compile(r"\b(?:my|me|mine|our|we|i)\b", re.I)
+#: A question about the world the owner can have answered by the web without naming anyone: a fixed list of
+#: topics, not wh-words (a person's name behind "who", "where" or "what" is not a public-world question).
+_PUBLIC_TOPIC = re.compile(
+    r"\b(?:weather|forecast|sunset|sunrise|exchange rate|currency|time zone|capital of|population of|"
+    r"opening hours|hours of|recipe for|score of|translate|definition of|meaning of|"
+    r"distance (?:to|from|between))\b", re.I)
+
+
+def _owner_says_web(text: str) -> bool:
+    if _SAYS_WEB_ALWAYS.search(text):
+        return True
+    return bool(_SAYS_WEB_WEAK.search(text)) and not _PERSONAL_WORD.search(text)
 
 
 def _public_question(text: str, m) -> bool:
-    """Whether a bare "look up ..." is a question about the world (the weather, a capital, sunset time) and
-    nothing of the owner's. A bare name or anything that says my/our is not: it is asked back."""
-    try:
-        q = _query(text, m)["query"]
-    except Exception:  # noqa: BLE001
-        return False
-    return bool(_PUBLIC_CUE.search(q)) and not _PERSONAL_WORD.search(q)
+    """Whether a bare "look up ..." asks about the world and nothing of the owner's."""
+    q = _query(text, m).get("query", "")
+    return bool(_PUBLIC_TOPIC.search(q)) and not _PERSONAL_WORD.search(q)
 
 
 def _own_store_query(text: str) -> str:
@@ -832,7 +840,7 @@ def _tier0_rest(text: str) -> Optional[Route]:
         m = pat.search(text)
         if m:
             label, template, required = TOOLS[tool]
-            if tool == "search_web" and not _SAYS_WEB.search(text) and not _public_question(text, m):
+            if tool == "search_web" and not _owner_says_web(text) and not _public_question(text, m):
                 return Route("ask", tool=tool, confidence=0.95, layer="rule", label=label,
                              question=_ASK_WHERE,
                              reason="a lookup that names no place is asked, never sent to the web")
