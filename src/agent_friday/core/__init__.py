@@ -2565,6 +2565,7 @@ DEFAULT_SETTINGS = {
     # Notification kinds the owner muted ("kind|source"); muted kinds go to the
     # activity log. Approvals can never be muted (notification_policy).
     "notification_mutes": [],
+    "notification_interrupt_rules": {},
     "news_local_area": "",
     # Hours a story stays eligible for each routine's edition (news_seen).
     "news_edition_window_hours": {"front_page": 36, "briefing": 36},
