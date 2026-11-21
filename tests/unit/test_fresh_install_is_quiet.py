@@ -195,7 +195,10 @@ def test_a_brave_key_saved_by_the_old_key_screen_is_used(no_keys, monkeypatch):
     from agent_friday.services import web_search
     monkeypatch.setattr(cs, "get_provider_key",
                         lambda name: "example-brave-token" if name == "brave-search" else None)
-    assert web_search.brave_key() == "example-brave-token"
+    # The search code holds only a stand-in; the gateway is what finds the saved key (and would send it).
+    from agent_friday.services import key_gateway
+    assert web_search.brave_key() == key_gateway.DUMMY_KEY
+    assert key_gateway._find_key(key_gateway.PROVIDERS["brave"]) == "example-brave-token"
     from agent_friday import setup_brain
     assert {k["provider"] for k in setup_brain.KEYS} >= {"brave"}
     assert "brave-search" not in {k["provider"] for k in setup_brain.KEYS}

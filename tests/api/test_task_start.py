@@ -121,6 +121,120 @@ def test_the_read_only_observer_cannot_start_a_job(client, spawned, monkeypatch,
     r = client.post("/api/tasks/start", json={"prompt": "x", "origin": PHONE}, headers={obs.HEADER: tok})
     assert r.status_code == 403 and spawned == []
 
+@pytest.mark.parametrize("origin", ["pc\n", "device:dev_phone_1\n", "pc ", "PC"])
+def test_an_origin_is_matched_whole_not_up_to_a_trailing_newline(client, spawned, origin):
+    r = _start(client, origin=origin)
+    assert r.status_code == 400 and spawned == []
+
+
+def test_the_journal_says_where_a_job_came_from_not_that_the_device_is_paired(client, spawned):
+    r = _start(client, origin="device:dev_unknown_9")
+    entries = [e for e in tj.read(r.get_json()["task_id"]) if e["kind"] == "decision" and e["point"] == "origin"]
+    assert "a paired device" not in entries[0]["reason"] and "device:dev_unknown_9" in entries[0]["reason"]
+
+
+def test_a_journal_that_cannot_be_written_does_not_make_a_running_job_look_failed(client, spawned, monkeypatch):
+    real = tj.append
+
+    def append(tid, kind, **kw):
+        if kind == "decision":
+            raise OSError("disk full")
+        return real(tid, kind, **kw)
+    monkeypatch.setattr(tj, "append", append)
+    r = _start(client)
+    assert r.status_code == 201 and r.get_json()["task_id"] == "job-0001"
+
+
+def test_a_spawn_that_raises_is_a_refusal_in_words_not_a_server_error(client, monkeypatch):
+    def boom(*a, **k):
+        raise PermissionError("not allowed to start that")
+    monkeypatch.setattr(ag, "_spawn_task", boom)
+    r = _start(client)
+    assert r.status_code == 409 and r.get_json()["error"] and "PermissionError" not in r.get_json()["error"]
+
+
+@pytest.mark.parametrize("waiting", ["waiting_for_approval", "queued-for-seat", "waiting", "paused"])
+def test_a_job_waiting_on_a_card_or_a_seat_still_holds_its_place_under_the_cap(client, spawned, waiting):
+    """A job that is queued, waiting for a seat, waiting or paused has not ended: it is still the device's job.
+    Three of them must not let a fourth start, and they must not be forgotten when they resume."""
+    ids = [_start(client).get_json()["task_id"] for _ in range(task_start.DEVICE_JOB_CAP)]
+    with ag.TASKS_LOCK:
+        for tid in ids:
+            ag.TASKS[tid]["status"] = waiting
+    assert _start(client).status_code == 409
+    with ag.TASKS_LOCK:
+        ag.TASKS[ids[0]]["status"] = "running"                 # it resumes: still counted
+    assert _start(client).status_code == 409
+    with ag.TASKS_LOCK:
+        ag.TASKS[ids[0]]["status"] = "complete"                # only an ending frees the place
+    assert _start(client).status_code == 201
+
+
+def test_a_job_whose_worker_is_finished_and_waits_only_for_the_owners_card_frees_its_place(client, spawned):
+    """task_journal.TERMINAL counts waiting_approval as an ending (the worker is done; what is left is the owner's
+    decision on a card), so it does not hold a device's place."""
+    ids = [_start(client).get_json()["task_id"] for _ in range(task_start.DEVICE_JOB_CAP)]
+    assert _start(client).status_code == 409
+    with ag.TASKS_LOCK:
+        ag.TASKS[ids[0]]["status"] = "waiting_approval"
+    assert _start(client).status_code == 201
+
+
+def _finished(tid="old-1"):
+    with ag.TASKS_LOCK:
+        ag.TASKS[tid] = {"task_id": tid, "name": "an earlier job", "prompt": "tidy the downloads folder",
+                         "status": "complete", "created": 1.0}
+    return tid
+
+
+def _rerun(client, tid, **body):
+    return client.post("/api/tasks/%s/rerun" % tid, json=body)
+
+
+def test_a_rerun_asked_for_by_a_device_counts_against_that_devices_cap(client, spawned):
+    """The cap must not be a way around by re-running one finished job again and again."""
+    old = _finished()
+    for _ in range(task_start.DEVICE_JOB_CAP):
+        assert _rerun(client, old, origin=PHONE).status_code == 200
+    again = _rerun(client, old, origin=PHONE)
+    assert again.status_code == 409 and "already running" in again.get_json()["error"]
+    assert _start(client).status_code == 409                       # the same cap, from the other door
+    assert len(spawned) == task_start.DEVICE_JOB_CAP
+
+
+def test_a_rerun_from_the_pc_itself_is_not_capped(client, spawned):
+    old = _finished()
+    for _ in range(task_start.DEVICE_JOB_CAP + 2):
+        assert _rerun(client, old).status_code == 200
+    assert _rerun(client, old, origin="pc").status_code == 200
+
+
+@pytest.mark.parametrize("origin", ["pc\n", 7, ["device:x"], "phone"])
+def test_a_rerun_with_an_origin_that_is_not_one_is_refused_before_anything_starts(client, spawned, origin):
+    old = _finished()
+    assert _rerun(client, old, origin=origin).status_code == 400 and spawned == []
+
+
+def test_a_cap_check_that_raises_does_not_leave_the_job_lock_held(monkeypatch):
+    """__exit__ does not run when __enter__ raises, so the lock must be given back on any failure, or every later
+    start and re-run waits for it forever."""
+    def boom():
+        raise RuntimeError("a bad record in the registry")
+    monkeypatch.setattr(task_start, "_running_from_devices", boom)
+    with pytest.raises(RuntimeError):
+        with task_start.DeviceSlot(PHONE):
+            pass
+    assert task_start._LOCK.acquire(blocking=False), "the job lock was left held"
+    task_start._LOCK.release()
+
+
+@pytest.mark.parametrize("body", [[1], "text", 7, None])
+def test_a_rerun_with_a_body_that_is_not_an_object_is_still_a_plain_rerun(client, spawned, body):
+    """The route ignored its body before; a body that is not an object must not turn into a 500."""
+    old = _finished()
+    r = client.post("/api/tasks/%s/rerun" % old, json=body)
+    assert r.status_code == 200 and len(spawned) == 1
+
 
 def test_every_job_carries_its_origin_on_the_record_and_it_outlives_the_run(client, spawned):
     mine = _start(client, origin="pc").get_json()["task_id"]

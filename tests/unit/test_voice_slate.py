@@ -111,4 +111,13 @@ def test_every_built_in_engine_is_in_the_closed_set_and_old_spellings_resolve(pc
     assert vs.find("gemini-live")["id"] == "gemini" and vs.find("auto")["id"] == "local"
     pc["settings"]["voice_engine"] = "auto"
     assert vs.slate()["selected"] == "local"
-    assert set(vs.CLOUD_SPEECH) == {vs.Engine.GEMINI, vs.Engine.OPENAI}
+
+
+def test_the_cloud_speech_engines_are_the_ones_voice_engines_names(pc):
+    """One module spells the cloud engines (voice_engines); each switchable one is a closed-set Engine whose
+    slate row really is a cloud row, so adding one to voice_engines.SWITCH_ENGINES reaches the slate."""
+    from agent_friday.services import voice_engines
+    assert {e.value for e in vs.CLOUD_SPEECH} == set(voice_engines.SWITCH_ENGINES)
+    assert {e for e in voice_engines.CLOUD_ENGINES if e != "gemini-live"} <= {e.value for e in vs.Engine}
+    rows = {r["id"]: r for r in vs.slate()["engines"]}
+    assert all(rows[e.value]["cloud"] for e in vs.CLOUD_SPEECH)

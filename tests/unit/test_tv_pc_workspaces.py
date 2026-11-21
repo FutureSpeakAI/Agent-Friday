@@ -16,11 +16,15 @@ import pytest
 from agent_friday.services import laya_manifests as lm
 from agent_friday.services import workspace_registry as reg
 from tests.unit.test_tv_gateway import auth, open_session
-from tests.unit.test_tv_pc_read import _clean, client, paired  # noqa: F401  (fixtures and helpers)
+from tests.unit import test_tv_pc_read as shared
+from tests.unit.test_tv_pc_read import paired
+
+client = shared.client
+_clean = shared._clean
 
 GATE_CLASSES = {"internal", "self_gated", "by_argument", "card_only_when_outward", "outward"}
 CARDS = {"none", "own_card", "required", "by_argument"}
-VERB_KEYS = {"id", "label", "group", "gate_class", "card"}
+VERB_KEYS = {"id", "label", "group", "gate_class", "card", "placed"}
 
 
 def shown_workspaces():
@@ -65,7 +69,8 @@ def test_a_verb_that_needs_a_card_says_so(read):
 def test_a_verb_with_no_gate_block_is_reported_as_the_strictest_case(read, monkeypatch):
     monkeypatch.setattr(lm, "verbs", lambda ws: [{"id": "x.do", "ui": {"control": "Do it"}}])
     sent = detail(read, "calendar")["verbs"][0]
-    assert sent == {"id": "x.do", "label": "Do it", "group": None, "gate_class": "outward", "card": "required"}
+    assert sent == {"id": "x.do", "label": "Do it", "group": None, "gate_class": "outward", "card": "required",
+                    "placed": []}
 
 
 def test_a_verb_with_no_control_text_is_labelled_by_its_id_not_null(read, monkeypatch):

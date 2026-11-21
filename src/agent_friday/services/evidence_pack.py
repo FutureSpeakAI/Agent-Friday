@@ -18,6 +18,10 @@ Rules and the tests that hold them (tests/unit/test_evidence_pack.py):
 - The summary numbers are recounted from the pack's own files: test_summary_numbers_equal_a_
   recount_of_the_pack_files.
 - A break in range is stated first: test_a_break_is_the_first_line_of_the_summary.
+- The manifest is signed over the bytes of Federation's canonical form, not a new one:
+  test_the_manifest_bytes_come_from_the_federation_canonical_function.
+- Change the manifest, or sign with another key: the check fails:
+  test_a_changed_manifest_fails_the_signature, test_another_keys_signature_fails.
 """
 from __future__ import annotations
 
@@ -28,9 +32,12 @@ import zipfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
+
+from agent_friday.services import peer_wire_v2 as wire
 
 GENESIS = "0" * 64
+MANIFEST_PREFIX = b"asimov-evidence-pack/v1/manifest\x00"
 SUPPORTS_SENTENCE = ("This export supports ISO 27001 evidence-gathering. "
                      "It is not a certification and makes no compliance claim.")
 CONTENT_KEYS = frozenset({"prompt", "result", "message", "text", "content", "body", "reply",
@@ -40,7 +47,9 @@ APPROVAL_FIELDS = ("approval_id", "kind", "subject_type", "policy_class", "gated
                    "decided_source", "decided_check", "used_at", "off_record", "policy_version",
                    "decided_policy_version", "action_fingerprint", "decided_device", "withdrawn")
 GRANT_FIELDS = ("grant_id", "kind", "pattern", "created_at", "expires_at", "uses", "max_uses",
-                "revoked_at", "status")
+                "used_count", "first_used_at", "revoked_at", "status")
+APPROVAL_TIMES = ("created_at", "decided_at", "used_at")
+GRANT_TIMES = ("created_at", "first_used_at", "revoked_at", "expires_at")
 
 
 class PackFile(str, Enum):
@@ -52,6 +61,7 @@ class PackFile(str, Enum):
     HOW_TO_CHECK = "HOW_TO_CHECK.md"
     CHECKER = "check_pack.py"
     MANIFEST = "manifest.json"
+    SIGNATURE = "manifest.sig"
 
 
 class PackRefused(ValueError):
@@ -60,16 +70,23 @@ class PackRefused(ValueError):
 
 @dataclass(frozen=True)
 class Range:
-    """Entries with `start <= t < end` (unix seconds)."""
-    start: float
-    end: float
+    """Entries with `start <= t < end`, whole unix seconds."""
+    start: int
+    end: int
 
     def __post_init__(self):
-        if not self.start < self.end:
+        if type(self.start) is not int or type(self.end) is not int or not 0 <= self.start < self.end:
             raise PackRefused("The range must end after it starts.")
 
     def holds(self, entry: Mapping) -> bool:
         return self.start <= entry["t"] < self.end
+
+
+@dataclass(frozen=True)
+class Signer:
+    """Signs bytes with the owner's attestation key; `sign` returns hex or None (no key)."""
+    sign: Callable[[bytes], str | None]
+    public_key: str
 
 
 @dataclass(frozen=True)
@@ -126,8 +143,19 @@ def _pick(rows: Iterable[Mapping], fields: tuple[str, ...]) -> list[dict]:
     return [{k: row[k] for k in fields if k in row} for row in rows]
 
 
-def _in_range(rows: Iterable[Mapping], key: str, rng: Range) -> list[Mapping]:
-    return [r for r in rows if isinstance(r.get(key), (int, float)) and rng.start <= r[key] < rng.end]
+def _in_range(rows: Iterable[Mapping], keys: tuple[str, ...], rng: Range) -> list[Mapping]:
+    """Rows with any of `keys` inside the range. A row with no time at all cannot be placed, so
+    it is kept (the pack is never silently short) and the summary counts it."""
+    chosen = []
+    for row in rows:
+        times = [row[k] for k in keys if isinstance(row.get(k), (int, float))]
+        if not times or any(rng.start <= t < rng.end for t in times):
+            chosen.append(row)
+    return chosen
+
+
+def _undated(rows: Iterable[Mapping], keys: tuple[str, ...]) -> int:
+    return sum(1 for r in rows if not any(isinstance(r.get(k), (int, float)) for k in keys))
 
 
 def _starting_hash(entries: list[Mapping], chosen: list[Mapping]) -> str:
@@ -138,11 +166,12 @@ def _starting_hash(entries: list[Mapping], chosen: list[Mapping]) -> str:
 
 
 def build_pack(entries: list[Mapping], approvals: Iterable[Mapping], grants: Iterable[Mapping],
-               verify_result: Mapping, rng: Range, app_version: str, exported_at: float) -> Pack:
+               verify_result: Mapping, rng: Range, app_version: str, exported_at: int,
+               signer: Signer | None = None) -> Pack:
     chosen = [e for e in entries if rng.holds(e)]
     _refuse_content(chosen)
-    approval_rows = _pick(_in_range(approvals, "created_at", rng), APPROVAL_FIELDS)
-    grant_rows = _pick(_in_range(grants, "created_at", rng), GRANT_FIELDS)
+    approval_rows = _pick(_in_range(approvals, APPROVAL_TIMES, rng), APPROVAL_FIELDS)
+    grant_rows = _pick(_in_range(grants, GRANT_TIMES, rng), GRANT_FIELDS)
     checker = Path(__file__).with_name("evidence_pack_checker.py").read_bytes()
     body = {
         PackFile.LEDGER.value: _jsonl(chosen),
@@ -154,6 +183,7 @@ def build_pack(entries: list[Mapping], approvals: Iterable[Mapping], grants: Ite
     }
     body[PackFile.SUMMARY.value] = summary(chosen, approval_rows, grant_rows, verify_result,
                                            rng).encode("utf-8")
+    key_id = _sha(bytes.fromhex(signer.public_key))[:16] if signer else None
     manifest = {
         "range": {"start": rng.start, "end": rng.end},
         "entries": len(chosen),
@@ -166,10 +196,16 @@ def build_pack(entries: list[Mapping], approvals: Iterable[Mapping], grants: Ite
         "app_version": app_version,
         "exported_at": exported_at,
         "ledger_verified": bool(verify_result.get("ok")),
+        "public_key": signer.public_key if signer else None,
+        "key_id": key_id,
         "files": {name: _sha(data) for name, data in sorted(body.items())},
     }
     files = dict(body)
-    files[PackFile.MANIFEST.value] = canon(manifest) + b"\n"
+    manifest_bytes = wire.canonical(manifest)
+    files[PackFile.MANIFEST.value] = manifest_bytes
+    signature = signer.sign(MANIFEST_PREFIX + manifest_bytes) if signer else None
+    if signature:
+        files[PackFile.SIGNATURE.value] = signature.encode("ascii")
     return Pack(files, manifest)
 
 
@@ -204,14 +240,16 @@ def summary(entries: list[Mapping], approvals: list[Mapping], grants: list[Mappi
     status = _counts(str(a.get("status")) for a in approvals)
     source = _counts(str(a.get("decided_source")) for a in approvals if a.get("decided_source"))
     versions = sorted({e["pv"] for e in entries if "pv" in e})
+    undated = _undated(approvals, APPROVAL_TIMES) + _undated(grants, GRANT_TIMES)
     lines += [
-        f"Range: {rng.start:.0f} to {rng.end:.0f} (unix seconds, start included, end excluded).",
+        f"Range: {rng.start} to {rng.end} (unix seconds, start included, end excluded).",
         f"Ledger entries: {len(entries)}",
         *[f"- {kind}: {count}" for kind, count in kinds.items()],
         f"Approvals: {len(approvals)}",
         *[f"- status {name}: {count}" for name, count in status.items()],
         *[f"- decided from {name}: {count}" for name, count in source.items()],
         f"Grants: {len(grants)}",
+        *([f"Rows with no recorded time (kept): {undated}"] if undated else []),
         "Actions seen for the first time: "
         + ("recorded" if any("novelty" in a for a in approvals) else "the label was not recorded"),
         f"Policy versions in force: {', '.join(versions) if versions else 'none recorded'}",
