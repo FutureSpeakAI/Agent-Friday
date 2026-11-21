@@ -103,6 +103,7 @@ def test_a_replayed_signature_cannot_accept_the_offer_twice(client):
     first = phone.post(path, body)
     assert first.status_code == 200 and len(_grants()) == 1
     again = phone.post(path, body)
+    assert again.status_code != 200 or again.get_json().get("already_decided") is True, again.get_json()
     assert again.get_json().get("won") is not True and len(_grants()) == 1
 
 
@@ -131,3 +132,47 @@ def test_a_device_may_decline_the_offer_without_a_signature(client):
     offer = _offer()
     answer = phone.post("/tv/v1/approvals/%s/decide" % offer["approval_id"], {"decision": "deny"})
     assert answer.status_code == 200 and status(offer["approval_id"]) == "denied" and _grants() == []
+
+
+def test_the_second_guard_layer_refuses_every_other_screen_only_kind_even_with_the_whole_signed_path():
+    """Defence in depth: the gateway refuses these cards at the challenge; the decision itself must refuse them too,
+    whatever reaches it (device_signed_ok names the kinds a device may approve, and only those)."""
+    for kind in sorted(set(approvals.SCREEN_ONLY_KINDS) - {sg.OFFER_KIND}):
+        pending = card(kind=kind)
+        rec, won = approvals.decide_with_outcome(pending["approval_id"], "approve", decided_by="device:phone-1",
+                                                 source="device_signed", proof={"sig": "x"},
+                                                 expect_fp=approvals._action_fp(pending))
+        assert won is False and rec["status"] == "pending", kind
+
+
+def test_a_device_whose_right_is_withdrawn_between_challenge_and_decide_makes_no_grant(client):
+    from agent_friday.services import device_pairing
+    phone = Enrolled(client)
+    offer = _offer()
+    got = phone.challenge(offer["approval_id"]).get_json()
+    when = int(time.time())
+    device_pairing.set_right(phone.id, "pc_approve", False)
+    body = {"decision": "approve", "nonce": got["nonce"], "time": when, "sig": phone.sign(got, when)}
+    assert phone.post("/tv/v1/approvals/%s/decide" % offer["approval_id"], body).status_code == 403
+    assert status(offer["approval_id"]) == "pending" and _grants() == []
+
+
+def test_an_offer_changed_after_the_challenge_is_refused_by_the_signed_fingerprint(client):
+    phone = Enrolled(client)
+    offer = _offer()
+    got = phone.challenge(offer["approval_id"]).get_json()
+    when = int(time.time())
+    rec = approvals.get_approval(offer["approval_id"])
+    rec["payload"] = dict(rec["payload"], pattern="another-pattern")
+    approvals._upsert(rec)
+    body = {"decision": "approve", "nonce": got["nonce"], "time": when, "sig": phone.sign(got, when)}
+    answer = phone.post("/tv/v1/approvals/%s/decide" % offer["approval_id"], body)
+    assert answer.status_code != 200 and status(offer["approval_id"]) == "pending" and _grants() == []
+
+
+def test_a_grant_the_phone_made_is_listed_as_the_devices(client):
+    phone = Enrolled(client)
+    offer = _offer()
+    assert phone.approve(offer["approval_id"]).get_json()["won"] is True
+    [row] = sg.listing()["grants"]
+    assert row["pressed_by"] == "device:%s" % phone.id and row["device"] == "owner_device"
